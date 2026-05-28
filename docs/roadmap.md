@@ -1,10 +1,10 @@
 # Canvas ADE — Roadmap
 
-Guides work after Phase 0. Each phase ends in a **runnable, committed checkpoint**. The
+Guides work after Phase 0. Each phase/step ends in a **runnable, committed checkpoint**. The
 `design-reference/` bundle is the authoritative UX contract; this roadmap is the build order.
 Design wins on UX, the architecture in `CLAUDE.md` wins on the stack.
 
-Legend: 🚦 = hard gate · ✅ = acceptance criteria · ⛓ = depends on.
+Legend: 🚦 = hard gate · ✅ = acceptance criteria · 📏 = measured/tested · ⛓ = depends on.
 
 ---
 
@@ -16,116 +16,132 @@ end (incl. running the packaged exe). CI matrix wired. CLAUDE.md + ADR 0001 writ
 
 ---
 
-## Phase 1 — 🚦 Preview feasibility spike (THE GATE)
+## Phase 1 — 🚦 Preview feasibility spike (THE GATE), broken into measured steps
 
 Prove the hardest thing before building on it: a native `WebContentsView` preview that stays
-visually correct as the React Flow camera pans/zooms — on Windows, with multiple views.
+visually correct as the React Flow camera pans/zooms — on Windows, with multiple views. Decomposed
+so each step **isolates one risk variable** and is independently testable. Steps stay minimal but
+**salvageable** — the working sync code graduates into Phase 2.0, the rest can be throwaway.
 
-**Build**
-1. Real React Flow canvas shell: infinite pan/zoom (`minZoom 0.1`, `maxZoom 2.5`, zoom-to-cursor),
-   dotted background, `hideAttribution`, dark restyle. This becomes the canvas foundation for Phase 2.
-2. A custom **Browser board node** rendering the device-frame chrome + a transparent cutout.
-3. **PreviewManager (main)** over **N** `WebContentsView`s — built for many from day one:
-   - Sync each view's `setBounds()` + scale to the camera via a single rAF loop driven by
-     `useOnViewportChange`; coalesce to one IPC batch/frame; diff-skip no-ops.
-   - Responsive trick: fixed CSS width W∈{390,834,1280}, `setZoomFactor(fitScale*camZoom)` +
-     `setBounds(width: W*fitScale*camZoom)`.
-   - **Detach + snapshot** on pan/zoom and below ~40% zoom (`capturePage` while on-screen →
-     detach → show card; reattach exact bounds on `onMoveEnd`). Cap ~4 live; close far/over-cap.
-   - `webContents.close()` on board removal (no `destroy()` → else leak).
-4. Two simultaneous preview boards to exercise N-view sync + the live cap.
+**1-A · Dev tooling + diagnostics harness** (adjustment B)
+- Wire **ESLint + Prettier + Vitest**. Extend CI `check` job to run **lint + test + typecheck + build**.
+- A diagnostics overlay (frame timing / live-view count / memory sample) + the pure **camera→bounds
+  math** extracted as a unit-tested module (`worldRect → screenRect` given `{x,y,z}`).
+- ✅📏 `pnpm test` green; CI gate runs lint+test; overlay shows live metrics.
 
-**✅ Acceptance / 🚦 abort criteria**
-- Pan/zoom on Windows feels smooth (snapshot-while-moving hides IPC lag; live view re-pins crisply on idle).
-- 2+ previews stay aligned; switching viewport reflows the page at the true breakpoint width.
-- No renderer leaks across open/close cycles; memory stable with the live cap.
-- **If janky and unfixable** with detach+snapshot: STOP, write up options (e.g. snapshot-only previews,
-  fewer live views, or a different preview transport) and decide with the user before Phase 2.
+**1-B · Static overlay** ⛓ 1-A
+- One `WebContentsView` pinned to one React Flow node's bounds, camera still.
+- ✅📏 view sits pixel-aligned over the cutout; transform unit tests cover the rect math.
+
+**1-C · Live pan/zoom** ⛓ 1-B — *the core risk*
+- View follows the camera live via a single rAF loop (`useOnViewportChange`), coalesced IPC, diff-skip.
+- ✅📏 record trailing/lag on Windows (frames behind, perceived smoothness). 🚦 if unacceptable even
+  coalesced, that's the signal detach+snapshot (1-D) must carry the motion.
+
+**1-D · Detach + snapshot** ⛓ 1-C
+- `capturePage` while on-screen → detach → show card during motion → reattach exact bounds on
+  `onMoveEnd`. Decide the open question: **Browser board scales with camera (shrinks) vs stays 1:1**
+  (assumption: scales with camera).
+- ✅📏 perceived motion is smooth (no trailing live view); snapshot never blank; scale model locked.
+
+**1-E · N views + responsive + lifecycle** ⛓ 1-D
+- 2+ simultaneous views; viewport reflow at true breakpoint width (390/834/1280) via
+  `setZoomFactor`+`setBounds`; cap ~4 live, close far/over-cap; `webContents.close()` leak check.
+- ✅📏 multi-view stays aligned; reflow correct; memory stable across open/close (no renderer leaks).
+
+**🚦 GATE verdict (end of 1-E):** smooth + leak-free + aligned → proceed. **If janky and unfixable**,
+STOP, write up options (snapshot-only previews, fewer live views, alternate transport) and decide
+with the user before Phase 2.
 
 ⛓ Phase 0.
 
 ---
 
-## Phase 2 — Core boards (one runnable vertical slice at a time)
+## Phase 2 — Core boards (one runnable vertical slice at a time) ⛓ Phase 1
 
-Built on the Phase 1 canvas foundation. Each board = a custom React Flow node sharing a chrome base.
-
-**2.0 — Board framework**
-- Shared `BoardFrame` (title bar w/ glyph + type tag + title + actions + ⋯, content slot), `NodeResizer`
-  restyled to 8 handles + min 240×160, selection ring, **LOD card** below 40% zoom (glyph+title+status).
+**2.0 — Production canvas foundation** (adjustments A + C)
+- Promote the salvaged spike into the real canvas: pan/zoom (`minZoom 0.1`/`maxZoom 2.5`,
+  zoom-to-cursor), dotted background, `hideAttribution`, dark restyle, overview/fit.
+- Shared `BoardFrame` (title bar: glyph + type tag + title + actions + ⋯; content slot), `NodeResizer`
+  restyled to 8 handles + min 240×160, selection ring, **LOD card** below 40% zoom.
 - App chrome shell: bottom dock (`select · +Terminal · +Browser · +Planning · +Checklist`), top-right
-  camera cluster (`fit · −/%/+ · overview`), top-left project switcher placeholder, empty-state.
-- Zustand store for board/app state; React Flow `toObject()` round-trips (in-memory for now).
+  camera cluster, top-left project-switcher placeholder, empty-state.
+- **Persisted node-data schema + `schemaVersion` defined now** (file I/O lands Phase 3) so every board
+  is serialization-ready from birth; Zustand for app/ephemeral state; `toObject()` round-trips in-memory.
+- ✅📏 unit tests for the node schema (de)serialize; boards add/select/move/resize; LOD swaps at 40%.
 
 **2.1 — Terminal board** ⛓ 2.0
-- xterm (themed to tokens) ⇄ node-pty over MessagePort; control over IPC. User-selectable shell
-  (detect installed; OS default). Agent-agnostic `launchCommand` written as first PTY line.
-- Chrome: agent identity pill (ok/warn/err dot), `mm:ss` run timer, run-progress sliver, follow-up
-  prompt affordance, pause/restart/interrupt actions. Kill the process tree on close.
-- ✅ Spawn a shell, run a CLI, resize reflows, output streams smoothly, close kills cleanly.
+- xterm (themed) ⇄ node-pty over MessagePort; control over IPC. User-selectable shell (detect installed;
+  OS default). Agent-agnostic `launchCommand` written as first PTY line. Kill the process tree on close.
+- Chrome: agent identity pill (ok/warn/err), `mm:ss` timer, run-progress sliver, follow-up prompt,
+  pause/restart/interrupt. **Basic states** (adjustment D): spawning / running / exited / spawn-failed.
+- ✅📏 spawn shell → run a CLI → resize reflows → close kills cleanly; basic states render.
 
 **2.2 — Browser board** ⛓ 2.0, Phase 1
-- Promote the Phase 1 preview into a real board: viewport segmented control (Mobile/Tablet/Desktop),
-  device frame (mobile 22px + notch), URL/route bar (back/fwd/reload, editable URL, connected dot,
-  dims readout). URL persisted per board.
-- ✅ All three presets render correctly through camera changes; URL edits reload.
+- Real board over the PreviewManager: viewport segmented control (Mobile/Tablet/Desktop), device frame
+  (mobile 22px + notch), URL/route bar (back/fwd/reload, editable URL, connected dot, dims readout).
+  URL persisted per board. **Basic states:** connecting / connected / load-failed.
+- ✅📏 all three presets correct through camera changes; URL edits reload; failed load shows a state.
 
 **2.3 — Planning board** ⛓ 2.0
-- Whiteboard content: finer dot grid, sticky notes (4 tints), text, freehand pen (vendored
-  perfect-freehand, pointer deltas ÷ zoom), arrows. Tool cluster shown only when selected.
-- ✅ Create/move/edit notes + draw strokes that land under the cursor at any zoom.
+- **Setup:** vendor `perfect-freehand` into `src/vendor/` (pin + attribution) (adjustment E).
+- Whiteboard content: finer dot grid, sticky notes (4 tints), text, freehand pen (pointer deltas ÷ zoom),
+  arrows. Tool cluster shown only when selected.
+- ✅📏 create/move/edit notes; strokes land under the cursor at any zoom (unit-test the ÷zoom mapping).
 
 **2.4 — Checklist board** ⛓ 2.0
-- Own board type, Planning visual family: title + `done/total`, 3px accent progress bar, toggle/
-  add/edit/delete/reorder items. Responsive: large = full list, medium = scroll, small = collapsed
-  summary. State lives in the node props (persists with the canvas).
-- ✅ Items CRUD + reorder; progress updates live; resize switches the three density modes.
+- Own board type, Planning visual family: title + `done/total`, 3px accent progress bar,
+  add/edit/delete/reorder/toggle items. Responsive: large = full list, medium = scroll, small =
+  collapsed summary. State in node props (persists with the canvas).
+- ✅📏 items CRUD + reorder; progress live; resize switches the three density modes.
 
 ---
 
 ## Phase 3 — Board actions & projects ⛓ Phase 2
 
-- **Focus** (double-click → camera fit one board, dim others to 55%) and **Full view** (modal
-  overlay, `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both;
-  in full view a Browser board renders via snapshot/reattach so HTML chrome isn't punched through.
-- **Duplicate** (⋯ menu): clone geometry + state offset 36px, select copy; Browser clone defaults to
-  the next viewport preset, its own independent `WebContentsView`.
+- **Focus** (double-click → camera fit one board, dim others 55%) + **Full view** (modal overlay,
+  `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both; in full
+  view a Browser board renders via snapshot/reattach so HTML chrome isn't punched through.
+- **Duplicate** (⋯): clone geometry + state offset 36px, select copy; Browser clone → next viewport
+  preset, own independent `WebContentsView`.
 - **Project create / open**: folder picker; `canvas.json` (+`.bak`, `schemaVersion`) via atomic write,
-  debounced autosave + flush on blur/quit; recent-projects in `userData`; project switcher wired.
+  debounced autosave + flush on blur/quit; recent-projects in `userData`; project switcher wired; migrations.
 - **Git worktrees**: opt-in toggle on create (reuse-if-exists, never nest-init); worktree per Terminal
   board; keep-on-disk + prompt on dirty delete; per-board port assignment for previews.
-- ✅ Full reopen fidelity: zoom/pan/board positions/contents/checklist state survive restart.
+- ✅📏 full reopen fidelity: zoom/pan/positions/contents/checklist state survive restart (integration test).
 
 ---
 
 ## Phase 4 — Design pass & polish ⛓ Phase 3
 
-- Apply every DESIGN.md token, board-chrome rule, state, and motion spec (incl. `prefers-reduced-motion`).
-- Empty / loading / error states throughout (board spawn, preview connecting/failed, agent failed,
-  project load error, git/worktree errors).
+- Apply every DESIGN.md token, board-chrome rule, state, and motion spec (+ `prefers-reduced-motion`).
+- **Polished** empty / loading / error states throughout (building on Phase 2's basic ones).
 - Harden CSP to nonce-based (drop `unsafe-inline`) for the packaged build. Load Geist / Geist Mono.
 - Code-split the renderer bundle (xterm / React Flow lazy where sensible).
-- ✅ Visual parity with the design frames; all states reachable and styled.
+- ✅ visual parity with the design frames; all states reachable and styled.
 
 ---
 
 ## Phase 5 — Packaging & release ⛓ Phase 4
 
-- Finalize the per-OS CI matrix (already scaffolded). Native rebuild green on all targets.
-- Signing: macOS code-sign + notarize (needs Apple Developer creds), Windows Authenticode (needs cert).
+- Finalize the per-OS CI matrix. Native rebuild green on all targets.
+- Signing: macOS code-sign + notarize (Apple Developer creds), Windows Authenticode (cert).
 - Auto-update via electron-updater (release feed). App icons in `build/`.
-- React Flow production check: `hideAttribution` verified absent of badge in packaged build.
-- ✅ Signed installers per OS; in-app update upgrades a prior version.
+- Verify `hideAttribution` (no React Flow badge in packaged build).
+- ✅ signed installers per OS; in-app update upgrades a prior version.
 
 ---
 
-## Cross-cutting (carry through every phase)
+## Cross-cutting (every phase)
 
-- Keep the app launchable after every change; commit per phase/slice.
-- Never weaken the security model (contextIsolation/sandbox/no-nodeIntegration/thin preload).
+- Keep the app launchable after every change; commit per phase/step.
+- Never weaken security (contextIsolation/sandbox/no-nodeIntegration/thin preload).
+- Maintain lint + format + tests green in CI; add tests with each slice (📏 steps above).
 - Update `CLAUDE.md` + add an ADR when a decision lands.
-- Watch the known traps: WebContentsView occlusion/leak, xterm under scale, Windows process-tree
-  kill, per-frame IPC fan-out to MAIN (shared with node-pty), vendored perfect-freehand ownership.
+- **Re-evaluate node-pty stable** — drop the beta when a winpty-free stable ships (or relocate the
+  spaced repo path) (adjustment E).
+- Watch the traps: WebContentsView occlusion/leak, xterm under scale, Windows process-tree kill,
+  per-frame IPC fan-out to MAIN (shared with node-pty), vendored perfect-freehand ownership.
 
 ## Deferred (not now)
 
