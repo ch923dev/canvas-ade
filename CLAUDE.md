@@ -122,4 +122,5 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 ## Status
 
 - **Phase 0 — DONE.** Toolchain proven end-to-end: React Flow renders, xterm + webgl, node-pty (ConPTY) spawns a shell from MAIN over a MessagePort, WebContentsView loads localhost, electron-builder produces a runnable + native-unpacked Windows build (verified by running the packaged exe headless). See `docs/roadmap.md` for what's next.
-- Next: **Phase 1 GATE** — WebContentsView ↔ React Flow camera sync spike on Windows (detach+snapshot), N-view PreviewManager. Do not proceed past it if janky.
+- Next: **Phase 1 GATE** — WebContentsView ↔ React Flow camera sync spike on Windows (detach+snapshot), N-view PreviewManager. Decomposed into steps 1-A…1-E (see `docs/roadmap.md`). Do not proceed past it if janky.
+- **Start here next session:** `docs/handoffs/phase-1-a.md` (cold-start task handoff for Phase 1-A).
