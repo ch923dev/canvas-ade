@@ -1,0 +1,203 @@
+/* Canvas ADE design tokens (DESIGN.md §2-4). Seeded in Phase 0; the real
+   board chrome consumes these from Phase 2 onward. */
+:root {
+  --ui: 'Geist', system-ui, -apple-system, sans-serif;
+  --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --void: #0a0a0b;
+  --grid-dot: #232327;
+  --surface: #141416;
+  --surface-raised: #1a1a1d;
+  --surface-overlay: #232328;
+  --inset: #0e0e10;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.17);
+
+  --text: #ededee;
+  --text-2: #9b9ba1;
+  --text-3: #6a6a70;
+  --text-faint: #46464b;
+
+  --accent: #4f8cff;
+  --accent-hover: #6ea0ff;
+  --accent-wash: color-mix(in srgb, #4f8cff 14%, transparent);
+  --ok: #3ecf8e;
+  --warn: #e8b339;
+  --err: #f2545b;
+
+  --r-board: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.topbar {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.brand .mark {
+  color: var(--accent);
+}
+.tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.status {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.status .ok {
+  color: var(--ok);
+}
+.status .bad {
+  color: var(--err);
+}
+.status .pending {
+  color: var(--warn);
+}
+
+.tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+.tab {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-3);
+}
+.tab:hover {
+  color: var(--text-2);
+  background: var(--surface-overlay);
+}
+.tab[data-active='true'] {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--void);
+}
+
+.hint {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  padding: 6px 9px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.btn {
+  appearance: none;
+  cursor: pointer;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+.btn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.btn.accent {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+}
+
+/* React Flow restyle to dark tokens (Phase 4 finalizes board chrome). */
+.react-flow {
+  background: var(--void);
+}
+.react-flow__node-smoke {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-board);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 12px;
+  padding: 12px 14px;
+  width: 200px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.62);
+}
+.react-flow__node-smoke .t {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.react-flow__node-smoke .s {
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}

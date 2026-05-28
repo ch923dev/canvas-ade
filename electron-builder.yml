@@ -1,0 +1,46 @@
+appId: com.canvasade.app
+productName: Canvas ADE
+copyright: Copyright © 2026 cdeasis923
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+# node-pty ships a native .node binary + helper executables that must NOT be
+# packed inside app.asar, or they fail only in the packaged build.
+asarUnpack:
+  - "**/*.node"
+  - "node_modules/node-pty/**"
+
+npmRebuild: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.developer-tools
+  # Signing/notarization wired in Phase 5; CI builds unsigned for now.
+  identity: null
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+  category: Development
+
+# auto-update feed is configured in Phase 5; placeholder generic provider.
+publish: null

@@ -1,0 +1,13 @@
+# Normalize to LF in the repo; Windows working tree gets CRLF via autocrlf.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.node binary
+.thumbnail binary

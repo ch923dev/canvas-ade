@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Canvas ADE — Frames</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;450;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ui: "Geist", system-ui, -apple-system, sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --void: #0a0a0b; --grid-dot: #232327;
+    --surface: #141416; --surface-raised: #1a1a1d; --surface-overlay: #232328; --inset: #0e0e10;
+    --border-subtle: rgba(255,255,255,.06); --border: rgba(255,255,255,.10); --border-strong: rgba(255,255,255,.17);
+    --text: #ededee; --text-2: #9b9ba1; --text-3: #6a6a70; --text-faint: #46464b;
+    --accent: #4f8cff; --accent-hover: #6ea0ff; --accent-wash: color-mix(in srgb, #4f8cff 14%, transparent);
+    --ok: #3ecf8e; --warn: #e8b339; --err: #f2545b;
+    --r-board: 8px; --titlebar-h: 34px;
+    --shadow-board: 0 1px 2px rgba(0,0,0,.45), 0 10px 28px -12px rgba(0,0,0,.62);
+    --shadow-pop: 0 8px 24px -6px rgba(0,0,0,.72);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font-family: var(--ui); font-size: 13px; -webkit-font-smoothing: antialiased; }
+  button { font-family: inherit; }
+  .ca-progress-bar { position: absolute; top: 0; left: 0; height: 100%; width: 32%;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: caprog 1.25s linear infinite; }
+  @keyframes caprog { 0% { transform: translateX(-110%); } 100% { transform: translateX(420%); } }
+  .ca-blink { animation: cablink 1.05s steps(1) infinite; }
+  .ca-caret-run { animation: cablink .9s steps(1) infinite; }
+  @keyframes cablink { 0%,50% { opacity: 1; } 50.01%,100% { opacity: 0; } }
+  .ca-pulse { animation: capulse 1.8s ease-out infinite; }
+  @keyframes capulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); } 70%,100% { box-shadow: 0 0 0 5px transparent; } }
+  @media (prefers-reduced-motion: reduce) { .ca-progress-bar, .ca-blink, .ca-caret-run, .ca-pulse { animation: none !important; } }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="boards.jsx"></script>
+  <script type="text/babel" src="frames.jsx"></script>
+</body>
+</html>

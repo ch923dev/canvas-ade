@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast feedback: typecheck + bundle on Linux before the build matrix fans out.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+
+  # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
+  package:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win --x64 --arm64
+          - os: macos-14
+            args: --mac --arm64
+          - os: macos-13
+            args: --mac --x64
+          - os: ubuntu-latest
+            args: --linux --x64
+          - os: ubuntu-24.04-arm
+            args: --linux --arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - name: Install (rebuilds node-pty against Electron ABI)
+        run: pnpm install --frozen-lockfile
+      - name: Package
+        run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish never
+        env:
+          # Skip macOS code-sign/notarize until Phase 5 (no certs in CI yet).
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-ade-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+            release/*.zip
+          if-no-files-found: ignore
+          retention-days: 7
