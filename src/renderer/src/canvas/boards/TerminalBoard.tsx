@@ -108,6 +108,15 @@ export function TerminalBoard({
     termRef.current = term
     fitRef.current = fit
 
+    // Forward keystrokes + resizes to whatever port is CURRENT. Registered ONCE
+    // (not inside onWinMsg) so a restart — which delivers a fresh port through the
+    // same persistent message listener — doesn't stack duplicate xterm listeners;
+    // the disposables are released on teardown.
+    const dataDisp = term.onData((d) => portRef.current?.postMessage({ t: 'input', d }))
+    const resizeDisp = term.onResize(({ cols, rows }) =>
+      portRef.current?.postMessage({ t: 'resize', cols, rows })
+    )
+
     // The canvas binds global keys (1 fit / 0 reset / Esc / Backspace-Delete).
     // Stop key events from a focused terminal bubbling to those handlers so the
     // user can type those characters into the shell.
@@ -129,8 +138,6 @@ export function TerminalBoard({
         }
       }
       port.start()
-      term.onData((d) => port.postMessage({ t: 'input', d }))
-      term.onResize(({ cols, rows }) => port.postMessage({ t: 'resize', cols, rows }))
     }
     window.addEventListener('message', onWinMsg)
 
@@ -167,6 +174,8 @@ export function TerminalBoard({
     return () => {
       window.removeEventListener('message', onWinMsg)
       el.removeEventListener('keydown', stopKeys, true)
+      dataDisp.dispose()
+      resizeDisp.dispose()
       ro.disconnect()
       void window.api.killTerminal(board.id)
       try {

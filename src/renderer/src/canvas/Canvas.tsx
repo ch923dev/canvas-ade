@@ -30,6 +30,7 @@ import {
   type NodeTypes
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
+import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
@@ -68,6 +69,8 @@ function CanvasInner(): ReactElement {
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
+  // Live native-view count (Browser boards) for the diagnostics overlay.
+  const liveViews = usePreviewStore(selectLiveCount)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [diag, setDiag] = useState(import.meta.env.DEV)
@@ -190,7 +193,7 @@ function CanvasInner(): ReactElement {
 
       {boards.length === 0 && <EmptyState onAdd={addCentered} />}
       <AppChrome onAdd={addCentered} />
-      {diag && <DiagOverlay liveViews={0} />}
+      {diag && <DiagOverlay liveViews={liveViews} />}
     </div>
   )
 }

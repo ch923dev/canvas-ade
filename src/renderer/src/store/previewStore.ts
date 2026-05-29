@@ -67,3 +67,10 @@ export const usePreviewStore = create<PreviewState>((set) => ({
 export function selectRuntime(id: string): (s: PreviewState) => PreviewRuntime {
   return (s: PreviewState): PreviewRuntime => s.byId[id] ?? DEFAULT_RUNTIME
 }
+
+/** Count of boards with a native view currently attached (the DiagOverlay metric). */
+export function selectLiveCount(s: PreviewState): number {
+  let n = 0
+  for (const r of Object.values(s.byId)) if (r.live) n++
+  return n
+}

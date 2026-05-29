@@ -5,7 +5,15 @@
  * awaiting / `--err` failed) and formats the run timer + braille spinner.
  */
 
-/** Lifecycle states the board can be in (superset of the main `PtyState`). */
+/**
+ * Lifecycle states the board can be in (superset of the main `PtyState`).
+ *
+ * `awaiting-input` is RESERVED forward-wiring: the chrome (warn dot + label) and
+ * the `{ t: 'state' }` port channel fully support it, but `pty.ts` does not emit it
+ * today — reliably detecting "an agent is waiting for input" from raw PTY bytes is
+ * out of scope. A future agent integration pushes it over the existing channel; no
+ * UI change needed then. (Reviewed 2026-05-29.)
+ */
 export type TerminalState =
   | 'idle'
   | 'spawning'
