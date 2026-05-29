@@ -1,9 +1,12 @@
 /**
  * React Flow custom node = one board (ADR 0001: each board is a custom RF node).
- * Wraps the shared `BoardFrame`, swaps to the LOD card below `LOD_ZOOM`, and hosts
- * a restyled `NodeResizer` (visible on hover/selection, hidden in LOD). Content is
- * a per-type placeholder in 2.0-C — the real Terminal/Browser/Planning content
- * lands in 2.1 / 2.2 / 2.3, which only replace the children of this frame.
+ * Owns the cross-type concerns — zoom-driven LOD card, the restyled `NodeResizer`,
+ * hover state, and the focus-dim — then dispatches the full-detail render to the
+ * per-type board component, which fills the `BoardFrame` content slot + actions.
+ *
+ * The dispatch seam is FROZEN for the parallel board work (2.1/2.2/2.3): each
+ * board type owns exactly one file under `canvas/boards/`. Do not collapse the
+ * dispatch back into this file.
  */
 import { useState, type ReactElement } from 'react'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
@@ -11,7 +14,9 @@ import type { Board, BoardType } from '../lib/boardSchema'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
 import { isLod } from '../lib/canvasView'
 import { BoardFrame, type BoardStatus } from './BoardFrame'
-import { TypeGlyph } from './TypeGlyph'
+import { TerminalBoard } from './boards/TerminalBoard'
+import { BrowserBoard } from './boards/BrowserBoard'
+import { PlanningBoard } from './boards/PlanningBoard'
 
 export interface BoardNodeData extends Record<string, unknown> {
   board: Board
@@ -21,48 +26,18 @@ export interface BoardNodeData extends Record<string, unknown> {
 
 export type BoardFlowNode = Node<BoardNodeData, 'board'>
 
-const PLACEHOLDER_LABEL: Record<BoardType, string> = {
-  terminal: 'Terminal',
-  browser: 'Browser',
-  planning: 'Planning'
+/** Per-type shared props every board component receives from the node. */
+export interface BoardViewProps<T extends Board = Board> {
+  board: T
+  selected: boolean
+  hovered: boolean
+  dimmed: boolean
 }
 
-const PLACEHOLDER_PHASE: Record<BoardType, string> = {
-  terminal: '2.1',
-  browser: '2.2',
-  planning: '2.3'
-}
-
-/** Static placeholder content per type (real content arrives in 2.1–2.3). */
-function PlaceholderContent({ type }: { type: BoardType }): ReactElement {
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8
-      }}
-    >
-      <div style={{ transform: 'scale(1.8)', color: 'var(--text-3)' }}>
-        <TypeGlyph type={type} />
-      </div>
-      <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-3)' }}>
-        {PLACEHOLDER_LABEL[type]} board
-      </div>
-      <div className="t-meta" style={{ color: 'var(--text-faint)' }}>
-        content · Phase {PLACEHOLDER_PHASE[type]}
-      </div>
-    </div>
-  )
-}
-
-function statusFor(type: BoardType): BoardStatus | null {
-  if (type === 'terminal') return { dot: 'var(--text-3)', label: 'idle' }
-  if (type === 'browser') return { dot: 'var(--ok)', label: 'preview' }
+/** Status dot shown on the LOD card (no label at LOD). */
+function lodStatus(type: BoardType): BoardStatus | null {
+  if (type === 'terminal') return { dot: 'var(--text-3)' }
+  if (type === 'browser') return { dot: 'var(--ok)' }
   return null
 }
 
@@ -71,31 +46,39 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const zoom = useStore((s) => s.transform[2])
   const lod = isLod(zoom)
   const [hovered, setHovered] = useState(false)
+  const dimmed = data.dimmed ?? false
 
-  const showResizer = (selected || hovered) && !lod
-
-  return (
-    <>
-      {showResizer && (
-        <NodeResizer minWidth={MIN_BOARD_SIZE.w} minHeight={MIN_BOARD_SIZE.h} lineClassName="" />
-      )}
-      <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{ position: 'absolute', inset: 0, pointerEvents: lod ? 'none' : 'auto' }}
-      >
+  if (lod) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
         <BoardFrame
           type={board.type}
           title={board.title}
           selected={selected}
-          hovered={hovered}
-          dimmed={data.dimmed}
-          lod={lod}
-          status={statusFor(board.type)}
-          contentBg={board.type === 'terminal' ? 'var(--inset)' : 'var(--surface)'}
-        >
-          {!lod && <PlaceholderContent type={board.type} />}
-        </BoardFrame>
+          dimmed={dimmed}
+          lod
+          status={lodStatus(board.type)}
+        />
+      </div>
+    )
+  }
+
+  const common = { selected, hovered, dimmed }
+  return (
+    <>
+      <NodeResizer
+        minWidth={MIN_BOARD_SIZE.w}
+        minHeight={MIN_BOARD_SIZE.h}
+        isVisible={selected || hovered}
+      />
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{ position: 'absolute', inset: 0 }}
+      >
+        {board.type === 'terminal' && <TerminalBoard board={board} {...common} />}
+        {board.type === 'browser' && <BrowserBoard board={board} {...common} />}
+        {board.type === 'planning' && <PlanningBoard board={board} {...common} />}
       </div>
     </>
   )
