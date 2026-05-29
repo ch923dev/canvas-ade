@@ -108,6 +108,39 @@ function park(id: string): void {
 }
 
 /**
+ * Adopt a parked session for `id` (#15): clear its TTL, bind a fresh MessagePort
+ * to the still-running proc, move it back into `sessions`, replay the recorded
+ * output buffer so the re-mounted xterm reconstructs its scrollback, and re-emit
+ * `running`. Returns the live pid so the e2e can assert process identity. If no
+ * session is parked, returns `{ adopted: false }` and the caller spawns fresh.
+ */
+function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number } {
+  const p = parked.get(id)
+  if (!p) return { adopted: false }
+  clearTimeout(p.timer)
+  parked.delete(id)
+
+  const { port1, port2 } = new MessageChannelMain()
+  port1.on('message', (e) => {
+    const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
+    if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
+    else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+  })
+  port1.start()
+
+  // Back into `sessions` with the SAME boxed buffer; the spawn-time onData listener
+  // now forwards live output to this new port (it looks up sessions.get(id)).
+  sessions.set(id, { proc: p.proc, port: port1, buf: p.buf })
+  win.webContents.postMessage('pty:port', { id }, [port2])
+
+  // Replay recorded scrollback, then re-announce running.
+  if (p.buf.data) port1.postMessage({ t: 'data', d: p.buf.data })
+  port1.postMessage({ t: 'state', state: 'running' satisfies PtyState })
+
+  return { adopted: true, pid: p.proc.pid }
+}
+
+/**
  * Canonical dedupe key for a shell path. Resolves 8.3 short names, junctions,
  * and symlinks via `realpathSync.native` (so a non-canonical COMSPEC and
  * `onPath('cmd')` that point at the SAME cmd.exe collapse to one key), falling
@@ -292,6 +325,12 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // Reference our OWN proc so a late exit from this (old) process cannot tear
       // down a freshly respawned session that now occupies the same id.
       cleanup(opts.id, proc)
+      // If this proc was parked (deleted, awaiting undo) and exited on its own, drop it.
+      const p = parked.get(opts.id)
+      if (p && p.proc === proc) {
+        clearTimeout(p.timer)
+        parked.delete(opts.id)
+      }
     })
 
     port1.on('message', (e) => {
@@ -321,6 +360,12 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
   ipcMain.handle('pty:park', (_e, id: string) => {
     park(id)
     return true
+  })
+
+  ipcMain.handle('pty:adopt', (_e, id: string) => {
+    const win = getWin()
+    if (!win) return { adopted: false }
+    return adopt(id, win)
   })
 }
 
@@ -409,5 +454,7 @@ function killTree(proc: pty.IPty): Promise<void> {
  * before exiting instead of racing a fixed timer and orphaning a child tree.
  */
 export function disposeAllPtys(): Promise<void> {
-  return Promise.all([...sessions.keys()].map((id) => cleanup(id))).then(() => undefined)
+  const parkedDone = [...parked.keys()].map((id) => reapParked(id))
+  const liveDone = [...sessions.keys()].map((id) => cleanup(id))
+  return Promise.all([...parkedDone, ...liveDone]).then(() => undefined)
 }
