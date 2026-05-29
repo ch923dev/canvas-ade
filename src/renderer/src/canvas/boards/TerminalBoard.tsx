@@ -226,9 +226,16 @@ export function TerminalBoard({
     // write the launchCommand TUI) at the wrong width (#34). We defer until the
     // ResizeObserver reports the first good fit (the well becoming visible resizes
     // it), at which point dims reflect the board's true column width.
+    // #15: try to ADOPT a parked session (undo of a delete) before spawning fresh.
+    // `spawnAllowed` stays false until adopt resolves with adopted:false, so neither
+    // the immediate launch() nor the ResizeObserver can spawn a fresh shell over an
+    // adoptable one. When adopted, the reposted port + replayed scrollback arrive via
+    // the existing onWinMsg listener.
     let spawned = false
+    let spawnAllowed = false
+    let disposed = false
     const launch = (): void => {
-      if (spawned) return
+      if (spawned || !spawnAllowed) return
       const dims = fit.proposeDimensions()
       if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) return
       spawned = true
@@ -252,8 +259,18 @@ export function TerminalBoard({
           term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
         })
     }
-    // Try immediately (board mounted at normal zoom → already laid out).
-    launch()
+    // Decide adopt-vs-spawn once. Adopted → the reposted port + replayed buffer
+    // arrive over onWinMsg (no spawn). Not adopted → allow the normal spawn flow
+    // (immediate try here + the ResizeObserver's deferred try for the #34 LOD case).
+    void window.api.adoptTerminal(board.id).then((res) => {
+      if (disposed) return
+      if (res.adopted) {
+        setState('running')
+      } else {
+        spawnAllowed = true
+        launch()
+      }
+    })
 
     const ro = new ResizeObserver(() => {
       try {
@@ -268,6 +285,7 @@ export function TerminalBoard({
     ro.observe(el)
 
     return () => {
+      disposed = true
       window.removeEventListener('message', onWinMsg)
       el.removeEventListener('keydown', stopKeys)
       dataDisp.dispose()
