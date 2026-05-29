@@ -79,6 +79,7 @@ export function PlanningBoard({
   dimmed
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  const beginChange = useCanvasStore((s) => s.beginChange)
   // Live camera zoom for the ÷zoom screen→board mapping (handoff 2.3).
   const zoom = useStore((s) => s.transform[2])
 
@@ -159,6 +160,7 @@ export function PlanningBoard({
   // ── Element drag (select tool): grab → move in board-local space ─────────────
   const startElementDrag = useCallback(
     (e: PointerEvent, id: string) => {
+      beginChange()
       const el = elements.find((x) => x.id === id)
       if (!el || el.kind === 'arrow' || el.kind === 'stroke') return
       const p = toBoard(e)
@@ -167,7 +169,7 @@ export function PlanningBoard({
       // even when the cursor leaves the card during a fast drag.
       wellRef.current?.setPointerCapture(e.pointerId)
     },
-    [elements, toBoard]
+    [beginChange, elements, toBoard]
   )
 
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
@@ -178,17 +180,20 @@ export function PlanningBoard({
       const p = toBoard(e)
 
       if (tool === 'note') {
+        beginChange()
         const note = makeNote(newId(), p, elements.filter((x) => x.kind === 'note').length)
         commit([...elements, note])
         setTool('select')
         return
       }
       if (tool === 'check') {
+        beginChange()
         commit([...elements, makeChecklist(newId(), newId(), p)])
         setTool('select')
         return
       }
       if (tool === 'arrow') {
+        beginChange()
         const arrow = makeArrow(newId(), p)
         drag.current = { mode: 'arrow', id: arrow.id }
         setDraftArrow(arrow)
@@ -196,6 +201,7 @@ export function PlanningBoard({
         return
       }
       if (tool === 'pen') {
+        beginChange()
         const points = pushBoardPoint([], p)
         drag.current = { mode: 'pen', points }
         setDraftStroke(points)
@@ -205,7 +211,7 @@ export function PlanningBoard({
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
-    [tool, elements, commit, toBoard]
+    [tool, elements, commit, toBoard, beginChange]
   )
 
   const onWellPointerMove = useCallback(
@@ -231,9 +237,10 @@ export function PlanningBoard({
     (e: MouseEvent<HTMLDivElement>) => {
       if (tool !== 'select' || e.target !== e.currentTarget) return
       e.stopPropagation()
+      beginChange()
       commit([...elements, makeText(newId(), toBoard(e))])
     },
-    [tool, elements, commit, toBoard]
+    [tool, elements, commit, toBoard, beginChange]
   )
 
   const onWellPointerUp = useCallback(() => {

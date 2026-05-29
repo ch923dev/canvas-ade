@@ -67,6 +67,9 @@ function CanvasInner(): ReactElement {
   const resizeBoard = useCanvasStore((s) => s.resizeBoard)
   const removeBoard = useCanvasStore((s) => s.removeBoard)
   const selectBoard = useCanvasStore((s) => s.selectBoard)
+  const beginChange = useCanvasStore((s) => s.beginChange)
+  const undo = useCanvasStore((s) => s.undo)
+  const redo = useCanvasStore((s) => s.redo)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -138,6 +141,8 @@ function CanvasInner(): ReactElement {
     [rf, selectBoard]
   )
 
+  const onNodeDragStart = useCallback(() => beginChange(), [beginChange])
+
   const clearSelection = useCallback(() => {
     selectBoard(null)
     setFocusedId(null)
@@ -145,8 +150,18 @@ function CanvasInner(): ReactElement {
 
   // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
   // Backspace/Delete deletes the selected board via React Flow's deleteKeyCode.
+  // Ctrl/⌘+Z → undo; Ctrl/⌘+Shift+Z → redo (guarded: no-op while typing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement | null
+      const typing =
+        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
       if (e.key === 'Escape') {
         clearSelection()
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
@@ -160,7 +175,7 @@ function CanvasInner(): ReactElement {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection])
+  }, [rf, clearSelection, undo, redo])
 
   return (
     <div ref={paneRef} style={paneStyle}>
@@ -170,6 +185,7 @@ function CanvasInner(): ReactElement {
         nodeTypes={nodeTypes}
         onPaneClick={clearSelection}
         onNodeDoubleClick={focusBoard}
+        onNodeDragStart={onNodeDragStart}
         minZoom={Z_MIN}
         maxZoom={Z_MAX}
         fitView
