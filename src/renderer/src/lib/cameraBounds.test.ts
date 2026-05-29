@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { worldRectToScreen, roundRect, rectsEqual, type Rect, type Viewport } from './cameraBounds'
+import {
+  worldRectToScreen,
+  roundRect,
+  rectsEqual,
+  fitZoomFactor,
+  type Rect,
+  type Viewport
+} from './cameraBounds'
 
 describe('worldRectToScreen', () => {
   it('is the identity map at zoom 1, vp (0,0), no offset', () => {
@@ -142,5 +149,36 @@ describe('rectsEqual', () => {
     const a = roundRect(worldRectToScreen(node, vp, { x: 0, y: 84 }))
     const b = roundRect(worldRectToScreen(node, vp, { x: 0, y: 84 }))
     expect(rectsEqual(a, b)).toBe(true)
+  })
+})
+
+describe('fitZoomFactor', () => {
+  // A 480px-wide board makes the three presets land inside the [0.25,5] clamp at zoom 1.
+  it('is nodeWorldW / presetW at camera zoom 1', () => {
+    expect(fitZoomFactor(480, 390, 1)).toBeCloseTo(480 / 390, 10) // mobile  ≈ 1.231
+    expect(fitZoomFactor(480, 834, 1)).toBeCloseTo(480 / 834, 10) // tablet  ≈ 0.576
+    expect(fitZoomFactor(480, 1280, 1)).toBeCloseTo(480 / 1280, 10) // desktop = 0.375
+  })
+
+  it('makes the page lay out at exactly presetW (bounds.width / zoomFactor === W)', () => {
+    const nodeWorldW = 480
+    const W = 834
+    const camZoom = 1.6
+    const boundsWidth = nodeWorldW * camZoom // worldRectToScreen width
+    const zf = fitZoomFactor(nodeWorldW, W, camZoom)
+    expect(boundsWidth / zf).toBeCloseTo(W, 10)
+  })
+
+  it('scales linearly with camera zoom', () => {
+    expect(fitZoomFactor(390, 390, 2)).toBeCloseTo(2, 10)
+    expect(fitZoomFactor(390, 390, 0.5)).toBeCloseTo(0.5, 10)
+  })
+
+  it('clamps below Chromium min (0.25) at extreme zoom-out', () => {
+    expect(fitZoomFactor(480, 1280, 0.1)).toBe(0.25) // raw 0.0375 → clamped
+  })
+
+  it('clamps above Chromium max (5)', () => {
+    expect(fitZoomFactor(480, 100, 2)).toBe(5) // raw 9.6 → clamped
   })
 })

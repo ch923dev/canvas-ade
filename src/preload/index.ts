@@ -16,18 +16,25 @@ const api = {
     ipcRenderer.invoke('pty:spawn', opts),
   killTerminal: (id: string): Promise<boolean> => ipcRenderer.invoke('pty:kill', id),
 
-  // ── Browser preview (WebContentsView) ──
-  openPreview: (args: { url?: string; bounds: Rectangle }): Promise<{ url: string }> =>
-    ipcRenderer.invoke('preview:open', args),
-  setPreviewBounds: (bounds: Rectangle): Promise<boolean> =>
-    ipcRenderer.invoke('preview:setBounds', bounds),
+  // ── Browser preview (WebContentsView, keyed by board id — 1-E) ──
+  openPreview: (args: {
+    id: string
+    url?: string
+    bounds: Rectangle
+    zoomFactor?: number
+  }): Promise<{ url: string }> => ipcRenderer.invoke('preview:open', args),
+  // ONE coalesced batch for all views per frame (shared channel with node-pty).
+  setPreviewBoundsBatch: (
+    items: Array<{ id: string; bounds: Rectangle; zoomFactor?: number }>
+  ): Promise<boolean> => ipcRenderer.invoke('preview:setBoundsBatch', items),
   // Snapshot the live view (data URL) before detaching, so an HTML <img> can carry
   // motion / LOD while the native layer is pulled out of the tree (1-D).
-  capturePreview: (): Promise<string | null> => ipcRenderer.invoke('preview:capture'),
-  detachPreview: (): Promise<boolean> => ipcRenderer.invoke('preview:detach'),
-  attachPreview: (bounds: Rectangle): Promise<boolean> =>
-    ipcRenderer.invoke('preview:attach', bounds),
-  closePreview: (): Promise<boolean> => ipcRenderer.invoke('preview:close')
+  capturePreview: (id: string): Promise<string | null> => ipcRenderer.invoke('preview:capture', id),
+  detachPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:detach', id),
+  attachPreview: (args: { id: string; bounds: Rectangle; zoomFactor?: number }): Promise<boolean> =>
+    ipcRenderer.invoke('preview:attach', args),
+  closePreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:close', id),
+  closeAllPreviews: (): Promise<boolean> => ipcRenderer.invoke('preview:closeAll')
 }
 
 /**

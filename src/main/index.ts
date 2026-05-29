@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerPtyHandlers, disposeAllPtys } from './pty'
-import { registerPreviewHandlers, disposePreview } from './preview'
+import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 
@@ -77,7 +77,7 @@ app.whenReady().then(async () => {
 
 function shutdown(): void {
   disposeAllPtys()
-  disposePreview()
+  disposeAllPreviews()
   localServer?.close()
   localServer = null
 }

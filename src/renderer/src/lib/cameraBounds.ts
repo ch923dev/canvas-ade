@@ -66,3 +66,21 @@ export function roundRect(r: Rect): Rect {
 export function rectsEqual(a: Rect, b: Rect): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
+
+/**
+ * Responsive reflow (1-E). A Browser board holds its page at a fixed CSS width W
+ * (390 mobile / 834 tablet / 1280 desktop) and scales it to fill the node. The
+ * native view's bounds width is the node's screen width (`nodeWorldW * camZoom`);
+ * setting `setZoomFactor` to this value makes the page lay out at exactly W CSS px
+ * (`bounds.width / zoomFactor === W`), so its media queries fire at the breakpoint —
+ * then the whole thing is scaled as a unit by the camera:
+ *
+ *     zoomFactor = (nodeWorldW / presetW) * camZoom
+ *
+ * Clamped to Chromium's zoom-factor range [0.25, 5]. Below ~40% camera zoom a board
+ * shows a snapshot (detached), so the clamp only bites at extreme zoom-out.
+ */
+export function fitZoomFactor(nodeWorldW: number, presetW: number, camZoom: number): number {
+  const z = (nodeWorldW / presetW) * camZoom
+  return Math.min(5, Math.max(0.25, z))
+}

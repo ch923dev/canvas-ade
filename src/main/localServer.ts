@@ -6,26 +6,48 @@ export interface LocalServer {
   close: () => void
 }
 
+// Responsive on purpose (1-E): three breakpoints so a Browser board held at a
+// fixed CSS width (390 / 834 / 1280) visibly reflows — column count, tint, and the
+// MODE label all change, and the page prints its own innerWidth so you can confirm
+// it equals the preset W (the `setZoomFactor` trick is working when it does).
 const PAGE = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>localhost preview</title>
 <style>
-  html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#fbfbfa;color:#1b1c1e;display:grid;place-items:center}
-  .card{padding:26px 30px;border:1px solid #e6e6e3;border-radius:12px;text-align:center;box-shadow:0 10px 30px -18px rgba(0,0,0,.3)}
-  h1{margin:0 0 8px;font-size:20px;font-weight:700;letter-spacing:-.01em}
-  p{margin:2px 0;color:#6b7076;font-size:13px}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:9px;background:#3ecf8e;margin-right:7px;vertical-align:middle}
-  code{font-family:ui-monospace,monospace;color:#3b6fe0}
+  :root{--accent:#e06f9c}
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;font-family:system-ui,sans-serif;background:#fbe9f0;color:#1b1c1e}
+  body{padding:18px;transition:background .15s}
+  header{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .dot{width:10px;height:10px;border-radius:10px;background:var(--accent)}
+  .mode{font-size:22px;font-weight:800;letter-spacing:-.02em;color:var(--accent)}
+  .mode::after{content:'MOBILE · 1 col'}
+  .meta{margin:0 0 14px;color:#6b7076;font-size:13px}
+  code{font-family:ui-monospace,monospace;color:var(--accent);font-weight:700}
+  .grid{display:grid;gap:10px;grid-template-columns:1fr}
+  .tile{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:10px;padding:16px;font-size:13px;box-shadow:0 8px 24px -18px rgba(0,0,0,.4)}
+  @media(min-width:600px){
+    body{background:#fdf3e0} :root{--accent:#d08a2c}
+    .grid{grid-template-columns:1fr 1fr} .mode::after{content:'TABLET · 2 col'}
+  }
+  @media(min-width:1024px){
+    body{background:#e9f0fd} :root{--accent:#3b6fe0}
+    .grid{grid-template-columns:repeat(4,1fr)} .mode::after{content:'DESKTOP · 4 col'}
+  }
 </style></head>
-<body><div class="card">
-  <h1><span class="dot"></span>WebContentsView loaded a localhost page</h1>
-  <p>Served from <code>127.0.0.1</code> by the Electron main process.</p>
-  <p>Canvas ADE — Phase 0 preview smoke · <span id="t"></span></p>
-</div>
+<body>
+  <header><span class="dot"></span><span class="mode"></span></header>
+  <p class="meta">CSS width <code id="w"></code> · 127.0.0.1 · <span id="t"></span></p>
+  <div class="grid">
+    <div class="tile">one</div><div class="tile">two</div>
+    <div class="tile">three</div><div class="tile">four</div>
+  </div>
 <script>
   document.title = 'localhost preview OK';
-  const t = document.getElementById('t');
+  const w = document.getElementById('w'), t = document.getElementById('t');
+  const sync = () => { w.textContent = window.innerWidth + 'px'; };
+  sync(); window.addEventListener('resize', sync);
   setInterval(() => { t.textContent = new Date().toLocaleTimeString(); }, 1000);
   console.log('LOCAL_PAGE_OK');
 </script></body></html>`

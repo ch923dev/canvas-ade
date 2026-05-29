@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+// This tab drives a single keyed preview (the canvas tab drives the multi-view
+// PreviewManager); any id distinct from the canvas boards is fine.
+const SMOKE_ID = 'preview-smoke'
+
 /**
  * A native WebContentsView mounts over the "cutout" div. It paints above all
  * HTML (so it covers the placeholder) — exactly the constraint Phase 1's
@@ -19,12 +23,12 @@ export default function PreviewSmoke() {
   const openPreview = useCallback(async () => {
     const b = rect()
     if (!b) return
-    await window.api.openPreview({ bounds: b })
+    await window.api.openPreview({ id: SMOKE_ID, bounds: b })
     setOpen(true)
   }, [rect])
 
   const closePreview = useCallback(async () => {
-    await window.api.closePreview()
+    await window.api.closePreview(SMOKE_ID)
     setOpen(false)
   }, [])
 
@@ -33,7 +37,7 @@ export default function PreviewSmoke() {
     if (!open) return
     const sync = (): void => {
       const b = rect()
-      if (b) void window.api.setPreviewBounds(b)
+      if (b) void window.api.setPreviewBoundsBatch([{ id: SMOKE_ID, bounds: b }])
     }
     window.addEventListener('resize', sync)
     const ro = new ResizeObserver(sync)
@@ -45,7 +49,7 @@ export default function PreviewSmoke() {
   }, [open, rect])
 
   // Tear the view down when leaving the tab.
-  useEffect(() => () => void window.api.closePreview(), [])
+  useEffect(() => () => void window.api.closePreview(SMOKE_ID), [])
 
   return (
     <>
