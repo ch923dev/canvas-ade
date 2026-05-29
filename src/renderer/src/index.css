@@ -535,3 +535,30 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Planning board whiteboard (Phase 2.3) ────────────────────────────────────
+   The Planning board paints its own elements (notes / text / checklists / SVG
+   arrows + freehand strokes) inside the BoardFrame content slot. Most visuals
+   live inline in the element components (driven by tokens); these rules cover the
+   things CSS does best: caret/placeholder colour, the text-element drag gutter
+   affordance, and disabling native textarea/scrollbar chrome. Elements live in
+   board-local coordinates; the well itself is the pointer-gesture surface. */
+.pl-well ::placeholder {
+  color: var(--text-faint);
+}
+.pl-well textarea,
+.pl-well input {
+  caret-color: var(--accent);
+}
+/* The free-text drag gutter only hints on hover so the text reads cleanly. */
+.pl-text:hover .pl-text-grip {
+  background: var(--border-subtle);
+}
+.pl-text-grip:hover {
+  background: var(--border) !important;
+}
+/* A grabbed note/checklist follows the cursor; show the grabbing hand. */
+.pl-note:active,
+.pl-check-head:active {
+  cursor: grabbing;
+}

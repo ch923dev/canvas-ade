@@ -25,3 +25,6 @@ Thumbs.db
 
 # electron-builder cache
 .cache/
+
+# agent worktrees (harness-managed git worktrees for parallel work)
+.claude/worktrees/

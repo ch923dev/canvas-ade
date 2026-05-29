@@ -20,5 +20,10 @@
     },
     "types": ["node"]
   },
-  "include": ["src/renderer/src/**/*", "src/renderer/src/**/*.tsx", "src/preload/index.d.ts"]
+  "include": [
+    "src/renderer/src/**/*",
+    "src/renderer/src/**/*.tsx",
+    "src/preload/index.d.ts",
+    "src/vendor/**/*"
+  ]
 }

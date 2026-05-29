@@ -1,15 +1,76 @@
 /**
- * Planning board content (Phase 2.3). STUB — renders the shared `BoardFrame` with
- * placeholder content. 2.3 replaces it with the whiteboard layer: sticky notes,
- * free text, SVG-bezier arrows, freehand pen (vendored perfect-freehand, pointer
- * deltas ÷ zoom), and the Checklist element + the selected-only tool cluster
- * (DESIGN.md §7.3). Owns this file only; the shared surface is frozen.
+ * Planning board content (Phase 2.3 — DESIGN.md §7.3). The whiteboard layer:
+ * sticky notes, free text, SVG-bezier arrows, freehand pen (vendored
+ * perfect-freehand), and the Checklist element. A mini tool cluster
+ * (`select · note · check · arrow · pen`) shows in the BoardFrame action slot
+ * ONLY while the board is selected; otherwise the board is just its content.
+ *
+ * Coordinate model: every element is stored in BOARD-LOCAL space (zoom-1 px from
+ * the content well's top-left) on `board.elements`. Pointer interactions map the
+ * screen position to board-local via `lib/pen.screenToBoard` (subtract the well's
+ * on-screen origin, then ÷ camera zoom — the unit-tested mapping that keeps
+ * strokes/notes under the cursor at any zoom). Edits persist immediately through
+ * `store.updateBoard(board.id, { elements })`.
+ *
+ * Owns this file + everything under `boards/planning/`; the shared surface
+ * (`BoardFrame`, schema, store) is consumed, never modified.
  */
-import type { ReactElement } from 'react'
-import type { PlanningBoard as PlanningBoardData } from '../../lib/boardSchema'
-import { BoardFrame } from '../BoardFrame'
-import { TypeGlyph } from '../TypeGlyph'
+import {
+  useCallback,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactElement
+} from 'react'
+import { useStore } from '@xyflow/react'
+import type {
+  ArrowElement,
+  ChecklistElement,
+  NoteElement,
+  PlanningElement,
+  PlanningBoard as PlanningBoardData,
+  StrokeElement,
+  TextElement
+} from '../../lib/boardSchema'
+import { useCanvasStore } from '../../store/canvasStore'
+import { screenToBoard, pushBoardPoint } from '../../lib/pen'
+import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
+import { NoteCard } from './planning/NoteCard'
+import { FreeText } from './planning/FreeText'
+import { ChecklistCard } from './planning/ChecklistCard'
+import { WhiteboardSvg } from './planning/WhiteboardSvg'
+import {
+  makeArrow,
+  makeChecklist,
+  makeNote,
+  makeStroke,
+  makeText,
+  moveElement,
+  patchElement,
+  removeElement,
+  toggleItem,
+  addItem,
+  removeItem,
+  setItemLabel
+} from './planning/elements'
+
+/** The whiteboard tools (board-internal; distinct from the dock add-board tool). */
+type PlanTool = 'select' | 'note' | 'check' | 'arrow' | 'pen'
+
+const TOOLS: ReadonlyArray<{
+  tool: PlanTool
+  icon: 'select' | 'note' | 'check' | 'arrow' | 'pen'
+}> = [
+  { tool: 'select', icon: 'select' },
+  { tool: 'note', icon: 'note' },
+  { tool: 'check', icon: 'check' },
+  { tool: 'arrow', icon: 'arrow' },
+  { tool: 'pen', icon: 'pen' }
+]
+
+const newId = (): string => crypto.randomUUID()
 
 export function PlanningBoard({
   board,
@@ -17,6 +78,220 @@ export function PlanningBoard({
   hovered,
   dimmed
 }: BoardViewProps<PlanningBoardData>): ReactElement {
+  const updateBoard = useCanvasStore((s) => s.updateBoard)
+  // Live camera zoom for the ÷zoom screen→board mapping (handoff 2.3).
+  const zoom = useStore((s) => s.transform[2])
+
+  const [tool, setTool] = useState<PlanTool>('select')
+  const wellRef = useRef<HTMLDivElement>(null)
+  const elements = board.elements
+
+  // In-progress (uncommitted) gesture state — drawn as a draft until pointer-up.
+  const [draftArrow, setDraftArrow] = useState<ArrowElement | null>(null)
+  const [draftStroke, setDraftStroke] = useState<number[] | null>(null)
+  // Active drag (an element move, an arrow, or a pen stroke) → captured pointer.
+  const drag = useRef<
+    | { mode: 'move'; id: string; offX: number; offY: number }
+    | { mode: 'arrow'; id: string }
+    | { mode: 'pen'; points: number[] }
+    | null
+  >(null)
+
+  /** Commit a new elements array to the store. */
+  const commit = useCallback(
+    (next: PlanningElement[]) => updateBoard(board.id, { elements: next }),
+    [board.id, updateBoard]
+  )
+
+  /** Map a pointer event to a board-local point using the well's screen origin. */
+  const toBoard = useCallback(
+    (e: { clientX: number; clientY: number }): { x: number; y: number } => {
+      const r = wellRef.current?.getBoundingClientRect()
+      return screenToBoard(
+        { x: e.clientX, y: e.clientY },
+        { originX: r?.left ?? 0, originY: r?.top ?? 0, zoom }
+      )
+    },
+    [zoom]
+  )
+
+  // ── Element-level handlers (passed to the element components) ────────────────
+  const interactive = tool === 'select'
+
+  const setNoteText = useCallback(
+    (id: string, text: string) =>
+      commit(patchElement<NoteElement>(elements, id, (n) => ({ ...n, text }))),
+    [commit, elements]
+  )
+  const setTextText = useCallback(
+    (id: string, text: string) =>
+      commit(patchElement<TextElement>(elements, id, (t) => ({ ...t, text }))),
+    [commit, elements]
+  )
+  const deleteEl = useCallback(
+    (id: string) => commit(removeElement(elements, id)),
+    [commit, elements]
+  )
+
+  const toggle = useCallback(
+    (elId: string, itemId: string) => commit(toggleItem(elements, elId, itemId)),
+    [commit, elements]
+  )
+  const setTitle = useCallback(
+    (elId: string, title: string) =>
+      commit(patchElement<ChecklistElement>(elements, elId, (c) => ({ ...c, title }))),
+    [commit, elements]
+  )
+  const setItem = useCallback(
+    (elId: string, itemId: string, label: string) =>
+      commit(setItemLabel(elements, elId, itemId, label)),
+    [commit, elements]
+  )
+  const appendItem = useCallback(
+    (elId: string) => commit(addItem(elements, elId, newId())),
+    [commit, elements]
+  )
+  const dropItem = useCallback(
+    (elId: string, itemId: string) => commit(removeItem(elements, elId, itemId)),
+    [commit, elements]
+  )
+
+  // ── Element drag (select tool): grab → move in board-local space ─────────────
+  const startElementDrag = useCallback(
+    (e: PointerEvent, id: string) => {
+      const el = elements.find((x) => x.id === id)
+      if (!el || el.kind === 'arrow' || el.kind === 'stroke') return
+      const p = toBoard(e)
+      drag.current = { mode: 'move', id, offX: p.x - el.x, offY: p.y - el.y }
+      // Capture on the WELL (not the card) so move/up route to the well handlers
+      // even when the cursor leaves the card during a fast drag.
+      wellRef.current?.setPointerCapture(e.pointerId)
+    },
+    [elements, toBoard]
+  )
+
+  // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
+  const onWellPointerDown = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      // Only react to a press that lands on the empty well (not an element).
+      if (e.target !== e.currentTarget) return
+      const p = toBoard(e)
+
+      if (tool === 'note') {
+        const note = makeNote(newId(), p, elements.filter((x) => x.kind === 'note').length)
+        commit([...elements, note])
+        setTool('select')
+        return
+      }
+      if (tool === 'check') {
+        commit([...elements, makeChecklist(newId(), newId(), p)])
+        setTool('select')
+        return
+      }
+      if (tool === 'arrow') {
+        const arrow = makeArrow(newId(), p)
+        drag.current = { mode: 'arrow', id: arrow.id }
+        setDraftArrow(arrow)
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
+      if (tool === 'pen') {
+        const points = pushBoardPoint([], p)
+        drag.current = { mode: 'pen', points }
+        setDraftStroke(points)
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
+      // select tool, empty press → place a text caret on double interactions is
+      // handled per-element; a single empty press just does nothing here.
+    },
+    [tool, elements, commit, toBoard]
+  )
+
+  const onWellPointerMove = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      const d = drag.current
+      if (!d) return
+      const p = toBoard(e)
+      if (d.mode === 'move') {
+        commit(moveElement(elements, d.id, Math.round(p.x - d.offX), Math.round(p.y - d.offY)))
+      } else if (d.mode === 'arrow') {
+        setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
+      } else if (d.mode === 'pen') {
+        d.points = pushBoardPoint(d.points, p)
+        setDraftStroke(d.points)
+      }
+    },
+    [commit, elements, toBoard]
+  )
+
+  // Double-click empty whiteboard in select mode → drop a free-text element.
+  // stopPropagation keeps it from triggering the canvas double-click focus.
+  const onWellDoubleClick = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
+      if (tool !== 'select' || e.target !== e.currentTarget) return
+      e.stopPropagation()
+      commit([...elements, makeText(newId(), toBoard(e))])
+    },
+    [tool, elements, commit, toBoard]
+  )
+
+  const onWellPointerUp = useCallback(() => {
+    const d = drag.current
+    drag.current = null
+    if (!d) return
+    if (d.mode === 'arrow') {
+      const a = draftArrow
+      setDraftArrow(null)
+      // Discard a degenerate (no-drag) arrow.
+      if (a && (Math.abs(a.x2 - a.x) > 4 || Math.abs(a.y2 - a.y) > 4)) {
+        commit([...elements, a])
+      }
+      setTool('select')
+    } else if (d.mode === 'pen') {
+      const pts = d.points
+      setDraftStroke(null)
+      if (pts.length >= 4) commit([...elements, makeStroke(newId(), pts)])
+      setTool('select')
+    }
+  }, [draftArrow, commit, elements])
+
+  // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
+  const actions = selected ? (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        padding: 2,
+        background: 'var(--inset)',
+        borderRadius: 'var(--r-inner)',
+        border: '1px solid var(--border-subtle)',
+        marginRight: 2
+      }}
+      // Keep tool clicks from starting the title-bar drag.
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {TOOLS.map(({ tool: t, icon }) => (
+        <IconBtn
+          key={t}
+          name={icon}
+          title={t}
+          size={15}
+          active={tool === t}
+          onClick={() => setTool(t)}
+        />
+      ))}
+    </div>
+  ) : undefined
+
+  const arrows = elements.filter((e): e is ArrowElement => e.kind === 'arrow')
+  const strokes = elements.filter((e): e is StrokeElement => e.kind === 'stroke')
+
+  // The well captures the pen/arrow/place gestures; the draw tools also force a
+  // crosshair cursor so the active mode is legible.
+  const drawing = tool === 'arrow' || tool === 'pen'
+
   return (
     <BoardFrame
       type="planning"
@@ -26,26 +301,97 @@ export function PlanningBoard({
       dimmed={dimmed}
       status={null}
       contentBg="var(--surface)"
+      actions={actions}
     >
-      <div style={placeholder}>
-        <div style={{ transform: 'scale(1.8)', color: 'var(--text-3)' }}>
-          <TypeGlyph type="planning" />
-        </div>
-        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-3)' }}>Planning board</div>
-        <div className="t-meta" style={{ color: 'var(--text-faint)' }}>
-          content · Phase 2.3
-        </div>
+      <div
+        ref={wellRef}
+        className="pl-well"
+        onPointerDown={onWellPointerDown}
+        onPointerMove={onWellPointerMove}
+        onPointerUp={onWellPointerUp}
+        onPointerCancel={onWellPointerUp}
+        onDoubleClick={onWellDoubleClick}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          overflow: 'hidden',
+          cursor: drawing ? 'crosshair' : tool === 'note' || tool === 'check' ? 'copy' : 'default',
+          // 13px dot grid — finer than the canvas lattice, to read as a sketch
+          // surface (DESIGN.md §7.3).
+          backgroundImage: 'radial-gradient(var(--grid-dot) 1px, transparent 1px)',
+          backgroundSize: '13px 13px',
+          backgroundPosition: '6px 6px',
+          // Tool gestures own this layer; React Flow node-drag stays on the title.
+          touchAction: 'none'
+        }}
+      >
+        {/* Vector layer (under the cards so cards stay clickable). */}
+        <WhiteboardSvg
+          arrows={arrows}
+          strokes={strokes}
+          draftArrow={draftArrow}
+          draftStroke={draftStroke}
+        />
+
+        {/* DOM elements: notes, free text, checklists. */}
+        {elements.map((el) => {
+          if (el.kind === 'note') {
+            return (
+              <NoteCard
+                key={el.id}
+                note={el}
+                interactive={interactive}
+                onDragStart={startElementDrag}
+                onChangeText={setNoteText}
+                onDelete={deleteEl}
+              />
+            )
+          }
+          if (el.kind === 'text') {
+            return (
+              <FreeText
+                key={el.id}
+                element={el}
+                interactive={interactive}
+                onDragStart={startElementDrag}
+                onChangeText={setTextText}
+                onDelete={deleteEl}
+              />
+            )
+          }
+          if (el.kind === 'checklist') {
+            return (
+              <ChecklistCard
+                key={el.id}
+                element={el}
+                interactive={interactive}
+                onDragStart={startElementDrag}
+                onToggle={toggle}
+                onChangeTitle={setTitle}
+                onChangeItem={setItem}
+                onAddItem={appendItem}
+                onRemoveItem={dropItem}
+              />
+            )
+          }
+          return null
+        })}
+
+        {elements.length === 0 && (
+          <div
+            className="t-meta"
+            style={{
+              position: 'absolute',
+              left: 14,
+              top: 12,
+              color: 'var(--text-faint)',
+              pointerEvents: 'none'
+            }}
+          >
+            {selected ? 'pick a tool above · note · check · arrow · pen' : 'empty plan'}
+          </div>
+        )}
       </div>
     </BoardFrame>
   )
-}
-
-const placeholder: React.CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 8
 }
