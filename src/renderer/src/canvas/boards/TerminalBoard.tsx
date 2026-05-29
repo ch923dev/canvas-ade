@@ -29,6 +29,7 @@ import {
   statusFor,
   type TerminalState
 } from './terminalState'
+import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -107,6 +108,7 @@ export function TerminalBoard({
     }
     termRef.current = term
     fitRef.current = fit
+    if (isE2E()) e2eTerminals.set(board.id, term)
 
     // Forward keystrokes + resizes to whatever port is CURRENT. Registered ONCE
     // (not inside onWinMsg) so a restart — which delivers a fresh port through the
@@ -184,6 +186,7 @@ export function TerminalBoard({
         /* port already closed */
       }
       portRef.current = null
+      if (isE2E()) e2eTerminals.delete(board.id)
       term.dispose()
       termRef.current = null
       fitRef.current = null

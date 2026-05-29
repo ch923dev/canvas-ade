@@ -51,7 +51,26 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
 
   // Tasks 5-7 push real parts here. For now, prove the seam: seed one of each and
   // assert they reached the store.
-  await evalIn(win, "window.__canvasE2E.seedBoard('terminal')")
+
+  // ── Terminal: seed with a launchCommand that echoes the sentinel, then read it
+  // back off the xterm framebuffer (proves the PTY↔xterm data plane end to end). ──
+  const termId = await evalIn<string>(
+    win,
+    `window.__canvasE2E.seedBoard('terminal', { launchCommand: 'echo ${TERM_SENTINEL}' })`
+  )
+  const termOk = await poll(async () => {
+    const text = await evalIn<string | null>(
+      win,
+      `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+    )
+    return typeof text === 'string' && text.includes(TERM_SENTINEL)
+  }, 10000)
+  parts.push({
+    name: 'terminal',
+    ok: termOk,
+    detail: termOk ? 'sentinel in framebuffer' : 'no sentinel'
+  })
+
   await evalIn(win, `window.__canvasE2E.seedBoard('browser', { url: ${JSON.stringify(localUrl)} })`)
   await evalIn(win, "window.__canvasE2E.seedBoard('planning')")
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
