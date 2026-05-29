@@ -6,6 +6,8 @@
  *
  * `launchCommand` is free-text → ANY agentic CLI (e.g. `claude`, `codex`). It is
  * written as the first PTY line in pty.ts so the agent inherits PATH/profile/auth.
+ * The Label field edits `board.title` (the header text — what the terminal is for);
+ * a label-only change does NOT respawn (only shell/launchCommand/cwd are spawn deps).
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
@@ -22,11 +24,18 @@ export function TerminalConfig({
 }): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const [shells, setShells] = useState<ShellInfo[]>([])
+  const [title, setTitle] = useState(board.title)
   const [shell, setShell] = useState(board.shell ?? '')
   const [launchCommand, setLaunchCommand] = useState(board.launchCommand ?? '')
   const [cwd, setCwd] = useState(board.cwd ?? '')
 
   const seededShell = useRef(board.shell)
+  // True only once the user actually picks a shell from the dropdown. The effect
+  // below auto-seeds the select to list[0] for display when the board has no
+  // explicit shell — but that auto-seed must NOT be persisted, or a label-only
+  // Apply would flip `board.shell` from undefined → the default path, changing a
+  // spawn dep and killing the live session on every Apply (#9).
+  const shellTouched = useRef(false)
   useEffect(() => {
     let live = true
     void window.api.listShells().then((list) => {
@@ -42,7 +51,10 @@ export function TerminalConfig({
   const apply = (): void => {
     useCanvasStore.getState().beginChange()
     updateBoard(board.id, {
-      shell: shell || undefined,
+      title: title.trim() || board.title,
+      // Only persist `shell` when the user explicitly chose one; otherwise leave it
+      // untouched so a label-only Apply doesn't seed undefined → default and respawn.
+      ...(shellTouched.current ? { shell: shell || undefined } : {}),
       launchCommand: launchCommand.trim() || undefined,
       cwd: cwd.trim() || undefined
     })
@@ -60,8 +72,25 @@ export function TerminalConfig({
       }}
     >
       <label style={lbl}>
+        Label
+        <input
+          style={fld}
+          placeholder="What this terminal is for"
+          spellCheck={false}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </label>
+      <label style={lbl}>
         Shell
-        <select style={fld} value={shell} onChange={(e) => setShell(e.target.value)}>
+        <select
+          style={fld}
+          value={shell}
+          onChange={(e) => {
+            shellTouched.current = true
+            setShell(e.target.value)
+          }}
+        >
           {shells.map((s) => (
             <option key={s.path} value={s.path}>
               {s.label}

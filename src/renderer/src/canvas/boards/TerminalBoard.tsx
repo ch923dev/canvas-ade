@@ -5,11 +5,10 @@
  *
  * Per CLAUDE.md we spawn the SHELL, not the agent; if `board.launchCommand` is
  * set it is written as the first PTY line (in `pty.ts`) so the agent inherits
- * PATH/profile/auth. Chrome follows DESIGN.md §7.1: agent identity pill + run
- * timer, a 2px `--accent` indeterminate progress sliver while running (via
- * `BoardFrame running`), a braille spinner working line, and a bottom follow-up
- * prompt with a blinking caret. Title-bar actions: play/pause · restart ·
- * interrupt (Ctrl-C). Owns this file only; the shared surface is frozen.
+ * PATH/profile/auth. The board is a plain terminal: a calm identity pill (status
+ * dot + shell/agent name) plus two title-bar actions — Configure (shell /
+ * launch command / cwd / editable label) and Restart. Clicking the body focuses
+ * xterm directly so keystrokes always land. Owns this file only; shared surface frozen.
  *
  * Lifecycle (spawning → running → awaiting-input → exited / spawn-failed) is
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
@@ -24,7 +23,6 @@ import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import {
   agentIdentity,
-  brailleFrame,
   formatTimer,
   isRunning,
   statusFor,
@@ -63,20 +61,85 @@ export function TerminalBoard({
   board,
   selected,
   hovered,
-  dimmed
+  dimmed,
+  lod = false
 }: BoardViewProps<TerminalBoardData>): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const webglRef = useRef<WebglAddon | null>(null)
   const portRef = useRef<MessagePort | null>(null)
 
   const [state, setState] = useState<TerminalState>('spawning')
-  const [elapsed, setElapsed] = useState(0)
-  const [frame, setFrame] = useState(0)
   const [configOpen, setConfigOpen] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
+
+  // `lod` read by the spawn effect (initial WebGL attach) without making it a spawn
+  // dep — `lod` must NOT respawn the PTY (the session survives zoom-out by design).
+  const lodRef = useRef(lod)
+  useEffect(() => {
+    lodRef.current = lod
+  }, [lod])
+
+  // Run timer: while running, derive elapsed seconds from the run start time so the
+  // pill shows `· mm:ss`. setElapsed only ever fires from the interval callback (an
+  // external tick — never a synchronous setState in the effect body). The first
+  // tick at ~100ms zeroes the display for a fresh run; the suffix is gated on
+  // `running`, so a stale value is never shown once a run ends.
+  useEffect(() => {
+    if (!running) return
+    const start = Date.now()
+    const tick = (): void => setElapsed(Math.floor((Date.now() - start) / 1000))
+    const lead = setTimeout(tick, 100)
+    const t = setInterval(tick, 1000)
+    return () => {
+      clearTimeout(lead)
+      clearInterval(t)
+    }
+  }, [running])
+
+  // ── WebGL renderer pooling (#10) ────────────────────────────────────────────
+  // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
+  // Flow) and silently drops the OLDEST under churn. Rather than relying on that
+  // eviction, we hold a GL context only for DETAIL-view terminals: a board that
+  // goes to LOD (off the working zoom band) releases its context so on-screen
+  // terminals keep theirs, and re-acquires when it returns to detail. The PTY
+  // session is independent of the renderer, so this is purely a perf/quality lever.
+  const attachWebgl = useCallback((term: Terminal): void => {
+    if (webglRef.current) return
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => {
+        webgl.dispose()
+        webglRef.current = null
+      })
+      term.loadAddon(webgl)
+      webglRef.current = webgl
+    } catch {
+      /* GL unavailable — xterm falls back to the DOM/canvas renderer */
+    }
+  }, [])
+
+  const detachWebgl = useCallback((): void => {
+    try {
+      webglRef.current?.dispose()
+    } catch {
+      /* already disposed */
+    }
+    webglRef.current = null
+  }, [])
+
+  // Release the GL context at LOD; re-acquire on return to detail view. Guarded by
+  // a live terminal (the spawn effect owns mount/unmount of `term` itself).
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    if (lod) detachWebgl()
+    else attachWebgl(term)
+  }, [lod, attachWebgl, detachWebgl])
 
   // ── Bridge: spawn the PTY, wire the MessagePort, fit on resize ──────────────
   // Keyed by board id so re-mounts (LOD swaps, drags) reconnect the same session
@@ -86,8 +149,16 @@ export function TerminalBoard({
     const el = screenRef.current
     if (!el) return () => {}
 
+    // xterm paints glyphs onto a canvas/WebGL atlas where CSS var() does NOT
+    // resolve — passing 'var(--mono)' breaks the canvas font parse, so glyphs
+    // render tiny inside full-width cells (the wide letter-spacing). Resolve the
+    // --mono design token to its literal font stack before handing it to xterm.
+    const mono =
+      getComputedStyle(document.documentElement).getPropertyValue('--mono').trim() ||
+      'ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+
     const term = new Terminal({
-      fontFamily: 'var(--mono), ui-monospace, Menlo, Consolas, monospace',
+      fontFamily: mono,
       fontSize: 12.5,
       lineHeight: 1.2,
       cursorBlink: true,
@@ -98,11 +169,9 @@ export function TerminalBoard({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
-    try {
-      term.loadAddon(new WebglAddon())
-    } catch {
-      /* GL unavailable — xterm falls back to the DOM/canvas renderer */
-    }
+    // Attach a GL context only when mounting in detail view; a board mounted at LOD
+    // runs on the DOM renderer until it returns to detail (see the LOD effect above).
+    if (!lodRef.current) attachWebgl(term)
     try {
       fit.fit()
     } catch {
@@ -121,11 +190,14 @@ export function TerminalBoard({
       portRef.current?.postMessage({ t: 'resize', cols, rows })
     )
 
-    // The canvas binds global keys (1 fit / 0 reset / Esc / Backspace-Delete).
-    // Stop key events from a focused terminal bubbling to those handlers so the
-    // user can type those characters into the shell.
+    // Let xterm handle the key FIRST (Backspace/Enter/arrows/Ctrl-C are keydown-
+    // driven on xterm's textarea), THEN stop it bubbling to the canvas / React Flow
+    // global keys (1 / 0 / Esc / Backspace-Delete board-delete). Must be BUBBLE
+    // phase: capture would intercept the event before xterm's textarea (a child of
+    // `el`) ever sees it — which silently breaks Backspace and the other key-driven
+    // controls while plain typing still works via the textarea input event.
     const stopKeys = (e: KeyboardEvent): void => e.stopPropagation()
-    el.addEventListener('keydown', stopKeys, true)
+    el.addEventListener('keydown', stopKeys)
 
     const onWinMsg = (e: MessageEvent): void => {
       const data = e.data as { __ptyPort?: boolean; id?: string }
@@ -146,25 +218,59 @@ export function TerminalBoard({
     window.addEventListener('message', onWinMsg)
 
     setState('spawning')
-    window.api
-      .spawnTerminal({
-        id: board.id,
-        shell: board.shell,
-        cwd: board.cwd,
-        launchCommand: board.launchCommand,
-        cols: term.cols,
-        rows: term.rows
-      })
-      .then((res) => {
-        if (res.state === 'spawn-failed') {
+
+    // Spawn the PTY only ONCE per mount, and only after the xterm host has a real
+    // layout — i.e. fit produced finite cols/rows. A board created while the camera
+    // is below LOD mounts with the well at `display:none`, so fit.fit() no-ops and
+    // term.cols/rows are the default 80×24; spawning then would size the PTY (and
+    // write the launchCommand TUI) at the wrong width (#34). We defer until the
+    // ResizeObserver reports the first good fit (the well becoming visible resizes
+    // it), at which point dims reflect the board's true column width.
+    // #15: try to ADOPT a parked session (undo of a delete) before spawning fresh.
+    // `spawnAllowed` stays false until adopt resolves with adopted:false, so neither
+    // the immediate launch() nor the ResizeObserver can spawn a fresh shell over an
+    // adoptable one. When adopted, the reposted port + replayed scrollback arrive via
+    // the existing onWinMsg listener.
+    let spawned = false
+    let spawnAllowed = false
+    let disposed = false
+    const launch = (): void => {
+      if (spawned || !spawnAllowed) return
+      const dims = fit.proposeDimensions()
+      if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) return
+      spawned = true
+      window.api
+        .spawnTerminal({
+          id: board.id,
+          shell: board.shell,
+          cwd: board.cwd,
+          launchCommand: board.launchCommand,
+          cols: term.cols,
+          rows: term.rows
+        })
+        .then((res) => {
+          if (res.state === 'spawn-failed') {
+            setState('spawn-failed')
+            term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
+          }
+        })
+        .catch((err: Error) => {
           setState('spawn-failed')
-          term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
-        }
-      })
-      .catch((err: Error) => {
-        setState('spawn-failed')
-        term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
-      })
+          term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
+        })
+    }
+    // Decide adopt-vs-spawn once. Adopted → the reposted port + replayed buffer
+    // arrive over onWinMsg (no spawn). Not adopted → allow the normal spawn flow
+    // (immediate try here + the ResizeObserver's deferred try for the #34 LOD case).
+    void window.api.adoptTerminal(board.id).then((res) => {
+      if (disposed) return
+      if (res.adopted) {
+        setState('running')
+      } else {
+        spawnAllowed = true
+        launch()
+      }
+    })
 
     const ro = new ResizeObserver(() => {
       try {
@@ -172,12 +278,16 @@ export function TerminalBoard({
       } catch {
         /* element detached mid-resize */
       }
+      // First good fit after a hidden/LOD mount spawns the deferred PTY at the
+      // board's true width; later fits no-op (`spawned` guard) and just resize.
+      launch()
     })
     ro.observe(el)
 
     return () => {
+      disposed = true
       window.removeEventListener('message', onWinMsg)
-      el.removeEventListener('keydown', stopKeys, true)
+      el.removeEventListener('keydown', stopKeys)
       dataDisp.dispose()
       resizeDisp.dispose()
       ro.disconnect()
@@ -189,35 +299,18 @@ export function TerminalBoard({
       }
       portRef.current = null
       if (isE2E()) e2eTerminals.delete(board.id)
+      // Free the WebGL context before disposing the terminal (no-op if a prior
+      // context-loss or LOD detach already disposed it and nulled the ref).
+      detachWebgl()
       term.dispose()
       termRef.current = null
       fitRef.current = null
     }
-  }, [board.id, board.shell, board.cwd, board.launchCommand])
+  }, [board.id, board.shell, board.cwd, board.launchCommand, attachWebgl, detachWebgl])
 
   useEffect(() => spawn(), [spawn])
 
-  // Run timer (mm:ss): tick only while a live process is running.
-  useEffect(() => {
-    if (!running) return
-    const id = window.setInterval(() => setElapsed((s) => s + 1), 1000)
-    return () => window.clearInterval(id)
-  }, [running])
-
-  // Braille spinner (~90ms/frame) for the working line; idle when not running.
-  useEffect(() => {
-    if (!running) return
-    const id = window.setInterval(() => setFrame((f) => f + 1), 90)
-    return () => window.clearInterval(id)
-  }, [running])
-
-  // ── Actions (DESIGN.md §7.1) ────────────────────────────────────────────────
-  /** Send Ctrl-C to interrupt the foreground process without killing the shell. */
-  const interrupt = useCallback(() => {
-    portRef.current?.postMessage({ t: 'input', d: '\x03' })
-    termRef.current?.focus()
-  }, [])
-
+  // ── Actions ─────────────────────────────────────────────────────────────────
   /** Restart: kill the current session + respawn a fresh shell in place. */
   const restart = useCallback(() => {
     const term = termRef.current
@@ -231,7 +324,6 @@ export function TerminalBoard({
     portRef.current = null
     term.reset()
     setState('spawning')
-    setElapsed(0)
     void window.api
       .spawnTerminal({
         id: board.id,
@@ -249,71 +341,76 @@ export function TerminalBoard({
       })
   }, [board.id, board.shell, board.cwd, board.launchCommand])
 
-  /** Play/pause: stop the live session, or restart one when stopped. */
-  const toggleRun = useCallback(() => {
-    if (running || state === 'awaiting-input') {
-      void window.api.killTerminal(board.id)
-      setState('exited')
-    } else {
-      restart()
-    }
-  }, [running, state, board.id, restart])
-
-  const live = running || state === 'awaiting-input'
   const status = statusFor(state, identity, running ? formatTimer(elapsed) : undefined)
+
+  /** Interrupt: send Ctrl-C (SIGINT) over the data plane to the running agent. */
+  const interrupt = useCallback(() => {
+    portRef.current?.postMessage({ t: 'input', d: '\x03' })
+  }, [])
 
   const actions = (
     <>
-      <IconBtn name="settings" title="Configure" onClick={() => setConfigOpen((v) => !v)} />
-      <IconBtn name={live ? 'pause' : 'play'} title={live ? 'Pause' : 'Run'} onClick={toggleRun} />
+      {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
+      <IconBtn
+        name="settings"
+        title="Configure terminal"
+        onClick={() => setConfigOpen((v) => !v)}
+      />
       <IconBtn name="restart" title="Restart" onClick={restart} />
-      <IconBtn name="stop" title="Interrupt (Ctrl-C)" danger onClick={interrupt} />
     </>
   )
 
+  // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
+  // session survives zoom-out — see BoardNode. At LOD we hide the xterm well and
+  // overlay the opaque LOD card on top (it fully covers the chrome beneath it),
+  // never tearing the terminal down. The card's dot reflects the live status, so a
+  // running agent still pulses `--ok` while zoomed out.
   return (
-    <BoardFrame
-      type="terminal"
-      title={board.title}
-      selected={selected}
-      hovered={hovered}
-      dimmed={dimmed}
-      running={running}
-      status={status}
-      actions={actions}
-      contentBg="var(--inset)"
-    >
-      <div style={shell}>
-        {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
-        {/* Live xterm screen — fills the well; --inset bg, 12px padding (§7.1). */}
-        <div style={screenWrap}>
-          <div ref={screenRef} style={screen} />
-        </div>
-
-        {/* Working line: braille spinner + current action while running. */}
-        {running && (
-          <div style={workingLine}>
-            <span style={{ color: 'var(--accent)', width: 10, display: 'inline-block' }}>
-              {brailleFrame(frame)}
-            </span>
-            <span>working…</span>
+    <>
+      <BoardFrame
+        type="terminal"
+        title={board.title}
+        selected={selected}
+        hovered={hovered}
+        dimmed={dimmed}
+        running={running}
+        status={status}
+        actions={actions}
+        contentBg="var(--inset)"
+      >
+        <div style={lod ? shellHidden : shell}>
+          {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+          {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
+              `nodrag nowheel` stops React Flow from treating clicks as a node drag or
+              wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF
+              and force focus into xterm: otherwise RF focuses the node wrapper on
+              click and swallows keystrokes until a restart (the "can't type" bug). */}
+          <div
+            className="nodrag nowheel"
+            style={screenWrap}
+            onMouseDown={(e) => {
+              e.stopPropagation()
+              termRef.current?.focus()
+            }}
+          >
+            <div ref={screenRef} style={screen} />
           </div>
-        )}
-
-        {/* Follow-up prompt: focuses the live terminal on click (§7.1). */}
-        <div
-          style={prompt}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => termRef.current?.focus()}
-        >
-          <span style={{ color: 'var(--accent)' }}>›</span>
-          <span style={{ color: 'var(--text-faint)' }}>
-            {live ? 'send a follow-up instruction' : 'session stopped — restart to continue'}
-          </span>
-          {live && <span className="ca-blink" style={caret} />}
         </div>
-      </div>
-    </BoardFrame>
+      </BoardFrame>
+      {lod && (
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          <BoardFrame
+            type="terminal"
+            title={board.title}
+            selected={selected}
+            dimmed={dimmed}
+            lod
+            running={running}
+            status={{ dot: status.dot }}
+          />
+        </div>
+      )}
+    </>
   )
 }
 
@@ -323,6 +420,9 @@ const shell: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column'
 }
+
+/** LOD: hide the xterm well (keep it mounted so the PTY session stays alive). */
+const shellHidden: React.CSSProperties = { ...shell, display: 'none' }
 
 const screenWrap: React.CSSProperties = {
   flex: 1,
@@ -335,37 +435,4 @@ const screen: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
   padding: '12px 12px 4px'
-}
-
-const workingLine: React.CSSProperties = {
-  flex: 'none',
-  fontFamily: 'var(--mono)',
-  fontSize: 12.5,
-  lineHeight: '19px',
-  color: 'var(--text-2)',
-  display: 'flex',
-  gap: 8,
-  padding: '0 12px 4px'
-}
-
-const prompt: React.CSSProperties = {
-  flex: 'none',
-  borderTop: '1px solid var(--border-subtle)',
-  padding: '8px 14px',
-  fontFamily: 'var(--mono)',
-  fontSize: 12.5,
-  color: 'var(--text-3)',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 7,
-  cursor: 'text',
-  background: 'color-mix(in srgb, var(--inset) 70%, var(--surface))'
-}
-
-const caret: React.CSSProperties = {
-  width: 7,
-  height: 14,
-  background: 'var(--text-3)',
-  borderRadius: 1,
-  marginLeft: -2
 }

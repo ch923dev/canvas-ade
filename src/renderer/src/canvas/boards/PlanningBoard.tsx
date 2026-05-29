@@ -47,8 +47,9 @@ import {
   makeNote,
   makeStroke,
   makeText,
-  moveElement,
+  nextNoteIndex,
   patchElement,
+  translateElement,
   removeElement,
   toggleItem,
   addItem,
@@ -91,9 +92,16 @@ export function PlanningBoard({
   // In-progress (uncommitted) gesture state — drawn as a draft until pointer-up.
   const [draftArrow, setDraftArrow] = useState<ArrowElement | null>(null)
   const [draftStroke, setDraftStroke] = useState<number[] | null>(null)
+  // Transient element-move delta — rendered live during a drag, committed to the
+  // store ONCE on pointer-up (mirrors the arrow/pen draft pattern) so a move is a
+  // single undo checkpoint, not one mutation per frame (#9). A delta (not an
+  // absolute top-left) so it translates EVERY kind uniformly, including arrows +
+  // strokes which have no single top-left (#28, #37).
+  const [dragPos, setDragPos] = useState<{ id: string; dx: number; dy: number } | null>(null)
   // Active drag (an element move, an arrow, or a pen stroke) → captured pointer.
+  // A move records the grab point in board space so the delta = pointer − grab.
   const drag = useRef<
-    | { mode: 'move'; id: string; offX: number; offY: number }
+    | { mode: 'move'; id: string; grabX: number; grabY: number }
     | { mode: 'arrow'; id: string }
     | { mode: 'pen'; points: number[] }
     | null
@@ -170,32 +178,55 @@ export function PlanningBoard({
     [beginChange, commit, elements]
   )
 
+  // Auto-grow the board so a tall checklist (its rows + "Add item" button) is
+  // never clipped by the well's overflow:hidden (#12). Only ever grows; the
+  // measured `bottom` is board-local (element.y + card height), so the board must
+  // be tall enough for the titlebar + that bottom + a small margin.
+  const TITLEBAR_H = 34
+  const WELL_PAD = 14
+  const growForChecklist = useCallback(
+    (_elId: string, bottom: number) => {
+      const needed = Math.ceil(bottom + TITLEBAR_H + WELL_PAD)
+      if (needed > board.h) updateBoard(board.id, { h: needed })
+    },
+    [board.id, board.h, updateBoard]
+  )
+
   // ── Element drag (select tool): grab → move in board-local space ─────────────
   const startElementDrag = useCallback(
     (e: PointerEvent, id: string) => {
       const el = elements.find((x) => x.id === id)
-      if (!el || el.kind === 'arrow' || el.kind === 'stroke') return
-      beginChange()
+      if (!el) return
+      // Do NOT checkpoint here: a zero-movement grab (plain click) would push a
+      // no-op undo snapshot and wipe an armed redo branch (#11). The checkpoint is
+      // taken lazily in onWellPointerUp, only if the move actually committed.
       const p = toBoard(e)
-      drag.current = { mode: 'move', id, offX: p.x - el.x, offY: p.y - el.y }
+      // Record the grab point; the live delta is pointer − grab. Works for every
+      // kind (cards + arrows + strokes) since we translate by delta (#28, #37).
+      drag.current = { mode: 'move', id, grabX: p.x, grabY: p.y }
       // Capture on the WELL (not the card) so move/up route to the well handlers
       // even when the cursor leaves the card during a fast drag.
       wellRef.current?.setPointerCapture(e.pointerId)
     },
-    [beginChange, elements, toBoard]
+    [elements, toBoard]
   )
 
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
   const onWellPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
-      // Only react to a press that lands on the empty well (not an element).
-      if (e.target !== e.currentTarget) return
+      // In select mode, only react to a press on the EMPTY well (element presses
+      // are owned by the cards). In a DRAW mode the press may have fallen through
+      // a card (cards no longer stop it — #6), so proceed regardless of target and
+      // let the well capture the whole gesture below.
+      if (tool === 'select' && e.target !== e.currentTarget) return
       setSelectedElId(null)
       const p = toBoard(e)
 
       if (tool === 'note') {
         beginChange()
-        const note = makeNote(newId(), p, elements.filter((x) => x.kind === 'note').length)
+        // Index off the least-used tint slot, not the live note count, so variety
+        // survives deletions (#27).
+        const note = makeNote(newId(), p, nextNoteIndex(elements))
         commit([...elements, note])
         setTool('select')
         return
@@ -234,7 +265,9 @@ export function PlanningBoard({
       if (!d) return
       const p = toBoard(e)
       if (d.mode === 'move') {
-        commit(moveElement(elements, d.id, Math.round(p.x - d.offX), Math.round(p.y - d.offY)))
+        // Transient: render the dragged element shifted by the live delta; the
+        // store is written once on pointer-up so undo stays one checkpoint (#9).
+        setDragPos({ id: d.id, dx: Math.round(p.x - d.grabX), dy: Math.round(p.y - d.grabY) })
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
       } else if (d.mode === 'pen') {
@@ -242,15 +275,19 @@ export function PlanningBoard({
         setDraftStroke(d.points)
       }
     },
-    [commit, elements, toBoard]
+    [toBoard]
   )
 
   // Double-click empty whiteboard in select mode → drop a free-text element.
   // stopPropagation keeps it from triggering the canvas double-click focus.
   const onWellDoubleClick = useCallback(
     (e: MouseEvent<HTMLDivElement>) => {
-      if (tool !== 'select' || e.target !== e.currentTarget) return
+      // A dblclick that originated inside this board's well is NEVER a canvas-focus
+      // gesture, so always stop it from bubbling to React Flow's onNodeDoubleClick
+      // (#40). The select+bare-well check then only decides whether to also drop a
+      // free-text element.
       e.stopPropagation()
+      if (tool !== 'select' || e.target !== e.currentTarget) return
       beginChange()
       commit([...elements, makeText(newId(), toBoard(e))])
     },
@@ -261,7 +298,18 @@ export function PlanningBoard({
     const d = drag.current
     drag.current = null
     if (!d) return
-    if (d.mode === 'arrow') {
+    if (d.mode === 'move') {
+      // Checkpoint + commit the final position ONCE, and only if the element
+      // actually moved (dragPos set on the first move frame). A zero-movement grab
+      // leaves dragPos null → no snapshot, no future-wipe (#11). The whole drag is
+      // a single undo checkpoint (#9).
+      const pos = dragPos
+      setDragPos(null)
+      if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
+        beginChange()
+        commit(translateElement(elements, pos.id, pos.dx, pos.dy))
+      }
+    } else if (d.mode === 'arrow') {
       const a = draftArrow
       setDraftArrow(null)
       // Discard a degenerate (no-drag) arrow.
@@ -275,7 +323,7 @@ export function PlanningBoard({
       if (pts.length >= 4) commit([...elements, makeStroke(newId(), pts)])
       setTool('select')
     }
-  }, [draftArrow, commit, elements])
+  }, [draftArrow, dragPos, commit, elements, beginChange])
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
@@ -309,8 +357,16 @@ export function PlanningBoard({
     </div>
   ) : undefined
 
-  const arrows = elements.filter((e): e is ArrowElement => e.kind === 'arrow')
-  const strokes = elements.filter((e): e is StrokeElement => e.kind === 'stroke')
+  // While a move is in flight, render the dragged element shifted by its transient
+  // delta (the store still holds the pre-drag position until pointer-up — #9).
+  // Any kind is movable now (cards + arrows + strokes), so derive the SVG vectors
+  // from viewElements too so a dragged arrow/stroke tracks the cursor live (#28, #37).
+  const viewElements = dragPos
+    ? translateElement(elements, dragPos.id, dragPos.dx, dragPos.dy)
+    : elements
+
+  const arrows = viewElements.filter((e): e is ArrowElement => e.kind === 'arrow')
+  const strokes = viewElements.filter((e): e is StrokeElement => e.kind === 'stroke')
 
   // The well captures the pen/arrow/place gestures; the draw tools also force a
   // crosshair cursor so the active mode is legible.
@@ -367,14 +423,16 @@ export function PlanningBoard({
           draftArrow={draftArrow}
           draftStroke={draftStroke}
           selectedId={selectedElId}
+          drawing={drawing}
           onSelect={(id) => {
             setSelectedElId(id)
             wellRef.current?.focus()
           }}
+          onDragStart={startElementDrag}
         />
 
         {/* DOM elements: notes, free text, checklists. */}
-        {elements.map((el) => {
+        {viewElements.map((el) => {
           if (el.kind === 'note') {
             return (
               <NoteCard
@@ -415,6 +473,7 @@ export function PlanningBoard({
                 onRemoveItem={dropItem}
                 onDelete={deleteEl}
                 onEditStart={beginChange}
+                onMeasureBottom={growForChecklist}
               />
             )
           }

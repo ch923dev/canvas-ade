@@ -17,11 +17,29 @@ import type {
   StrokeElement,
   TextElement
 } from '../../../lib/boardSchema'
-import { noteRotation } from './tints'
+import { noteRotation, TINT_CYCLE } from './tints'
 
 /** Default sizes for the card-shaped elements (board-local px). */
 export const NOTE_SIZE = { w: 156, h: 96 } as const
 export const CHECKLIST_W = 240
+
+/**
+ * Pick the tint/rotation slot for the next note from the EXISTING notes, choosing
+ * the least-used tint (ties → earliest in TINT_CYCLE). Indexing off the live note
+ * COUNT (the old behaviour) collides + loses variety after a deletion — drop note
+ * A of {A,B,C} and the next note reuses C's tint/tilt (#27). Counting actual tints
+ * is stable across deletions and reloads (it reads only persisted note data).
+ */
+export function nextNoteIndex(els: PlanningElement[]): number {
+  const counts = TINT_CYCLE.map(
+    (tint) => els.filter((e) => e.kind === 'note' && (e as NoteElement).tint === tint).length
+  )
+  let best = 0
+  for (let i = 1; i < counts.length; i++) {
+    if (counts[i] < counts[best]) best = i
+  }
+  return best
+}
 
 /** A new sticky note centred-ish on the drop point, tinted + tilted by index. */
 export function makeNote(
@@ -37,7 +55,7 @@ export function makeNote(
     y: Math.round(at.y - 20),
     w: NOTE_SIZE.w,
     h: NOTE_SIZE.h,
-    tint: tint ?? (['yellow', 'blue', 'green', 'plain'] as NoteTint[])[index % 4],
+    tint: tint ?? TINT_CYCLE[index % TINT_CYCLE.length],
     rotation: noteRotation(index),
     text: ''
   }
@@ -100,6 +118,35 @@ export function moveElement(
   y: number
 ): PlanningElement[] {
   return els.map((el) => (el.id === id ? { ...el, x, y } : el))
+}
+
+/**
+ * Translate one element by a board-local delta, correctly for EVERY kind so a
+ * drag never deforms a vector (#28, #37):
+ * - note / text / checklist carry a single top-left → shift x/y.
+ * - arrow stores both endpoints (x/y AND x2/y2) → shift both so the bow is
+ *   preserved (shifting x/y alone would drag only the tail).
+ * - stroke pins its origin at x:0,y:0 and renders `points` in absolute board
+ *   space → shift every point pair (and keep x/y in lockstep).
+ * No-op if the element is absent. Immutable.
+ */
+export function translateElement(
+  els: PlanningElement[],
+  id: string,
+  dx: number,
+  dy: number
+): PlanningElement[] {
+  return els.map((el) => {
+    if (el.id !== id) return el
+    if (el.kind === 'arrow') {
+      return { ...el, x: el.x + dx, y: el.y + dy, x2: el.x2 + dx, y2: el.y2 + dy }
+    }
+    if (el.kind === 'stroke') {
+      const points = el.points.map((v, i) => (i % 2 === 0 ? v + dx : v + dy))
+      return { ...el, x: el.x + dx, y: el.y + dy, points }
+    }
+    return { ...el, x: el.x + dx, y: el.y + dy }
+  })
 }
 
 /** Toggle one checklist item's `done` flag (live progress). */

@@ -51,6 +51,9 @@ export function NoteCard({
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
+  // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
+  // the grip is pressed) does NOT prune an empty note mid-drag (#29 guard).
+  const dragging = useRef(false)
 
   // Auto-size the textarea to its content so the note grows with the text.
   useEffect(() => {
@@ -59,6 +62,14 @@ export function NoteCard({
     el.style.height = 'auto'
     el.style.height = `${el.scrollHeight}px`
   }, [note.text, note.w])
+
+  // Focus a freshly-dropped empty note so the user can type immediately, AND so
+  // leaving it untouched blurs → prunes it instead of leaving an orphan (#29).
+  // Runs once on mount; existing (loaded) notes have content so won't grab focus.
+  useEffect(() => {
+    if (interactive && note.text === '') ref.current?.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div
@@ -76,9 +87,11 @@ export function NoteCard({
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {
+        // Only swallow the press in select mode (interactive editing/drag). In a
+        // draw mode (pen/arrow/place) let it fall through to the well so a stroke
+        // can START on top of the card (#6).
+        if (!interactive) return
         e.stopPropagation()
-        // Drag from the card chrome, not from inside the textarea (let it focus).
-        if (interactive && e.target === e.currentTarget) onDragStart(e, note.id)
       }}
       onDoubleClick={(e) => {
         e.stopPropagation()
@@ -100,7 +113,25 @@ export function NoteCard({
           <Icon name="x" size={11} />
         </button>
       )}
-      <div className="pl-note-grip" style={{ position: 'relative', padding: '9px 11px' }}>
+      {/* The padding ring is the drag handle: pressing anywhere on the grip (but
+          not in the textarea, which stops propagation) starts the move (#13). */}
+      <div
+        className="pl-note-grip"
+        onPointerDown={(e) => {
+          // In a draw mode let the press fall through to the well (#6); in select
+          // mode this band is the drag handle (the textarea owns its own press).
+          if (!interactive) return
+          e.stopPropagation()
+          // Suppress the empty-note blur-prune this gesture is about to trigger.
+          dragging.current = true
+          onDragStart(e, note.id)
+          // Clear after the synchronous blur has had a chance to fire.
+          setTimeout(() => {
+            dragging.current = false
+          }, 0)
+        }}
+        style={{ position: 'relative', padding: '9px 11px' }}
+      >
         <textarea
           ref={ref}
           value={note.text}
@@ -109,7 +140,16 @@ export function NoteCard({
           spellCheck={false}
           onChange={(e) => onChangeText(note.id, e.target.value)}
           onFocus={() => onEditStart?.()}
-          onPointerDown={(e) => e.stopPropagation()}
+          // Prune an empty / whitespace-only note on blur so a note that was
+          // focused but never given content doesn't linger as an orphan (#29).
+          // Skip while a drag is starting (grip press blurs the textarea).
+          onBlur={() => {
+            if (!dragging.current && note.text.trim() === '') onDelete(note.id)
+          }}
+          // Let a draw gesture begin over the note body (#6); only block in select.
+          onPointerDown={(e) => {
+            if (interactive) e.stopPropagation()
+          }}
           onKeyDown={(e) => {
             e.stopPropagation()
             if (e.key === 'Backspace' && note.text.length === 0) onDelete(note.id)

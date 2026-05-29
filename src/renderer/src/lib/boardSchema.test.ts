@@ -182,6 +182,204 @@ describe('fromObject', () => {
   })
 })
 
+// ── Deep per-type validation (fix #5) ──────────────────────────────────────────
+// A parseable envelope (schemaVersion + boards[]) is NOT enough — a corrupt board
+// or element must throw so the Phase-3 persistence layer falls back to the .bak.
+// `wrap` builds a minimal valid doc around an arbitrary board to exercise one path.
+function wrap(board: unknown): unknown {
+  return { schemaVersion: SCHEMA_VERSION, boards: [board] }
+}
+
+describe('fromObject deep validation', () => {
+  it('still round-trips a fully-valid populated doc', () => {
+    const boards = sampleBoards()
+    expect(fromObject(toObject(boards)).boards).toEqual(boards)
+  })
+
+  it('throws when a board is missing required common fields', () => {
+    expect(() => fromObject(wrap({ id: 't', type: 'terminal', x: 0, y: 0, w: 1, h: 1 }))).toThrow()
+  })
+
+  it('throws on a non-string id or title', () => {
+    const base = { type: 'terminal', x: 0, y: 0, w: 1, h: 1, title: 'ok' }
+    expect(() => fromObject(wrap({ ...base, id: 42 }))).toThrow()
+    expect(() =>
+      fromObject(wrap({ id: 't', type: 'terminal', x: 0, y: 0, w: 1, h: 1, title: 9 }))
+    ).toThrow()
+  })
+
+  it('throws on NaN / Infinity geometry', () => {
+    const ok = { id: 't', type: 'terminal', title: 'ok', x: 0, y: 0, w: 1, h: 1 }
+    expect(() => fromObject(wrap({ ...ok, x: NaN }))).toThrow()
+    expect(() => fromObject(wrap({ ...ok, y: Infinity }))).toThrow()
+    expect(() => fromObject(wrap({ ...ok, w: -Infinity }))).toThrow()
+    expect(() => fromObject(wrap({ ...ok, h: 'big' }))).toThrow()
+  })
+
+  it('throws on an unknown board type', () => {
+    expect(() =>
+      fromObject(wrap({ id: 'x', type: 'sticky', title: 'x', x: 0, y: 0, w: 1, h: 1 }))
+    ).toThrow()
+  })
+
+  it('throws when a browser board is missing its url', () => {
+    expect(() =>
+      fromObject(
+        wrap({ id: 'b', type: 'browser', title: 'B', x: 0, y: 0, w: 1, h: 1, viewport: 'desktop' })
+      )
+    ).toThrow()
+  })
+
+  it('throws when a browser board has an invalid viewport', () => {
+    expect(() =>
+      fromObject(
+        wrap({
+          id: 'b',
+          type: 'browser',
+          title: 'B',
+          x: 0,
+          y: 0,
+          w: 1,
+          h: 1,
+          url: 'http://x',
+          viewport: 'watch'
+        })
+      )
+    ).toThrow()
+  })
+
+  it('accepts valid optional terminal fields but throws on wrong-typed ones', () => {
+    const base = { id: 't', type: 'terminal', title: 'T', x: 0, y: 0, w: 1, h: 1 }
+    expect(() => fromObject(wrap({ ...base, port: 5173, shell: 'pwsh' }))).not.toThrow()
+    expect(() => fromObject(wrap({ ...base, port: 'http' }))).toThrow()
+    expect(() => fromObject(wrap({ ...base, launchCommand: 7 }))).toThrow()
+  })
+
+  it('throws when planning.elements is not an array', () => {
+    expect(() =>
+      fromObject(
+        wrap({ id: 'p', type: 'planning', title: 'P', x: 0, y: 0, w: 1, h: 1, elements: {} })
+      )
+    ).toThrow()
+  })
+
+  it('throws on a malformed checklist item', () => {
+    const planning = {
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      elements: [
+        {
+          id: 'c1',
+          kind: 'checklist',
+          x: 0,
+          y: 0,
+          w: 10,
+          h: 10,
+          title: 'Tasks',
+          items: [{ id: 'i1', label: 'ok', done: 'yes' }]
+        }
+      ]
+    }
+    expect(() => fromObject(wrap(planning))).toThrow()
+  })
+
+  it('throws on an odd-length stroke points array', () => {
+    const planning = {
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      elements: [{ id: 's1', kind: 'stroke', x: 0, y: 0, points: [0, 0, 4] }]
+    }
+    expect(() => fromObject(wrap(planning))).toThrow()
+  })
+
+  it('throws on a stroke points entry that is not finite', () => {
+    const planning = {
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      elements: [{ id: 's1', kind: 'stroke', x: 0, y: 0, points: [0, NaN] }]
+    }
+    expect(() => fromObject(wrap(planning))).toThrow()
+  })
+
+  it('throws on an arrow with non-finite end points', () => {
+    const planning = {
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      elements: [{ id: 'a1', kind: 'arrow', x: 0, y: 0, x2: 10, y2: Infinity }]
+    }
+    expect(() => fromObject(wrap(planning))).toThrow()
+  })
+
+  it('throws on an unknown planning element kind', () => {
+    const planning = {
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      elements: [{ id: 'e1', kind: 'doodle', x: 0, y: 0 }]
+    }
+    expect(() => fromObject(wrap(planning))).toThrow()
+  })
+
+  it('throws on a note element with a bad tint or missing text', () => {
+    const mk = (note: unknown): unknown => ({
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      elements: [note]
+    })
+    expect(() =>
+      fromObject(
+        wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: 1, h: 1, text: 'hi', tint: 'red' }))
+      )
+    ).toThrow()
+    expect(() =>
+      fromObject(wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: 1, h: 1, tint: 'yellow' })))
+    ).toThrow()
+  })
+
+  it('throws on a text element missing its content', () => {
+    const planning = {
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      elements: [{ id: 'x1', kind: 'text', x: 0, y: 0 }]
+    }
+    expect(() => fromObject(wrap(planning))).toThrow()
+  })
+})
+
 describe('migrate', () => {
   it('is a no-op at the current schemaVersion', () => {
     const doc = toObject(sampleBoards())

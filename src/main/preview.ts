@@ -27,10 +27,79 @@ interface Entry {
   attached: boolean
   /** Desired zoom factor; re-applied on every load (a reload resets zoom to 1). */
   zoom: number
+  /**
+   * The current main-frame load failed (dead/refused URL). Chromium loads an error
+   * page AFTER `did-fail-load`, which fires its own `did-finish-load` — without this
+   * latch we'd emit a spurious `did-finish-load` (renderer shows "connected") and
+   * clobber the `load-failed` state. Reset on each main-frame navigation start.
+   */
+  failed: boolean
 }
 
 const views = new Map<string, Entry>()
 let owner: BrowserWindow | null = null
+
+/**
+ * Secondary failure signal from `did-navigate`'s `httpResponseCode` (Bug #5). A
+ * Chromium error page commits with code `0`; a real HTTP error page is `>= 400`.
+ * `-1` means a non-HTTP navigation (e.g. `file:`/`about:`) and a 2xx/3xx is a normal
+ * load — neither is treated as a failure. Pure so it can be unit-tested.
+ */
+export function isErrorResponseCode(code: number): boolean {
+  return code === 0 || code >= 400
+}
+
+/**
+ * An HTTP-server error RESPONSE (4xx/5xx) that committed a real (non-blank) error
+ * page (Bug #7). Distinct from `isErrorResponseCode`: a Chromium-generated error
+ * page commits with code `0` and is ALWAYS preceded by a real `did-fail-load`, so
+ * re-emitting a failure for code `0` would be redundant. The 4xx/5xx case, by
+ * contrast, fires NO `did-fail-load` (the server answered) — its `did-navigate`
+ * carries the only failure signal, so it needs its own terminal `did-fail-load`
+ * emit or the board is stranded on "connecting" forever. Pure / unit-testable.
+ */
+export function isHttpErrorCode(code: number): boolean {
+  return code >= 400
+}
+
+/**
+ * Schemes the preview's OWN native view is allowed to load (Bug #32). A Browser
+ * board previews a localhost dev server, never the local filesystem or arbitrary
+ * protocols — `file:`/`data:`/`smb:`/custom schemes are rejected at this trust
+ * boundary so the preview can never become a general browser / file viewer,
+ * regardless of how `board.url` was set (typed, pasted, or imported in Phase 3).
+ * Pure (parses with the WHATWG `URL`) so it is unit-testable.
+ */
+export function isAllowedPreviewUrl(rawUrl: string): boolean {
+  let u: URL
+  try {
+    u = new URL(rawUrl)
+  } catch {
+    return false
+  }
+  return u.protocol === 'http:' || u.protocol === 'https:'
+}
+
+/**
+ * Schemes we hand to the OS via `shell.openExternal` (Bug #23). Untrusted preview
+ * content can call `window.open('file:///…')` / `smb://…` / a registered custom
+ * protocol; without this gate that URL would be handed straight to the OS handler.
+ * Restrict to web + mail; everything else is silently dropped. Pure / unit-testable.
+ */
+export function isAllowedExternal(rawUrl: string): boolean {
+  let u: URL
+  try {
+    u = new URL(rawUrl)
+  } catch {
+    return false
+  }
+  return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:'
+}
+
+/** Open a URL in the OS browser ONLY if its scheme is allowlisted (Bug #23). */
+function openExternalSafe(rawUrl: string): void {
+  if (isAllowedExternal(rawUrl)) void shell.openExternal(rawUrl)
+}
 
 function round(b: Rectangle): Rectangle {
   return {
@@ -71,27 +140,62 @@ function ensure(id: string, win: BrowserWindow): Entry {
         partition: `preview-${id}`
       }
     })
-    e = { view, attached: false, zoom: 1 }
+    e = { view, attached: false, zoom: 1, failed: false }
     views.set(id, e)
     const wc = view.webContents
     // External links open in the OS browser, never inside the preview (security:
-    // the preview must never become a general web browser / nav target).
+    // the preview must never become a general web browser / nav target). The scheme
+    // is allowlisted (Bug #23) so untrusted preview content can't smuggle a
+    // file:/smb:/custom-protocol URL to the OS handler via window.open.
     wc.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(url)
+      openExternalSafe(url)
       return { action: 'deny' }
     })
+    // Defense-in-depth (Bug #16/#32): block an in-page link/script navigation to a
+    // disallowed scheme (file:/data:/external) so a previewed page can't turn the
+    // view into a general browser / file viewer. The URL bar drives navigation via
+    // `preview:navigate` → loadURL (already scheme-gated), not through this path, so
+    // legitimate localhost navigation is unaffected.
+    wc.on('will-navigate', (ev, url) => {
+      if (!isAllowedPreviewUrl(url)) ev.preventDefault()
+    })
+    // A fresh main-frame navigation clears the failed latch — until proven otherwise
+    // (a later did-fail-load), this load is assumed good.
+    wc.on('did-start-navigation', (details) => {
+      if (details.isMainFrame) e!.failed = false
+    })
     // Re-apply the held zoom factor after each load so the page keeps laying out at
-    // its fixed CSS width W (otherwise a load resets the factor to 1).
+    // its fixed CSS width W (otherwise a load resets the factor to 1). ALWAYS re-apply
+    // zoom (even the error page lays out), but only report "connected" when the load
+    // didn't fail — Chromium's error page fires its own did-finish-load AFTER
+    // did-fail-load, which would otherwise clobber the load-failed state (Bug #5).
     wc.on('did-finish-load', () => {
       try {
         wc.setZoomFactor(e!.zoom)
       } catch {
         /* view gone */
       }
-      emit({ id, type: 'did-finish-load', url: wc.getURL() })
+      if (!e!.failed) emit({ id, type: 'did-finish-load', url: wc.getURL() })
     })
     // Surface navigation so the renderer can update the URL bar + back/fwd state.
-    wc.on('did-navigate', (_ev, url) => {
+    // An error page navigates with httpResponseCode 0 (or ≥400 for HTTP errors) →
+    // treat it as a failure latch even if did-fail-load didn't fire.
+    wc.on('did-navigate', (_ev, url, httpResponseCode) => {
+      if (isErrorResponseCode(httpResponseCode)) e!.failed = true
+      // Bug #7: a 4xx/5xx server RESPONSE commits a real (non-blank) error page but
+      // fires NO did-fail-load — so this did-navigate carries the only failure signal.
+      // Without a terminal status the board stays "connecting" forever. Emit a
+      // did-fail-load so the renderer resolves to "load-failed". Gated on ≥400 only:
+      // code 0 (Chromium's own error page) already followed a real did-fail-load.
+      if (isHttpErrorCode(httpResponseCode)) {
+        emit({
+          id,
+          type: 'did-fail-load',
+          url,
+          errorCode: httpResponseCode,
+          errorDescription: `HTTP ${httpResponseCode}`
+        })
+      }
       emit({
         id,
         type: 'did-navigate',
@@ -111,9 +215,11 @@ function ensure(id: string, win: BrowserWindow): Entry {
       })
     })
     // Only the top-level (main-frame) load failure is a board-level "load-failed"
-    // state; sub-resource/aborted loads (errorCode -3) are ignored.
+    // state; sub-resource/aborted loads (errorCode -3) are ignored. Latch `failed`
+    // AFTER that guard so the error page's subsequent did-finish-load is suppressed.
     wc.on('did-fail-load', (_ev, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return
+      e!.failed = true
       emit({ id, type: 'did-fail-load', url: validatedURL, errorCode, errorDescription })
     })
   }
@@ -185,8 +291,23 @@ export function registerPreviewHandlers(
     if (!win) throw new Error('preview:open — no window')
     const e = ensure(args.id, win)
     attach(e, args.bounds, args.zoomFactor)
-    void e.view.webContents.loadURL(args.url || defaultUrl)
-    return { url: args.url || defaultUrl }
+    const url = args.url || defaultUrl
+    // Scheme allowlist at the trust boundary (Bug #32): only http(s) loads, so a
+    // file:/data:/external-protocol URL can never be fetched into the native view.
+    // A rejected URL emits a terminal failure so the board shows "Couldn't load".
+    if (isAllowedPreviewUrl(url)) {
+      void e.view.webContents.loadURL(url)
+    } else {
+      e.failed = true
+      emit({
+        id: args.id,
+        type: 'did-fail-load',
+        url,
+        errorCode: -1,
+        errorDescription: 'blocked scheme'
+      })
+    }
+    return { url }
   })
 
   // One coalesced batch for ALL views per frame (the channel is shared with
@@ -239,6 +360,19 @@ export function registerPreviewHandlers(
   ipcMain.handle('preview:navigate', (_e, args: { id: string; url: string }) => {
     const e = views.get(args.id)
     if (!e) return false
+    // Scheme allowlist (Bug #32) — same trust boundary as preview:open. A blocked
+    // scheme is not loaded; the board is told it failed so it doesn't hang.
+    if (!isAllowedPreviewUrl(args.url)) {
+      e.failed = true
+      emit({
+        id: args.id,
+        type: 'did-fail-load',
+        url: args.url,
+        errorCode: -1,
+        errorDescription: 'blocked scheme'
+      })
+      return false
+    }
     void e.view.webContents.loadURL(args.url)
     return true
   })
@@ -285,8 +419,16 @@ export function disposeAll(): void {
 export async function debugCaptureView(id: string): Promise<{ attached: boolean; empty: boolean }> {
   const e = views.get(id)
   if (!e || !e.attached) return { attached: false, empty: true }
-  const img = await e.view.webContents.capturePage()
-  return { attached: true, empty: img.isEmpty() }
+  try {
+    const img = await e.view.webContents.capturePage()
+    return { attached: true, empty: img.isEmpty() }
+  } catch {
+    // No composited display surface (headless / GPU-contended host, e.g. several
+    // Electron instances at once): capturePage rejects. Report empty rather than
+    // letting the rejection abort the whole e2e run before any marker prints — the
+    // browser part then fails gracefully while the other board asserts still report.
+    return { attached: true, empty: true }
+  }
 }
 
 /** E2E ONLY — ids of every native preview view currently created. */

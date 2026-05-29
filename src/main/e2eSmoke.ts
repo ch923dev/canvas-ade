@@ -11,12 +11,16 @@
 import type { BrowserWindow } from 'electron'
 import { summarizeE2E, type E2EPart } from './e2eReport'
 import { debugCaptureView } from './preview'
+import { debugTerminalPid, debugWriteTerminal } from './pty'
 
 // Markers go to stdout via bare console.log — safe here because index.ts installs a
 // process.stdout 'error' handler (EPIPE swallow) before this runs whenever SMOKE is set.
 
 /** Sentinel echoed into a terminal board to prove the PTY↔xterm data plane. */
 export const TERM_SENTINEL = 'CANVAS_E2E_TERM_OK'
+
+/** Second sentinel — proves a respawned (config-changed) session is live (fix #1). */
+export const TERM_SENTINEL2 = 'CANVAS_E2E_RESPAWN_OK'
 
 function evalIn<T>(win: BrowserWindow, expr: string): Promise<T> {
   return win.webContents.executeJavaScript(expr, true) as Promise<T>
@@ -97,6 +101,34 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }
   parts.push({ name: 'browser', ok: browserOk, detail: capDetail })
 
+  // ── Occlusion fix (node-drag/resize detach): a node gesture must DETACH every live
+  // native view to its HTML snapshot — a native WebContentsView paints above all HTML,
+  // so without this a board dragged over a live Browser board is occluded by it. Drive
+  // previewStore.nodeGesture and assert the live flag drops on start, restores on end. ──
+  let gestureDetail = 'browser not live'
+  let gestureOk = false
+  if (browserOk) {
+    await evalIn(win, 'window.__canvasE2E.setGesture(true)')
+    const detached = await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === false
+    }, 5000)
+    await evalIn(win, 'window.__canvasE2E.setGesture(false)')
+    const reattached = await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === true
+    }, 8000)
+    gestureOk = detached && reattached
+    gestureDetail = `detached=${detached} reattached=${reattached}`
+  }
+  parts.push({ name: 'browser-gesture', ok: gestureOk, detail: gestureDetail })
+
   // ── Planning: seed, add a checklist element, assert it persisted on the board AND
   // that the whole canvas round-trips through the schema (persistence-readiness). ──
   const planId = await evalIn<string>(win, "window.__canvasE2E.seedBoard('planning')")
@@ -116,8 +148,109 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: `elements=[${planProbe.kinds.join(',')}] roundTrip=${planProbe.roundTrip}`
   })
 
+  // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
+  // kill its PTY. e2eTerminals registration tracks the xterm mount, so the board
+  // staying mounted across LOD proves the session survives (pre-fix BoardNode
+  // early-returned a LOD card → TerminalBoard unmounted → registration dropped). ──
+  await evalIn(win, 'window.__canvasE2E.setZoom(0.2)') // < LOD_ZOOM (0.4)
+  const lodAlive = await poll(
+    () => evalIn<boolean>(win, `window.__canvasE2E.terminalMounted(${JSON.stringify(termId)})`),
+    3000
+  )
+  parts.push({
+    name: 'terminal-lod',
+    ok: lodAlive,
+    detail: lodAlive ? 'mounted across LOD (session alive)' : 'unmounted at LOD (PTY killed)'
+  })
+
+  // ── Fix #1 (restart/config respawn): changing launchCommand tears the old PTY
+  // down and spawns a new one under the SAME board id — the path that raced. The
+  // new session must come up and echo a fresh sentinel (a stale old-process onExit
+  // must not reap it). Restore zoom first so xterm relayouts before reading. ──
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(termId)}, { launchCommand: 'echo ${TERM_SENTINEL2}' })`
+  )
+  const respawnOk = await poll(async () => {
+    const text = await evalIn<string | null>(
+      win,
+      `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+    )
+    return typeof text === 'string' && text.includes(TERM_SENTINEL2)
+  }, 10000)
+  parts.push({
+    name: 'terminal-respawn',
+    ok: respawnOk,
+    detail: respawnOk ? 'new session echoed after respawn' : 'respawned session not alive'
+  })
+
+  // ── #15 (park/adopt on undo): write a unique marker into the live terminal,
+  // capture its pid, delete the board (parks the session), undo (adopts it), then
+  // assert the SAME pid is back AND the marker replayed from the buffer — a fresh
+  // spawn would have neither. Restore zoom first so the re-mounted xterm lays out. ──
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  const ADOPT_MARKER = 'CANVAS_E2E_ADOPT_MARKER'
+  debugWriteTerminal(termId, `echo ${ADOPT_MARKER}\r`)
+  const markerSeen = await poll(async () => {
+    const text = await evalIn<string | null>(
+      win,
+      `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+    )
+    return typeof text === 'string' && text.includes(ADOPT_MARKER)
+  }, 8000)
+  const pidBefore = debugTerminalPid(termId)
+  await evalIn(win, `window.__canvasE2E.deleteBoard(${JSON.stringify(termId)})`)
+  await delay(200) // let the unmount + park settle
+  await evalIn(win, 'window.__canvasE2E.undo()')
+  const adoptedOk = await poll(async () => {
+    const pidNow = debugTerminalPid(termId)
+    const text = await evalIn<string | null>(
+      win,
+      `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+    )
+    return (
+      pidNow !== null &&
+      pidBefore !== null &&
+      pidNow === pidBefore &&
+      typeof text === 'string' &&
+      text.includes(ADOPT_MARKER)
+    )
+  }, 10000)
+  parts.push({
+    name: 'terminal-adopt',
+    ok: markerSeen && adoptedOk,
+    detail:
+      markerSeen && adoptedOk
+        ? `same pid ${pidBefore} + scrollback replayed after undo`
+        : `markerSeen=${markerSeen} pidBefore=${pidBefore} adoptedOk=${adoptedOk}`
+  })
+
+  // ── Fix #4 (dead-URL status): a refused connection must end as 'load-failed',
+  // NOT 'connected' (Chromium's error-page did-finish-load previously clobbered the
+  // failure). Seed a browser at a closed port and assert the runtime status. ──
+  const deadUrl = 'http://127.0.0.1:59999/' // nothing listens → connection refused
+  const deadId = await evalIn<string>(
+    win,
+    `window.__canvasE2E.seedBoard('browser', { url: ${JSON.stringify(deadUrl)} })`
+  )
+  await delay(150)
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(deadId)})`)
+  const failedOk = await poll(async () => {
+    const rt = await evalIn<{ status: string; live: boolean } | null>(
+      win,
+      `window.__canvasE2E.getRuntime(${JSON.stringify(deadId)})`
+    )
+    return rt?.status === 'load-failed'
+  }, 12000)
+  parts.push({
+    name: 'browser-deadurl',
+    ok: failedOk,
+    detail: failedOk ? 'refused URL → load-failed' : `did not reach load-failed`
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
-  parts.push({ name: 'seed', ok: count === 3, detail: `${count} boards` })
+  parts.push({ name: 'seed', ok: count === 4, detail: `${count} boards` })
 
   const summary = summarizeE2E(parts)
   for (const p of parts) console.log(`E2E_${p.name.toUpperCase()} ${JSON.stringify(p)}`)

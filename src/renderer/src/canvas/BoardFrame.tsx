@@ -286,7 +286,7 @@ export function BoardFrame({
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
           {actions}
           {onFull && <IconBtn name="maximize" title="Full view" size={14} onClick={onFull} />}
-          <IconBtn name="more" title="More" onClick={onMore} />
+          {onMore && <IconBtn name="more" title="More" onClick={onMore} />}
         </div>
       </div>
 

@@ -42,6 +42,28 @@ describe('addBoard', () => {
     const b = get().addBoard('terminal', { x: 0, y: 0 })
     expect(a).not.toBe(b)
   })
+
+  it('cascades a board added at an already-occupied position so they do not fully stack', () => {
+    get().addBoard('terminal', { x: 100, y: 100 })
+    get().addBoard('terminal', { x: 100, y: 100 })
+    const [a, b] = get().boards
+    // The second board must not land at the exact same top-left as the first.
+    expect(b.x === a.x && b.y === a.y).toBe(false)
+  })
+
+  it('does not cascade a board added at a clear position', () => {
+    get().addBoard('terminal', { x: 100, y: 100 })
+    get().addBoard('terminal', { x: 900, y: 900 })
+    expect(get().boards[1]).toMatchObject({ x: 900, y: 900 })
+  })
+
+  it('cascades repeated co-located adds to distinct positions', () => {
+    get().addBoard('terminal', { x: 0, y: 0 })
+    get().addBoard('terminal', { x: 0, y: 0 })
+    get().addBoard('terminal', { x: 0, y: 0 })
+    const positions = get().boards.map((b) => `${b.x},${b.y}`)
+    expect(new Set(positions).size).toBe(3)
+  })
 })
 
 describe('removeBoard', () => {
@@ -75,9 +97,27 @@ describe('updateBoard', () => {
 
   it('leaves other boards untouched', () => {
     const a = get().addBoard('terminal', { x: 0, y: 0 })
-    get().addBoard('terminal', { x: 0, y: 0 })
+    get().addBoard('terminal', { x: 900, y: 900 })
     get().updateBoard(a, { x: 500 })
-    expect(get().boards[1].x).toBe(0)
+    expect(get().boards[1].x).toBe(900)
+  })
+
+  it('ignores id/type in the patch — a patch can never re-identify or re-type a board', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    // A stray id/type in the patch must not create a cross-type hybrid or steal the id.
+    get().updateBoard(id, {
+      id: 'spoofed',
+      type: 'browser',
+      url: 'http://evil',
+      title: 'x'
+    } as never)
+    const b = get().boards[0]
+    expect(b.id).toBe(id)
+    expect(b.type).toBe('terminal')
+    // The off-type `url` field must not have leaked onto the terminal board.
+    expect((b as unknown as Record<string, unknown>).url).toBeUndefined()
+    // The legitimate part of the patch still applies.
+    expect(b.title).toBe('x')
   })
 })
 
@@ -146,5 +186,51 @@ describe('undo/redo history', () => {
     expect(get().boards[0].x).toBe(200)
     get().undo()
     expect(get().boards[0].x).toBe(0)
+  })
+
+  it('updateBoard after an undo discards the redo branch (no stale redo)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 200 }) // checkpoint A → x=200, redo branch armed by undo below
+    get().undo() // back to x=0, future = [x=200]
+    expect(get().boards[0].x).toBe(0)
+    // A fresh edit must invalidate the stale redo branch — redo must NOT clobber it.
+    get().updateBoard(id, { x: 333 })
+    expect(get().boards[0].x).toBe(333)
+    get().redo() // future was cleared → no-op, the post-undo edit survives
+    expect(get().boards[0].x).toBe(333)
+  })
+
+  it('resizeBoard after an undo discards the redo branch (no stale redo)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().resizeBoard(id, 800, 600)
+    get().undo() // back to default size, future armed
+    get().resizeBoard(id, 500, 400)
+    expect(get().boards[0]).toMatchObject({ w: 500, h: 400 })
+    get().redo() // future cleared → no-op
+    expect(get().boards[0]).toMatchObject({ w: 500, h: 400 })
+  })
+
+  it('updateBoard with no matching board leaves an armed redo branch intact', () => {
+    get().addBoard('terminal', { x: 0, y: 0 })
+    get().undo() // remove the board; future = [the add]
+    get().updateBoard('does-not-exist', { x: 9 }) // no board changed → keep redo
+    get().redo()
+    expect(get().boards).toHaveLength(1)
+  })
+
+  // The Canvas-side focus-clear on undo/redo (#30 / #38) relies on undo/redo
+  // nulling selectedId; lock that contract so a refactor can't silently break it.
+  it('undo and redo clear the selection', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 200 })
+    get().selectBoard(id)
+    get().undo()
+    expect(get().selectedId).toBeNull()
+    get().selectBoard(id)
+    get().redo()
+    expect(get().selectedId).toBeNull()
   })
 })

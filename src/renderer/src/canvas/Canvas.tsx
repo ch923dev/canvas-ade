@@ -44,6 +44,8 @@ import { installE2EHooks } from '../smoke/e2eHooks'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const FIT_OPTIONS = { padding: 0.2, maxZoom: 1 } as const
+/** "Reset zoom" (0 / %): recenter on content pinned at 100% so it can't strand boards (#41). */
+const RESET_OPTIONS = { padding: 0.2, maxZoom: 1, minZoom: 1 } as const
 /** Single-board focus framing (DESIGN.md §5/§9: ~70px pad, 200ms animate). */
 const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX, duration: 200 } as const
 
@@ -77,6 +79,9 @@ function CanvasInner(): ReactElement {
   const paneRef = useRef<HTMLDivElement>(null)
   // Live native-view count (Browser boards) for the diagnostics overlay.
   const liveViews = usePreviewStore(selectLiveCount)
+  // Signal a board drag/resize to the preview layer so it detaches live native
+  // views to snapshots for the duration (they'd otherwise paint over the moved board).
+  const setNodeGesture = usePreviewStore((s) => s.setNodeGesture)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [diag, setDiag] = useState(import.meta.env.DEV)
@@ -110,6 +115,11 @@ function CanvasInner(): ReactElement {
         else if (intent.kind === 'deselect') {
           if (nextSel === undefined) nextSel = null
         } else if (intent.kind === 'remove') {
+          // #15: parking a terminal's live session BEFORE removal lets undo adopt it.
+          // Sent before removeBoard → main parks before the unmount's kill arrives
+          // (a single renderer's IPC is delivered in send order).
+          const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
+          if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id)
           removeBoard(intent.id)
           setFocusedId((f) => (f === intent.id ? null : f))
         }
@@ -128,6 +138,8 @@ function CanvasInner(): ReactElement {
       const c = rf.screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
       const size = DEFAULT_BOARD_SIZE[type]
       useCanvasStore.getState().addBoard(type, { x: c.x - size.w / 2, y: c.y - size.h / 2 })
+      // Exit focus mode so the new board (and the rest) aren't born dimmed (#14).
+      setFocusedId(null)
     },
     [rf]
   )
@@ -143,12 +155,30 @@ function CanvasInner(): ReactElement {
     [rf, selectBoard]
   )
 
-  const onNodeDragStart = useCallback(() => beginChange(), [beginChange])
+  // Drag start: checkpoint for undo + detach live preview views (snapshot carries
+  // the motion + restores z-order so a dragged board isn't occluded). Stop: reattach.
+  const onNodeDragStart = useCallback(() => {
+    beginChange()
+    setNodeGesture(true)
+  }, [beginChange, setNodeGesture])
+  const onNodeDragStop = useCallback(() => setNodeGesture(false), [setNodeGesture])
 
   const clearSelection = useCallback(() => {
     selectBoard(null)
     setFocusedId(null)
   }, [selectBoard])
+
+  // Undo/redo clears store selection (canvasStore) but focus is local component
+  // state — clearing it here keeps focus following selection so undo/redo can't
+  // leave others dimmed with no ringed/selected board (#30 / #38, same defect).
+  const doUndo = useCallback(() => {
+    undo()
+    setFocusedId(null)
+  }, [undo])
+  const doRedo = useCallback(() => {
+    redo()
+    setFocusedId(null)
+  }, [redo])
 
   // Heal a stale focus (e.g. after undoing the focused board's creation): if the
   // focused board no longer exists, drop focus so others don't stay dimmed.
@@ -171,29 +201,31 @@ function CanvasInner(): ReactElement {
       const mod = (e.ctrlKey || e.metaKey) && !e.altKey
       if (mod && e.key.toLowerCase() === 'z' && !typing) {
         e.preventDefault()
-        if (e.shiftKey) redo()
-        else undo()
+        if (e.shiftKey) doRedo()
+        else doUndo()
         return
       }
       if (mod && e.key.toLowerCase() === 'y' && !e.shiftKey && !typing) {
         e.preventDefault()
-        redo()
+        doRedo()
         return
       }
       if (e.key === 'Escape' && !typing) {
         clearSelection()
-      } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+      } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
         e.preventDefault()
         setDiag((v) => !v)
       } else if (e.key === '1' && !typing) {
         void rf.fitView(FIT_OPTIONS)
       } else if (e.key === '0' && !typing) {
-        void rf.zoomTo(1)
+        // Recenter content at 100% rather than zoomTo(1)-in-place, which can
+        // strand every board off-screen after a far pan/zoom (#41).
+        void rf.fitView(RESET_OPTIONS)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, undo, redo])
+  }, [rf, clearSelection, doUndo, doRedo])
 
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
@@ -210,6 +242,7 @@ function CanvasInner(): ReactElement {
         onPaneClick={clearSelection}
         onNodeDoubleClick={focusBoard}
         onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         minZoom={Z_MIN}
         maxZoom={Z_MAX}
         fitView
@@ -227,7 +260,7 @@ function CanvasInner(): ReactElement {
             WebContentsView to the camera. Renders nothing (returns null); it owns
             the native-view lifecycle only. The Browser board is the sole board type
             allowed to touch this file. */}
-        <BrowserPreviewLayer paneRef={paneRef} />
+        <BrowserPreviewLayer paneRef={paneRef} focusedId={focusedId} />
       </ReactFlow>
 
       {boards.length === 0 && <EmptyState onAdd={addCentered} />}

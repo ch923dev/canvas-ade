@@ -54,6 +54,41 @@ export interface CanvasState {
 
 const newId = (): string => crypto.randomUUID()
 
+/** Cascade step (world px) per occupied slot + a guard cap on the walk. */
+const CASCADE_STEP = 28
+const CASCADE_MAX = 24
+
+/**
+ * Nudge a new board's top-left off any board already sitting at (≈) the same spot
+ * so repeated centered adds don't fully stack (#42). Deterministic: walk a fixed
+ * diagonal step until a free slot is found. The cap keeps the walk bounded if a
+ * canvas is pathologically dense at that exact diagonal.
+ */
+function cascadePosition(boards: Board[], at: { x: number; y: number }): { x: number; y: number } {
+  const occupied = (x: number, y: number): boolean =>
+    boards.some((b) => Math.abs(b.x - x) < 1 && Math.abs(b.y - y) < 1)
+  let x = at.x
+  let y = at.y
+  for (let i = 1; occupied(x, y) && i <= CASCADE_MAX; i++) {
+    x = at.x + i * CASCADE_STEP
+    y = at.y + i * CASCADE_STEP
+  }
+  return { x, y }
+}
+
+/**
+ * Patch keys a board of each type may accept — id/type are never patchable, and an
+ * off-type field (e.g. `url`) must never land on a board it doesn't belong to (that
+ * would forge a cross-type hybrid the discriminated union forbids). The common,
+ * geometry/title keys are mergeable on every type.
+ */
+const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z'] as const
+const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
+  terminal: [...COMMON_KEYS, 'shell', 'launchCommand', 'cwd', 'port'],
+  browser: [...COMMON_KEYS, 'url', 'viewport'],
+  planning: [...COMMON_KEYS, 'elements']
+}
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   boards: [],
   selectedId: null,
@@ -63,7 +98,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addBoard: (type, at) => {
     const id = newId()
-    const board = createBoard(type, { id, x: at.x, y: at.y })
+    const pos = cascadePosition(get().boards, at)
+    const board = createBoard(type, { id, x: pos.x, y: pos.y })
     set((s) => ({
       past: recordPast(s.past, s.boards),
       future: [],
@@ -82,18 +118,40 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     })),
 
   updateBoard: (id, patch) =>
-    set((s) => ({
-      boards: s.boards.map((b) => (b.id === id ? ({ ...b, ...patch } as Board) : b))
-    })),
+    set((s) => {
+      // A patch may carry props (move, rename, per-type fields) but MUST NOT change
+      // a board's identity or type, nor smuggle an off-type field (e.g. a `url`
+      // landing on a terminal board) — that would forge a cross-type hybrid the
+      // discriminated union forbids. So we keep only the keys valid for the target
+      // board's type before the merge, which keeps the cast sound.
+      const src = patch as Record<string, unknown>
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id) return b
+        const allowed = PATCHABLE_KEYS[b.type]
+        const safe: Record<string, unknown> = {}
+        for (const key of allowed) {
+          if (key in src) safe[key] = src[key]
+        }
+        changed = true
+        return { ...b, ...safe } as Board
+      })
+      if (!changed) return s
+      // A live edit invalidates any armed redo branch (else redo could clobber it).
+      return s.future.length ? { boards, future: [] } : { boards }
+    }),
 
   resizeBoard: (id, w, h) =>
-    set((s) => ({
-      boards: s.boards.map((b) =>
-        b.id === id
-          ? { ...b, w: Math.max(MIN_BOARD_SIZE.w, w), h: Math.max(MIN_BOARD_SIZE.h, h) }
-          : b
-      )
-    })),
+    set((s) => {
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id) return b
+        changed = true
+        return { ...b, w: Math.max(MIN_BOARD_SIZE.w, w), h: Math.max(MIN_BOARD_SIZE.h, h) }
+      })
+      if (!changed) return s
+      return s.future.length ? { boards, future: [] } : { boards }
+    }),
 
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),

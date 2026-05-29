@@ -18,10 +18,14 @@ asarUnpack:
 
 npmRebuild: true
 
+# Arch is driven per-job by the CI matrix CLI flags (--x64 / --arm64), NOT pinned
+# here — a hardcoded `arch: [x64, arm64]` overrides the flag and makes a single-arch
+# job (e.g. the native arm64 Linux runner) also attempt the other arch, which g++
+# can't cross-build (`-m64` unsupported on arm). Leaving arch unset lets each
+# native runner build only what its CLI flag requests.
 win:
   target:
     - target: nsis
-      arch: [x64, arm64]
   artifactName: ${productName}-${version}-${arch}.${ext}
 
 nsis:
@@ -31,7 +35,6 @@ nsis:
 mac:
   target:
     - target: dmg
-      arch: [x64, arm64]
   category: public.app-category.developer-tools
   # Signing/notarization wired in Phase 5; CI builds unsigned for now.
   identity: null
@@ -39,7 +42,6 @@ mac:
 linux:
   target:
     - target: AppImage
-      arch: [x64, arm64]
   category: Development
 
 # auto-update feed is configured in Phase 5; placeholder generic provider.

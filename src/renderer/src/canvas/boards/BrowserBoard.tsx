@@ -113,6 +113,7 @@ export function BrowserBoard({
   dimmed
 }: BoardViewProps<BrowserBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  const beginChange = useCanvasStore((s) => s.beginChange)
   const runtime = usePreviewStore(selectRuntime(board.id))
   const preset = VIEWPORT_PRESETS[board.viewport]
 
@@ -133,11 +134,16 @@ export function BrowserBoard({
       setDraftUrl(board.url)
       return
     }
+    // One undo checkpoint per committed URL edit (also clears any armed redo branch).
+    beginChange()
     updateBoard(board.id, { url: next })
   }
 
   const setViewport = (vp: BrowserViewport): void => {
-    if (vp !== board.viewport) updateBoard(board.id, { viewport: vp })
+    if (vp !== board.viewport) {
+      beginChange()
+      updateBoard(board.id, { viewport: vp })
+    }
   }
 
   // Device-frame outer rect in board-LOCAL coords (matches browserLayout exactly:
