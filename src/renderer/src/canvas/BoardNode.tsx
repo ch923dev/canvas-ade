@@ -33,6 +33,13 @@ export interface BoardViewProps<T extends Board = Board> {
   selected: boolean
   hovered: boolean
   dimmed: boolean
+  /**
+   * Camera is below `LOD_ZOOM` → the board should render its compact LOD card.
+   * Only TerminalBoard reads this: it stays MOUNTED at LOD (hides the xterm host,
+   * shows the card) so the live PTY/agent session survives zoom-out. The other
+   * board types never receive it — BoardNode renders their LOD card itself.
+   */
+  lod?: boolean
 }
 
 /** Status dot shown on the LOD card (no label at LOD). */
@@ -49,7 +56,12 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
 
-  if (lod) {
+  // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
+  // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).
+  // TerminalBoard reads `lod` and swaps the xterm host for its own LOD card while
+  // keeping the session alive. Other types are presentational at LOD — BoardNode
+  // renders their static LOD card and unmounts the heavy content.
+  if (lod && board.type !== 'terminal') {
     return (
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
         <BoardFrame
@@ -67,18 +79,21 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const common = { selected, hovered, dimmed }
   return (
     <>
-      <NodeResizer
-        minWidth={MIN_BOARD_SIZE.w}
-        minHeight={MIN_BOARD_SIZE.h}
-        isVisible={selected || hovered}
-        onResizeStart={() => useCanvasStore.getState().beginChange()}
-      />
+      {/* Hidden in LOD: the design shows no resize handles on LOD cards. */}
+      {!lod && (
+        <NodeResizer
+          minWidth={MIN_BOARD_SIZE.w}
+          minHeight={MIN_BOARD_SIZE.h}
+          isVisible={selected || hovered}
+          onResizeStart={() => useCanvasStore.getState().beginChange()}
+        />
+      )}
       <div
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{ position: 'absolute', inset: 0 }}
       >
-        {board.type === 'terminal' && <TerminalBoard board={board} {...common} />}
+        {board.type === 'terminal' && <TerminalBoard board={board} lod={lod} {...common} />}
         {board.type === 'browser' && <BrowserBoard board={board} {...common} />}
         {board.type === 'planning' && <PlanningBoard board={board} {...common} />}
       </div>

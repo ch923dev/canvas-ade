@@ -224,10 +224,117 @@ function isCanvasDoc(doc: unknown): doc is CanvasDoc {
   )
 }
 
+// ── Deep runtime validation (fix #5) ────────────────────────────────────────────
+// The envelope check (schemaVersion + boards[]) is not enough: a parseable but
+// corrupt board/element would slip through and crash a consumer later, bypassing
+// the Phase-3 `canvas.json.bak` fallback. These hand-rolled guards reject any board
+// or element that does not match the schema above, so `fromObject` throws and the
+// persistence layer can fall back to the backup. Kept dependency-free (no zod) to
+// match the rest of this module.
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+
+function isFiniteNum(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
+function fail(msg: string): never {
+  throw new Error(`fromObject: ${msg}`)
+}
+
+const VIEWPORTS: readonly BrowserViewport[] = ['mobile', 'tablet', 'desktop']
+const NOTE_TINTS: readonly NoteTint[] = ['yellow', 'blue', 'green', 'plain']
+
+/** Validate a single planning element by `kind`; throws on any mismatch. */
+function assertPlanningElement(el: unknown): void {
+  if (!isRecord(el)) fail('planning element is not an object')
+  if (typeof el.id !== 'string') fail('planning element has a non-string id')
+  if (!isFiniteNum(el.x) || !isFiniteNum(el.y)) fail('planning element has non-finite x/y')
+
+  switch (el.kind) {
+    case 'note':
+      if (typeof el.text !== 'string') fail('note element is missing string text')
+      if (!isFiniteNum(el.w) || !isFiniteNum(el.h)) fail('note element has non-finite w/h')
+      if (!NOTE_TINTS.includes(el.tint as NoteTint)) fail(`note element has invalid tint ${el.tint}`)
+      if (el.rotation !== undefined && !isFiniteNum(el.rotation)) {
+        fail('note element has a non-finite rotation')
+      }
+      return
+    case 'text':
+      if (typeof el.text !== 'string') fail('text element is missing string text')
+      return
+    case 'arrow':
+      if (!isFiniteNum(el.x2) || !isFiniteNum(el.y2)) fail('arrow element has non-finite x2/y2')
+      return
+    case 'stroke': {
+      const pts = el.points
+      if (!Array.isArray(pts)) fail('stroke element points is not an array')
+      if (pts.length % 2 !== 0) fail('stroke element points has odd length')
+      if (!pts.every(isFiniteNum)) fail('stroke element points has a non-finite value')
+      return
+    }
+    case 'checklist': {
+      if (typeof el.title !== 'string') fail('checklist element is missing string title')
+      if (!isFiniteNum(el.w) || !isFiniteNum(el.h)) fail('checklist element has non-finite w/h')
+      if (!Array.isArray(el.items)) fail('checklist element items is not an array')
+      for (const item of el.items) {
+        if (
+          !isRecord(item) ||
+          typeof item.id !== 'string' ||
+          typeof item.label !== 'string' ||
+          typeof item.done !== 'boolean'
+        ) {
+          fail('checklist element has a malformed item')
+        }
+      }
+      return
+    }
+    default:
+      fail(`planning element has an unknown kind ${String(el.kind)}`)
+  }
+}
+
+/** Validate one board (common fields + per-type fields); throws on any mismatch. */
+function assertBoard(b: unknown): void {
+  if (!isRecord(b)) fail('board is not an object')
+  if (typeof b.id !== 'string') fail('board has a non-string id')
+  if (typeof b.title !== 'string') fail('board has a non-string title')
+  if (!isFiniteNum(b.x) || !isFiniteNum(b.y) || !isFiniteNum(b.w) || !isFiniteNum(b.h)) {
+    fail('board has non-finite geometry (x/y/w/h)')
+  }
+  if (b.z !== undefined && !isFiniteNum(b.z)) fail('board has a non-finite z')
+
+  switch (b.type) {
+    case 'terminal':
+      if (b.shell !== undefined && typeof b.shell !== 'string') fail('terminal shell is not a string')
+      if (b.launchCommand !== undefined && typeof b.launchCommand !== 'string') {
+        fail('terminal launchCommand is not a string')
+      }
+      if (b.cwd !== undefined && typeof b.cwd !== 'string') fail('terminal cwd is not a string')
+      if (b.port !== undefined && !isFiniteNum(b.port)) fail('terminal port is not a number')
+      return
+    case 'browser':
+      if (typeof b.url !== 'string') fail('browser board is missing a string url')
+      if (!VIEWPORTS.includes(b.viewport as BrowserViewport)) {
+        fail(`browser board has an invalid viewport ${String(b.viewport)}`)
+      }
+      return
+    case 'planning':
+      if (!Array.isArray(b.elements)) fail('planning board elements is not an array')
+      b.elements.forEach(assertPlanningElement)
+      return
+    default:
+      fail(`board has an unknown type ${String(b.type)}`)
+  }
+}
+
 /** Parse + migrate an unknown value into a current-version document. */
 export function fromObject(doc: unknown): CanvasDoc {
   if (!isCanvasDoc(doc)) {
     throw new Error('fromObject: value is not a CanvasDoc (need numeric schemaVersion + boards[])')
   }
+  doc.boards.forEach(assertBoard)
   return migrate(doc)
 }

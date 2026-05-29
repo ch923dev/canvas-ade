@@ -182,7 +182,7 @@ function CanvasInner(): ReactElement {
       }
       if (e.key === 'Escape' && !typing) {
         clearSelection()
-      } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+      } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
         e.preventDefault()
         setDiag((v) => !v)
       } else if (e.key === '1' && !typing) {

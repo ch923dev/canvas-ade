@@ -133,9 +133,17 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     proc.onData((d) => port1.postMessage({ t: 'data', d }))
     proc.onExit(({ exitCode }) => {
-      port1.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
-      port1.postMessage({ t: 'exit', code: exitCode })
-      cleanup(opts.id)
+      // During a restart/config-respawn the port may already be closed (the new
+      // session has taken over this id), so a post would throw — guard it.
+      try {
+        port1.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
+        port1.postMessage({ t: 'exit', code: exitCode })
+      } catch {
+        /* port already closed by a newer session */
+      }
+      // Reference our OWN proc so a late exit from this (old) process cannot tear
+      // down a freshly respawned session that now occupies the same id.
+      cleanup(opts.id, proc)
     })
 
     port1.on('message', (e) => {
@@ -163,9 +171,28 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
   })
 }
 
-function cleanup(id: string): void {
+/**
+ * Identity guard for a process's own `onExit` cleanup: a late exit from an OLD
+ * process must NOT reap the session if the stored session has since been
+ * replaced by a NEW process under the same id. Reference identity only — pure,
+ * so it is unit-testable without the electron/node-pty runtime. `exiting` is
+ * `undefined` for an explicit `pty:kill`, which always proceeds.
+ */
+export function isStaleExit<T>(stored: T, exiting: T | undefined): boolean {
+  return exiting !== undefined && stored !== exiting
+}
+
+/**
+ * Tear down the session for `id`. Identity-aware: when `proc` is supplied (a
+ * process's own `onExit`), no-op unless the stored session still owns that exact
+ * process — this is what stops a stale OLD-process exit from reaping the NEW
+ * session that has since respawned under the same id. An explicit `pty:kill`
+ * passes no `proc` and always tears down the current session.
+ */
+function cleanup(id: string, proc?: pty.IPty): void {
   const s = sessions.get(id)
   if (!s) return
+  if (isStaleExit(s.proc, proc)) return
   sessions.delete(id)
   killTree(s.proc)
   try {

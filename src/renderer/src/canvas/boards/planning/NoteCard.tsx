@@ -76,9 +76,13 @@ export function NoteCard({
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {
+        // Only swallow the press in select mode (interactive editing/drag). In a
+        // draw mode (pen/arrow/place) let it fall through to the well so a stroke
+        // can START on top of the card (#6).
+        if (!interactive) return
         e.stopPropagation()
         // Drag from the card chrome, not from inside the textarea (let it focus).
-        if (interactive && e.target === e.currentTarget) onDragStart(e, note.id)
+        if (e.target === e.currentTarget) onDragStart(e, note.id)
       }}
       onDoubleClick={(e) => {
         e.stopPropagation()
@@ -109,7 +113,10 @@ export function NoteCard({
           spellCheck={false}
           onChange={(e) => onChangeText(note.id, e.target.value)}
           onFocus={() => onEditStart?.()}
-          onPointerDown={(e) => e.stopPropagation()}
+          // Let a draw gesture begin over the note body (#6); only block in select.
+          onPointerDown={(e) => {
+            if (interactive) e.stopPropagation()
+          }}
           onKeyDown={(e) => {
             e.stopPropagation()
             if (e.key === 'Backspace' && note.text.length === 0) onDelete(note.id)

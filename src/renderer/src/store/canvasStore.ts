@@ -54,6 +54,19 @@ export interface CanvasState {
 
 const newId = (): string => crypto.randomUUID()
 
+/**
+ * Patch keys a board of each type may accept — id/type are never patchable, and an
+ * off-type field (e.g. `url`) must never land on a board it doesn't belong to (that
+ * would forge a cross-type hybrid the discriminated union forbids). The common,
+ * geometry/title keys are mergeable on every type.
+ */
+const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z'] as const
+const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
+  terminal: [...COMMON_KEYS, 'shell', 'launchCommand', 'cwd', 'port'],
+  browser: [...COMMON_KEYS, 'url', 'viewport'],
+  planning: [...COMMON_KEYS, 'elements']
+}
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   boards: [],
   selectedId: null,
@@ -82,18 +95,40 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     })),
 
   updateBoard: (id, patch) =>
-    set((s) => ({
-      boards: s.boards.map((b) => (b.id === id ? ({ ...b, ...patch } as Board) : b))
-    })),
+    set((s) => {
+      // A patch may carry props (move, rename, per-type fields) but MUST NOT change
+      // a board's identity or type, nor smuggle an off-type field (e.g. a `url`
+      // landing on a terminal board) — that would forge a cross-type hybrid the
+      // discriminated union forbids. So we keep only the keys valid for the target
+      // board's type before the merge, which keeps the cast sound.
+      const src = patch as Record<string, unknown>
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id) return b
+        const allowed = PATCHABLE_KEYS[b.type]
+        const safe: Record<string, unknown> = {}
+        for (const key of allowed) {
+          if (key in src) safe[key] = src[key]
+        }
+        changed = true
+        return { ...b, ...safe } as Board
+      })
+      if (!changed) return s
+      // A live edit invalidates any armed redo branch (else redo could clobber it).
+      return s.future.length ? { boards, future: [] } : { boards }
+    }),
 
   resizeBoard: (id, w, h) =>
-    set((s) => ({
-      boards: s.boards.map((b) =>
-        b.id === id
-          ? { ...b, w: Math.max(MIN_BOARD_SIZE.w, w), h: Math.max(MIN_BOARD_SIZE.h, h) }
-          : b
-      )
-    })),
+    set((s) => {
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id) return b
+        changed = true
+        return { ...b, w: Math.max(MIN_BOARD_SIZE.w, w), h: Math.max(MIN_BOARD_SIZE.h, h) }
+      })
+      if (!changed) return s
+      return s.future.length ? { boards, future: [] } : { boards }
+    }),
 
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),

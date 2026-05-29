@@ -74,6 +74,28 @@ describe('array transforms (immutable)', () => {
     expect(removeElement(base, 'n').map((e) => e.id)).toEqual(['cl'])
     expect(removeElement(base, 'nope')).toHaveLength(2)
   })
+
+  it('a single moveElement to the final position matches the committed drag result (#9)', () => {
+    // The Planning board renders mid-drag positions transiently and commits only
+    // the final position once on pointer-up. A drag through several frames must
+    // therefore equal one moveElement to the last position — i.e. intermediate
+    // frames never need to touch the store.
+    const frames = [
+      [10, 10],
+      [20, 25],
+      [37, 42] // final (pointer-up position)
+    ] as const
+    const committedOnce = moveElement(base, 'n', 37, 42)
+    // Replaying every frame against the store would yield the same final state…
+    let replayed = base
+    for (const [x, y] of frames) replayed = moveElement(replayed, 'n', x, y)
+    const a = committedOnce.find((e) => e.id === 'n')!
+    const b = replayed.find((e) => e.id === 'n')!
+    expect([a.x, a.y]).toEqual([b.x, b.y])
+    expect([a.x, a.y]).toEqual([37, 42])
+    // …and crucially the base array is never mutated by the transient frames.
+    expect(base.find((e) => e.id === 'n')!.x).toBe(note.x)
+  })
 })
 
 describe('checklist mutations + live progress', () => {

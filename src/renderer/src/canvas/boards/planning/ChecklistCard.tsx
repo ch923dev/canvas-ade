@@ -111,7 +111,11 @@ export function ChecklistCard({
         flexDirection: 'column',
         gap: 9
       }}
-      onPointerDown={(e) => e.stopPropagation()}
+      // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
+      // fall through to the well so it can START over the card (#6).
+      onPointerDown={(e) => {
+        if (interactive) e.stopPropagation()
+      }}
     >
       {interactive && (
         <button
@@ -152,7 +156,10 @@ export function ChecklistCard({
           spellCheck={false}
           onChange={(e) => onChangeTitle(element.id, e.target.value)}
           onFocus={() => onEditStart?.()}
-          onPointerDown={(e) => e.stopPropagation()}
+          // Let a draw gesture begin over the title (#6); only block in select.
+          onPointerDown={(e) => {
+            if (interactive) e.stopPropagation()
+          }}
           onKeyDown={(e) => e.stopPropagation()}
           style={{
             flex: 1,
@@ -204,7 +211,11 @@ export function ChecklistCard({
             <button
               type="button"
               title={item.done ? 'Mark not done' : 'Mark done'}
-              onPointerDown={(e) => e.stopPropagation()}
+              // Block the press only in select mode; a draw gesture may begin over
+              // the checkbox and should reach the well (#6). Toggling is a click.
+              onPointerDown={(e) => {
+                if (interactive) e.stopPropagation()
+              }}
               onClick={(e) => {
                 e.stopPropagation()
                 onToggle(element.id, item.id)
@@ -228,7 +239,10 @@ export function ChecklistCard({
               spellCheck={false}
               onChange={(e) => onChangeItem(element.id, item.id, e.target.value)}
               onFocus={() => onEditStart?.()}
-              onPointerDown={(e) => e.stopPropagation()}
+              // Let a draw gesture begin over an item row (#6); block in select.
+              onPointerDown={(e) => {
+                if (interactive) e.stopPropagation()
+              }}
               onKeyDown={(e) => {
                 e.stopPropagation()
                 if (e.key === 'Enter') {

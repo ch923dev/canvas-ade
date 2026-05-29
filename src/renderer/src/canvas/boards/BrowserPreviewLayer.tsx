@@ -353,6 +353,13 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
   useEffect(() => {
     const off = window.api.onPreviewEvent((ev) => {
       if (ev.type === 'did-finish-load') {
+        // Respect a prior load-failed: a dead/refused URL loads a Chromium error page
+        // whose own did-finish-load must not flip the board back to "connected"
+        // (Bug #5). Main already latches `failed` and suppresses the emit in that
+        // case; this is the renderer-side belt-and-suspenders — only promote to
+        // connected from the in-flight `connecting` state, never override load-failed.
+        const cur = usePreviewStore.getState().byId[ev.id]?.status
+        if (cur === 'load-failed') return
         patchRuntime(ev.id, { status: 'connected', liveUrl: ev.url, error: null })
       } else if (ev.type === 'did-navigate') {
         patchRuntime(ev.id, {

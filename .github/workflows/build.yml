@@ -22,8 +22,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
+
+  # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
+  # runE2ESmoke sets process.exitCode + app.exit(code), so a failed assertion fails the job.
+  smoke:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Board e2e smoke
+        run: pnpm start
+        env:
+          CANVAS_SMOKE: e2e
 
   # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
   package:

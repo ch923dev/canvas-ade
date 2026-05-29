@@ -55,11 +55,13 @@ export function TerminalBoard({
   board,
   selected,
   hovered,
-  dimmed
+  dimmed,
+  lod = false
 }: BoardViewProps<TerminalBoardData>): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const webglRef = useRef<WebglAddon | null>(null)
   const portRef = useRef<MessagePort | null>(null)
 
   const [state, setState] = useState<TerminalState>('spawning')
@@ -95,8 +97,18 @@ export function TerminalBoard({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
+    // One WebGL context per terminal. Chromium caps live GL contexts (~16) and
+    // drops the OLDEST under churn — without a loss handler that terminal goes
+    // permanently blank. Dispose the addon on context loss so xterm transparently
+    // falls back to the DOM renderer; capture it so teardown frees the context.
     try {
-      term.loadAddon(new WebglAddon())
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => {
+        webgl.dispose()
+        webglRef.current = null
+      })
+      term.loadAddon(webgl)
+      webglRef.current = webgl
     } catch {
       /* GL unavailable — xterm falls back to the DOM/canvas renderer */
     }
@@ -189,6 +201,14 @@ export function TerminalBoard({
       }
       portRef.current = null
       if (isE2E()) e2eTerminals.delete(board.id)
+      // Free the WebGL context before disposing the terminal (no-op if a prior
+      // context-loss already disposed it and nulled the ref).
+      try {
+        webglRef.current?.dispose()
+      } catch {
+        /* already disposed */
+      }
+      webglRef.current = null
       term.dispose()
       termRef.current = null
       fitRef.current = null
@@ -241,36 +261,55 @@ export function TerminalBoard({
     </>
   )
 
+  // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
+  // session survives zoom-out — see BoardNode. At LOD we hide the xterm well and
+  // overlay the opaque LOD card on top (it fully covers the chrome beneath it),
+  // never tearing the terminal down. The card's dot reflects the live status, so a
+  // running agent still pulses `--ok` while zoomed out.
   return (
-    <BoardFrame
-      type="terminal"
-      title={board.title}
-      selected={selected}
-      hovered={hovered}
-      dimmed={dimmed}
-      status={status}
-      actions={actions}
-      contentBg="var(--inset)"
-    >
-      <div style={shell}>
-        {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
-        {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
-            `nodrag nowheel` stops React Flow from treating clicks as a node drag or
-            wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF
-            and force focus into xterm: otherwise RF focuses the node wrapper on
-            click and swallows keystrokes until a restart (the "can't type" bug). */}
-        <div
-          className="nodrag nowheel"
-          style={screenWrap}
-          onMouseDown={(e) => {
-            e.stopPropagation()
-            termRef.current?.focus()
-          }}
-        >
-          <div ref={screenRef} style={screen} />
+    <>
+      <BoardFrame
+        type="terminal"
+        title={board.title}
+        selected={selected}
+        hovered={hovered}
+        dimmed={dimmed}
+        status={status}
+        actions={actions}
+        contentBg="var(--inset)"
+      >
+        <div style={lod ? shellHidden : shell}>
+          {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+          {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
+              `nodrag nowheel` stops React Flow from treating clicks as a node drag or
+              wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF
+              and force focus into xterm: otherwise RF focuses the node wrapper on
+              click and swallows keystrokes until a restart (the "can't type" bug). */}
+          <div
+            className="nodrag nowheel"
+            style={screenWrap}
+            onMouseDown={(e) => {
+              e.stopPropagation()
+              termRef.current?.focus()
+            }}
+          >
+            <div ref={screenRef} style={screen} />
+          </div>
         </div>
-      </div>
-    </BoardFrame>
+      </BoardFrame>
+      {lod && (
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          <BoardFrame
+            type="terminal"
+            title={board.title}
+            selected={selected}
+            dimmed={dimmed}
+            lod
+            status={{ dot: status.dot }}
+          />
+        </div>
+      )}
+    </>
   )
 }
 
@@ -280,6 +319,9 @@ const shell: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column'
 }
+
+/** LOD: hide the xterm well (keep it mounted so the PTY session stays alive). */
+const shellHidden: React.CSSProperties = { ...shell, display: 'none' }
 
 const screenWrap: React.CSSProperties = {
   flex: 1,

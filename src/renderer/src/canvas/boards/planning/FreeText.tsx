@@ -63,7 +63,11 @@ export function FreeText({
         top: element.y,
         display: 'flex'
       }}
-      onPointerDown={(e) => e.stopPropagation()}
+      // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
+      // fall through to the well so it can START over the text (#6).
+      onPointerDown={(e) => {
+        if (interactive) e.stopPropagation()
+      }}
     >
       {interactive && (
         <button
@@ -105,7 +109,10 @@ export function FreeText({
         rows={1}
         onChange={(e) => onChangeText(element.id, e.target.value)}
         onFocus={() => onEditStart?.()}
-        onPointerDown={(e) => e.stopPropagation()}
+        // Let a draw gesture begin over the text (#6); only block in select.
+        onPointerDown={(e) => {
+          if (interactive) e.stopPropagation()
+        }}
         onKeyDown={(e) => {
           e.stopPropagation()
           if (e.key === 'Backspace' && element.text.length === 0) onDelete(element.id)

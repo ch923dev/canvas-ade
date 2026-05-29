@@ -91,6 +91,10 @@ export function PlanningBoard({
   // In-progress (uncommitted) gesture state — drawn as a draft until pointer-up.
   const [draftArrow, setDraftArrow] = useState<ArrowElement | null>(null)
   const [draftStroke, setDraftStroke] = useState<number[] | null>(null)
+  // Transient element-move position — rendered live during a drag, committed to
+  // the store ONCE on pointer-up (mirrors the arrow/pen draft pattern) so a move
+  // is a single undo checkpoint, not one mutation per frame (#9).
+  const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null)
   // Active drag (an element move, an arrow, or a pen stroke) → captured pointer.
   const drag = useRef<
     | { mode: 'move'; id: string; offX: number; offY: number }
@@ -188,8 +192,11 @@ export function PlanningBoard({
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
   const onWellPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
-      // Only react to a press that lands on the empty well (not an element).
-      if (e.target !== e.currentTarget) return
+      // In select mode, only react to a press on the EMPTY well (element presses
+      // are owned by the cards). In a DRAW mode the press may have fallen through
+      // a card (cards no longer stop it — #6), so proceed regardless of target and
+      // let the well capture the whole gesture below.
+      if (tool === 'select' && e.target !== e.currentTarget) return
       setSelectedElId(null)
       const p = toBoard(e)
 
@@ -234,7 +241,9 @@ export function PlanningBoard({
       if (!d) return
       const p = toBoard(e)
       if (d.mode === 'move') {
-        commit(moveElement(elements, d.id, Math.round(p.x - d.offX), Math.round(p.y - d.offY)))
+        // Transient: render the dragged element at the live position; the store is
+        // written once on pointer-up so undo stays one checkpoint per drag (#9).
+        setDragPos({ id: d.id, x: Math.round(p.x - d.offX), y: Math.round(p.y - d.offY) })
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
       } else if (d.mode === 'pen') {
@@ -242,7 +251,7 @@ export function PlanningBoard({
         setDraftStroke(d.points)
       }
     },
-    [commit, elements, toBoard]
+    [toBoard]
   )
 
   // Double-click empty whiteboard in select mode → drop a free-text element.
@@ -261,7 +270,13 @@ export function PlanningBoard({
     const d = drag.current
     drag.current = null
     if (!d) return
-    if (d.mode === 'arrow') {
+    if (d.mode === 'move') {
+      // Commit the final position ONCE (beginChange already snapshotted at drag
+      // start, so the whole drag is a single undo checkpoint — #9).
+      const pos = dragPos
+      setDragPos(null)
+      if (pos) commit(moveElement(elements, pos.id, pos.x, pos.y))
+    } else if (d.mode === 'arrow') {
       const a = draftArrow
       setDraftArrow(null)
       // Discard a degenerate (no-drag) arrow.
@@ -275,7 +290,7 @@ export function PlanningBoard({
       if (pts.length >= 4) commit([...elements, makeStroke(newId(), pts)])
       setTool('select')
     }
-  }, [draftArrow, commit, elements])
+  }, [draftArrow, dragPos, commit, elements])
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
@@ -311,6 +326,13 @@ export function PlanningBoard({
 
   const arrows = elements.filter((e): e is ArrowElement => e.kind === 'arrow')
   const strokes = elements.filter((e): e is StrokeElement => e.kind === 'stroke')
+
+  // While a move is in flight, render the dragged element at its transient
+  // position (the store still holds the pre-drag position until pointer-up — #9).
+  // Only note/text/checklist are movable, so the SVG (arrows/strokes) is unaffected.
+  const viewElements = dragPos
+    ? moveElement(elements, dragPos.id, dragPos.x, dragPos.y)
+    : elements
 
   // The well captures the pen/arrow/place gestures; the draw tools also force a
   // crosshair cursor so the active mode is legible.
@@ -374,7 +396,7 @@ export function PlanningBoard({
         />
 
         {/* DOM elements: notes, free text, checklists. */}
-        {elements.map((el) => {
+        {viewElements.map((el) => {
           if (el.kind === 'note') {
             return (
               <NoteCard
