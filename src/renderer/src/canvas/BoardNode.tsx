@@ -11,6 +11,7 @@
 import { useState, type ReactElement } from 'react'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
+import { useCanvasStore } from '../store/canvasStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
 import { isLod } from '../lib/canvasView'
 import { BoardFrame, type BoardStatus } from './BoardFrame'
@@ -70,6 +71,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
         minWidth={MIN_BOARD_SIZE.w}
         minHeight={MIN_BOARD_SIZE.h}
         isVisible={selected || hovered}
+        onResizeStart={() => useCanvasStore.getState().beginChange()}
       />
       <div
         onMouseEnter={() => setHovered(true)}

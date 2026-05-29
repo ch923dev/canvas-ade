@@ -33,6 +33,7 @@ import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
+import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { AppChrome } from './AppChrome'
@@ -68,6 +69,9 @@ function CanvasInner(): ReactElement {
   const resizeBoard = useCanvasStore((s) => s.resizeBoard)
   const removeBoard = useCanvasStore((s) => s.removeBoard)
   const selectBoard = useCanvasStore((s) => s.selectBoard)
+  const beginChange = useCanvasStore((s) => s.beginChange)
+  const undo = useCanvasStore((s) => s.undo)
+  const redo = useCanvasStore((s) => s.redo)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -99,17 +103,15 @@ function CanvasInner(): ReactElement {
   const onNodesChange = useCallback(
     (changes: NodeChange<BoardFlowNode>[]) => {
       let nextSel: string | null | undefined
-      for (const c of changes) {
-        if (c.type === 'position' && c.position) {
-          updateBoard(c.id, { x: c.position.x, y: c.position.y })
-        } else if (c.type === 'dimensions' && c.dimensions && c.resizing) {
-          resizeBoard(c.id, c.dimensions.width, c.dimensions.height)
-        } else if (c.type === 'select') {
-          if (c.selected) nextSel = c.id
-          else if (nextSel === undefined) nextSel = null
-        } else if (c.type === 'remove') {
-          removeBoard(c.id)
-          setFocusedId((f) => (f === c.id ? null : f))
+      for (const intent of nodeChangesToIntents(changes)) {
+        if (intent.kind === 'move') updateBoard(intent.id, { x: intent.x, y: intent.y })
+        else if (intent.kind === 'resize') resizeBoard(intent.id, intent.w, intent.h)
+        else if (intent.kind === 'select') nextSel = intent.id
+        else if (intent.kind === 'deselect') {
+          if (nextSel === undefined) nextSel = null
+        } else if (intent.kind === 'remove') {
+          removeBoard(intent.id)
+          setFocusedId((f) => (f === intent.id ? null : f))
         }
       }
       if (nextSel !== undefined) selectBoard(nextSel)
@@ -141,29 +143,57 @@ function CanvasInner(): ReactElement {
     [rf, selectBoard]
   )
 
+  const onNodeDragStart = useCallback(() => beginChange(), [beginChange])
+
   const clearSelection = useCallback(() => {
     selectBoard(null)
     setFocusedId(null)
   }, [selectBoard])
 
+  // Heal a stale focus (e.g. after undoing the focused board's creation): if the
+  // focused board no longer exists, drop focus so others don't stay dimmed.
+  // This is intentional derived-state synchronisation (focusedId depends on boards);
+  // the eslint-disable-next-line suppresses the react-hooks/set-state-in-effect rule
+  // which fires on ANY setState in an effect body, including legitimate cases like this.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFocusedId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
+  }, [boards])
+
   // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
   // Backspace/Delete deletes the selected board via React Flow's deleteKeyCode.
+  // Ctrl/⌘+Z → undo; Ctrl/⌘+Shift+Z → redo (guarded: no-op while typing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
+      const t = e.target as HTMLElement | null
+      const typing =
+        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      const mod = (e.ctrlKey || e.metaKey) && !e.altKey
+      if (mod && e.key.toLowerCase() === 'z' && !typing) {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'y' && !e.shiftKey && !typing) {
+        e.preventDefault()
+        redo()
+        return
+      }
+      if (e.key === 'Escape' && !typing) {
         clearSelection()
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
         e.preventDefault()
         setDiag((v) => !v)
-      } else if (e.key === '1') {
+      } else if (e.key === '1' && !typing) {
         void rf.fitView(FIT_OPTIONS)
-      } else if (e.key === '0') {
+      } else if (e.key === '0' && !typing) {
         void rf.zoomTo(1)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection])
+  }, [rf, clearSelection, undo, redo])
 
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
@@ -179,6 +209,7 @@ function CanvasInner(): ReactElement {
         nodeTypes={nodeTypes}
         onPaneClick={clearSelection}
         onNodeDoubleClick={focusBoard}
+        onNodeDragStart={onNodeDragStart}
         minZoom={Z_MIN}
         maxZoom={Z_MAX}
         fitView

@@ -562,3 +562,12 @@ body {
 .pl-check-head:active {
   cursor: grabbing;
 }
+/* Reveal the hover-delete button when the card is hovered. */
+.pl-note:hover .pl-del,
+.pl-text:hover .pl-del,
+.pl-check:hover .pl-del {
+  opacity: 1;
+}
+.pl-well:focus-visible {
+  outline: none;
+}

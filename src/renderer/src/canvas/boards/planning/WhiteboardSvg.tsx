@@ -9,23 +9,32 @@
  */
 import { useMemo, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
-import { arrowPath, strokeToPath } from './svgPaths'
+import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 
 export interface WhiteboardSvgProps {
+  boardId: string
   arrows: ArrowElement[]
   strokes: StrokeElement[]
   /** In-progress arrow while dragging the `arrow` tool (board-local). */
   draftArrow?: ArrowElement | null
   /** In-progress freehand points while dragging the `pen` tool (board-local). */
   draftStroke?: number[] | null
+  /** Id of the currently selected vector element (arrow or stroke). */
+  selectedId?: string | null
+  /** Called when a committed arrow or stroke is clicked. */
+  onSelect?: (id: string) => void
 }
 
 export function WhiteboardSvg({
+  boardId,
   arrows,
   strokes,
   draftArrow,
-  draftStroke
+  draftStroke,
+  selectedId,
+  onSelect
 }: WhiteboardSvgProps): ReactElement {
+  const markerId = arrowheadMarkerId(boardId)
   // Memoize the (potentially heavy) outline math for committed strokes.
   const strokePaths = useMemo(() => strokes.map((s) => strokeToPath(s.points)), [strokes])
   const draftPath = useMemo(
@@ -45,8 +54,18 @@ export function WhiteboardSvg({
       }}
     >
       <defs>
-        <marker id="pl-arrowhead" markerWidth={8} markerHeight={8} refX={6} refY={4} orient="auto">
+        <marker id={markerId} markerWidth={8} markerHeight={8} refX={6} refY={4} orient="auto">
           <path d="M0 0 L7 4 L0 8 z" fill="var(--border-strong)" />
+        </marker>
+        <marker
+          id={`${markerId}-sel`}
+          markerWidth={8}
+          markerHeight={8}
+          refX={6}
+          refY={4}
+          orient="auto"
+        >
+          <path d="M0 0 L7 4 L0 8 z" fill="var(--accent)" />
         </marker>
       </defs>
 
@@ -54,10 +73,15 @@ export function WhiteboardSvg({
         <path
           key={a.id}
           d={arrowPath(a)}
-          stroke="var(--border-strong)"
-          strokeWidth={1.5}
+          stroke={a.id === selectedId ? 'var(--accent)' : 'var(--border-strong)'}
+          strokeWidth={a.id === selectedId ? 2.5 : 1.5}
           fill="none"
-          markerEnd="url(#pl-arrowhead)"
+          markerEnd={a.id === selectedId ? `url(#${markerId}-sel)` : `url(#${markerId})`}
+          style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            onSelect?.(a.id)
+          }}
         />
       ))}
       {draftArrow && (
@@ -66,12 +90,23 @@ export function WhiteboardSvg({
           stroke="var(--border-strong)"
           strokeWidth={1.5}
           fill="none"
-          markerEnd="url(#pl-arrowhead)"
+          markerEnd={`url(#${markerId})`}
         />
       )}
 
       {strokePaths.map((d, i) =>
-        d ? <path key={strokes[i].id} d={d} fill="var(--text-2)" /> : null
+        d ? (
+          <path
+            key={strokes[i].id}
+            d={d}
+            fill={strokes[i].id === selectedId ? 'var(--accent)' : 'var(--text-2)'}
+            style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              onSelect?.(strokes[i].id)
+            }}
+          />
+        ) : null
       )}
       {draftPath && <path d={draftPath} fill="var(--text-2)" />}
     </svg>

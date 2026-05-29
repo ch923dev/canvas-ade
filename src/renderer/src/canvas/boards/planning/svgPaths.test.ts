@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { arrowPath, strokeToPath } from './svgPaths'
+import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 import type { ArrowElement } from '../../../lib/boardSchema'
 
 const arrow = (x: number, y: number, x2: number, y2: number): ArrowElement => ({
@@ -42,5 +42,15 @@ describe('strokeToPath (perfect-freehand → fill path)', () => {
   it('is deterministic for the same input', () => {
     const pts = [0, 0, 10, 10, 20, 5]
     expect(strokeToPath(pts)).toBe(strokeToPath(pts))
+  })
+})
+
+describe('arrowheadMarkerId', () => {
+  it('namespaces the marker id by board id', () => {
+    expect(arrowheadMarkerId('abc')).toBe('pl-arrowhead-abc')
+  })
+  it('accepts a UUID-shaped board id without mangling it', () => {
+    const uuid = '3f2504e0-4f89-11d3-9a0c-0305e82c3301'
+    expect(arrowheadMarkerId(uuid)).toBe(`pl-arrowhead-${uuid}`)
   })
 })

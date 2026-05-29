@@ -18,6 +18,7 @@ import {
   toObject,
   MIN_BOARD_SIZE
 } from '../lib/boardSchema'
+import { recordPast, applyUndo, applyRedo } from './history'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -26,6 +27,9 @@ export interface CanvasState {
   boards: Board[]
   selectedId: string | null
   tool: Tool
+  /** Undo/redo rails (internal — drive via beginChange/undo/redo, don't read directly). */
+  past: Board[][]
+  future: Board[][]
 
   /** Add a board of `type` at a world position; selects it; returns its new id. */
   addBoard: (type: BoardType, at: { x: number; y: number }) => string
@@ -37,6 +41,10 @@ export interface CanvasState {
   resizeBoard: (id: string, w: number, h: number) => void
   selectBoard: (id: string | null) => void
   setTool: (tool: Tool) => void
+  /** Snapshot the current boards for undo (call at the start of a discrete edit). */
+  beginChange: () => void
+  undo: () => void
+  redo: () => void
 
   /** Snapshot the canvas as a versioned document (Phase 3 persistence bridge). */
   toObject: () => CanvasDoc
@@ -50,16 +58,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   boards: [],
   selectedId: null,
   tool: 'select',
+  past: [],
+  future: [],
 
   addBoard: (type, at) => {
     const id = newId()
     const board = createBoard(type, { id, x: at.x, y: at.y })
-    set((s) => ({ boards: [...s.boards, board], selectedId: id }))
+    set((s) => ({
+      past: recordPast(s.past, s.boards),
+      future: [],
+      boards: [...s.boards, board],
+      selectedId: id
+    }))
     return id
   },
 
   removeBoard: (id) =>
     set((s) => ({
+      past: recordPast(s.past, s.boards),
+      future: [],
       boards: s.boards.filter((b) => b.id !== id),
       selectedId: s.selectedId === id ? null : s.selectedId
     })),
@@ -80,7 +97,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),
+  beginChange: () =>
+    set((s) => {
+      // No change since the last checkpoint (boards array ref unchanged) → skip,
+      // so a no-op gesture doesn't push a duplicate snapshot or wipe the redo branch.
+      if (s.past[s.past.length - 1] === s.boards) return s
+      return { past: recordPast(s.past, s.boards), future: [] }
+    }),
+  undo: () =>
+    set((s) => {
+      const r = applyUndo(s.past, s.boards, s.future)
+      return r ? { boards: r.present, past: r.past, future: r.future, selectedId: null } : s
+    }),
+  redo: () =>
+    set((s) => {
+      const r = applyRedo(s.past, s.boards, s.future)
+      return r ? { boards: r.present, past: r.past, future: r.future, selectedId: null } : s
+    }),
 
   toObject: () => toObject(get().boards),
-  loadObject: (doc) => set({ boards: fromObject(doc).boards, selectedId: null })
+  loadObject: (doc) =>
+    set({ boards: fromObject(doc).boards, selectedId: null, past: [], future: [] })
 }))

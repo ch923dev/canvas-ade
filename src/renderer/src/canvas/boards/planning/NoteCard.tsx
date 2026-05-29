@@ -7,8 +7,9 @@
  * The card stops pointer propagation so interacting with it never starts a React
  * Flow node-drag or clears the canvas selection mid-edit.
  */
-import { useEffect, useRef, type ReactElement } from 'react'
+import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
 import type { NoteElement } from '../../../lib/boardSchema'
+import { Icon } from '../../Icon'
 import { NOTE_TINTS } from './tints'
 
 export interface NoteCardProps {
@@ -19,6 +20,25 @@ export interface NoteCardProps {
   onDragStart: (e: React.PointerEvent, id: string) => void
   onChangeText: (id: string, text: string) => void
   onDelete: (id: string) => void
+  /** Called when the textarea gains focus — used to checkpoint undo. */
+  onEditStart?: () => void
+}
+
+const delBtn: CSSProperties = {
+  position: 'absolute',
+  top: 2,
+  right: 2,
+  width: 18,
+  height: 18,
+  display: 'grid',
+  placeItems: 'center',
+  borderRadius: 'var(--r-pill)',
+  border: '1px solid var(--border)',
+  background: 'var(--surface-raised)',
+  color: 'var(--text-3)',
+  cursor: 'pointer',
+  opacity: 0,
+  transition: 'opacity .1s'
 }
 
 export function NoteCard({
@@ -26,7 +46,8 @@ export function NoteCard({
   interactive,
   onDragStart,
   onChangeText,
-  onDelete
+  onDelete,
+  onEditStart
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -64,6 +85,21 @@ export function NoteCard({
         ref.current?.focus()
       }}
     >
+      {interactive && (
+        <button
+          type="button"
+          className="pl-del"
+          title="Delete"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(note.id)
+          }}
+          style={delBtn}
+        >
+          <Icon name="x" size={11} />
+        </button>
+      )}
       <div className="pl-note-grip" style={{ position: 'relative', padding: '9px 11px' }}>
         <textarea
           ref={ref}
@@ -72,6 +108,7 @@ export function NoteCard({
           placeholder="Note…"
           spellCheck={false}
           onChange={(e) => onChangeText(note.id, e.target.value)}
+          onFocus={() => onEditStart?.()}
           onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
             e.stopPropagation()

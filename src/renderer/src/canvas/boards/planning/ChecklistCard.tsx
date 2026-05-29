@@ -9,7 +9,7 @@
  * coordinates; stops pointer propagation so toggling/editing never starts a node
  * drag or clears the canvas selection.
  */
-import { useEffect, useRef, type ReactElement } from 'react'
+import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
 import type { ChecklistElement } from '../../../lib/boardSchema'
 import { Icon } from '../../Icon'
 
@@ -25,6 +25,27 @@ export interface ChecklistCardProps {
   /** Enter pressed on an item → append a fresh empty item. */
   onAddItem: (elementId: string) => void
   onRemoveItem: (elementId: string, itemId: string) => void
+  /** Delete the whole checklist card. */
+  onDelete: (id: string) => void
+  /** Called when any input gains focus — used to checkpoint undo. */
+  onEditStart?: () => void
+}
+
+const delBtn: CSSProperties = {
+  position: 'absolute',
+  top: 2,
+  right: 2,
+  width: 18,
+  height: 18,
+  display: 'grid',
+  placeItems: 'center',
+  borderRadius: 'var(--r-pill)',
+  border: '1px solid var(--border)',
+  background: 'var(--surface-raised)',
+  color: 'var(--text-3)',
+  cursor: 'pointer',
+  opacity: 0,
+  transition: 'opacity .1s'
 }
 
 /** 16px checkbox; filled `--accent` + a `--void` check glyph when done. */
@@ -57,7 +78,9 @@ export function ChecklistCard({
   onChangeTitle,
   onChangeItem,
   onAddItem,
-  onRemoveItem
+  onRemoveItem,
+  onDelete,
+  onEditStart
 }: ChecklistCardProps): ReactElement {
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
@@ -90,6 +113,21 @@ export function ChecklistCard({
       }}
       onPointerDown={(e) => e.stopPropagation()}
     >
+      {interactive && (
+        <button
+          type="button"
+          className="pl-del"
+          title="Delete"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete(element.id)
+          }}
+          style={delBtn}
+        >
+          <Icon name="x" size={11} />
+        </button>
+      )}
       {/* Header = title + done/total count; an empty-area press is the drag grip. */}
       <div
         className="pl-check-head"
@@ -113,6 +151,7 @@ export function ChecklistCard({
           placeholder="Checklist"
           spellCheck={false}
           onChange={(e) => onChangeTitle(element.id, e.target.value)}
+          onFocus={() => onEditStart?.()}
           onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
           style={{
@@ -188,6 +227,7 @@ export function ChecklistCard({
               placeholder="Item…"
               spellCheck={false}
               onChange={(e) => onChangeItem(element.id, item.id, e.target.value)}
+              onFocus={() => onEditStart?.()}
               onPointerDown={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
                 e.stopPropagation()

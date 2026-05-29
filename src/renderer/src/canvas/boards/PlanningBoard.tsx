@@ -79,10 +79,12 @@ export function PlanningBoard({
   dimmed
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  const beginChange = useCanvasStore((s) => s.beginChange)
   // Live camera zoom for the ÷zoom screen→board mapping (handoff 2.3).
   const zoom = useStore((s) => s.transform[2])
 
   const [tool, setTool] = useState<PlanTool>('select')
+  const [selectedElId, setSelectedElId] = useState<string | null>(null)
   const wellRef = useRef<HTMLDivElement>(null)
   const elements = board.elements
 
@@ -129,13 +131,19 @@ export function PlanningBoard({
     [commit, elements]
   )
   const deleteEl = useCallback(
-    (id: string) => commit(removeElement(elements, id)),
-    [commit, elements]
+    (id: string) => {
+      beginChange()
+      commit(removeElement(elements, id))
+    },
+    [beginChange, commit, elements]
   )
 
   const toggle = useCallback(
-    (elId: string, itemId: string) => commit(toggleItem(elements, elId, itemId)),
-    [commit, elements]
+    (elId: string, itemId: string) => {
+      beginChange()
+      commit(toggleItem(elements, elId, itemId))
+    },
+    [beginChange, commit, elements]
   )
   const setTitle = useCallback(
     (elId: string, title: string) =>
@@ -148,12 +156,18 @@ export function PlanningBoard({
     [commit, elements]
   )
   const appendItem = useCallback(
-    (elId: string) => commit(addItem(elements, elId, newId())),
-    [commit, elements]
+    (elId: string) => {
+      beginChange()
+      commit(addItem(elements, elId, newId()))
+    },
+    [beginChange, commit, elements]
   )
   const dropItem = useCallback(
-    (elId: string, itemId: string) => commit(removeItem(elements, elId, itemId)),
-    [commit, elements]
+    (elId: string, itemId: string) => {
+      beginChange()
+      commit(removeItem(elements, elId, itemId))
+    },
+    [beginChange, commit, elements]
   )
 
   // ── Element drag (select tool): grab → move in board-local space ─────────────
@@ -161,13 +175,14 @@ export function PlanningBoard({
     (e: PointerEvent, id: string) => {
       const el = elements.find((x) => x.id === id)
       if (!el || el.kind === 'arrow' || el.kind === 'stroke') return
+      beginChange()
       const p = toBoard(e)
       drag.current = { mode: 'move', id, offX: p.x - el.x, offY: p.y - el.y }
       // Capture on the WELL (not the card) so move/up route to the well handlers
       // even when the cursor leaves the card during a fast drag.
       wellRef.current?.setPointerCapture(e.pointerId)
     },
-    [elements, toBoard]
+    [beginChange, elements, toBoard]
   )
 
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
@@ -175,20 +190,24 @@ export function PlanningBoard({
     (e: PointerEvent<HTMLDivElement>) => {
       // Only react to a press that lands on the empty well (not an element).
       if (e.target !== e.currentTarget) return
+      setSelectedElId(null)
       const p = toBoard(e)
 
       if (tool === 'note') {
+        beginChange()
         const note = makeNote(newId(), p, elements.filter((x) => x.kind === 'note').length)
         commit([...elements, note])
         setTool('select')
         return
       }
       if (tool === 'check') {
+        beginChange()
         commit([...elements, makeChecklist(newId(), newId(), p)])
         setTool('select')
         return
       }
       if (tool === 'arrow') {
+        beginChange()
         const arrow = makeArrow(newId(), p)
         drag.current = { mode: 'arrow', id: arrow.id }
         setDraftArrow(arrow)
@@ -196,6 +215,7 @@ export function PlanningBoard({
         return
       }
       if (tool === 'pen') {
+        beginChange()
         const points = pushBoardPoint([], p)
         drag.current = { mode: 'pen', points }
         setDraftStroke(points)
@@ -205,7 +225,7 @@ export function PlanningBoard({
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
-    [tool, elements, commit, toBoard]
+    [tool, elements, commit, toBoard, beginChange]
   )
 
   const onWellPointerMove = useCallback(
@@ -231,9 +251,10 @@ export function PlanningBoard({
     (e: MouseEvent<HTMLDivElement>) => {
       if (tool !== 'select' || e.target !== e.currentTarget) return
       e.stopPropagation()
+      beginChange()
       commit([...elements, makeText(newId(), toBoard(e))])
     },
-    [tool, elements, commit, toBoard]
+    [tool, elements, commit, toBoard, beginChange]
   )
 
   const onWellPointerUp = useCallback(() => {
@@ -279,7 +300,10 @@ export function PlanningBoard({
           title={t}
           size={15}
           active={tool === t}
-          onClick={() => setTool(t)}
+          onClick={() => {
+            setTool(t)
+            setSelectedElId(null)
+          }}
         />
       ))}
     </div>
@@ -306,11 +330,21 @@ export function PlanningBoard({
       <div
         ref={wellRef}
         className="pl-well"
+        tabIndex={0}
         onPointerDown={onWellPointerDown}
         onPointerMove={onWellPointerMove}
         onPointerUp={onWellPointerUp}
         onPointerCancel={onWellPointerUp}
         onDoubleClick={onWellDoubleClick}
+        onKeyDown={(e) => {
+          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElId) {
+            e.stopPropagation()
+            e.preventDefault()
+            beginChange()
+            commit(removeElement(elements, selectedElId))
+            setSelectedElId(null)
+          }
+        }}
         style={{
           position: 'absolute',
           inset: 0,
@@ -327,10 +361,16 @@ export function PlanningBoard({
       >
         {/* Vector layer (under the cards so cards stay clickable). */}
         <WhiteboardSvg
+          boardId={board.id}
           arrows={arrows}
           strokes={strokes}
           draftArrow={draftArrow}
           draftStroke={draftStroke}
+          selectedId={selectedElId}
+          onSelect={(id) => {
+            setSelectedElId(id)
+            wellRef.current?.focus()
+          }}
         />
 
         {/* DOM elements: notes, free text, checklists. */}
@@ -344,6 +384,7 @@ export function PlanningBoard({
                 onDragStart={startElementDrag}
                 onChangeText={setNoteText}
                 onDelete={deleteEl}
+                onEditStart={beginChange}
               />
             )
           }
@@ -356,6 +397,7 @@ export function PlanningBoard({
                 onDragStart={startElementDrag}
                 onChangeText={setTextText}
                 onDelete={deleteEl}
+                onEditStart={beginChange}
               />
             )
           }
@@ -371,6 +413,8 @@ export function PlanningBoard({
                 onChangeItem={setItem}
                 onAddItem={appendItem}
                 onRemoveItem={dropItem}
+                onDelete={deleteEl}
+                onEditStart={beginChange}
               />
             )
           }

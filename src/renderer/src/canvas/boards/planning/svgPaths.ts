@@ -5,6 +5,8 @@
  *
  * - `arrowPath` — a cubic bezier from an arrow's start→end with a gentle bow,
  *   drawn 1.5px `--border-strong` + arrowhead marker (DESIGN.md §7.3).
+ * - `arrowheadMarkerId` — per-board `<marker>` id so multiple Planning boards
+ *   never share a DOM id.
  * - `strokeToPath` — a freehand point list → a filled outline path via the
  *   vendored perfect-freehand (ADR 0001). `simulatePressure: false` because a
  *   mouse/trackpad has no real pressure.
@@ -32,6 +34,11 @@ export function arrowPath(a: ArrowElement): string {
   const c2x = a.x + dx * 0.6
   const c2y = a.y2 - dy * 0.1
   return `M ${a.x} ${a.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${a.x2} ${a.y2}`
+}
+
+/** Per-board SVG <marker> id so multiple Planning boards never share a DOM id. */
+export function arrowheadMarkerId(boardId: string): string {
+  return `pl-arrowhead-${boardId}`
 }
 
 /** Flat board-local point list → an SVG fill path for a perfect-freehand outline. */

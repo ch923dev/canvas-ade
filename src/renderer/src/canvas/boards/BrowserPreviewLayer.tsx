@@ -27,6 +27,7 @@ import { useReactFlow, useOnViewportChange } from '@xyflow/react'
 import { roundRect, worldRectToScreen, rectsEqual, fitZoomFactor } from '../../lib/cameraBounds'
 import type { Rect } from '../../lib/cameraBounds'
 import { LOD_ZOOM } from '../../lib/canvasView'
+import { isLiveEligible, pickLive } from '../../lib/previewPlan'
 import {
   VIEWPORT_PRESETS,
   deviceStageRect,
@@ -115,11 +116,16 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
   const liveEligible = useCallback(
     (g: BoardGeom): boolean => {
       const vp = getViewport()
-      if (vp.zoom < LOD_ZOOM) return false
       const stage = deviceStageRect(g.w, g.h, g.viewport)
-      if (stage.width <= 1 || stage.height <= 1) return false
       const s = worldRectToScreen(toWorldRect(stage, g.x, g.y), vp, paneOffset.current)
-      return s.y >= paneOffset.current.y
+      return isLiveEligible({
+        zoom: vp.zoom,
+        lod: LOD_ZOOM,
+        screenY: s.y,
+        paneTop: paneOffset.current.y,
+        w: stage.width,
+        h: stage.height
+      })
     },
     [getViewport]
   )
@@ -248,7 +254,7 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
     gestureRef.current = false
     const all = [...geomRef.current.values()]
     const wantLive = all.filter((g) => liveEligible(g))
-    const liveIds = new Set(wantLive.slice(0, MAX_LIVE).map((g) => g.id))
+    const liveIds = new Set(pickLive(wantLive, MAX_LIVE))
     for (const g of all) {
       const r = rec(g.id)
       if (liveIds.has(g.id)) void attachBoard(g)
