@@ -22,6 +22,14 @@ describe('isLiveEligible', () => {
       true
     )
   })
+  it('accepts at exactly the LOD boundary (zoom === lod)', () => {
+    expect(isLiveEligible({ zoom: 0.4, lod: 0.4, screenY: 0, paneTop: 0, w: 100, h: 100 })).toBe(
+      true
+    )
+  })
+  it('accepts the smallest non-degenerate stage (w === 2, h === 2)', () => {
+    expect(isLiveEligible({ zoom: 1, lod: 0.4, screenY: 0, paneTop: 0, w: 2, h: 2 })).toBe(true)
+  })
 })
 
 describe('pickLive', () => {
