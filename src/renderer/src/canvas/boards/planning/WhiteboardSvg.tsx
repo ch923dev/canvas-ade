@@ -57,6 +57,16 @@ export function WhiteboardSvg({
         <marker id={markerId} markerWidth={8} markerHeight={8} refX={6} refY={4} orient="auto">
           <path d="M0 0 L7 4 L0 8 z" fill="var(--border-strong)" />
         </marker>
+        <marker
+          id={`${markerId}-sel`}
+          markerWidth={8}
+          markerHeight={8}
+          refX={6}
+          refY={4}
+          orient="auto"
+        >
+          <path d="M0 0 L7 4 L0 8 z" fill="var(--accent)" />
+        </marker>
       </defs>
 
       {arrows.map((a) => (
@@ -66,7 +76,7 @@ export function WhiteboardSvg({
           stroke={a.id === selectedId ? 'var(--accent)' : 'var(--border-strong)'}
           strokeWidth={a.id === selectedId ? 2.5 : 1.5}
           fill="none"
-          markerEnd={`url(#${markerId})`}
+          markerEnd={a.id === selectedId ? `url(#${markerId}-sel)` : `url(#${markerId})`}
           style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
           onPointerDown={(e) => {
             e.stopPropagation()

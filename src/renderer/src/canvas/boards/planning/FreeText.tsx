@@ -20,8 +20,8 @@ export interface FreeTextProps {
 
 const delBtn: CSSProperties = {
   position: 'absolute',
-  top: -8,
-  right: -8,
+  top: 2,
+  right: 2,
   width: 18,
   height: 18,
   display: 'grid',
@@ -67,6 +67,7 @@ export function FreeText({
     >
       {interactive && (
         <button
+          type="button"
           className="pl-del"
           title="Delete"
           onPointerDown={(e) => e.stopPropagation()}

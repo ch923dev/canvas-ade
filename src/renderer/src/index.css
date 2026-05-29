@@ -568,3 +568,6 @@ body {
 .pl-check:hover .pl-del {
   opacity: 1;
 }
+.pl-well:focus-visible {
+  outline: none;
+}

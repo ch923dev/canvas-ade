@@ -300,7 +300,10 @@ export function PlanningBoard({
           title={t}
           size={15}
           active={tool === t}
-          onClick={() => setTool(t)}
+          onClick={() => {
+            setTool(t)
+            setSelectedElId(null)
+          }}
         />
       ))}
     </div>
