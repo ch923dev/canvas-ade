@@ -30,6 +30,12 @@ export function TerminalConfig({
   const [cwd, setCwd] = useState(board.cwd ?? '')
 
   const seededShell = useRef(board.shell)
+  // True only once the user actually picks a shell from the dropdown. The effect
+  // below auto-seeds the select to list[0] for display when the board has no
+  // explicit shell — but that auto-seed must NOT be persisted, or a label-only
+  // Apply would flip `board.shell` from undefined → the default path, changing a
+  // spawn dep and killing the live session on every Apply (#9).
+  const shellTouched = useRef(false)
   useEffect(() => {
     let live = true
     void window.api.listShells().then((list) => {
@@ -46,7 +52,9 @@ export function TerminalConfig({
     useCanvasStore.getState().beginChange()
     updateBoard(board.id, {
       title: title.trim() || board.title,
-      shell: shell || undefined,
+      // Only persist `shell` when the user explicitly chose one; otherwise leave it
+      // untouched so a label-only Apply doesn't seed undefined → default and respawn.
+      ...(shellTouched.current ? { shell: shell || undefined } : {}),
       launchCommand: launchCommand.trim() || undefined,
       cwd: cwd.trim() || undefined
     })
@@ -75,7 +83,14 @@ export function TerminalConfig({
       </label>
       <label style={lbl}>
         Shell
-        <select style={fld} value={shell} onChange={(e) => setShell(e.target.value)}>
+        <select
+          style={fld}
+          value={shell}
+          onChange={(e) => {
+            shellTouched.current = true
+            setShell(e.target.value)
+          }}
+        >
           {shells.map((s) => (
             <option key={s.path} value={s.path}>
               {s.label}
