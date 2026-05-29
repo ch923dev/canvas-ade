@@ -9,9 +9,10 @@
  */
 import { useMemo, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
-import { arrowPath, strokeToPath } from './svgPaths'
+import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 
 export interface WhiteboardSvgProps {
+  boardId: string
   arrows: ArrowElement[]
   strokes: StrokeElement[]
   /** In-progress arrow while dragging the `arrow` tool (board-local). */
@@ -21,11 +22,13 @@ export interface WhiteboardSvgProps {
 }
 
 export function WhiteboardSvg({
+  boardId,
   arrows,
   strokes,
   draftArrow,
   draftStroke
 }: WhiteboardSvgProps): ReactElement {
+  const markerId = arrowheadMarkerId(boardId)
   // Memoize the (potentially heavy) outline math for committed strokes.
   const strokePaths = useMemo(() => strokes.map((s) => strokeToPath(s.points)), [strokes])
   const draftPath = useMemo(
@@ -45,7 +48,7 @@ export function WhiteboardSvg({
       }}
     >
       <defs>
-        <marker id="pl-arrowhead" markerWidth={8} markerHeight={8} refX={6} refY={4} orient="auto">
+        <marker id={markerId} markerWidth={8} markerHeight={8} refX={6} refY={4} orient="auto">
           <path d="M0 0 L7 4 L0 8 z" fill="var(--border-strong)" />
         </marker>
       </defs>
@@ -57,7 +60,7 @@ export function WhiteboardSvg({
           stroke="var(--border-strong)"
           strokeWidth={1.5}
           fill="none"
-          markerEnd="url(#pl-arrowhead)"
+          markerEnd={`url(#${markerId})`}
         />
       ))}
       {draftArrow && (
@@ -66,7 +69,7 @@ export function WhiteboardSvg({
           stroke="var(--border-strong)"
           strokeWidth={1.5}
           fill="none"
-          markerEnd="url(#pl-arrowhead)"
+          markerEnd={`url(#${markerId})`}
         />
       )}
 

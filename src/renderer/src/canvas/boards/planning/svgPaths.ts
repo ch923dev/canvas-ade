@@ -34,6 +34,11 @@ export function arrowPath(a: ArrowElement): string {
   return `M ${a.x} ${a.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${a.x2} ${a.y2}`
 }
 
+/** Per-board SVG <marker> id so multiple Planning boards never share a DOM id. */
+export function arrowheadMarkerId(boardId: string): string {
+  return `pl-arrowhead-${boardId}`
+}
+
 /** Flat board-local point list → an SVG fill path for a perfect-freehand outline. */
 export function strokeToPath(points: number[]): string {
   const outline = getStroke(pointsToPairs(points), STROKE_OPTIONS)

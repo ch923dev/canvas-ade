@@ -327,6 +327,7 @@ export function PlanningBoard({
       >
         {/* Vector layer (under the cards so cards stay clickable). */}
         <WhiteboardSvg
+          boardId={board.id}
           arrows={arrows}
           strokes={strokes}
           draftArrow={draftArrow}
