@@ -84,6 +84,7 @@ export function PlanningBoard({
   const zoom = useStore((s) => s.transform[2])
 
   const [tool, setTool] = useState<PlanTool>('select')
+  const [selectedElId, setSelectedElId] = useState<string | null>(null)
   const wellRef = useRef<HTMLDivElement>(null)
   const elements = board.elements
 
@@ -130,13 +131,19 @@ export function PlanningBoard({
     [commit, elements]
   )
   const deleteEl = useCallback(
-    (id: string) => commit(removeElement(elements, id)),
-    [commit, elements]
+    (id: string) => {
+      beginChange()
+      commit(removeElement(elements, id))
+    },
+    [beginChange, commit, elements]
   )
 
   const toggle = useCallback(
-    (elId: string, itemId: string) => commit(toggleItem(elements, elId, itemId)),
-    [commit, elements]
+    (elId: string, itemId: string) => {
+      beginChange()
+      commit(toggleItem(elements, elId, itemId))
+    },
+    [beginChange, commit, elements]
   )
   const setTitle = useCallback(
     (elId: string, title: string) =>
@@ -149,12 +156,18 @@ export function PlanningBoard({
     [commit, elements]
   )
   const appendItem = useCallback(
-    (elId: string) => commit(addItem(elements, elId, newId())),
-    [commit, elements]
+    (elId: string) => {
+      beginChange()
+      commit(addItem(elements, elId, newId()))
+    },
+    [beginChange, commit, elements]
   )
   const dropItem = useCallback(
-    (elId: string, itemId: string) => commit(removeItem(elements, elId, itemId)),
-    [commit, elements]
+    (elId: string, itemId: string) => {
+      beginChange()
+      commit(removeItem(elements, elId, itemId))
+    },
+    [beginChange, commit, elements]
   )
 
   // ── Element drag (select tool): grab → move in board-local space ─────────────
@@ -177,6 +190,7 @@ export function PlanningBoard({
     (e: PointerEvent<HTMLDivElement>) => {
       // Only react to a press that lands on the empty well (not an element).
       if (e.target !== e.currentTarget) return
+      setSelectedElId(null)
       const p = toBoard(e)
 
       if (tool === 'note') {
@@ -313,11 +327,21 @@ export function PlanningBoard({
       <div
         ref={wellRef}
         className="pl-well"
+        tabIndex={0}
         onPointerDown={onWellPointerDown}
         onPointerMove={onWellPointerMove}
         onPointerUp={onWellPointerUp}
         onPointerCancel={onWellPointerUp}
         onDoubleClick={onWellDoubleClick}
+        onKeyDown={(e) => {
+          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElId) {
+            e.stopPropagation()
+            e.preventDefault()
+            beginChange()
+            commit(removeElement(elements, selectedElId))
+            setSelectedElId(null)
+          }
+        }}
         style={{
           position: 'absolute',
           inset: 0,
@@ -339,6 +363,11 @@ export function PlanningBoard({
           strokes={strokes}
           draftArrow={draftArrow}
           draftStroke={draftStroke}
+          selectedId={selectedElId}
+          onSelect={(id) => {
+            setSelectedElId(id)
+            wellRef.current?.focus()
+          }}
         />
 
         {/* DOM elements: notes, free text, checklists. */}
@@ -352,6 +381,7 @@ export function PlanningBoard({
                 onDragStart={startElementDrag}
                 onChangeText={setNoteText}
                 onDelete={deleteEl}
+                onEditStart={beginChange}
               />
             )
           }
@@ -364,6 +394,7 @@ export function PlanningBoard({
                 onDragStart={startElementDrag}
                 onChangeText={setTextText}
                 onDelete={deleteEl}
+                onEditStart={beginChange}
               />
             )
           }
@@ -379,6 +410,8 @@ export function PlanningBoard({
                 onChangeItem={setItem}
                 onAddItem={appendItem}
                 onRemoveItem={dropItem}
+                onDelete={deleteEl}
+                onEditStart={beginChange}
               />
             )
           }

@@ -19,6 +19,10 @@ export interface WhiteboardSvgProps {
   draftArrow?: ArrowElement | null
   /** In-progress freehand points while dragging the `pen` tool (board-local). */
   draftStroke?: number[] | null
+  /** Id of the currently selected vector element (arrow or stroke). */
+  selectedId?: string | null
+  /** Called when a committed arrow or stroke is clicked. */
+  onSelect?: (id: string) => void
 }
 
 export function WhiteboardSvg({
@@ -26,7 +30,9 @@ export function WhiteboardSvg({
   arrows,
   strokes,
   draftArrow,
-  draftStroke
+  draftStroke,
+  selectedId,
+  onSelect
 }: WhiteboardSvgProps): ReactElement {
   const markerId = arrowheadMarkerId(boardId)
   // Memoize the (potentially heavy) outline math for committed strokes.
@@ -57,10 +63,15 @@ export function WhiteboardSvg({
         <path
           key={a.id}
           d={arrowPath(a)}
-          stroke="var(--border-strong)"
-          strokeWidth={1.5}
+          stroke={a.id === selectedId ? 'var(--accent)' : 'var(--border-strong)'}
+          strokeWidth={a.id === selectedId ? 2.5 : 1.5}
           fill="none"
           markerEnd={`url(#${markerId})`}
+          style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            onSelect?.(a.id)
+          }}
         />
       ))}
       {draftArrow && (
@@ -74,7 +85,18 @@ export function WhiteboardSvg({
       )}
 
       {strokePaths.map((d, i) =>
-        d ? <path key={strokes[i].id} d={d} fill="var(--text-2)" /> : null
+        d ? (
+          <path
+            key={strokes[i].id}
+            d={d}
+            fill={strokes[i].id === selectedId ? 'var(--accent)' : 'var(--text-2)'}
+            style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              onSelect?.(strokes[i].id)
+            }}
+          />
+        ) : null
       )}
       {draftPath && <path d={draftPath} fill="var(--text-2)" />}
     </svg>
