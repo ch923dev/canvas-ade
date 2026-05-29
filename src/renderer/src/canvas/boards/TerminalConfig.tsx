@@ -7,7 +7,7 @@
  * `launchCommand` is free-text → ANY agentic CLI (e.g. `claude`, `codex`). It is
  * written as the first PTY line in pty.ts so the agent inherits PATH/profile/auth.
  */
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 
@@ -26,17 +26,18 @@ export function TerminalConfig({
   const [launchCommand, setLaunchCommand] = useState(board.launchCommand ?? '')
   const [cwd, setCwd] = useState(board.cwd ?? '')
 
+  const seededShell = useRef(board.shell)
   useEffect(() => {
     let live = true
     void window.api.listShells().then((list) => {
       if (!live) return
       setShells(list)
-      if (!board.shell && list[0]) setShell(list[0].path)
+      if (!seededShell.current && list[0]) setShell(list[0].path)
     })
     return () => {
       live = false
     }
-  }, [board.shell])
+  }, [])
 
   const apply = (): void => {
     updateBoard(board.id, {
@@ -50,6 +51,7 @@ export function TerminalConfig({
   return (
     <div
       style={pop}
+      tabIndex={-1}
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         e.stopPropagation()
@@ -87,7 +89,7 @@ export function TerminalConfig({
           onChange={(e) => setCwd(e.target.value)}
         />
       </label>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 2 }}>
+      <div style={footer}>
         <button style={btnGhost} onClick={onClose}>
           Cancel
         </button>
@@ -109,7 +111,7 @@ const pop: React.CSSProperties = {
   flexDirection: 'column',
   gap: 8,
   padding: 12,
-  borderRadius: 'var(--r-board)',
+  borderRadius: 'var(--r-inner)',
   background: 'var(--surface-raised)',
   border: '1px solid var(--border)',
   boxShadow: 'var(--shadow-pop)'
@@ -148,4 +150,10 @@ const btnPrimary: React.CSSProperties = {
   border: '1px solid var(--accent)',
   background: 'var(--accent-wash)',
   color: 'var(--accent)'
+}
+const footer: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: 6,
+  marginTop: 2
 }
