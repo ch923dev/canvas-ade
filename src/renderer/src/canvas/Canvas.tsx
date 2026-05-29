@@ -33,6 +33,7 @@ import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
+import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { AppChrome } from './AppChrome'
@@ -97,17 +98,15 @@ function CanvasInner(): ReactElement {
   const onNodesChange = useCallback(
     (changes: NodeChange<BoardFlowNode>[]) => {
       let nextSel: string | null | undefined
-      for (const c of changes) {
-        if (c.type === 'position' && c.position) {
-          updateBoard(c.id, { x: c.position.x, y: c.position.y })
-        } else if (c.type === 'dimensions' && c.dimensions && c.resizing) {
-          resizeBoard(c.id, c.dimensions.width, c.dimensions.height)
-        } else if (c.type === 'select') {
-          if (c.selected) nextSel = c.id
-          else if (nextSel === undefined) nextSel = null
-        } else if (c.type === 'remove') {
-          removeBoard(c.id)
-          setFocusedId((f) => (f === c.id ? null : f))
+      for (const intent of nodeChangesToIntents(changes)) {
+        if (intent.kind === 'move') updateBoard(intent.id, { x: intent.x, y: intent.y })
+        else if (intent.kind === 'resize') resizeBoard(intent.id, intent.w, intent.h)
+        else if (intent.kind === 'select') nextSel = intent.id
+        else if (intent.kind === 'deselect') {
+          if (nextSel === undefined) nextSel = null
+        } else if (intent.kind === 'remove') {
+          removeBoard(intent.id)
+          setFocusedId((f) => (f === intent.id ? null : f))
         }
       }
       if (nextSel !== undefined) selectBoard(nextSel)
