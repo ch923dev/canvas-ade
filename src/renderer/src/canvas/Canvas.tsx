@@ -38,6 +38,8 @@ import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import DiagOverlay from '../spike/DiagOverlay'
+import { isE2E } from '../smoke/e2eRegistry'
+import { installE2EHooks } from '../smoke/e2eHooks'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const FIT_OPTIONS = { padding: 0.2, maxZoom: 1 } as const
@@ -162,6 +164,12 @@ function CanvasInner(): ReactElement {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [rf, clearSelection])
+
+  // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
+  // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
+  useEffect(() => {
+    if (isE2E()) installE2EHooks(rf)
+  }, [rf])
 
   return (
     <div ref={paneRef} style={paneStyle}>
