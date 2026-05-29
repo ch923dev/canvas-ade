@@ -42,6 +42,8 @@ export interface CanvasE2E {
   terminalMounted: (id: string) => boolean
   /** True if the live store round-trips through toObject→fromObject without throwing. */
   roundTripOk: () => boolean
+  /** Flag a node drag/resize gesture (drives the preview layer detach/reattach). */
+  setGesture: (active: boolean) => void
 }
 
 declare global {
@@ -106,6 +108,9 @@ export function installE2EHooks(rf: ReactFlowInstance): void {
       } catch {
         return false
       }
+    },
+    setGesture(active) {
+      usePreviewStore.getState().setNodeGesture(active)
     }
   }
   window.__canvasE2E = api

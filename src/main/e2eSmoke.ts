@@ -100,6 +100,34 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }
   parts.push({ name: 'browser', ok: browserOk, detail: capDetail })
 
+  // ── Occlusion fix (node-drag/resize detach): a node gesture must DETACH every live
+  // native view to its HTML snapshot — a native WebContentsView paints above all HTML,
+  // so without this a board dragged over a live Browser board is occluded by it. Drive
+  // previewStore.nodeGesture and assert the live flag drops on start, restores on end. ──
+  let gestureDetail = 'browser not live'
+  let gestureOk = false
+  if (browserOk) {
+    await evalIn(win, 'window.__canvasE2E.setGesture(true)')
+    const detached = await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === false
+    }, 5000)
+    await evalIn(win, 'window.__canvasE2E.setGesture(false)')
+    const reattached = await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === true
+    }, 8000)
+    gestureOk = detached && reattached
+    gestureDetail = `detached=${detached} reattached=${reattached}`
+  }
+  parts.push({ name: 'browser-gesture', ok: gestureOk, detail: gestureDetail })
+
   // ── Planning: seed, add a checklist element, assert it persisted on the board AND
   // that the whole canvas round-trips through the schema (persistence-readiness). ──
   const planId = await evalIn<string>(win, "window.__canvasE2E.seedBoard('planning')")

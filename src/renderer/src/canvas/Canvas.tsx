@@ -77,6 +77,9 @@ function CanvasInner(): ReactElement {
   const paneRef = useRef<HTMLDivElement>(null)
   // Live native-view count (Browser boards) for the diagnostics overlay.
   const liveViews = usePreviewStore(selectLiveCount)
+  // Signal a board drag/resize to the preview layer so it detaches live native
+  // views to snapshots for the duration (they'd otherwise paint over the moved board).
+  const setNodeGesture = usePreviewStore((s) => s.setNodeGesture)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
   const [diag, setDiag] = useState(import.meta.env.DEV)
@@ -143,7 +146,13 @@ function CanvasInner(): ReactElement {
     [rf, selectBoard]
   )
 
-  const onNodeDragStart = useCallback(() => beginChange(), [beginChange])
+  // Drag start: checkpoint for undo + detach live preview views (snapshot carries
+  // the motion + restores z-order so a dragged board isn't occluded). Stop: reattach.
+  const onNodeDragStart = useCallback(() => {
+    beginChange()
+    setNodeGesture(true)
+  }, [beginChange, setNodeGesture])
+  const onNodeDragStop = useCallback(() => setNodeGesture(false), [setNodeGesture])
 
   const clearSelection = useCallback(() => {
     selectBoard(null)
@@ -210,6 +219,7 @@ function CanvasInner(): ReactElement {
         onPaneClick={clearSelection}
         onNodeDoubleClick={focusBoard}
         onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         minZoom={Z_MIN}
         maxZoom={Z_MAX}
         fitView
@@ -227,7 +237,7 @@ function CanvasInner(): ReactElement {
             WebContentsView to the camera. Renders nothing (returns null); it owns
             the native-view lifecycle only. The Browser board is the sole board type
             allowed to touch this file. */}
-        <BrowserPreviewLayer paneRef={paneRef} />
+        <BrowserPreviewLayer paneRef={paneRef} focusedId={focusedId} />
       </ReactFlow>
 
       {boards.length === 0 && <EmptyState onAdd={addCentered} />}

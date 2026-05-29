@@ -73,12 +73,21 @@ interface BoardRec {
 interface LayerProps {
   /** The React Flow pane element, for the paneOffset measurement (full-bleed). */
   paneRef: React.RefObject<HTMLDivElement | null>
+  /**
+   * The currently focused board id (double-click focus), or null. A native view
+   * ignores the HTML dim-others, so while a focus is active every non-focused
+   * Browser board demotes to its dimmable snapshot (see `liveEligible`).
+   */
+  focusedId: string | null
 }
 
-export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | null {
+export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
   const clearRuntime = usePreviewStore((s) => s.clear)
+  // A board drag/resize is in progress (React Flow node-drag / NodeResizer). Unlike
+  // a camera move it never fires useOnViewportChange, so we detach live views here.
+  const nodeGesture = usePreviewStore((s) => s.nodeGesture)
 
   // paneOffset = the RF pane top-left in window CSS px. The canvas is now full-bleed
   // (App.tsx → position:fixed inset:0), so this is ~ (0,0) — but MEASURE it (a future
@@ -90,6 +99,8 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
   const gestureRef = useRef(false)
   const rafRef = useRef(0)
   const idleRef = useRef(0)
+  // Latest focused board id, read inside the (geometry-only-deps) liveEligible cb.
+  const focusedIdRef = useRef<string | null>(focusedId)
 
   const preset = useCallback((vp: BrowserViewport): ViewportPreset => VIEWPORT_PRESETS[vp], [])
 
@@ -124,7 +135,9 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
         screenY: s.y,
         paneTop: paneOffset.current.y,
         w: stage.width,
-        h: stage.height
+        h: stage.height,
+        focusActive: focusedIdRef.current !== null,
+        isFocused: focusedIdRef.current === g.id
       })
     },
     [getViewport]
@@ -247,11 +260,12 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
     })()
   }, [startPump, patchRuntime])
 
-  // onMoveEnd: reattach the boards that should be live (zoom ≥ LOD, under the cap);
-  // over-cap eligible boards are CLOSED (free the renderer); below-LOD boards stay
-  // snapshot. Already-detached snapshot boards keep their image for a fast reattach.
-  const endMotion = useCallback((): void => {
-    gestureRef.current = false
+  // Recompute which boards should be live (zoom ≥ LOD, on-pane, focus, under the
+  // cap) and reconcile each: attach the winners, CLOSE over-cap eligible boards
+  // (free the renderer), demote the rest to snapshot. Shared by motion-end, node
+  // gestures, and focus changes. Already-detached boards keep their image for a fast
+  // reattach.
+  const applyLiveness = useCallback((): void => {
     const all = [...geomRef.current.values()]
     const wantLive = all.filter((g) => liveEligible(g))
     const liveIds = new Set(pickLive(wantLive, MAX_LIVE))
@@ -260,11 +274,47 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
       if (liveIds.has(g.id)) void attachBoard(g)
       else if (wantLive.includes(g))
         closeBoard(g.id) // over the live cap → free renderer
-      else if (r.attached) void demoteToSnapshot(g) // LOD / chrome zone → snapshot
+      else if (r.attached) void demoteToSnapshot(g) // LOD / chrome / unfocused → snapshot
     }
   }, [liveEligible, rec, attachBoard, closeBoard, demoteToSnapshot])
 
+  // onMoveEnd: clear the gesture flag, then reconcile liveness at the rest position.
+  const endMotion = useCallback((): void => {
+    gestureRef.current = false
+    applyLiveness()
+  }, [applyLiveness])
+
   useOnViewportChange({ onStart: beginMotion, onChange: startPump, onEnd: endMotion })
+
+  // ── Node drag/resize gestures + focus changes (no camera move → no viewport event) ──
+  // A node drag/resize START detaches every live view → HTML snapshot (so a board
+  // dragged over a live Browser board isn't occluded by its always-above native
+  // layer); the gesture END reattaches the eligible ones. Skip the initial mount tick
+  // (gesture is already false). begin/endMotion are stable (deps don't include
+  // nodeGesture), so this effect runs on real gesture toggles; re-running on a rare
+  // callback-identity change is safe (begin guards on gestureRef, end is idempotent).
+  const gestureMounted = useRef(false)
+  useEffect(() => {
+    if (!gestureMounted.current) {
+      gestureMounted.current = true
+      return
+    }
+    if (nodeGesture) beginMotion()
+    else endMotion()
+  }, [nodeGesture, beginMotion, endMotion])
+
+  // Focus change → re-evaluate liveness (focused board stays live, others demote to
+  // their dimmable snapshot). Focus also fits the camera (→ onMoveEnd already
+  // reconciles), but UNFOCUS via Esc moves no camera, so re-apply here too.
+  const focusMounted = useRef(false)
+  useEffect(() => {
+    focusedIdRef.current = focusedId
+    if (!focusMounted.current) {
+      focusMounted.current = true
+      return
+    }
+    applyLiveness()
+  }, [focusedId, applyLiveness])
 
   // ── Reconcile the native views with the store's Browser boards ────────────────
   // Subscribe imperatively (NOT via a hook selector that re-renders) so geometry +

@@ -30,6 +30,51 @@ describe('isLiveEligible', () => {
   it('accepts the smallest non-degenerate stage (w === 2, h === 2)', () => {
     expect(isLiveEligible({ zoom: 1, lod: 0.4, screenY: 0, paneTop: 0, w: 2, h: 2 })).toBe(true)
   })
+
+  // Focus isolation (occlusion fix): when a focus is active, only the focused board
+  // may stay live; every other Browser board must demote to its dimmable snapshot.
+  it('rejects a non-focused board while a focus is active', () => {
+    expect(
+      isLiveEligible({
+        zoom: 1,
+        lod: 0.4,
+        screenY: 10,
+        paneTop: 0,
+        w: 100,
+        h: 100,
+        focusActive: true,
+        isFocused: false
+      })
+    ).toBe(false)
+  })
+  it('keeps the focused board itself eligible while a focus is active', () => {
+    expect(
+      isLiveEligible({
+        zoom: 1,
+        lod: 0.4,
+        screenY: 10,
+        paneTop: 0,
+        w: 100,
+        h: 100,
+        focusActive: true,
+        isFocused: true
+      })
+    ).toBe(true)
+  })
+  it('ignores focus flags when no focus is active', () => {
+    expect(
+      isLiveEligible({
+        zoom: 1,
+        lod: 0.4,
+        screenY: 10,
+        paneTop: 0,
+        w: 100,
+        h: 100,
+        focusActive: false,
+        isFocused: false
+      })
+    ).toBe(true)
+  })
 })
 
 describe('pickLive', () => {

@@ -13,9 +13,21 @@ export interface EligibilityInput {
   /** Stage size in screen px. */
   w: number
   h: number
+  /**
+   * A board is currently focused (double-click focus / Full view). A native view
+   * paints ABOVE all HTML, so the HTML dim-others can't darken it and it would paint
+   * over the focused board — when a focus is active, only the focused board may stay
+   * live; every other Browser board must demote to its (dimmable) HTML snapshot.
+   */
+  focusActive?: boolean
+  /** This board IS the focused one (only meaningful when `focusActive`). */
+  isFocused?: boolean
 }
 
 export function isLiveEligible(i: EligibilityInput): boolean {
+  // Focus isolation: a non-focused board can never be live while a focus is active
+  // (its native view would ignore the HTML dim and paint over the focused board).
+  if (i.focusActive && !i.isFocused) return false
   if (i.zoom < i.lod) return false
   if (i.w <= 1 || i.h <= 1) return false
   return i.screenY >= i.paneTop
