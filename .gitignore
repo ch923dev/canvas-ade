@@ -30,3 +30,6 @@ Thumbs.db
 .claude/worktrees/
 # harness runtime artifacts
 .claude/scheduled_tasks.lock
+
+# local config/file backups (e.g. CLAUDE.md.bak-YYYYMMDD)
+*.bak-*
