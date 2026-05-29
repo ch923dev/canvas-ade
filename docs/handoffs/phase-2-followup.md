@@ -43,8 +43,8 @@ salvage references.
 - **#4 Terminal listener leak** — `term.onData/onResize` were registered inside `onWinMsg`
   (re-fires per `restart()`), disposables dropped. FIXED (`06470fe`): registered once
   against `portRef.current`, disposed on teardown.
-- **#1 Live-verify gap** — STILL OPEN. The biggest risk. Closed by Track 1 (harness) and/or
-  the manual checklist below.
+- **#1 Live-verify gap** — CLOSED for the in-process layer by Track 1 Stage 1 (`CANVAS_SMOKE=e2e`, branch `e2e-smoke-harness`): boots the built app, seeds each board, asserts terminal framebuffer echo + Browser native per-view `capturePage` non-blank + Planning round-trip. Remaining live coverage (real drag/pen/pan) lands in Stage 2 (Playwright).
+- **#5 Browser dead-URL status** — a dead/refused URL ends `connected` (Chromium error-page `did-finish-load` fires after `did-fail-load`, overwriting `load-failed`). Found by the e2e harness. Fix in `preview.ts`/`BrowserPreviewLayer` (don't let an error-page finish-load override a fail-load). Tracked, deferred.
 
 ---
 
@@ -53,6 +53,8 @@ salvage references.
 **Goal:** the agent runs ONE command, reads pass/fail from exit code + console markers,
 and verifies all 3 board types at runtime **including the native Browser layer** — no human
 eyeballing. Full verified plan + citations: **`docs/research/self-smoke-testing.md`**.
+
+**Stage 1 — DONE** (branch `e2e-smoke-harness`, not the `selfTest.ts` extension as originally sketched but a dedicated `e2eSmoke.ts` + `window.__canvasE2E` hook). The remaining Track 1 work is Stage 2 (Playwright).
 
 **Staged (do step 1 first; it closes most of #1 with zero new deps):**
 
