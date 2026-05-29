@@ -51,9 +51,20 @@ export interface ShellInfo {
   default?: boolean
 }
 
+/** Park a deleted terminal's process this long before reaping it (#15). */
+const PARK_TTL_MS = 120_000
+/** Cap of each session's replay buffer (#15). */
+const RING_CAP_BYTES = 256 * 1024
+
 interface Session {
   proc: pty.IPty
   port: MessagePortMain
+  /**
+   * Recent output, boxed so the SAME reference travels into `parked` on park and
+   * back into a session on adopt — the single `proc.onData` listener keeps appending
+   * to it across the move (closures capture the box, not the map entry).
+   */
+  buf: { data: string }
 }
 
 const sessions = new Map<string, Session>()
@@ -217,7 +228,20 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     const { port1, port2 } = new MessageChannelMain()
 
-    proc.onData((d) => port1.postMessage({ t: 'data', d }))
+    const buf = { data: '' }
+    proc.onData((d) => {
+      buf.data = appendRing(buf.data, d, RING_CAP_BYTES)
+      // Forward to the current live port (looked up at fire time, so it follows an
+      // adopt onto the new port); none while parked → guard the post.
+      const live = sessions.get(opts.id)
+      if (live) {
+        try {
+          live.port.postMessage({ t: 'data', d })
+        } catch {
+          /* port closed */
+        }
+      }
+    })
     proc.onExit(({ exitCode }) => {
       // During a restart/config-respawn the port may already be closed (the new
       // session has taken over this id), so a post would throw — guard it.
@@ -239,7 +263,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     })
     port1.start()
 
-    sessions.set(opts.id, { proc, port: port1 })
+    sessions.set(opts.id, { proc, port: port1, buf })
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
 
     // Announce running, then — spawn the SHELL, not the agent — write the
