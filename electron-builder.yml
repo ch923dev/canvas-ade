@@ -13,8 +13,8 @@ files:
 # node-pty ships a native .node binary + helper executables that must NOT be
 # packed inside app.asar, or they fail only in the packaged build.
 asarUnpack:
-  - "**/*.node"
-  - "node_modules/node-pty/**"
+  - '**/*.node'
+  - 'node_modules/node-pty/**'
 
 npmRebuild: true
 

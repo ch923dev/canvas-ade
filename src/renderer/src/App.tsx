@@ -41,6 +41,8 @@ function App() {
       r.xterm = false
     }
     host.remove()
+    // One-shot smoke measurement on mount; a single extra render here is intended.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSmoke(r)
     // eslint-disable-next-line no-console
     console.log('RENDERER_SMOKE ' + JSON.stringify(r))

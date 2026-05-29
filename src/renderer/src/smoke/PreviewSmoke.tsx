@@ -76,7 +76,9 @@ export default function PreviewSmoke() {
           fontSize: 12
         }}
       >
-        {open ? 'native view mounted above this area' : 'WebContentsView mounts here →  click “Open preview”'}
+        {open
+          ? 'native view mounted above this area'
+          : 'WebContentsView mounts here →  click “Open preview”'}
       </div>
     </>
   )

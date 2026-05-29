@@ -78,7 +78,10 @@ function testPty(result: SelfTestResult): Promise<void> {
     const cmd = isWin ? `echo CANVAS_PTY_OK & exit\r` : `printf 'CANVAS_PTY_OK\\n'; exit\n`
     proc.write(cmd)
 
-    setTimeout(() => finish(buf.includes(sentinel), `timeout; sawSentinel=${buf.includes(sentinel)}`), 6000)
+    setTimeout(
+      () => finish(buf.includes(sentinel), `timeout; sawSentinel=${buf.includes(sentinel)}`),
+      6000
+    )
   })
 }
 

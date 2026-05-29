@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/
+release/
+design-reference/
+pnpm-lock.yaml
+# Hand-authored docs (tables/prose) — keep Prettier's markdown reflow off them.
+*.md

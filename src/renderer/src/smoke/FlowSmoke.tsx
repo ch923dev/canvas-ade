@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { ReactFlow, Background, BackgroundVariant, Controls, MiniMap } from '@xyflow/react'
 import type { Node, NodeProps } from '@xyflow/react'
+import DiagOverlay from '../spike/DiagOverlay'
 
 // Custom node = the seed of a future "board". Confirms React Flow renders
 // arbitrary React content inside a node and that the dark restyle takes.
@@ -16,12 +18,42 @@ function SmokeNode({ data }: NodeProps) {
 const nodeTypes = { smoke: SmokeNode }
 
 const nodes: Node[] = [
-  { id: '1', type: 'smoke', position: { x: 0, y: 0 }, data: { label: 'Terminal board', sub: 'agent · main' } },
-  { id: '2', type: 'smoke', position: { x: 280, y: 60 }, data: { label: 'Browser board', sub: 'localhost:5173' } },
-  { id: '3', type: 'smoke', position: { x: 120, y: 240 }, data: { label: 'Planning board', sub: 'milestone 2' } }
+  {
+    id: '1',
+    type: 'smoke',
+    position: { x: 0, y: 0 },
+    data: { label: 'Terminal board', sub: 'agent · main' }
+  },
+  {
+    id: '2',
+    type: 'smoke',
+    position: { x: 280, y: 60 },
+    data: { label: 'Browser board', sub: 'localhost:5173' }
+  },
+  {
+    id: '3',
+    type: 'smoke',
+    position: { x: 120, y: 240 },
+    data: { label: 'Planning board', sub: 'milestone 2' }
+  }
 ]
 
 export default function FlowSmoke() {
+  // Diagnostics overlay: on by default in dev, off in packaged builds. The 1-C+
+  // sync work reads frame-time/FPS from it. Toggle with Ctrl/⌘+Shift+D.
+  const [diag, setDiag] = useState(import.meta.env.DEV)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+        e.preventDefault()
+        setDiag((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   return (
     <>
       <div className="hint">React Flow · drag to pan · ⌘/Ctrl + wheel to zoom (0.1–2.5)</div>
@@ -39,6 +71,8 @@ export default function FlowSmoke() {
           <MiniMap pannable zoomable />
         </ReactFlow>
       </div>
+      {/* liveViews is 0 until 1-C wires the PreviewManager's WebContentsView count. */}
+      {diag && <DiagOverlay liveViews={0} />}
     </>
   )
 }
