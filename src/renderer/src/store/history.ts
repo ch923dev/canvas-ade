@@ -14,14 +14,13 @@ export function recordPast<T>(past: T[], present: T, limit = HISTORY_LIMIT): T[]
 export function applyUndo<T>(
   past: T[],
   present: T,
-  future: T[],
-  limit = HISTORY_LIMIT
+  future: T[]
 ): { past: T[]; present: T; future: T[] } | null {
   if (past.length === 0) return null
   return {
     present: past[past.length - 1],
     past: past.slice(0, -1),
-    future: [present, ...future].slice(0, limit)
+    future: [present, ...future].slice(0, HISTORY_LIMIT)
   }
 }
 
@@ -29,13 +28,12 @@ export function applyUndo<T>(
 export function applyRedo<T>(
   past: T[],
   present: T,
-  future: T[],
-  limit = HISTORY_LIMIT
+  future: T[]
 ): { past: T[]; present: T; future: T[] } | null {
   if (future.length === 0) return null
   return {
     present: future[0],
     future: future.slice(1),
-    past: recordPast(past, present, limit)
+    past: recordPast(past, present)
   }
 }

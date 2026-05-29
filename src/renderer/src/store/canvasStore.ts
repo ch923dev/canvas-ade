@@ -27,6 +27,7 @@ export interface CanvasState {
   boards: Board[]
   selectedId: string | null
   tool: Tool
+  /** Undo/redo rails (internal — drive via beginChange/undo/redo, don't read directly). */
   past: Board[][]
   future: Board[][]
 
@@ -96,7 +97,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),
-  beginChange: () => set((s) => ({ past: recordPast(s.past, s.boards), future: [] })),
+  beginChange: () =>
+    set((s) => {
+      // No change since the last checkpoint (boards array ref unchanged) → skip,
+      // so a no-op gesture doesn't push a duplicate snapshot or wipe the redo branch.
+      if (s.past[s.past.length - 1] === s.boards) return s
+      return { past: recordPast(s.past, s.boards), future: [] }
+    }),
   undo: () =>
     set((s) => {
       const r = applyUndo(s.past, s.boards, s.future)
