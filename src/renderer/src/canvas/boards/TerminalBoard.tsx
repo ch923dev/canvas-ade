@@ -5,11 +5,10 @@
  *
  * Per CLAUDE.md we spawn the SHELL, not the agent; if `board.launchCommand` is
  * set it is written as the first PTY line (in `pty.ts`) so the agent inherits
- * PATH/profile/auth. Chrome follows DESIGN.md §7.1: agent identity pill + run
- * timer, a 2px `--accent` indeterminate progress sliver while running (via
- * `BoardFrame running`), a braille spinner working line, and a bottom follow-up
- * prompt with a blinking caret. Title-bar actions: play/pause · restart ·
- * interrupt (Ctrl-C). Owns this file only; the shared surface is frozen.
+ * PATH/profile/auth. The board is a plain terminal: a calm identity pill (status
+ * dot + shell/agent name) plus two title-bar actions — Configure (shell /
+ * launch command / cwd / editable label) and Restart. Clicking the body focuses
+ * xterm directly so keystrokes always land. Owns this file only; shared surface frozen.
  *
  * Lifecycle (spawning → running → awaiting-input → exited / spawn-failed) is
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
@@ -22,14 +21,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import {
-  agentIdentity,
-  brailleFrame,
-  formatTimer,
-  isRunning,
-  statusFor,
-  type TerminalState
-} from './terminalState'
+import { agentIdentity, statusFor, type TerminalState } from './terminalState'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
@@ -71,12 +63,9 @@ export function TerminalBoard({
   const portRef = useRef<MessagePort | null>(null)
 
   const [state, setState] = useState<TerminalState>('spawning')
-  const [elapsed, setElapsed] = useState(0)
-  const [frame, setFrame] = useState(0)
   const [configOpen, setConfigOpen] = useState(false)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
-  const running = isRunning(state)
 
   // ── Bridge: spawn the PTY, wire the MessagePort, fit on resize ──────────────
   // Keyed by board id so re-mounts (LOD swaps, drags) reconnect the same session
@@ -86,8 +75,16 @@ export function TerminalBoard({
     const el = screenRef.current
     if (!el) return () => {}
 
+    // xterm paints glyphs onto a canvas/WebGL atlas where CSS var() does NOT
+    // resolve — passing 'var(--mono)' breaks the canvas font parse, so glyphs
+    // render tiny inside full-width cells (the wide letter-spacing). Resolve the
+    // --mono design token to its literal font stack before handing it to xterm.
+    const mono =
+      getComputedStyle(document.documentElement).getPropertyValue('--mono').trim() ||
+      'ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+
     const term = new Terminal({
-      fontFamily: 'var(--mono), ui-monospace, Menlo, Consolas, monospace',
+      fontFamily: mono,
       fontSize: 12.5,
       lineHeight: 1.2,
       cursorBlink: true,
@@ -121,11 +118,14 @@ export function TerminalBoard({
       portRef.current?.postMessage({ t: 'resize', cols, rows })
     )
 
-    // The canvas binds global keys (1 fit / 0 reset / Esc / Backspace-Delete).
-    // Stop key events from a focused terminal bubbling to those handlers so the
-    // user can type those characters into the shell.
+    // Let xterm handle the key FIRST (Backspace/Enter/arrows/Ctrl-C are keydown-
+    // driven on xterm's textarea), THEN stop it bubbling to the canvas / React Flow
+    // global keys (1 / 0 / Esc / Backspace-Delete board-delete). Must be BUBBLE
+    // phase: capture would intercept the event before xterm's textarea (a child of
+    // `el`) ever sees it — which silently breaks Backspace and the other key-driven
+    // controls while plain typing still works via the textarea input event.
     const stopKeys = (e: KeyboardEvent): void => e.stopPropagation()
-    el.addEventListener('keydown', stopKeys, true)
+    el.addEventListener('keydown', stopKeys)
 
     const onWinMsg = (e: MessageEvent): void => {
       const data = e.data as { __ptyPort?: boolean; id?: string }
@@ -177,7 +177,7 @@ export function TerminalBoard({
 
     return () => {
       window.removeEventListener('message', onWinMsg)
-      el.removeEventListener('keydown', stopKeys, true)
+      el.removeEventListener('keydown', stopKeys)
       dataDisp.dispose()
       resizeDisp.dispose()
       ro.disconnect()
@@ -197,27 +197,7 @@ export function TerminalBoard({
 
   useEffect(() => spawn(), [spawn])
 
-  // Run timer (mm:ss): tick only while a live process is running.
-  useEffect(() => {
-    if (!running) return
-    const id = window.setInterval(() => setElapsed((s) => s + 1), 1000)
-    return () => window.clearInterval(id)
-  }, [running])
-
-  // Braille spinner (~90ms/frame) for the working line; idle when not running.
-  useEffect(() => {
-    if (!running) return
-    const id = window.setInterval(() => setFrame((f) => f + 1), 90)
-    return () => window.clearInterval(id)
-  }, [running])
-
-  // ── Actions (DESIGN.md §7.1) ────────────────────────────────────────────────
-  /** Send Ctrl-C to interrupt the foreground process without killing the shell. */
-  const interrupt = useCallback(() => {
-    portRef.current?.postMessage({ t: 'input', d: '\x03' })
-    termRef.current?.focus()
-  }, [])
-
+  // ── Actions ─────────────────────────────────────────────────────────────────
   /** Restart: kill the current session + respawn a fresh shell in place. */
   const restart = useCallback(() => {
     const term = termRef.current
@@ -231,7 +211,6 @@ export function TerminalBoard({
     portRef.current = null
     term.reset()
     setState('spawning')
-    setElapsed(0)
     void window.api
       .spawnTerminal({
         id: board.id,
@@ -249,25 +228,16 @@ export function TerminalBoard({
       })
   }, [board.id, board.shell, board.cwd, board.launchCommand])
 
-  /** Play/pause: stop the live session, or restart one when stopped. */
-  const toggleRun = useCallback(() => {
-    if (running || state === 'awaiting-input') {
-      void window.api.killTerminal(board.id)
-      setState('exited')
-    } else {
-      restart()
-    }
-  }, [running, state, board.id, restart])
-
-  const live = running || state === 'awaiting-input'
-  const status = statusFor(state, identity, running ? formatTimer(elapsed) : undefined)
+  const status = statusFor(state, identity)
 
   const actions = (
     <>
-      <IconBtn name="settings" title="Configure" onClick={() => setConfigOpen((v) => !v)} />
-      <IconBtn name={live ? 'pause' : 'play'} title={live ? 'Pause' : 'Run'} onClick={toggleRun} />
+      <IconBtn
+        name="settings"
+        title="Configure terminal"
+        onClick={() => setConfigOpen((v) => !v)}
+      />
       <IconBtn name="restart" title="Restart" onClick={restart} />
-      <IconBtn name="stop" title="Interrupt (Ctrl-C)" danger onClick={interrupt} />
     </>
   )
 
@@ -278,39 +248,26 @@ export function TerminalBoard({
       selected={selected}
       hovered={hovered}
       dimmed={dimmed}
-      running={running}
       status={status}
       actions={actions}
       contentBg="var(--inset)"
     >
       <div style={shell}>
         {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
-        {/* Live xterm screen — fills the well; --inset bg, 12px padding (§7.1). */}
-        <div style={screenWrap}>
-          <div ref={screenRef} style={screen} />
-        </div>
-
-        {/* Working line: braille spinner + current action while running. */}
-        {running && (
-          <div style={workingLine}>
-            <span style={{ color: 'var(--accent)', width: 10, display: 'inline-block' }}>
-              {brailleFrame(frame)}
-            </span>
-            <span>working…</span>
-          </div>
-        )}
-
-        {/* Follow-up prompt: focuses the live terminal on click (§7.1). */}
+        {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
+            `nodrag nowheel` stops React Flow from treating clicks as a node drag or
+            wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF
+            and force focus into xterm: otherwise RF focuses the node wrapper on
+            click and swallows keystrokes until a restart (the "can't type" bug). */}
         <div
-          style={prompt}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => termRef.current?.focus()}
+          className="nodrag nowheel"
+          style={screenWrap}
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            termRef.current?.focus()
+          }}
         >
-          <span style={{ color: 'var(--accent)' }}>›</span>
-          <span style={{ color: 'var(--text-faint)' }}>
-            {live ? 'send a follow-up instruction' : 'session stopped — restart to continue'}
-          </span>
-          {live && <span className="ca-blink" style={caret} />}
+          <div ref={screenRef} style={screen} />
         </div>
       </div>
     </BoardFrame>
@@ -335,37 +292,4 @@ const screen: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
   padding: '12px 12px 4px'
-}
-
-const workingLine: React.CSSProperties = {
-  flex: 'none',
-  fontFamily: 'var(--mono)',
-  fontSize: 12.5,
-  lineHeight: '19px',
-  color: 'var(--text-2)',
-  display: 'flex',
-  gap: 8,
-  padding: '0 12px 4px'
-}
-
-const prompt: React.CSSProperties = {
-  flex: 'none',
-  borderTop: '1px solid var(--border-subtle)',
-  padding: '8px 14px',
-  fontFamily: 'var(--mono)',
-  fontSize: 12.5,
-  color: 'var(--text-3)',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 7,
-  cursor: 'text',
-  background: 'color-mix(in srgb, var(--inset) 70%, var(--surface))'
-}
-
-const caret: React.CSSProperties = {
-  width: 7,
-  height: 14,
-  background: 'var(--text-3)',
-  borderRadius: 1,
-  marginLeft: -2
 }
