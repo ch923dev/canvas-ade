@@ -6,7 +6,8 @@ const get = () => useCanvasStore.getState()
 
 beforeEach(() => {
   // Reset the singleton's data between tests; merge keeps the action functions.
-  useCanvasStore.setState({ boards: [], selectedId: null, tool: 'select' })
+  // past/future are cleared too so history state doesn't bleed between tests.
+  useCanvasStore.setState({ boards: [], selectedId: null, tool: 'select', past: [], future: [] })
 })
 
 describe('initial state', () => {
@@ -125,5 +126,25 @@ describe('serialization bridge', () => {
     expect(get().boards).toHaveLength(1)
     expect(get().boards[0].id).toBe('b1')
     expect(get().selectedId).toBeNull()
+  })
+})
+
+describe('undo/redo history', () => {
+  it('undo reverts an add; redo re-applies it', () => {
+    get().addBoard('terminal', { x: 0, y: 0 })
+    expect(get().boards).toHaveLength(1)
+    get().undo()
+    expect(get().boards).toHaveLength(0)
+    get().redo()
+    expect(get().boards).toHaveLength(1)
+  })
+
+  it('beginChange snapshots so a subsequent move can be undone', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 200 })
+    expect(get().boards[0].x).toBe(200)
+    get().undo()
+    expect(get().boards[0].x).toBe(0)
   })
 })
