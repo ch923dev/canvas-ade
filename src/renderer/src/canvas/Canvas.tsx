@@ -1,16 +1,24 @@
 /**
- * The production canvas (2.0-C). A React Flow surface whose nodes are derived from
- * the Zustand board store (store = single source of truth); React Flow changes
+ * The production canvas. A React Flow surface whose nodes are derived from the
+ * Zustand board store (store = single source of truth); React Flow changes
  * (drag / resize / select / remove) are translated straight back into store
  * mutations. Camera follows DESIGN.md §5: drag-empty-to-pan, wheel/trackpad pan,
  * Ctrl/⌘+wheel zoom-to-cursor, zoom range 0.1–2.5, dotted grid that fades in the
  * overview band. Boards keep world-space size and degrade to an LOD card < 40%.
  *
- * The bottom add-bar + the initial seed are TEMPORARY 2.0-C scaffolding so the
- * canvas is exercisable now; the real floating app chrome (dock, camera cluster,
- * empty state, focus/dim, keys) lands in 2.0-D and replaces both.
+ * Floating app chrome (project switcher, camera cluster, dock) + the empty state
+ * overlay the surface (DESIGN.md §8). Double-click focuses a board (camera fit +
+ * dim others); Esc clears, 1 fits, 0 resets zoom, Backspace/Delete removes.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactElement
+} from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -25,12 +33,14 @@ import { useCanvasStore } from '../store/canvasStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
-import { TypeGlyph } from './TypeGlyph'
-import { Icon } from './Icon'
+import { AppChrome } from './AppChrome'
+import { EmptyState } from './EmptyState'
 import DiagOverlay from '../spike/DiagOverlay'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const FIT_OPTIONS = { padding: 0.2, maxZoom: 1 } as const
+/** Single-board focus framing (DESIGN.md §5/§9: ~70px pad, 200ms animate). */
+const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX, duration: 200 } as const
 
 /** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5). */
 function FadingDots(): ReactElement {
@@ -57,11 +67,12 @@ function CanvasInner(): ReactElement {
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
-  const seeded = useRef(false)
+  // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
+  const [focusedId, setFocusedId] = useState<string | null>(null)
   const [diag, setDiag] = useState(import.meta.env.DEV)
 
-  // Controlled nodes: one React Flow node per board, selection mirrored from the
-  // store. The title bar is the only drag handle (BoardFrame marks it).
+  // Controlled nodes: one React Flow node per board, selection + dim mirrored from
+  // state. The title bar is the only drag handle (BoardFrame marks it).
   const nodes = useMemo<BoardFlowNode[]>(
     () =>
       boards.map((b) => ({
@@ -69,11 +80,11 @@ function CanvasInner(): ReactElement {
         type: 'board',
         position: { x: b.x, y: b.y },
         style: { width: b.w, height: b.h },
-        data: { board: b },
+        data: { board: b, dimmed: focusedId !== null && focusedId !== b.id },
         selected: b.id === selectedId,
         dragHandle: '.board-titlebar'
       })),
-    [boards, selectedId]
+    [boards, selectedId, focusedId]
   )
 
   // Translate React Flow changes into store mutations. Position covers both node
@@ -92,6 +103,7 @@ function CanvasInner(): ReactElement {
           else if (nextSel === undefined) nextSel = null
         } else if (c.type === 'remove') {
           removeBoard(c.id)
+          setFocusedId((f) => (f === c.id ? null : f))
         }
       }
       if (nextSel !== undefined) selectBoard(nextSel)
@@ -99,33 +111,7 @@ function CanvasInner(): ReactElement {
     [updateBoard, resizeBoard, removeBoard, selectBoard]
   )
 
-  // Seed one of each board type once, then frame them. TEMP 2.0-C scaffolding.
-  useEffect(() => {
-    if (seeded.current) return
-    seeded.current = true
-    const s = useCanvasStore.getState()
-    if (s.boards.length === 0) {
-      s.addBoard('planning', { x: -540, y: -180 })
-      s.addBoard('terminal', { x: 40, y: -180 })
-      s.addBoard('browser', { x: -260, y: 260 })
-      s.selectBoard(null)
-    }
-    requestAnimationFrame(() => rf.fitView(FIT_OPTIONS))
-  }, [rf])
-
-  // Diagnostics overlay toggle (Ctrl/⌘+Shift+D) — moves into app chrome in 2.0-D.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
-        e.preventDefault()
-        setDiag((v) => !v)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  // Add a board centered in the current view (TEMP — the dock owns this in 2.0-D).
+  // Add a board centered in the current view, then select it (store auto-selects).
   const addCentered = useCallback(
     (type: BoardType) => {
       const el = paneRef.current
@@ -138,13 +124,49 @@ function CanvasInner(): ReactElement {
     [rf]
   )
 
+  // Double-click = focus: fit the camera to the board and dim the others. Distinct
+  // from Full view (Phase 3), which is a modal layer that doesn't move the camera.
+  const focusBoard = useCallback(
+    (_e: MouseEvent, node: BoardFlowNode) => {
+      setFocusedId(node.id)
+      selectBoard(node.id)
+      void rf.fitView({ ...FOCUS_OPTIONS, nodes: [{ id: node.id }] })
+    },
+    [rf, selectBoard]
+  )
+
+  const clearSelection = useCallback(() => {
+    selectBoard(null)
+    setFocusedId(null)
+  }, [selectBoard])
+
+  // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
+  // Backspace/Delete deletes the selected board via React Flow's deleteKeyCode.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        clearSelection()
+      } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+        e.preventDefault()
+        setDiag((v) => !v)
+      } else if (e.key === '1') {
+        void rf.fitView(FIT_OPTIONS)
+      } else if (e.key === '0') {
+        void rf.zoomTo(1)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [rf, clearSelection])
+
   return (
     <div ref={paneRef} style={paneStyle}>
       <ReactFlow
         nodes={nodes}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
-        onPaneClick={() => selectBoard(null)}
+        onPaneClick={clearSelection}
+        onNodeDoubleClick={focusBoard}
         minZoom={Z_MIN}
         maxZoom={Z_MAX}
         fitView
@@ -158,23 +180,8 @@ function CanvasInner(): ReactElement {
         <FadingDots />
       </ReactFlow>
 
-      {/* TEMP 2.0-C add bar — replaced by the floating dock + camera cluster in 2.0-D. */}
-      <div style={addBarStyle}>
-        <button style={fitBtnStyle} title="Fit (temp)" onClick={() => rf.fitView(FIT_OPTIONS)}>
-          <Icon name="fit" size={16} />
-        </button>
-        <div style={dividerStyle} />
-        {(['terminal', 'browser', 'planning'] as const).map((type) => (
-          <button key={type} style={addBtnStyle} onClick={() => addCentered(type)}>
-            <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
-              <TypeGlyph type={type} />
-            </span>
-            <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>+</span>
-            {type[0].toUpperCase() + type.slice(1)}
-          </button>
-        ))}
-      </div>
-
+      {boards.length === 0 && <EmptyState onAdd={addCentered} />}
+      <AppChrome onAdd={addCentered} />
       {diag && <DiagOverlay liveViews={0} />}
     </div>
   )
@@ -192,55 +199,4 @@ const paneStyle: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
   background: 'var(--void)'
-}
-
-const addBarStyle: React.CSSProperties = {
-  position: 'absolute',
-  bottom: 18,
-  left: '50%',
-  transform: 'translateX(-50%)',
-  zIndex: 20,
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 3,
-  padding: 4,
-  borderRadius: 9,
-  background: 'var(--surface-raised)',
-  border: '1px solid var(--border-subtle)',
-  boxShadow: 'var(--shadow-pop)'
-}
-
-const addBtnStyle: React.CSSProperties = {
-  height: 32,
-  padding: '0 11px 0 9px',
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 7,
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
-  background: 'transparent',
-  color: 'var(--text-2)',
-  fontSize: 12.5,
-  fontWeight: 500,
-  fontFamily: 'var(--ui)'
-}
-
-const fitBtnStyle: React.CSSProperties = {
-  width: 32,
-  height: 32,
-  display: 'grid',
-  placeItems: 'center',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
-  background: 'transparent',
-  color: 'var(--text-3)'
-}
-
-const dividerStyle: React.CSSProperties = {
-  width: 1,
-  height: 18,
-  background: 'var(--border-subtle)',
-  margin: '0 3px'
 }

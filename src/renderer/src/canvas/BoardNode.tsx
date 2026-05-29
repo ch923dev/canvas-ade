@@ -15,6 +15,8 @@ import { TypeGlyph } from './TypeGlyph'
 
 export interface BoardNodeData extends Record<string, unknown> {
   board: Board
+  /** Dim to 55% when another board is focused (dimOnFocus, fixed-on). */
+  dimmed?: boolean
 }
 
 export type BoardFlowNode = Node<BoardNodeData, 'board'>
@@ -87,6 +89,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           title={board.title}
           selected={selected}
           hovered={hovered}
+          dimmed={data.dimmed}
           lod={lod}
           status={statusFor(board.type)}
           contentBg={board.type === 'terminal' ? 'var(--inset)' : 'var(--surface)'}
