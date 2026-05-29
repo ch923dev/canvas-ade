@@ -9,8 +9,10 @@ Each item is a resizable **board**. A **project = one canvas**. Board types:
 
 - **Terminal** — a live CLI coding agent (any agentic CLI) running in a real shell.
 - **Browser** — a responsive preview of the user's running localhost app in a device frame.
-- **Planning** — whiteboard: notes, arrows, text, freehand.
-- **Checklist** — structured task list, Planning visual family, its own board type.
+- **Planning** — whiteboard: notes, arrows, text, freehand, **and checklists** (interactive task cards).
+- **Checklist** — NOT a separate board type. A first-class **element inside a Planning board** (toggleable
+  items + progress bar), alongside notes/arrows/text/pen. (Decided 2026-05-29; was previously framed as its
+  own type — see `docs/handoffs/phase-2.md`.)
 
 ## Authoritative design reference
 
@@ -81,6 +83,8 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 | Preview liveness | Detach + snapshot while moving/LOD; cap ~4 live. |
 | Browser board scale | Scales WITH the camera (snapshot scales as a unit), not 1:1. Locked in 1-D. |
 | Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session syncs all presets. ADR 0002. |
+| Checklist | A Planning **element** (card inside a Planning board), not a 4th board type / dock button. Decided 2026-05-29. |
+| Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/handoffs/phase-2.md`. |
 | Build matrix | Full: win + mac + linux × x64/arm64 (CI). Local verify = Windows x64 only here. |
 | Target | Single-user desktop (no multiplayer). |
 
@@ -131,5 +135,5 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - **Phase 1-D — DONE** (commit `8f1b1bd`). Detach + `capturePage` snapshot carries motion/LOD: on `onMoveStart` capture (while attached) → set snapshot `<img>` inside the node → `preview:detach`; on `onMoveEnd` `preview:attach` at exact bounds (stays detached + snapshot below `LOD_ZOOM=0.4`). New main IPC `preview:capture/detach/attach` + an `attached` flag; preload `capturePreview/detachPreview/attachPreview`; `useNodesState` + `updateNodeData(snapshot)`, `nodesDraggable=false`. **Scale model LOCKED: board scales with the camera** (see Locked decisions). Verified Windows: no trailing card, snapshot never blank, LOD swaps across 40%.
 - **Phase 1-E — DONE** (commit `40849ec`). `preview.ts` is now a keyed `Map<id, WebContentsView>` PreviewManager (id-scoped `open/setBoundsBatch/capture/detach/attach/close/closeAll`, `disposeAll`). Renderer drives N boards from ONE coalesced `setBounds` batch/frame, per-board detach+snapshot on motion, `MAX_LIVE=4` cap, LOD snapshot < 40%. Responsive reflow via tested `fitZoomFactor` (page held at W∈{390,834,1280}, `setZoomFactor=(nodeW/W)*camZoom`, clamped [0.25,5]; 24 tests total). **Per-board `partition: preview-<id>` isolates each view's zoom** (Chromium stores zoom per-host per-session; a shared session synced all presets). Controls live in a bar ABOVE the pane; snapshot kept as a fallback layer under the live view.
 - **🚦 PHASE 1 GATE — PASSED** (Windows, 2026-05-29). Smooth (165fps), leak-free (open/close `electron.exe` 6→4→6, full close → 0), aligned, multi-view, reflow correct in the working-zoom band. Verdict + load-bearing decisions + known constraints in **`docs/decisions/0002-preview-gate.md`**. Known WebContentsView limits (inherent, mitigated): paints above ALL HTML → occludes boards/in-canvas chrome (mitigate: LOD/motion snapshots + chrome outside the canvas pane); zoom-factor floor 0.25 → desktop preset can't hit 1280 CSS px at heavy zoom-out (fine in working band, snapshot < 40%).
-- Next: **Phase 2.0 — production canvas foundation** (see `docs/roadmap.md`). Promote the salvaged spike (camera math + `PreviewManager` + rAF batch + detach/snapshot + `fitZoomFactor`) into the real canvas: shared `BoardFrame`, restyled `NodeResizer`, LOD card, app chrome shell, persisted node-data schema + `schemaVersion`. The spike harness (`FlowSmoke`, smoke tabs, leak-cycle button) is throwaway.
-- **Start here next session:** `docs/roadmap.md` → Phase 2.0 (Phase 1 handoff `docs/handoffs/phase-1.md` is complete — all steps done).
+- **Phase 2 — PLANNED + handed off** (not started). Researched (design contract + prototype + code salvage) and decomposed: **2.0 foundation = 4 sequential gated steps** (2.0-A tokens · 2.0-B store+schema · 2.0-C canvas+`BoardFrame`+`NodeResizer`+LOD · 2.0-D app chrome shell), then the board types **in parallel** (2.1 Terminal · 2.2 Browser · 2.3 Planning+Checklist). Full plan, salvage map, exact design specs, parallel-execution guidance, and deferred questions in **`docs/handoffs/phase-2.md`**.
+- **Start here next session:** `docs/handoffs/phase-2.md` → **step 2.0-A** (design tokens). Phase 1 handoff (`docs/handoffs/phase-1.md`) is complete.

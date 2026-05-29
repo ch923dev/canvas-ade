@@ -57,14 +57,20 @@ with the user before Phase 2.
 
 ---
 
-## Phase 2 — Core boards (one runnable vertical slice at a time) ⛓ Phase 1
+## Phase 2 — Core boards ⛓ Phase 1
 
-**2.0 — Production canvas foundation** (adjustments A + C)
+**Decomposed + handed off** (2026-05-29) — too big for one pass. **2.0 = 4 sequential gated steps**
+(2.0-A tokens · 2.0-B store+schema · 2.0-C canvas+`BoardFrame`+`NodeResizer`+LOD · 2.0-D app chrome).
+Then the board types build **in PARALLEL** (independent). **Checklist is a Planning element, not a 4th
+board type** (decided 2026-05-29) → folded into 2.3; old "2.4 Checklist board" dropped. Full plan + exact
+design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
+
+**2.0 — Production canvas foundation** (adjustments A + C) — *split into 2.0-A…2.0-D in the handoff*
 - Promote the salvaged spike into the real canvas: pan/zoom (`minZoom 0.1`/`maxZoom 2.5`,
   zoom-to-cursor), dotted background, `hideAttribution`, dark restyle, overview/fit.
 - Shared `BoardFrame` (title bar: glyph + type tag + title + actions + ⋯; content slot), `NodeResizer`
   restyled to 8 handles + min 240×160, selection ring, **LOD card** below 40% zoom.
-- App chrome shell: bottom dock (`select · +Terminal · +Browser · +Planning · +Checklist`), top-right
+- App chrome shell: bottom dock (`select · +Terminal · +Browser · +Planning`), top-right
   camera cluster, top-left project-switcher placeholder, empty-state.
 - **Persisted node-data schema + `schemaVersion` defined now** (file I/O lands Phase 3) so every board
   is serialization-ready from birth; Zustand for app/ephemeral state; `toObject()` round-trips in-memory.
@@ -83,17 +89,14 @@ with the user before Phase 2.
   URL persisted per board. **Basic states:** connecting / connected / load-failed.
 - ✅📏 all three presets correct through camera changes; URL edits reload; failed load shows a state.
 
-**2.3 — Planning board** ⛓ 2.0
+**2.3 — Planning board (incl. the Checklist element)** ⛓ 2.0  *(parallelizable with 2.1 / 2.2)*
 - **Setup:** vendor `perfect-freehand` into `src/vendor/` (pin + attribution) (adjustment E).
 - Whiteboard content: finer dot grid, sticky notes (4 tints), text, freehand pen (pointer deltas ÷ zoom),
-  arrows. Tool cluster shown only when selected.
-- ✅📏 create/move/edit notes; strokes land under the cursor at any zoom (unit-test the ÷zoom mapping).
-
-**2.4 — Checklist board** ⛓ 2.0
-- Own board type, Planning visual family: title + `done/total`, 3px accent progress bar,
-  add/edit/delete/reorder/toggle items. Responsive: large = full list, medium = scroll, small =
-  collapsed summary. State in node props (persists with the canvas).
-- ✅📏 items CRUD + reorder; progress live; resize switches the three density modes.
+  arrows. Tool cluster (`select · note · check · arrow · pen`) shown only when selected.
+- **Checklist element** (folded in from the old 2.4): a card inside Planning — title + `done/total`, 3px
+  accent progress bar, add/edit/delete/toggle items, live progress. State in the Planning board's element data.
+- ✅📏 create/move/edit notes + checklist items (CRUD + toggle + live progress); strokes land under the
+  cursor at any zoom (unit-test the ÷zoom mapping).
 
 ---
 
