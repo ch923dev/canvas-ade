@@ -68,9 +68,12 @@ and node sizing via `node.measured?.{width,height}` (or fixed board dims for the
 
 ---
 
-## 1-B · Static overlay ⛓ 1-A — *START HERE*
+## 1-B · Static overlay ⛓ 1-A — ✅ DONE (commit `ba6ee09`)
 
 One `WebContentsView` pinned to ONE React Flow node's bounds, **camera still**.
+Implemented in `FlowSmoke.tsx` as `PreviewSync` (child of `<ReactFlow>`): preview node
+`PREVIEW_RECT {280,60,360,240}` + dashed cutout; bounds from `worldRectToScreen` + once-per-layout
+`paneOffset`. Verified pixel-aligned at zoom 1.0 / 0.6 / 1.8 on Windows.
 
 Checklist:
 - [ ] Pick/mark one smoke node as the "preview node" (give it known world `{x,y,width,height}`; React Flow
@@ -88,9 +91,13 @@ Checklist:
 Done-signal: open the preview, eyeball that the native view edges match the node's cutout edges at zoom 1,
 ~0.6, ~1.8. Tiny ≤1px rounding drift is fine; systematic offset means `paneOffset`/formula is wrong.
 
-## 1-C · Live pan/zoom ⛓ 1-B — *the core risk*
+## 1-C · Live pan/zoom ⛓ 1-B — ✅ DONE (commit `e844788`)
 
-View follows the camera **live**.
+View follows the camera **live**. `PreviewSync` now drives a single rAF pump off
+`useOnViewportChange` (one coalesced `setBounds` IPC/frame, `rectsEqual` diff-skip, self-stops when
+still). Measured Windows/165Hz: fps pinned 165, frame ~6.1ms, heap flat ~10MB, no perceptible
+trailing/jank through hard pan/zoom. (1-C was smoother than feared — 1-D still adds detach+snapshot
+for LOD/occlusion, not because 1-C trailed.)
 
 Checklist:
 - [ ] Drive a **single rAF loop** off `useOnViewportChange`/`onMove` (NOT React re-renders). Each frame:
@@ -102,7 +109,7 @@ Checklist:
       the signal detach+snapshot (1-D) must carry the motion — note it and move on, don't over-polish 1-C.
       Commit with the measurement written down (in the commit body or a short note).
 
-## 1-D · Detach + snapshot ⛓ 1-C
+## 1-D · Detach + snapshot ⛓ 1-C — *START HERE*
 
 Hide the native view during motion behind a captured image so there's no trailing live view.
 
