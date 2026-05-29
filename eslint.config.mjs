@@ -15,6 +15,8 @@ export default tseslint.config(
       'release/**',
       'node_modules/**',
       'design-reference/**',
+      // Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand).
+      'src/vendor/**',
       // Tooling configs are authored loosely and don't benefit from TS linting.
       '**/*.config.{js,cjs,mjs,ts,mts}',
       'eslint.config.mjs'
