@@ -148,6 +148,16 @@ function CanvasInner(): ReactElement {
     setFocusedId(null)
   }, [selectBoard])
 
+  // Heal a stale focus (e.g. after undoing the focused board's creation): if the
+  // focused board no longer exists, drop focus so others don't stay dimmed.
+  // This is intentional derived-state synchronisation (focusedId depends on boards);
+  // the eslint-disable-next-line suppresses the react-hooks/set-state-in-effect rule
+  // which fires on ANY setState in an effect body, including legitimate cases like this.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFocusedId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
+  }, [boards])
+
   // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
   // Backspace/Delete deletes the selected board via React Flow's deleteKeyCode.
   // Ctrl/⌘+Z → undo; Ctrl/⌘+Shift+Z → redo (guarded: no-op while typing).
@@ -168,14 +178,14 @@ function CanvasInner(): ReactElement {
         redo()
         return
       }
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !typing) {
         clearSelection()
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey) {
         e.preventDefault()
         setDiag((v) => !v)
-      } else if (e.key === '1') {
+      } else if (e.key === '1' && !typing) {
         void rf.fitView(FIT_OPTIONS)
-      } else if (e.key === '0') {
+      } else if (e.key === '0' && !typing) {
         void rf.zoomTo(1)
       }
     }

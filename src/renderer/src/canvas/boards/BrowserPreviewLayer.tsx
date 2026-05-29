@@ -27,7 +27,7 @@ import { useReactFlow, useOnViewportChange } from '@xyflow/react'
 import { roundRect, worldRectToScreen, rectsEqual, fitZoomFactor } from '../../lib/cameraBounds'
 import type { Rect } from '../../lib/cameraBounds'
 import { LOD_ZOOM } from '../../lib/canvasView'
-import { isLiveEligible } from '../../lib/previewPlan'
+import { isLiveEligible, pickLive } from '../../lib/previewPlan'
 import {
   VIEWPORT_PRESETS,
   deviceStageRect,
@@ -254,7 +254,7 @@ export function BrowserPreviewLayer({ paneRef }: LayerProps): ReactElement | nul
     gestureRef.current = false
     const all = [...geomRef.current.values()]
     const wantLive = all.filter((g) => liveEligible(g))
-    const liveIds = new Set(wantLive.slice(0, MAX_LIVE).map((g) => g.id))
+    const liveIds = new Set(pickLive(wantLive, MAX_LIVE))
     for (const g of all) {
       const r = rec(g.id)
       if (liveIds.has(g.id)) void attachBoard(g)

@@ -116,5 +116,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
 
   toObject: () => toObject(get().boards),
-  loadObject: (doc) => set({ boards: fromObject(doc).boards, selectedId: null })
+  loadObject: (doc) =>
+    set({ boards: fromObject(doc).boards, selectedId: null, past: [], future: [] })
 }))

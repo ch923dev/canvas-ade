@@ -40,6 +40,7 @@ export function TerminalConfig({
   }, [])
 
   const apply = (): void => {
+    useCanvasStore.getState().beginChange()
     updateBoard(board.id, {
       shell: shell || undefined,
       launchCommand: launchCommand.trim() || undefined,

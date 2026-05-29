@@ -30,8 +30,8 @@ export interface LiveCandidate {
 
 /**
  * Cap the live set (first-come wins, matching the existing slice(0, MAX_LIVE)).
- * Extracted for testing; wire into endMotion when the cap strategy changes.
+ * Generic over `{ id }` so the layer can pass its board geometry directly.
  */
-export function pickLive(candidates: LiveCandidate[], cap: number): string[] {
+export function pickLive<T extends { id: string }>(candidates: T[], cap: number): string[] {
   return candidates.slice(0, cap).map((c) => c.id)
 }
