@@ -47,6 +47,7 @@ declare global {
 let seedX = 0
 
 export function installE2EHooks(rf: ReactFlowInstance): void {
+  seedX = 0 // reset the seed cursor so a re-install (e.g. HMR) starts fresh + idempotent
   const api: CanvasE2E = {
     seedBoard(type, patch) {
       const store = useCanvasStore.getState()

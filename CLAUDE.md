@@ -111,6 +111,8 @@ pnpm pack:dir       # build + electron-builder --dir → release/win-unpacked/
 pnpm build:win|mac|linux
 pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 # headless smoke: $env:CANVAS_SMOKE='exit'; pnpm start   (prints SELFTEST_DONE / RENDERER_SMOKE)
+# board e2e smoke: pnpm build; $env:CANVAS_SMOKE='e2e'; pnpm start   (seeds each board, prints E2E_* / E2E_DONE, exits non-zero on fail)
+# HTML screenshot:  $env:CANVAS_SHOT='C:\tmp\canvas.png'; pnpm start  (renderer DOM only, NOT the native preview view)
 ```
 
 ## Conventions

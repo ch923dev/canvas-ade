@@ -62,8 +62,10 @@ function createWindow(): void {
   // Dev-only HTML screenshot path (committed, env-gated). Captures the renderer DOM
   // (NOT the native WebContentsView — that's what the e2e Browser capture is for).
   // Usage: $env:CANVAS_SHOT='C:\tmp\canvas.png'; pnpm start
+  // Skip when CANVAS_SMOKE=e2e: that run owns the did-finish-load lifecycle (and its
+  // 800ms app.quit would cut the multi-second e2e harness short).
   const shotPath = process.env.CANVAS_SHOT
-  if (shotPath) {
+  if (shotPath && SMOKE !== 'e2e') {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {

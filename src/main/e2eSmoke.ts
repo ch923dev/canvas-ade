@@ -15,10 +15,7 @@ import { debugCaptureView } from './preview'
 // Markers go to stdout via bare console.log — safe here because index.ts installs a
 // process.stdout 'error' handler (EPIPE swallow) before this runs whenever SMOKE is set.
 
-/**
- * Sentinel echoed into a terminal board to prove the PTY↔xterm data plane.
- * Used by Tasks 5–7 when real per-board assertions are wired in.
- */
+/** Sentinel echoed into a terminal board to prove the PTY↔xterm data plane. */
 export const TERM_SENTINEL = 'CANVAS_E2E_TERM_OK'
 
 function evalIn<T>(win: BrowserWindow, expr: string): Promise<T> {
@@ -50,8 +47,8 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     return s.exitCode
   }
 
-  // Tasks 5-7 push real parts here. For now, prove the seam: seed one of each and
-  // assert they reached the store.
+  // Seed + assert one of each board type, plus a final 3-board count check. Each
+  // block pushes its E2EPart; the summary decides the overall pass/fail + exit code.
 
   // ── Terminal: seed with a launchCommand that echoes the sentinel, then read it
   // back off the xterm framebuffer (proves the PTY↔xterm data plane end to end). ──
