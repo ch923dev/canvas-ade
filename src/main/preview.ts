@@ -4,11 +4,16 @@ import { WebContentsView } from 'electron'
 /**
  * Phase 0: a single WebContentsView proving native-overlay basics. Phase 1
  * turns this into a PreviewManager over N views, synced to the canvas camera.
- * A native view paints ABOVE all HTML and cannot be clipped/rounded — Phase 1
- * adds detach + capturePage snapshotting for LOD / occlusion.
+ * A native view paints ABOVE all HTML and cannot be clipped/rounded — 1-D adds
+ * detach + capturePage snapshotting so motion / LOD is carried by an HTML image
+ * (which CAN be clipped/scaled) instead of the native layer.
  */
 let view: WebContentsView | null = null
 let owner: BrowserWindow | null = null
+// Whether `view` is currently a child of the window's contentView. capturePage
+// only works while attached + on-screen, so detach/attach are tracked explicitly
+// (addChildView twice / removeChildView when absent both misbehave).
+let attached = false
 
 function round(b: Rectangle): Rectangle {
   return {
@@ -17,6 +22,21 @@ function round(b: Rectangle): Rectangle {
     width: Math.round(b.width),
     height: Math.round(b.height)
   }
+}
+
+function attach(bounds?: Rectangle): void {
+  if (!view || !owner) return
+  if (!attached) {
+    owner.contentView.addChildView(view)
+    attached = true
+  }
+  if (bounds) view.setBounds(round(bounds))
+}
+
+function detach(): void {
+  if (!view || !owner || !attached) return
+  owner.contentView.removeChildView(view)
+  attached = false
 }
 
 export function registerPreviewHandlers(
@@ -32,15 +52,35 @@ export function registerPreviewHandlers(
       view = new WebContentsView({
         webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
       })
-      win.contentView.addChildView(view)
     }
-    view.setBounds(round(args.bounds))
+    attach(args.bounds)
     void view.webContents.loadURL(args.url || defaultUrl)
     return { url: args.url || defaultUrl }
   })
 
   ipcMain.handle('preview:setBounds', (_e, bounds: Rectangle) => {
-    view?.setBounds(round(bounds))
+    if (view && attached) view.setBounds(round(bounds))
+    return true
+  })
+
+  // Capture the CURRENT on-screen pixels as a data URL. Must run while attached —
+  // a detached/off-screen view captures blank. The renderer captures, awaits, THEN
+  // detaches (so the snapshot it shows during motion is never empty).
+  ipcMain.handle('preview:capture', async () => {
+    if (!view || !attached) return null
+    const img = await view.webContents.capturePage()
+    return img.isEmpty() ? null : img.toDataURL()
+  })
+
+  // Pull the native view out of the layer tree WITHOUT closing its renderer, so an
+  // HTML snapshot can carry motion / LOD. `preview:attach` puts it back at bounds.
+  ipcMain.handle('preview:detach', () => {
+    detach()
+    return true
+  })
+
+  ipcMain.handle('preview:attach', (_e, bounds: Rectangle) => {
+    attach(bounds)
     return true
   })
 
@@ -53,7 +93,7 @@ export function registerPreviewHandlers(
 export function disposePreview(): void {
   if (!view) return
   try {
-    owner?.contentView.removeChildView(view)
+    detach()
     // WebContentsView has no destroy(); close the renderer or leak it.
     view.webContents.close()
   } catch {
@@ -61,4 +101,5 @@ export function disposePreview(): void {
   }
   view = null
   owner = null
+  attached = false
 }

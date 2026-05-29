@@ -6,7 +6,8 @@ import {
   Controls,
   MiniMap,
   useReactFlow,
-  useOnViewportChange
+  useOnViewportChange,
+  useNodesState
 } from '@xyflow/react'
 import type { Node, NodeProps } from '@xyflow/react'
 import DiagOverlay from '../spike/DiagOverlay'
@@ -19,20 +20,32 @@ import type { Rect } from '../lib/cameraBounds'
 // sits pixel-aligned over the dashed cutout at a few static zoom levels.
 const PREVIEW_NODE_ID = '2'
 const PREVIEW_RECT: Rect = { x: 280, y: 60, width: 360, height: 240 }
+// 1-D LOD: below this camera zoom the live view is too small to be worth a
+// renderer — show the captured snapshot instead, reattaching live above ~40%.
+const LOD_ZOOM = 0.4
 
 // Custom node = the seed of a future "board". The preview node renders a dashed
 // "cutout" so misalignment is visible: a perfectly-placed native view hides it;
-// any drift reveals the dashed edge peeking out on one side.
+// any drift reveals the dashed edge peeking out on one side. During motion / LOD
+// (1-D) the native view is detached and `data.snapshot` (a capturePage data URL)
+// is shown as an <img> INSIDE the node — so React Flow scales it with the camera
+// as a unit (this is what locks "Browser board scales with the camera").
 function SmokeNode({ data }: NodeProps) {
-  const d = data as { label: string; sub: string; preview?: boolean }
+  const d = data as { label: string; sub: string; preview?: boolean; snapshot?: string | null }
   if (d.preview) {
     return (
       <div style={cutoutStyle}>
-        <div className="t">{d.label}</div>
-        <div className="s">{d.sub}</div>
-        <div style={{ marginTop: 'auto', color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>
-          native view mounts over this cutout
-        </div>
+        {d.snapshot ? (
+          <img src={d.snapshot} alt="" draggable={false} style={snapshotStyle} />
+        ) : (
+          <>
+            <div className="t">{d.label}</div>
+            <div className="s">{d.sub}</div>
+            <div style={{ marginTop: 'auto', color: 'var(--text-3)', fontFamily: 'var(--mono)' }}>
+              native view mounts over this cutout
+            </div>
+          </>
+        )}
       </div>
     )
   }
@@ -54,7 +67,18 @@ const cutoutStyle: React.CSSProperties = {
   border: '1.5px dashed var(--accent)',
   borderRadius: 'var(--r-board)',
   background: 'var(--accent-wash)',
-  fontSize: 11
+  fontSize: 11,
+  overflow: 'hidden'
+}
+
+const snapshotStyle: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  display: 'block',
+  borderRadius: 'var(--r-board)'
 }
 
 const nodeTypes = { smoke: SmokeNode }
@@ -85,11 +109,14 @@ const nodes: Node[] = [
  * Keeps the single native WebContentsView glued to PREVIEW_RECT under the React
  * Flow camera. Must live INSIDE <ReactFlow> to use the viewport hooks.
  *
- * 1-C: the view follows the camera LIVE via a single rAF pump driven off
- * useOnViewportChange — NOT React re-renders. Each frame computes the screen rect
- * imperatively, diff-skips, and sends at most ONE coalesced setBounds IPC (the
- * channel is shared with node-pty, so per-frame fan-out must stay bounded). The
- * pump self-stops when the camera goes still, so there's no idle rAF.
+ * 1-C: while STILL the view tracks the camera via a single rAF pump off
+ * useOnViewportChange (one coalesced setBounds IPC/frame, diff-skipped, no React
+ * re-render). 1-D: during MOTION (and below LOD_ZOOM) the native view is detached
+ * and a capturePage snapshot — rendered as an <img> inside the node — carries the
+ * movement, so there's no trailing native layer; onMoveEnd reattaches the live
+ * view at exact bounds. Capture happens WHILE attached (a detached view captures
+ * blank): capture → set snapshot → detach. The pump keeps the live view glued
+ * during the brief async capture window before the detach lands.
  */
 function PreviewSync({
   paneRef,
@@ -98,22 +125,27 @@ function PreviewSync({
   paneRef: React.RefObject<HTMLDivElement | null>
   open: boolean
 }) {
-  const { getViewport } = useReactFlow()
+  const { getViewport, updateNodeData } = useReactFlow()
   const paneOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const lastSent = useRef<Rect | null>(null)
   const openRef = useRef(open)
   // rAF pump state: the raf handle (0 = idle) + consecutive no-change frames.
   const rafRef = useRef(0)
   const idleRef = useRef(0)
+  // Whether the native view is in the layer tree, and whether a detach gesture is
+  // live. gestureRef guards the async capture against a gesture that ends first.
+  const attachedRef = useRef(false)
+  const gestureRef = useRef(false)
   useEffect(() => {
     openRef.current = open
   }, [open])
 
   // Compute current screen bounds; send ONE coalesced setBounds IPC iff it moved.
-  // Reads the viewport imperatively (no React re-render). Returns whether it sent
-  // — the pump uses that to auto-stop when the camera goes still.
+  // No-op while detached (the snapshot carries motion then). Reads the viewport
+  // imperatively (no React re-render). Returns whether it sent — the pump uses
+  // that to auto-stop when the camera goes still.
   const flush = useCallback((): boolean => {
-    if (!openRef.current) return false
+    if (!openRef.current || !attachedRef.current) return false
     const bounds = roundRect(worldRectToScreen(PREVIEW_RECT, getViewport(), paneOffset.current))
     if (lastSent.current && rectsEqual(lastSent.current, bounds)) return false
     lastSent.current = bounds
@@ -134,14 +166,36 @@ function PreviewSync({
     rafRef.current = requestAnimationFrame(step)
   }, [flush])
 
-  // Drive the pump off React Flow's viewport gesture, NOT React re-renders.
-  useOnViewportChange({
-    onStart: startPump,
-    onChange: startPump,
-    onEnd: () => {
-      flush() // land exact final bounds; the pump then idles out
+  // onMoveStart: keep tracking live (pump) AND kick off capture→snapshot→detach.
+  const beginMotion = useCallback(() => {
+    startPump()
+    if (!openRef.current || !attachedRef.current || gestureRef.current) return
+    gestureRef.current = true
+    void (async () => {
+      const url = await window.api.capturePreview()
+      if (!gestureRef.current) return // gesture ended before capture → keep live view
+      if (url) updateNodeData(PREVIEW_NODE_ID, { snapshot: url })
+      await window.api.detachPreview()
+      attachedRef.current = false
+    })()
+  }, [startPump, updateNodeData])
+
+  // onMoveEnd: reattach the live view at exact bounds — unless we're below LOD_ZOOM,
+  // where the snapshot stays (too small to be worth a renderer).
+  const endMotion = useCallback(() => {
+    gestureRef.current = false
+    if (!openRef.current) return
+    if (getViewport().zoom >= LOD_ZOOM) {
+      const bounds = roundRect(worldRectToScreen(PREVIEW_RECT, getViewport(), paneOffset.current))
+      lastSent.current = bounds
+      attachedRef.current = true
+      void window.api.attachPreview(bounds)
+      updateNodeData(PREVIEW_NODE_ID, { snapshot: null })
     }
-  })
+  }, [getViewport, updateNodeData])
+
+  // Drive off React Flow's viewport gesture, NOT React re-renders.
+  useOnViewportChange({ onStart: beginMotion, onChange: startPump, onEnd: endMotion })
 
   // paneOffset = the React Flow pane's top-left in window CSS px. setBounds wants
   // window-content DIP coords, and the pane sits below the 44px topbar + tabs.
@@ -170,12 +224,16 @@ function PreviewSync({
     if (open) {
       const bounds = roundRect(worldRectToScreen(PREVIEW_RECT, getViewport(), paneOffset.current))
       lastSent.current = bounds
+      attachedRef.current = true
       void window.api.openPreview({ bounds })
     } else {
       lastSent.current = null
+      attachedRef.current = false
+      gestureRef.current = false
       void window.api.closePreview()
+      updateNodeData(PREVIEW_NODE_ID, { snapshot: null })
     }
-  }, [open, getViewport])
+  }, [open, getViewport, updateNodeData])
 
   // Tear down on unmount (tab switch / HMR): stop the pump + close the view.
   useEffect(
@@ -195,6 +253,9 @@ export default function FlowSmoke() {
   const [diag, setDiag] = useState(import.meta.env.DEV)
   const [open, setOpen] = useState(false)
   const paneRef = useRef<HTMLDivElement>(null)
+  // Owned node state so 1-D's updateNodeData(snapshot) on the preview node sticks.
+  // Dragging is off — PREVIEW_RECT stays the authoritative world rect for the math.
+  const [rfNodes, , onNodesChange] = useNodesState(nodes)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -217,8 +278,10 @@ export default function FlowSmoke() {
       </div>
       <div ref={paneRef} style={{ position: 'absolute', inset: 0 }}>
         <ReactFlow
-          nodes={nodes}
+          nodes={rfNodes}
+          onNodesChange={onNodesChange}
           nodeTypes={nodeTypes}
+          nodesDraggable={false}
           minZoom={0.1}
           maxZoom={2.5}
           fitView

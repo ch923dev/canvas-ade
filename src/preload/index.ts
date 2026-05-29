@@ -21,6 +21,12 @@ const api = {
     ipcRenderer.invoke('preview:open', args),
   setPreviewBounds: (bounds: Rectangle): Promise<boolean> =>
     ipcRenderer.invoke('preview:setBounds', bounds),
+  // Snapshot the live view (data URL) before detaching, so an HTML <img> can carry
+  // motion / LOD while the native layer is pulled out of the tree (1-D).
+  capturePreview: (): Promise<string | null> => ipcRenderer.invoke('preview:capture'),
+  detachPreview: (): Promise<boolean> => ipcRenderer.invoke('preview:detach'),
+  attachPreview: (bounds: Rectangle): Promise<boolean> =>
+    ipcRenderer.invoke('preview:attach', bounds),
   closePreview: (): Promise<boolean> => ipcRenderer.invoke('preview:close')
 }
 
