@@ -1,6 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import * as path from 'node:path'
-import { canonicalizeShellPath, isStaleExit } from './pty'
+import { canonicalizeShellPath, isStaleExit, appendRing } from './pty'
+
+describe('appendRing', () => {
+  it('concatenates when the result is under the cap', () => {
+    expect(appendRing('ab', 'cd', 10)).toBe('abcd')
+  })
+  it('returns exactly the input at the cap boundary', () => {
+    expect(appendRing('abcd', 'ef', 6)).toBe('abcdef')
+  })
+  it('drops the oldest bytes when over the cap (keeps the last `cap`)', () => {
+    expect(appendRing('abcd', 'efgh', 6)).toBe('cdefgh')
+  })
+  it('keeps only the last `cap` bytes when a single chunk exceeds the cap', () => {
+    expect(appendRing('', 'abcdefgh', 4)).toBe('efgh')
+  })
+  it('is a no-op for an empty chunk', () => {
+    expect(appendRing('abc', '', 10)).toBe('abc')
+  })
+})
 
 // Pure identity-guard behind the restart/config-respawn race fix: a late
 // onExit from an OLD pty process must not tear down the NEW session that has

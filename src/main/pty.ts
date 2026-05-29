@@ -17,6 +17,16 @@ import * as pty from 'node-pty'
  * `exited` / `spawn-failed`) is pushed back to the renderer over the SAME
  * MessagePort as `{ t: 'state', … }` so the board can render its identity pill.
  */
+/**
+ * Append `chunk` to a capped output ring buffer, keeping only the last `cap`
+ * characters (drop-oldest). Pure, so it is unit-tested. Used to record each
+ * session's recent output for replay when a deleted terminal is adopted on undo.
+ */
+export function appendRing(prev: string, chunk: string, cap: number): string {
+  const next = prev + chunk
+  return next.length <= cap ? next : next.slice(next.length - cap)
+}
+
 export interface SpawnOpts {
   id: string
   shell?: string
