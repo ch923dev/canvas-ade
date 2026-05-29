@@ -6,12 +6,12 @@ import {
   Controls,
   MiniMap,
   useReactFlow,
-  useViewport
+  useOnViewportChange
 } from '@xyflow/react'
 import type { Node, NodeProps } from '@xyflow/react'
 import DiagOverlay from '../spike/DiagOverlay'
 import { roundRect, worldRectToScreen, rectsEqual } from '../lib/cameraBounds'
-import type { Rect, Viewport } from '../lib/cameraBounds'
+import type { Rect } from '../lib/cameraBounds'
 
 // 1-B: one WebContentsView pinned to ONE node's bounds, camera still. The
 // "preview node" has a KNOWN world rect; the native view is positioned by the
@@ -85,9 +85,11 @@ const nodes: Node[] = [
  * Keeps the single native WebContentsView glued to PREVIEW_RECT under the React
  * Flow camera. Must live INSIDE <ReactFlow> to use the viewport hooks.
  *
- * 1-B drives the sync off React's reactive `useViewport()` — correct while the
- * camera is still (open, then set zoom via Controls). 1-C replaces this with a
- * single rAF loop off useOnViewportChange for live pan/zoom (no React re-renders).
+ * 1-C: the view follows the camera LIVE via a single rAF pump driven off
+ * useOnViewportChange — NOT React re-renders. Each frame computes the screen rect
+ * imperatively, diff-skips, and sends at most ONE coalesced setBounds IPC (the
+ * channel is shared with node-pty, so per-frame fan-out must stay bounded). The
+ * pump self-stops when the camera goes still, so there's no idle rAF.
  */
 function PreviewSync({
   paneRef,
@@ -97,34 +99,60 @@ function PreviewSync({
   open: boolean
 }) {
   const { getViewport } = useReactFlow()
-  const vp = useViewport()
   const paneOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const lastSent = useRef<Rect | null>(null)
-  // Mirror `open` into a ref so the stable `sync` callback can guard on it
-  // without re-creating itself (and tearing down the ResizeObserver) per toggle.
   const openRef = useRef(open)
+  // rAF pump state: the raf handle (0 = idle) + consecutive no-change frames.
+  const rafRef = useRef(0)
+  const idleRef = useRef(0)
   useEffect(() => {
     openRef.current = open
   }, [open])
 
-  const sync = useCallback((viewport: Viewport) => {
-    if (!openRef.current) return
-    const bounds = roundRect(worldRectToScreen(PREVIEW_RECT, viewport, paneOffset.current))
-    if (lastSent.current && rectsEqual(lastSent.current, bounds)) return
+  // Compute current screen bounds; send ONE coalesced setBounds IPC iff it moved.
+  // Reads the viewport imperatively (no React re-render). Returns whether it sent
+  // — the pump uses that to auto-stop when the camera goes still.
+  const flush = useCallback((): boolean => {
+    if (!openRef.current) return false
+    const bounds = roundRect(worldRectToScreen(PREVIEW_RECT, getViewport(), paneOffset.current))
+    if (lastSent.current && rectsEqual(lastSent.current, bounds)) return false
     lastSent.current = bounds
     void window.api.setPreviewBounds(bounds)
-  }, [])
+    return true
+  }, [getViewport])
+
+  // Single rAF loop: one IPC batch per frame while moving, diff-skipped. Self-stops
+  // after a few idle frames — no perpetual rAF when still, and a backstop if onEnd
+  // never fires. onChange restarts it (guarded by rafRef === 0).
+  const startPump = useCallback(() => {
+    if (rafRef.current || !openRef.current) return
+    idleRef.current = 0
+    const step = (): void => {
+      idleRef.current = flush() ? 0 : idleRef.current + 1
+      rafRef.current = idleRef.current < 4 ? requestAnimationFrame(step) : 0
+    }
+    rafRef.current = requestAnimationFrame(step)
+  }, [flush])
+
+  // Drive the pump off React Flow's viewport gesture, NOT React re-renders.
+  useOnViewportChange({
+    onStart: startPump,
+    onChange: startPump,
+    onEnd: () => {
+      flush() // land exact final bounds; the pump then idles out
+    }
+  })
 
   // paneOffset = the React Flow pane's top-left in window CSS px. setBounds wants
   // window-content DIP coords, and the pane sits below the 44px topbar + tabs.
-  // Compute once per LAYOUT (resize), never per frame — then re-sync bounds.
+  // Compute once per LAYOUT (resize), never per frame — then re-sync once.
   useEffect(() => {
     const el = paneRef.current
     if (!el) return
     const measure = (): void => {
       const r = el.getBoundingClientRect()
       paneOffset.current = { x: r.left, y: r.top }
-      sync(getViewport())
+      flush()
     }
     measure()
     const ro = new ResizeObserver(measure)
@@ -134,10 +162,10 @@ function PreviewSync({
       ro.disconnect()
       window.removeEventListener('resize', measure)
     }
-  }, [paneRef, sync, getViewport])
+  }, [paneRef, flush])
 
   // Open/close lifecycle. openPreview creates the view + loads the URL + sets the
-  // initial bounds; priming lastSent so the first reactive sync diff-skips.
+  // initial bounds; priming lastSent so the first pump frame diff-skips.
   useEffect(() => {
     if (open) {
       const bounds = roundRect(worldRectToScreen(PREVIEW_RECT, getViewport(), paneOffset.current))
@@ -149,13 +177,14 @@ function PreviewSync({
     }
   }, [open, getViewport])
 
-  // Re-sync when the camera changes (reactive; still-camera path for 1-B).
-  useEffect(() => {
-    sync(vp)
-  }, [vp, sync])
-
-  // Tear the native view down when the canvas unmounts (tab switch / HMR).
-  useEffect(() => () => void window.api.closePreview(), [])
+  // Tear down on unmount (tab switch / HMR): stop the pump + close the view.
+  useEffect(
+    () => () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      void window.api.closePreview()
+    },
+    []
+  )
 
   return null
 }
