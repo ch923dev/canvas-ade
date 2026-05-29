@@ -33,6 +33,7 @@ export type IconName =
   | 'copy'
   | 'check'
   | 'trash'
+  | 'settings'
 
 /** Icons drawn from multiple primitives (rect + path) rather than one path. */
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
@@ -63,7 +64,8 @@ const PATHS: Record<IconName, string> = {
   x: 'M6 6l12 12M18 6L6 18',
   copy: 'M9 9.5A1.5 1.5 0 0 1 10.5 8H18a1.5 1.5 0 0 1 1.5 1.5V18A1.5 1.5 0 0 1 18 19.5h-7.5A1.5 1.5 0 0 1 9 18zM6 15.5A1.5 1.5 0 0 1 4.5 14V5.5A1.5 1.5 0 0 1 6 4h7.5A1.5 1.5 0 0 1 15 5.5',
   check: 'M5 12.5l4.5 4.5L19 7',
-  trash: 'M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13'
+  trash: 'M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13',
+  settings: 'M4 8h7M15 8h5M4 16h5M13 16h7M13 6v4M9 14v4'
 }
 
 interface SvgProps {

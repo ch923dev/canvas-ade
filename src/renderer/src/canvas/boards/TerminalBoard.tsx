@@ -15,6 +15,7 @@
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { TerminalConfig } from './TerminalConfig'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -71,6 +72,7 @@ export function TerminalBoard({
   const [state, setState] = useState<TerminalState>('spawning')
   const [elapsed, setElapsed] = useState(0)
   const [frame, setFrame] = useState(0)
+  const [configOpen, setConfigOpen] = useState(false)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -259,6 +261,7 @@ export function TerminalBoard({
 
   const actions = (
     <>
+      <IconBtn name="settings" title="Configure" onClick={() => setConfigOpen((v) => !v)} />
       <IconBtn name={live ? 'pause' : 'play'} title={live ? 'Pause' : 'Run'} onClick={toggleRun} />
       <IconBtn name="restart" title="Restart" onClick={restart} />
       <IconBtn name="stop" title="Interrupt (Ctrl-C)" danger onClick={interrupt} />
@@ -278,6 +281,7 @@ export function TerminalBoard({
       contentBg="var(--inset)"
     >
       <div style={shell}>
+        {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
         {/* Live xterm screen — fills the well; --inset bg, 12px padding (§7.1). */}
         <div style={screenWrap}>
           <div ref={screenRef} style={screen} />
