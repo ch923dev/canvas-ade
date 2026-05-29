@@ -7,7 +7,7 @@
  * Includes a live "draft" overlay so an in-progress arrow/stroke renders while
  * the pointer is still down, before it is committed to the store.
  */
-import { useMemo, type ReactElement } from 'react'
+import { useMemo, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 
@@ -23,6 +23,19 @@ export interface WhiteboardSvgProps {
   selectedId?: string | null
   /** Called when a committed arrow or stroke is clicked. */
   onSelect?: (id: string) => void
+  /**
+   * Begin a board-local drag of a committed vector (arrow/stroke) — wired to the
+   * same `startElementDrag` the cards use so vectors are repositionable, not just
+   * select+delete (#28, #37).
+   */
+  onDragStart?: (e: PointerEvent, id: string) => void
+  /**
+   * True while a draw tool (pen/arrow) is active. Disables hit-testing on the
+   * committed vectors so a new stroke/arrow can START on top of existing ink
+   * (the press falls through to the well's onWellPointerDown — #4), mirroring the
+   * card fall-through guards.
+   */
+  drawing?: boolean
 }
 
 export function WhiteboardSvg({
@@ -32,7 +45,9 @@ export function WhiteboardSvg({
   draftArrow,
   draftStroke,
   selectedId,
-  onSelect
+  onSelect,
+  onDragStart,
+  drawing = false
 }: WhiteboardSvgProps): ReactElement {
   const markerId = arrowheadMarkerId(boardId)
   // Memoize the (potentially heavy) outline math for committed strokes.
@@ -77,10 +92,11 @@ export function WhiteboardSvg({
           strokeWidth={a.id === selectedId ? 2.5 : 1.5}
           fill="none"
           markerEnd={a.id === selectedId ? `url(#${markerId}-sel)` : `url(#${markerId})`}
-          style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+          style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
           onPointerDown={(e) => {
             e.stopPropagation()
             onSelect?.(a.id)
+            onDragStart?.(e, a.id)
           }}
         />
       ))}
@@ -100,10 +116,11 @@ export function WhiteboardSvg({
             key={strokes[i].id}
             d={d}
             fill={strokes[i].id === selectedId ? 'var(--accent)' : 'var(--text-2)'}
-            style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+            style={{ pointerEvents: drawing ? 'none' : 'auto', cursor: 'grab' }}
             onPointerDown={(e) => {
               e.stopPropagation()
               onSelect?.(strokes[i].id)
+              onDragStart?.(e, strokes[i].id)
             }}
           />
         ) : null
