@@ -115,6 +115,11 @@ function CanvasInner(): ReactElement {
         else if (intent.kind === 'deselect') {
           if (nextSel === undefined) nextSel = null
         } else if (intent.kind === 'remove') {
+          // #15: parking a terminal's live session BEFORE removal lets undo adopt it.
+          // Sent before removeBoard → main parks before the unmount's kill arrives
+          // (a single renderer's IPC is delivered in send order).
+          const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
+          if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id)
           removeBoard(intent.id)
           setFocusedId((f) => (f === intent.id ? null : f))
         }
