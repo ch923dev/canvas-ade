@@ -160,9 +160,9 @@ export function PlanningBoard({
   // ── Element drag (select tool): grab → move in board-local space ─────────────
   const startElementDrag = useCallback(
     (e: PointerEvent, id: string) => {
-      beginChange()
       const el = elements.find((x) => x.id === id)
       if (!el || el.kind === 'arrow' || el.kind === 'stroke') return
+      beginChange()
       const p = toBoard(e)
       drag.current = { mode: 'move', id, offX: p.x - el.x, offY: p.y - el.y }
       // Capture on the WELL (not the card) so move/up route to the well handlers

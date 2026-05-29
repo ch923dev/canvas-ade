@@ -156,10 +156,16 @@ function CanvasInner(): ReactElement {
       const t = e.target as HTMLElement | null
       const typing =
         !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) {
+      const mod = (e.ctrlKey || e.metaKey) && !e.altKey
+      if (mod && e.key.toLowerCase() === 'z' && !typing) {
         e.preventDefault()
         if (e.shiftKey) redo()
         else undo()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'y' && !e.shiftKey && !typing) {
+        e.preventDefault()
+        redo()
         return
       }
       if (e.key === 'Escape') {
