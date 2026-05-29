@@ -35,15 +35,44 @@ export function isLiveEligible(i: EligibilityInput): boolean {
 
 export interface LiveCandidate {
   id: string
+  /** Stage left in screen px (pane-local + offset). */
+  screenX?: number
+  /** Stage top in screen px (pane-local + offset). */
   screenY: number
   w: number
   h: number
 }
 
+/** A screen-space point (the viewport centre) for distance-ranking candidates. */
+export interface Point {
+  x: number
+  y: number
+}
+
 /**
- * Cap the live set (first-come wins, matching the existing slice(0, MAX_LIVE)).
- * Generic over `{ id }` so the layer can pass its board geometry directly.
+ * Cap the live set (Bug #8). When a viewport `center` is given, the `cap` candidates
+ * whose stage centres are NEAREST that point win the live slots (so panning to a new
+ * board makes it live instead of an off-screen earlier one); ties keep first-come
+ * order (a stable sort). With no `center` it falls back to first-come (`slice(0, cap)`),
+ * preserving the original behaviour. Generic over the geometry the layer carries.
  */
-export function pickLive<T extends { id: string }>(candidates: T[], cap: number): string[] {
-  return candidates.slice(0, cap).map((c) => c.id)
+export function pickLive<T extends LiveCandidate>(
+  candidates: T[],
+  cap: number,
+  center?: Point
+): string[] {
+  if (!center || candidates.length <= cap) {
+    return candidates.slice(0, cap).map((c) => c.id)
+  }
+  const dist = (c: T): number => {
+    const cx = (c.screenX ?? 0) + c.w / 2
+    const cy = c.screenY + c.h / 2
+    return (cx - center.x) ** 2 + (cy - center.y) ** 2
+  }
+  // Decorate with original index so equal distances keep first-come order (stable).
+  return candidates
+    .map((c, i) => ({ c, i, d: dist(c) }))
+    .sort((a, b) => a.d - b.d || a.i - b.i)
+    .slice(0, cap)
+    .map((e) => e.c.id)
 }

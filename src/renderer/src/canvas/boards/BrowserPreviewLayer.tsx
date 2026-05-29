@@ -46,6 +46,11 @@ interface PaneOffset {
   y: number
 }
 
+interface PaneSize {
+  w: number
+  h: number
+}
+
 /** Minimal geometry the manager needs per board (snapshot of the store row). */
 interface BoardGeom {
   id: string
@@ -68,6 +73,12 @@ interface BoardRec {
   lastZoom: number
   /** Last loaded URL, so a board.url edit triggers a navigate. */
   lastUrl: string | null
+  /**
+   * Bumped on every (re)attach. demoteToSnapshot snapshots this before its capture
+   * await; if it changed when the await resolves, a concurrent attach re-claimed the
+   * board (Bug #45) and the demote must not detach it.
+   */
+  attachSeq: number
 }
 
 interface LayerProps {
@@ -93,6 +104,9 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   // (App.tsx → position:fixed inset:0), so this is ~ (0,0) — but MEASURE it (a future
   // bar/inset would shift it). setBounds wants window-content DIP coords.
   const paneOffset = useRef<PaneOffset>({ x: 0, y: 0 })
+  // Pane size in CSS px (same layout cadence as paneOffset). Used to rank live
+  // candidates by distance to the viewport centre (Bug #8).
+  const paneSize = useRef<PaneSize>({ w: 0, h: 0 })
   const recs = useRef<Map<string, BoardRec>>(new Map())
   // Latest board geometry, refreshed from the store subscription (read in rAF).
   const geomRef = useRef<Map<string, BoardGeom>>(new Map())
@@ -122,6 +136,16 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     [getViewport, preset]
   )
 
+  // The board's device-stage rect in screen (pane-local + offset) space — the raw,
+  // un-rounded rect used for eligibility + viewport-distance ranking.
+  const stageScreenRect = useCallback(
+    (g: BoardGeom): Rect => {
+      const stage = deviceStageRect(g.w, g.h, g.viewport)
+      return worldRectToScreen(toWorldRect(stage, g.x, g.y), getViewport(), paneOffset.current)
+    },
+    [getViewport]
+  )
+
   // A board may be LIVE only if zoomed in enough AND its stage has positive size and
   // sits at/below the pane top (a native view can't be clipped above the pane).
   const liveEligible = useCallback(
@@ -146,7 +170,14 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   const rec = useCallback((id: string): BoardRec => {
     let r = recs.current.get(id)
     if (!r) {
-      r = { exists: false, attached: false, lastSent: null, lastZoom: 0, lastUrl: null }
+      r = {
+        exists: false,
+        attached: false,
+        lastSent: null,
+        lastZoom: 0,
+        lastUrl: null,
+        attachSeq: 0
+      }
       recs.current.set(id, r)
     }
     return r
@@ -157,9 +188,18 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     async (g: BoardGeom): Promise<void> => {
       const r = rec(g.id)
       if (!r.attached) return
+      const seq = r.attachSeq
       const url = await window.api.capturePreview(g.id)
+      // Re-check after the capture IPC round-trip:
+      //  • Bug #48 — the board may have been deleted mid-capture (reconcile removed
+      //    its rec + cleared its runtime); patching here would resurrect an orphan.
+      //  • Bug #45 — a concurrent attach (zoomed back in across LOD) re-claimed this
+      //    board (attachSeq bumped), so it should stay live, not be detached.
+      if (!recs.current.has(g.id)) return
+      if (!r.attached || r.attachSeq !== seq) return
       if (url) patchRuntime(g.id, { snapshot: url })
       await window.api.detachPreview(g.id)
+      if (!r.attached || r.attachSeq !== seq) return
       r.attached = false
       patchRuntime(g.id, { live: false })
     },
@@ -177,6 +217,7 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       r.lastSent = bounds
       r.lastZoom = zoomFactor
       r.attached = true
+      r.attachSeq++
       if (r.exists) {
         void window.api.attachPreview({ id: g.id, bounds, zoomFactor })
       } else {
@@ -246,7 +287,9 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       if (!gestureRef.current) return // gesture ended before capture → keep live
       const captured: BoardGeom[] = []
       live.forEach((g, i) => {
-        if (shots[i]) {
+        // Bug #48: a board deleted mid-capture had its rec removed + runtime cleared
+        // by reconcile; patching here would resurrect an orphaned previewStore entry.
+        if (shots[i] && recs.current.has(g.id)) {
           patchRuntime(g.id, { snapshot: shots[i] })
           captured.push(g)
         }
@@ -254,7 +297,8 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       await Promise.all(captured.map((g) => window.api.detachPreview(g.id)))
       captured.forEach((g) => {
         const r = recs.current.get(g.id)
-        if (r) r.attached = false
+        if (!r) return // removed during the detach await (Bug #48)
+        r.attached = false
         patchRuntime(g.id, { live: false })
       })
     })()
@@ -268,15 +312,30 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   const applyLiveness = useCallback((): void => {
     const all = [...geomRef.current.values()]
     const wantLive = all.filter((g) => liveEligible(g))
-    const liveIds = new Set(pickLive(wantLive, MAX_LIVE))
+    // Bug #8: rank the live winners by distance to the viewport centre so the board
+    // the user navigated to wins a live slot over off-screen earlier-created boards.
+    const candidates = wantLive.map((g) => {
+      const s = stageScreenRect(g)
+      return { id: g.id, screenX: s.x, screenY: s.y, w: s.width, h: s.height }
+    })
+    const center = {
+      x: paneOffset.current.x + paneSize.current.w / 2,
+      y: paneOffset.current.y + paneSize.current.h / 2
+    }
+    const liveIds = new Set(pickLive(candidates, MAX_LIVE, center))
     for (const g of all) {
       const r = rec(g.id)
       if (liveIds.has(g.id)) void attachBoard(g)
-      else if (wantLive.includes(g))
-        closeBoard(g.id) // over the live cap → free renderer
-      else if (r.attached) void demoteToSnapshot(g) // LOD / chrome / unfocused → snapshot
+      else if (wantLive.includes(g)) {
+        // Over the live cap. Free the renderer ONLY when there is a snapshot (or a
+        // still-attached native view) to fall back on; a never-captured board would
+        // otherwise show a blank device frame (Bug #24) — leave it for reconcile to
+        // attach once a live slot frees.
+        const rt = usePreviewStore.getState().byId[g.id]
+        if (r.exists || rt?.snapshot) closeBoard(g.id)
+      } else if (r.attached) void demoteToSnapshot(g) // LOD / chrome / unfocused → snapshot
     }
-  }, [liveEligible, rec, attachBoard, closeBoard, demoteToSnapshot])
+  }, [liveEligible, stageScreenRect, rec, attachBoard, closeBoard, demoteToSnapshot])
 
   // onMoveEnd: clear the gesture flag, then reconcile liveness at the rest position.
   const endMotion = useCallback((): void => {
@@ -338,6 +397,13 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
         if (!r.exists && !r.attached) {
           // New board (or one whose renderer was freed): bring it live if eligible.
           if (liveEligible(g)) void attachBoard(g)
+          // Bug #3: a board created below LOD / off-pane isn't yet eligible, so it
+          // would otherwise sit on the dead idle default (empty stage, no label)
+          // until a later zoom gesture attaches it. Show the 'Connecting…'
+          // placeholder so it doesn't read as broken; endMotion/reconcile will
+          // attach + load it once it becomes eligible.
+          else if ((usePreviewStore.getState().byId[g.id]?.status ?? 'idle') === 'idle')
+            patchRuntime(g.id, { status: 'connecting' })
         } else if (r.exists) {
           // URL edit → navigate (resets zoom; did-finish-load re-applies the factor).
           if (g.url !== r.lastUrl) {
@@ -346,9 +412,13 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
             void window.api.navigatePreview(g.id, g.url)
           }
           // Viewport / geometry change → re-push bounds + zoom for attached boards.
+          // Bug #44: diff-skip an unchanged board (mirrors flushBatch) so a store
+          // mutation on ANOTHER board (drag, select, setTool) doesn't fire a
+          // redundant preview:attach IPC for every already-positioned view.
           if (r.attached) {
             const bounds = boundsFor(g)
             const zoomFactor = zoomFor(g)
+            if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
             r.lastSent = bounds
             r.lastZoom = zoomFactor
             void window.api.attachPreview({ id: g.id, bounds, zoomFactor })
@@ -387,6 +457,7 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     const measure = (): void => {
       const r = el.getBoundingClientRect()
       paneOffset.current = { x: r.left, y: r.top }
+      paneSize.current = { w: r.width, h: r.height }
       flushBatch()
     }
     measure()
