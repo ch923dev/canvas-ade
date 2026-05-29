@@ -109,9 +109,16 @@ Checklist:
       the signal detach+snapshot (1-D) must carry the motion — note it and move on, don't over-polish 1-C.
       Commit with the measurement written down (in the commit body or a short note).
 
-## 1-D · Detach + snapshot ⛓ 1-C — *START HERE*
+## 1-D · Detach + snapshot ⛓ 1-C — ✅ DONE (commit `8f1b1bd`)
 
 Hide the native view during motion behind a captured image so there's no trailing live view.
+Implemented: main IPC `preview:capture/detach/attach` (+ `attached` flag, capturePage while attached,
+`isEmpty`→null); preload `capturePreview/detachPreview/attachPreview`; `PreviewSync` captures on
+`onMoveStart` → snapshot `<img>` inside the node → detach, reattaches on `onMoveEnd` (stays detached +
+snapshot below `LOD_ZOOM=0.4`); `useNodesState` + `updateNodeData`, `nodesDraggable=false`. Gesture token
+guards the async capture vs a gesture that ends first. **Scale model LOCKED: board scales with the camera
+(snapshot scales as a unit), not 1:1** — matched the assumption, no ADR. Verified Windows: smooth motion,
+no trailing native card, snapshot never blank, LOD swap at 40%.
 
 Checklist:
 - [ ] Add IPC `preview:capture` → `view.webContents.capturePage()` → `NativeImage.toDataURL()`. **Capture
@@ -123,7 +130,7 @@ Checklist:
       (snapshot scales as a unit) or stay 1:1? Lock it, write it in `CLAUDE.md`/an ADR if it deviates.
 - ✅📏 perceived motion smooth (no trailing live view), snapshot never blank, scale model locked. Commit.
 
-## 1-E · N views + responsive + lifecycle ⛓ 1-D
+## 1-E · N views + responsive + lifecycle ⛓ 1-D — *START HERE*
 
 Make `preview.ts` **multi-view** and prove it scales + doesn't leak.
 
