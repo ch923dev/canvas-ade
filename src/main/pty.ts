@@ -69,6 +69,44 @@ interface Session {
 
 const sessions = new Map<string, Session>()
 
+interface Parked {
+  proc: pty.IPty
+  buf: { data: string }
+  timer: ReturnType<typeof setTimeout>
+}
+
+/** Deleted-but-undoable sessions, kept alive up to PARK_TTL_MS for adopt-on-undo. */
+const parked = new Map<string, Parked>()
+
+/** Reap a parked session: stop its TTL timer and kill its process tree. */
+function reapParked(id: string): Promise<void> {
+  const p = parked.get(id)
+  if (!p) return Promise.resolve()
+  parked.delete(id)
+  clearTimeout(p.timer)
+  return killTree(p.proc)
+}
+
+/**
+ * Park the live session for `id` instead of killing it (#15): move it out of
+ * `sessions` (so the board-unmount's `pty:kill` no-ops), close the renderer port
+ * (the proc keeps running and the onData listener keeps recording into `buf`), and
+ * start a TTL after which the process tree is reaped if no undo adopts it.
+ */
+function park(id: string): void {
+  const s = sessions.get(id)
+  if (!s) return
+  sessions.delete(id)
+  try {
+    s.port.close()
+  } catch {
+    /* already closed */
+  }
+  const timer = setTimeout(() => void reapParked(id), PARK_TTL_MS)
+  timer.unref?.()
+  parked.set(id, { proc: s.proc, buf: s.buf, timer })
+}
+
 /**
  * Canonical dedupe key for a shell path. Resolves 8.3 short names, junctions,
  * and symlinks via `realpathSync.native` (so a non-canonical COMSPEC and
@@ -277,6 +315,11 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
   ipcMain.handle('pty:kill', (_e, id: string) => {
     cleanup(id)
+    return true
+  })
+
+  ipcMain.handle('pty:park', (_e, id: string) => {
+    park(id)
     return true
   })
 }
