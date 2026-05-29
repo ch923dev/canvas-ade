@@ -3,7 +3,11 @@ import { join } from 'path'
 import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerPtyHandlers, disposeAllPtys } from './pty'
-import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
+import {
+  registerPreviewHandlers,
+  disposeAll as disposeAllPreviews,
+  isAllowedExternal
+} from './preview'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2eSmoke'
@@ -46,10 +50,48 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
-  // External links open in the OS browser, never in-app.
+  // External links open in the OS browser, never in-app. The scheme is allowlisted
+  // (Bug #23) so a stray window.open of file:/smb:/custom-protocol is dropped, not
+  // handed to the OS handler.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isAllowedExternal(url)) shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // Same-frame navigation guard (Bug #16/#47): the main window must never navigate
+  // away from the app's own document — an accidental file/URL drop or a stray
+  // location.assign would replace the whole React app (and every live PTY + native
+  // preview view) with no in-app way back. Pin to the app origin; route an external
+  // http(s) target to the OS browser, drop everything else. Compare ORIGIN (not the
+  // full URL) so the e2e `?e2e=1` query / in-app hash changes don't trip the guard.
+  const appOrigin = ((): string | null => {
+    try {
+      const dev = process.env['ELECTRON_RENDERER_URL']
+      return dev ? new URL(dev).origin : null // packaged: file: origin is "null"
+    } catch {
+      return null
+    }
+  })()
+  const guardNav = (event: { preventDefault: () => void }, url: string): void => {
+    let origin: string | null
+    try {
+      const u = new URL(url)
+      // Packaged app loads file://…/index.html — its URL origin is the string "null".
+      origin = u.protocol === 'file:' ? null : u.origin
+    } catch {
+      event.preventDefault()
+      return
+    }
+    if (origin === appOrigin) return // same app document — allow
+    event.preventDefault()
+    if (isAllowedExternal(url)) shell.openExternal(url)
+  }
+  mainWindow.webContents.on('will-navigate', (details, url) => guardNav(details, url))
+  mainWindow.webContents.on('will-redirect', (details, url) => guardNav(details, url))
+  // will-frame-navigate (Electron ≥22) covers subframes too — the renderer has none
+  // today, but this keeps the guard complete if an iframe is ever added.
+  mainWindow.webContents.on('will-frame-navigate', (details) => {
+    if (!details.isMainFrame) guardNav(details, details.url)
   })
 
   // Surface renderer console to main stdout during smoke runs.
@@ -110,11 +152,11 @@ app.whenReady().then(async () => {
         // app.exit() (not app.quit()): on Windows app.quit() ignores process.exitCode,
         // so the harness exit code wouldn't reach the shell. app.exit() propagates it
         // but bypasses `before-quit` — so call shutdown() explicitly first to drain the
-        // PTY tree / preview views / local server (shutdown is idempotent).
-        setTimeout(() => {
-          shutdown()
-          app.exit(code)
-        }, 400)
+        // PTY tree / preview views / local server (shutdown is idempotent). AWAIT the
+        // drain (the PTY tree-kill is now awaitable, #49) before exiting so a deep
+        // child tree is reaped instead of orphaned by a fixed timer race.
+        await shutdown()
+        app.exit(code)
       } else {
         const ok = await runSelfTest(mainWindow!, localServer!.url)
         smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
@@ -128,16 +170,43 @@ app.whenReady().then(async () => {
   })
 })
 
-function shutdown(): void {
-  disposeAllPtys()
+/**
+ * Idempotent teardown of every native resource (PTY trees, preview views, local
+ * server). Returns a Promise that resolves once the PTY tree-kill is reaped (#49)
+ * so the abrupt `app.exit` path can await it; the sync paths (before-quit /
+ * window-all-closed / crash hooks) fire it best-effort without awaiting.
+ */
+function shutdown(): Promise<void> {
+  const drained = disposeAllPtys()
   disposeAllPreviews()
   localServer?.close()
   localServer = null
+  return drained
 }
 
 app.on('window-all-closed', () => {
-  shutdown()
+  void shutdown()
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', shutdown)
+app.on('before-quit', () => {
+  void shutdown()
+})
+
+// Crash-path / signal cleanup (#50): before-quit/window-all-closed don't fire on an
+// uncaught error or an external SIGINT/SIGTERM, which would orphan the node-pty child
+// trees. shutdown() is idempotent, so firing it here (in addition to the normal paths)
+// is safe. An uncaughtException handler can't await the async taskkill before exit, so
+// this is best-effort — but firing the tree-kill at all beats the zero-cleanup path.
+let crashing = false
+function crashShutdown(exitCode: number, err?: unknown): void {
+  if (crashing) return
+  crashing = true
+  if (err) console.error(err)
+  void shutdown()
+  app.exit(exitCode)
+}
+process.on('uncaughtException', (err) => crashShutdown(1, err))
+process.on('unhandledRejection', (reason) => crashShutdown(1, reason))
+process.on('SIGINT', () => crashShutdown(0))
+process.on('SIGTERM', () => crashShutdown(0))

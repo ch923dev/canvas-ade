@@ -265,30 +265,43 @@ export function isStaleExit<T>(stored: T, exiting: T | undefined): boolean {
  * session that has since respawned under the same id. An explicit `pty:kill`
  * passes no `proc` and always tears down the current session.
  */
-function cleanup(id: string, proc?: pty.IPty): void {
+function cleanup(id: string, proc?: pty.IPty): Promise<void> {
   const s = sessions.get(id)
-  if (!s) return
-  if (isStaleExit(s.proc, proc)) return
+  if (!s) return Promise.resolve()
+  if (isStaleExit(s.proc, proc)) return Promise.resolve()
   sessions.delete(id)
-  killTree(s.proc)
+  const done = killTree(s.proc)
   try {
     s.port.close()
   } catch {
     /* port already closed */
   }
+  return done
 }
 
 /**
  * Agentic CLIs spawn child process trees. On Windows a bare kill() leaves
- * orphans, so kill the whole tree with taskkill /T /F.
+ * orphans, so kill the whole tree with taskkill /T /F. Returns a Promise that
+ * resolves when the tree-kill child process has exited (or a short safety timeout
+ * elapses) so an abrupt shutdown can AWAIT the reap before `app.exit` instead of
+ * racing a fixed timer (#49). The node-pty `kill()` (ConPTY/conout Worker dispose)
+ * is synchronous, so it always runs regardless of the taskkill timing.
  */
-function killTree(proc: pty.IPty): void {
+function killTree(proc: pty.IPty): Promise<void> {
   const pid = proc.pid
   if (process.platform === 'win32') {
     // taskkill /T /F reaps the descendant tree (taskkill alone, since proc.kill()
     // only signals the console process list, not deeply re-parented children).
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => {
-      /* best effort */
+    const reaped = new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => finish())
+      // Bounded fallback: never block shutdown indefinitely on a hung taskkill.
+      setTimeout(finish, 2000).unref?.()
     })
     // ALSO call node-pty's own kill() so the pseudoconsole handle + conout Worker
     // thread are disposed deterministically at session teardown — taskkill reaps
@@ -298,6 +311,7 @@ function killTree(proc: pty.IPty): void {
     } catch {
       /* ConPTY already torn down */
     }
+    return reaped
   } else {
     try {
       process.kill(-pid, 'SIGKILL')
@@ -308,9 +322,15 @@ function killTree(proc: pty.IPty): void {
         /* already gone */
       }
     }
+    return Promise.resolve()
   }
 }
 
-export function disposeAllPtys(): void {
-  for (const id of [...sessions.keys()]) cleanup(id)
+/**
+ * Tear down every live session. Awaitable (#49): resolves once each session's
+ * tree-kill has been reaped (bounded), so an abrupt `app.exit` path can await this
+ * before exiting instead of racing a fixed timer and orphaning a child tree.
+ */
+export function disposeAllPtys(): Promise<void> {
+  return Promise.all([...sessions.keys()].map((id) => cleanup(id))).then(() => undefined)
 }
