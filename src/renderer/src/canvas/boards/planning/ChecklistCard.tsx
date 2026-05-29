@@ -29,6 +29,12 @@ export interface ChecklistCardProps {
   onDelete: (id: string) => void
   /** Called when any input gains focus — used to checkpoint undo. */
   onEditStart?: () => void
+  /**
+   * Report the card's measured bottom edge in board-local px (element.y +
+   * rendered height) whenever it changes, so the board can grow to avoid clipping
+   * a tall checklist + its "Add item" button under overflow:hidden (#12).
+   */
+  onMeasureBottom?: (id: string, bottom: number) => void
 }
 
 const delBtn: CSSProperties = {
@@ -80,13 +86,15 @@ export function ChecklistCard({
   onAddItem,
   onRemoveItem,
   onDelete,
-  onEditStart
+  onEditStart,
+  onMeasureBottom
 }: ChecklistCardProps): ReactElement {
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
   const pct = total === 0 ? 0 : Math.round((done / total) * 100)
   const lastInputRef = useRef<HTMLInputElement>(null)
   const prevTotal = useRef(total)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   // After appending an item, focus the new (last) row.
   useEffect(() => {
@@ -94,8 +102,22 @@ export function ChecklistCard({
     prevTotal.current = total
   }, [total])
 
+  // Report the card's bottom edge (board-local) on any size change so the board
+  // can auto-grow rather than clip a tall checklist under overflow:hidden (#12).
+  // offsetHeight is in board-local px (the card lives inside the unzoomed well).
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el || !onMeasureBottom) return
+    const report = (): void => onMeasureBottom(element.id, element.y + el.offsetHeight)
+    report()
+    const ro = new ResizeObserver(report)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [element.id, element.y, onMeasureBottom])
+
   return (
     <div
+      ref={cardRef}
       className="pl-check"
       style={{
         position: 'absolute',
@@ -116,6 +138,8 @@ export function ChecklistCard({
       onPointerDown={(e) => {
         if (interactive) e.stopPropagation()
       }}
+      // A dblclick on the card must not bubble to the canvas focus handler (#40).
+      onDoubleClick={(e) => e.stopPropagation()}
     >
       {interactive && (
         <button
@@ -251,6 +275,12 @@ export function ChecklistCard({
                 } else if (e.key === 'Backspace' && item.label.length === 0 && total > 1) {
                   e.preventDefault()
                   onRemoveItem(element.id, item.id)
+                } else if (e.key === 'Backspace' && item.label.length === 0) {
+                  // Keep the non-zero floor (never a zero-item card), but make
+                  // Backspace on the sole empty row feel intentional — blur out of
+                  // the dead row instead of silently swallowing the key (#35).
+                  e.preventDefault()
+                  e.currentTarget.blur()
                 }
               }}
               style={{
