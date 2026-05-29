@@ -13,6 +13,8 @@ import { TypeGlyph } from './TypeGlyph'
 
 /** Padding used by fit / overview framing (overview leaves more margin). */
 const FIT = { padding: 0.2, maxZoom: 1 } as const
+/** "Reset zoom" (%): recenter on content pinned at 100% so it can't strand boards (#41). */
+const RESET = { padding: 0.2, maxZoom: 1, minZoom: 1 } as const
 const OVERVIEW = { padding: 0.35, duration: 240 } as const
 
 export interface AppChromeProps {
@@ -31,19 +33,19 @@ export function AppChrome({ onAdd }: AppChromeProps): ReactElement {
 }
 
 // ── Top-left: project switcher (placeholder until multi-project lands) ──────────
+// Rendered as a non-interactive label (no onClick, no pointer/chevron affordance)
+// so it doesn't present as a dead clickable control (#31). The chevron + click
+// menu land with real multi-project support in Phase 3.
 function ProjectSwitcher(): ReactElement {
   const count = useCanvasStore((s) => s.boards.length)
   return (
     <div style={styles.tl}>
-      <button style={styles.proj} title="Projects">
+      <div style={styles.proj}>
         <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>
           <Icon name="diamond" size={15} />
         </span>
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>canvas-ade</span>
-        <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
-          <Icon name="chevron" size={14} />
-        </span>
-      </button>
+      </div>
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
@@ -61,7 +63,7 @@ function CameraCluster(): ReactElement {
         <ToolBtn name="fit" title="Zoom to fit (1)" onClick={() => void rf.fitView(FIT)} />
         <span style={styles.divider} />
         <ToolBtn name="minus" title="Zoom out" onClick={() => void rf.zoomOut()} />
-        <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.zoomTo(1)}>
+        <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.fitView(RESET)}>
           {Math.round(zoom * 100)}%
         </button>
         <ToolBtn name="plus" title="Zoom in" onClick={() => void rf.zoomIn()} />
@@ -195,9 +197,9 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
     gap: 7,
     height: 34,
-    padding: '0 9px 0 8px',
+    padding: '0 11px 0 10px',
     borderRadius: 8,
-    cursor: 'pointer',
+    cursor: 'default',
     background: 'var(--surface-raised)',
     border: '1px solid var(--border-subtle)',
     boxShadow: 'var(--shadow-pop)'
