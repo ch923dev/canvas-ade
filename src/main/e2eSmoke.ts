@@ -10,6 +10,7 @@
  */
 import type { BrowserWindow } from 'electron'
 import { summarizeE2E, type E2EPart } from './e2eReport'
+import { debugCaptureView } from './preview'
 
 // Markers go to stdout via bare console.log — safe here because index.ts installs a
 // process.stdout 'error' handler (EPIPE swallow) before this runs whenever SMOKE is set.
@@ -71,7 +72,34 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: termOk ? 'sentinel in framebuffer' : 'no sentinel'
   })
 
-  await evalIn(win, `window.__canvasE2E.seedBoard('browser', { url: ${JSON.stringify(localUrl)} })`)
+  // ── Browser: seed pointing at the in-process localServer (deterministic), fit the
+  // camera to it (forces zoom ≥ LOD so the native view attaches), wait for the
+  // connected status, then assert a NON-BLANK per-view capturePage (the gap). ──
+  const browserId = await evalIn<string>(
+    win,
+    `window.__canvasE2E.seedBoard('browser', { url: ${JSON.stringify(localUrl)} })`
+  )
+  await delay(150) // let React Flow mount + measure the new node before fitView
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+  const connected = await poll(async () => {
+    const rt = await evalIn<{ status: string; live: boolean } | null>(
+      win,
+      `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+    )
+    return rt?.status === 'connected' && rt.live === true
+  }, 10000)
+  let capDetail = 'not connected'
+  let browserOk = false
+  if (connected) {
+    // Brief pause after connected: the view needs at least one paint before
+    // capturePage yields non-blank pixels.
+    await delay(300)
+    const cap = await debugCaptureView(browserId)
+    browserOk = cap.attached && !cap.empty
+    capDetail = `attached=${cap.attached} empty=${cap.empty}`
+  }
+  parts.push({ name: 'browser', ok: browserOk, detail: capDetail })
+
   await evalIn(win, "window.__canvasE2E.seedBoard('planning')")
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 3, detail: `${count} boards` })

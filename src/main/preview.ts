@@ -274,3 +274,22 @@ export function disposeAll(): void {
   for (const id of [...views.keys()]) disposeOne(id)
   owner = null
 }
+
+/**
+ * E2E (in-process smoke) ONLY — read-only accessors over the live `views` Map.
+ * `capturePage()` is BLANK for a detached/off-screen view, so this returns
+ * `attached` too: the harness must ensure the board is live (zoom ≥ LOD, on-screen,
+ * connected) before trusting `empty`. Not a security change — it exposes nothing the
+ * preview IPC handlers don't already.
+ */
+export async function debugCaptureView(id: string): Promise<{ attached: boolean; empty: boolean }> {
+  const e = views.get(id)
+  if (!e || !e.attached) return { attached: false, empty: true }
+  const img = await e.view.webContents.capturePage()
+  return { attached: true, empty: img.isEmpty() }
+}
+
+/** E2E ONLY — ids of every native preview view currently created. */
+export function debugViewIds(): string[] {
+  return [...views.keys()]
+}
