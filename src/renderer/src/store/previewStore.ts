@@ -42,14 +42,27 @@ export const DEFAULT_RUNTIME: PreviewRuntime = {
 
 interface PreviewState {
   byId: Record<string, PreviewRuntime>
+  /**
+   * A node-level gesture (board drag or resize) is in progress. Native
+   * `WebContentsView`s can't be clipped and paint above all HTML, so during a node
+   * drag/resize the BrowserPreviewLayer detaches every live view to its HTML
+   * snapshot (which DOES respect z-order/clipping) and reattaches on gesture end —
+   * the same motion path the camera uses, but driven by React Flow's node-drag /
+   * NodeResizer callbacks (which never move the camera). Without this, dragging a
+   * board over a live Browser board leaves the native view painting over it.
+   */
+  nodeGesture: boolean
   /** Shallow-merge a runtime patch for one board (creates the entry if absent). */
   patch: (id: string, patch: Partial<PreviewRuntime>) => void
   /** Drop a board's runtime state (on board removal). */
   clear: (id: string) => void
+  /** Mark a node drag/resize gesture as started/ended (drives detach/reattach). */
+  setNodeGesture: (active: boolean) => void
 }
 
 export const usePreviewStore = create<PreviewState>((set) => ({
   byId: {},
+  nodeGesture: false,
   patch: (id, patch) =>
     set((s) => ({
       byId: { ...s.byId, [id]: { ...DEFAULT_RUNTIME, ...s.byId[id], ...patch } }
@@ -60,7 +73,8 @@ export const usePreviewStore = create<PreviewState>((set) => ({
       const next = { ...s.byId }
       delete next[id]
       return { byId: next }
-    })
+    }),
+  setNodeGesture: (active) => set((s) => (s.nodeGesture === active ? s : { nodeGesture: active }))
 }))
 
 /** Read one board's runtime state, falling back to the idle default. */

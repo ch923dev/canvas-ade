@@ -21,7 +21,13 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import { agentIdentity, statusFor, type TerminalState } from './terminalState'
+import {
+  agentIdentity,
+  formatTimer,
+  isRunning,
+  statusFor,
+  type TerminalState
+} from './terminalState'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
@@ -66,8 +72,74 @@ export function TerminalBoard({
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
+  const running = isRunning(state)
+
+  // `lod` read by the spawn effect (initial WebGL attach) without making it a spawn
+  // dep — `lod` must NOT respawn the PTY (the session survives zoom-out by design).
+  const lodRef = useRef(lod)
+  useEffect(() => {
+    lodRef.current = lod
+  }, [lod])
+
+  // Run timer: while running, derive elapsed seconds from the run start time so the
+  // pill shows `· mm:ss`. setElapsed only ever fires from the interval callback (an
+  // external tick — never a synchronous setState in the effect body). The first
+  // tick at ~100ms zeroes the display for a fresh run; the suffix is gated on
+  // `running`, so a stale value is never shown once a run ends.
+  useEffect(() => {
+    if (!running) return
+    const start = Date.now()
+    const tick = (): void => setElapsed(Math.floor((Date.now() - start) / 1000))
+    const lead = setTimeout(tick, 100)
+    const t = setInterval(tick, 1000)
+    return () => {
+      clearTimeout(lead)
+      clearInterval(t)
+    }
+  }, [running])
+
+  // ── WebGL renderer pooling (#10) ────────────────────────────────────────────
+  // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
+  // Flow) and silently drops the OLDEST under churn. Rather than relying on that
+  // eviction, we hold a GL context only for DETAIL-view terminals: a board that
+  // goes to LOD (off the working zoom band) releases its context so on-screen
+  // terminals keep theirs, and re-acquires when it returns to detail. The PTY
+  // session is independent of the renderer, so this is purely a perf/quality lever.
+  const attachWebgl = useCallback((term: Terminal): void => {
+    if (webglRef.current) return
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => {
+        webgl.dispose()
+        webglRef.current = null
+      })
+      term.loadAddon(webgl)
+      webglRef.current = webgl
+    } catch {
+      /* GL unavailable — xterm falls back to the DOM/canvas renderer */
+    }
+  }, [])
+
+  const detachWebgl = useCallback((): void => {
+    try {
+      webglRef.current?.dispose()
+    } catch {
+      /* already disposed */
+    }
+    webglRef.current = null
+  }, [])
+
+  // Release the GL context at LOD; re-acquire on return to detail view. Guarded by
+  // a live terminal (the spawn effect owns mount/unmount of `term` itself).
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    if (lod) detachWebgl()
+    else attachWebgl(term)
+  }, [lod, attachWebgl, detachWebgl])
 
   // ── Bridge: spawn the PTY, wire the MessagePort, fit on resize ──────────────
   // Keyed by board id so re-mounts (LOD swaps, drags) reconnect the same session
@@ -97,21 +169,9 @@ export function TerminalBoard({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
-    // One WebGL context per terminal. Chromium caps live GL contexts (~16) and
-    // drops the OLDEST under churn — without a loss handler that terminal goes
-    // permanently blank. Dispose the addon on context loss so xterm transparently
-    // falls back to the DOM renderer; capture it so teardown frees the context.
-    try {
-      const webgl = new WebglAddon()
-      webgl.onContextLoss(() => {
-        webgl.dispose()
-        webglRef.current = null
-      })
-      term.loadAddon(webgl)
-      webglRef.current = webgl
-    } catch {
-      /* GL unavailable — xterm falls back to the DOM/canvas renderer */
-    }
+    // Attach a GL context only when mounting in detail view; a board mounted at LOD
+    // runs on the DOM renderer until it returns to detail (see the LOD effect above).
+    if (!lodRef.current) attachWebgl(term)
     try {
       fit.fit()
     } catch {
@@ -158,25 +218,59 @@ export function TerminalBoard({
     window.addEventListener('message', onWinMsg)
 
     setState('spawning')
-    window.api
-      .spawnTerminal({
-        id: board.id,
-        shell: board.shell,
-        cwd: board.cwd,
-        launchCommand: board.launchCommand,
-        cols: term.cols,
-        rows: term.rows
-      })
-      .then((res) => {
-        if (res.state === 'spawn-failed') {
+
+    // Spawn the PTY only ONCE per mount, and only after the xterm host has a real
+    // layout — i.e. fit produced finite cols/rows. A board created while the camera
+    // is below LOD mounts with the well at `display:none`, so fit.fit() no-ops and
+    // term.cols/rows are the default 80×24; spawning then would size the PTY (and
+    // write the launchCommand TUI) at the wrong width (#34). We defer until the
+    // ResizeObserver reports the first good fit (the well becoming visible resizes
+    // it), at which point dims reflect the board's true column width.
+    // #15: try to ADOPT a parked session (undo of a delete) before spawning fresh.
+    // `spawnAllowed` stays false until adopt resolves with adopted:false, so neither
+    // the immediate launch() nor the ResizeObserver can spawn a fresh shell over an
+    // adoptable one. When adopted, the reposted port + replayed scrollback arrive via
+    // the existing onWinMsg listener.
+    let spawned = false
+    let spawnAllowed = false
+    let disposed = false
+    const launch = (): void => {
+      if (spawned || !spawnAllowed) return
+      const dims = fit.proposeDimensions()
+      if (!dims || !Number.isFinite(dims.cols) || !Number.isFinite(dims.rows)) return
+      spawned = true
+      window.api
+        .spawnTerminal({
+          id: board.id,
+          shell: board.shell,
+          cwd: board.cwd,
+          launchCommand: board.launchCommand,
+          cols: term.cols,
+          rows: term.rows
+        })
+        .then((res) => {
+          if (res.state === 'spawn-failed') {
+            setState('spawn-failed')
+            term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
+          }
+        })
+        .catch((err: Error) => {
           setState('spawn-failed')
-          term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
-        }
-      })
-      .catch((err: Error) => {
-        setState('spawn-failed')
-        term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
-      })
+          term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
+        })
+    }
+    // Decide adopt-vs-spawn once. Adopted → the reposted port + replayed buffer
+    // arrive over onWinMsg (no spawn). Not adopted → allow the normal spawn flow
+    // (immediate try here + the ResizeObserver's deferred try for the #34 LOD case).
+    void window.api.adoptTerminal(board.id).then((res) => {
+      if (disposed) return
+      if (res.adopted) {
+        setState('running')
+      } else {
+        spawnAllowed = true
+        launch()
+      }
+    })
 
     const ro = new ResizeObserver(() => {
       try {
@@ -184,10 +278,14 @@ export function TerminalBoard({
       } catch {
         /* element detached mid-resize */
       }
+      // First good fit after a hidden/LOD mount spawns the deferred PTY at the
+      // board's true width; later fits no-op (`spawned` guard) and just resize.
+      launch()
     })
     ro.observe(el)
 
     return () => {
+      disposed = true
       window.removeEventListener('message', onWinMsg)
       el.removeEventListener('keydown', stopKeys)
       dataDisp.dispose()
@@ -202,18 +300,13 @@ export function TerminalBoard({
       portRef.current = null
       if (isE2E()) e2eTerminals.delete(board.id)
       // Free the WebGL context before disposing the terminal (no-op if a prior
-      // context-loss already disposed it and nulled the ref).
-      try {
-        webglRef.current?.dispose()
-      } catch {
-        /* already disposed */
-      }
-      webglRef.current = null
+      // context-loss or LOD detach already disposed it and nulled the ref).
+      detachWebgl()
       term.dispose()
       termRef.current = null
       fitRef.current = null
     }
-  }, [board.id, board.shell, board.cwd, board.launchCommand])
+  }, [board.id, board.shell, board.cwd, board.launchCommand, attachWebgl, detachWebgl])
 
   useEffect(() => spawn(), [spawn])
 
@@ -248,10 +341,16 @@ export function TerminalBoard({
       })
   }, [board.id, board.shell, board.cwd, board.launchCommand])
 
-  const status = statusFor(state, identity)
+  const status = statusFor(state, identity, running ? formatTimer(elapsed) : undefined)
+
+  /** Interrupt: send Ctrl-C (SIGINT) over the data plane to the running agent. */
+  const interrupt = useCallback(() => {
+    portRef.current?.postMessage({ t: 'input', d: '\x03' })
+  }, [])
 
   const actions = (
     <>
+      {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
       <IconBtn
         name="settings"
         title="Configure terminal"
@@ -274,6 +373,7 @@ export function TerminalBoard({
         selected={selected}
         hovered={hovered}
         dimmed={dimmed}
+        running={running}
         status={status}
         actions={actions}
         contentBg="var(--inset)"
@@ -305,6 +405,7 @@ export function TerminalBoard({
             selected={selected}
             dimmed={dimmed}
             lod
+            running={running}
             status={{ dot: status.dot }}
           />
         </div>

@@ -42,6 +42,12 @@ export interface CanvasE2E {
   terminalMounted: (id: string) => boolean
   /** True if the live store round-trips through toObject→fromObject without throwing. */
   roundTripOk: () => boolean
+  /** Flag a node drag/resize gesture (drives the preview layer detach/reattach). */
+  setGesture: (active: boolean) => void
+  /** Delete a board the way the canvas does (parks a terminal's session first). */
+  deleteBoard: (id: string) => void
+  /** Undo the last store change (restores a deleted board → adopt path). */
+  undo: () => void
 }
 
 declare global {
@@ -106,6 +112,17 @@ export function installE2EHooks(rf: ReactFlowInstance): void {
       } catch {
         return false
       }
+    },
+    setGesture(active) {
+      usePreviewStore.getState().setNodeGesture(active)
+    },
+    deleteBoard(id) {
+      const b = useCanvasStore.getState().boards.find((x) => x.id === id)
+      if (b?.type === 'terminal') void window.api.parkTerminal(id)
+      useCanvasStore.getState().removeBoard(id)
+    },
+    undo() {
+      useCanvasStore.getState().undo()
     }
   }
   window.__canvasE2E = api

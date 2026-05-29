@@ -44,6 +44,9 @@ export function FreeText({
   onEditStart
 }: FreeTextProps): ReactElement {
   const ref = useRef<HTMLTextAreaElement>(null)
+  // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
+  // the grip is pressed) does NOT prune an empty text element mid-drag (#36 guard).
+  const dragging = useRef(false)
 
   useEffect(() => {
     const el = ref.current
@@ -53,6 +56,14 @@ export function FreeText({
     el.style.width = 'auto'
     el.style.width = `${Math.max(40, el.scrollWidth)}px`
   }, [element.text])
+
+  // Focus a freshly-dropped empty text element so the user can type immediately,
+  // AND so leaving it untouched blurs → prunes it instead of leaving an orphan
+  // (#36). Runs once on mount; existing (loaded) texts have content so won't grab.
+  useEffect(() => {
+    if (interactive && element.text === '') ref.current?.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div
@@ -68,6 +79,8 @@ export function FreeText({
       onPointerDown={(e) => {
         if (interactive) e.stopPropagation()
       }}
+      // A dblclick on the text must not bubble to the canvas focus handler (#40).
+      onDoubleClick={(e) => e.stopPropagation()}
     >
       {interactive && (
         <button
@@ -90,7 +103,13 @@ export function FreeText({
         title="Drag"
         onPointerDown={(e) => {
           e.stopPropagation()
-          if (interactive) onDragStart(e, element.id)
+          if (!interactive) return
+          // Suppress the empty-text blur-prune this gesture is about to trigger.
+          dragging.current = true
+          onDragStart(e, element.id)
+          setTimeout(() => {
+            dragging.current = false
+          }, 0)
         }}
         style={{
           width: 6,
@@ -109,6 +128,12 @@ export function FreeText({
         rows={1}
         onChange={(e) => onChangeText(element.id, e.target.value)}
         onFocus={() => onEditStart?.()}
+        // Prune an empty / whitespace-only text element on blur so a double-click
+        // that never receives content doesn't leave an orphan (#29, #36). Skip
+        // while a drag is starting (grip press blurs the textarea).
+        onBlur={() => {
+          if (!dragging.current && element.text.trim() === '') onDelete(element.id)
+        }}
         // Let a draw gesture begin over the text (#6); only block in select.
         onPointerDown={(e) => {
           if (interactive) e.stopPropagation()

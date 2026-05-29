@@ -12,6 +12,7 @@ import { useState, type ReactElement } from 'react'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
 import { useCanvasStore } from '../store/canvasStore'
+import { usePreviewStore } from '../store/previewStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
 import { isLod } from '../lib/canvasView'
 import { BoardFrame, type BoardStatus } from './BoardFrame'
@@ -51,8 +52,10 @@ function lodStatus(type: BoardType): BoardStatus | null {
 
 export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>): ReactElement {
   const board = data.board
-  const zoom = useStore((s) => s.transform[2])
-  const lod = isLod(zoom)
+  // Subscribe to the derived LOD boolean, NOT the raw zoom scalar: with Object.is
+  // equality the selected value only flips at the LOD threshold, so a BoardNode
+  // re-renders only at the crossover instead of on every intra-band zoom frame (#39).
+  const lod = useStore((s) => isLod(s.transform[2]))
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
 
@@ -85,7 +88,13 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           minWidth={MIN_BOARD_SIZE.w}
           minHeight={MIN_BOARD_SIZE.h}
           isVisible={selected || hovered}
-          onResizeStart={() => useCanvasStore.getState().beginChange()}
+          // Checkpoint for undo + flag the gesture so the preview layer detaches live
+          // native views (which can't be clipped) to snapshots while this board resizes.
+          onResizeStart={() => {
+            useCanvasStore.getState().beginChange()
+            usePreviewStore.getState().setNodeGesture(true)
+          }}
+          onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
       <div

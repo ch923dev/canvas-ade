@@ -7,6 +7,8 @@ import {
   makeArrow,
   makeStroke,
   moveElement,
+  translateElement,
+  nextNoteIndex,
   removeElement,
   toggleItem,
   addItem,
@@ -16,6 +18,7 @@ import {
   NOTE_SIZE,
   CHECKLIST_W
 } from './elements'
+import { TINT_CYCLE } from './tints'
 
 describe('element factories', () => {
   it('makeNote centres on the drop point and cycles tint + rotation by index', () => {
@@ -31,6 +34,15 @@ describe('element factories', () => {
 
   it('makeNote honours an explicit tint', () => {
     expect(makeNote('n', { x: 0, y: 0 }, 0, 'green').tint).toBe('green')
+  })
+
+  it('makeNote cycles tint off the shared TINT_CYCLE source of truth (#46)', () => {
+    // No hardcoded copy: the cycle is exactly TINT_CYCLE, wrapping by its length.
+    TINT_CYCLE.forEach((tint, i) => {
+      expect(makeNote(`n${i}`, { x: 0, y: 0 }, i).tint).toBe(tint)
+    })
+    // Wraps modulo the cycle length.
+    expect(makeNote('w', { x: 0, y: 0 }, TINT_CYCLE.length).tint).toBe(TINT_CYCLE[0])
   })
 
   it('makeText anchors at the drop point with empty text', () => {
@@ -95,6 +107,73 @@ describe('array transforms (immutable)', () => {
     expect([a.x, a.y]).toEqual([37, 42])
     // …and crucially the base array is never mutated by the transient frames.
     expect(base.find((e) => e.id === 'n')!.x).toBe(note.x)
+  })
+})
+
+describe('nextNoteIndex (tint variety survives deletions — #27)', () => {
+  it('starts at the first slot for an empty board', () => {
+    expect(nextNoteIndex([])).toBe(0)
+  })
+
+  it('picks the least-used tint, not the live note count', () => {
+    // Drop yellow(0), blue(1), green(2). The old count-based index (3) would pick
+    // plain. With one of each, the least-used tie-break picks the earliest empty
+    // slot — here `plain` (index 3) is the only unused one.
+    let els: PlanningElement[] = []
+    els = [...els, makeNote('a', { x: 0, y: 0 }, nextNoteIndex(els))] // yellow
+    els = [...els, makeNote('b', { x: 0, y: 0 }, nextNoteIndex(els))] // blue
+    els = [...els, makeNote('c', { x: 0, y: 0 }, nextNoteIndex(els))] // green
+    expect(els.map((e) => (e as { tint: string }).tint)).toEqual(['yellow', 'blue', 'green'])
+
+    // Delete the first (yellow). Old behaviour: count===2 → green (collides with c).
+    // New behaviour: yellow is now the least-used (0) → reuse yellow, no collision
+    // with the remaining green.
+    const afterDelete = removeElement(els, 'a')
+    const idx = nextNoteIndex(afterDelete)
+    expect(TINT_CYCLE[idx]).toBe('yellow')
+    expect(TINT_CYCLE[idx]).not.toBe('green')
+  })
+
+  it('ignores non-note elements when counting tints', () => {
+    const els: PlanningElement[] = [
+      makeChecklist('cl', 'i', { x: 0, y: 0 }),
+      makeArrow('ar', { x: 0, y: 0 })
+    ]
+    expect(nextNoteIndex(els)).toBe(0)
+  })
+})
+
+describe('translateElement (move any kind by a delta — #28, #37)', () => {
+  it('shifts a note/text/checklist top-left like moveElement would', () => {
+    const note = makeNote('n', { x: 100, y: 100 }, 0)
+    const moved = translateElement([note], 'n', 10, -5)[0]
+    expect([moved.x, moved.y]).toEqual([note.x + 10, note.y - 5])
+  })
+
+  it('shifts BOTH arrow endpoints so the arrow translates without deforming', () => {
+    const a = makeArrow('a', { x: 10, y: 20 })
+    const arrow = { ...a, x2: 60, y2: 80 }
+    const out = translateElement([arrow], 'a', 5, 7)[0]
+    expect(out).toMatchObject({ x: 15, y: 27, x2: 65, y2: 87 })
+  })
+
+  it('shifts every stroke point pair (origin-pinned absolute points)', () => {
+    const s = makeStroke('s', [0, 0, 10, 4, 20, 8])
+    const out = translateElement([s], 's', 3, -2)[0] as typeof s
+    expect(out.points).toEqual([3, -2, 13, 2, 23, 6])
+    expect([out.x, out.y]).toEqual([3, -2])
+  })
+
+  it('is immutable and a no-op for an absent id', () => {
+    const base: PlanningElement[] = [makeNote('n', { x: 0, y: 0 }, 0)]
+    const same = translateElement(base, 'nope', 5, 5)
+    expect(same).not.toBe(base)
+    expect((same[0] as { x: number }).x).toBe((base[0] as { x: number }).x)
+  })
+
+  it('a zero delta leaves coordinates unchanged', () => {
+    const a = { ...makeArrow('a', { x: 1, y: 2 }), x2: 9, y2: 9 }
+    expect(translateElement([a], 'a', 0, 0)[0]).toMatchObject({ x: 1, y: 2, x2: 9, y2: 9 })
   })
 })
 

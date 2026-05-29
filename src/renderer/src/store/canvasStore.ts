@@ -54,6 +54,28 @@ export interface CanvasState {
 
 const newId = (): string => crypto.randomUUID()
 
+/** Cascade step (world px) per occupied slot + a guard cap on the walk. */
+const CASCADE_STEP = 28
+const CASCADE_MAX = 24
+
+/**
+ * Nudge a new board's top-left off any board already sitting at (≈) the same spot
+ * so repeated centered adds don't fully stack (#42). Deterministic: walk a fixed
+ * diagonal step until a free slot is found. The cap keeps the walk bounded if a
+ * canvas is pathologically dense at that exact diagonal.
+ */
+function cascadePosition(boards: Board[], at: { x: number; y: number }): { x: number; y: number } {
+  const occupied = (x: number, y: number): boolean =>
+    boards.some((b) => Math.abs(b.x - x) < 1 && Math.abs(b.y - y) < 1)
+  let x = at.x
+  let y = at.y
+  for (let i = 1; occupied(x, y) && i <= CASCADE_MAX; i++) {
+    x = at.x + i * CASCADE_STEP
+    y = at.y + i * CASCADE_STEP
+  }
+  return { x, y }
+}
+
 /**
  * Patch keys a board of each type may accept — id/type are never patchable, and an
  * off-type field (e.g. `url`) must never land on a board it doesn't belong to (that
@@ -76,7 +98,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addBoard: (type, at) => {
     const id = newId()
-    const board = createBoard(type, { id, x: at.x, y: at.y })
+    const pos = cascadePosition(get().boards, at)
+    const board = createBoard(type, { id, x: pos.x, y: pos.y })
     set((s) => ({
       past: recordPast(s.past, s.boards),
       future: [],
