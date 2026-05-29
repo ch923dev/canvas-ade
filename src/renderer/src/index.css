@@ -360,3 +360,30 @@ body {
   font-family: var(--mono);
   font-size: 11px;
 }
+
+/* ── Board node + NodeResizer (Phase 2.0-C) ───────────────────────────────────
+   BoardFrame paints the box, border, selection ring and shadow itself, so the RF
+   node wrapper stays chrome-less. The resizer handles are restyled to DESIGN.md
+   §6: 10px corner squares (--surface-overlay + --border-strong, r2), the SE
+   corner carrying an extra --accent ring; edge lines are an invisible hit area. */
+.react-flow__node-board {
+  background: transparent;
+  border: none;
+}
+.react-flow__node-board.selected {
+  box-shadow: none;
+}
+
+.react-flow__resize-control.handle {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+}
+.react-flow__resize-control.handle.bottom-right {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.react-flow__resize-control.line {
+  border-color: transparent;
+}

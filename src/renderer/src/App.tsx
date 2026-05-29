@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { WebglAddon } from '@xterm/addon-webgl'
+import Canvas from './canvas/Canvas'
 import FlowSmoke from './smoke/FlowSmoke'
 import TerminalSmoke from './smoke/TerminalSmoke'
 import PreviewSmoke from './smoke/PreviewSmoke'
 
-type Tab = 'canvas' | 'terminal' | 'preview'
+type Tab = 'canvas' | 'spike' | 'terminal' | 'preview'
 
 interface RendererSmoke {
   reactflow: boolean
@@ -54,7 +55,7 @@ function App() {
         <div className="brand">
           <span className="mark">◇</span>Canvas ADE
         </div>
-        <span className="tag">phase 0 · toolchain smoke</span>
+        <span className="tag">phase 2.0-C · canvas</span>
         <div className="status">
           <span className={smoke.reactflow ? 'ok' : 'bad'}>react-flow</span>
           <span className={smoke.xterm ? 'ok' : 'bad'}>xterm</span>
@@ -64,7 +65,10 @@ function App() {
 
       <div className="tabs">
         <button className="tab" data-active={tab === 'canvas'} onClick={() => setTab('canvas')}>
-          React Flow
+          Canvas
+        </button>
+        <button className="tab" data-active={tab === 'spike'} onClick={() => setTab('spike')}>
+          Preview spike
         </button>
         <button className="tab" data-active={tab === 'terminal'} onClick={() => setTab('terminal')}>
           Terminal (PTY)
@@ -75,7 +79,8 @@ function App() {
       </div>
 
       <div className="panel">
-        {tab === 'canvas' && <FlowSmoke />}
+        {tab === 'canvas' && <Canvas />}
+        {tab === 'spike' && <FlowSmoke />}
         {tab === 'terminal' && <TerminalSmoke />}
         {tab === 'preview' && <PreviewSmoke />}
       </div>
