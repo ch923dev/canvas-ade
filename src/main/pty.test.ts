@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { isStaleExit } from './pty'
+import * as path from 'node:path'
+import { canonicalizeShellPath, isStaleExit } from './pty'
 
 // Pure identity-guard behind the restart/config-respawn race fix: a late
 // onExit from an OLD pty process must not tear down the NEW session that has
@@ -24,5 +25,37 @@ describe('isStaleExit', () => {
 
   it('treats two distinct procs with equal shape as different (identity, not value)', () => {
     expect(isStaleExit({ tag: 'old' }, { tag: 'old' })).toBe(true)
+  })
+})
+
+// Canonicalization behind the enumerateShells dedupe fix (#26): a non-canonical
+// COMSPEC (8.3 short name / junction) and onPath('cmd') resolve to the SAME real
+// cmd.exe, so they must collapse to one dedupe key. The realpath resolver is
+// injected so the test is deterministic without touching the filesystem.
+describe('canonicalizeShellPath', () => {
+  const real = 'C:\\Windows\\System32\\cmd.exe'
+
+  it('resolves a short-name / junction variant to its real path', () => {
+    const resolver = (q: string): string =>
+      q === 'C:\\PROGRA~0\\..\\Windows\\System32\\cmd.exe' ? real : q
+    expect(canonicalizeShellPath('C:\\PROGRA~0\\..\\Windows\\System32\\cmd.exe', resolver)).toBe(
+      real
+    )
+  })
+
+  it('collapses two spellings of the same binary to one lowercased key', () => {
+    const resolver = (): string => real
+    const a = canonicalizeShellPath('C:\\COMSPEC-shortname\\cmd.exe', resolver).toLowerCase()
+    const b = canonicalizeShellPath('C:\\Windows\\System32\\cmd.exe', resolver).toLowerCase()
+    expect(a).toBe(b)
+  })
+
+  it('falls back to a normalized path when the target does not exist (resolver throws)', () => {
+    const throwing = (): string => {
+      throw new Error('ENOENT')
+    }
+    expect(canonicalizeShellPath('C:\\nope\\..\\gone\\cmd.exe', throwing)).toBe(
+      path.normalize('C:\\nope\\..\\gone\\cmd.exe')
+    )
   })
 })

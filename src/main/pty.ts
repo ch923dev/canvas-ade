@@ -48,6 +48,24 @@ interface Session {
 
 const sessions = new Map<string, Session>()
 
+/**
+ * Canonical dedupe key for a shell path. Resolves 8.3 short names, junctions,
+ * and symlinks via `realpathSync.native` (so a non-canonical COMSPEC and
+ * `onPath('cmd')` that point at the SAME cmd.exe collapse to one key), falling
+ * back to a normalized path when the target doesn't exist. Pure except for the
+ * realpath probe; the resolver is injectable so it is unit-testable.
+ */
+export function canonicalizeShellPath(
+  p: string,
+  realpath: (q: string) => string = (q) => fs.realpathSync.native(q)
+): string {
+  try {
+    return realpath(p)
+  } catch {
+    return path.normalize(p)
+  }
+}
+
 /** First existing path on the system PATH for a bare command name. */
 function onPath(cmd: string): string | null {
   const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : ['']
@@ -110,12 +128,20 @@ function findWsl(): string | null {
 export function enumerateShells(): ShellInfo[] {
   const found: ShellInfo[] = []
   const seen = new Set<string>()
+  const seenLabels = new Set<string>()
   const add = (p: string | null | undefined, label: string): void => {
     if (!p) return
-    const key = p.toLowerCase()
-    if (seen.has(key)) return
+    // Canonicalize first so 8.3/junction/symlink variants of the same binary
+    // (e.g. a non-canonical COMSPEC vs onPath('cmd')) collapse to one entry, and
+    // store the resolved path so the picker shows a single stable value.
+    const resolved = canonicalizeShellPath(p)
+    const key = resolved.toLowerCase()
+    // Belt-and-suspenders: also dedupe by label, so the two `cmd` adds can never
+    // both surface even if their canonical paths somehow differ.
+    if (seen.has(key) || seenLabels.has(label)) return
     seen.add(key)
-    found.push({ path: p, label })
+    seenLabels.add(label)
+    found.push({ path: resolved, label })
   }
 
   if (process.platform === 'win32') {
@@ -259,9 +285,19 @@ function cleanup(id: string, proc?: pty.IPty): void {
 function killTree(proc: pty.IPty): void {
   const pid = proc.pid
   if (process.platform === 'win32') {
+    // taskkill /T /F reaps the descendant tree (taskkill alone, since proc.kill()
+    // only signals the console process list, not deeply re-parented children).
     execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => {
       /* best effort */
     })
+    // ALSO call node-pty's own kill() so the pseudoconsole handle + conout Worker
+    // thread are disposed deterministically at session teardown — taskkill reaps
+    // the OS process tree but leaves node-pty's ConPTY/worker until process exit.
+    try {
+      proc.kill()
+    } catch {
+      /* ConPTY already torn down */
+    }
   } else {
     try {
       process.kill(-pid, 'SIGKILL')
