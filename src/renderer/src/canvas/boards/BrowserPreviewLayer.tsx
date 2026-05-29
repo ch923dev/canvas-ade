@@ -27,7 +27,13 @@ import { useReactFlow, useOnViewportChange } from '@xyflow/react'
 import { roundRect, worldRectToScreen, rectsEqual, fitZoomFactor } from '../../lib/cameraBounds'
 import type { Rect } from '../../lib/cameraBounds'
 import { LOD_ZOOM } from '../../lib/canvasView'
-import { isLiveEligible, pickLive } from '../../lib/previewPlan'
+import {
+  isLiveEligible,
+  pickLive,
+  chromeExclusionZones,
+  shouldDemoteForOcclusion,
+  type Box
+} from '../../lib/previewPlan'
 import {
   VIEWPORT_PRESETS,
   deviceStageRect,
@@ -115,6 +121,13 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   const idleRef = useRef(0)
   // Latest focused board id, read inside the (geometry-only-deps) liveEligible cb.
   const focusedIdRef = useRef<string | null>(focusedId)
+  // Latest store selection + the selected board's WORLD rect (any board type), kept
+  // fresh by the store subscription. Used by the static-occlusion demote (LOT F #2/
+  // #19/#20): a live Browser view overlapping a DIFFERENT selected board must demote
+  // to its (clippable, z-ordered) HTML snapshot so that board shows its ring/handles
+  // and receives input. Null when nothing — or a Browser board itself — is selected.
+  const selectedIdRef = useRef<string | null>(null)
+  const selectedRectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
 
   const preset = useCallback((vp: BrowserViewport): ViewportPreset => VIEWPORT_PRESETS[vp], [])
 
@@ -167,6 +180,44 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     [getViewport]
   )
 
+  // Static-occlusion demote (LOT F): a live Browser view must fall back to its HTML
+  // snapshot when, AT REST, its native stage would paint over (a) a DIFFERENT selected
+  // board (#2/#19/#20 — restore that board's ring/handles + input) or (b) the fixed
+  // app-chrome zones (#21 — dock / camera cluster / DiagOverlay). Geometry is resolved
+  // to screen space here; the pure predicate decides. Kept narrow so a non-overlapping,
+  // unselected live preview is never needlessly demoted (the e2e `browser` live guard).
+  const occludesProtected = useCallback(
+    (g: BoardGeom): boolean => {
+      const vp = getViewport()
+      const stage = stageScreenRect(g)
+      const stageBox: Box = { x: stage.x, y: stage.y, width: stage.width, height: stage.height }
+      const sel = selectedRectRef.current
+      let selectedRect: Box | null = null
+      if (sel) {
+        const s = worldRectToScreen(
+          { x: sel.x, y: sel.y, width: sel.w, height: sel.h },
+          vp,
+          paneOffset.current
+        )
+        selectedRect = { x: s.x, y: s.y, width: s.width, height: s.height }
+      }
+      const chromeZones = chromeExclusionZones({
+        x: paneOffset.current.x,
+        y: paneOffset.current.y,
+        w: paneSize.current.w,
+        h: paneSize.current.h
+      })
+      return shouldDemoteForOcclusion({
+        id: g.id,
+        stage: stageBox,
+        selectedId: selectedIdRef.current,
+        selectedRect,
+        chromeZones
+      })
+    },
+    [getViewport, stageScreenRect]
+  )
+
   const rec = useCallback((id: string): BoardRec => {
     let r = recs.current.get(id)
     if (!r) {
@@ -214,6 +265,22 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       const r = rec(g.id)
       const bounds = boundsFor(g)
       const zoomFactor = zoomFor(g)
+      // Diff-skip a redundant re-attach: if the view is already attached at exactly
+      // these bounds/zoom, re-issuing attachPreview re-adds the child view (a wasted
+      // IPC + attachSeq bump for nothing). The new selection-driven applyLiveness
+      // (LOT F) can call attachBoard on an already-correct live board, so this keeps
+      // that a true no-op — mirrors the reconcile Bug #44 diff-skip. A genuine
+      // move / re-attach (detached, or bounds/zoom changed) still falls through.
+      if (
+        r.exists &&
+        r.attached &&
+        r.lastSent &&
+        rectsEqual(r.lastSent, bounds) &&
+        r.lastZoom === zoomFactor
+      ) {
+        patchRuntime(g.id, { live: true })
+        return
+      }
       r.lastSent = bounds
       r.lastZoom = zoomFactor
       r.attached = true
@@ -311,7 +378,11 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   // reattach.
   const applyLiveness = useCallback((): void => {
     const all = [...geomRef.current.values()]
-    const wantLive = all.filter((g) => liveEligible(g))
+    // A board may go live only if base-eligible (zoom/on-pane/focus) AND not statically
+    // occluding a selected board or the app chrome (LOT F #2/#19/#20/#21). The
+    // occlusion-demoted set keeps its renderer + snapshot for a fast reattach once the
+    // overlap clears (handled in the else-branch, like LOD), so it is NOT closed.
+    const wantLive = all.filter((g) => liveEligible(g) && !occludesProtected(g))
     // Bug #8: rank the live winners by distance to the viewport centre so the board
     // the user navigated to wins a live slot over off-screen earlier-created boards.
     const candidates = wantLive.map((g) => {
@@ -333,9 +404,17 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
         // attach once a live slot frees.
         const rt = usePreviewStore.getState().byId[g.id]
         if (r.exists || rt?.snapshot) closeBoard(g.id)
-      } else if (r.attached) void demoteToSnapshot(g) // LOD / chrome / unfocused → snapshot
+      } else if (r.attached) void demoteToSnapshot(g) // LOD / chrome / occlusion / unfocused → snapshot
     }
-  }, [liveEligible, stageScreenRect, rec, attachBoard, closeBoard, demoteToSnapshot])
+  }, [
+    liveEligible,
+    occludesProtected,
+    stageScreenRect,
+    rec,
+    attachBoard,
+    closeBoard,
+    demoteToSnapshot
+  ])
 
   // onMoveEnd: clear the gesture flag, then reconcile liveness at the rest position.
   const endMotion = useCallback((): void => {
@@ -395,8 +474,9 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       for (const g of boards) {
         const r = rec(g.id)
         if (!r.exists && !r.attached) {
-          // New board (or one whose renderer was freed): bring it live if eligible.
-          if (liveEligible(g)) void attachBoard(g)
+          // New board (or one whose renderer was freed): bring it live if eligible AND
+          // not statically occluding a selected board / the app chrome (LOT F).
+          if (liveEligible(g) && !occludesProtected(g)) void attachBoard(g)
           // Bug #3: a board created below LOD / off-pane isn't yet eligible, so it
           // would otherwise sit on the dead idle default (empty stage, no label)
           // until a later zoom gesture attaches it. Show the 'Connecting…'
@@ -426,7 +506,17 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
         }
       }
     },
-    [rec, closeBoard, clearRuntime, liveEligible, attachBoard, boundsFor, zoomFor, patchRuntime]
+    [
+      rec,
+      closeBoard,
+      clearRuntime,
+      liveEligible,
+      occludesProtected,
+      attachBoard,
+      boundsFor,
+      zoomFor,
+      patchRuntime
+    ]
   )
 
   useEffect(() => {
@@ -443,11 +533,40 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
           viewport: b.viewport
         }))
 
+    // Refresh the selection refs (LOT F): the selected board's id + WORLD rect (any
+    // type). A live Browser view overlapping a DIFFERENT selected board demotes to its
+    // snapshot so that board is interactable. Returns true when the selection signal
+    // (id or the selected board's rect) changed — the layer then re-runs applyLiveness.
+    const syncSelection = (s: ReturnType<typeof useCanvasStore.getState>): boolean => {
+      const id = s.selectedId
+      const b = id ? s.boards.find((x) => x.id === id) : undefined
+      const rect = b ? { x: b.x, y: b.y, w: b.w, h: b.h } : null
+      const prev = selectedRectRef.current
+      const changed =
+        id !== selectedIdRef.current ||
+        rect?.x !== prev?.x ||
+        rect?.y !== prev?.y ||
+        rect?.w !== prev?.w ||
+        rect?.h !== prev?.h
+      selectedIdRef.current = id
+      selectedRectRef.current = rect
+      return changed
+    }
+
     // Initial sync, then on every store change.
+    syncSelection(useCanvasStore.getState())
     reconcile(toGeom(useCanvasStore.getState().boards))
-    const unsub = useCanvasStore.subscribe((s) => reconcile(toGeom(s.boards)))
+    const unsub = useCanvasStore.subscribe((s) => {
+      const selChanged = syncSelection(s)
+      reconcile(toGeom(s.boards))
+      // Selection (or the selected board's geometry) changed but no camera/node gesture
+      // is in flight → re-evaluate static occlusion so an already-attached Browser view
+      // demotes (or reattaches) against the new selection. Geometry-driven changes are
+      // already handled by reconcile's bounds re-push + the gesture/move paths.
+      if (selChanged && !gestureRef.current) applyLiveness()
+    })
     return unsub
-  }, [reconcile])
+  }, [reconcile, applyLiveness])
 
   // paneOffset: the RF pane top-left in window CSS px. Once per layout (ResizeObserver
   // + window resize), never per frame — then re-flush the batch.
