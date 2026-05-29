@@ -32,8 +32,14 @@ export interface CanvasE2E {
   readTerminal: (id: string) => string | null
   /** Append a checklist element (one starter item) to a planning board. */
   addChecklist: (id: string) => void
+  /** Patch durable props on any board — e.g. change a terminal's launchCommand to force a respawn. */
+  patchBoard: (id: string, patch: Partial<Board>) => void
   /** Fit the camera to one board (id) or all boards — forces zoom ≥ LOD for capture. */
   fitView: (id?: string) => void
+  /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
+  setZoom: (z: number) => void
+  /** True if a terminal board's xterm instance is currently mounted (registered). */
+  terminalMounted: (id: string) => boolean
   /** True if the live store round-trips through toObject→fromObject without throwing. */
   roundTripOk: () => boolean
 }
@@ -80,9 +86,18 @@ export function installE2EHooks(rf: ReactFlowInstance): void {
       const cl = makeChecklist(crypto.randomUUID(), crypto.randomUUID(), { x: 60, y: 60 })
       store.updateBoard(id, { elements: [...b.elements, cl] })
     },
+    patchBoard(id, patch) {
+      useCanvasStore.getState().updateBoard(id, patch)
+    },
     fitView(id) {
       const opts = { maxZoom: 1, padding: 0.2, duration: 0 } as const
       void rf.fitView(id ? { ...opts, nodes: [{ id }] } : opts)
+    },
+    setZoom(z) {
+      void rf.zoomTo(z, { duration: 0 })
+    },
+    terminalMounted(id) {
+      return e2eTerminals.has(id)
     },
     roundTripOk() {
       try {
