@@ -9,7 +9,7 @@ import { runSelfTest } from './selfTest'
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
 
-const SMOKE = process.env.CANVAS_SMOKE // "1" = run self-test, "exit" = self-test then quit
+const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "e2e"=board harness+quit
 
 // Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
 // pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
@@ -57,10 +57,15 @@ function createWindow(): void {
     })
   }
 
+  const e2e = SMOKE === 'e2e'
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    const base = process.env['ELECTRON_RENDERER_URL']
+    mainWindow.loadURL(e2e ? `${base}?e2e=1` : base)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(
+      join(__dirname, '../renderer/index.html'),
+      e2e ? { query: { e2e: '1' } } : undefined
+    )
   }
 }
 
