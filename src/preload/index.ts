@@ -46,6 +46,11 @@ const api = {
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
     ipcRenderer.invoke('pty:spawn', opts),
   killTerminal: (id: string): Promise<boolean> => ipcRenderer.invoke('pty:kill', id),
+  // Park the session on delete (keep the proc alive for adopt-on-undo, #15).
+  parkTerminal: (id: string): Promise<boolean> => ipcRenderer.invoke('pty:park', id),
+  // Adopt a parked session on undo; { adopted:false } → caller spawns fresh (#15).
+  adoptTerminal: (id: string): Promise<{ adopted: boolean; pid?: number }> =>
+    ipcRenderer.invoke('pty:adopt', id),
   // Phase 2.1: OS-aware shell list (best-default first) for the board picker.
   listShells: (): Promise<ShellInfo[]> => ipcRenderer.invoke('pty:shells'),
 
