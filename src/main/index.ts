@@ -5,6 +5,7 @@ import { registerPtyHandlers, disposeAllPtys } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
+import { runE2ESmoke } from './e2eSmoke'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -81,10 +82,21 @@ app.whenReady().then(async () => {
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
-      const ok = await runSelfTest(mainWindow!, localServer!.url)
-      smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
-      if (SMOKE === 'exit') {
-        setTimeout(() => app.quit(), 400)
+      if (SMOKE === 'e2e') {
+        const code = await runE2ESmoke(mainWindow!, localServer!.url)
+        process.exitCode = code
+        // app.exit() (not app.quit()): on Windows app.quit() ignores process.exitCode,
+        // so the harness exit code wouldn't reach the shell. app.exit() propagates it
+        // but bypasses `before-quit` — so call shutdown() explicitly first to drain the
+        // PTY tree / preview views / local server (shutdown is idempotent).
+        setTimeout(() => {
+          shutdown()
+          app.exit(code)
+        }, 400)
+      } else {
+        const ok = await runSelfTest(mainWindow!, localServer!.url)
+        smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
+        if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
       }
     })
   }
