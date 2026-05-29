@@ -28,3 +28,5 @@ Thumbs.db
 
 # agent worktrees (harness-managed git worktrees for parallel work)
 .claude/worktrees/
+# harness runtime artifacts
+.claude/scheduled_tasks.lock
