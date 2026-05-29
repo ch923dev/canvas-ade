@@ -1,5 +1,16 @@
 import type { IpcMain, BrowserWindow, Rectangle } from 'electron'
-import { WebContentsView } from 'electron'
+import { WebContentsView, shell } from 'electron'
+
+/**
+ * Preview lifecycle event pushed main → renderer (Phase 2.2). The renderer keys it
+ * by board `id` to drive the URL bar (live URL, connecting/connected/load-failed)
+ * and the back/forward affordance. Kept structurally in sync with the preload's
+ * `PreviewEvent` (preload re-declares it to avoid a main→preload type import).
+ */
+export type PreviewEvent =
+  | { id: string; type: 'did-finish-load'; url: string }
+  | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
+  | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
 
 /**
  * PreviewManager (1-E): N native WebContentsViews keyed by board id, synced to the
@@ -30,6 +41,20 @@ function round(b: Rectangle): Rectangle {
   }
 }
 
+/**
+ * Push a preview lifecycle event to the renderer (Phase 2.2). The Browser board's
+ * URL/route bar reflects connecting / connected / load-failed and the live URL +
+ * nav-affordance state from these. Sent on the owner window's main-world channel
+ * (`preview:event`); the preload re-exposes a typed `onPreviewEvent` subscriber.
+ */
+function emit(ev: PreviewEvent): void {
+  try {
+    owner?.webContents.send('preview:event', ev)
+  } catch {
+    /* window gone */
+  }
+}
+
 function ensure(id: string, win: BrowserWindow): Entry {
   owner = win
   let e = views.get(id)
@@ -48,14 +73,48 @@ function ensure(id: string, win: BrowserWindow): Entry {
     })
     e = { view, attached: false, zoom: 1 }
     views.set(id, e)
+    const wc = view.webContents
+    // External links open in the OS browser, never inside the preview (security:
+    // the preview must never become a general web browser / nav target).
+    wc.setWindowOpenHandler(({ url }) => {
+      void shell.openExternal(url)
+      return { action: 'deny' }
+    })
     // Re-apply the held zoom factor after each load so the page keeps laying out at
     // its fixed CSS width W (otherwise a load resets the factor to 1).
-    view.webContents.on('did-finish-load', () => {
+    wc.on('did-finish-load', () => {
       try {
-        view.webContents.setZoomFactor(e!.zoom)
+        wc.setZoomFactor(e!.zoom)
       } catch {
         /* view gone */
       }
+      emit({ id, type: 'did-finish-load', url: wc.getURL() })
+    })
+    // Surface navigation so the renderer can update the URL bar + back/fwd state.
+    wc.on('did-navigate', (_ev, url) => {
+      emit({
+        id,
+        type: 'did-navigate',
+        url,
+        canGoBack: wc.navigationHistory.canGoBack(),
+        canGoForward: wc.navigationHistory.canGoForward()
+      })
+    })
+    wc.on('did-navigate-in-page', (_ev, url, isMainFrame) => {
+      if (!isMainFrame) return
+      emit({
+        id,
+        type: 'did-navigate',
+        url,
+        canGoBack: wc.navigationHistory.canGoBack(),
+        canGoForward: wc.navigationHistory.canGoForward()
+      })
+    })
+    // Only the top-level (main-frame) load failure is a board-level "load-failed"
+    // state; sub-resource/aborted loads (errorCode -3) are ignored.
+    wc.on('did-fail-load', (_ev, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) return
+      emit({ id, type: 'did-fail-load', url: validatedURL, errorCode, errorDescription })
     })
   }
   return e
@@ -170,6 +229,42 @@ export function registerPreviewHandlers(
 
   ipcMain.handle('preview:closeAll', () => {
     disposeAll()
+    return true
+  })
+
+  // ── Navigation (Phase 2.2 browser) — additive control plane for the URL bar ──
+  // Browser-board content is never trusted to drive the PTY; these only steer the
+  // view's own webContents. `navigate` loads the user-edited URL (a reload resets
+  // zoom → did-finish-load re-applies the held factor).
+  ipcMain.handle('preview:navigate', (_e, args: { id: string; url: string }) => {
+    const e = views.get(args.id)
+    if (!e) return false
+    void e.view.webContents.loadURL(args.url)
+    return true
+  })
+
+  ipcMain.handle('preview:goBack', (_e, id: string) => {
+    const e = views.get(id)
+    if (e?.view.webContents.navigationHistory.canGoBack()) {
+      e.view.webContents.navigationHistory.goBack()
+      return true
+    }
+    return false
+  })
+
+  ipcMain.handle('preview:goForward', (_e, id: string) => {
+    const e = views.get(id)
+    if (e?.view.webContents.navigationHistory.canGoForward()) {
+      e.view.webContents.navigationHistory.goForward()
+      return true
+    }
+    return false
+  })
+
+  ipcMain.handle('preview:reload', (_e, id: string) => {
+    const e = views.get(id)
+    if (!e) return false
+    e.view.webContents.reload()
     return true
   })
 }

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Rectangle } from 'electron'
+import type { Rectangle, IpcRendererEvent } from 'electron'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -32,6 +32,15 @@ export interface SpawnTerminalResult {
   error?: string
 }
 
+/**
+ * Preview lifecycle event (Phase 2.2 browser). Structurally mirrors the main
+ * process `PreviewEvent` (re-declared here to keep preload decoupled from main).
+ */
+export type PreviewEvent =
+  | { id: string; type: 'did-finish-load'; url: string }
+  | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
+  | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -58,7 +67,27 @@ const api = {
   attachPreview: (args: { id: string; bounds: Rectangle; zoomFactor?: number }): Promise<boolean> =>
     ipcRenderer.invoke('preview:attach', args),
   closePreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:close', id),
-  closeAllPreviews: (): Promise<boolean> => ipcRenderer.invoke('preview:closeAll')
+  closeAllPreviews: (): Promise<boolean> => ipcRenderer.invoke('preview:closeAll'),
+
+  // ── Phase 2.2 browser — navigation + lifecycle events (additive) ──
+  // Navigate the preview's OWN webContents (control plane). Browser-board content
+  // never reaches the PTY write channel; these only steer the native view.
+  navigatePreview: (id: string, url: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:navigate', { id, url }),
+  goBackPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:goBack', id),
+  goForwardPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:goForward', id),
+  reloadPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:reload', id),
+  /**
+   * Subscribe to preview lifecycle events (did-navigate / did-fail-load /
+   * did-finish-load), keyed by board id. Returns an unsubscribe fn. The listener
+   * gets ONLY the event payload (never the IpcRendererEvent) so the renderer can't
+   * reach ipcRenderer.
+   */
+  onPreviewEvent: (listener: (ev: PreviewEvent) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, ev: PreviewEvent): void => listener(ev)
+    ipcRenderer.on('preview:event', handler)
+    return () => ipcRenderer.removeListener('preview:event', handler)
+  }
 }
 
 /**

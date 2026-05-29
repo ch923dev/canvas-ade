@@ -33,6 +33,7 @@ import { useCanvasStore } from '../store/canvasStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
+import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import DiagOverlay from '../spike/DiagOverlay'
@@ -178,6 +179,13 @@ function CanvasInner(): ReactElement {
         style={{ width: '100%', height: '100%' }}
       >
         <FadingDots />
+        {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
+            <ReactFlow> so it can read the live camera (useReactFlow /
+            useOnViewportChange) and sync every Browser board's native
+            WebContentsView to the camera. Renders nothing (returns null); it owns
+            the native-view lifecycle only. The Browser board is the sole board type
+            allowed to touch this file. */}
+        <BrowserPreviewLayer paneRef={paneRef} />
       </ReactFlow>
 
       {boards.length === 0 && <EmptyState onAdd={addCentered} />}
