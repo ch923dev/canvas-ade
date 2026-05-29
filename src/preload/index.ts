@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Rectangle } from 'electron'
 
+// ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
+/** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
+export type PtyState = 'spawning' | 'running' | 'exited' | 'spawn-failed'
+
+/** A discoverable shell for the per-board picker (mirrors main `ShellInfo`). */
+export interface ShellInfo {
+  path: string
+  label: string
+  default?: boolean
+}
+
 export interface SpawnTerminalOpts {
   id: string
   shell?: string
@@ -8,13 +19,26 @@ export interface SpawnTerminalOpts {
   cwd?: string
   cols?: number
   rows?: number
+  /** Free-text agentic CLI written as the first PTY line (e.g. `claude`). */
+  launchCommand?: string
+}
+
+/** Result of `pty:spawn`: on failure `pid` is -1 and `state` is `spawn-failed`. */
+export interface SpawnTerminalResult {
+  id: string
+  shell: string
+  pid: number
+  state: PtyState
+  error?: string
 }
 
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
-  spawnTerminal: (opts: SpawnTerminalOpts): Promise<{ id: string; shell: string; pid: number }> =>
+  spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
     ipcRenderer.invoke('pty:spawn', opts),
   killTerminal: (id: string): Promise<boolean> => ipcRenderer.invoke('pty:kill', id),
+  // Phase 2.1: OS-aware shell list (best-default first) for the board picker.
+  listShells: (): Promise<ShellInfo[]> => ipcRenderer.invoke('pty:shells'),
 
   // ── Browser preview (WebContentsView, keyed by board id — 1-E) ──
   openPreview: (args: {
