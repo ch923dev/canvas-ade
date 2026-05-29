@@ -11,6 +11,20 @@ let localServer: LocalServer | null = null
 
 const SMOKE = process.env.CANVAS_SMOKE // "1" = run self-test, "exit" = self-test then quit
 
+// Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
+// pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
+// pipe and throws EPIPE — which must NOT crash main with an uncaught-exception
+// dialog. Swallow EPIPE on both the sync (throw) and async (stream 'error') paths.
+if (SMOKE) process.stdout.on('error', () => {})
+
+function smokeLog(line: string): void {
+  try {
+    console.log(line)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EPIPE') throw err
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -39,7 +53,7 @@ function createWindow(): void {
   // Surface renderer console to main stdout during smoke runs.
   if (SMOKE) {
     mainWindow.webContents.on('console-message', (_e, _lvl, message) => {
-      if (message.startsWith('RENDERER_SMOKE')) console.log(message)
+      if (message.startsWith('RENDERER_SMOKE')) smokeLog(message)
     })
   }
 
@@ -63,7 +77,7 @@ app.whenReady().then(async () => {
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
       const ok = await runSelfTest(mainWindow!, localServer!.url)
-      console.log(`SELFTEST_DONE ${JSON.stringify(ok)}`)
+      smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
       if (SMOKE === 'exit') {
         setTimeout(() => app.quit(), 400)
       }
