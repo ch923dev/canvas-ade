@@ -29,10 +29,12 @@ describe('nodeChangesToIntents', () => {
     expect(
       nodeChangesToIntents([
         { type: 'select', id: 'a', selected: true } as never,
+        { type: 'select', id: 'c', selected: false } as never,
         { type: 'remove', id: 'b' } as never
       ])
     ).toEqual([
       { kind: 'select', id: 'a' },
+      { kind: 'deselect', id: 'c' },
       { kind: 'remove', id: 'b' }
     ])
   })
