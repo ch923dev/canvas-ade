@@ -130,7 +130,14 @@ Checklist:
       (snapshot scales as a unit) or stay 1:1? Lock it, write it in `CLAUDE.md`/an ADR if it deviates.
 - ✅📏 perceived motion smooth (no trailing live view), snapshot never blank, scale model locked. Commit.
 
-## 1-E · N views + responsive + lifecycle ⛓ 1-D — *START HERE*
+## 1-E · N views + responsive + lifecycle ⛓ 1-D — ✅ DONE (commit `40849ec`)
+
+`preview.ts` is a keyed `Map<id, WebContentsView>` PreviewManager; N boards sync from ONE `setBounds`
+batch/frame; per-board detach+snapshot on motion; `MAX_LIVE=4` cap; LOD snapshot < 40%; responsive
+reflow via tested `fitZoomFactor` (page held at W∈{390,834,1280}). **Gotcha found: Chromium zoom is
+per-host per-SESSION → each view needs its own `partition: preview-<id>` or all presets sync.** Controls
+moved to a bar above the pane (native views can't paint over it); snapshot kept as a fallback layer under
+the live view (no cutout flash). Leak verified Windows: `electron.exe` 6→4→6, full close → 0.
 
 Make `preview.ts` **multi-view** and prove it scales + doesn't leak.
 
@@ -149,12 +156,15 @@ Checklist:
 - ✅📏 multi-view stays aligned; reflow correct at all 3 presets through camera changes; memory stable across
       open/close (no leaked renderers). Commit.
 
-## 🚦 GATE verdict (end of 1-E)
+## 🚦 GATE verdict (end of 1-E) — ✅ PASSED (Windows, 2026-05-29)
 
-Smooth + leak-free + aligned on Windows → **proceed to Phase 2** (the working sync code graduates into
-Phase 2.0's production canvas; the rest of the spike can be thrown away). **If janky and unfixable**: STOP,
-write up fallback options (snapshot-only previews, fewer live views, alternate transport than per-frame IPC)
-and decide with the user before building Phase 2.
+Smooth (165fps), leak-free (open/close `electron.exe` 6→4→6, full close → 0), aligned, multi-view, reflow
+correct in the working-zoom band → **proceed to Phase 2.** The working sync code graduates into Phase 2.0;
+the rest of the spike (`FlowSmoke`, smoke tabs, leak-cycle button) is throwaway. Full verdict + load-bearing
+decisions + known constraints: **`docs/decisions/0002-preview-gate.md`**. Known WebContentsView limits
+(inherent, mitigated): paints above ALL HTML → occludes boards/in-canvas chrome (→ LOD/motion snapshots +
+chrome outside the pane); zoom-factor floor 0.25 caps the desktop preset at heavy zoom-out (→ snapshot < 40%,
+pick board world-sizes for the working band).
 
 ## Gotchas / carry-forward (don't relearn these)
 
