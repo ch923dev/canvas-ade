@@ -49,7 +49,8 @@ describe('arrowheadMarkerId', () => {
   it('namespaces the marker id by board id', () => {
     expect(arrowheadMarkerId('abc')).toBe('pl-arrowhead-abc')
   })
-  it('differs per board so duplicate DOM ids cannot collide', () => {
-    expect(arrowheadMarkerId('a')).not.toBe(arrowheadMarkerId('b'))
+  it('accepts a UUID-shaped board id without mangling it', () => {
+    const uuid = '3f2504e0-4f89-11d3-9a0c-0305e82c3301'
+    expect(arrowheadMarkerId(uuid)).toBe(`pl-arrowhead-${uuid}`)
   })
 })

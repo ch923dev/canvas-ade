@@ -5,6 +5,8 @@
  *
  * - `arrowPath` — a cubic bezier from an arrow's start→end with a gentle bow,
  *   drawn 1.5px `--border-strong` + arrowhead marker (DESIGN.md §7.3).
+ * - `arrowheadMarkerId` — per-board `<marker>` id so multiple Planning boards
+ *   never share a DOM id.
  * - `strokeToPath` — a freehand point list → a filled outline path via the
  *   vendored perfect-freehand (ADR 0001). `simulatePressure: false` because a
  *   mouse/trackpad has no real pressure.
