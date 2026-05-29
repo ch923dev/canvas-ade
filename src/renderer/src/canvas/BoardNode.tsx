@@ -52,8 +52,10 @@ function lodStatus(type: BoardType): BoardStatus | null {
 
 export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>): ReactElement {
   const board = data.board
-  const zoom = useStore((s) => s.transform[2])
-  const lod = isLod(zoom)
+  // Subscribe to the derived LOD boolean, NOT the raw zoom scalar: with Object.is
+  // equality the selected value only flips at the LOD threshold, so a BoardNode
+  // re-renders only at the crossover instead of on every intra-band zoom frame (#39).
+  const lod = useStore((s) => isLod(s.transform[2]))
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
 
