@@ -11,6 +11,7 @@
 import type { BrowserWindow } from 'electron'
 import { summarizeE2E, type E2EPart } from './e2eReport'
 import { debugCaptureView } from './preview'
+import { debugTerminalPid, debugWriteTerminal } from './pty'
 
 // Markers go to stdout via bare console.log — safe here because index.ts installs a
 // process.stdout 'error' handler (EPIPE swallow) before this runs whenever SMOKE is set.
@@ -182,6 +183,47 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     name: 'terminal-respawn',
     ok: respawnOk,
     detail: respawnOk ? 'new session echoed after respawn' : 'respawned session not alive'
+  })
+
+  // ── #15 (park/adopt on undo): write a unique marker into the live terminal,
+  // capture its pid, delete the board (parks the session), undo (adopts it), then
+  // assert the SAME pid is back AND the marker replayed from the buffer — a fresh
+  // spawn would have neither. Restore zoom first so the re-mounted xterm lays out. ──
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  const ADOPT_MARKER = 'CANVAS_E2E_ADOPT_MARKER'
+  debugWriteTerminal(termId, `echo ${ADOPT_MARKER}\r`)
+  const markerSeen = await poll(async () => {
+    const text = await evalIn<string | null>(
+      win,
+      `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+    )
+    return typeof text === 'string' && text.includes(ADOPT_MARKER)
+  }, 8000)
+  const pidBefore = debugTerminalPid(termId)
+  await evalIn(win, `window.__canvasE2E.deleteBoard(${JSON.stringify(termId)})`)
+  await delay(200) // let the unmount + park settle
+  await evalIn(win, 'window.__canvasE2E.undo()')
+  const adoptedOk = await poll(async () => {
+    const pidNow = debugTerminalPid(termId)
+    const text = await evalIn<string | null>(
+      win,
+      `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+    )
+    return (
+      pidNow !== null &&
+      pidBefore !== null &&
+      pidNow === pidBefore &&
+      typeof text === 'string' &&
+      text.includes(ADOPT_MARKER)
+    )
+  }, 10000)
+  parts.push({
+    name: 'terminal-adopt',
+    ok: markerSeen && adoptedOk,
+    detail:
+      markerSeen && adoptedOk
+        ? `same pid ${pidBefore} + scrollback replayed after undo`
+        : `markerSeen=${markerSeen} pidBefore=${pidBefore} adoptedOk=${adoptedOk}`
   })
 
   // ── Fix #4 (dead-URL status): a refused connection must end as 'load-failed',
