@@ -315,8 +315,16 @@ export function disposeAll(): void {
 export async function debugCaptureView(id: string): Promise<{ attached: boolean; empty: boolean }> {
   const e = views.get(id)
   if (!e || !e.attached) return { attached: false, empty: true }
-  const img = await e.view.webContents.capturePage()
-  return { attached: true, empty: img.isEmpty() }
+  try {
+    const img = await e.view.webContents.capturePage()
+    return { attached: true, empty: img.isEmpty() }
+  } catch {
+    // No composited display surface (headless / GPU-contended host, e.g. several
+    // Electron instances at once): capturePage rejects. Report empty rather than
+    // letting the rejection abort the whole e2e run before any marker prints — the
+    // browser part then fails gracefully while the other board asserts still report.
+    return { attached: true, empty: true }
+  }
 }
 
 /** E2E ONLY — ids of every native preview view currently created. */
