@@ -18,6 +18,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # node-gyp (rebuilds node-pty in postinstall) imports distutils, removed from
+      # the Python 3.12 stdlib that GitHub runners now ship — pin 3.11 (has distutils).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
@@ -36,6 +41,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
@@ -50,13 +58,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # One job per NATIVE (os, arch) where the toolchain can't cross-build native
+        # modules (Linux g++), and a single job where it can (Windows MSVC + macOS
+        # clang both cross-compile x64↔arm64). macos-13 (x64) is dropped — the runner
+        # is scarce/queues forever; macOS x64 is built on the arm runner instead.
         include:
           - os: windows-latest
             args: --win --x64 --arm64
           - os: macos-14
-            args: --mac --arm64
-          - os: macos-13
-            args: --mac --x64
+            args: --mac --x64 --arm64
           - os: ubuntu-latest
             args: --linux --x64
           - os: ubuntu-24.04-arm
@@ -67,6 +77,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - run: corepack enable
       - name: Install (rebuilds node-pty against Electron ABI)
         run: pnpm install --frozen-lockfile
