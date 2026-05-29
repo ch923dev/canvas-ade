@@ -122,5 +122,6 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 ## Status
 
 - **Phase 0 — DONE.** Toolchain proven end-to-end: React Flow renders, xterm + webgl, node-pty (ConPTY) spawns a shell from MAIN over a MessagePort, WebContentsView loads localhost, electron-builder produces a runnable + native-unpacked Windows build (verified by running the packaged exe headless). See `docs/roadmap.md` for what's next.
-- Next: **Phase 1 GATE** — WebContentsView ↔ React Flow camera sync spike on Windows (detach+snapshot), N-view PreviewManager. Decomposed into steps 1-A…1-E (see `docs/roadmap.md`). Do not proceed past it if janky.
-- **Start here next session:** `docs/handoffs/phase-1-a.md` (cold-start task handoff for Phase 1-A).
+- **Phase 1-A — DONE** (commit `8a96d2d`). Dev tooling wired: ESLint 9 flat (typescript-eslint v8 + react-hooks + react-refresh + config-prettier), Prettier 3, Vitest 2; CI `check` job runs lint + test + typecheck + build. Load-bearing pure module `src/renderer/src/lib/cameraBounds.ts` (`worldRectToScreen`/`roundRect`/`rectsEqual`) with 19 colocated tests. Diagnostics overlay (`src/renderer/src/spike/DiagOverlay.tsx`: frame-time/FPS/live-view/heap) wired into the canvas tab — dev-default-on, Ctrl/⌘+Shift+D toggle. All gates green incl. headless smoke.
+- Next: **Phase 1 GATE** continues — steps **1-B…1-E** (see `docs/roadmap.md`). 1-B = static `WebContentsView` pinned to one React Flow node's bounds (camera still) via `worldRectToScreen` + `roundRect`; verify pixel alignment. Then 1-C adds live pan/zoom and measures Windows trailing/lag with the overlay. Do not proceed past the gate if janky.
+- **Start here next session:** Phase 1-B — `docs/roadmap.md` → Phase 1, step 1-B (no separate handoff doc yet).
