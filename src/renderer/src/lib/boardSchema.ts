@@ -257,7 +257,8 @@ function assertPlanningElement(el: unknown): void {
     case 'note':
       if (typeof el.text !== 'string') fail('note element is missing string text')
       if (!isFiniteNum(el.w) || !isFiniteNum(el.h)) fail('note element has non-finite w/h')
-      if (!NOTE_TINTS.includes(el.tint as NoteTint)) fail(`note element has invalid tint ${el.tint}`)
+      if (!NOTE_TINTS.includes(el.tint as NoteTint))
+        fail(`note element has invalid tint ${el.tint}`)
       if (el.rotation !== undefined && !isFiniteNum(el.rotation)) {
         fail('note element has a non-finite rotation')
       }
@@ -308,7 +309,8 @@ function assertBoard(b: unknown): void {
 
   switch (b.type) {
     case 'terminal':
-      if (b.shell !== undefined && typeof b.shell !== 'string') fail('terminal shell is not a string')
+      if (b.shell !== undefined && typeof b.shell !== 'string')
+        fail('terminal shell is not a string')
       if (b.launchCommand !== undefined && typeof b.launchCommand !== 'string') {
         fail('terminal launchCommand is not a string')
       }

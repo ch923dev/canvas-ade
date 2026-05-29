@@ -6,6 +6,8 @@
  *
  * `launchCommand` is free-text → ANY agentic CLI (e.g. `claude`, `codex`). It is
  * written as the first PTY line in pty.ts so the agent inherits PATH/profile/auth.
+ * The Label field edits `board.title` (the header text — what the terminal is for);
+ * a label-only change does NOT respawn (only shell/launchCommand/cwd are spawn deps).
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
@@ -22,6 +24,7 @@ export function TerminalConfig({
 }): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const [shells, setShells] = useState<ShellInfo[]>([])
+  const [title, setTitle] = useState(board.title)
   const [shell, setShell] = useState(board.shell ?? '')
   const [launchCommand, setLaunchCommand] = useState(board.launchCommand ?? '')
   const [cwd, setCwd] = useState(board.cwd ?? '')
@@ -42,6 +45,7 @@ export function TerminalConfig({
   const apply = (): void => {
     useCanvasStore.getState().beginChange()
     updateBoard(board.id, {
+      title: title.trim() || board.title,
       shell: shell || undefined,
       launchCommand: launchCommand.trim() || undefined,
       cwd: cwd.trim() || undefined
@@ -59,6 +63,16 @@ export function TerminalConfig({
         if (e.key === 'Escape') onClose()
       }}
     >
+      <label style={lbl}>
+        Label
+        <input
+          style={fld}
+          placeholder="What this terminal is for"
+          spellCheck={false}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </label>
       <label style={lbl}>
         Shell
         <select style={fld} value={shell} onChange={(e) => setShell(e.target.value)}>

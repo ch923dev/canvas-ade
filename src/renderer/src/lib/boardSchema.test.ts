@@ -203,8 +203,9 @@ describe('fromObject deep validation', () => {
   it('throws on a non-string id or title', () => {
     const base = { type: 'terminal', x: 0, y: 0, w: 1, h: 1, title: 'ok' }
     expect(() => fromObject(wrap({ ...base, id: 42 }))).toThrow()
-    expect(() => fromObject(wrap({ id: 't', type: 'terminal', x: 0, y: 0, w: 1, h: 1, title: 9 })))
-      .toThrow()
+    expect(() =>
+      fromObject(wrap({ id: 't', type: 'terminal', x: 0, y: 0, w: 1, h: 1, title: 9 }))
+    ).toThrow()
   })
 
   it('throws on NaN / Infinity geometry', () => {
@@ -355,7 +356,9 @@ describe('fromObject deep validation', () => {
       elements: [note]
     })
     expect(() =>
-      fromObject(wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: 1, h: 1, text: 'hi', tint: 'red' })))
+      fromObject(
+        wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: 1, h: 1, text: 'hi', tint: 'red' }))
+      )
     ).toThrow()
     expect(() =>
       fromObject(wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: 1, h: 1, tint: 'yellow' })))

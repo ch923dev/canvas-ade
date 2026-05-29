@@ -330,9 +330,7 @@ export function PlanningBoard({
   // While a move is in flight, render the dragged element at its transient
   // position (the store still holds the pre-drag position until pointer-up — #9).
   // Only note/text/checklist are movable, so the SVG (arrows/strokes) is unaffected.
-  const viewElements = dragPos
-    ? moveElement(elements, dragPos.id, dragPos.x, dragPos.y)
-    : elements
+  const viewElements = dragPos ? moveElement(elements, dragPos.id, dragPos.x, dragPos.y) : elements
 
   // The well captures the pen/arrow/place gestures; the draw tools also force a
   // crosshair cursor so the active mode is legible.

@@ -65,6 +65,42 @@ function onPath(cmd: string): string | null {
   return null
 }
 
+/** First of the candidate absolute paths that exists as a file. */
+function firstFile(...candidates: Array<string | null | undefined>): string | null {
+  for (const c of candidates) {
+    if (!c) continue
+    try {
+      if (fs.existsSync(c) && fs.statSync(c).isFile()) return c
+    } catch {
+      /* unreadable */
+    }
+  }
+  return null
+}
+
+/**
+ * Git for Windows' `bash.exe` (Git Bash), if installed. Probes the install root
+ * derived from `git` on PATH (`…\Git\cmd\git.exe` → `…\Git\bin\bash.exe`) plus
+ * the usual Program Files / per-user locations. This is the REAL Git Bash, not
+ * the `WindowsApps\bash.exe` Store alias (which is just the WSL launcher).
+ */
+function findGitBash(): string | null {
+  const roots: string[] = []
+  const git = onPath('git') // …\Git\cmd\git.exe → root is two dirs up
+  if (git) roots.push(path.dirname(path.dirname(git)))
+  const pf = process.env.ProgramFiles || 'C:\\Program Files'
+  const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
+  roots.push(path.join(pf, 'Git'), path.join(pf86, 'Git'))
+  if (process.env.LOCALAPPDATA) roots.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'Git'))
+  return firstFile(...roots.map((r) => path.join(r, 'bin', 'bash.exe')))
+}
+
+/** WSL launcher — prefer the real System32 binary over the WindowsApps alias. */
+function findWsl(): string | null {
+  const sysRoot = process.env.SystemRoot || 'C:\\Windows'
+  return firstFile(path.join(sysRoot, 'System32', 'wsl.exe')) || onPath('wsl')
+}
+
 /**
  * Discoverable shells, OS-aware, best-default first (CLAUDE.md: Win
  * pwsh > powershell > cmd; *nix `$SHELL` then zsh > bash). Pure of side effects
@@ -87,6 +123,14 @@ export function enumerateShells(): ShellInfo[] {
     add(onPath('powershell'), 'powershell')
     add(process.env.COMSPEC, 'cmd')
     add(onPath('cmd'), 'cmd')
+    add(findGitBash(), 'git bash')
+    add(findWsl(), 'wsl')
+    // A standalone bash/zsh on PATH (e.g. MSYS2/Cygwin), skipping the
+    // WindowsApps Store alias which is just the WSL launcher (already added).
+    const stdBash = onPath('bash')
+    if (stdBash && !/WindowsApps/i.test(stdBash)) add(stdBash, 'bash')
+    const stdZsh = onPath('zsh')
+    if (stdZsh && !/WindowsApps/i.test(stdZsh)) add(stdZsh, 'zsh')
   } else {
     if (process.env.SHELL) add(process.env.SHELL, path.basename(process.env.SHELL))
     add(onPath('zsh'), 'zsh')
@@ -114,9 +158,15 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     if (!win) throw new Error('pty:spawn — no window')
 
     const shell = opts.shell || enumerateShells()[0].path
+    // Git Bash with no explicit args: launch as a login+interactive shell so it
+    // sources its profile (otherwise PATH/prompt are bare under ConPTY).
+    let args = opts.args ?? []
+    if (process.platform === 'win32' && args.length === 0 && /\\bash\.exe$/i.test(shell)) {
+      args = ['-l', '-i']
+    }
     let proc: pty.IPty
     try {
-      proc = pty.spawn(shell, opts.args ?? [], {
+      proc = pty.spawn(shell, args, {
         name: 'xterm-256color',
         cols: opts.cols ?? 80,
         rows: opts.rows ?? 24,
