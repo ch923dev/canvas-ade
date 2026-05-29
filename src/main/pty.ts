@@ -458,3 +458,24 @@ export function disposeAllPtys(): Promise<void> {
   const liveDone = [...sessions.keys()].map((id) => cleanup(id))
   return Promise.all([...parkedDone, ...liveDone]).then(() => undefined)
 }
+
+/**
+ * E2E (in-process smoke) ONLY — pid of the live OR parked session for `id`, so the
+ * harness can assert process IDENTITY across a delete→undo (adopt must reattach the
+ * SAME process, not spawn a new one). Read-only; exposes nothing new to the renderer.
+ */
+export function debugTerminalPid(id: string): number | null {
+  return sessions.get(id)?.proc.pid ?? parked.get(id)?.proc.pid ?? null
+}
+
+/**
+ * E2E ONLY — write directly to the live session's process (a runtime marker the
+ * harness can look for in the replayed scrollback after undo). Not wired to the
+ * renderer; the harness runs in MAIN and calls this directly.
+ */
+export function debugWriteTerminal(id: string, data: string): boolean {
+  const s = sessions.get(id)
+  if (!s) return false
+  s.proc.write(data)
+  return true
+}
