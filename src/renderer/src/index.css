@@ -1,33 +1,192 @@
-/* Canvas ADE design tokens (DESIGN.md §2-4). Seeded in Phase 0; the real
-   board chrome consumes these from Phase 2 onward. */
+/* Canvas ADE design tokens — faithful mirror of DESIGN.md §2-4 (authoritative
+   visual contract). Seeded in Phase 0, completed in Phase 2.0-A. Board chrome
+   consumes these from 2.0-C onward. DESIGN.md wins on visual; on any drift,
+   align here to it. */
 :root {
+  /* §3 Typography — families */
   --ui: 'Geist', system-ui, -apple-system, sans-serif;
   --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
+  /* §2 Surfaces (furthest → closest) */
   --void: #0a0a0b;
-  --grid-dot: #232327;
+  --grid-dot: #202022;
   --surface: #141416;
   --surface-raised: #1a1a1d;
-  --surface-overlay: #232328;
+  --surface-overlay: #1e1e22;
   --inset: #0e0e10;
 
+  /* §2 Borders */
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(255, 255, 255, 0.17);
+  --border-strong: rgba(255, 255, 255, 0.16);
 
+  /* §2 Text */
   --text: #ededee;
   --text-2: #9b9ba1;
   --text-3: #6a6a70;
   --text-faint: #46464b;
 
+  /* §2 Accent + status (one functional accent; status = 8px dots / 1px rings) */
   --accent: #4f8cff;
   --accent-hover: #6ea0ff;
-  --accent-wash: color-mix(in srgb, #4f8cff 14%, transparent);
+  --accent-wash: rgba(79, 140, 255, 0.14);
   --ok: #3ecf8e;
   --warn: #e8b339;
   --err: #f2545b;
 
+  /* §3 Type scale — size / line-height / weight / tracking per role.
+     micro=section labels & board-type tag · meta=mono meta/status/breadcrumb ·
+     label=board title/button/toolbar · body=notes/menu items · term=terminal
+     output (mono) · h=empty-state heading/dialog title. */
+  --fs-micro: 10px;
+  --lh-micro: 14px;
+  --fw-micro: 500;
+  --tr-micro: 0.06em;
+
+  --fs-meta: 11px;
+  --lh-meta: 16px;
+  --fw-meta: 450;
+
+  --fs-label: 12px;
+  --lh-label: 16px;
+  --fw-label: 500;
+
+  --fs-body: 13px;
+  --lh-body: 20px;
+  --fw-body: 400;
+
+  --fs-term: 12.5px;
+  --lh-term: 19px;
+  --fw-term: 400;
+
+  --fs-h: 15px;
+  --lh-h: 22px;
+  --fw-h: 600;
+  --tr-h: -0.01em;
+
+  /* §4 Spacing — base 4px; steps 2,4,6,8,12,16,20,24,32 (named by px value) */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+
+  /* §4 Radius */
   --r-board: 8px;
+  --r-inner: 6px;
+  --r-ctl: 5px;
+  --r-pill: 999px;
+
+  /* §4 Elevation — the only shadows in the system */
+  --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+
+  /* §4 Density — compact default (roomy dropped; tweaks panel cut) */
+  --titlebar-h: 34px;
+}
+
+/* §3 Type-scale helper classes — apply a named role in one class.
+   (Components may consume the per-role --fs / --lh / --fw tokens directly.) */
+.t-micro {
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  font-weight: var(--fw-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+}
+.t-meta {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: var(--fw-meta);
+}
+.t-label {
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: var(--fw-label);
+}
+.t-body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: var(--fw-body);
+}
+.t-term {
+  font-family: var(--mono);
+  font-size: var(--fs-term);
+  line-height: var(--lh-term);
+  font-weight: var(--fw-term);
+}
+.t-h {
+  font-size: var(--fs-h);
+  line-height: var(--lh-h);
+  font-weight: var(--fw-h);
+  letter-spacing: var(--tr-h);
+}
+
+/* §9 Motion — the ca-* keyframes referenced by board chrome (2.1+).
+   ca-pulse: --ok status dot halo · ca-progress(-bar): 1.25s indeterminate run
+   sliver · ca-blink: 1.05s step caret · ca-caret-run: 0.9s running glyph caret.
+   prefers-reduced-motion drops all loops (§9). */
+.ca-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 32%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: ca-progress 1.25s linear infinite;
+}
+@keyframes ca-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+
+.ca-blink {
+  animation: ca-blink 1.05s steps(1) infinite;
+}
+.ca-caret-run {
+  animation: ca-blink 0.9s steps(1) infinite;
+}
+@keyframes ca-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.ca-pulse {
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  animation: ca-pulse 1.8s ease-out infinite;
+}
+@keyframes ca-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ca-progress-bar,
+  .ca-blink,
+  .ca-caret-run,
+  .ca-pulse {
+    animation: none !important;
+  }
 }
 
 * {
@@ -190,9 +349,7 @@ body {
   font-size: 12px;
   padding: 12px 14px;
   width: 200px;
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.45),
-    0 10px 28px -12px rgba(0, 0, 0, 0.62);
+  box-shadow: var(--shadow-board);
 }
 .react-flow__node-smoke .t {
   font-weight: 600;
