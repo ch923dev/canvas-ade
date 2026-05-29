@@ -100,7 +100,25 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }
   parts.push({ name: 'browser', ok: browserOk, detail: capDetail })
 
-  await evalIn(win, "window.__canvasE2E.seedBoard('planning')")
+  // ── Planning: seed, add a checklist element, assert it persisted on the board AND
+  // that the whole canvas round-trips through the schema (persistence-readiness). ──
+  const planId = await evalIn<string>(win, "window.__canvasE2E.seedBoard('planning')")
+  await evalIn(win, `window.__canvasE2E.addChecklist(${JSON.stringify(planId)})`)
+  const planProbe = await evalIn<{ kinds: string[]; roundTrip: boolean }>(
+    win,
+    `(() => {
+       const b = window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(planId)});
+       const kinds = b && b.type === 'planning' ? b.elements.map((e) => e.kind) : [];
+       return { kinds, roundTrip: window.__canvasE2E.roundTripOk() };
+     })()`
+  )
+  const planOk = planProbe.kinds.includes('checklist') && planProbe.roundTrip
+  parts.push({
+    name: 'planning',
+    ok: planOk,
+    detail: `elements=[${planProbe.kinds.join(',')}] roundTrip=${planProbe.roundTrip}`
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 3, detail: `${count} boards` })
 

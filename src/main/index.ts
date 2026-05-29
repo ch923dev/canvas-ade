@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerPtyHandlers, disposeAllPtys } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
@@ -55,6 +56,25 @@ function createWindow(): void {
   if (SMOKE) {
     mainWindow.webContents.on('console-message', (_e, _lvl, message) => {
       if (message.startsWith('RENDERER_SMOKE')) smokeLog(message)
+    })
+  }
+
+  // Dev-only HTML screenshot path (committed, env-gated). Captures the renderer DOM
+  // (NOT the native WebContentsView — that's what the e2e Browser capture is for).
+  // Usage: $env:CANVAS_SHOT='C:\tmp\canvas.png'; pnpm start
+  const shotPath = process.env.CANVAS_SHOT
+  if (shotPath) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const img = await mainWindow!.webContents.capturePage()
+          writeFileSync(shotPath, img.toPNG())
+          smokeLog(`CANVAS_SHOT_DONE ${shotPath}`)
+        } catch (err) {
+          smokeLog(`CANVAS_SHOT_FAIL ${(err as Error).message}`)
+        }
+        app.quit()
+      }, 800)
     })
   }
 
