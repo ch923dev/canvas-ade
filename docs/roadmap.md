@@ -107,8 +107,11 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
   view a Browser board renders via snapshot/reattach so HTML chrome isn't punched through.
 - **Duplicate** (⋯): clone geometry + state offset 36px, select copy; Browser clone → next viewport
   preset, own independent `WebContentsView`.
-- **Project create / open**: folder picker; `canvas.json` (+`.bak`, `schemaVersion`) via atomic write,
-  debounced autosave + flush on blur/quit; recent-projects in `userData`; project switcher wired; migrations.
+- **Project create / open** ✅ DONE (branch `phase-3-persistence`, 2026-05-30): folder picker;
+  `canvas.json` (+`.bak`, `schemaVersion` **v2** w/ persisted camera `viewport` + real `migrate(1→2)`)
+  via atomic write; debounced autosave + flush on blur/quit; recent-projects in `userData`; project
+  switcher wired (flush → dispose previews+PTYs → load); restored terminals idle + `cwd`→project folder.
+  Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`. BUG-027 (alias) fixed.
 
 > 🔗 **Related bug-hunt finding:** BUG-025 (load validation accepts non-positive / sub-`MIN_BOARD_SIZE`
 > geometry) touches this area but is not fully resolved by this work — see bug-hunt-findings/findings/BUG-025.md.

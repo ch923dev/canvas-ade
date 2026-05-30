@@ -133,13 +133,21 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 Durable contract is above. The full phase-by-phase build history (Phase 0 → Phase 2
 follow-up) lives in **`docs/handoffs/status-archive.md`** to keep this file lean.
 
-**Current state (2026-05-30):** Phase 2 complete — Terminal · Browser · Planning+Checklist
-all built, merged to `main`, 117 tests green. Stage-1 in-process self-smoke harness done
-(`CANVAS_SMOKE=e2e`).
+**Current state (2026-05-30):** Phase 2 complete (Terminal · Browser · Planning+Checklist,
+on `main`). **Phase 3 Slice A — Persistence** built on branch `phase-3-persistence` (273
+tests green): projects = a folder + `canvas.json` (schema **v2**, adds persisted camera
+`viewport`; real `migrate(1→2)`); atomic write + `.bak` rotation (`main/projectStore.ts`);
+recent-projects MRU in userData (`main/recentProjects.ts`); frame-guarded project IPC
+(`main/projectIpc.ts`) + `window.api.project`/`dialog` preload bridge; renderer-driven
+debounced autosave (`store/useAutosave.ts`, flush on blur/quit); boot auto-reopens the last
+project else a welcome screen; in-session project switch (flush → `disposeLiveResources`
+[close previews + kill PTYs] → load); restored terminals are **idle** (no auto-spawn) and
+default `cwd` to the project folder. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`.
 
-**Start here next:** `docs/handoffs/phase-2-followup.md` — two tracks: (1) Stage-2 Playwright
-`_electron` harness; (2) continue the Phase 2 review (Terminal port lifecycle · Browser
-rAF/attach races + the `connected`-on-dead-URL bug · Planning pen/drag/checklist edges).
-Then Phase 3: persistence (`canvas.json` I/O + autosave), Focus/Full view, Duplicate, git
-worktrees + per-board ports.
+**Start here next:** merge `phase-3-persistence`, then the remaining Phase 3 slices —
+**Focus/Full view** (Browser via snapshot in full view) · **Duplicate** (⋯, offset 36px,
+Browser→next preset) · **git worktrees + per-board ports** (`simple-git`; the create-dialog
+git toggle is currently inert). Deferred (own slice): **agentic session resume** (roadmap
+note). Still open from Phase 2 follow-up: Stage-2 Playwright `_electron` harness; the
+`connected`-on-dead-URL Browser bug.
 
