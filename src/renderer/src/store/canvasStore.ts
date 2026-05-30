@@ -158,7 +158,7 @@ function freeSlot(
 const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z'] as const
 const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   terminal: [...COMMON_KEYS, 'shell', 'launchCommand', 'cwd', 'port'],
-  browser: [...COMMON_KEYS, 'url', 'viewport'],
+  browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements']
 }
 
@@ -188,7 +188,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((s) => ({
       past: recordPast(s.past, s.boards),
       future: [],
-      boards: s.boards.filter((b) => b.id !== id),
+      boards: s.boards
+        .filter((b) => b.id !== id)
+        // Clear a preview link whose source terminal was just removed (Slice C′).
+        .map((b) =>
+          b.type === 'browser' && b.previewSourceId === id
+            ? { ...b, previewSourceId: undefined }
+            : b
+        ),
       selectedId: s.selectedId === id ? null : s.selectedId
     })),
 
@@ -201,7 +208,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     clone.x = src.x + 36
     clone.y = src.y + 36
     delete clone.z // re-stacks on top via array order, like a freshly added board
-    if (clone.type === 'browser') clone.viewport = nextViewport(clone.viewport)
+    if (clone.type === 'browser') {
+      clone.viewport = nextViewport(clone.viewport)
+      delete clone.previewSourceId // a copy starts unlinked (Slice C′)
+    }
     if (clone.type === 'planning') {
       clone.elements = clone.elements.map((e) => ({ ...structuredClone(e), id: newId() }))
     }
