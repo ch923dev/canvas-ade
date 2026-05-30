@@ -348,12 +348,17 @@ export function fromObject(doc: unknown): CanvasDoc {
     throw new Error('fromObject: value is not a CanvasDoc (need numeric schemaVersion + boards[])')
   }
   doc.boards.forEach(assertBoard)
+  // Own the data: deep-clone the input so the returned doc (and any store it feeds)
+  // does not alias the caller's object — symmetric with toObject's structuredClone,
+  // and covers the no-migration (already-current) case which migrate() returns by
+  // reference (#BUG-027).
+  const owned = structuredClone(doc)
   // Clamp each board to the MIN_BOARD_SIZE floor — assertBoard already rejects
   // non-positive w/h, but a valid-yet-below-minimum size (e.g. w:5) is normalized
   // here rather than dropped, so corrupt-but-recoverable input still loads (#BUG-025).
-  for (const b of doc.boards) {
+  for (const b of owned.boards) {
     b.w = Math.max(MIN_BOARD_SIZE.w, b.w)
     b.h = Math.max(MIN_BOARD_SIZE.h, b.h)
   }
-  return migrate(doc)
+  return migrate(owned)
 }

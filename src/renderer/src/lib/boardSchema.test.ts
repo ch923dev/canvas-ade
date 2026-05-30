@@ -429,6 +429,16 @@ describe('fromObject geometry validation', () => {
   })
 })
 
+// ── Load-path ownership: input doc is deep-cloned (BUG-027) ─────────────────────
+describe('fromObject load-path clone', () => {
+  it('deep-clones boards so mutating the input doc does not touch the returned boards', () => {
+    const doc = toObject(sampleBoards()) // a fresh, valid current-version doc
+    const out = fromObject(doc)
+    doc.boards[0].x = 9999
+    expect(out.boards[0].x).toBe(0)
+  })
+})
+
 describe('migrate', () => {
   it('is a no-op at the current schemaVersion', () => {
     const doc = toObject(sampleBoards())
