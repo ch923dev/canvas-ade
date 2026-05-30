@@ -483,7 +483,11 @@ export function TerminalBoard({
   const actions = (
     <>
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
-      <IconBtn name="globe" title="Open preview from this server" onClick={() => void onPreview()} />
+      <IconBtn
+        name="globe"
+        title="Open preview from this server"
+        onClick={() => void onPreview()}
+      />
       <IconBtn
         name="settings"
         title="Configure terminal"

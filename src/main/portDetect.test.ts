@@ -16,9 +16,9 @@ describe('parsePortsFromOutput', () => {
 
   it('parses Next (3000), Django (127.0.0.1:8000), Flask (5000)', () => {
     expect(parsePortsFromOutput('- Local:  http://localhost:3000')[0].port).toBe(3000)
-    expect(parsePortsFromOutput('Starting development server at http://127.0.0.1:8000/')[0]).toEqual(
-      { url: 'http://127.0.0.1:8000', host: '127.0.0.1', port: 8000 }
-    )
+    expect(
+      parsePortsFromOutput('Starting development server at http://127.0.0.1:8000/')[0]
+    ).toEqual({ url: 'http://127.0.0.1:8000', host: '127.0.0.1', port: 8000 })
     expect(parsePortsFromOutput('Running on http://127.0.0.1:5000')[0].port).toBe(5000)
   })
 

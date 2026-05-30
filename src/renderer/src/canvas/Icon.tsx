@@ -67,7 +67,8 @@ const PATHS: Record<IconName, string> = {
   check: 'M5 12.5l4.5 4.5L19 7',
   trash: 'M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13',
   settings: 'M4 8h7M15 8h5M4 16h5M13 16h7M13 6v4M9 14v4',
-  globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18'
+  globe:
+    'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18'
 }
 
 interface SvgProps {
