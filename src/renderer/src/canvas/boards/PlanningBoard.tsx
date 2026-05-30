@@ -423,7 +423,10 @@ export function PlanningBoard({
           draftArrow={draftArrow}
           draftStroke={draftStroke}
           selectedId={selectedElId}
-          drawing={drawing}
+          // Disable committed-vector hit-testing for ANY non-select tool (not just
+          // pen/arrow) so a note/check placement over committed ink falls through
+          // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
+          drawing={tool !== 'select'}
           onSelect={(id) => {
             setSelectedElId(id)
             wellRef.current?.focus()

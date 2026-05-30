@@ -30,10 +30,11 @@ export interface WhiteboardSvgProps {
    */
   onDragStart?: (e: PointerEvent, id: string) => void
   /**
-   * True while a draw tool (pen/arrow) is active. Disables hit-testing on the
-   * committed vectors so a new stroke/arrow can START on top of existing ink
-   * (the press falls through to the well's onWellPointerDown — #4), mirroring the
-   * card fall-through guards.
+   * True while ANY non-select tool (pen/arrow/note/check) is active. Disables
+   * hit-testing on the committed vectors so a new stroke/arrow can START — or a
+   * note/checklist can be PLACED — on top of existing ink (the press falls through
+   * to the well's onWellPointerDown — #4/BUG-022), mirroring the card fall-through
+   * guards. Selection/drag of vectors stays available in select mode.
    */
   drawing?: boolean
 }
