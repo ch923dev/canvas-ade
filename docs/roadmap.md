@@ -103,10 +103,19 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 ## Phase 3 — Board actions & projects ⛓ Phase 2
 
 - **Focus** (double-click → camera fit one board, dim others 55%) + **Full view** (modal overlay,
-  `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both; in full
-  view a Browser board renders via snapshot/reattach so HTML chrome isn't punched through.
+  `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both.
+  ✅ DONE — Focus shipped in Phase 2; **Full view** lands in Slice B (branch `phase-3-board-actions`,
+  2026-05-30) as a live **portal relocation** (the board's live subtree is `createPortal`-moved into
+  the modal — no remount, so PTY/xterm/native view survive) rather than the originally-planned
+  snapshot/reattach: in full view a Browser board's native `WebContentsView` is **re-bound to the
+  portaled device-frame's live DOM rect** while every other view detaches, so HTML chrome isn't
+  punched through. Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
 - **Duplicate** (⋯): clone geometry + state offset 36px, select copy; Browser clone → next viewport
-  preset, own independent `WebContentsView`.
+  preset, own independent `WebContentsView`. ✅ DONE (branch `phase-3-board-actions`, 2026-05-30):
+  `duplicateBoard(id)` offsets +36px, selects the copy, one undo step; Browser clones advance to the
+  next viewport preset (`lib/viewportCycle.ts`), planning elements are deep-cloned with fresh ids;
+  delivered alongside the shared **⋯ menu** (Full view · Duplicate · Delete) via `BoardActionsContext`.
+  Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
 - **Project create / open** ✅ DONE (branch `phase-3-persistence`, 2026-05-30): folder picker;
   `canvas.json` (+`.bak`, `schemaVersion` **v2** w/ persisted camera `viewport` + real `migrate(1→2)`)
   via atomic write; debounced autosave + flush on blur/quit; recent-projects in `userData`; project
@@ -136,6 +145,14 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 ## Phase 4 — Design pass & polish ⛓ Phase 3
 
 - Apply every DESIGN.md token, board-chrome rule, state, and motion spec (+ `prefers-reduced-motion`).
+
+> 🎬 **Deferred polish — Full view enter/exit animation (noted 2026-05-30, Slice B).** Full view
+> (`FullViewModal`, branch `phase-3-board-actions`) currently opens/closes **instantly** — no
+> transition. Add a motion pass here: scrim fade-in + the frame scale/opacity in from the board's
+> on-canvas rect (and reverse on close), honoring `prefers-reduced-motion`. Intentionally cut from
+> Slice B (which shipped the live portal-relocation mechanics, not the motion). Note: a Browser
+> board's native `WebContentsView` cannot be CSS-animated (it's an OS layer) — animate the HTML
+> scrim/frame; the native view snaps to its final bounds (or carries the transition via its snapshot).
 
 > 🐛 **Bug-hunt finding (auto-noted 2026-05-30):** The codebase bug hunt independently
 > confirmed a bug that this planned work is expected to fix.

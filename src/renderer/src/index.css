@@ -682,3 +682,59 @@ body {
   background: var(--border-subtle);
   margin: 4px 0;
 }
+.board-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 132px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+}
+.board-menu-item {
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: calc(var(--r-ctl) - 2px);
+  cursor: pointer;
+  font-size: 12px;
+}
+.board-menu-item:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.board-menu-item[data-danger]:hover {
+  color: var(--err);
+}
+
+.fullview-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.66);
+  display: flex;
+  padding: 5vh 5vw;
+}
+.fullview-frame {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-board);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    var(--shadow-board);
+}
+.fullview-host {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}

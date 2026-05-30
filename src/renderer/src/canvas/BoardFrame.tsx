@@ -6,7 +6,7 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { BoardType } from '../lib/boardSchema'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
@@ -74,6 +74,75 @@ export function IconBtn({
   )
 }
 
+/** ⋯ overflow popover: Full view · Duplicate · Delete (DESIGN §6.1). */
+function BoardMenu({
+  onFull,
+  onDuplicate,
+  onDelete
+}: {
+  onFull?: (e: MouseEvent) => void
+  onDuplicate?: () => void
+  onDelete?: () => void
+}): ReactElement {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (): void => setOpen(false)
+    // Close on any outside pointerdown or Escape.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const item = (label: string, danger: boolean, fn?: (e: MouseEvent) => void): ReactElement => (
+    <button
+      className="board-menu-item"
+      data-danger={danger || undefined}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation()
+        setOpen(false)
+        fn?.(e)
+      }}
+    >
+      {label}
+    </button>
+  )
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex' }}>
+      <IconBtn
+        name="more"
+        title="More"
+        active={open}
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen((v) => !v)
+        }}
+      />
+      {open && (
+        <div
+          className="board-menu"
+          role="menu"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onFull && item('Full view', false, onFull)}
+          {onDuplicate && item('Duplicate', false, () => onDuplicate())}
+          {onDelete && item('Delete', true, () => onDelete())}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export interface BoardFrameProps {
   type: BoardType
   title: string
@@ -90,7 +159,10 @@ export interface BoardFrameProps {
   contentBg?: string
   /** Provided only when the board is focusable → renders the maximize button. */
   onFull?: (e: MouseEvent) => void
-  onMore?: (e: MouseEvent) => void
+  /** ⋯ menu → Duplicate. When provided alongside onFull/onDelete, the ⋯ button shows. */
+  onDuplicate?: () => void
+  /** ⋯ menu → Delete (danger). */
+  onDelete?: () => void
   children?: ReactNode
 }
 
@@ -106,7 +178,8 @@ export function BoardFrame({
   actions,
   contentBg = 'var(--surface)',
   onFull,
-  onMore,
+  onDuplicate,
+  onDelete,
   children
 }: BoardFrameProps): ReactElement {
   if (lod) {
@@ -271,7 +344,9 @@ export function BoardFrame({
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
           {actions}
           {onFull && <IconBtn name="maximize" title="Full view" size={14} onClick={onFull} />}
-          {onMore && <IconBtn name="more" title="More" onClick={onMore} />}
+          {(onFull || onDuplicate || onDelete) && (
+            <BoardMenu onFull={onFull} onDuplicate={onDuplicate} onDelete={onDelete} />
+          )}
         </div>
       </div>
 

@@ -77,7 +77,10 @@ export function PlanningBoard({
   board,
   selected,
   hovered,
-  dimmed
+  dimmed,
+  onFull,
+  onDuplicate,
+  onDelete
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -386,6 +389,9 @@ export function PlanningBoard({
       status={null}
       contentBg="var(--surface)"
       actions={actions}
+      onFull={onFull}
+      onDuplicate={onDuplicate}
+      onDelete={onDelete}
     >
       <div
         ref={wellRef}

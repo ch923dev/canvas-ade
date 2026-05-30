@@ -294,6 +294,56 @@ describe('canvasStore — viewport', () => {
   })
 })
 
+describe('canvasStore — duplicateBoard', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], viewport: null, selectedId: null, past: [], future: [] })
+  })
+
+  it('offsets +36, assigns a new id, selects the copy, one undo step', () => {
+    const src = useCanvasStore.getState().addBoard('planning', { x: 100, y: 100 })
+    const pastLen = useCanvasStore.getState().past.length
+    const copyId = useCanvasStore.getState().duplicateBoard(src)
+    const s = useCanvasStore.getState()
+    expect(copyId).not.toBeNull()
+    expect(copyId).not.toBe(src)
+    const copy = s.boards.find((b) => b.id === copyId)!
+    const orig = s.boards.find((b) => b.id === src)!
+    expect(copy.x).toBe(orig.x + 36)
+    expect(copy.y).toBe(orig.y + 36)
+    expect(s.selectedId).toBe(copyId)
+    expect(s.past.length).toBe(pastLen + 1)
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().boards.some((b) => b.id === copyId)).toBe(false)
+  })
+
+  it('browser copy advances to the next viewport preset', () => {
+    const id = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 }) // default 'desktop'
+    const copyId = useCanvasStore.getState().duplicateBoard(id)
+    const copy = useCanvasStore.getState().boards.find((b) => b.id === copyId)!
+    expect(copy.type === 'browser' && copy.viewport).toBe('mobile') // desktop → mobile
+  })
+
+  it('planning copy deep-clones elements with fresh ids', () => {
+    const id = useCanvasStore.getState().addBoard('planning', { x: 0, y: 0 })
+    useCanvasStore.getState().updateBoard(id, {
+      elements: [{ id: 'e1', kind: 'text', x: 1, y: 1, text: 'hi' }]
+    } as never)
+    const copyId = useCanvasStore.getState().duplicateBoard(id)
+    const s = useCanvasStore.getState()
+    const orig = s.boards.find((b) => b.id === id)! as { elements: { id: string }[] }
+    const copy = s.boards.find((b) => b.id === copyId)! as { elements: { id: string }[] }
+    expect(copy.elements).toHaveLength(1)
+    expect(copy.elements[0].id).not.toBe('e1')
+    expect(copy.elements).not.toBe(orig.elements)
+  })
+
+  it('returns null for an unknown id and does not mutate', () => {
+    const before = useCanvasStore.getState().boards
+    expect(useCanvasStore.getState().duplicateBoard('nope')).toBeNull()
+    expect(useCanvasStore.getState().boards).toBe(before)
+  })
+})
+
 describe('canvasStore — project lifecycle', () => {
   beforeEach(() => {
     useCanvasStore.setState({

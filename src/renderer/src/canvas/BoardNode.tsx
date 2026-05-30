@@ -8,9 +8,12 @@
  * board type owns exactly one file under `canvas/boards/`. Do not collapse the
  * dispatch back into this file.
  */
-import { useEffect, useState, type ReactElement } from 'react'
+import { useContext, useEffect, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
+import { BoardActionsContext } from './boardActions'
+import { FullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
@@ -24,6 +27,8 @@ export interface BoardNodeData extends Record<string, unknown> {
   board: Board
   /** Dim to 55% when another board is focused (dimOnFocus, fixed-on). */
   dimmed?: boolean
+  /** This board is the one shown in the full-view modal (Task 6 portals it). */
+  fullView?: boolean
 }
 
 export type BoardFlowNode = Node<BoardNodeData, 'board'>
@@ -41,6 +46,19 @@ export interface BoardViewProps<T extends Board = Board> {
    * board types never receive it — BoardNode renders their LOD card itself.
    */
   lod?: boolean
+  /**
+   * This board is shown in the full-view modal (its subtree is portaled there).
+   * BrowserBoard reads it to fill the modal with its device frame instead of the
+   * board-geometry-sized frame, so the native view (bound to the frame's DOM rect)
+   * renders edge-to-edge.
+   */
+  fullView?: boolean
+  /** Title-bar maximize → request full view for this board. */
+  onFull?: () => void
+  /** ⋯ menu → duplicate this board. */
+  onDuplicate?: () => void
+  /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
+  onDelete?: () => void
 }
 
 /** Status dot shown on the LOD card (no label at LOD). */
@@ -58,6 +76,13 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const lod = useStore((s) => isLod(s.transform[2]))
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
+  const acts = useContext(BoardActionsContext)
+  const fullViewHost = useContext(FullViewContext)
+  const fullView = data.fullView ?? false
+  const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
+  const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
+  const onDelete = acts ? (): void => acts.remove(board.id) : undefined
+  const actions = { onFull, onDuplicate, onDelete }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
@@ -76,7 +101,14 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   // TerminalBoard reads `lod` and swaps the xterm host for its own LOD card while
   // keeping the session alive. Other types are presentational at LOD — BoardNode
   // renders their static LOD card and unmounts the heavy content.
-  if (lod && board.type !== 'terminal') {
+  //
+  // EXCEPTION: a board in full view ALWAYS renders its real content (never the LOD
+  // card), even when the camera is zoomed out below LOD. The full-view board is
+  // portaled into the (untransformed) modal host, so its real `.bb-frame` must exist
+  // there for `fullViewBoundsFor` to read the modal rect; the LOD card has no
+  // `.bb-frame` and never portals, which would strand the native view at its
+  // camera-scaled canvas position (the full-view native-bounds bug).
+  if (lod && board.type !== 'terminal' && !fullView) {
     return (
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
         <BoardFrame
@@ -92,6 +124,22 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   }
 
   const common = { selected, hovered, dimmed }
+  const subtree = (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ position: 'absolute', inset: 0 }}
+    >
+      {board.type === 'terminal' && (
+        <TerminalBoard board={board} lod={lod} {...common} {...actions} />
+      )}
+      {board.type === 'browser' && (
+        <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
+      )}
+      {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+    </div>
+  )
+
   return (
     <>
       {/* Hidden in LOD: the design shows no resize handles on LOD cards. */}
@@ -112,15 +160,11 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
-      <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{ position: 'absolute', inset: 0 }}
-      >
-        {board.type === 'terminal' && <TerminalBoard board={board} lod={lod} {...common} />}
-        {board.type === 'browser' && <BrowserBoard board={board} {...common} />}
-        {board.type === 'planning' && <PlanningBoard board={board} {...common} />}
-      </div>
+      {/* In full view the SAME subtree element is portaled into the modal host →
+          React relocates (not remounts) it, so the live PTY/xterm and planning
+          elements survive. The on-canvas NodeResizer stays put (empty handle frame
+          behind the scrim — harmless). */}
+      {fullView && fullViewHost ? createPortal(subtree, fullViewHost) : subtree}
     </>
   )
 }

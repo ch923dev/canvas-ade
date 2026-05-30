@@ -90,7 +90,10 @@ export function TerminalBoard({
   selected,
   hovered,
   dimmed,
-  lod = false
+  lod = false,
+  onFull,
+  onDuplicate,
+  onDelete
 }: BoardViewProps<TerminalBoardData>): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -486,6 +489,9 @@ export function TerminalBoard({
         status={status}
         actions={actions}
         contentBg="var(--inset)"
+        onFull={onFull}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
       >
         <div style={lod ? shellHidden : shell}>
           {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
@@ -516,6 +522,9 @@ export function TerminalBoard({
             lod
             running={running}
             status={{ dot: status.dot }}
+            onFull={onFull}
+            onDuplicate={onDuplicate}
+            onDelete={onDelete}
           />
         </div>
       )}

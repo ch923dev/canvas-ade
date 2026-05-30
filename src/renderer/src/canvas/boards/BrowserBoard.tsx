@@ -110,7 +110,11 @@ export function BrowserBoard({
   board,
   selected,
   hovered,
-  dimmed
+  dimmed,
+  fullView = false,
+  onFull,
+  onDuplicate,
+  onDelete
 }: BoardViewProps<BrowserBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -166,6 +170,9 @@ export function BrowserBoard({
       status={status}
       contentBg="var(--surface)"
       actions={<ViewportControl value={board.viewport} onChange={setViewport} />}
+      onFull={onFull}
+      onDuplicate={onDuplicate}
+      onDelete={onDelete}
     >
       {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
       <div className="bb-urlbar" style={{ height: URLBAR_H }}>
@@ -219,13 +226,22 @@ export function BrowserBoard({
       <div className="bb-stage" style={{ top: URLBAR_H }}>
         <div
           className="bb-frame"
-          style={{
-            left: frame.x,
-            top: frameTopInStage,
-            width: frame.width,
-            height: frame.height,
-            borderRadius: preset.radius
-          }}
+          data-bb-frame={board.id}
+          // In full view the frame FILLS the modal stage (board-geometry sizing no
+          // longer applies — the board is portaled out of the camera-scaled canvas);
+          // the native view binds to this element's live DOM rect (fullViewBoundsFor),
+          // so the page renders edge-to-edge. On canvas it keeps the fitted device box.
+          style={
+            fullView
+              ? { inset: 0, borderRadius: 0 }
+              : {
+                  left: frame.x,
+                  top: frameTopInStage,
+                  width: frame.width,
+                  height: frame.height,
+                  borderRadius: preset.radius
+                }
+          }
         >
           {preset.notch && <div className="bb-notch" />}
           <DeviceContent runtime={runtime} url={board.url} />
