@@ -4,6 +4,7 @@ import {
   roundRect,
   rectsEqual,
   fitZoomFactor,
+  fitZoomFactorForBounds,
   type Rect,
   type Viewport
 } from './cameraBounds'
@@ -180,5 +181,55 @@ describe('fitZoomFactor', () => {
 
   it('clamps above Chromium max (5)', () => {
     expect(fitZoomFactor(480, 100, 2)).toBe(5) // raw 9.6 → clamped
+  })
+})
+
+// Bug #20: the consumer feeds `setBounds(round(rect))` (integer native px) but the OLD
+// zoomFor derived the factor from the UN-rounded stage width, breaking the documented
+// invariant bounds.width / zoomFactor === presetW (it drifted by the ≤0.5px rounding,
+// so the responsive page laid out at e.g. 389.73 / 390.70 instead of exactly 390).
+// fitZoomFactorForBounds derives the factor from the SAME rounded bounds width, so the
+// invariant holds EXACTLY on the consumer path.
+describe('fitZoomFactorForBounds', () => {
+  it('makes the page lay out at EXACTLY presetW for an integer bounds width', () => {
+    // A rounded (integer) native bounds width — what setBounds actually receives.
+    const roundedBoundsWidth = 167 // e.g. round(371px stage * 0.45 camZoom)
+    const presetW = 390
+    const zf = fitZoomFactorForBounds(roundedBoundsWidth, presetW)
+    // Exact: no sub-pixel drift (this is the property the old un-rounded path missed).
+    expect(roundedBoundsWidth / zf).toBe(presetW)
+  })
+
+  it('holds the invariant across every preset for assorted integer bounds widths', () => {
+    for (const presetW of [390, 834, 1280]) {
+      for (const w of [100, 167, 333, 500, 999, 1500]) {
+        const zf = fitZoomFactorForBounds(w, presetW)
+        // Only assert the invariant in the unclamped band (clamp re-attributes it).
+        if (zf > 0.25 && zf < 5) expect(w / zf).toBeCloseTo(presetW, 10)
+      }
+    }
+  })
+
+  it('still clamps to the Chromium [0.25, 5] zoom-factor range', () => {
+    expect(fitZoomFactorForBounds(40, 1280)).toBe(0.25) // raw 0.03125 → clamped
+    expect(fitZoomFactorForBounds(960, 100)).toBe(5) // raw 9.6 → clamped
+  })
+
+  it('drift vs the old un-rounded path: the old derivation misses exact presetW', () => {
+    // Realistic live (zoom >= LOD) non-clamped case from the finding: a ~371px world
+    // stage at camZoom 0.45 → un-rounded screen width 166.95, rounded bounds 167.
+    const stageWorldW = 371
+    const camZoom = 0.45
+    const presetW = 390
+    const unrounded = stageWorldW * camZoom // 166.95
+    const roundedBoundsWidth = Math.round(unrounded) // 167
+    // Old path (zoomFor used fitZoomFactor on the un-rounded stage width):
+    const oldZf = fitZoomFactor(stageWorldW, presetW, camZoom)
+    const oldLayoutW = roundedBoundsWidth / oldZf
+    expect(oldLayoutW).not.toBe(presetW) // drifts off the exact breakpoint
+    expect(Math.abs(oldLayoutW - presetW)).toBeLessThan(1) // sub-pixel (Low severity)
+    // New path: exact.
+    const newZf = fitZoomFactorForBounds(roundedBoundsWidth, presetW)
+    expect(roundedBoundsWidth / newZf).toBe(presetW)
   })
 })

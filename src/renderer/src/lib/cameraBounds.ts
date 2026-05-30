@@ -84,3 +84,19 @@ export function fitZoomFactor(nodeWorldW: number, presetW: number, camZoom: numb
   const z = (nodeWorldW / presetW) * camZoom
   return Math.min(5, Math.max(0.25, z))
 }
+
+/**
+ * The consumer applies `setBounds(round(rect))` (integer native pixels) but must keep
+ * the documented invariant `bounds.width / zoomFactor === presetW` exactly, so the
+ * responsive page lays out at precisely 390/834/1280 CSS px. Deriving the factor from
+ * the UN-rounded stage width instead drifts by the ≤0.5px integer-bounds rounding
+ * (Bug #20). Derive it from the SAME rounded bounds width that is fed to setBounds:
+ *
+ *     zoomFactor = clamp(roundedBoundsWidth / presetW)   → bounds.width / zoomFactor === presetW
+ *
+ * Same [0.25, 5] Chromium clamp as `fitZoomFactor`; in the unclamped (working-zoom)
+ * band the invariant holds exactly.
+ */
+export function fitZoomFactorForBounds(roundedBoundsWidth: number, presetW: number): number {
+  return Math.min(5, Math.max(0.25, roundedBoundsWidth / presetW))
+}

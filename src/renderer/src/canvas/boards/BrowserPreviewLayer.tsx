@@ -24,7 +24,12 @@
  */
 import { useCallback, useEffect, useRef, type ReactElement } from 'react'
 import { useReactFlow, useOnViewportChange } from '@xyflow/react'
-import { roundRect, worldRectToScreen, rectsEqual, fitZoomFactor } from '../../lib/cameraBounds'
+import {
+  roundRect,
+  worldRectToScreen,
+  rectsEqual,
+  fitZoomFactorForBounds
+} from '../../lib/cameraBounds'
 import type { Rect } from '../../lib/cameraBounds'
 import { LOD_ZOOM } from '../../lib/canvasView'
 import {
@@ -146,10 +151,13 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   /** Zoom factor that holds the page at the preset CSS width (responsive trick). */
   const zoomFor = useCallback(
     (g: BoardGeom): number => {
-      const stage = deviceStageRect(g.w, g.h, g.viewport)
-      return fitZoomFactor(stage.width, preset(g.viewport).w, getViewport().zoom)
+      // Bug #20: derive the factor from the SAME rounded bounds width fed to
+      // setBounds (boundsFor) — NOT the un-rounded stage width — so the documented
+      // invariant bounds.width / zoomFactor === presetW holds exactly and the page
+      // lays out at precisely 390/834/1280 CSS px (no sub-pixel rounding drift).
+      return fitZoomFactorForBounds(boundsFor(g).width, preset(g.viewport).w)
     },
-    [getViewport, preset]
+    [boundsFor, preset]
   )
 
   // The board's device-stage rect in screen (pane-local + offset) space — the raw,
