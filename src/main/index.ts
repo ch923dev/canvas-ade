@@ -138,9 +138,24 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.canvasade.app')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
-  localServer = await startLocalServer()
+  // The local preview server is a convenience (dev/preview fallback URL), not a hard
+  // boot dependency. If listen() fails (EACCES from AV/firewall loopback denial,
+  // EMFILE/ENFILE under fd exhaustion, ENETDOWN), surface a clear diagnostic and
+  // degrade gracefully — boot the window with an empty fallback URL rather than
+  // crashing to app.exit(1) via the uncaughtException sink with no message.
+  let defaultPreviewUrl = ''
+  try {
+    localServer = await startLocalServer()
+    defaultPreviewUrl = localServer.url
+  } catch (err) {
+    console.error(
+      'Could not bind local preview server on 127.0.0.1 — continuing without it. ' +
+        'Boards open with an explicit URL still work.',
+      err
+    )
+  }
   registerPtyHandlers(ipcMain, () => mainWindow)
-  registerPreviewHandlers(ipcMain, () => mainWindow, localServer.url)
+  registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
 
   createWindow()
 
