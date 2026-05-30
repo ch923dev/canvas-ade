@@ -153,9 +153,14 @@ Browser→next viewport preset, planning elements deep-cloned with fresh ids) ·
 (Full view · Duplicate · Delete) in `BoardFrame`, threaded to all three board types via
 `BoardActionsContext`. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
 
-**Start here next:** merge `phase-3-persistence` then `phase-3-board-actions`, then the
-remaining Phase 3 slice — **git worktrees + per-board ports** (`simple-git`; the create-dialog
-git toggle is currently inert). Deferred (own slice): **agentic session resume** (roadmap
-note). Still open from Phase 2 follow-up: Stage-2 Playwright `_electron` harness; the
-`connected`-on-dead-URL Browser bug.
+Slice B also fixed a pre-existing native-view ghost: `preview.ts` now `setVisible(false)` on
+detach so the drag detach→reattach toggle can't leave a frozen composited frame (Electron
+#43961; #44652 is already fixed in our 33.4.11).
+
+**Start here next:** merge `phase-3-persistence` then `phase-3-board-actions`, then the last
+Phase 3 slice — **Slice C: git worktrees + per-board ports**. Full handoff (scope, locked
+decisions, existing seams, open design questions, decomposition, gotchas):
+**`docs/handoffs/phase-3-slice-c.md`**. Deferred (own slices): **agentic session resume**
+(roadmap note) · **full-view enter/exit animation** (Phase 4). Still open from Phase 2
+follow-up: Stage-2 Playwright `_electron` harness; the `connected`-on-dead-URL Browser bug.
 
