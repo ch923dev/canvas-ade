@@ -12,7 +12,7 @@
  */
 
 /** Bump on any breaking change to the persisted shape and add a migration below. */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -113,9 +113,17 @@ export interface PlanningBoard extends BoardCommon {
 
 export type Board = TerminalBoard | BrowserBoard | PlanningBoard
 
-/** The whole-canvas serialized document (root of `canvas.json` in Phase 3). */
+/** Persisted camera transform. `null` in a doc means "fit on load". */
+export interface CanvasViewport {
+  x: number
+  y: number
+  zoom: number
+}
+
+/** The whole-canvas serialized document (root of `canvas.json`). */
 export interface CanvasDoc {
   schemaVersion: number
+  viewport: CanvasViewport | null
   boards: Board[]
 }
 
@@ -182,15 +190,22 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
 
 // ── Serialization + migration ─────────────────────────────────────────────────
 
-/** Boards → a versioned document. Deep-clones so the doc owns its data. */
-export function toObject(boards: Board[]): CanvasDoc {
-  return { schemaVersion: SCHEMA_VERSION, boards: structuredClone(boards) }
+/** Boards + camera → a versioned document. Deep-clones so the doc owns its data. */
+export function toObject(boards: Board[], viewport: CanvasViewport | null): CanvasDoc {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    viewport: viewport ? { ...viewport } : null,
+    boards: structuredClone(boards)
+  }
 }
 
 type Migration = (doc: CanvasDoc) => CanvasDoc
 
-/** Keyed by the FROM version. Empty at v1 — add entries as the shape evolves. */
-const MIGRATIONS: Record<number, Migration> = {}
+/** Keyed by the FROM version. Each step returns a doc one version higher. */
+const MIGRATIONS: Record<number, Migration> = {
+  // v1 had no camera. v2 adds `viewport` (null = fit on load).
+  1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null })
+}
 
 /**
  * Bring a document up to `SCHEMA_VERSION` by applying migrations in order. A doc
@@ -243,6 +258,17 @@ function isFiniteNum(v: unknown): v is number {
 /** Finite AND strictly positive — a real (non-degenerate, non-inverted) size. */
 function isPositiveNum(v: unknown): v is number {
   return isFiniteNum(v) && v > 0
+}
+
+/** A valid persisted viewport: finite x/y and a finite, strictly-positive zoom. */
+function isValidViewport(v: unknown): v is CanvasViewport {
+  return (
+    isRecord(v) &&
+    isFiniteNum(v.x) &&
+    isFiniteNum(v.y) &&
+    isFiniteNum(v.zoom) &&
+    (v.zoom as number) > 0
+  )
 }
 
 function fail(msg: string): never {
@@ -360,5 +386,8 @@ export function fromObject(doc: unknown): CanvasDoc {
     b.w = Math.max(MIN_BOARD_SIZE.w, b.w)
     b.h = Math.max(MIN_BOARD_SIZE.h, b.h)
   }
-  return migrate(owned)
+  const migrated = migrate(owned)
+  // A corrupt camera shouldn't fail the whole load — drop to fit-on-load.
+  if (!isValidViewport(migrated.viewport)) migrated.viewport = null
+  return migrated
 }

@@ -8,7 +8,9 @@ import {
   fromObject,
   migrate,
   type Board,
-  type PlanningBoard
+  type PlanningBoard,
+  type CanvasDoc,
+  type CanvasViewport
 } from './boardSchema'
 
 describe('createBoard', () => {
@@ -149,14 +151,14 @@ function sampleBoards(): Board[] {
 
 describe('toObject', () => {
   it('wraps boards with the current schemaVersion', () => {
-    const doc = toObject(sampleBoards())
+    const doc = toObject(sampleBoards(), null)
     expect(doc.schemaVersion).toBe(SCHEMA_VERSION)
     expect(doc.boards).toHaveLength(3)
   })
 
   it('deep-clones boards so mutating the doc does not touch the source', () => {
     const boards = sampleBoards()
-    const doc = toObject(boards)
+    const doc = toObject(boards, null)
     doc.boards[0].x = 9999
     expect(boards[0].x).toBe(0)
   })
@@ -165,12 +167,12 @@ describe('toObject', () => {
 describe('round-trip', () => {
   it('fromObject(toObject(boards)) preserves every board and element', () => {
     const boards = sampleBoards()
-    expect(fromObject(toObject(boards)).boards).toEqual(boards)
+    expect(fromObject(toObject(boards, null)).boards).toEqual(boards)
   })
 
   it('survives a JSON serialize/parse cycle unchanged (serialization-ready)', () => {
     const boards = sampleBoards()
-    const wire = JSON.parse(JSON.stringify(toObject(boards)))
+    const wire = JSON.parse(JSON.stringify(toObject(boards, null)))
     expect(fromObject(wire).boards).toEqual(boards)
   })
 })
@@ -193,7 +195,7 @@ function wrap(board: unknown): unknown {
 describe('fromObject deep validation', () => {
   it('still round-trips a fully-valid populated doc', () => {
     const boards = sampleBoards()
-    expect(fromObject(toObject(boards)).boards).toEqual(boards)
+    expect(fromObject(toObject(boards, null)).boards).toEqual(boards)
   })
 
   it('throws when a board is missing required common fields', () => {
@@ -436,7 +438,7 @@ describe('fromObject geometry validation', () => {
 // ── Load-path ownership: input doc is deep-cloned (BUG-027) ─────────────────────
 describe('fromObject load-path clone', () => {
   it('deep-clones boards so mutating the input doc does not touch the returned boards', () => {
-    const doc = toObject(sampleBoards()) // a fresh, valid current-version doc
+    const doc = toObject(sampleBoards(), null) // a fresh, valid current-version doc
     const out = fromObject(doc)
     doc.boards[0].x = 9999
     expect(out.boards[0].x).toBe(0)
@@ -445,15 +447,65 @@ describe('fromObject load-path clone', () => {
 
 describe('migrate', () => {
   it('is a no-op at the current schemaVersion', () => {
-    const doc = toObject(sampleBoards())
+    const doc = toObject(sampleBoards(), null)
     expect(migrate(doc)).toEqual(doc)
   })
 
   it('throws when the doc is newer than the supported version', () => {
-    expect(() => migrate({ schemaVersion: SCHEMA_VERSION + 1, boards: [] })).toThrow()
+    expect(() => migrate({ schemaVersion: SCHEMA_VERSION + 1, viewport: null, boards: [] })).toThrow()
   })
 
   it('throws when schemaVersion is missing', () => {
     expect(() => migrate({ boards: [] } as never)).toThrow()
+  })
+})
+
+describe('schema v2 — viewport', () => {
+  const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
+
+  it('SCHEMA_VERSION is 2', () => {
+    expect(SCHEMA_VERSION).toBe(2)
+  })
+
+  it('toObject embeds the viewport and version', () => {
+    const doc = toObject([], vp)
+    expect(doc).toEqual({ schemaVersion: 2, viewport: vp, boards: [] })
+  })
+
+  it('toObject accepts a null viewport (fit-on-load)', () => {
+    expect(toObject([], null).viewport).toBeNull()
+  })
+
+  it('migrates a v1 doc (no viewport) to v2 with viewport=null', () => {
+    const v1 = { schemaVersion: 1, boards: [] } as unknown
+    const out = fromObject(v1)
+    expect(out.schemaVersion).toBe(2)
+    expect(out.viewport).toBeNull()
+  })
+
+  it('coerces an invalid viewport to null rather than throwing', () => {
+    const bad = { schemaVersion: 2, viewport: { x: 0, y: 0, zoom: 0 }, boards: [] } as unknown
+    expect(fromObject(bad).viewport).toBeNull()
+    const nan = { schemaVersion: 2, viewport: { x: NaN, y: 0, zoom: 1 }, boards: [] } as unknown
+    expect(fromObject(nan).viewport).toBeNull()
+  })
+
+  it('round-trips a valid viewport', () => {
+    const doc = toObject([], vp)
+    const back = fromObject(JSON.parse(JSON.stringify(doc)))
+    expect(back.viewport).toEqual(vp)
+  })
+
+  it('fromObject deep-clones — returned doc never aliases input (BUG-027)', () => {
+    const input: CanvasDoc = { schemaVersion: 2, viewport: { ...vp }, boards: [] }
+    const out = fromObject(input)
+    expect(out).not.toBe(input)
+    expect(out.viewport).not.toBe(input.viewport)
+  })
+
+  it('migrate result is a fresh object, not the input ref (BUG-027)', () => {
+    const input = { schemaVersion: 1, boards: [] } as unknown as CanvasDoc
+    const out = fromObject(input)
+    expect(out).not.toBe(input)
   })
 })
