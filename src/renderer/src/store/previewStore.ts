@@ -54,6 +54,14 @@ interface PreviewState {
   nodeGesture: boolean
   /** Shallow-merge a runtime patch for one board (creates the entry if absent). */
   patch: (id: string, patch: Partial<PreviewRuntime>) => void
+  /**
+   * Shallow-merge a runtime patch ONLY for a board that already has an entry — a
+   * no-op when the id is absent. Used by the main-driven lifecycle-event handlers
+   * (did-navigate / did-fail-load) so an event that arrives AFTER the board was
+   * deleted (clearRuntime already ran) can't resurrect a cleared, never-cleaned-up
+   * orphan entry via the create-if-absent `patch` (Bug #32).
+   */
+  patchIfPresent: (id: string, patch: Partial<PreviewRuntime>) => void
   /** Drop a board's runtime state (on board removal). */
   clear: (id: string) => void
   /** Mark a node drag/resize gesture as started/ended (drives detach/reattach). */
@@ -67,6 +75,10 @@ export const usePreviewStore = create<PreviewState>((set) => ({
     set((s) => ({
       byId: { ...s.byId, [id]: { ...DEFAULT_RUNTIME, ...s.byId[id], ...patch } }
     })),
+  patchIfPresent: (id, patch) =>
+    set((s) =>
+      id in s.byId ? { byId: { ...s.byId, [id]: { ...s.byId[id], ...patch } } } : s
+    ),
   clear: (id) =>
     set((s) => {
       if (!(id in s.byId)) return s

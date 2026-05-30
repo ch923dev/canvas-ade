@@ -101,6 +101,9 @@ interface LayerProps {
 export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
+  // Patch ONLY an existing entry — for main-driven lifecycle events that may arrive
+  // after a board was deleted, so they can't resurrect a cleared orphan (Bug #32).
+  const patchRuntimeIfPresent = usePreviewStore((s) => s.patchIfPresent)
   const clearRuntime = usePreviewStore((s) => s.clear)
   // A board drag/resize is in progress (React Flow node-drag / NodeResizer). Unlike
   // a camera move it never fires useOnViewportChange, so we detach live views here.
@@ -647,17 +650,19 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
         if (cur === 'load-failed') return
         patchRuntime(ev.id, { status: 'connected', liveUrl: ev.url, error: null })
       } else if (ev.type === 'did-navigate') {
-        patchRuntime(ev.id, {
+        // Bug #32: patch ONLY if the entry still exists — an in-flight nav event that
+        // arrives after the board was deleted must not resurrect a cleared orphan.
+        patchRuntimeIfPresent(ev.id, {
           liveUrl: ev.url,
           canGoBack: ev.canGoBack,
           canGoForward: ev.canGoForward
         })
       } else if (ev.type === 'did-fail-load') {
-        patchRuntime(ev.id, { status: 'load-failed', error: ev.errorDescription })
+        patchRuntimeIfPresent(ev.id, { status: 'load-failed', error: ev.errorDescription })
       }
     })
     return off
-  }, [patchRuntime])
+  }, [patchRuntime, patchRuntimeIfPresent])
 
   // Tear down on unmount (HMR / route change): stop the pump + close every view.
   useEffect(
