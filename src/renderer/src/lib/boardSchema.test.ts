@@ -511,3 +511,30 @@ describe('schema v2 — viewport', () => {
     expect(out).not.toBe(input)
   })
 })
+
+describe('BrowserBoard.previewSourceId (preview link)', () => {
+  it('round-trips a valid previewSourceId through toObject/fromObject', () => {
+    const term = createBoard('terminal', { id: 't1', x: 0, y: 0 })
+    const browser = { ...createBoard('browser', { id: 'b1', x: 800, y: 0 }), previewSourceId: 't1' }
+    const doc = toObject([term, browser], null)
+    const back = fromObject(doc)
+    const b = back.boards.find((x) => x.id === 'b1')
+    expect(b && b.type === 'browser' ? b.previewSourceId : 'MISSING').toBe('t1')
+  })
+
+  it('prunes a dangling previewSourceId (source board absent) on load', () => {
+    const browser = { ...createBoard('browser', { id: 'b1', x: 0, y: 0 }), previewSourceId: 'gone' }
+    const back = fromObject(toObject([browser], null))
+    const b = back.boards.find((x) => x.id === 'b1')
+    expect(b && b.type === 'browser' ? b.previewSourceId : 'X').toBeUndefined()
+  })
+
+  it('rejects a non-string previewSourceId', () => {
+    const bad = {
+      schemaVersion: 2,
+      viewport: null,
+      boards: [{ ...createBoard('browser', { id: 'b1', x: 0, y: 0 }), previewSourceId: 7 }]
+    }
+    expect(() => fromObject(bad)).toThrow(/previewSourceId/)
+  })
+})

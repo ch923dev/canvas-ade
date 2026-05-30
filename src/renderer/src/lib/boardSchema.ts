@@ -43,6 +43,8 @@ export interface BrowserBoard extends BoardCommon {
   type: 'browser'
   url: string
   viewport: BrowserViewport
+  /** Slice C′: the Terminal board id that pushed this preview (the link/arrow source). */
+  previewSourceId?: string
 }
 
 // ── Planning elements (whiteboard content; 2.3 owns the rich impl) ────────────
@@ -358,6 +360,9 @@ function assertBoard(b: unknown): void {
       if (!VIEWPORTS.includes(b.viewport as BrowserViewport)) {
         fail(`browser board has an invalid viewport ${String(b.viewport)}`)
       }
+      if (b.previewSourceId !== undefined && typeof b.previewSourceId !== 'string') {
+        fail('browser previewSourceId is not a string')
+      }
       return
     case 'planning':
       if (!Array.isArray(b.elements)) fail('planning board elements is not an array')
@@ -385,6 +390,14 @@ export function fromObject(doc: unknown): CanvasDoc {
   for (const b of owned.boards) {
     b.w = Math.max(MIN_BOARD_SIZE.w, b.w)
     b.h = Math.max(MIN_BOARD_SIZE.h, b.h)
+  }
+  // Drop a preview link whose source board is no longer present (Slice C′) — a
+  // dangling link must not render a half-edge; clear it rather than fail the load.
+  const ids = new Set(owned.boards.map((b) => b.id))
+  for (const b of owned.boards) {
+    if (b.type === 'browser' && b.previewSourceId && !ids.has(b.previewSourceId)) {
+      delete b.previewSourceId
+    }
   }
   const migrated = migrate(owned)
   // A corrupt camera shouldn't fail the whole load — drop to fit-on-load.
