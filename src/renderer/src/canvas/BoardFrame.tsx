@@ -74,28 +74,6 @@ export function IconBtn({
   )
 }
 
-function StatusPill({ dot, label }: BoardStatus): ReactElement {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        fontFamily: 'var(--mono)',
-        fontSize: 11,
-        color: 'var(--text-3)',
-        whiteSpace: 'nowrap'
-      }}
-    >
-      <span
-        className={dot === 'var(--ok)' ? 'ca-pulse' : ''}
-        style={{ width: 7, height: 7, borderRadius: 999, background: dot, flex: 'none' }}
-      />
-      {label}
-    </span>
-  )
-}
-
 export interface BoardFrameProps {
   type: BoardType
   title: string
@@ -247,26 +225,19 @@ export function BoardFrame({
           borderBottom: '1px solid var(--border-subtle)'
         }}
       >
+        {/* The type glyph itself carries status: tinted to the status colour (green
+            running / red failed / neutral idle), so no separate persistent status dot
+            or uppercase type tag is needed — the glyph + title already say the type. */}
         <span
+          className={status?.dot === 'var(--ok)' && running ? 'ca-pulse' : ''}
           style={{
-            color: selected ? 'var(--text-2)' : 'var(--text-3)',
+            color: status ? status.dot : selected ? 'var(--text-2)' : 'var(--text-3)',
             display: 'inline-flex',
-            flex: 'none'
+            flex: 'none',
+            transition: 'color .12s'
           }}
         >
           <TypeGlyph type={type} running={running} />
-        </span>
-        <span
-          style={{
-            fontSize: 9.5,
-            letterSpacing: '0.07em',
-            fontWeight: 600,
-            color: 'var(--text-faint)',
-            fontFamily: 'var(--mono)',
-            flex: 'none'
-          }}
-        >
-          {TYPE_TAG[type]}
         </span>
         <span
           style={{
@@ -282,7 +253,21 @@ export function BoardFrame({
         >
           {title}
         </span>
-        {status && <StatusPill {...status} />}
+        {/* Status label is on-demand: only while hovered or selected, kept calm at
+            rest (the glyph colour carries the at-a-glance signal). */}
+        {status?.label && (hovered || selected) && (
+          <span
+            style={{
+              fontFamily: 'var(--mono)',
+              fontSize: 11,
+              color: 'var(--text-3)',
+              whiteSpace: 'nowrap',
+              flex: 'none'
+            }}
+          >
+            {status.label}
+          </span>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
           {actions}
           {onFull && <IconBtn name="maximize" title="Full view" size={14} onClick={onFull} />}

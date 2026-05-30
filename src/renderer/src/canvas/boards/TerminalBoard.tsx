@@ -21,13 +21,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import {
-  agentIdentity,
-  formatTimer,
-  isRunning,
-  statusFor,
-  type TerminalState
-} from './terminalState'
+import { agentIdentity, isRunning, statusFor, type TerminalState } from './terminalState'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
@@ -109,7 +103,6 @@ export function TerminalBoard({
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -120,23 +113,6 @@ export function TerminalBoard({
   useEffect(() => {
     lodRef.current = lod
   }, [lod])
-
-  // Run timer: while running, derive elapsed seconds from the run start time so the
-  // pill shows `· mm:ss`. setElapsed only ever fires from the interval callback (an
-  // external tick — never a synchronous setState in the effect body). The first
-  // tick at ~100ms zeroes the display for a fresh run; the suffix is gated on
-  // `running`, so a stale value is never shown once a run ends.
-  useEffect(() => {
-    if (!running) return
-    const start = Date.now()
-    const tick = (): void => setElapsed(Math.floor((Date.now() - start) / 1000))
-    const lead = setTimeout(tick, 100)
-    const t = setInterval(tick, 1000)
-    return () => {
-      clearTimeout(lead)
-      clearInterval(t)
-    }
-  }, [running])
 
   // ── WebGL renderer pooling (#10/#12/#29) ─────────────────────────────────────
   // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
@@ -461,7 +437,7 @@ export function TerminalBoard({
     }
   }, [respawn, board.id])
 
-  const status = statusFor(state, identity, running ? formatTimer(elapsed) : undefined)
+  const status = statusFor(state, identity)
 
   /** Interrupt: send Ctrl-C (SIGINT) over the data plane to the running agent. */
   const interrupt = useCallback(() => {

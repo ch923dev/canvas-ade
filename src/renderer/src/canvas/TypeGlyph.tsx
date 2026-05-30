@@ -35,7 +35,9 @@ export function TypeGlyph({ type, running = false }: TypeGlyphProps): ReactEleme
             width: 6,
             height: 11,
             marginLeft: 1,
-            background: running ? 'var(--ok)' : 'var(--text-3)',
+            // Inherit the glyph colour so the caret tints with the board status
+            // (green running / red failed / neutral idle) set by BoardFrame.
+            background: 'currentColor',
             borderRadius: 1,
             transform: 'translateY(0.5px)'
           }}
