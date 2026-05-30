@@ -62,11 +62,14 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
   // would stay armed across the LOD boundary and paint a stale border + resize
-  // handles on zoom-in. Clear it whenever we enter LOD (#BUG-017).
+  // handles on zoom-in. Clear it on LOD entry — but ONLY for the types that take the
+  // LOD early-return below; terminal boards stay full-chrome at LOD (their hover div
+  // never unmounts), so they have no stale-hover bug and must keep normal hover
+  // behavior (#BUG-017, scoped per the card to non-terminal boards).
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (lod) setHovered(false)
-  }, [lod])
+    if (lod && board.type !== 'terminal') setHovered(false)
+  }, [lod, board.type])
 
   // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
   // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).
