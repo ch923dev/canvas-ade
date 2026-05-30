@@ -539,6 +539,24 @@ export function BrowserPreviewLayer({
     applyLiveness()
   }, [focusedId, fullViewId, applyLiveness])
 
+  // Full view: the camera never moves, so the camera-driven rAF pump (startPump, fired
+  // by useOnViewportChange) never runs — yet the full-view board's native bounds must
+  // (a) correct themselves once the portal relocates `.bb-frame` from the canvas into
+  // the modal a couple render cycles after open (applyLiveness above attaches with the
+  // still-on-canvas rect), and (b) follow the modal frame across window resizes. Drive a
+  // dedicated rAF that re-pushes bounds (flushBatch reads the live `.bb-frame` DOM rect
+  // via fullViewBoundsFor and diff-skips once stable) for as long as a board is full-view.
+  useEffect(() => {
+    if (!fullViewId) return
+    let raf = 0
+    const tick = (): void => {
+      flushBatch()
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [fullViewId, flushBatch])
+
   // ── Reconcile the native views with the store's Browser boards ────────────────
   // Subscribe imperatively (NOT via a hook selector that re-renders) so geometry +
   // url + viewport changes update the views without re-rendering this layer.

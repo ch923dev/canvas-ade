@@ -111,6 +111,7 @@ export function BrowserBoard({
   selected,
   hovered,
   dimmed,
+  fullView = false,
   onFull,
   onDuplicate,
   onDelete
@@ -226,13 +227,21 @@ export function BrowserBoard({
         <div
           className="bb-frame"
           data-bb-frame={board.id}
-          style={{
-            left: frame.x,
-            top: frameTopInStage,
-            width: frame.width,
-            height: frame.height,
-            borderRadius: preset.radius
-          }}
+          // In full view the frame FILLS the modal stage (board-geometry sizing no
+          // longer applies — the board is portaled out of the camera-scaled canvas);
+          // the native view binds to this element's live DOM rect (fullViewBoundsFor),
+          // so the page renders edge-to-edge. On canvas it keeps the fitted device box.
+          style={
+            fullView
+              ? { inset: 0, borderRadius: 0 }
+              : {
+                  left: frame.x,
+                  top: frameTopInStage,
+                  width: frame.width,
+                  height: frame.height,
+                  borderRadius: preset.radius
+                }
+          }
         >
           {preset.notch && <div className="bb-notch" />}
           <DeviceContent runtime={runtime} url={board.url} />

@@ -46,6 +46,13 @@ export interface BoardViewProps<T extends Board = Board> {
    * board types never receive it — BoardNode renders their LOD card itself.
    */
   lod?: boolean
+  /**
+   * This board is shown in the full-view modal (its subtree is portaled there).
+   * BrowserBoard reads it to fill the modal with its device frame instead of the
+   * board-geometry-sized frame, so the native view (bound to the frame's DOM rect)
+   * renders edge-to-edge.
+   */
+  fullView?: boolean
   /** Title-bar maximize → request full view for this board. */
   onFull?: () => void
   /** ⋯ menu → duplicate this board. */
@@ -119,7 +126,9 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
       {board.type === 'terminal' && (
         <TerminalBoard board={board} lod={lod} {...common} {...actions} />
       )}
-      {board.type === 'browser' && <BrowserBoard board={board} {...common} {...actions} />}
+      {board.type === 'browser' && (
+        <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
+      )}
       {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
     </div>
   )
