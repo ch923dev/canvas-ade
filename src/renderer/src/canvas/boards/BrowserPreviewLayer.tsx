@@ -608,6 +608,19 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   // ── Lifecycle events from main (load / navigate / fail) → runtime store ────────
   useEffect(() => {
     const off = window.api.onPreviewEvent((ev) => {
+      // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
+      // Clear a stale `load-failed` latch so the following did-finish-load can promote
+      // to `connected` after a successful recovery load (Bug #5). The preload
+      // `PreviewEvent` union doesn't declare this additive variant, so compare via a
+      // widened string. Only clears the load-failed latch — the error page's OWN
+      // did-finish-load is still suppressed (main reuses the failed navigation and
+      // emits no fresh did-start-navigation for it).
+      if ((ev.type as string) === 'did-start-navigation') {
+        if (!(ev.id in usePreviewStore.getState().byId)) return
+        const cur = usePreviewStore.getState().byId[ev.id]?.status
+        if (cur === 'load-failed') patchRuntime(ev.id, { status: 'connecting', error: null })
+        return
+      }
       if (ev.type === 'did-finish-load') {
         // Respect a prior load-failed: a dead/refused URL loads a Chromium error page
         // whose own did-finish-load must not flip the board back to "connected"

@@ -11,6 +11,10 @@ export type PreviewEvent =
   | { id: string; type: 'did-finish-load'; url: string }
   | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
   | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
+  // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
+  // Lets the renderer clear a stale `load-failed` latch so the following
+  // did-finish-load can promote to `connected` (Bug #5).
+  | { id: string; type: 'did-start-navigation' }
 
 /**
  * PreviewManager (1-E): N native WebContentsViews keyed by board id, synced to the
@@ -160,9 +164,16 @@ function ensure(id: string, win: BrowserWindow): Entry {
       if (!isAllowedPreviewUrl(url)) ev.preventDefault()
     })
     // A fresh main-frame navigation clears the failed latch — until proven otherwise
-    // (a later did-fail-load), this load is assumed good.
+    // (a later did-fail-load), this load is assumed good. Tell the renderer too so a
+    // stale `load-failed` latch is cleared and the following did-finish-load can
+    // promote to `connected` after a successful reload/back/forward (Bug #5). This
+    // does NOT fire for Chromium's error-page commit (it reuses the failed
+    // navigation, no new did-start-navigation), so the error page's own
+    // did-finish-load suppression is preserved.
     wc.on('did-start-navigation', (details) => {
-      if (details.isMainFrame) e!.failed = false
+      if (!details.isMainFrame) return
+      e!.failed = false
+      emit({ id, type: 'did-start-navigation' })
     })
     // Re-apply the held zoom factor after each load so the page keeps laying out at
     // its fixed CSS width W (otherwise a load resets the factor to 1). ALWAYS re-apply
