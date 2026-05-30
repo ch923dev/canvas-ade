@@ -101,7 +101,14 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   // TerminalBoard reads `lod` and swaps the xterm host for its own LOD card while
   // keeping the session alive. Other types are presentational at LOD — BoardNode
   // renders their static LOD card and unmounts the heavy content.
-  if (lod && board.type !== 'terminal') {
+  //
+  // EXCEPTION: a board in full view ALWAYS renders its real content (never the LOD
+  // card), even when the camera is zoomed out below LOD. The full-view board is
+  // portaled into the (untransformed) modal host, so its real `.bb-frame` must exist
+  // there for `fullViewBoundsFor` to read the modal rect; the LOD card has no
+  // `.bb-frame` and never portals, which would strand the native view at its
+  // camera-scaled canvas position (the full-view native-bounds bug).
+  if (lod && board.type !== 'terminal' && !fullView) {
     return (
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
         <BoardFrame

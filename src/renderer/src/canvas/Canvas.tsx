@@ -333,7 +333,12 @@ function CanvasInner(): ReactElement {
             WebContentsView to the camera. Renders nothing (returns null); it owns
             the native-view lifecycle only. The Browser board is the sole board type
             allowed to touch this file. */}
-            <BrowserPreviewLayer paneRef={paneRef} focusedId={focusedId} fullViewId={fullViewId} />
+            <BrowserPreviewLayer
+              paneRef={paneRef}
+              focusedId={focusedId}
+              fullViewId={fullViewId}
+              fullViewHost={fullViewHost}
+            />
           </ReactFlow>
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}

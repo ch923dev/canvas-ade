@@ -103,12 +103,21 @@ interface LayerProps {
   focusedId: string | null
   /** The board currently in full view (its native view binds to the modal frame). */
   fullViewId: string | null
+  /**
+   * The full-view modal's portal host element (published by FullViewModal). The
+   * full-view board's `.bb-frame` is portaled INTO this untransformed host; the native
+   * view binds to that relocated frame's rect. We use it to GUARD `fullViewBoundsFor`:
+   * only a `.bb-frame` contained by this host is the modal (untransformed) one — any
+   * other read is the camera-scaled on-canvas frame and must be rejected.
+   */
+  fullViewHost: HTMLElement | null
 }
 
 export function BrowserPreviewLayer({
   paneRef,
   focusedId,
-  fullViewId
+  fullViewId,
+  fullViewHost
 }: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
@@ -138,6 +147,10 @@ export function BrowserPreviewLayer({
   // Latest full-view board id. When set, that board's native view binds to the
   // portaled modal device frame (live DOM rect) and every other view detaches.
   const fullViewIdRef = useRef<string | null>(fullViewId)
+  // Latest modal portal host element. fullViewBoundsFor only accepts a `.bb-frame`
+  // contained by this host (= the relocated, untransformed modal frame) so it never
+  // reads the camera-scaled on-canvas rect (the full-view native-bounds bug).
+  const fullViewHostRef = useRef<HTMLElement | null>(fullViewHost)
   // Latest store selection + the selected board's WORLD rect (any board type), kept
   // fresh by the store subscription. Used by the static-occlusion demote (LOT F #2/
   // #19/#20): a live Browser view overlapping a DIFFERENT selected board must demote
@@ -170,10 +183,21 @@ export function BrowserPreviewLayer({
   )
 
   /** In full view, the native view binds to the portaled device frame's live DOM rect
-   *  (the board's HTML frame is relocated into the modal; camera math no longer applies). */
+   *  (the board's HTML frame is relocated into the modal; camera math no longer applies).
+   *
+   *  Returns null (caller HOLDS — never falls back to the canvas rect) UNLESS the
+   *  `.bb-frame` is the one relocated INTO the modal host. The same `.bb-frame` element
+   *  normally lives under `.react-flow__viewport` (CSS `translate()scale()`), so its
+   *  `getBoundingClientRect()` is the CAMERA-SCALED CANVAS position — wrong for the modal.
+   *  Only once `createPortal` has moved the subtree into the untransformed host does the
+   *  rect become the true modal rect. The `host.contains(el)` guard accepts exactly that
+   *  case and rejects the transform-polluted / pre-portal / LOD-card (no `.bb-frame`)
+   *  reads, so the canvas rect is never sent in full view. */
   const fullViewBoundsFor = useCallback((id: string): Rect | null => {
+    const host = fullViewHostRef.current
+    if (!host) return null
     const el = document.querySelector<HTMLElement>(`[data-bb-frame="${id}"]`)
-    if (!el) return null
+    if (!el || !host.contains(el)) return null
     const r = el.getBoundingClientRect()
     if (r.width <= 0 || r.height <= 0) return null
     return roundRect({ x: r.left, y: r.top, width: r.width, height: r.height })
@@ -302,7 +326,14 @@ export function BrowserPreviewLayer({
   const attachBoard = useCallback(
     async (g: BoardGeom): Promise<void> => {
       const r = rec(g.id)
-      const fv = fullViewIdRef.current === g.id ? fullViewBoundsFor(g.id) : null
+      const isFullView = fullViewIdRef.current === g.id
+      const fv = isFullView ? fullViewBoundsFor(g.id) : null
+      // HOLD: in full view, never fall back to the camera-scaled canvas rect. If the
+      // portal hasn't relocated `.bb-frame` into the modal host yet (fv null), skip the
+      // push — the board keeps its prior (pre-full-view) bounds for the 1–2 frames until
+      // the portal lands, then the rAF pump snaps it to the modal rect. Falling back to
+      // boundsFor here is what stranded the view at its canvas position.
+      if (isFullView && !fv) return
       const bounds = fv ?? boundsFor(g)
       const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
       // Diff-skip a redundant re-attach: if the view is already attached at exactly
@@ -364,7 +395,12 @@ export function BrowserPreviewLayer({
     for (const g of geomRef.current.values()) {
       const r = recs.current.get(g.id)
       if (!r || !r.attached) continue
-      const fv = fullViewIdRef.current === g.id ? fullViewBoundsFor(g.id) : null
+      const isFullView = fullViewIdRef.current === g.id
+      const fv = isFullView ? fullViewBoundsFor(g.id) : null
+      // HOLD (mirror of attachBoard): in full view, never push the camera-scaled canvas
+      // rect. Until the portal relocates `.bb-frame` into the modal host (fv null), skip
+      // this board so its view stays at its prior bounds rather than snapping to canvas.
+      if (isFullView && !fv) continue
       const bounds = fv ?? boundsFor(g)
       const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
       if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
@@ -447,10 +483,16 @@ export function BrowserPreviewLayer({
     const fvId = fullViewIdRef.current
     if (fvId) {
       // Full view: only the full-view Browser board may be live (bound to the modal
-      // frame); detach every other native view (the modal scrim covers the canvas).
+      // frame). Every OTHER native view must be torn down — NOT demoted via the async
+      // detach (removeChildView), which Electron 33 (#44652) can leave stuck painting at
+      // its old canvas bounds over the modal (the "second copy" ghost), and which also
+      // races the full-view rAF pump. closeBoard does a real webContents.close(); the
+      // board's last snapshot keeps showing as its HTML fallback on the canvas behind the
+      // scrim. On full-view EXIT the focus effect re-runs applyLiveness (non-full-view
+      // path), which re-attaches the eligible views via reconcile's new-board path.
       for (const g of all) {
         if (g.id === fvId) void attachBoard(g)
-        else if (rec(g.id).attached) void demoteToSnapshot(g)
+        else if (rec(g.id).exists) closeBoard(g.id)
       }
       return
     }
@@ -532,12 +574,13 @@ export function BrowserPreviewLayer({
   useEffect(() => {
     focusedIdRef.current = focusedId
     fullViewIdRef.current = fullViewId
+    fullViewHostRef.current = fullViewHost
     if (!focusMounted.current) {
       focusMounted.current = true
       return
     }
     applyLiveness()
-  }, [focusedId, fullViewId, applyLiveness])
+  }, [focusedId, fullViewId, fullViewHost, applyLiveness])
 
   // Full view: the camera never moves, so the camera-driven rAF pump (startPump, fired
   // by useOnViewportChange) never runs — yet the full-view board's native bounds must
@@ -550,12 +593,19 @@ export function BrowserPreviewLayer({
     if (!fullViewId) return
     let raf = 0
     const tick = (): void => {
+      // The full-view board's native view may not be attached yet — the initial
+      // applyLiveness attach is HELD until the portal relocates `.bb-frame` into the
+      // modal host (fullViewBoundsFor null → attachBoard early-returns). Once the host
+      // is ready, re-issue the attach here so the (held) view comes live at the modal
+      // rect; flushBatch (attached-only) then keeps it pinned across window resizes.
+      const g = geomRef.current.get(fullViewId)
+      if (g && !recs.current.get(fullViewId)?.attached) void attachBoard(g)
       flushBatch()
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [fullViewId, flushBatch])
+  }, [fullViewId, flushBatch, attachBoard])
 
   // ── Reconcile the native views with the store's Browser boards ────────────────
   // Subscribe imperatively (NOT via a hook selector that re-renders) so geometry +
