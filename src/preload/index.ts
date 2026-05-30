@@ -96,6 +96,12 @@ const api = {
     const handler = (_e: IpcRendererEvent, ev: PreviewEvent): void => listener(ev)
     ipcRenderer.on('preview:event', handler)
     return () => ipcRenderer.removeListener('preview:event', handler)
+  },
+
+  // ── MCP board mirror (control plane; metadata only — id/type/title, never content) ──
+  mcp: {
+    publishBoards: (boards: Array<{ id: string; type: string; title: string }>): void =>
+      ipcRenderer.send('mcp:boards', boards)
   }
 }
 
