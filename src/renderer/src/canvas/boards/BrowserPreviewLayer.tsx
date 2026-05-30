@@ -459,6 +459,14 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
 
   // onMoveEnd: clear the gesture flag, then reconcile liveness at the rest position.
   const endMotion = useCallback((): void => {
+    // Bug #2: endMotion is driven by BOTH the camera path (useOnViewportChange.onEnd)
+    // and the node-gesture effect below. React Flow auto-pans the camera when a node is
+    // dragged to a pane edge; that programmatic pan fires onEnd → endMotion WHILE the
+    // node drag is still in progress, reattaching the always-above native views and
+    // re-occluding the dragged board mid-drag. Ignore a camera-driven end while a node
+    // gesture is active — the node-drag's own end (nodeGesture → false) stays the sole
+    // authority that finally clears the flag and reattaches.
+    if (usePreviewStore.getState().nodeGesture) return
     gestureRef.current = false
     applyLiveness()
   }, [applyLiveness])
