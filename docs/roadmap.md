@@ -127,9 +127,17 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 > 🔗 **Related bug-hunt finding:** BUG-027 (`fromObject`/`migrate` return the input doc by reference, so loaded
 > store boards alias the caller's input) touches this area but is not fully resolved by this work —
 > see bug-hunt-findings/findings/BUG-027.md.
-- **Git worktrees**: opt-in toggle on create (reuse-if-exists, never nest-init); worktree per Terminal
-  board; keep-on-disk + prompt on dirty delete; per-board port assignment for previews.
+- **Port detect → push to preview** (Slice C′, replaces the old worktrees+ports slice): a Terminal
+  board reads the localhost URL its dev server printed and one click opens/points a Browser board at
+  it. **Detect, don't assign** — output-parse only, on-click, reuse-else-spawn target, read-only,
+  agent-agnostic, no git. Spec: `docs/superpowers/specs/2026-05-30-port-detect-preview-design.md`.
 - ✅📏 full reopen fidelity: zoom/pan/positions/contents/checklist state survive restart (integration test).
+
+> 🧰 **Re-scoped 2026-05-30 — git worktrees deferred.** The original Slice C bundled git
+> worktrees + static per-board port assignment. Both were re-scoped during brainstorming: static
+> assignment (inject `PORT`/`--port`) was dropped in favour of runtime **detection** (above), and
+> worktrees were deferred to a post-MCP phase under a better model — **Feature Workspaces** (see
+> Deferred). Rationale lives in the Slice C′ spec's "Decision record".
 
 > 💡 **Deferred feature — agentic session resume (own slice, post-Phase 3).** Restored Terminal
 > boards come back **idle** (fresh shell on Run; never auto-execute a stored command). A future
@@ -194,3 +202,18 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 
 CDP/debug attach to previews (build views CDP-ready, don't implement) · SQLite persistence ·
 multiplayer/collaboration · hand-drawn (roughjs) whiteboard aesthetic.
+
+> 🌳 **Feature Workspaces — worktree-backed board zones (post-MCP phase, deferred 2026-05-30).**
+> The deferred home for git worktrees, re-modelled. A project's infinite canvas hosts multiple
+> **feature zones** — clusters of boards that belong together (e.g. an "Auth/Login" zone = a Terminal
+> building auth + a Browser previewing the login page + a Planning board tracking the auth
+> checklist; a separate "Signup/Landing" zone with its own three). **Each zone is backed by one git
+> worktree + branch.** Every board in a zone operates against that branch's checkout — the agent
+> edits there, the browser previews that worktree's dev server, the plan tracks that feature. So a
+> worktree is **per-feature-region, not per-board** (the cleaner model the original Slice C lacked).
+> Gated on the planned `canvas-ade-mcp` swarm layer, which orchestrates agents across zones/branches.
+> Carries forward the still-valid locked safety rules: reuse-if-exists, never nest-init, keep-on-disk
+> + prompt on dirty delete, `git worktree remove` never `rm -rf`, `simple-git` in MAIN only behind
+> frame-guarded IPC. This subsumes the per-board-worktree assumptions in several
+> `docs/feature-proposals.md` entries (SB-3 fan-out, SB-5 diff, OS-1 commit/PR), which should be read
+> against the per-zone model.
