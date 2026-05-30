@@ -1,25 +1,40 @@
 import type { BoardId, BoardSummary, Orchestrator } from '@ch923dev/canvas-ade-mcp'
 
-/** The thin MAIN-owned board view the adapter reads (a slice of the PTY session map). */
+/** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
+  listBoards(): Array<{ id: string; type: string; title: string }>
   listSessions(): Array<{ id: string; status: string }>
 }
 
+function deriveStatus(
+  board: { id: string; type: string },
+  sessionById: Map<string, string>
+): string {
+  if (board.type === 'terminal') return sessionById.get(board.id) ?? 'no-session'
+  if (board.type === 'browser') return 'open'
+  if (board.type === 'planning') return 'static'
+  return 'unknown'
+}
+
 /**
- * Build an Orchestrator backed by the PTY session registry. Pure — imports only
- * types from the package, so the contract test runs without loading node-pty.
- * Methods with no MAIN source yet throw an explicit phase-gated error; no tool or
- * resource registered in this milestone reaches them.
+ * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
+ * terminal boards. Pure (type-only package imports → contract test loads no
+ * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated.
  */
-export function buildPtyOrchestrator(registry: BoardRegistry): Orchestrator {
+export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
+  const sessionMap = (): Map<string, string> =>
+    new Map(registry.listSessions().map((s) => [s.id, s.status]))
   return {
     async listBoards(): Promise<BoardSummary[]> {
-      return registry.listSessions().map((s) => ({ id: s.id, type: 'terminal', status: s.status }))
+      const sessions = sessionMap()
+      return registry
+        .listBoards()
+        .map((b) => ({ id: b.id, type: b.type, title: b.title, status: deriveStatus(b, sessions) }))
     },
     async boardStatus(boardId: BoardId): Promise<string> {
-      const found = registry.listSessions().find((s) => s.id === boardId)
-      if (!found) throw new Error(`board not found: ${boardId}`)
-      return found.status
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) throw new Error(`board not found: ${boardId}`)
+      return deriveStatus(board, sessionMap())
     },
     async spawnBoard(): Promise<{ id: BoardId }> {
       throw new Error('spawnBoard not available until Phase 3')
