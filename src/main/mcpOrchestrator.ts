@@ -6,6 +6,15 @@ export interface BoardRegistry {
   listSessions(): Array<{ id: string; status: string }>
 }
 
+/**
+ * Coarse, type-derived status (v1). ONLY `terminal` is a real liveness signal —
+ * overlaid from the live PTY session map ('running'/'exited' or 'no-session').
+ * `browser` ('open') and `planning` ('static') are PRESENCE markers, NOT liveness
+ * probes: a crashed/unreachable browser still reads 'open'. Real per-type liveness
+ * (e.g. a dead browser, an awaiting/blocked terminal) is deferred to the Phase-5
+ * attention slice, which wires the renderer runtime (previewStore) into the mirror.
+ * An unrecognized (forward) board type maps to 'unknown' rather than being dropped.
+ */
 function deriveStatus(
   board: { id: string; type: string },
   sessionById: Map<string, string>

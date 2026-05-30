@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@ch923dev/canvas-ade-mcp':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@electron-toolkit/preload':
         specifier: ^3.0.1
         version: 3.0.2(electron@33.4.11)
@@ -206,8 +206,8 @@ packages:
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
 
-  '@ch923dev/canvas-ade-mcp@0.1.0':
-    resolution: {integrity: sha512-IbBIzl2Xz9yQh03MFlpycSsvvChfdfwha4sqB5Q0RCf5bMKBXXGnGVn4nBDTIEz/BYQG73NOyjdCgwhhTKXVwA==, tarball: https://npm.pkg.github.com/download/@ch923dev/canvas-ade-mcp/0.1.0/6790c3df4fc42e0301f2fb5a098984f5f95701de}
+  '@ch923dev/canvas-ade-mcp@0.2.0':
+    resolution: {integrity: sha512-UVsi2Id5EbCVXytgOenvDhZlCnpn5r9fR9fUXk2zslRkBe8AQU8rSOHoOjwz6WBT1AKl751uF5sSV8cA5dFdoA==, tarball: https://npm.pkg.github.com/download/@ch923dev/canvas-ade-mcp/0.2.0/693bbceb1f6952b32086e112680c51bc127c4438}
     engines: {node: '>=20'}
 
   '@develar/schema-utils@2.6.5':
@@ -3051,7 +3051,7 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@ch923dev/canvas-ade-mcp@0.1.0':
+  '@ch923dev/canvas-ade-mcp@0.2.0':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       express: 5.2.1

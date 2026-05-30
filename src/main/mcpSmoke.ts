@@ -70,6 +70,9 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
           ? boards.map((b) => b?.type).filter((t): t is string => typeof t === 'string')
           : []
       } catch {
+        // A malformed (non-JSON) resource payload is a distinct failure from "boards
+        // not yet propagated" — surface it so the log is actionable, not a silent [].
+        log(`MCP_FAIL boards-unparseable len=${text.length}`)
         return []
       }
     },
@@ -146,7 +149,7 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
     // ── all-board-types listBoards: seed one of each type through the renderer hook,
     // then poll canvas://boards (the orchestrator's resource) until the mirror has
     // propagated all three. The hook installs after React mounts (?e2e=1 seedHarness). ──
-    const evalIn = <T,>(expr: string): Promise<T> =>
+    const evalIn = <T>(expr: string): Promise<T> =>
       win.webContents.executeJavaScript(expr, true) as Promise<T>
     const hookReady = await poll(() => evalIn<boolean>('!!window.__canvasE2E'), 8000)
     if (!hookReady) {

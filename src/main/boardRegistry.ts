@@ -9,11 +9,23 @@ export interface BoardMirror {
 
 let mirror: BoardMirror[] = []
 
-/** Keep only well-formed {id,type,title} string entries; drop anything else. */
+/** Bound the snapshot so a forged/oversized push on mcp:boards can't grow MAIN memory. */
+const MAX_BOARDS = 500
+const MAX_FIELD_LEN = 256
+
+/**
+ * Keep only well-formed {id,type,title} string entries; drop anything else.
+ * Bounded: at most MAX_BOARDS entries, each field at most MAX_FIELD_LEN chars —
+ * the renderer is trusted, but mcp:boards is an IPC channel, so a malformed/oversized
+ * payload is capped rather than retained wholesale. `type` is intentionally left an
+ * open string (forward board types are allowed); an unrecognized type maps to status
+ * 'unknown' downstream rather than being dropped.
+ */
 export function sanitizeSnapshot(input: unknown): BoardMirror[] {
   if (!Array.isArray(input)) return []
   const out: BoardMirror[] = []
   for (const b of input) {
+    if (out.length >= MAX_BOARDS) break
     if (
       b &&
       typeof b === 'object' &&
@@ -22,6 +34,13 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       typeof (b as BoardMirror).title === 'string'
     ) {
       const { id, type, title } = b as BoardMirror
+      if (
+        id.length > MAX_FIELD_LEN ||
+        type.length > MAX_FIELD_LEN ||
+        title.length > MAX_FIELD_LEN
+      ) {
+        continue
+      }
       out.push({ id, type, title })
     }
   }
