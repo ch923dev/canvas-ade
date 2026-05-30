@@ -123,8 +123,14 @@ function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number
   const { port1, port2 } = new MessageChannelMain()
   port1.on('message', (e) => {
     const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-    if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
-    else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+    // Guard as in the spawn handler: a write/resize on an exited pty throws and
+    // would escape to uncaughtException → app.exit(1). Swallow it.
+    try {
+      if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
+      else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+    } catch {
+      /* pty already exited */
+    }
   })
   port1.start()
 
@@ -303,9 +309,12 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     proc.onData((d) => {
       buf.data = appendRing(buf.data, d, RING_CAP_BYTES)
       // Forward to the current live port (looked up at fire time, so it follows an
-      // adopt onto the new port); none while parked → guard the post.
+      // adopt onto the new port); none while parked → guard the post. Identity
+      // guard `live.proc === proc`: a dying OLD proc keeps draining bytes for up to
+      // ~1s after kill() (node-pty's flush window), and without this check those
+      // late bytes would bleed into a freshly-restarted session under the same id.
       const live = sessions.get(opts.id)
-      if (live) {
+      if (live && live.proc === proc) {
         try {
           live.port.postMessage({ t: 'data', d })
         } catch {
@@ -314,11 +323,21 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       }
     })
     proc.onExit(({ exitCode }) => {
-      // During a restart/config-respawn the port may already be closed (the new
-      // session has taken over this id), so a post would throw — guard it.
+      // Post lifecycle to the CURRENT live port (looked up at fire time) the same
+      // way onData does — so an ADOPTED session (re-bound to a fresh port by adopt())
+      // is told when its process exits. Posting to the captured spawn-time `port1`
+      // would hit the port park() already closed, and the adopted renderer would
+      // stay stuck in 'running' forever. During a restart/config-respawn the port
+      // may already be closed (the new session took over this id), so guard the post.
       try {
-        port1.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
-        port1.postMessage({ t: 'exit', code: exitCode })
+        // Identity guard: only the session that still OWNS this exact proc should
+        // be told it exited — a stale OLD-proc exit must not post 'exited' to a NEW
+        // session that has since respawned under the same id (mirrors isStaleExit).
+        const live = sessions.get(opts.id)
+        if (live && live.proc === proc) {
+          live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
+          live.port.postMessage({ t: 'exit', code: exitCode })
+        }
       } catch {
         /* port already closed by a newer session */
       }
@@ -335,8 +354,16 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     port1.on('message', (e) => {
       const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-      if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
-      else if (m.t === 'resize' && m.cols && m.rows) proc.resize(m.cols, m.rows)
+      // node-pty's write/resize THROW on an exited-but-not-yet-reaped pty
+      // (resize: 'Cannot resize a pty that has already exited'). The throw would
+      // escape this EventEmitter listener as an uncaughtException → app.exit(1),
+      // crashing the whole app — so swallow it (the session is being torn down).
+      try {
+        if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
+        else if (m.t === 'resize' && m.cols && m.rows) proc.resize(m.cols, m.rows)
+      } catch {
+        /* pty already exited */
+      }
     })
     port1.start()
 
