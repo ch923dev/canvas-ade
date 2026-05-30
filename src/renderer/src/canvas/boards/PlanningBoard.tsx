@@ -187,16 +187,13 @@ export function PlanningBoard({
   const growForChecklist = useCallback(
     (_elId: string, bottom: number) => {
       const needed = Math.ceil(bottom + TITLEBAR_H + WELL_PAD)
-      // Only ever grow (one-shot, bounded). This is an untracked layout measurement,
-      // not a user edit, so it must NEVER destroy an armed redo branch: updateBoard
-      // clears `future` when it is non-empty, so skip the write while redo is armed
-      // and let a later genuine re-render re-measure and grow (#BUG-024). Reading the
-      // store snapshot here is non-reactive and does not mutate it.
-      if (needed > board.h && useCanvasStore.getState().future.length === 0) {
-        updateBoard(board.id, { h: needed })
-      }
+      // Untracked layout-only grow (#BUG-024): a measured content-fit bump is not a
+      // user edit, so it routes through a dedicated store action that NEVER touches the
+      // undo/redo rails — it can't push an undo checkpoint nor wipe an armed redo
+      // branch. Only-grows; a no-op when the board is already tall enough.
+      if (needed > board.h) useCanvasStore.getState().growBoardHeight(board.id, needed)
     },
-    [board.id, board.h, updateBoard]
+    [board.id, board.h]
   )
 
   // ── Element drag (select tool): grab → move in board-local space ─────────────

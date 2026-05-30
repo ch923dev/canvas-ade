@@ -39,6 +39,13 @@ export interface CanvasState {
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
   resizeBoard: (id: string, w: number, h: number) => void
+  /**
+   * Grow a board's height to fit measured content (checklist auto-grow). UNTRACKED,
+   * layout-only: never touches the undo/redo rails, so a measured height bump on
+   * mount/render can neither push an undo checkpoint nor wipe an armed redo branch
+   * (#BUG-024). Only ever grows; a no-op when the board is already tall enough.
+   */
+  growBoardHeight: (id: string, h: number) => void
   selectBoard: (id: string | null) => void
   setTool: (tool: Tool) => void
   /** Snapshot the current boards for undo (call at the start of a discrete edit). */
@@ -151,6 +158,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       })
       if (!changed) return s
       return s.future.length ? { boards, future: [] } : { boards }
+    }),
+
+  growBoardHeight: (id, h) =>
+    set((s) => {
+      // Layout-only, untracked: only-grow, and NEVER touch past/future. A measured
+      // content-fit bump must not pollute or wipe undo/redo history (#BUG-024).
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id || b.h >= h) return b
+        changed = true
+        return { ...b, h }
+      })
+      return changed ? { boards } : s
     }),
 
   selectBoard: (id) => set({ selectedId: id }),
