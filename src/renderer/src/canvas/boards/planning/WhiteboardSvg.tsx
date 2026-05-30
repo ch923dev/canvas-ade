@@ -7,9 +7,26 @@
  * Includes a live "draft" overlay so an in-progress arrow/stroke renders while
  * the pointer is still down, before it is committed to the store.
  */
-import { useMemo, useRef, type PointerEvent, type ReactElement } from 'react'
+import { useMemo, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
+
+/**
+ * Per-stroke outline cache keyed on the `points` array identity (#BUG-028). A
+ * module-level WeakMap (NOT a React ref, so it is read/written outside the hook graph
+ * and never during render) — unmoved strokes keep their `points` reference and hit the
+ * cache, while a moved stroke's fresh array misses and recomputes; the stale array
+ * GC's out of the map on its own (no manual pruning needed).
+ */
+const strokeOutlineCache = new WeakMap<number[], string>()
+function strokeOutline(points: number[]): string {
+  let path = strokeOutlineCache.get(points)
+  if (path === undefined) {
+    path = strokeToPath(points)
+    strokeOutlineCache.set(points, path)
+  }
+  return path
+}
 
 export interface WhiteboardSvgProps {
   boardId: string
@@ -51,27 +68,13 @@ export function WhiteboardSvg({
   drawing = false
 }: WhiteboardSvgProps): ReactElement {
   const markerId = arrowheadMarkerId(boardId)
-  // Memoize the (potentially heavy) outline math PER STROKE, keyed on each stroke's
-  // `points` reference. The parent derives `strokes` via .filter() (new array every
-  // render) and translateElement returns the SAME element object for unmoved strokes
-  // (only the dragged one gets a fresh ref), so caching on the points reference lets
-  // unchanged strokes reuse their path across every drag/zoom frame instead of
-  // recomputing getStroke for all of them (#BUG-028). Keyed cache is pruned to the
-  // live stroke set each render so deleted strokes don't leak.
-  const pathCache = useRef(new Map<string, { points: number[]; path: string }>())
-  const strokePaths = useMemo(() => {
-    const cache = pathCache.current
-    const next = new Map<string, { points: number[]; path: string }>()
-    const out = strokes.map((s) => {
-      const hit = cache.get(s.id)
-      const entry =
-        hit && hit.points === s.points ? hit : { points: s.points, path: strokeToPath(s.points) }
-      next.set(s.id, entry)
-      return entry.path
-    })
-    pathCache.current = next
-    return out
-  }, [strokes])
+  // Memoize the (potentially heavy) outline math PER STROKE via the module-level
+  // points-keyed cache. The parent derives `strokes` via .filter() (new array every
+  // render) and translateElement returns the SAME element object (same `points` ref)
+  // for unmoved strokes — only the dragged one gets a fresh ref — so unchanged strokes
+  // reuse their path across every drag/zoom frame instead of recomputing getStroke for
+  // all of them (#BUG-028).
+  const strokePaths = useMemo(() => strokes.map((s) => strokeOutline(s.points)), [strokes])
   const draftPath = useMemo(
     () => (draftStroke && draftStroke.length >= 2 ? strokeToPath(draftStroke) : ''),
     [draftStroke]
