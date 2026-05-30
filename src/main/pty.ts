@@ -320,11 +320,21 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       }
     })
     proc.onExit(({ exitCode }) => {
-      // During a restart/config-respawn the port may already be closed (the new
-      // session has taken over this id), so a post would throw — guard it.
+      // Post lifecycle to the CURRENT live port (looked up at fire time) the same
+      // way onData does — so an ADOPTED session (re-bound to a fresh port by adopt())
+      // is told when its process exits. Posting to the captured spawn-time `port1`
+      // would hit the port park() already closed, and the adopted renderer would
+      // stay stuck in 'running' forever. During a restart/config-respawn the port
+      // may already be closed (the new session took over this id), so guard the post.
       try {
-        port1.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
-        port1.postMessage({ t: 'exit', code: exitCode })
+        // Identity guard: only the session that still OWNS this exact proc should
+        // be told it exited — a stale OLD-proc exit must not post 'exited' to a NEW
+        // session that has since respawned under the same id (mirrors isStaleExit).
+        const live = sessions.get(opts.id)
+        if (live && live.proc === proc) {
+          live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
+          live.port.postMessage({ t: 'exit', code: exitCode })
+        }
       } catch {
         /* port already closed by a newer session */
       }
