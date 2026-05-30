@@ -36,6 +36,16 @@ export interface ProjectState {
 export type OpenResult =
   | { ok: true; dir: string; name: string; doc: unknown }
   | { ok: false; error: string }
+/**
+ * A recent-project entry (mirrors preload `RecentProject`). Re-declared here so
+ * renderer UI (welcome screen, project switcher) can import it from the store
+ * instead of reaching across to the preload module (outside the web tsconfig glob).
+ */
+export interface RecentProject {
+  path: string
+  name: string
+  lastOpenedAt: number
+}
 
 export interface CanvasState {
   boards: Board[]

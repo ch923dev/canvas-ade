@@ -571,3 +571,74 @@ body {
 .pl-well:focus-visible {
   outline: none;
 }
+
+/* ── Phase 3 persistence — welcome / project-picker screen ── */
+.welcome {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg, #0a0a0b);
+  color: #e6e6e6;
+  font: 14px/1.5 system-ui, sans-serif;
+}
+.welcome h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0;
+}
+.welcome-error {
+  color: #ff6b6b;
+}
+.welcome-actions {
+  display: flex;
+  gap: 12px;
+}
+.welcome-actions button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid #2a2a2e;
+  background: #161618;
+  color: #e6e6e6;
+  cursor: pointer;
+}
+.welcome-actions button:first-child {
+  background: #4f8cff;
+  border-color: #4f8cff;
+  color: #fff;
+}
+.welcome-recents {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 420px;
+  max-width: 80vw;
+}
+.welcome-recents button {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.welcome-recents button:hover {
+  background: #161618;
+}
+.recent-name {
+  font-weight: 500;
+}
+.recent-path {
+  font-size: 12px;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
