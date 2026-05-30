@@ -281,6 +281,16 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     const win = getWin()
     if (!win) throw new Error('pty:spawn — no window')
 
+    // Bug #13: a Restart can race the mount's deferred/adopt launch so two pty:spawn
+    // calls land under one id. Without this, sessions.set below overwrites the prior
+    // entry WITHOUT reaping its proc, dropping that process out of BOTH the sessions
+    // and parked maps so neither cleanup() nor disposeAllPtys() ever kills it (an
+    // orphaned agent child-tree). Reap any session already occupying this id first,
+    // turning the silent overwrite into a safe replace. (cleanup() deletes the entry
+    // synchronously, then tree-kills async; the displaced proc's later onExit no-ops
+    // via the isStaleExit guard.)
+    if (sessions.has(opts.id)) void cleanup(opts.id)
+
     const shell = opts.shell || enumerateShells()[0].path
     // Git Bash with no explicit args: launch as a login+interactive shell so it
     // sources its profile (otherwise PATH/prompt are bare under ConPTY).
