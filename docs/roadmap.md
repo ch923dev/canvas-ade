@@ -109,15 +109,39 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
   preset, own independent `WebContentsView`.
 - **Project create / open**: folder picker; `canvas.json` (+`.bak`, `schemaVersion`) via atomic write,
   debounced autosave + flush on blur/quit; recent-projects in `userData`; project switcher wired; migrations.
+
+> 🔗 **Related bug-hunt finding:** BUG-025 (load validation accepts non-positive / sub-`MIN_BOARD_SIZE`
+> geometry) touches this area but is not fully resolved by this work — see bug-hunt-findings/findings/BUG-025.md.
+> 🔗 **Related bug-hunt finding:** BUG-027 (`fromObject`/`migrate` return the input doc by reference, so loaded
+> store boards alias the caller's input) touches this area but is not fully resolved by this work —
+> see bug-hunt-findings/findings/BUG-027.md.
 - **Git worktrees**: opt-in toggle on create (reuse-if-exists, never nest-init); worktree per Terminal
   board; keep-on-disk + prompt on dirty delete; per-board port assignment for previews.
 - ✅📏 full reopen fidelity: zoom/pan/positions/contents/checklist state survive restart (integration test).
+
+> 💡 **Deferred feature — agentic session resume (own slice, post-Phase 3).** Restored Terminal
+> boards come back **idle** (fresh shell on Run; never auto-execute a stored command). A future
+> enhancement: persist a per-board session handle and resume the agent's prior conversation on Run
+> (e.g. `claude --resume <id>` / `claude -c`). Non-trivial + **agent-specific**: needs the session
+> id captured at runtime (scrape PTY output or read the CLI's session file) and a per-CLI resume
+> matrix, which cuts against the locked agent-agnostic `launchCommand`. Additive only — an optional
+> `resumeCommand?`/`sessionId?` field adds with **zero migration** when built, so nothing to reserve
+> now. Give it its own brainstorm + slice.
 
 ---
 
 ## Phase 4 — Design pass & polish ⛓ Phase 3
 
 - Apply every DESIGN.md token, board-chrome rule, state, and motion spec (+ `prefers-reduced-motion`).
+
+> 🐛 **Bug-hunt finding (auto-noted 2026-05-30):** The codebase bug hunt independently
+> confirmed a bug that this planned work is expected to fix.
+> - **Location:** `src/renderer/src/canvas/AppChrome.tsx`
+> - **Severity:** Low
+> - **What:** Fit (button + '1' key) snaps the camera instantly with no animation, violating the DESIGN.md §9 contract that fit animate 200ms (inconsistent with the animated Overview/Focus siblings).
+> - **Verification:** Code-path trace — `rf.fitView(FIT)` passes no `duration`, so `@xyflow/system` `setViewport` runs duration 0; sibling camera ops pass `{ duration: 200 }`.
+> - **Status:** Skipped from active fix queue; expected to be resolved by this phase.
+> - **Ref:** bug-hunt-findings/skipped-roadmap.md
 - **Polished** empty / loading / error states throughout (building on Phase 2's basic ones).
 - Harden CSP to nonce-based (drop `unsafe-inline`) for the packaged build. Load Geist / Geist Mono.
 - Code-split the renderer bundle (xterm / React Flow lazy where sensible).
