@@ -12,12 +12,13 @@ import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2eSmoke'
 import { startMcpServer, type RunningMcp } from './mcp'
+import { runMcpSmoke } from './mcpSmoke'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 
-const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "e2e"=board harness+quit
+const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "e2e"=board harness+quit, "mcp"=MCP tier smoke+quit
 
 // Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
 // pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
@@ -164,7 +165,12 @@ app.whenReady().then(async () => {
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
-      if (SMOKE === 'e2e') {
+      if (SMOKE === 'mcp') {
+        const code = await runMcpSmoke(mcp)
+        process.exitCode = code
+        await shutdown()
+        app.exit(code)
+      } else if (SMOKE === 'e2e') {
         const code = await runE2ESmoke(mainWindow!, localServer!.url)
         process.exitCode = code
         // app.exit() (not app.quit()): on Windows app.quit() ignores process.exitCode,
