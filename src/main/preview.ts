@@ -105,6 +105,39 @@ function openExternalSafe(rawUrl: string): void {
   if (isAllowedExternal(rawUrl)) void shell.openExternal(rawUrl)
 }
 
+/** A cancellable navigation event (the `event` arg of will-navigate/will-redirect). */
+interface CancellableNav {
+  preventDefault(): void
+}
+/** The `details` arg of will-frame-navigate (covers subframes via `url`). */
+interface FrameNavDetails extends CancellableNav {
+  url: string
+}
+/** The webContents surface the preview nav guards listen on (minimal, testable). */
+interface NavGuardTarget {
+  on(event: 'will-navigate', listener: (ev: CancellableNav, url: string) => void): unknown
+  on(event: 'will-redirect', listener: (ev: CancellableNav, url: string) => void): unknown
+  on(event: 'will-frame-navigate', listener: (details: FrameNavDetails) => void): unknown
+}
+
+/**
+ * Enforce the http(s)-only scheme allowlist (Bug #32) on EVERY page-driven navigation
+ * of the preview's native view: top-frame loads (`will-navigate`), 30x redirect legs
+ * (`will-redirect`), and subframe navigations (`will-frame-navigate`) — `will-navigate`
+ * alone misses the latter two (Bug #14). Mirrors the main-window guard (index.ts:89-95).
+ * Renderer-issued loads (`preview:open`/`preview:navigate`) are already gated at the
+ * IPC boundary, so the remaining surface is page-driven cross-document navigation.
+ * Extracted (and given a minimal target type) so it can be unit-tested with a fake wc.
+ */
+export function registerPreviewNavGuards(wc: NavGuardTarget): void {
+  const guard = (ev: CancellableNav, url: string): void => {
+    if (!isAllowedPreviewUrl(url)) ev.preventDefault()
+  }
+  wc.on('will-navigate', (ev, url) => guard(ev, url))
+  wc.on('will-redirect', (ev, url) => guard(ev, url))
+  wc.on('will-frame-navigate', (details) => guard(details, details.url))
+}
+
 function round(b: Rectangle): Rectangle {
   return {
     x: Math.round(b.x),
@@ -155,14 +188,12 @@ function ensure(id: string, win: BrowserWindow): Entry {
       openExternalSafe(url)
       return { action: 'deny' }
     })
-    // Defense-in-depth (Bug #16/#32): block an in-page link/script navigation to a
-    // disallowed scheme (file:/data:/external) so a previewed page can't turn the
-    // view into a general browser / file viewer. The URL bar drives navigation via
-    // `preview:navigate` → loadURL (already scheme-gated), not through this path, so
-    // legitimate localhost navigation is unaffected.
-    wc.on('will-navigate', (ev, url) => {
-      if (!isAllowedPreviewUrl(url)) ev.preventDefault()
-    })
+    // Defense-in-depth (Bug #16/#32/#14): block a page-driven navigation to a
+    // disallowed scheme (file:/data:/external) — top-frame, 30x redirect leg, and
+    // subframes — so a previewed page can't turn the view into a general browser /
+    // file viewer. The URL bar drives navigation via `preview:navigate` → loadURL
+    // (already scheme-gated), not through these, so legitimate localhost nav is fine.
+    registerPreviewNavGuards(wc)
     // A fresh main-frame navigation clears the failed latch — until proven otherwise
     // (a later did-fail-load), this load is assumed good. Tell the renderer too so a
     // stale `load-failed` latch is cleared and the following did-finish-load can

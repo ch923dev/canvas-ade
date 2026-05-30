@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   isErrorResponseCode,
   isHttpErrorCode,
   isAllowedPreviewUrl,
-  isAllowedExternal
+  isAllowedExternal,
+  registerPreviewNavGuards
 } from './preview'
 
 // Bug #5: a dead/refused URL loads a Chromium error page whose did-finish-load must
@@ -103,5 +104,68 @@ describe('isAllowedExternal', () => {
   it('rejects javascript: and a non-URL string', () => {
     expect(isAllowedExternal('javascript:alert(1)')).toBe(false)
     expect(isAllowedExternal('')).toBe(false)
+  })
+})
+
+// Bug #14: the preview's http(s)-only scheme guard was registered on will-navigate
+// only, so the 30x redirect leg (will-redirect) and subframe navigations
+// (will-frame-navigate) bypassed it — a previewed localhost origin could 302 the view
+// to file:/data:/custom and turn the sandboxed preview into a file viewer. The shared
+// guard is now wired onto all three events. This drives a fake webContents emitter to
+// assert preventDefault fires for a disallowed scheme on every guarded event and is
+// NOT called for an allowed http(s) target.
+describe('registerPreviewNavGuards', () => {
+  type Listener = (...args: unknown[]) => void
+
+  function fakeWc(): {
+    on: (event: string, listener: Listener) => unknown
+    emit: (event: string, ...args: unknown[]) => void
+  } {
+    const handlers = new Map<string, Listener>()
+    return {
+      on: (event, listener) => {
+        handlers.set(event, listener)
+        return undefined
+      },
+      emit: (event, ...args) => handlers.get(event)?.(...args)
+    }
+  }
+
+  it('preventDefaults a disallowed-scheme will-navigate (top frame)', () => {
+    const wc = fakeWc()
+    registerPreviewNavGuards(wc as never)
+    const ev = { preventDefault: vi.fn() }
+    wc.emit('will-navigate', ev, 'file:///C:/Windows/win.ini')
+    expect(ev.preventDefault).toHaveBeenCalledTimes(1)
+  })
+
+  it('preventDefaults a disallowed-scheme will-redirect (30x leg)', () => {
+    const wc = fakeWc()
+    registerPreviewNavGuards(wc as never)
+    const ev = { preventDefault: vi.fn() }
+    wc.emit('will-redirect', ev, 'file:///C:/Users/secret')
+    expect(ev.preventDefault).toHaveBeenCalledTimes(1)
+  })
+
+  it('preventDefaults a disallowed-scheme will-frame-navigate (subframe via details.url)', () => {
+    const wc = fakeWc()
+    registerPreviewNavGuards(wc as never)
+    const details = { url: 'data:text/html,<h1>x</h1>', preventDefault: vi.fn() }
+    wc.emit('will-frame-navigate', details)
+    expect(details.preventDefault).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT preventDefault an allowed http(s) target on any guarded event', () => {
+    const wc = fakeWc()
+    registerPreviewNavGuards(wc as never)
+    const nav = { preventDefault: vi.fn() }
+    wc.emit('will-navigate', nav, 'http://localhost:5173/app')
+    const redir = { preventDefault: vi.fn() }
+    wc.emit('will-redirect', redir, 'https://localhost:5173/next')
+    const frame = { url: 'http://127.0.0.1:3000/', preventDefault: vi.fn() }
+    wc.emit('will-frame-navigate', frame)
+    expect(nav.preventDefault).not.toHaveBeenCalled()
+    expect(redir.preventDefault).not.toHaveBeenCalled()
+    expect(frame.preventDefault).not.toHaveBeenCalled()
   })
 })
