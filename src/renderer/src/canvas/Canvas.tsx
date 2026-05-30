@@ -22,11 +22,13 @@ import {
 import {
   Background,
   BackgroundVariant,
+  MarkerType,
   ReactFlow,
   ReactFlowProvider,
   useOnViewportChange,
   useReactFlow,
   useStore,
+  type EdgeTypes,
   type NodeChange,
   type NodeTypes
 } from '@xyflow/react'
@@ -36,6 +38,8 @@ import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
+import { PreviewEdge } from './edges/PreviewEdge'
+import { previewEdges } from '../lib/previewEdges'
 import { BoardActionsContext, type BoardActions } from './boardActions'
 import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
@@ -47,6 +51,7 @@ import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
+const edgeTypes: EdgeTypes = { preview: PreviewEdge }
 const FIT_OPTIONS = { padding: 0.2, maxZoom: 1 } as const
 /** "Reset zoom" (0 / %): recenter on content pinned at 100% so it can't strand boards (#41). */
 const RESET_OPTIONS = { padding: 0.2, maxZoom: 1, minZoom: 1 } as const
@@ -117,6 +122,17 @@ function CanvasInner(): ReactElement {
         dragHandle: '.board-titlebar'
       })),
     [boards, selectedId, focusedId, fullViewId]
+  )
+
+  // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
+  // a Terminal. Decorated here with an arrowhead; the path is computed by PreviewEdge.
+  const edges = useMemo(
+    () =>
+      previewEdges(boards).map((e) => ({
+        ...e,
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#4f8cff', width: 16, height: 16 }
+      })),
+    [boards]
   )
 
   // Translate React Flow changes into store mutations. Position covers both node
@@ -310,8 +326,10 @@ function CanvasInner(): ReactElement {
         <div ref={paneRef} style={paneStyle}>
           <ReactFlow
             nodes={nodes}
+            edges={edges}
             onNodesChange={onNodesChange}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onPaneClick={clearSelection}
             onNodeDoubleClick={focusBoard}
             onNodeDragStart={onNodeDragStart}

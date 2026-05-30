@@ -10,7 +10,7 @@
  */
 import { useContext, useEffect, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
-import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
+import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
 import { BoardActionsContext } from './boardActions'
 import { FullViewContext } from './fullViewContext'
@@ -22,6 +22,27 @@ import { BoardFrame, type BoardStatus } from './BoardFrame'
 import { TerminalBoard } from './boards/TerminalBoard'
 import { BrowserBoard } from './boards/BrowserBoard'
 import { PlanningBoard } from './boards/PlanningBoard'
+
+/** Hidden, non-connectable anchor handles so RF can attach the preview edge to any
+ *  board without exposing a connection UX or stealing pointer events (Slice C′). */
+const HIDDEN_HANDLE = {
+  opacity: 0,
+  width: 1,
+  height: 1,
+  minWidth: 1,
+  minHeight: 1,
+  border: 'none',
+  background: 'transparent',
+  pointerEvents: 'none' as const
+}
+function EdgeAnchors(): ReactElement {
+  return (
+    <>
+      <Handle type="target" position={Position.Left} isConnectable={false} style={HIDDEN_HANDLE} />
+      <Handle type="source" position={Position.Right} isConnectable={false} style={HIDDEN_HANDLE} />
+    </>
+  )
+}
 
 export interface BoardNodeData extends Record<string, unknown> {
   board: Board
@@ -111,6 +132,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   if (lod && board.type !== 'terminal' && !fullView) {
     return (
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        <EdgeAnchors />
         <BoardFrame
           type={board.type}
           title={board.title}
@@ -142,6 +164,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
 
   return (
     <>
+      <EdgeAnchors />
       {/* Hidden in LOD: the design shows no resize handles on LOD cards. */}
       {!lod && (
         <NodeResizer
