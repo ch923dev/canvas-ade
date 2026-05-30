@@ -69,6 +69,10 @@ export function TerminalBoard({
   const fitRef = useRef<FitAddon | null>(null)
   const webglRef = useRef<WebglAddon | null>(null)
   const portRef = useRef<MessagePort | null>(null)
+  // #23: when a Restart happens while the well is unfitted (LOD/display:none),
+  // proposeDimensions has no finite dims yet, so we defer the actual respawn and
+  // let the spawn effect's ResizeObserver consume this flag on the first good fit.
+  const pendingRespawnRef = useRef(false)
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
@@ -140,6 +144,37 @@ export function TerminalBoard({
     if (lod) detachWebgl()
     else attachWebgl(term)
   }, [lod, attachWebgl, detachWebgl])
+
+  // Fire a fresh PTY spawn into the CURRENT term. Shared by the Restart action and
+  // the ResizeObserver's deferred-respawn path (#23). The async .then()/.catch()
+  // bail if the captured term was disposed/replaced mid-IPC (#16), and a rejected
+  // pty:spawn invoke surfaces the error instead of leaving the board stuck on
+  // 'spawning' (#11).
+  const respawn = useCallback(() => {
+    const term = termRef.current
+    if (!term) return
+    void window.api
+      .spawnTerminal({
+        id: board.id,
+        shell: board.shell,
+        cwd: board.cwd,
+        launchCommand: board.launchCommand,
+        cols: term.cols,
+        rows: term.rows
+      })
+      .then((res) => {
+        if (termRef.current !== term) return
+        if (res.state === 'spawn-failed') {
+          setState('spawn-failed')
+          term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
+        }
+      })
+      .catch((err: Error) => {
+        if (termRef.current !== term) return
+        setState('spawn-failed')
+        term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
+      })
+  }, [board.id, board.shell, board.cwd, board.launchCommand])
 
   // ── Bridge: spawn the PTY, wire the MessagePort, fit on resize ──────────────
   // Keyed by board id so re-mounts (LOD swaps, drags) reconnect the same session
@@ -234,6 +269,9 @@ export function TerminalBoard({
     let spawned = false
     let spawnAllowed = false
     let disposed = false
+    // A fresh mount supersedes any respawn parked by a Restart on the prior term
+    // incarnation (#23) — the initial launch() owns this term's first spawn.
+    pendingRespawnRef.current = false
     const launch = (): void => {
       if (spawned || !spawnAllowed) return
       const dims = fit.proposeDimensions()
@@ -281,6 +319,15 @@ export function TerminalBoard({
       // First good fit after a hidden/LOD mount spawns the deferred PTY at the
       // board's true width; later fits no-op (`spawned` guard) and just resize.
       launch()
+      // #23: a Restart issued while the well was unfitted parked a respawn; the
+      // first good fit (well now visible) drives it at the board's true width.
+      if (pendingRespawnRef.current) {
+        const dims = fit.proposeDimensions()
+        if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)) {
+          pendingRespawnRef.current = false
+          respawn()
+        }
+      }
     })
     ro.observe(el)
 
@@ -306,7 +353,7 @@ export function TerminalBoard({
       termRef.current = null
       fitRef.current = null
     }
-  }, [board.id, board.shell, board.cwd, board.launchCommand, attachWebgl, detachWebgl])
+  }, [board.id, board.shell, board.cwd, board.launchCommand, attachWebgl, detachWebgl, respawn])
 
   useEffect(() => spawn(), [spawn])
 
@@ -324,22 +371,25 @@ export function TerminalBoard({
     portRef.current = null
     term.reset()
     setState('spawning')
-    void window.api
-      .spawnTerminal({
-        id: board.id,
-        shell: board.shell,
-        cwd: board.cwd,
-        launchCommand: board.launchCommand,
-        cols: term.cols,
-        rows: term.rows
-      })
-      .then((res) => {
-        if (res.state === 'spawn-failed') {
-          setState('spawn-failed')
-          term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
-        }
-      })
-  }, [board.id, board.shell, board.cwd, board.launchCommand])
+    // #23: only spawn now if the well is laid out (finite proposed dims). A board
+    // restarted entirely under LOD has a display:none well where fit.fit() no-ops
+    // and term.cols/rows are the 80×24 default — spawning then sizes the PTY (and
+    // any launchCommand TUI) at the wrong width. Defer to the ResizeObserver's
+    // first good fit, mirroring the initial-spawn deferral.
+    const fit = fitRef.current
+    try {
+      fit?.fit()
+    } catch {
+      /* element not laid out yet */
+    }
+    const dims = fit?.proposeDimensions()
+    if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)) {
+      pendingRespawnRef.current = false
+      respawn()
+    } else {
+      pendingRespawnRef.current = true
+    }
+  }, [respawn])
 
   const status = statusFor(state, identity, running ? formatTimer(elapsed) : undefined)
 
