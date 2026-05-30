@@ -24,7 +24,12 @@
  */
 import { useCallback, useEffect, useRef, type ReactElement } from 'react'
 import { useReactFlow, useOnViewportChange } from '@xyflow/react'
-import { roundRect, worldRectToScreen, rectsEqual, fitZoomFactor } from '../../lib/cameraBounds'
+import {
+  roundRect,
+  worldRectToScreen,
+  rectsEqual,
+  fitZoomFactorForBounds
+} from '../../lib/cameraBounds'
 import type { Rect } from '../../lib/cameraBounds'
 import { LOD_ZOOM } from '../../lib/canvasView'
 import {
@@ -101,6 +106,9 @@ interface LayerProps {
 export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
+  // Patch ONLY an existing entry — for main-driven lifecycle events that may arrive
+  // after a board was deleted, so they can't resurrect a cleared orphan (Bug #32).
+  const patchRuntimeIfPresent = usePreviewStore((s) => s.patchIfPresent)
   const clearRuntime = usePreviewStore((s) => s.clear)
   // A board drag/resize is in progress (React Flow node-drag / NodeResizer). Unlike
   // a camera move it never fires useOnViewportChange, so we detach live views here.
@@ -143,10 +151,13 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   /** Zoom factor that holds the page at the preset CSS width (responsive trick). */
   const zoomFor = useCallback(
     (g: BoardGeom): number => {
-      const stage = deviceStageRect(g.w, g.h, g.viewport)
-      return fitZoomFactor(stage.width, preset(g.viewport).w, getViewport().zoom)
+      // Bug #20: derive the factor from the SAME rounded bounds width fed to
+      // setBounds (boundsFor) — NOT the un-rounded stage width — so the documented
+      // invariant bounds.width / zoomFactor === presetW holds exactly and the page
+      // lays out at precisely 390/834/1280 CSS px (no sub-pixel rounding drift).
+      return fitZoomFactorForBounds(boundsFor(g).width, preset(g.viewport).w)
     },
-    [getViewport, preset]
+    [boundsFor, preset]
   )
 
   // The board's device-stage rect in screen (pane-local + offset) space — the raw,
@@ -240,7 +251,16 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       const r = rec(g.id)
       if (!r.attached) return
       const seq = r.attachSeq
-      const url = await window.api.capturePreview(g.id)
+      // Bug #8/#9: a rejected capturePage() (headless / GPU-contended host) must NOT
+      // abort the detach — the native view paints above all HTML, so it MUST still be
+      // pulled out. Treat a capture failure like an empty snapshot (url = null) and
+      // proceed to the detach + state-clear regardless.
+      let url: string | null = null
+      try {
+        url = await window.api.capturePreview(g.id)
+      } catch {
+        url = null
+      }
       // Re-check after the capture IPC round-trip:
       //  • Bug #48 — the board may have been deleted mid-capture (reconcile removed
       //    its rec + cleared its runtime); patching here would resurrect an orphan.
@@ -292,6 +312,12 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
         r.lastUrl = g.url
         patchRuntime(g.id, { status: 'connecting', live: true })
         await window.api.openPreview({ id: g.id, url: g.url, bounds, zoomFactor })
+        // Bug #48/#30: the board may have been deleted during the open IPC round-trip
+        // (reconcile ran closeBoard + recs.delete + clearRuntime). Re-check existence
+        // before the trailing live:true patch — otherwise previewStore.patch
+        // (create-if-absent) resurrects a cleared entry with live:true, leaking it and
+        // inflating the live-view count. Mirrors demoteToSnapshot / beginMotion.
+        if (!recs.current.has(g.id)) return
       }
       patchRuntime(g.id, { live: true })
     },
@@ -350,21 +376,36 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     if (!live.length) return
     gestureRef.current = true
     void (async () => {
-      const shots = await Promise.all(live.map((g) => window.api.capturePreview(g.id)))
+      // Bug #8/#9: capture per-board with a per-item guard so ONE rejected
+      // capturePage() (headless / GPU-contended host) can't reject the whole batch and
+      // abort every board's detach. A failed/empty capture resolves to null → that
+      // board keeps its live native view (not detached blind) while the rest snapshot
+      // + detach normally.
+      const shots = await Promise.all(
+        live.map((g) => window.api.capturePreview(g.id).catch(() => null))
+      )
       if (!gestureRef.current) return // gesture ended before capture → keep live
       const captured: BoardGeom[] = []
+      // Snapshot each captured board's attachSeq BEFORE the detach await so a
+      // concurrent endMotion → applyLiveness → attachBoard reattach (which bumps
+      // attachSeq) is detected below and not clobbered (Bug #15).
+      const seqOf = new Map<string, number>()
       live.forEach((g, i) => {
         // Bug #48: a board deleted mid-capture had its rec removed + runtime cleared
         // by reconcile; patching here would resurrect an orphaned previewStore entry.
         if (shots[i] && recs.current.has(g.id)) {
           patchRuntime(g.id, { snapshot: shots[i] })
           captured.push(g)
+          seqOf.set(g.id, recs.current.get(g.id)!.attachSeq)
         }
       })
       await Promise.all(captured.map((g) => window.api.detachPreview(g.id)))
       captured.forEach((g) => {
         const r = recs.current.get(g.id)
-        if (!r) return // removed during the detach await (Bug #48)
+        // Bug #15/#48: skip the detach state-write if the board was removed (no rec),
+        // a concurrent attachBoard re-claimed it (attachSeq bumped), or the gesture
+        // already ended (endMotion now owns liveness) — otherwise we'd undo a reattach.
+        if (!r || r.attachSeq !== seqOf.get(g.id) || !gestureRef.current) return
         r.attached = false
         patchRuntime(g.id, { live: false })
       })
@@ -592,7 +633,30 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   // ── Lifecycle events from main (load / navigate / fail) → runtime store ────────
   useEffect(() => {
     const off = window.api.onPreviewEvent((ev) => {
+      // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
+      // Clear a stale `load-failed` latch so the following did-finish-load can promote
+      // to `connected` after a successful recovery load (Bug #5). The preload
+      // `PreviewEvent` union doesn't declare this additive variant, so compare via a
+      // widened string. Only clears the load-failed latch — the error page's OWN
+      // did-finish-load is still suppressed (main reuses the failed navigation and
+      // emits no fresh did-start-navigation for it).
+      if ((ev.type as string) === 'did-start-navigation') {
+        // Recovery only matters for a board that still has a live native view; ignore
+        // an in-flight nav-start for an evicted/deleted board (Bug #18/#32 — no rec, or
+        // its renderer was freed → don't resurrect or mutate a stale entry).
+        if (!recs.current.get(ev.id)?.exists) return
+        const cur = usePreviewStore.getState().byId[ev.id]?.status
+        if (cur === 'load-failed') patchRuntime(ev.id, { status: 'connecting', error: null })
+        return
+      }
       if (ev.type === 'did-finish-load') {
+        // Bug #18: reconcile against the lifecycle before promoting. An over-cap-evicted
+        // board (closeBoard cleared exists/attached + live, but left status 'connecting')
+        // whose load completes just as its view is closed would otherwise flip to a green
+        // 'connected' over a detached snapshot with no live view. Skip when there is no
+        // live native view (rec gone or its renderer was freed). This also avoids
+        // resurrecting a cleared runtime entry for a just-deleted board (Bug #32).
+        if (!recs.current.get(ev.id)?.exists) return
         // Respect a prior load-failed: a dead/refused URL loads a Chromium error page
         // whose own did-finish-load must not flip the board back to "connected"
         // (Bug #5). Main already latches `failed` and suppresses the emit in that
@@ -602,17 +666,19 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
         if (cur === 'load-failed') return
         patchRuntime(ev.id, { status: 'connected', liveUrl: ev.url, error: null })
       } else if (ev.type === 'did-navigate') {
-        patchRuntime(ev.id, {
+        // Bug #32: patch ONLY if the entry still exists — an in-flight nav event that
+        // arrives after the board was deleted must not resurrect a cleared orphan.
+        patchRuntimeIfPresent(ev.id, {
           liveUrl: ev.url,
           canGoBack: ev.canGoBack,
           canGoForward: ev.canGoForward
         })
       } else if (ev.type === 'did-fail-load') {
-        patchRuntime(ev.id, { status: 'load-failed', error: ev.errorDescription })
+        patchRuntimeIfPresent(ev.id, { status: 'load-failed', error: ev.errorDescription })
       }
     })
     return off
-  }, [patchRuntime])
+  }, [patchRuntime, patchRuntimeIfPresent])
 
   // Tear down on unmount (HMR / route change): stop the pump + close every view.
   useEffect(

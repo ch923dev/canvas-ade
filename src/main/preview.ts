@@ -11,6 +11,10 @@ export type PreviewEvent =
   | { id: string; type: 'did-finish-load'; url: string }
   | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
   | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
+  // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
+  // Lets the renderer clear a stale `load-failed` latch so the following
+  // did-finish-load can promote to `connected` (Bug #5).
+  | { id: string; type: 'did-start-navigation' }
 
 /**
  * PreviewManager (1-E): N native WebContentsViews keyed by board id, synced to the
@@ -101,6 +105,39 @@ function openExternalSafe(rawUrl: string): void {
   if (isAllowedExternal(rawUrl)) void shell.openExternal(rawUrl)
 }
 
+/** A cancellable navigation event (the `event` arg of will-navigate/will-redirect). */
+interface CancellableNav {
+  preventDefault(): void
+}
+/** The `details` arg of will-frame-navigate (covers subframes via `url`). */
+interface FrameNavDetails extends CancellableNav {
+  url: string
+}
+/** The webContents surface the preview nav guards listen on (minimal, testable). */
+interface NavGuardTarget {
+  on(event: 'will-navigate', listener: (ev: CancellableNav, url: string) => void): unknown
+  on(event: 'will-redirect', listener: (ev: CancellableNav, url: string) => void): unknown
+  on(event: 'will-frame-navigate', listener: (details: FrameNavDetails) => void): unknown
+}
+
+/**
+ * Enforce the http(s)-only scheme allowlist (Bug #32) on EVERY page-driven navigation
+ * of the preview's native view: top-frame loads (`will-navigate`), 30x redirect legs
+ * (`will-redirect`), and subframe navigations (`will-frame-navigate`) — `will-navigate`
+ * alone misses the latter two (Bug #14). Mirrors the main-window guard (index.ts:89-95).
+ * Renderer-issued loads (`preview:open`/`preview:navigate`) are already gated at the
+ * IPC boundary, so the remaining surface is page-driven cross-document navigation.
+ * Extracted (and given a minimal target type) so it can be unit-tested with a fake wc.
+ */
+export function registerPreviewNavGuards(wc: NavGuardTarget): void {
+  const guard = (ev: CancellableNav, url: string): void => {
+    if (!isAllowedPreviewUrl(url)) ev.preventDefault()
+  }
+  wc.on('will-navigate', (ev, url) => guard(ev, url))
+  wc.on('will-redirect', (ev, url) => guard(ev, url))
+  wc.on('will-frame-navigate', (details) => guard(details, details.url))
+}
+
 function round(b: Rectangle): Rectangle {
   return {
     x: Math.round(b.x),
@@ -151,18 +188,23 @@ function ensure(id: string, win: BrowserWindow): Entry {
       openExternalSafe(url)
       return { action: 'deny' }
     })
-    // Defense-in-depth (Bug #16/#32): block an in-page link/script navigation to a
-    // disallowed scheme (file:/data:/external) so a previewed page can't turn the
-    // view into a general browser / file viewer. The URL bar drives navigation via
-    // `preview:navigate` → loadURL (already scheme-gated), not through this path, so
-    // legitimate localhost navigation is unaffected.
-    wc.on('will-navigate', (ev, url) => {
-      if (!isAllowedPreviewUrl(url)) ev.preventDefault()
-    })
+    // Defense-in-depth (Bug #16/#32/#14): block a page-driven navigation to a
+    // disallowed scheme (file:/data:/external) — top-frame, 30x redirect leg, and
+    // subframes — so a previewed page can't turn the view into a general browser /
+    // file viewer. The URL bar drives navigation via `preview:navigate` → loadURL
+    // (already scheme-gated), not through these, so legitimate localhost nav is fine.
+    registerPreviewNavGuards(wc)
     // A fresh main-frame navigation clears the failed latch — until proven otherwise
-    // (a later did-fail-load), this load is assumed good.
+    // (a later did-fail-load), this load is assumed good. Tell the renderer too so a
+    // stale `load-failed` latch is cleared and the following did-finish-load can
+    // promote to `connected` after a successful reload/back/forward (Bug #5). This
+    // does NOT fire for Chromium's error-page commit (it reuses the failed
+    // navigation, no new did-start-navigation), so the error page's own
+    // did-finish-load suppression is preserved.
     wc.on('did-start-navigation', (details) => {
-      if (details.isMainFrame) e!.failed = false
+      if (!details.isMainFrame) return
+      e!.failed = false
+      emit({ id, type: 'did-start-navigation' })
     })
     // Re-apply the held zoom factor after each load so the page keeps laying out at
     // its fixed CSS width W (otherwise a load resets the factor to 1). ALWAYS re-apply
@@ -327,8 +369,16 @@ export function registerPreviewHandlers(
   ipcMain.handle('preview:capture', async (_e, id: string) => {
     const e = views.get(id)
     if (!e || !e.attached) return null
-    const img = await e.view.webContents.capturePage()
-    return img.isEmpty() ? null : img.toDataURL()
+    try {
+      const img = await e.view.webContents.capturePage()
+      return img.isEmpty() ? null : img.toDataURL()
+    } catch {
+      // No composited display surface (headless / GPU-contended host, e.g. several
+      // Electron instances at once) or the view was closed mid-capture: capturePage
+      // rejects. Return null (treated as "no snapshot") rather than letting the
+      // rejection propagate to the renderer await and skip its detach (Bug #9).
+      return null
+    }
   })
 
   ipcMain.handle('preview:detach', (_e, id: string) => {
