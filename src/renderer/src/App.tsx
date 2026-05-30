@@ -1,5 +1,6 @@
 import Canvas from './canvas/Canvas'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
+import { useMcpPublish } from './store/useMcpPublish'
 
 /**
  * App root = the full-bleed canvas. The old tab harness (Phase 0–1 smoke) is gone;
@@ -9,6 +10,7 @@ import { useRendererSmoke } from './smoke/useRendererSmoke'
  */
 function App(): React.ReactElement {
   useRendererSmoke()
+  useMcpPublish()
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
       <Canvas />
