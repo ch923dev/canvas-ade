@@ -9,9 +9,11 @@
  * dispatch back into this file.
  */
 import { useContext, useEffect, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
 import { BoardActionsContext } from './boardActions'
+import { FullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
@@ -68,6 +70,8 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
   const acts = useContext(BoardActionsContext)
+  const fullViewHost = useContext(FullViewContext)
+  const fullView = data.fullView ?? false
   const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
   const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
   const onDelete = acts ? (): void => acts.remove(board.id) : undefined
@@ -106,6 +110,20 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   }
 
   const common = { selected, hovered, dimmed }
+  const subtree = (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ position: 'absolute', inset: 0 }}
+    >
+      {board.type === 'terminal' && (
+        <TerminalBoard board={board} lod={lod} {...common} {...actions} />
+      )}
+      {board.type === 'browser' && <BrowserBoard board={board} {...common} {...actions} />}
+      {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+    </div>
+  )
+
   return (
     <>
       {/* Hidden in LOD: the design shows no resize handles on LOD cards. */}
@@ -126,17 +144,11 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
-      <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{ position: 'absolute', inset: 0 }}
-      >
-        {board.type === 'terminal' && (
-          <TerminalBoard board={board} lod={lod} {...common} {...actions} />
-        )}
-        {board.type === 'browser' && <BrowserBoard board={board} {...common} {...actions} />}
-        {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
-      </div>
+      {/* In full view the SAME subtree element is portaled into the modal host →
+          React relocates (not remounts) it, so the live PTY/xterm and planning
+          elements survive. The on-canvas NodeResizer stays put (empty handle frame
+          behind the scrim — harmless). */}
+      {fullView && fullViewHost ? createPortal(subtree, fullViewHost) : subtree}
     </>
   )
 }

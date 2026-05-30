@@ -37,6 +37,8 @@ import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { BoardActionsContext, type BoardActions } from './boardActions'
+import { FullViewModal } from './FullViewModal'
+import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
@@ -92,6 +94,9 @@ function CanvasInner(): ReactElement {
   // Board shown in the full-view modal (Task 5 feeds this to node data; Task 6 renders
   // the modal). Tracked here so the ⋯ menu's Full view can set it immediately.
   const [fullViewId, setFullViewId] = useState<string | null>(null)
+  // The modal's portal host element — the full-view BoardNode portals its live subtree
+  // into this so the board is relocated (not remounted) and its session survives.
+  const [fullViewHost, setFullViewHost] = useState<HTMLElement | null>(null)
   const [diag, setDiag] = useState(import.meta.env.DEV)
 
   // Controlled nodes: one React Flow node per board, selection + dim mirrored from
@@ -296,41 +301,48 @@ function CanvasInner(): ReactElement {
     // (status flips welcome/loading → open on each load) — viewport is read live.
   }, [projectStatus, rf])
 
+  const fullViewBoard = fullViewId ? boards.find((b) => b.id === fullViewId) : undefined
+
   return (
     <BoardActionsContext.Provider value={boardActions}>
-      <div ref={paneRef} style={paneStyle}>
-        <ReactFlow
-          nodes={nodes}
-          onNodesChange={onNodesChange}
-          nodeTypes={nodeTypes}
-          onPaneClick={clearSelection}
-          onNodeDoubleClick={focusBoard}
-          onNodeDragStart={onNodeDragStart}
-          onNodeDragStop={onNodeDragStop}
-          minZoom={Z_MIN}
-          maxZoom={Z_MAX}
-          fitView
-          fitViewOptions={FIT_OPTIONS}
-          panOnScroll
-          zoomActivationKeyCode={['Meta', 'Control']}
-          deleteKeyCode={['Backspace', 'Delete']}
-          proOptions={{ hideAttribution: true }}
-          style={{ width: '100%', height: '100%' }}
-        >
-          <FadingDots />
-          {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
+      <FullViewContext.Provider value={fullViewHost}>
+        <div ref={paneRef} style={paneStyle}>
+          <ReactFlow
+            nodes={nodes}
+            onNodesChange={onNodesChange}
+            nodeTypes={nodeTypes}
+            onPaneClick={clearSelection}
+            onNodeDoubleClick={focusBoard}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDragStop={onNodeDragStop}
+            minZoom={Z_MIN}
+            maxZoom={Z_MAX}
+            fitView
+            fitViewOptions={FIT_OPTIONS}
+            panOnScroll
+            zoomActivationKeyCode={['Meta', 'Control']}
+            deleteKeyCode={['Backspace', 'Delete']}
+            proOptions={{ hideAttribution: true }}
+            style={{ width: '100%', height: '100%' }}
+          >
+            <FadingDots />
+            {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
             <ReactFlow> so it can read the live camera (useReactFlow /
             useOnViewportChange) and sync every Browser board's native
             WebContentsView to the camera. Renders nothing (returns null); it owns
             the native-view lifecycle only. The Browser board is the sole board type
             allowed to touch this file. */}
-          <BrowserPreviewLayer paneRef={paneRef} focusedId={focusedId} />
-        </ReactFlow>
+            <BrowserPreviewLayer paneRef={paneRef} focusedId={focusedId} />
+          </ReactFlow>
 
-        {boards.length === 0 && <EmptyState onAdd={addCentered} />}
-        <AppChrome onAdd={addCentered} />
-        {diag && <DiagOverlay liveViews={liveViews} />}
-      </div>
+          {boards.length === 0 && <EmptyState onAdd={addCentered} />}
+          <AppChrome onAdd={addCentered} />
+          {diag && <DiagOverlay liveViews={liveViews} />}
+        </div>
+        {fullViewBoard && (
+          <FullViewModal onClose={() => setFullViewId(null)} onHost={setFullViewHost} />
+        )}
+      </FullViewContext.Provider>
     </BoardActionsContext.Provider>
   )
 }
