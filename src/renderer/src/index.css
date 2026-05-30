@@ -583,7 +583,9 @@ body {
   gap: 16px;
   background: var(--bg, #0a0a0b);
   color: #e6e6e6;
-  font: 14px/1.5 system-ui, sans-serif;
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
 }
 .welcome h1 {
   font-size: 22px;
@@ -641,4 +643,42 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Project switcher (top-left chrome dropdown) ── */
+.project-switcher {
+  position: relative;
+}
+.project-switcher-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  min-width: 220px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 60;
+  box-shadow: var(--shadow-pop);
+}
+.project-switcher-menu button {
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.project-switcher-menu button:hover {
+  background: var(--surface-overlay);
+}
+.project-switcher-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 0;
 }
