@@ -125,10 +125,32 @@ export function NoteCard({
           // Suppress the empty-note blur-prune this gesture is about to trigger.
           dragging.current = true
           onDragStart(e, note.id)
-          // Clear after the synchronous blur has had a chance to fire.
-          setTimeout(() => {
+          // The well captures the pointer, so the grip never sees move/up. Track the
+          // gesture on the document to tell a real drag from a zero-movement press:
+          // on a press with NO movement the empty-note blur-prune was skipped (the
+          // `dragging` guard) AND the note never re-focuses, so it would orphan
+          // permanently — re-check and prune it on pointer-up (#BUG-029/BUG-026).
+          const startX = e.clientX
+          const startY = e.clientY
+          let moved = false
+          const onMove = (ev: PointerEvent): void => {
+            if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true
+          }
+          const onUp = (): void => {
+            document.removeEventListener('pointermove', onMove)
+            document.removeEventListener('pointerup', onUp)
+            document.removeEventListener('pointercancel', onUp)
             dragging.current = false
-          }, 0)
+            // Read the live DOM value (controlled → current store text) so a note
+            // that gained content during the gesture is never pruned.
+            const text = ref.current?.value ?? note.text
+            if (!moved && text.trim() === '' && document.activeElement !== ref.current) {
+              onDelete(note.id)
+            }
+          }
+          document.addEventListener('pointermove', onMove)
+          document.addEventListener('pointerup', onUp)
+          document.addEventListener('pointercancel', onUp)
         }}
         style={{ position: 'relative', padding: '9px 11px' }}
       >
