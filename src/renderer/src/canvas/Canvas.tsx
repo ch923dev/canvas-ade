@@ -171,13 +171,18 @@ function CanvasInner(): ReactElement {
   // Undo/redo clears store selection (canvasStore) but focus is local component
   // state — clearing it here keeps focus following selection so undo/redo can't
   // leave others dimmed with no ringed/selected board (#30 / #38, same defect).
+  // Only drop focus when undo/redo actually mutates the boards — on an empty stack
+  // they are true no-ops (return state unchanged) and must not silently exit focus
+  // mode (#BUG-019). The boards array ref changes iff a real transition occurred.
   const doUndo = useCallback(() => {
+    const before = useCanvasStore.getState().boards
     undo()
-    setFocusedId(null)
+    if (useCanvasStore.getState().boards !== before) setFocusedId(null)
   }, [undo])
   const doRedo = useCallback(() => {
+    const before = useCanvasStore.getState().boards
     redo()
-    setFocusedId(null)
+    if (useCanvasStore.getState().boards !== before) setFocusedId(null)
   }, [redo])
 
   // Heal a stale focus (e.g. after undoing the focused board's creation): if the
