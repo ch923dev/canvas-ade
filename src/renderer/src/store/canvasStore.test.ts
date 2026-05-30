@@ -64,6 +64,15 @@ describe('addBoard', () => {
     const positions = get().boards.map((b) => `${b.x},${b.y}`)
     expect(new Set(positions).size).toBe(3)
   })
+
+  it('places a co-located add in free space so it never overlaps an existing board', () => {
+    get().addBoard('browser', { x: 0, y: 0 })
+    get().addBoard('browser', { x: 0, y: 0 }) // dropped on the same spot
+    const [a, b] = get().boards
+    const overlap =
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    expect(overlap).toBe(false)
+  })
 })
 
 describe('removeBoard', () => {
