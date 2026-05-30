@@ -24,6 +24,7 @@ import {
   BackgroundVariant,
   ReactFlow,
   ReactFlowProvider,
+  useOnViewportChange,
   useReactFlow,
   useStore,
   type NodeChange,
@@ -74,6 +75,8 @@ function CanvasInner(): ReactElement {
   const beginChange = useCanvasStore((s) => s.beginChange)
   const undo = useCanvasStore((s) => s.undo)
   const redo = useCanvasStore((s) => s.redo)
+  const setViewport = useCanvasStore((s) => s.setViewport)
+  const projectStatus = useCanvasStore((s) => s.project.status)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -237,6 +240,24 @@ function CanvasInner(): ReactElement {
   useEffect(() => {
     if (isE2E()) installE2EHooks(rf)
   }, [rf])
+
+  // Capture the live camera into the (untracked) store so autosave persists it.
+  // onChange fires on the rAF-coalesced camera updates React Flow emits — no new
+  // pump, and writing setViewport won't pollute undo history.
+  useOnViewportChange({
+    onChange: (vp) => setViewport({ x: vp.x, y: vp.y, zoom: vp.zoom })
+  })
+
+  // Apply the stored camera when a project becomes `open` (restore on load/switch);
+  // fall back to fitView when there's no persisted viewport (fit-on-load).
+  useEffect(() => {
+    if (projectStatus !== 'open') return
+    const vp = useCanvasStore.getState().viewport
+    if (vp) void rf.setViewport(vp)
+    else void rf.fitView(FIT_OPTIONS)
+    // Deps are intentionally just [projectStatus, rf]: this fires once per open
+    // (status flips welcome/loading → open on each load) — viewport is read live.
+  }, [projectStatus, rf])
 
   return (
     <div ref={paneRef} style={paneStyle}>
