@@ -309,9 +309,12 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     proc.onData((d) => {
       buf.data = appendRing(buf.data, d, RING_CAP_BYTES)
       // Forward to the current live port (looked up at fire time, so it follows an
-      // adopt onto the new port); none while parked → guard the post.
+      // adopt onto the new port); none while parked → guard the post. Identity
+      // guard `live.proc === proc`: a dying OLD proc keeps draining bytes for up to
+      // ~1s after kill() (node-pty's flush window), and without this check those
+      // late bytes would bleed into a freshly-restarted session under the same id.
       const live = sessions.get(opts.id)
-      if (live) {
+      if (live && live.proc === proc) {
         try {
           live.port.postMessage({ t: 'data', d })
         } catch {
