@@ -146,6 +146,14 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 
 - Apply every DESIGN.md token, board-chrome rule, state, and motion spec (+ `prefers-reduced-motion`).
 
+> 🎬 **Deferred polish — Full view enter/exit animation (noted 2026-05-30, Slice B).** Full view
+> (`FullViewModal`, branch `phase-3-board-actions`) currently opens/closes **instantly** — no
+> transition. Add a motion pass here: scrim fade-in + the frame scale/opacity in from the board's
+> on-canvas rect (and reverse on close), honoring `prefers-reduced-motion`. Intentionally cut from
+> Slice B (which shipped the live portal-relocation mechanics, not the motion). Note: a Browser
+> board's native `WebContentsView` cannot be CSS-animated (it's an OS layer) — animate the HTML
+> scrim/frame; the native view snaps to its final bounds (or carries the transition via its snapshot).
+
 > 🐛 **Bug-hunt finding (auto-noted 2026-05-30):** The codebase bug hunt independently
 > confirmed a bug that this planned work is expected to fix.
 > - **Location:** `src/renderer/src/canvas/AppChrome.tsx`
