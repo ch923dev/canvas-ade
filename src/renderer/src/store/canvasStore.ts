@@ -21,6 +21,7 @@ import {
   DEFAULT_BOARD_SIZE
 } from '../lib/boardSchema'
 import { recordPast, applyUndo, applyRedo } from './history'
+import { nextViewport } from '../lib/viewportCycle'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -67,6 +68,8 @@ export interface CanvasState {
   addBoard: (type: BoardType, at: { x: number; y: number }) => string
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
+  /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
+  duplicateBoard: (id: string) => string | null
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
@@ -188,6 +191,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       boards: s.boards.filter((b) => b.id !== id),
       selectedId: s.selectedId === id ? null : s.selectedId
     })),
+
+  duplicateBoard: (id) => {
+    const src = get().boards.find((b) => b.id === id)
+    if (!src) return null
+    const cloneId = newId()
+    const clone = structuredClone(src)
+    clone.id = cloneId
+    clone.x = src.x + 36
+    clone.y = src.y + 36
+    delete clone.z // re-stacks on top via array order, like a freshly added board
+    if (clone.type === 'browser') clone.viewport = nextViewport(clone.viewport)
+    if (clone.type === 'planning') {
+      clone.elements = clone.elements.map((e) => ({ ...structuredClone(e), id: newId() }))
+    }
+    set((s) => ({
+      past: recordPast(s.past, s.boards),
+      future: [],
+      boards: [...s.boards, clone],
+      selectedId: cloneId
+    }))
+    return cloneId
+  },
 
   updateBoard: (id, patch) =>
     set((s) => {
