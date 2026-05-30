@@ -40,6 +40,8 @@ import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { previewEdges } from '../lib/previewEdges'
+import { resolvePreviewTarget } from '../lib/previewTarget'
+import type { Board } from '../lib/boardSchema'
 import { BoardActionsContext, type BoardActions } from './boardActions'
 import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
@@ -219,6 +221,22 @@ function CanvasInner(): ReactElement {
         setFullViewId((f) => (f === id ? null : f))
         removeBoard(id)
         setFocusedId((f) => (f === id ? null : f))
+      },
+      pushPreview: (fromBoardId, url) => {
+        const st = useCanvasStore.getState()
+        const from = st.boards.find((b) => b.id === fromBoardId)
+        if (!from) return
+        const target = resolvePreviewTarget(st.boards, st.selectedId, fromBoardId)
+        const patch = { url, previewSourceId: fromBoardId } as Partial<Board>
+        if (target.kind === 'existing') {
+          st.updateBoard(target.id, patch)
+          st.selectBoard(target.id)
+        } else {
+          const id = st.addBoard('browser', { x: from.x + from.w + 40, y: from.y })
+          st.updateBoard(id, patch)
+          st.selectBoard(id)
+        }
+        setFullViewId(null)
       }
     }),
     [duplicateBoard, removeBoard]

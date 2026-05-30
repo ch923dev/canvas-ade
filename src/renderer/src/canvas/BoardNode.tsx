@@ -80,6 +80,8 @@ export interface BoardViewProps<T extends Board = Board> {
   onDuplicate?: () => void
   /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
   onDelete?: () => void
+  /** Terminal "Preview" action → open/point a linked Browser board at `url`. */
+  onPushPreview?: (url: string) => void
 }
 
 /** Status dot shown on the LOD card (no label at LOD). */
@@ -103,7 +105,8 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
   const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
   const onDelete = acts ? (): void => acts.remove(board.id) : undefined
-  const actions = { onFull, onDuplicate, onDelete }
+  const onPushPreview = acts ? (url: string): void => acts.pushPreview(board.id, url) : undefined
+  const actions = { onFull, onDuplicate, onDelete, onPushPreview }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
