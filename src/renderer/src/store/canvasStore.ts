@@ -25,6 +25,18 @@ import { recordPast, applyUndo, applyRedo } from './history'
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
 
+export type ProjectStatus = 'welcome' | 'loading' | 'open' | 'error'
+export interface ProjectState {
+  dir: string | null
+  name: string | null
+  status: ProjectStatus
+  error?: string
+}
+/** Result of a project open/create IPC call (mirrors preload `ProjectResult`). */
+export type OpenResult =
+  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: false; error: string }
+
 export interface CanvasState {
   boards: Board[]
   selectedId: string | null
@@ -34,6 +46,12 @@ export interface CanvasState {
   future: Board[][]
   /** Persisted camera transform (null = not yet captured / fit on load). */
   viewport: CanvasViewport | null
+  /** Current project lifecycle (welcome/loading/open/error). */
+  project: ProjectState
+  /** Apply an open/create IPC result: load on ok, set error otherwise (no clobber). */
+  applyOpenResult: (r: OpenResult) => void
+  /** Mark the project as loading (suppresses autosave mid-switch). */
+  setProjectLoading: () => void
 
   /** Add a board of `type` at a world position; selects it; returns its new id. */
   addBoard: (type: BoardType, at: { x: number; y: number }) => string
@@ -138,6 +156,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   past: [],
   future: [],
   viewport: null,
+  project: { dir: null, name: null, status: 'welcome' },
 
   addBoard: (type, at) => {
     const id = newId()
@@ -243,5 +262,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   loadObject: (doc) => {
     const d = fromObject(doc)
     set({ boards: d.boards, viewport: d.viewport, selectedId: null, past: [], future: [] })
+  },
+  setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
+  applyOpenResult: (r) => {
+    if (!r.ok) {
+      set((s) => ({ project: { ...s.project, status: 'error', error: r.error } }))
+      return
+    }
+    const d = fromObject(r.doc)
+    set({
+      boards: d.boards,
+      viewport: d.viewport,
+      selectedId: null,
+      past: [],
+      future: [],
+      project: { dir: r.dir, name: r.name, status: 'open' }
+    })
   }
 }))

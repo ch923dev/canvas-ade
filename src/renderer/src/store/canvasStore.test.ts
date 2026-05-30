@@ -293,3 +293,41 @@ describe('canvasStore — viewport', () => {
     expect(s.viewport).toEqual({ x: 7, y: 8, zoom: 2 })
   })
 })
+
+describe('canvasStore — project lifecycle', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({
+      boards: [],
+      viewport: null,
+      selectedId: null,
+      past: [],
+      future: [],
+      project: { dir: null, name: null, status: 'welcome' }
+    })
+  })
+
+  it('defaults to welcome status', () => {
+    expect(useCanvasStore.getState().project.status).toBe('welcome')
+  })
+
+  it('applyOpenResult(ok) loads the doc and marks open', () => {
+    useCanvasStore.getState().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: { schemaVersion: 2, viewport: { x: 1, y: 2, zoom: 1 }, boards: [] }
+    })
+    const s = useCanvasStore.getState()
+    expect(s.project).toEqual({ dir: 'C:/p', name: 'p', status: 'open' })
+    expect(s.viewport).toEqual({ x: 1, y: 2, zoom: 1 })
+  })
+
+  it('applyOpenResult(error) sets error status without clobbering boards', () => {
+    useCanvasStore.setState({ boards: [{ id: 'x', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }] as never })
+    useCanvasStore.getState().applyOpenResult({ ok: false, error: 'bad' })
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.project.error).toBe('bad')
+    expect(s.boards).toHaveLength(1) // untouched
+  })
+})
