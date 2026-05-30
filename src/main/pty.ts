@@ -123,8 +123,14 @@ function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number
   const { port1, port2 } = new MessageChannelMain()
   port1.on('message', (e) => {
     const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-    if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
-    else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+    // Guard as in the spawn handler: a write/resize on an exited pty throws and
+    // would escape to uncaughtException → app.exit(1). Swallow it.
+    try {
+      if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
+      else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+    } catch {
+      /* pty already exited */
+    }
   })
   port1.start()
 
@@ -335,8 +341,16 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     port1.on('message', (e) => {
       const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-      if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
-      else if (m.t === 'resize' && m.cols && m.rows) proc.resize(m.cols, m.rows)
+      // node-pty's write/resize THROW on an exited-but-not-yet-reaped pty
+      // (resize: 'Cannot resize a pty that has already exited'). The throw would
+      // escape this EventEmitter listener as an uncaughtException → app.exit(1),
+      // crashing the whole app — so swallow it (the session is being torn down).
+      try {
+        if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
+        else if (m.t === 'resize' && m.cols && m.rows) proc.resize(m.cols, m.rows)
+      } catch {
+        /* pty already exited */
+      }
     })
     port1.start()
 
