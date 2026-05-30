@@ -76,9 +76,7 @@ export const usePreviewStore = create<PreviewState>((set) => ({
       byId: { ...s.byId, [id]: { ...DEFAULT_RUNTIME, ...s.byId[id], ...patch } }
     })),
   patchIfPresent: (id, patch) =>
-    set((s) =>
-      id in s.byId ? { byId: { ...s.byId, [id]: { ...s.byId[id], ...patch } } } : s
-    ),
+    set((s) => (id in s.byId ? { byId: { ...s.byId, [id]: { ...s.byId[id], ...patch } } } : s)),
   clear: (id) =>
     set((s) => {
       if (!(id in s.byId)) return s

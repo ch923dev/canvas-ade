@@ -410,7 +410,9 @@ describe('fromObject geometry validation', () => {
       elements: [note]
     })
     expect(() =>
-      fromObject(wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: -10, h: 0, text: 'hi', tint: 'yellow' })))
+      fromObject(
+        wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: -10, h: 0, text: 'hi', tint: 'yellow' }))
+      )
     ).toThrow()
   })
 
@@ -423,7 +425,9 @@ describe('fromObject geometry validation', () => {
       y: 0,
       w: 300,
       h: 200,
-      elements: [{ id: 'c1', kind: 'checklist', x: 0, y: 0, w: 220, h: 0, title: 'Tasks', items: [] }]
+      elements: [
+        { id: 'c1', kind: 'checklist', x: 0, y: 0, w: 220, h: 0, title: 'Tasks', items: [] }
+      ]
     }
     expect(() => fromObject(wrap(planning))).not.toThrow()
   })

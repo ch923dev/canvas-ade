@@ -69,8 +69,7 @@ describe('addBoard', () => {
     get().addBoard('browser', { x: 0, y: 0 })
     get().addBoard('browser', { x: 0, y: 0 }) // dropped on the same spot
     const [a, b] = get().boards
-    const overlap =
-      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
     expect(overlap).toBe(false)
   })
 })
