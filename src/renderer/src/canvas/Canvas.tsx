@@ -191,7 +191,8 @@ function CanvasInner(): ReactElement {
   // live session then removes the board (mirrors the React Flow delete path).
   const boardActions = useMemo<BoardActions>(
     () => ({
-      requestFullView: (id) => setFullViewId(id),
+      // Maximize (⤢) toggles: open full view, or exit if this board is already full-view.
+      requestFullView: (id) => setFullViewId((cur) => (cur === id ? null : id)),
       duplicate: (id) => {
         setFullViewId(null)
         duplicateBoard(id)

@@ -733,36 +733,6 @@ body {
     0 0 0 1.5px var(--accent),
     var(--shadow-board);
 }
-.fullview-band {
-  flex: none;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border-subtle);
-}
-.fullview-label {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: var(--text-3);
-}
-.fullview-close {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-3);
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-ctl);
-  padding: 3px 8px;
-  cursor: pointer;
-}
-.fullview-close:hover {
-  color: var(--text);
-  border-color: var(--border);
-}
 .fullview-host {
   flex: 1;
   position: relative;
