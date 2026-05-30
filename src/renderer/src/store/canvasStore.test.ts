@@ -169,7 +169,7 @@ describe('serialization bridge', () => {
   it('loadObject() replaces boards and clears selection', () => {
     get().addBoard('terminal', { x: 0, y: 0 })
     get().selectBoard(get().boards[0].id)
-    const incoming = toObject([createBoard('browser', { id: 'b1', x: 0, y: 0 })])
+    const incoming = toObject([createBoard('browser', { id: 'b1', x: 0, y: 0 })], null)
     get().loadObject(incoming)
     expect(get().boards).toHaveLength(1)
     expect(get().boards[0].id).toBe('b1')
