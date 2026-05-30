@@ -93,7 +93,8 @@ export function TerminalBoard({
   lod = false,
   onFull,
   onDuplicate,
-  onDelete
+  onDelete,
+  onPushPreview
 }: BoardViewProps<TerminalBoardData>): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -460,9 +461,29 @@ export function TerminalBoard({
     portRef.current?.postMessage({ t: 'input', d: '\x03' })
   }, [])
 
+  // Slice C′: detected dev-server URLs (picker when >1) + a transient "not found" note.
+  type DetectedUrl = { url: string; host: string; port: number }
+  const [portChoices, setPortChoices] = useState<DetectedUrl[]>([])
+  const [previewNote, setPreviewNote] = useState<string | null>(null)
+
+  const onPreview = useCallback(async () => {
+    setPreviewNote(null)
+    const urls = await window.api.detectPorts(board.id)
+    if (urls.length === 0) {
+      setPreviewNote('No dev server detected yet — start it, then try again.')
+      return
+    }
+    if (urls.length === 1) {
+      onPushPreview?.(urls[0].url)
+      return
+    }
+    setPortChoices(urls)
+  }, [board.id, onPushPreview])
+
   const actions = (
     <>
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
+      <IconBtn name="globe" title="Open preview from this server" onClick={() => void onPreview()} />
       <IconBtn
         name="settings"
         title="Configure terminal"
@@ -495,6 +516,34 @@ export function TerminalBoard({
       >
         <div style={lod ? shellHidden : shell}>
           {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+          {previewNote && (
+            <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
+              {previewNote}
+              <button className="ca-preview-dismiss" onClick={() => setPreviewNote(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {portChoices.length > 1 && (
+            <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="ca-port-picker-title">Multiple servers — choose one:</div>
+              {portChoices.map((u) => (
+                <button
+                  key={u.url}
+                  className="ca-port-choice"
+                  onClick={() => {
+                    setPortChoices([])
+                    onPushPreview?.(u.url)
+                  }}
+                >
+                  {u.host}:{u.port}
+                </button>
+              ))}
+              <button className="ca-preview-dismiss" onClick={() => setPortChoices([])}>
+                Cancel
+              </button>
+            </div>
+          )}
           {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
               `nodrag nowheel` stops React Flow from treating clicks as a node drag or
               wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF

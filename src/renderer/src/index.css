@@ -738,3 +738,49 @@ body {
   position: relative;
   min-height: 0;
 }
+
+/* Slice C′ — preview port note + picker (Terminal board overlay). */
+.ca-preview-note,
+.ca-port-picker {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 4;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  box-shadow: var(--shadow-board);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ca-port-picker-title {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.ca-port-choice {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.ca-port-choice:hover {
+  border-color: var(--accent);
+}
+.ca-preview-dismiss {
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
