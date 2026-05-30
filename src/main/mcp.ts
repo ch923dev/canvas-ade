@@ -1,5 +1,4 @@
-import type { BoardRegistry } from './mcpOrchestrator'
-import { buildPtyOrchestrator } from './mcpOrchestrator'
+import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
 import type { TokenStore } from '@ch923dev/canvas-ade-mcp'
 
 export interface RunningMcp {
@@ -27,7 +26,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       tier: 'orchestrator'
     })
     const server = await createMcpHttpServer({
-      orchestrator: buildPtyOrchestrator(registry),
+      orchestrator: buildOrchestrator(registry),
       tokens
     })
     return {
