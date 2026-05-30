@@ -220,6 +220,23 @@ describe('undo/redo history', () => {
     expect(get().boards).toHaveLength(1)
   })
 
+  it('a bare beginChange() after an undo does not wipe the armed redo branch (Bug #7)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 200 }) // checkpoint → x=200
+    get().undo() // back to x=0, future = [x=200] armed
+    expect(get().boards[0].x).toBe(0)
+    expect(get().future).toHaveLength(1)
+    // A no-op gesture (zero-movement titlebar/resize click, degenerate arrow/pen tap)
+    // fires beginChange at gesture-start but commits nothing — it must NOT discard the
+    // armed redo branch.
+    get().beginChange()
+    expect(get().future).toHaveLength(1)
+    // Redo still re-applies the undone move.
+    get().redo()
+    expect(get().boards[0].x).toBe(200)
+  })
+
   // The Canvas-side focus-clear on undo/redo (#30 / #38) relies on undo/redo
   // nulling selectedId; lock that contract so a refactor can't silently break it.
   it('undo and redo clear the selection', () => {

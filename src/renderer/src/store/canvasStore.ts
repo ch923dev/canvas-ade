@@ -158,9 +158,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   beginChange: () =>
     set((s) => {
       // No change since the last checkpoint (boards array ref unchanged) → skip,
-      // so a no-op gesture doesn't push a duplicate snapshot or wipe the redo branch.
+      // so a no-op gesture doesn't push a duplicate snapshot.
       if (s.past[s.past.length - 1] === s.boards) return s
-      return { past: recordPast(s.past, s.boards), future: [] }
+      // Take the pre-edit snapshot but do NOT clear the redo branch here (Bug #7).
+      // beginChange fires at GESTURE START, before we know whether the gesture will
+      // commit anything — a zero-movement titlebar/resize-handle click or a degenerate
+      // arrow/pen tap calls it but mutates nothing. The redo branch is correctly
+      // invalidated by the actual mutation: updateBoard/resizeBoard clear `future` only
+      // when boards truly change. Clearing it here too would wipe an armed redo on a
+      // no-op gesture performed right after an undo (the guard above misses the
+      // post-undo case, where past tail !== boards even though boards is unchanged).
+      return { past: recordPast(s.past, s.boards) }
     }),
   undo: () =>
     set((s) => {
