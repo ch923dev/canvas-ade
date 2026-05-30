@@ -378,29 +378,33 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     void (async () => {
       // Bug #8/#9: capture per-board with a per-item guard so ONE rejected
       // capturePage() (headless / GPU-contended host) can't reject the whole batch and
-      // abort every board's detach. A failed/empty capture resolves to null → that
-      // board keeps its live native view (not detached blind) while the rest snapshot
-      // + detach normally.
+      // abort every board's detach. A failed/empty capture resolves to null.
       const shots = await Promise.all(
         live.map((g) => window.api.capturePreview(g.id).catch(() => null))
       )
       if (!gestureRef.current) return // gesture ended before capture → keep live
-      const captured: BoardGeom[] = []
-      // Snapshot each captured board's attachSeq BEFORE the detach await so a
-      // concurrent endMotion → applyLiveness → attachBoard reattach (which bumps
-      // attachSeq) is detected below and not clobbered (Bug #15).
+      // Detach EVERY live native view for the gesture, even one whose capture came back
+      // empty/failed (a blank/loading page, or a GPU-contended host). A native view
+      // can't keep up with a fast NODE DRAG over IPC — it lags / appears stuck at the
+      // old position — whereas the HTML snapshot (or the device-frame fallback) follows
+      // the board pixel-perfect. A missing fresh snapshot just leaves the prior snapshot
+      // / device frame; that brief staleness during a gesture is far better than a
+      // trailing native layer. Fresh snapshot is applied only when one was captured.
+      const detached: BoardGeom[] = []
+      // Snapshot each board's attachSeq BEFORE the detach await so a concurrent
+      // endMotion → applyLiveness → attachBoard reattach (which bumps attachSeq) is
+      // detected below and not clobbered (Bug #15).
       const seqOf = new Map<string, number>()
       live.forEach((g, i) => {
-        // Bug #48: a board deleted mid-capture had its rec removed + runtime cleared
-        // by reconcile; patching here would resurrect an orphaned previewStore entry.
-        if (shots[i] && recs.current.has(g.id)) {
-          patchRuntime(g.id, { snapshot: shots[i] })
-          captured.push(g)
-          seqOf.set(g.id, recs.current.get(g.id)!.attachSeq)
-        }
+        // Bug #48: a board deleted mid-capture had its rec removed + runtime cleared by
+        // reconcile; patching here would resurrect an orphaned previewStore entry.
+        if (!recs.current.has(g.id)) return
+        if (shots[i]) patchRuntime(g.id, { snapshot: shots[i] })
+        detached.push(g)
+        seqOf.set(g.id, recs.current.get(g.id)!.attachSeq)
       })
-      await Promise.all(captured.map((g) => window.api.detachPreview(g.id)))
-      captured.forEach((g) => {
+      await Promise.all(detached.map((g) => window.api.detachPreview(g.id)))
+      detached.forEach((g) => {
         const r = recs.current.get(g.id)
         // Bug #15/#48: skip the detach state-write if the board was removed (no rec),
         // a concurrent attachBoard re-claimed it (attachSeq bumped), or the gesture
