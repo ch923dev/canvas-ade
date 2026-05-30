@@ -13,6 +13,7 @@ import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2eSmoke'
 import { startMcpServer, type RunningMcp } from './mcp'
 import { runMcpSmoke } from './mcpSmoke'
+import { listBoardMirror, registerBoardRegistryHandler } from './boardRegistry'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -125,14 +126,16 @@ function createWindow(): void {
     })
   }
 
-  const e2e = SMOKE === 'e2e'
+  // The mcp smoke also needs the renderer's seeding hook (window.__canvasE2E) to
+  // populate the board mirror, so load with ?e2e=1 for both the e2e and mcp smokes.
+  const seedHarness = SMOKE === 'e2e' || SMOKE === 'mcp'
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
-    mainWindow.loadURL(e2e ? `${base}?e2e=1` : base)
+    mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
   } else {
     mainWindow.loadFile(
       join(__dirname, '../renderer/index.html'),
-      e2e ? { query: { e2e: '1' } } : undefined
+      seedHarness ? { query: { e2e: '1' } } : undefined
     )
   }
 }
@@ -158,7 +161,8 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
-  mcp = await startMcpServer({ listSessions: listPtySessions })
+  registerBoardRegistryHandler(ipcMain, () => mainWindow)
+  mcp = await startMcpServer({ listBoards: listBoardMirror, listSessions: listPtySessions })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
 
   createWindow()
@@ -166,7 +170,7 @@ app.whenReady().then(async () => {
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
       if (SMOKE === 'mcp') {
-        const code = await runMcpSmoke(mcp)
+        const code = await runMcpSmoke(mcp, mainWindow!)
         process.exitCode = code
         await shutdown()
         app.exit(code)
