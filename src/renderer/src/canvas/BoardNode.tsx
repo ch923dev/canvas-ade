@@ -25,6 +25,8 @@ export interface BoardNodeData extends Record<string, unknown> {
   board: Board
   /** Dim to 55% when another board is focused (dimOnFocus, fixed-on). */
   dimmed?: boolean
+  /** This board is the one shown in the full-view modal (Task 6 portals it). */
+  fullView?: boolean
 }
 
 export type BoardFlowNode = Node<BoardNodeData, 'board'>

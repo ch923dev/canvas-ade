@@ -225,8 +225,10 @@ function CanvasInner(): ReactElement {
   // the eslint-disable-next-line suppresses the react-hooks/set-state-in-effect rule
   // which fires on ANY setState in an effect body, including legitimate cases like this.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setFocusedId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
+    setFullViewId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [boards])
 
   // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
@@ -250,6 +252,10 @@ function CanvasInner(): ReactElement {
         return
       }
       if (e.key === 'Escape' && !typing) {
+        if (fullViewId) {
+          setFullViewId(null)
+          return
+        }
         clearSelection()
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
         e.preventDefault()
@@ -264,7 +270,7 @@ function CanvasInner(): ReactElement {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, doUndo, doRedo])
+  }, [rf, clearSelection, doUndo, doRedo, fullViewId])
 
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
