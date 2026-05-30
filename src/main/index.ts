@@ -138,9 +138,24 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.canvasade.app')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
-  localServer = await startLocalServer()
+  // The local preview server is a convenience (dev/preview fallback URL), not a hard
+  // boot dependency. If listen() fails (EACCES from AV/firewall loopback denial,
+  // EMFILE/ENFILE under fd exhaustion, ENETDOWN), surface a clear diagnostic and
+  // degrade gracefully — boot the window with an empty fallback URL rather than
+  // crashing to app.exit(1) via the uncaughtException sink with no message.
+  let defaultPreviewUrl = ''
+  try {
+    localServer = await startLocalServer()
+    defaultPreviewUrl = localServer.url
+  } catch (err) {
+    console.error(
+      'Could not bind local preview server on 127.0.0.1 — continuing without it. ' +
+        'Boards open with an explicit URL still work.',
+      err
+    )
+  }
   registerPtyHandlers(ipcMain, () => mainWindow)
-  registerPreviewHandlers(ipcMain, () => mainWindow, localServer.url)
+  registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
 
   createWindow()
 
@@ -173,8 +188,8 @@ app.whenReady().then(async () => {
 /**
  * Idempotent teardown of every native resource (PTY trees, preview views, local
  * server). Returns a Promise that resolves once the PTY tree-kill is reaped (#49)
- * so the abrupt `app.exit` path can await it; the sync paths (before-quit /
- * window-all-closed / crash hooks) fire it best-effort without awaiting.
+ * so the abrupt `app.exit` and guarded `before-quit` paths can await it; the crash
+ * hooks fire it best-effort without awaiting (an uncaughtException handler can't).
  */
 function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
@@ -185,12 +200,22 @@ function shutdown(): Promise<void> {
 }
 
 app.on('window-all-closed', () => {
-  void shutdown()
+  // Route through app.quit() (non-darwin) so the guarded before-quit handler below
+  // performs the awaited PTY-tree drain (#49) instead of racing a fire-and-forget
+  // shutdown() against process exit.
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
-  void shutdown()
+// Guarded async quit (#49/BUG-031): on first entry, defer the quit, drain the PTY
+// tree (bounded by shutdown()'s own 2s timeout) so a deep agent child tree is reaped
+// instead of orphaned, then exit. The `quitting` flag lets the post-drain app.exit(0)
+// proceed without re-deferring.
+let quitting = false
+app.on('before-quit', (event) => {
+  if (quitting) return
+  quitting = true
+  event.preventDefault()
+  void shutdown().finally(() => app.exit(0))
 })
 
 // Crash-path / signal cleanup (#50): before-quit/window-all-closed don't fire on an

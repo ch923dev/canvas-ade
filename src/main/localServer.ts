@@ -55,12 +55,19 @@ const PAGE = `<!doctype html>
 /** Tiny loopback HTTP server so the WebContentsView smoke works in dev AND in
  *  the packaged build (no Vite dev server to depend on). */
 export function startLocalServer(): Promise<LocalServer> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server: Server = createServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       res.end(PAGE)
     })
+    // Without this, a listen() failure (EACCES from an AV/firewall loopback-bind
+    // denial, EMFILE/ENFILE under fd exhaustion, ENETDOWN) is re-thrown by Node as
+    // an uncaughtException and tears the app down at startup. Reject instead so the
+    // caller can surface a diagnostic / degrade gracefully.
+    const onError = (err: Error): void => reject(err)
+    server.once('error', onError)
     server.listen(0, '127.0.0.1', () => {
+      server.removeListener('error', onError)
       const addr = server.address()
       const port = typeof addr === 'object' && addr ? addr.port : 0
       resolve({
