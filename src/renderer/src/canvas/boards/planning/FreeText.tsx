@@ -102,8 +102,10 @@ export function FreeText({
         className="pl-text-grip"
         title="Drag"
         onPointerDown={(e) => {
-          e.stopPropagation()
+          // In a draw mode let the press fall through to the well so a stroke/arrow
+          // can START over the grip (#6); only swallow + drag in select mode.
           if (!interactive) return
+          e.stopPropagation()
           // Suppress the empty-text blur-prune this gesture is about to trigger.
           dragging.current = true
           onDragStart(e, element.id)
