@@ -301,6 +301,12 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
         r.lastUrl = g.url
         patchRuntime(g.id, { status: 'connecting', live: true })
         await window.api.openPreview({ id: g.id, url: g.url, bounds, zoomFactor })
+        // Bug #48/#30: the board may have been deleted during the open IPC round-trip
+        // (reconcile ran closeBoard + recs.delete + clearRuntime). Re-check existence
+        // before the trailing live:true patch — otherwise previewStore.patch
+        // (create-if-absent) resurrects a cleared entry with live:true, leaking it and
+        // inflating the live-view count. Mirrors demoteToSnapshot / beginMotion.
+        if (!recs.current.has(g.id)) return
       }
       patchRuntime(g.id, { live: true })
     },
