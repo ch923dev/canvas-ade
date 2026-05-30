@@ -32,6 +32,13 @@ export interface SpawnTerminalResult {
   error?: string
 }
 
+/** A localhost URL detected from a terminal's dev-server output (Slice C′). */
+export interface DetectedUrl {
+  url: string
+  host: string
+  port: number
+}
+
 /**
  * Preview lifecycle event (Phase 2.2 browser). Structurally mirrors the main
  * process `PreviewEvent` (re-declared here to keep preload decoupled from main).
@@ -67,6 +74,9 @@ const api = {
     ipcRenderer.invoke('pty:adopt', id),
   // Phase 2.1: OS-aware shell list (best-default first) for the board picker.
   listShells: (): Promise<ShellInfo[]> => ipcRenderer.invoke('pty:shells'),
+  // Slice C′: parse the dev-server URL(s) out of a board's PTY output (read-only).
+  detectPorts: (id: string): Promise<DetectedUrl[]> =>
+    ipcRenderer.invoke('terminal:detectPorts', id),
 
   // ── Browser preview (WebContentsView, keyed by board id — 1-E) ──
   openPreview: (args: {
