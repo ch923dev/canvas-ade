@@ -259,3 +259,37 @@ describe('undo/redo history', () => {
     expect(get().selectedId).toBeNull()
   })
 })
+
+describe('canvasStore — viewport', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], viewport: null, selectedId: null, past: [], future: [] })
+  })
+
+  it('setViewport stores the camera', () => {
+    useCanvasStore.getState().setViewport({ x: 10, y: 20, zoom: 1.5 })
+    expect(useCanvasStore.getState().viewport).toEqual({ x: 10, y: 20, zoom: 1.5 })
+  })
+
+  it('setViewport is untracked — does not push undo history', () => {
+    const before = useCanvasStore.getState().past.length
+    useCanvasStore.getState().setViewport({ x: 1, y: 2, zoom: 1 })
+    expect(useCanvasStore.getState().past.length).toBe(before)
+  })
+
+  it('toObject embeds the current viewport', () => {
+    useCanvasStore.getState().setViewport({ x: 5, y: 6, zoom: 0.5 })
+    expect(useCanvasStore.getState().toObject().viewport).toEqual({ x: 5, y: 6, zoom: 0.5 })
+  })
+
+  it('loadObject restores boards and viewport', () => {
+    const doc = {
+      schemaVersion: 2,
+      viewport: { x: 7, y: 8, zoom: 2 },
+      boards: [{ id: 'b1', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }]
+    }
+    useCanvasStore.getState().loadObject(doc)
+    const s = useCanvasStore.getState()
+    expect(s.boards).toHaveLength(1)
+    expect(s.viewport).toEqual({ x: 7, y: 8, zoom: 2 })
+  })
+})

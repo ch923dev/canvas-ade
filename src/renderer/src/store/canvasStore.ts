@@ -13,6 +13,7 @@ import {
   type Board,
   type BoardType,
   type CanvasDoc,
+  type CanvasViewport,
   createBoard,
   fromObject,
   toObject,
@@ -31,6 +32,8 @@ export interface CanvasState {
   /** Undo/redo rails (internal — drive via beginChange/undo/redo, don't read directly). */
   past: Board[][]
   future: Board[][]
+  /** Persisted camera transform (null = not yet captured / fit on load). */
+  viewport: CanvasViewport | null
 
   /** Add a board of `type` at a world position; selects it; returns its new id. */
   addBoard: (type: BoardType, at: { x: number; y: number }) => string
@@ -47,6 +50,8 @@ export interface CanvasState {
    * (#BUG-024). Only ever grows; a no-op when the board is already tall enough.
    */
   growBoardHeight: (id: string, h: number) => void
+  /** Set the camera transform. UNTRACKED — never touches undo/redo (like growBoardHeight). */
+  setViewport: (vp: CanvasViewport) => void
   selectBoard: (id: string | null) => void
   setTool: (tool: Tool) => void
   /** Snapshot the current boards for undo (call at the start of a discrete edit). */
@@ -132,6 +137,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   tool: 'select',
   past: [],
   future: [],
+  viewport: null,
 
   addBoard: (type, at) => {
     const id = newId()
@@ -203,6 +209,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return changed ? { boards } : s
     }),
 
+  setViewport: (vp) => set({ viewport: vp }),
+
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),
   beginChange: () =>
@@ -231,7 +239,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return r ? { boards: r.present, past: r.past, future: r.future, selectedId: null } : s
     }),
 
-  toObject: () => toObject(get().boards, null),
-  loadObject: (doc) =>
-    set({ boards: fromObject(doc).boards, selectedId: null, past: [], future: [] })
+  toObject: () => toObject(get().boards, get().viewport),
+  loadObject: (doc) => {
+    const d = fromObject(doc)
+    set({ boards: d.boards, viewport: d.viewport, selectedId: null, past: [], future: [] })
+  }
 }))
