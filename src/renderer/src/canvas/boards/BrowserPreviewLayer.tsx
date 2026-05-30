@@ -240,7 +240,16 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       const r = rec(g.id)
       if (!r.attached) return
       const seq = r.attachSeq
-      const url = await window.api.capturePreview(g.id)
+      // Bug #8/#9: a rejected capturePage() (headless / GPU-contended host) must NOT
+      // abort the detach — the native view paints above all HTML, so it MUST still be
+      // pulled out. Treat a capture failure like an empty snapshot (url = null) and
+      // proceed to the detach + state-clear regardless.
+      let url: string | null = null
+      try {
+        url = await window.api.capturePreview(g.id)
+      } catch {
+        url = null
+      }
       // Re-check after the capture IPC round-trip:
       //  • Bug #48 — the board may have been deleted mid-capture (reconcile removed
       //    its rec + cleared its runtime); patching here would resurrect an orphan.
@@ -350,7 +359,14 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     if (!live.length) return
     gestureRef.current = true
     void (async () => {
-      const shots = await Promise.all(live.map((g) => window.api.capturePreview(g.id)))
+      // Bug #8/#9: capture per-board with a per-item guard so ONE rejected
+      // capturePage() (headless / GPU-contended host) can't reject the whole batch and
+      // abort every board's detach. A failed/empty capture resolves to null → that
+      // board keeps its live native view (not detached blind) while the rest snapshot
+      // + detach normally.
+      const shots = await Promise.all(
+        live.map((g) => window.api.capturePreview(g.id).catch(() => null))
+      )
       if (!gestureRef.current) return // gesture ended before capture → keep live
       const captured: BoardGeom[] = []
       live.forEach((g, i) => {
