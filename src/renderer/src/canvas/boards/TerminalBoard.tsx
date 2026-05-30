@@ -147,6 +147,11 @@ export function TerminalBoard({
   // many-visible-terminals case. Over the cap a terminal stays on the DOM renderer
   // and registers a retry that fires when a slot frees. The PTY session is
   // independent of the renderer, so this is purely a perf/quality lever.
+  //
+  // The over-budget retry (wantWebgl) and onContextLoss re-acquire closures must
+  // re-invoke attachWebgl, but a useCallback can't reference its own binding from its
+  // body (react-hooks). Route the recursive call through a ref kept in sync below.
+  const attachWebglRef = useRef<(t: Terminal) => void>(() => {})
   const attachWebgl = useCallback(
     (term: Terminal): void => {
       if (webglRef.current) return
@@ -156,7 +161,7 @@ export function TerminalBoard({
       if (!acquireWebglSlot(board.id)) {
         wantWebgl.set(board.id, () => {
           const t = termRef.current
-          if (!lodRef.current && t) attachWebgl(t)
+          if (!lodRef.current && t) attachWebglRef.current(t)
         })
         return
       }
@@ -172,7 +177,7 @@ export function TerminalBoard({
           releaseWebglSlot(board.id)
           setTimeout(() => {
             const t = termRef.current
-            if (!lodRef.current && t) attachWebgl(t)
+            if (!lodRef.current && t) attachWebglRef.current(t)
           }, 0)
         })
         term.loadAddon(webgl)
@@ -195,6 +200,11 @@ export function TerminalBoard({
     wantWebgl.delete(board.id)
     releaseWebglSlot(board.id)
   }, [board.id])
+
+  // Keep the recursion ref pointed at the latest attachWebgl (stable per board.id).
+  useEffect(() => {
+    attachWebglRef.current = attachWebgl
+  }, [attachWebgl])
 
   // Release the GL context at LOD; re-acquire on return to detail view. Guarded by
   // a live terminal (the spawn effect owns mount/unmount of `term` itself).
@@ -449,7 +459,7 @@ export function TerminalBoard({
     } else {
       pendingRespawnRef.current = true
     }
-  }, [respawn])
+  }, [respawn, board.id])
 
   const status = statusFor(state, identity, running ? formatTimer(elapsed) : undefined)
 
