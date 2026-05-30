@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@ch923dev/canvas-ade-mcp':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@electron-toolkit/preload':
         specifier: ^3.0.1
         version: 3.0.2(electron@33.4.11)
@@ -26,9 +29,6 @@ importers:
       '@xyflow/react':
         specifier: ^12.3.0
         version: 12.10.2(@types/react@18.3.29)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      canvas-ade-mcp:
-        specifier: file:../canvas-ade-mcp
-        version: file:../canvas-ade-mcp
       electron-updater:
         specifier: ^6.3.4
         version: 6.8.3
@@ -205,6 +205,10 @@ packages:
   '@babel/types@7.29.7':
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
+
+  '@ch923dev/canvas-ade-mcp@0.1.0':
+    resolution: {integrity: sha512-IbBIzl2Xz9yQh03MFlpycSsvvChfdfwha4sqB5Q0RCf5bMKBXXGnGVn4nBDTIEz/BYQG73NOyjdCgwhhTKXVwA==, tarball: https://npm.pkg.github.com/download/@ch923dev/canvas-ade-mcp/0.1.0/6790c3df4fc42e0301f2fb5a098984f5f95701de}
+    engines: {node: '>=20'}
 
   '@develar/schema-utils@2.6.5':
     resolution: {integrity: sha512-0cp4PsWQ/9avqTVMCtZ+GirikIA36ikvjtHweU4/j8yLtgObI0+JUPhYFScgwlteveGB1rt3Cm8UhN04XayDig==}
@@ -1097,10 +1101,6 @@ packages:
 
   caniuse-lite@1.0.30001793:
     resolution: {integrity: sha512-iwSsYWaCOoh26cV8NwNRViHlrfUvYsHDfRVcbtmw0Kg6PJIZZXwMkj1442FYLBGkeUf1juAsU3DTfxW579mrPA==}
-
-  canvas-ade-mcp@file:../canvas-ade-mcp:
-    resolution: {directory: ../canvas-ade-mcp, type: directory}
-    engines: {node: '>=20'}
 
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
@@ -3051,6 +3051,15 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
+  '@ch923dev/canvas-ade-mcp@0.1.0':
+    dependencies:
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
+      express: 5.2.1
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - supports-color
+
   '@develar/schema-utils@2.6.5':
     dependencies:
       ajv: 6.15.0
@@ -4086,15 +4095,6 @@ snapshots:
   callsites@3.1.0: {}
 
   caniuse-lite@1.0.30001793: {}
-
-  canvas-ade-mcp@file:../canvas-ade-mcp:
-    dependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
-      express: 5.2.1
-      zod: 4.4.3
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
 
   chai@5.3.3:
     dependencies:

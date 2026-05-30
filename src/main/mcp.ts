@@ -1,6 +1,6 @@
 import type { BoardRegistry } from './mcpOrchestrator'
 import { buildPtyOrchestrator } from './mcpOrchestrator'
-import type { TokenStore } from 'canvas-ade-mcp'
+import type { TokenStore } from '@ch923dev/canvas-ade-mcp'
 
 export interface RunningMcp {
   port: number
@@ -19,7 +19,8 @@ export interface RunningMcp {
  */
 export async function startMcpServer(registry: BoardRegistry): Promise<RunningMcp | null> {
   try {
-    const { createMcpHttpServer, TokenStore, mintBoardToken } = await import('canvas-ade-mcp')
+    const { createMcpHttpServer, TokenStore, mintBoardToken } =
+      await import('@ch923dev/canvas-ade-mcp')
     const tokens = new TokenStore()
     const { token: orchestratorToken } = mintBoardToken(tokens, {
       boardId: 'app',

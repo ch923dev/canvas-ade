@@ -1,4 +1,4 @@
-import type { BoardId, BoardSummary, Orchestrator } from 'canvas-ade-mcp'
+import type { BoardId, BoardSummary, Orchestrator } from '@ch923dev/canvas-ade-mcp'
 
 /** The thin MAIN-owned board view the adapter reads (a slice of the PTY session map). */
 export interface BoardRegistry {
