@@ -49,6 +49,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@eslint/js": "^9.39.4",
     "@types/node": "^22.7.0",
     "@types/react": "^18.3.0",

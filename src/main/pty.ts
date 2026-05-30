@@ -65,7 +65,12 @@ interface Session {
    * to it across the move (closures capture the box, not the map entry).
    */
   buf: { data: string }
-  /** Last lifecycle state pushed to the renderer — read by the MCP board registry. */
+  /**
+   * Last lifecycle state, read by the MCP board registry. A live session is
+   * 'running'; it is marked 'exited' in onExit immediately before cleanup() removes
+   * it from the map, so listPtySessions in practice reports running boards (the
+   * field tracks lifecycle honestly for when that contract widens in Phase 2).
+   */
   state: PtyState
 }
 
@@ -520,7 +525,8 @@ export function disposeAllPtys(): Promise<void> {
 /**
  * Snapshot of live PTY sessions for the MCP board registry (read-only; control
  * plane only — never the PTY data stream). Parked (deleted-but-undoable) sessions
- * are excluded: they are not live boards.
+ * are excluded: they are not live boards. Exited sessions are removed by cleanup()
+ * on their onExit, so every listed board is effectively 'running' today.
  */
 export function listPtySessions(): Array<{ id: string; status: PtyState }> {
   return [...sessions.entries()].map(([id, s]) => ({ id, status: s.state }))

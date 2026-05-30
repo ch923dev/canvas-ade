@@ -37,7 +37,15 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       close: () => server.close()
     }
   } catch (err) {
-    console.error('Could not start the MCP server — continuing without it.', err)
+    // Graceful-degrade either way (the server is a convenience layer), but make a
+    // real wiring bug LOUD: an expected port/bind failure (EADDRINUSE/EACCES) is
+    // info-level "continuing without it"; anything else is a defect in this change.
+    const code = (err as NodeJS.ErrnoException)?.code
+    if (code === 'EADDRINUSE' || code === 'EACCES') {
+      console.error(`MCP server could not bind (${code}) — continuing without it.`)
+    } else {
+      console.error('MCP wiring bug — server failed to start, continuing without it.', err)
+    }
     return null
   }
 }
