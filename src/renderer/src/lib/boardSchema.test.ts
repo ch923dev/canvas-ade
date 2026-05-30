@@ -380,6 +380,55 @@ describe('fromObject deep validation', () => {
   })
 })
 
+// ── Degenerate geometry + load-floor clamp (BUG-025) ───────────────────────────
+describe('fromObject geometry validation', () => {
+  const okBoard = { id: 't', type: 'terminal', title: 'T', x: 0, y: 0, w: 300, h: 200 }
+
+  it('rejects a finite but non-positive board width (w: 0)', () => {
+    expect(() => fromObject(wrap({ ...okBoard, w: 0 }))).toThrow()
+  })
+
+  it('rejects a finite but negative board height (h: -50)', () => {
+    expect(() => fromObject(wrap({ ...okBoard, h: -50 }))).toThrow()
+  })
+
+  it('clamps a valid below-minimum board size (w: 5) up to MIN_BOARD_SIZE instead of dropping it', () => {
+    const out = fromObject(wrap({ ...okBoard, w: 5, h: 5 }))
+    expect(out.boards[0].w).toBe(MIN_BOARD_SIZE.w)
+    expect(out.boards[0].h).toBe(MIN_BOARD_SIZE.h)
+  })
+
+  it('rejects a note element with non-positive w/h', () => {
+    const mk = (note: unknown): unknown => ({
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 300,
+      h: 200,
+      elements: [note]
+    })
+    expect(() =>
+      fromObject(wrap(mk({ id: 'n', kind: 'note', x: 0, y: 0, w: -10, h: 0, text: 'hi', tint: 'yellow' })))
+    ).toThrow()
+  })
+
+  it('accepts a checklist element with the legitimately-seeded h: 0 (height is content-driven)', () => {
+    const planning = {
+      id: 'p',
+      type: 'planning',
+      title: 'P',
+      x: 0,
+      y: 0,
+      w: 300,
+      h: 200,
+      elements: [{ id: 'c1', kind: 'checklist', x: 0, y: 0, w: 220, h: 0, title: 'Tasks', items: [] }]
+    }
+    expect(() => fromObject(wrap(planning))).not.toThrow()
+  })
+})
+
 describe('migrate', () => {
   it('is a no-op at the current schemaVersion', () => {
     const doc = toObject(sampleBoards())
