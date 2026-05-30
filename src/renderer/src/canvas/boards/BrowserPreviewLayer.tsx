@@ -616,12 +616,22 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       // did-finish-load is still suppressed (main reuses the failed navigation and
       // emits no fresh did-start-navigation for it).
       if ((ev.type as string) === 'did-start-navigation') {
-        if (!(ev.id in usePreviewStore.getState().byId)) return
+        // Recovery only matters for a board that still has a live native view; ignore
+        // an in-flight nav-start for an evicted/deleted board (Bug #18/#32 — no rec, or
+        // its renderer was freed → don't resurrect or mutate a stale entry).
+        if (!recs.current.get(ev.id)?.exists) return
         const cur = usePreviewStore.getState().byId[ev.id]?.status
         if (cur === 'load-failed') patchRuntime(ev.id, { status: 'connecting', error: null })
         return
       }
       if (ev.type === 'did-finish-load') {
+        // Bug #18: reconcile against the lifecycle before promoting. An over-cap-evicted
+        // board (closeBoard cleared exists/attached + live, but left status 'connecting')
+        // whose load completes just as its view is closed would otherwise flip to a green
+        // 'connected' over a detached snapshot with no live view. Skip when there is no
+        // live native view (rec gone or its renderer was freed). This also avoids
+        // resurrecting a cleared runtime entry for a just-deleted board (Bug #32).
+        if (!recs.current.get(ev.id)?.exists) return
         // Respect a prior load-failed: a dead/refused URL loads a Chromium error page
         // whose own did-finish-load must not flip the board back to "connected"
         // (Bug #5). Main already latches `failed` and suppresses the emit in that
