@@ -11,6 +11,23 @@ import { useMemo, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 
+/**
+ * Per-stroke outline cache keyed on the `points` array identity (#BUG-028). A
+ * module-level WeakMap (NOT a React ref, so it is read/written outside the hook graph
+ * and never during render) — unmoved strokes keep their `points` reference and hit the
+ * cache, while a moved stroke's fresh array misses and recomputes; the stale array
+ * GC's out of the map on its own (no manual pruning needed).
+ */
+const strokeOutlineCache = new WeakMap<number[], string>()
+function strokeOutline(points: number[]): string {
+  let path = strokeOutlineCache.get(points)
+  if (path === undefined) {
+    path = strokeToPath(points)
+    strokeOutlineCache.set(points, path)
+  }
+  return path
+}
+
 export interface WhiteboardSvgProps {
   boardId: string
   arrows: ArrowElement[]
@@ -30,10 +47,11 @@ export interface WhiteboardSvgProps {
    */
   onDragStart?: (e: PointerEvent, id: string) => void
   /**
-   * True while a draw tool (pen/arrow) is active. Disables hit-testing on the
-   * committed vectors so a new stroke/arrow can START on top of existing ink
-   * (the press falls through to the well's onWellPointerDown — #4), mirroring the
-   * card fall-through guards.
+   * True while ANY non-select tool (pen/arrow/note/check) is active. Disables
+   * hit-testing on the committed vectors so a new stroke/arrow can START — or a
+   * note/checklist can be PLACED — on top of existing ink (the press falls through
+   * to the well's onWellPointerDown — #4/BUG-022), mirroring the card fall-through
+   * guards. Selection/drag of vectors stays available in select mode.
    */
   drawing?: boolean
 }
@@ -50,8 +68,13 @@ export function WhiteboardSvg({
   drawing = false
 }: WhiteboardSvgProps): ReactElement {
   const markerId = arrowheadMarkerId(boardId)
-  // Memoize the (potentially heavy) outline math for committed strokes.
-  const strokePaths = useMemo(() => strokes.map((s) => strokeToPath(s.points)), [strokes])
+  // Memoize the (potentially heavy) outline math PER STROKE via the module-level
+  // points-keyed cache. The parent derives `strokes` via .filter() (new array every
+  // render) and translateElement returns the SAME element object (same `points` ref)
+  // for unmoved strokes — only the dragged one gets a fresh ref — so unchanged strokes
+  // reuse their path across every drag/zoom frame instead of recomputing getStroke for
+  // all of them (#BUG-028).
+  const strokePaths = useMemo(() => strokes.map((s) => strokeOutline(s.points)), [strokes])
   const draftPath = useMemo(
     () => (draftStroke && draftStroke.length >= 2 ? strokeToPath(draftStroke) : ''),
     [draftStroke]

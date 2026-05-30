@@ -1,4 +1,4 @@
-import type { IpcMain, BrowserWindow, MessagePortMain } from 'electron'
+import type { IpcMain, BrowserWindow, MessagePortMain, IpcMainInvokeEvent } from 'electron'
 import { MessageChannelMain } from 'electron'
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -123,8 +123,14 @@ function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number
   const { port1, port2 } = new MessageChannelMain()
   port1.on('message', (e) => {
     const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-    if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
-    else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+    // Guard as in the spawn handler: a write/resize on an exited pty throws and
+    // would escape to uncaughtException → app.exit(1). Swallow it.
+    try {
+      if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
+      else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+    } catch {
+      /* pty already exited */
+    }
   })
   port1.start()
 
@@ -268,12 +274,37 @@ function defaultShell(): string {
   return process.env.SHELL || '/bin/bash'
 }
 
-export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
-  ipcMain.handle('pty:shells', () => enumerateShells())
+/**
+ * Bug #33 (defense-in-depth): reject IPC that did not originate from the main
+ * window's main frame. ipcMain channels are shared by ALL webContents, including the
+ * per-board preview WebContentsViews that load untrusted localhost content. Today
+ * those views have no preload (no ipcRenderer), so this is not exploitable — but the
+ * allowlist ENFORCES the PTY-isolation invariant rather than leaving it incidental to
+ * the absence of a preview preload. A synthetic/internal call (no senderFrame) is
+ * allowed; only a real foreign frame is blocked.
+ */
+function isForeignSender(e: IpcMainInvokeEvent, getWin: () => BrowserWindow | null): boolean {
+  const main = getWin()?.webContents.mainFrame
+  return !!main && !!e.senderFrame && e.senderFrame !== main
+}
 
-  ipcMain.handle('pty:spawn', (_e, opts: SpawnOpts) => {
+export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
+  ipcMain.handle('pty:shells', (e) => (isForeignSender(e, getWin) ? [] : enumerateShells()))
+
+  ipcMain.handle('pty:spawn', (e, opts: SpawnOpts) => {
+    if (isForeignSender(e, getWin)) throw new Error('pty:spawn — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('pty:spawn — no window')
+
+    // Bug #13: a Restart can race the mount's deferred/adopt launch so two pty:spawn
+    // calls land under one id. Without this, sessions.set below overwrites the prior
+    // entry WITHOUT reaping its proc, dropping that process out of BOTH the sessions
+    // and parked maps so neither cleanup() nor disposeAllPtys() ever kills it (an
+    // orphaned agent child-tree). Reap any session already occupying this id first,
+    // turning the silent overwrite into a safe replace. (cleanup() deletes the entry
+    // synchronously, then tree-kills async; the displaced proc's later onExit no-ops
+    // via the isStaleExit guard.)
+    if (sessions.has(opts.id)) void cleanup(opts.id)
 
     const shell = opts.shell || enumerateShells()[0].path
     // Git Bash with no explicit args: launch as a login+interactive shell so it
@@ -303,9 +334,12 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     proc.onData((d) => {
       buf.data = appendRing(buf.data, d, RING_CAP_BYTES)
       // Forward to the current live port (looked up at fire time, so it follows an
-      // adopt onto the new port); none while parked → guard the post.
+      // adopt onto the new port); none while parked → guard the post. Identity
+      // guard `live.proc === proc`: a dying OLD proc keeps draining bytes for up to
+      // ~1s after kill() (node-pty's flush window), and without this check those
+      // late bytes would bleed into a freshly-restarted session under the same id.
       const live = sessions.get(opts.id)
-      if (live) {
+      if (live && live.proc === proc) {
         try {
           live.port.postMessage({ t: 'data', d })
         } catch {
@@ -314,11 +348,21 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       }
     })
     proc.onExit(({ exitCode }) => {
-      // During a restart/config-respawn the port may already be closed (the new
-      // session has taken over this id), so a post would throw — guard it.
+      // Post lifecycle to the CURRENT live port (looked up at fire time) the same
+      // way onData does — so an ADOPTED session (re-bound to a fresh port by adopt())
+      // is told when its process exits. Posting to the captured spawn-time `port1`
+      // would hit the port park() already closed, and the adopted renderer would
+      // stay stuck in 'running' forever. During a restart/config-respawn the port
+      // may already be closed (the new session took over this id), so guard the post.
       try {
-        port1.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
-        port1.postMessage({ t: 'exit', code: exitCode })
+        // Identity guard: only the session that still OWNS this exact proc should
+        // be told it exited — a stale OLD-proc exit must not post 'exited' to a NEW
+        // session that has since respawned under the same id (mirrors isStaleExit).
+        const live = sessions.get(opts.id)
+        if (live && live.proc === proc) {
+          live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
+          live.port.postMessage({ t: 'exit', code: exitCode })
+        }
       } catch {
         /* port already closed by a newer session */
       }
@@ -335,8 +379,16 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     port1.on('message', (e) => {
       const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-      if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
-      else if (m.t === 'resize' && m.cols && m.rows) proc.resize(m.cols, m.rows)
+      // node-pty's write/resize THROW on an exited-but-not-yet-reaped pty
+      // (resize: 'Cannot resize a pty that has already exited'). The throw would
+      // escape this EventEmitter listener as an uncaughtException → app.exit(1),
+      // crashing the whole app — so swallow it (the session is being torn down).
+      try {
+        if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
+        else if (m.t === 'resize' && m.cols && m.rows) proc.resize(m.cols, m.rows)
+      } catch {
+        /* pty already exited */
+      }
     })
     port1.start()
 
@@ -352,17 +404,20 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     return { id: opts.id, shell, pid: proc.pid, state: 'running' as PtyState }
   })
 
-  ipcMain.handle('pty:kill', (_e, id: string) => {
+  ipcMain.handle('pty:kill', (e, id: string) => {
+    if (isForeignSender(e, getWin)) return false
     cleanup(id)
     return true
   })
 
-  ipcMain.handle('pty:park', (_e, id: string) => {
+  ipcMain.handle('pty:park', (e, id: string) => {
+    if (isForeignSender(e, getWin)) return false
     park(id)
     return true
   })
 
-  ipcMain.handle('pty:adopt', (_e, id: string) => {
+  ipcMain.handle('pty:adopt', (e, id: string) => {
+    if (isForeignSender(e, getWin)) return { adopted: false }
     const win = getWin()
     if (!win) return { adopted: false }
     return adopt(id, win)

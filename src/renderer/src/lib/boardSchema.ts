@@ -240,6 +240,11 @@ function isFiniteNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v)
 }
 
+/** Finite AND strictly positive — a real (non-degenerate, non-inverted) size. */
+function isPositiveNum(v: unknown): v is number {
+  return isFiniteNum(v) && v > 0
+}
+
 function fail(msg: string): never {
   throw new Error(`fromObject: ${msg}`)
 }
@@ -256,7 +261,7 @@ function assertPlanningElement(el: unknown): void {
   switch (el.kind) {
     case 'note':
       if (typeof el.text !== 'string') fail('note element is missing string text')
-      if (!isFiniteNum(el.w) || !isFiniteNum(el.h)) fail('note element has non-finite w/h')
+      if (!isPositiveNum(el.w) || !isPositiveNum(el.h)) fail('note element has non-positive w/h')
       if (!NOTE_TINTS.includes(el.tint as NoteTint))
         fail(`note element has invalid tint ${el.tint}`)
       if (el.rotation !== undefined && !isFiniteNum(el.rotation)) {
@@ -278,7 +283,10 @@ function assertPlanningElement(el: unknown): void {
     }
     case 'checklist': {
       if (typeof el.title !== 'string') fail('checklist element is missing string title')
-      if (!isFiniteNum(el.w) || !isFiniteNum(el.h)) fail('checklist element has non-finite w/h')
+      // w must be a real positive width; h is content-driven and legitimately seeded
+      // as 0 (elements.ts), so h is exempt from the positivity guard — finite + >= 0.
+      if (!isPositiveNum(el.w)) fail('checklist element has non-positive w')
+      if (!isFiniteNum(el.h) || el.h < 0) fail('checklist element has non-finite/negative h')
       if (!Array.isArray(el.items)) fail('checklist element items is not an array')
       for (const item of el.items) {
         if (
@@ -302,9 +310,11 @@ function assertBoard(b: unknown): void {
   if (!isRecord(b)) fail('board is not an object')
   if (typeof b.id !== 'string') fail('board has a non-string id')
   if (typeof b.title !== 'string') fail('board has a non-string title')
-  if (!isFiniteNum(b.x) || !isFiniteNum(b.y) || !isFiniteNum(b.w) || !isFiniteNum(b.h)) {
-    fail('board has non-finite geometry (x/y/w/h)')
-  }
+  if (!isFiniteNum(b.x) || !isFiniteNum(b.y)) fail('board has non-finite position (x/y)')
+  // w/h must be real positive sizes — a finite-but-degenerate 0/negative would render
+  // a zero-size or inverted board (#BUG-025). The MIN_BOARD_SIZE floor is clamped (not
+  // rejected) on load in fromObject so below-min-but-valid data isn't dropped.
+  if (!isPositiveNum(b.w) || !isPositiveNum(b.h)) fail('board has non-positive size (w/h)')
   if (b.z !== undefined && !isFiniteNum(b.z)) fail('board has a non-finite z')
 
   switch (b.type) {
@@ -338,5 +348,17 @@ export function fromObject(doc: unknown): CanvasDoc {
     throw new Error('fromObject: value is not a CanvasDoc (need numeric schemaVersion + boards[])')
   }
   doc.boards.forEach(assertBoard)
-  return migrate(doc)
+  // Own the data: deep-clone the input so the returned doc (and any store it feeds)
+  // does not alias the caller's object — symmetric with toObject's structuredClone,
+  // and covers the no-migration (already-current) case which migrate() returns by
+  // reference (#BUG-027).
+  const owned = structuredClone(doc)
+  // Clamp each board to the MIN_BOARD_SIZE floor — assertBoard already rejects
+  // non-positive w/h, but a valid-yet-below-minimum size (e.g. w:5) is normalized
+  // here rather than dropped, so corrupt-but-recoverable input still loads (#BUG-025).
+  for (const b of owned.boards) {
+    b.w = Math.max(MIN_BOARD_SIZE.w, b.w)
+    b.h = Math.max(MIN_BOARD_SIZE.h, b.h)
+  }
+  return migrate(owned)
 }

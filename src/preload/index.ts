@@ -40,6 +40,10 @@ export type PreviewEvent =
   | { id: string; type: 'did-finish-load'; url: string }
   | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
   | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
+  // A fresh main-frame navigation STARTED — lets the renderer clear a stale
+  // `load-failed` latch so a successful reload/back/forward promotes to `connected`
+  // (Bug #5). Kept in sync with the main-process union.
+  | { id: string; type: 'did-start-navigation' }
 
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──

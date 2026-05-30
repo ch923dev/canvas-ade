@@ -8,7 +8,7 @@
  * board type owns exactly one file under `canvas/boards/`. Do not collapse the
  * dispatch back into this file.
  */
-import { useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
 import { useCanvasStore } from '../store/canvasStore'
@@ -59,6 +59,18 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
 
+  // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
+  // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
+  // would stay armed across the LOD boundary and paint a stale border + resize
+  // handles on zoom-in. Clear it on LOD entry — but ONLY for the types that take the
+  // LOD early-return below; terminal boards stay full-chrome at LOD (their hover div
+  // never unmounts), so they have no stale-hover bug and must keep normal hover
+  // behavior (#BUG-017, scoped per the card to non-terminal boards).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (lod && board.type !== 'terminal') setHovered(false)
+  }, [lod, board.type])
+
   // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
   // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).
   // TerminalBoard reads `lod` and swaps the xterm host for its own LOD card while
@@ -88,12 +100,15 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           minWidth={MIN_BOARD_SIZE.w}
           minHeight={MIN_BOARD_SIZE.h}
           isVisible={selected || hovered}
-          // Checkpoint for undo + flag the gesture so the preview layer detaches live
-          // native views (which can't be clipped) to snapshots while this board resizes.
+          // Checkpoint for undo on press. Arm the gesture flag (so the preview layer
+          // detaches live native views, which can't be clipped, to snapshots while
+          // this board resizes) only on the FIRST real movement — XYResizer fires
+          // onResizeStart on a pure handle click too, and onResizeEnd is gated on
+          // movement, so arming on start would leave nodeGesture stuck true (#BUG-003).
           onResizeStart={() => {
             useCanvasStore.getState().beginChange()
-            usePreviewStore.getState().setNodeGesture(true)
           }}
+          onResize={() => usePreviewStore.getState().setNodeGesture(true)}
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}

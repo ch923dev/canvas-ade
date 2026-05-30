@@ -1,4 +1,4 @@
-import type { IpcMain, BrowserWindow, Rectangle } from 'electron'
+import type { IpcMain, BrowserWindow, Rectangle, IpcMainInvokeEvent } from 'electron'
 import { WebContentsView, shell } from 'electron'
 
 /**
@@ -11,6 +11,10 @@ export type PreviewEvent =
   | { id: string; type: 'did-finish-load'; url: string }
   | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
   | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
+  // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
+  // Lets the renderer clear a stale `load-failed` latch so the following
+  // did-finish-load can promote to `connected` (Bug #5).
+  | { id: string; type: 'did-start-navigation' }
 
 /**
  * PreviewManager (1-E): N native WebContentsViews keyed by board id, synced to the
@@ -101,6 +105,39 @@ function openExternalSafe(rawUrl: string): void {
   if (isAllowedExternal(rawUrl)) void shell.openExternal(rawUrl)
 }
 
+/** A cancellable navigation event (the `event` arg of will-navigate/will-redirect). */
+interface CancellableNav {
+  preventDefault(): void
+}
+/** The `details` arg of will-frame-navigate (covers subframes via `url`). */
+interface FrameNavDetails extends CancellableNav {
+  url: string
+}
+/** The webContents surface the preview nav guards listen on (minimal, testable). */
+interface NavGuardTarget {
+  on(event: 'will-navigate', listener: (ev: CancellableNav, url: string) => void): unknown
+  on(event: 'will-redirect', listener: (ev: CancellableNav, url: string) => void): unknown
+  on(event: 'will-frame-navigate', listener: (details: FrameNavDetails) => void): unknown
+}
+
+/**
+ * Enforce the http(s)-only scheme allowlist (Bug #32) on EVERY page-driven navigation
+ * of the preview's native view: top-frame loads (`will-navigate`), 30x redirect legs
+ * (`will-redirect`), and subframe navigations (`will-frame-navigate`) — `will-navigate`
+ * alone misses the latter two (Bug #14). Mirrors the main-window guard (index.ts:89-95).
+ * Renderer-issued loads (`preview:open`/`preview:navigate`) are already gated at the
+ * IPC boundary, so the remaining surface is page-driven cross-document navigation.
+ * Extracted (and given a minimal target type) so it can be unit-tested with a fake wc.
+ */
+export function registerPreviewNavGuards(wc: NavGuardTarget): void {
+  const guard = (ev: CancellableNav, url: string): void => {
+    if (!isAllowedPreviewUrl(url)) ev.preventDefault()
+  }
+  wc.on('will-navigate', (ev, url) => guard(ev, url))
+  wc.on('will-redirect', (ev, url) => guard(ev, url))
+  wc.on('will-frame-navigate', (details) => guard(details, details.url))
+}
+
 function round(b: Rectangle): Rectangle {
   return {
     x: Math.round(b.x),
@@ -151,18 +188,23 @@ function ensure(id: string, win: BrowserWindow): Entry {
       openExternalSafe(url)
       return { action: 'deny' }
     })
-    // Defense-in-depth (Bug #16/#32): block an in-page link/script navigation to a
-    // disallowed scheme (file:/data:/external) so a previewed page can't turn the
-    // view into a general browser / file viewer. The URL bar drives navigation via
-    // `preview:navigate` → loadURL (already scheme-gated), not through this path, so
-    // legitimate localhost navigation is unaffected.
-    wc.on('will-navigate', (ev, url) => {
-      if (!isAllowedPreviewUrl(url)) ev.preventDefault()
-    })
+    // Defense-in-depth (Bug #16/#32/#14): block a page-driven navigation to a
+    // disallowed scheme (file:/data:/external) — top-frame, 30x redirect leg, and
+    // subframes — so a previewed page can't turn the view into a general browser /
+    // file viewer. The URL bar drives navigation via `preview:navigate` → loadURL
+    // (already scheme-gated), not through these, so legitimate localhost nav is fine.
+    registerPreviewNavGuards(wc)
     // A fresh main-frame navigation clears the failed latch — until proven otherwise
-    // (a later did-fail-load), this load is assumed good.
+    // (a later did-fail-load), this load is assumed good. Tell the renderer too so a
+    // stale `load-failed` latch is cleared and the following did-finish-load can
+    // promote to `connected` after a successful reload/back/forward (Bug #5). This
+    // does NOT fire for Chromium's error-page commit (it reuses the failed
+    // navigation, no new did-start-navigation), so the error page's own
+    // did-finish-load suppression is preserved.
     wc.on('did-start-navigation', (details) => {
-      if (details.isMainFrame) e!.failed = false
+      if (!details.isMainFrame) return
+      e!.failed = false
+      emit({ id, type: 'did-start-navigation' })
     })
     // Re-apply the held zoom factor after each load so the page keeps laying out at
     // its fixed CSS width W (otherwise a load resets the factor to 1). ALWAYS re-apply
@@ -281,12 +323,27 @@ interface AttachArgs {
   zoomFactor?: number
 }
 
+/**
+ * Bug #33 (defense-in-depth): reject IPC that did not originate from the main
+ * window's main frame. ipcMain channels are shared by ALL webContents, including the
+ * per-board preview WebContentsViews that load untrusted localhost content. Today
+ * those views have no preload (no ipcRenderer), so this is not exploitable — but the
+ * allowlist ENFORCES the preview-isolation invariant rather than leaving it incidental
+ * to the absence of a preview preload. A synthetic/internal call (no senderFrame) is
+ * allowed; only a real foreign frame is blocked.
+ */
+function isForeignSender(e: IpcMainInvokeEvent, getWin: () => BrowserWindow | null): boolean {
+  const main = getWin()?.webContents.mainFrame
+  return !!main && !!e.senderFrame && e.senderFrame !== main
+}
+
 export function registerPreviewHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
   defaultUrl: string
 ): void {
-  ipcMain.handle('preview:open', (_e, args: OpenArgs) => {
+  ipcMain.handle('preview:open', (ev, args: OpenArgs) => {
+    if (isForeignSender(ev, getWin)) throw new Error('preview:open — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('preview:open — no window')
     const e = ensure(args.id, win)
@@ -312,7 +369,8 @@ export function registerPreviewHandlers(
 
   // One coalesced batch for ALL views per frame (the channel is shared with
   // node-pty, so we never fan out one IPC per view per frame).
-  ipcMain.handle('preview:setBoundsBatch', (_e, items: BoundsItem[]) => {
+  ipcMain.handle('preview:setBoundsBatch', (ev, items: BoundsItem[]) => {
+    if (isForeignSender(ev, getWin)) return true
     for (const it of items) {
       const e = views.get(it.id)
       if (!e || !e.attached) continue
@@ -324,31 +382,44 @@ export function registerPreviewHandlers(
 
   // Capture the CURRENT on-screen pixels as a data URL. Must run while attached —
   // a detached/off-screen view captures blank.
-  ipcMain.handle('preview:capture', async (_e, id: string) => {
+  ipcMain.handle('preview:capture', async (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return null
     const e = views.get(id)
     if (!e || !e.attached) return null
-    const img = await e.view.webContents.capturePage()
-    return img.isEmpty() ? null : img.toDataURL()
+    try {
+      const img = await e.view.webContents.capturePage()
+      return img.isEmpty() ? null : img.toDataURL()
+    } catch {
+      // No composited display surface (headless / GPU-contended host, e.g. several
+      // Electron instances at once) or the view was closed mid-capture: capturePage
+      // rejects. Return null (treated as "no snapshot") rather than letting the
+      // rejection propagate to the renderer await and skip its detach (Bug #9).
+      return null
+    }
   })
 
-  ipcMain.handle('preview:detach', (_e, id: string) => {
+  ipcMain.handle('preview:detach', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return true
     const e = views.get(id)
     if (e) detach(e)
     return true
   })
 
-  ipcMain.handle('preview:attach', (_e, args: AttachArgs) => {
+  ipcMain.handle('preview:attach', (ev, args: AttachArgs) => {
+    if (isForeignSender(ev, getWin)) return true
     const e = views.get(args.id)
     if (e) attach(e, args.bounds, args.zoomFactor)
     return true
   })
 
-  ipcMain.handle('preview:close', (_e, id: string) => {
+  ipcMain.handle('preview:close', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return true
     disposeOne(id)
     return true
   })
 
-  ipcMain.handle('preview:closeAll', () => {
+  ipcMain.handle('preview:closeAll', (e) => {
+    if (isForeignSender(e, getWin)) return true
     disposeAll()
     return true
   })
@@ -357,7 +428,8 @@ export function registerPreviewHandlers(
   // Browser-board content is never trusted to drive the PTY; these only steer the
   // view's own webContents. `navigate` loads the user-edited URL (a reload resets
   // zoom → did-finish-load re-applies the held factor).
-  ipcMain.handle('preview:navigate', (_e, args: { id: string; url: string }) => {
+  ipcMain.handle('preview:navigate', (ev, args: { id: string; url: string }) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(args.id)
     if (!e) return false
     // Scheme allowlist (Bug #32) — same trust boundary as preview:open. A blocked
@@ -377,7 +449,8 @@ export function registerPreviewHandlers(
     return true
   })
 
-  ipcMain.handle('preview:goBack', (_e, id: string) => {
+  ipcMain.handle('preview:goBack', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(id)
     if (e?.view.webContents.navigationHistory.canGoBack()) {
       e.view.webContents.navigationHistory.goBack()
@@ -386,7 +459,8 @@ export function registerPreviewHandlers(
     return false
   })
 
-  ipcMain.handle('preview:goForward', (_e, id: string) => {
+  ipcMain.handle('preview:goForward', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(id)
     if (e?.view.webContents.navigationHistory.canGoForward()) {
       e.view.webContents.navigationHistory.goForward()
@@ -395,7 +469,8 @@ export function registerPreviewHandlers(
     return false
   })
 
-  ipcMain.handle('preview:reload', (_e, id: string) => {
+  ipcMain.handle('preview:reload', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(id)
     if (!e) return false
     e.view.webContents.reload()

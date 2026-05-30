@@ -16,7 +16,8 @@ import {
   createBoard,
   fromObject,
   toObject,
-  MIN_BOARD_SIZE
+  MIN_BOARD_SIZE,
+  DEFAULT_BOARD_SIZE
 } from '../lib/boardSchema'
 import { recordPast, applyUndo, applyRedo } from './history'
 
@@ -39,6 +40,13 @@ export interface CanvasState {
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
   resizeBoard: (id: string, w: number, h: number) => void
+  /**
+   * Grow a board's height to fit measured content (checklist auto-grow). UNTRACKED,
+   * layout-only: never touches the undo/redo rails, so a measured height bump on
+   * mount/render can neither push an undo checkpoint nor wipe an armed redo branch
+   * (#BUG-024). Only ever grows; a no-op when the board is already tall enough.
+   */
+  growBoardHeight: (id: string, h: number) => void
   selectBoard: (id: string | null) => void
   setTool: (tool: Tool) => void
   /** Snapshot the current boards for undo (call at the start of a discrete edit). */
@@ -54,26 +62,55 @@ export interface CanvasState {
 
 const newId = (): string => crypto.randomUUID()
 
-/** Cascade step (world px) per occupied slot + a guard cap on the walk. */
-const CASCADE_STEP = 28
-const CASCADE_MAX = 24
+/** Gap (world px) kept between boards when auto-placing a new one. */
+const PLACE_GAP = 28
+/** How many expanding rings the free-slot search probes before giving up. */
+const PLACE_RINGS = 16
+/** Search directions for the outward spiral: right/down/left/up first, then diagonals. */
+const RING_DIRS = [
+  [1, 0],
+  [0, 1],
+  [-1, 0],
+  [0, -1],
+  [1, 1],
+  [-1, 1],
+  [-1, -1],
+  [1, -1]
+] as const
 
 /**
- * Nudge a new board's top-left off any board already sitting at (≈) the same spot
- * so repeated centered adds don't fully stack (#42). Deterministic: walk a fixed
- * diagonal step until a free slot is found. The cap keeps the walk bounded if a
- * canvas is pathologically dense at that exact diagonal.
+ * Find a top-left for a new board of `size` near `at` (the viewport centre) that does
+ * NOT overlap — with a PLACE_GAP margin — any board already on the canvas, so a freshly
+ * added board never lands on top of and hides an existing one (the canvas stays tidy).
+ * Returns `at` when it is already clear; otherwise searches outward in expanding rings
+ * (one board-step per ring, nearest direction first) and returns the closest free slot,
+ * so the new board tucks into open space beside the existing cluster instead of covering
+ * it. Deterministic (no randomness) so undo/redo + persistence stay reproducible.
  */
-function cascadePosition(boards: Board[], at: { x: number; y: number }): { x: number; y: number } {
-  const occupied = (x: number, y: number): boolean =>
-    boards.some((b) => Math.abs(b.x - x) < 1 && Math.abs(b.y - y) < 1)
-  let x = at.x
-  let y = at.y
-  for (let i = 1; occupied(x, y) && i <= CASCADE_MAX; i++) {
-    x = at.x + i * CASCADE_STEP
-    y = at.y + i * CASCADE_STEP
+function freeSlot(
+  boards: Board[],
+  at: { x: number; y: number },
+  size: { w: number; h: number }
+): { x: number; y: number } {
+  const overlaps = (x: number, y: number): boolean =>
+    boards.some(
+      (b) =>
+        x < b.x + b.w + PLACE_GAP &&
+        b.x < x + size.w + PLACE_GAP &&
+        y < b.y + b.h + PLACE_GAP &&
+        b.y < y + size.h + PLACE_GAP
+    )
+  if (!overlaps(at.x, at.y)) return at
+  const strideX = size.w + PLACE_GAP
+  const strideY = size.h + PLACE_GAP
+  for (let ring = 1; ring <= PLACE_RINGS; ring++) {
+    for (const [dx, dy] of RING_DIRS) {
+      const x = at.x + dx * ring * strideX
+      const y = at.y + dy * ring * strideY
+      if (!overlaps(x, y)) return { x, y }
+    }
   }
-  return { x, y }
+  return { x: at.x + PLACE_GAP, y: at.y + PLACE_GAP }
 }
 
 /**
@@ -98,7 +135,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addBoard: (type, at) => {
     const id = newId()
-    const pos = cascadePosition(get().boards, at)
+    const pos = freeSlot(get().boards, at, DEFAULT_BOARD_SIZE[type])
     const board = createBoard(type, { id, x: pos.x, y: pos.y })
     set((s) => ({
       past: recordPast(s.past, s.boards),
@@ -153,14 +190,35 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return s.future.length ? { boards, future: [] } : { boards }
     }),
 
+  growBoardHeight: (id, h) =>
+    set((s) => {
+      // Layout-only, untracked: only-grow, and NEVER touch past/future. A measured
+      // content-fit bump must not pollute or wipe undo/redo history (#BUG-024).
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id || b.h >= h) return b
+        changed = true
+        return { ...b, h }
+      })
+      return changed ? { boards } : s
+    }),
+
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),
   beginChange: () =>
     set((s) => {
       // No change since the last checkpoint (boards array ref unchanged) → skip,
-      // so a no-op gesture doesn't push a duplicate snapshot or wipe the redo branch.
+      // so a no-op gesture doesn't push a duplicate snapshot.
       if (s.past[s.past.length - 1] === s.boards) return s
-      return { past: recordPast(s.past, s.boards), future: [] }
+      // Take the pre-edit snapshot but do NOT clear the redo branch here (Bug #7).
+      // beginChange fires at GESTURE START, before we know whether the gesture will
+      // commit anything — a zero-movement titlebar/resize-handle click or a degenerate
+      // arrow/pen tap calls it but mutates nothing. The redo branch is correctly
+      // invalidated by the actual mutation: updateBoard/resizeBoard clear `future` only
+      // when boards truly change. Clearing it here too would wipe an armed redo on a
+      // no-op gesture performed right after an undo (the guard above misses the
+      // post-undo case, where past tail !== boards even though boards is unchanged).
+      return { past: recordPast(s.past, s.boards) }
     }),
   undo: () =>
     set((s) => {
