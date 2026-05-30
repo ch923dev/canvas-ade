@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { registerPtyHandlers, disposeAllPtys } from './pty'
+import { registerPtyHandlers, disposeAllPtys, listPtySessions } from './pty'
 import {
   registerPreviewHandlers,
   disposeAll as disposeAllPreviews,
@@ -11,9 +11,11 @@ import {
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2eSmoke'
+import { startMcpServer, type RunningMcp } from './mcp'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
+let mcp: RunningMcp | null = null
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "e2e"=board harness+quit
 
@@ -155,6 +157,7 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  mcp = await startMcpServer({ listSessions: listPtySessions })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
 
   createWindow()
@@ -194,9 +197,11 @@ app.whenReady().then(async () => {
 function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
   disposeAllPreviews()
+  const mcpClosed = mcp?.close() ?? Promise.resolve()
+  mcp = null
   localServer?.close()
   localServer = null
-  return drained
+  return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 
 app.on('window-all-closed', () => {
