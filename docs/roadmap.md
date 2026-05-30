@@ -130,7 +130,12 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 - **Port detect → push to preview** (Slice C′, replaces the old worktrees+ports slice): a Terminal
   board reads the localhost URL its dev server printed and one click opens/points a Browser board at
   it. **Detect, don't assign** — output-parse only, on-click, reuse-else-spawn target, read-only,
-  agent-agnostic, no git. Spec: `docs/superpowers/specs/2026-05-30-port-detect-preview-design.md`.
+  agent-agnostic, no git. ✅ DONE (branch `phase-3-slice-c`, 2026-05-31; 296 tests, full gate green):
+  pure `main/portDetect.ts` parser over a frame-guarded `terminal:detectPorts` IPC; `Canvas.pushPreview`
+  + `lib/previewTarget.ts` resolve the target; a React Flow floating connector arrow
+  (`lib/previewEdges.ts` + `canvas/edges/PreviewEdge.tsx`) is derived from the new optional
+  `BrowserBoard.previewSourceId` (no schema bump) and reroutes + persists; link cleaned up on
+  delete/duplicate. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`.
 - ✅📏 full reopen fidelity: zoom/pan/positions/contents/checklist state survive restart (integration test).
 
 > 🧰 **Re-scoped 2026-05-30 — git worktrees deferred.** The original Slice C bundled git

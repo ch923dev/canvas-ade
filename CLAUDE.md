@@ -140,8 +140,10 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 Durable contract is above. The full phase-by-phase build history (Phase 0 → Phase 2
 follow-up) lives in **`docs/handoffs/status-archive.md`** to keep this file lean.
 
-**Current state (2026-05-30):** Phase 2 complete (Terminal · Browser · Planning+Checklist,
-on `main`). **Phase 3 Slice A — Persistence** built on branch `phase-3-persistence` (273
+**Current state (2026-05-31):** Phase 2 complete (Terminal · Browser · Planning+Checklist, on
+`main`). **Phase 3 is feature-complete** across three stacked branches (A persistence · B board
+actions · C′ port-detect preview), not yet merged to `main`. **Phase 3 Slice A — Persistence** built
+on branch `phase-3-persistence` (273
 tests green): projects = a folder + `canvas.json` (schema **v2**, adds persisted camera
 `viewport`; real `migrate(1→2)`); atomic write + `.bak` rotation (`main/projectStore.ts`);
 recent-projects MRU in userData (`main/recentProjects.ts`); frame-guarded project IPC
@@ -164,14 +166,25 @@ Slice B also fixed a pre-existing native-view ghost: `preview.ts` now `setVisibl
 detach so the drag detach→reattach toggle can't leave a frozen composited frame (Electron
 #43961; #44652 is already fixed in our 33.4.11).
 
-**Start here next:** the last Phase 3 slice was **re-scoped 2026-05-30** — git worktrees are
-**deferred** (→ Feature Workspaces, post-MCP; roadmap Deferred) and the slice is now **Slice C′:
-Port detect → push to preview** (detect the dev-server URL from PTY output, one click opens/points a
-Browser board; output-parse, on-click, reuse-else-spawn, read-only, no git). Approved spec:
-**`docs/superpowers/specs/2026-05-30-port-detect-preview-design.md`** → next is the implementation
-plan. (The old worktree handoff `docs/handoffs/phase-3-slice-c.md` is superseded for scope but still
-useful for the deferred worktree seams.) Branch `phase-3-slice-c` is cut off the A+B tip; merge
-`phase-3-persistence` + `phase-3-board-actions` to `main` to land Phase 3. Deferred (own slices):
-**agentic session resume** (roadmap note) · **full-view enter/exit animation** (Phase 4). Still open
-from Phase 2 follow-up: Stage-2 Playwright `_electron` harness; the `connected`-on-dead-URL Browser bug.
+**Phase 3 Slice C′ — Port detect → push to preview** built on branch `phase-3-slice-c` (296 tests
+green; full gate verified). Git worktrees were **re-scoped 2026-05-30** out of Phase 3 → deferred to
+the post-MCP **Feature Workspaces** model (worktree backs a feature *zone* of boards, not a board;
+roadmap Deferred + proposals FW-1). The slice that shipped instead: a Terminal **Preview** (globe)
+button parses the dev-server URL from the PTY ring buffer (`main/portDetect.ts`, pure) over a
+frame-guarded `terminal:detectPorts` IPC; `Canvas.pushPreview` resolves a target Browser
+(follow-link → selected → sole → spawn-near, `lib/previewTarget.ts`) and sets its `url` +
+`previewSourceId`; a React Flow **floating connector arrow** Terminal→preview is derived from that
+field (`lib/previewEdges.ts` + `canvas/edges/PreviewEdge.tsx`, hidden anchors on BoardNode),
+auto-reroutes + persists (no schema bump — optional `BrowserBoard.previewSourceId`), cleaned up on
+delete/duplicate. Read-only (no Browser→PTY path). Spec + plan:
+`docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`. Known minor gap: no IPC
+frame-guard unit test (pre-existing pattern — no `pty:*` handler has one).
+
+**Start here next:** **Phase 3 is feature-complete** (A persistence · B board actions · C′ port-detect
+preview) across three branches. To land it: merge `phase-3-persistence` (PR #5) → `phase-3-board-actions`
+→ `phase-3-slice-c` into `main` (each branch stacks on the prior; rebase as needed). Then **Phase 4 —
+Design pass & polish** (apply every DESIGN.md token/state/motion). Deferred (own slices): **agentic
+session resume** (roadmap note) · **full-view enter/exit animation** (Phase 4) · **Feature Workspaces /
+worktrees** (post-MCP; FW-1). Still open from Phase 2 follow-up: Stage-2 Playwright `_electron`
+harness; the `connected`-on-dead-URL Browser bug.
 
