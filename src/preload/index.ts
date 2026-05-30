@@ -45,6 +45,16 @@ export type PreviewEvent =
   // (Bug #5). Kept in sync with the main-process union.
   | { id: string; type: 'did-start-navigation' }
 
+// ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
+export interface RecentProject {
+  path: string
+  name: string
+  lastOpenedAt: number
+}
+export type ProjectResult =
+  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: false; error: string }
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -96,6 +106,19 @@ const api = {
     const handler = (_e: IpcRendererEvent, ev: PreviewEvent): void => listener(ev)
     ipcRenderer.on('preview:event', handler)
     return () => ipcRenderer.removeListener('preview:event', handler)
+  },
+
+  // ── Phase 3 persistence ──
+  project: {
+    create: (dir: string, name: string, opts: { gitInit?: boolean }): Promise<ProjectResult> =>
+      ipcRenderer.invoke('project:create', { dir, name, opts }),
+    open: (dir: string): Promise<ProjectResult> => ipcRenderer.invoke('project:open', dir),
+    save: (doc: unknown): Promise<boolean> => ipcRenderer.invoke('project:save', doc),
+    recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
+    current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current')
+  },
+  dialog: {
+    openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
   }
 }
 
