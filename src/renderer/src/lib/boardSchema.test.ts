@@ -452,7 +452,9 @@ describe('migrate', () => {
   })
 
   it('throws when the doc is newer than the supported version', () => {
-    expect(() => migrate({ schemaVersion: SCHEMA_VERSION + 1, viewport: null, boards: [] })).toThrow()
+    expect(() =>
+      migrate({ schemaVersion: SCHEMA_VERSION + 1, viewport: null, boards: [] })
+    ).toThrow()
   })
 
   it('throws when schemaVersion is missing', () => {

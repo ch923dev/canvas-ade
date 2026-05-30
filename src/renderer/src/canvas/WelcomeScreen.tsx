@@ -30,7 +30,11 @@ export default function WelcomeScreen(): React.ReactElement {
     const dir = await window.api.dialog.openFolder()
     if (!dir) return
     setProjectLoading()
-    const name = dir.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || dir
+    const name =
+      dir
+        .replace(/[/\\]+$/, '')
+        .split(/[/\\]/)
+        .pop() || dir
     applyOpenResult(await window.api.project.create(dir, name, {}))
   }
 

@@ -323,7 +323,11 @@ describe('canvasStore — project lifecycle', () => {
   })
 
   it('applyOpenResult(error) sets error status without clobbering boards', () => {
-    useCanvasStore.setState({ boards: [{ id: 'x', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }] as never })
+    useCanvasStore.setState({
+      boards: [
+        { id: 'x', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+      ] as never
+    })
     useCanvasStore.getState().applyOpenResult({ ok: false, error: 'bad' })
     const s = useCanvasStore.getState()
     expect(s.project.status).toBe('error')

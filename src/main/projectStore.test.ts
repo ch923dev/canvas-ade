@@ -47,7 +47,10 @@ describe('projectStore', () => {
 
   it('falls back to .bak when canvas.json is corrupt', async () => {
     await writeProject(dir, doc) // valid
-    writeFileSync(join(dir, 'canvas.json.bak'), JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ ok: true }] }))
+    writeFileSync(
+      join(dir, 'canvas.json.bak'),
+      JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ ok: true }] })
+    )
     writeFileSync(join(dir, 'canvas.json'), '{ this is not json')
     const r = readProject(dir)
     expect(r.ok).toBe(true)
