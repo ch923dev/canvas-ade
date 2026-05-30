@@ -23,6 +23,7 @@ import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, isRunning, statusFor, type TerminalState } from './terminalState'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
+import { useCanvasStore } from '../../store/canvasStore'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -106,6 +107,9 @@ export function TerminalBoard({
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
+
+  // A board with no explicit cwd spawns in the open project folder, not os.homedir().
+  const projectDir = useCanvasStore((s) => s.project.dir)
 
   // `lod` read by the spawn effect (initial WebGL attach) without making it a spawn
   // dep — `lod` must NOT respawn the PTY (the session survives zoom-out by design).
@@ -203,7 +207,7 @@ export function TerminalBoard({
       .spawnTerminal({
         id: board.id,
         shell: board.shell,
-        cwd: board.cwd,
+        cwd: board.cwd ?? projectDir ?? undefined,
         launchCommand: board.launchCommand,
         cols: term.cols,
         rows: term.rows
@@ -220,7 +224,7 @@ export function TerminalBoard({
         setState('spawn-failed')
         term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
       })
-  }, [board.id, board.shell, board.cwd, board.launchCommand])
+  }, [board.id, board.shell, board.cwd, board.launchCommand, projectDir])
 
   // ── Bridge: spawn the PTY, wire the MessagePort, fit on resize ──────────────
   // Keyed by board id so re-mounts (LOD swaps, drags) reconnect the same session
@@ -327,7 +331,7 @@ export function TerminalBoard({
         .spawnTerminal({
           id: board.id,
           shell: board.shell,
-          cwd: board.cwd,
+          cwd: board.cwd ?? projectDir ?? undefined,
           launchCommand: board.launchCommand,
           cols: term.cols,
           rows: term.rows
@@ -399,7 +403,16 @@ export function TerminalBoard({
       termRef.current = null
       fitRef.current = null
     }
-  }, [board.id, board.shell, board.cwd, board.launchCommand, attachWebgl, detachWebgl, respawn])
+  }, [
+    board.id,
+    board.shell,
+    board.cwd,
+    board.launchCommand,
+    projectDir,
+    attachWebgl,
+    detachWebgl,
+    respawn
+  ])
 
   useEffect(() => spawn(), [spawn])
 
