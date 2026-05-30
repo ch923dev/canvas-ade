@@ -65,6 +65,8 @@ interface Session {
    * to it across the move (closures capture the box, not the map entry).
    */
   buf: { data: string }
+  /** Last lifecycle state pushed to the renderer — read by the MCP board registry. */
+  state: PtyState
 }
 
 const sessions = new Map<string, Session>()
@@ -136,7 +138,7 @@ function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number
 
   // Back into `sessions` with the SAME boxed buffer; the spawn-time onData listener
   // now forwards live output to this new port (it looks up sessions.get(id)).
-  sessions.set(id, { proc: p.proc, port: port1, buf: p.buf })
+  sessions.set(id, { proc: p.proc, port: port1, buf: p.buf, state: 'running' })
   win.webContents.postMessage('pty:port', { id }, [port2])
 
   // Replay recorded scrollback, then re-announce running.
@@ -360,6 +362,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         // session that has since respawned under the same id (mirrors isStaleExit).
         const live = sessions.get(opts.id)
         if (live && live.proc === proc) {
+          live.state = 'exited'
           live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
           live.port.postMessage({ t: 'exit', code: exitCode })
         }
@@ -392,7 +395,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     })
     port1.start()
 
-    sessions.set(opts.id, { proc, port: port1, buf })
+    sessions.set(opts.id, { proc, port: port1, buf, state: 'running' })
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
 
     // Announce running, then — spawn the SHELL, not the agent — write the
@@ -512,6 +515,15 @@ export function disposeAllPtys(): Promise<void> {
   const parkedDone = [...parked.keys()].map((id) => reapParked(id))
   const liveDone = [...sessions.keys()].map((id) => cleanup(id))
   return Promise.all([...parkedDone, ...liveDone]).then(() => undefined)
+}
+
+/**
+ * Snapshot of live PTY sessions for the MCP board registry (read-only; control
+ * plane only — never the PTY data stream). Parked (deleted-but-undoable) sessions
+ * are excluded: they are not live boards.
+ */
+export function listPtySessions(): Array<{ id: string; status: PtyState }> {
+  return [...sessions.entries()].map(([id, s]) => ({ id, status: s.state }))
 }
 
 /**
