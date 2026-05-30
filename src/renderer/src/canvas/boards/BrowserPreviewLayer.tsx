@@ -378,18 +378,26 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       )
       if (!gestureRef.current) return // gesture ended before capture → keep live
       const captured: BoardGeom[] = []
+      // Snapshot each captured board's attachSeq BEFORE the detach await so a
+      // concurrent endMotion → applyLiveness → attachBoard reattach (which bumps
+      // attachSeq) is detected below and not clobbered (Bug #15).
+      const seqOf = new Map<string, number>()
       live.forEach((g, i) => {
         // Bug #48: a board deleted mid-capture had its rec removed + runtime cleared
         // by reconcile; patching here would resurrect an orphaned previewStore entry.
         if (shots[i] && recs.current.has(g.id)) {
           patchRuntime(g.id, { snapshot: shots[i] })
           captured.push(g)
+          seqOf.set(g.id, recs.current.get(g.id)!.attachSeq)
         }
       })
       await Promise.all(captured.map((g) => window.api.detachPreview(g.id)))
       captured.forEach((g) => {
         const r = recs.current.get(g.id)
-        if (!r) return // removed during the detach await (Bug #48)
+        // Bug #15/#48: skip the detach state-write if the board was removed (no rec),
+        // a concurrent attachBoard re-claimed it (attachSeq bumped), or the gesture
+        // already ended (endMotion now owns liveness) — otherwise we'd undo a reattach.
+        if (!r || r.attachSeq !== seqOf.get(g.id) || !gestureRef.current) return
         r.attached = false
         patchRuntime(g.id, { live: false })
       })
