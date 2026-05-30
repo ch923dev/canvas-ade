@@ -110,7 +110,10 @@ export function BrowserBoard({
   board,
   selected,
   hovered,
-  dimmed
+  dimmed,
+  onFull,
+  onDuplicate,
+  onDelete
 }: BoardViewProps<BrowserBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -166,6 +169,9 @@ export function BrowserBoard({
       status={status}
       contentBg="var(--surface)"
       actions={<ViewportControl value={board.viewport} onChange={setViewport} />}
+      onFull={onFull}
+      onDuplicate={onDuplicate}
+      onDelete={onDelete}
     >
       {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
       <div className="bb-urlbar" style={{ height: URLBAR_H }}>

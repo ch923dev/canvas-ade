@@ -8,9 +8,10 @@
  * board type owns exactly one file under `canvas/boards/`. Do not collapse the
  * dispatch back into this file.
  */
-import { useEffect, useState, type ReactElement } from 'react'
+import { useContext, useEffect, useState, type ReactElement } from 'react'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
+import { BoardActionsContext } from './boardActions'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
@@ -41,6 +42,12 @@ export interface BoardViewProps<T extends Board = Board> {
    * board types never receive it — BoardNode renders their LOD card itself.
    */
   lod?: boolean
+  /** Title-bar maximize → request full view for this board. */
+  onFull?: () => void
+  /** ⋯ menu → duplicate this board. */
+  onDuplicate?: () => void
+  /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
+  onDelete?: () => void
 }
 
 /** Status dot shown on the LOD card (no label at LOD). */
@@ -58,6 +65,11 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const lod = useStore((s) => isLod(s.transform[2]))
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
+  const acts = useContext(BoardActionsContext)
+  const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
+  const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
+  const onDelete = acts ? (): void => acts.remove(board.id) : undefined
+  const actions = { onFull, onDuplicate, onDelete }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
@@ -117,9 +129,11 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
         onMouseLeave={() => setHovered(false)}
         style={{ position: 'absolute', inset: 0 }}
       >
-        {board.type === 'terminal' && <TerminalBoard board={board} lod={lod} {...common} />}
-        {board.type === 'browser' && <BrowserBoard board={board} {...common} />}
-        {board.type === 'planning' && <PlanningBoard board={board} {...common} />}
+        {board.type === 'terminal' && (
+          <TerminalBoard board={board} lod={lod} {...common} {...actions} />
+        )}
+        {board.type === 'browser' && <BrowserBoard board={board} {...common} {...actions} />}
+        {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
       </div>
     </>
   )
