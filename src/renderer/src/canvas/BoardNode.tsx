@@ -8,7 +8,7 @@
  * board type owns exactly one file under `canvas/boards/`. Do not collapse the
  * dispatch back into this file.
  */
-import { useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
 import { useCanvasStore } from '../store/canvasStore'
@@ -58,6 +58,15 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const lod = useStore((s) => isLod(s.transform[2]))
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
+
+  // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
+  // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
+  // would stay armed across the LOD boundary and paint a stale border + resize
+  // handles on zoom-in. Clear it whenever we enter LOD (#BUG-017).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (lod) setHovered(false)
+  }, [lod])
 
   // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
   // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).
