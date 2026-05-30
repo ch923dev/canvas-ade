@@ -88,12 +88,15 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           minWidth={MIN_BOARD_SIZE.w}
           minHeight={MIN_BOARD_SIZE.h}
           isVisible={selected || hovered}
-          // Checkpoint for undo + flag the gesture so the preview layer detaches live
-          // native views (which can't be clipped) to snapshots while this board resizes.
+          // Checkpoint for undo on press. Arm the gesture flag (so the preview layer
+          // detaches live native views, which can't be clipped, to snapshots while
+          // this board resizes) only on the FIRST real movement — XYResizer fires
+          // onResizeStart on a pure handle click too, and onResizeEnd is gated on
+          // movement, so arming on start would leave nodeGesture stuck true (#BUG-003).
           onResizeStart={() => {
             useCanvasStore.getState().beginChange()
-            usePreviewStore.getState().setNodeGesture(true)
           }}
+          onResize={() => usePreviewStore.getState().setNodeGesture(true)}
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
