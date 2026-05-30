@@ -1,3 +1,4 @@
+import type { BrowserWindow } from 'electron'
 import type { RunningMcp } from './mcp'
 
 /** stdout marker (EPIPE-safe like index.ts's smokeLog). */
@@ -9,12 +10,26 @@ function log(line: string): void {
   }
 }
 
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Poll `fn` until it resolves truthy or the timeout elapses (copied from e2eSmoke). */
+async function poll(fn: () => Promise<boolean>, timeoutMs: number, stepMs = 120): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await fn()) return true
+    if (Date.now() > deadline) return false
+    await delay(stepMs)
+  }
+}
+
 /** Outcome of a callTool: a returned result, or a thrown transport/protocol error. */
 type CallOutcome = { ok: true; result: unknown } | { ok: false; threw: string; code?: number }
 
 interface SmokeClient {
   list: string[]
   pingOrchestrator(): Promise<CallOutcome>
+  /** Read the canvas://boards resource and return each board's `type` (control plane). */
+  readBoardTypes(): Promise<string[]>
   close(): Promise<void>
 }
 
@@ -40,6 +55,22 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         return { ok: true, result: await client.callTool({ name: 'orchestrator_ping' }) }
       } catch (e: unknown) {
         return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    // canvas://boards returns JSON.stringify(BoardSummary[]) in a single text content
+    // block. Parse it and project the `type` of each board (no board content read).
+    readBoardTypes: async (): Promise<string[]> => {
+      const res = await client.readResource({ uri: 'canvas://boards' })
+      const text = res.contents
+        .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+        .join('')
+      try {
+        const boards = JSON.parse(text) as Array<{ type?: unknown }>
+        return Array.isArray(boards)
+          ? boards.map((b) => b?.type).filter((t): t is string => typeof t === 'string')
+          : []
+      } catch {
+        return []
       }
     },
     close: () => client.close()
@@ -69,7 +100,7 @@ function isErrorResult(r: unknown): boolean {
  * the wrong reason. We require the exact tool-not-found result AND treat any thrown
  * transport error as a smoke failure.
  */
-export async function runMcpSmoke(mcp: RunningMcp | null): Promise<number> {
+export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): Promise<number> {
   if (!mcp) {
     log('MCP_FAIL server-not-mounted')
     return 1
@@ -111,6 +142,32 @@ export async function runMcpSmoke(mcp: RunningMcp | null): Promise<number> {
     }
 
     if (orchPong && workerDenied) log('MCP_TIER_OK')
+
+    // ── all-board-types listBoards: seed one of each type through the renderer hook,
+    // then poll canvas://boards (the orchestrator's resource) until the mirror has
+    // propagated all three. The hook installs after React mounts (?e2e=1 seedHarness). ──
+    const evalIn = <T,>(expr: string): Promise<T> =>
+      win.webContents.executeJavaScript(expr, true) as Promise<T>
+    const hookReady = await poll(() => evalIn<boolean>('!!window.__canvasE2E'), 8000)
+    if (!hookReady) {
+      log('MCP_FAIL no-seed-hook')
+      code = 1
+    } else {
+      await evalIn("window.__canvasE2E.seedBoard('terminal')")
+      await evalIn("window.__canvasE2E.seedBoard('browser')")
+      await evalIn("window.__canvasE2E.seedBoard('planning')")
+      const want = ['terminal', 'browser', 'planning']
+      let types: string[] = []
+      const ok = await poll(async () => {
+        types = await orch.readBoardTypes()
+        return want.every((t) => types.includes(t))
+      }, 8000)
+      if (ok) log('MCP_BOARDS_OK')
+      else {
+        log(`MCP_FAIL boards types=${types.join(',')}`)
+        code = 1
+      }
+    }
 
     await orch.close()
     await worker.close()
