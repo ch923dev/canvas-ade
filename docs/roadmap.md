@@ -103,10 +103,19 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 ## Phase 3 — Board actions & projects ⛓ Phase 2
 
 - **Focus** (double-click → camera fit one board, dim others 55%) + **Full view** (modal overlay,
-  `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both; in full
-  view a Browser board renders via snapshot/reattach so HTML chrome isn't punched through.
+  `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both.
+  ✅ DONE — Focus shipped in Phase 2; **Full view** lands in Slice B (branch `phase-3-board-actions`,
+  2026-05-30) as a live **portal relocation** (the board's live subtree is `createPortal`-moved into
+  the modal — no remount, so PTY/xterm/native view survive) rather than the originally-planned
+  snapshot/reattach: in full view a Browser board's native `WebContentsView` is **re-bound to the
+  portaled device-frame's live DOM rect** while every other view detaches, so HTML chrome isn't
+  punched through. Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
 - **Duplicate** (⋯): clone geometry + state offset 36px, select copy; Browser clone → next viewport
-  preset, own independent `WebContentsView`.
+  preset, own independent `WebContentsView`. ✅ DONE (branch `phase-3-board-actions`, 2026-05-30):
+  `duplicateBoard(id)` offsets +36px, selects the copy, one undo step; Browser clones advance to the
+  next viewport preset (`lib/viewportCycle.ts`), planning elements are deep-cloned with fresh ids;
+  delivered alongside the shared **⋯ menu** (Full view · Duplicate · Delete) via `BoardActionsContext`.
+  Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
 - **Project create / open** ✅ DONE (branch `phase-3-persistence`, 2026-05-30): folder picker;
   `canvas.json` (+`.bak`, `schemaVersion` **v2** w/ persisted camera `viewport` + real `migrate(1→2)`)
   via atomic write; debounced autosave + flush on blur/quit; recent-projects in `userData`; project

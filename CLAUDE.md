@@ -144,9 +144,17 @@ project else a welcome screen; in-session project switch (flush → `disposeLive
 [close previews + kill PTYs] → load); restored terminals are **idle** (no auto-spawn) and
 default `cwd` to the project folder. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`.
 
-**Start here next:** merge `phase-3-persistence`, then the remaining Phase 3 slices —
-**Focus/Full view** (Browser via snapshot in full view) · **Duplicate** (⋯, offset 36px,
-Browser→next preset) · **git worktrees + per-board ports** (`simple-git`; the create-dialog
+**Phase 3 Slice B — Board actions** built on branch `phase-3-board-actions` (278 tests
+green): **Full view** (live portal-relocation — the matching `BoardNode` `createPortal`s its
+live subtree into the modal host so the PTY/xterm/native view survive, no remount; Browser's
+native `WebContentsView` is re-bound to the portaled device-frame's live DOM rect while all
+other views detach) · **Duplicate** (clone offset 36px, select copy, one undo step;
+Browser→next viewport preset, planning elements deep-cloned with fresh ids) · shared **⋯ menu**
+(Full view · Duplicate · Delete) in `BoardFrame`, threaded to all three board types via
+`BoardActionsContext`. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
+
+**Start here next:** merge `phase-3-persistence` then `phase-3-board-actions`, then the
+remaining Phase 3 slice — **git worktrees + per-board ports** (`simple-git`; the create-dialog
 git toggle is currently inert). Deferred (own slice): **agentic session resume** (roadmap
 note). Still open from Phase 2 follow-up: Stage-2 Playwright `_electron` harness; the
 `connected`-on-dead-URL Browser bug.
