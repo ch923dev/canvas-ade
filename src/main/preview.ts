@@ -1,4 +1,4 @@
-import type { IpcMain, BrowserWindow, Rectangle } from 'electron'
+import type { IpcMain, BrowserWindow, Rectangle, IpcMainInvokeEvent } from 'electron'
 import { WebContentsView, shell } from 'electron'
 
 /**
@@ -323,12 +323,27 @@ interface AttachArgs {
   zoomFactor?: number
 }
 
+/**
+ * Bug #33 (defense-in-depth): reject IPC that did not originate from the main
+ * window's main frame. ipcMain channels are shared by ALL webContents, including the
+ * per-board preview WebContentsViews that load untrusted localhost content. Today
+ * those views have no preload (no ipcRenderer), so this is not exploitable — but the
+ * allowlist ENFORCES the preview-isolation invariant rather than leaving it incidental
+ * to the absence of a preview preload. A synthetic/internal call (no senderFrame) is
+ * allowed; only a real foreign frame is blocked.
+ */
+function isForeignSender(e: IpcMainInvokeEvent, getWin: () => BrowserWindow | null): boolean {
+  const main = getWin()?.webContents.mainFrame
+  return !!main && !!e.senderFrame && e.senderFrame !== main
+}
+
 export function registerPreviewHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
   defaultUrl: string
 ): void {
-  ipcMain.handle('preview:open', (_e, args: OpenArgs) => {
+  ipcMain.handle('preview:open', (ev, args: OpenArgs) => {
+    if (isForeignSender(ev, getWin)) throw new Error('preview:open — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('preview:open — no window')
     const e = ensure(args.id, win)
@@ -354,7 +369,8 @@ export function registerPreviewHandlers(
 
   // One coalesced batch for ALL views per frame (the channel is shared with
   // node-pty, so we never fan out one IPC per view per frame).
-  ipcMain.handle('preview:setBoundsBatch', (_e, items: BoundsItem[]) => {
+  ipcMain.handle('preview:setBoundsBatch', (ev, items: BoundsItem[]) => {
+    if (isForeignSender(ev, getWin)) return true
     for (const it of items) {
       const e = views.get(it.id)
       if (!e || !e.attached) continue
@@ -366,7 +382,8 @@ export function registerPreviewHandlers(
 
   // Capture the CURRENT on-screen pixels as a data URL. Must run while attached —
   // a detached/off-screen view captures blank.
-  ipcMain.handle('preview:capture', async (_e, id: string) => {
+  ipcMain.handle('preview:capture', async (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return null
     const e = views.get(id)
     if (!e || !e.attached) return null
     try {
@@ -381,24 +398,28 @@ export function registerPreviewHandlers(
     }
   })
 
-  ipcMain.handle('preview:detach', (_e, id: string) => {
+  ipcMain.handle('preview:detach', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return true
     const e = views.get(id)
     if (e) detach(e)
     return true
   })
 
-  ipcMain.handle('preview:attach', (_e, args: AttachArgs) => {
+  ipcMain.handle('preview:attach', (ev, args: AttachArgs) => {
+    if (isForeignSender(ev, getWin)) return true
     const e = views.get(args.id)
     if (e) attach(e, args.bounds, args.zoomFactor)
     return true
   })
 
-  ipcMain.handle('preview:close', (_e, id: string) => {
+  ipcMain.handle('preview:close', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return true
     disposeOne(id)
     return true
   })
 
-  ipcMain.handle('preview:closeAll', () => {
+  ipcMain.handle('preview:closeAll', (e) => {
+    if (isForeignSender(e, getWin)) return true
     disposeAll()
     return true
   })
@@ -407,7 +428,8 @@ export function registerPreviewHandlers(
   // Browser-board content is never trusted to drive the PTY; these only steer the
   // view's own webContents. `navigate` loads the user-edited URL (a reload resets
   // zoom → did-finish-load re-applies the held factor).
-  ipcMain.handle('preview:navigate', (_e, args: { id: string; url: string }) => {
+  ipcMain.handle('preview:navigate', (ev, args: { id: string; url: string }) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(args.id)
     if (!e) return false
     // Scheme allowlist (Bug #32) — same trust boundary as preview:open. A blocked
@@ -427,7 +449,8 @@ export function registerPreviewHandlers(
     return true
   })
 
-  ipcMain.handle('preview:goBack', (_e, id: string) => {
+  ipcMain.handle('preview:goBack', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(id)
     if (e?.view.webContents.navigationHistory.canGoBack()) {
       e.view.webContents.navigationHistory.goBack()
@@ -436,7 +459,8 @@ export function registerPreviewHandlers(
     return false
   })
 
-  ipcMain.handle('preview:goForward', (_e, id: string) => {
+  ipcMain.handle('preview:goForward', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(id)
     if (e?.view.webContents.navigationHistory.canGoForward()) {
       e.view.webContents.navigationHistory.goForward()
@@ -445,7 +469,8 @@ export function registerPreviewHandlers(
     return false
   })
 
-  ipcMain.handle('preview:reload', (_e, id: string) => {
+  ipcMain.handle('preview:reload', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
     const e = views.get(id)
     if (!e) return false
     e.view.webContents.reload()
