@@ -327,8 +327,16 @@ export function registerPreviewHandlers(
   ipcMain.handle('preview:capture', async (_e, id: string) => {
     const e = views.get(id)
     if (!e || !e.attached) return null
-    const img = await e.view.webContents.capturePage()
-    return img.isEmpty() ? null : img.toDataURL()
+    try {
+      const img = await e.view.webContents.capturePage()
+      return img.isEmpty() ? null : img.toDataURL()
+    } catch {
+      // No composited display surface (headless / GPU-contended host, e.g. several
+      // Electron instances at once) or the view was closed mid-capture: capturePage
+      // rejects. Return null (treated as "no snapshot") rather than letting the
+      // rejection propagate to the renderer await and skip its detach (Bug #9).
+      return null
+    }
   })
 
   ipcMain.handle('preview:detach', (_e, id: string) => {
