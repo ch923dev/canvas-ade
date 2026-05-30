@@ -55,7 +55,11 @@ export function useAutosave(): void {
   useEffect(() => {
     const saver = createAutosaver({
       save: async () => window.api.project.save(useCanvasStore.getState().toObject()),
-      getStatus: () => useCanvasStore.getState().project.status
+      // The `project` slice is added in a later task; read it defensively so the hook
+      // compiles + no-ops (status 'welcome' → gate closed) until that slice exists.
+      getStatus: () =>
+        (useCanvasStore.getState() as { project?: { status?: ProjectStatus } }).project?.status ??
+        'welcome'
     })
 
     // Save when boards or camera change (skip pure selection/tool churn).
