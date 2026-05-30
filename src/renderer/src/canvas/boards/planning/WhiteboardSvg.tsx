@@ -7,7 +7,7 @@
  * Includes a live "draft" overlay so an in-progress arrow/stroke renders while
  * the pointer is still down, before it is committed to the store.
  */
-import { useMemo, type PointerEvent, type ReactElement } from 'react'
+import { useMemo, useRef, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 
@@ -30,10 +30,11 @@ export interface WhiteboardSvgProps {
    */
   onDragStart?: (e: PointerEvent, id: string) => void
   /**
-   * True while a draw tool (pen/arrow) is active. Disables hit-testing on the
-   * committed vectors so a new stroke/arrow can START on top of existing ink
-   * (the press falls through to the well's onWellPointerDown — #4), mirroring the
-   * card fall-through guards.
+   * True while ANY non-select tool (pen/arrow/note/check) is active. Disables
+   * hit-testing on the committed vectors so a new stroke/arrow can START — or a
+   * note/checklist can be PLACED — on top of existing ink (the press falls through
+   * to the well's onWellPointerDown — #4/BUG-022), mirroring the card fall-through
+   * guards. Selection/drag of vectors stays available in select mode.
    */
   drawing?: boolean
 }
@@ -50,8 +51,27 @@ export function WhiteboardSvg({
   drawing = false
 }: WhiteboardSvgProps): ReactElement {
   const markerId = arrowheadMarkerId(boardId)
-  // Memoize the (potentially heavy) outline math for committed strokes.
-  const strokePaths = useMemo(() => strokes.map((s) => strokeToPath(s.points)), [strokes])
+  // Memoize the (potentially heavy) outline math PER STROKE, keyed on each stroke's
+  // `points` reference. The parent derives `strokes` via .filter() (new array every
+  // render) and translateElement returns the SAME element object for unmoved strokes
+  // (only the dragged one gets a fresh ref), so caching on the points reference lets
+  // unchanged strokes reuse their path across every drag/zoom frame instead of
+  // recomputing getStroke for all of them (#BUG-028). Keyed cache is pruned to the
+  // live stroke set each render so deleted strokes don't leak.
+  const pathCache = useRef(new Map<string, { points: number[]; path: string }>())
+  const strokePaths = useMemo(() => {
+    const cache = pathCache.current
+    const next = new Map<string, { points: number[]; path: string }>()
+    const out = strokes.map((s) => {
+      const hit = cache.get(s.id)
+      const entry =
+        hit && hit.points === s.points ? hit : { points: s.points, path: strokeToPath(s.points) }
+      next.set(s.id, entry)
+      return entry.path
+    })
+    pathCache.current = next
+    return out
+  }, [strokes])
   const draftPath = useMemo(
     () => (draftStroke && draftStroke.length >= 2 ? strokeToPath(draftStroke) : ''),
     [draftStroke]

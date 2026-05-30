@@ -187,7 +187,14 @@ export function PlanningBoard({
   const growForChecklist = useCallback(
     (_elId: string, bottom: number) => {
       const needed = Math.ceil(bottom + TITLEBAR_H + WELL_PAD)
-      if (needed > board.h) updateBoard(board.id, { h: needed })
+      // Only ever grow (one-shot, bounded). This is an untracked layout measurement,
+      // not a user edit, so it must NEVER destroy an armed redo branch: updateBoard
+      // clears `future` when it is non-empty, so skip the write while redo is armed
+      // and let a later genuine re-render re-measure and grow (#BUG-024). Reading the
+      // store snapshot here is non-reactive and does not mutate it.
+      if (needed > board.h && useCanvasStore.getState().future.length === 0) {
+        updateBoard(board.id, { h: needed })
+      }
     },
     [board.id, board.h, updateBoard]
   )
@@ -423,7 +430,10 @@ export function PlanningBoard({
           draftArrow={draftArrow}
           draftStroke={draftStroke}
           selectedId={selectedElId}
-          drawing={drawing}
+          // Disable committed-vector hit-testing for ANY non-select tool (not just
+          // pen/arrow) so a note/check placement over committed ink falls through
+          // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
+          drawing={tool !== 'select'}
           onSelect={(id) => {
             setSelectedElId(id)
             wellRef.current?.focus()

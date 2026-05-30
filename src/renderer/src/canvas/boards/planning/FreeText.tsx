@@ -102,14 +102,39 @@ export function FreeText({
         className="pl-text-grip"
         title="Drag"
         onPointerDown={(e) => {
-          e.stopPropagation()
+          // In a draw mode let the press fall through to the well so a stroke/arrow
+          // can START over the grip (#6); only swallow + drag in select mode.
           if (!interactive) return
+          e.stopPropagation()
           // Suppress the empty-text blur-prune this gesture is about to trigger.
           dragging.current = true
           onDragStart(e, element.id)
-          setTimeout(() => {
+          // The well captures the pointer, so the grip never sees move/up. Track the
+          // gesture on the document to tell a real drag from a zero-movement press:
+          // on a press with NO movement the empty-text blur-prune was skipped (the
+          // `dragging` guard) AND the text never re-focuses, so it would orphan
+          // permanently — re-check and prune it on pointer-up (#BUG-026).
+          const startX = e.clientX
+          const startY = e.clientY
+          let moved = false
+          const onMove = (ev: PointerEvent): void => {
+            if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true
+          }
+          const onUp = (): void => {
+            document.removeEventListener('pointermove', onMove)
+            document.removeEventListener('pointerup', onUp)
+            document.removeEventListener('pointercancel', onUp)
             dragging.current = false
-          }, 0)
+            // Read the live DOM value (controlled → current store text) so a text
+            // element that gained content during the gesture is never pruned.
+            const text = ref.current?.value ?? element.text
+            if (!moved && text.trim() === '' && document.activeElement !== ref.current) {
+              onDelete(element.id)
+            }
+          }
+          document.addEventListener('pointermove', onMove)
+          document.addEventListener('pointerup', onUp)
+          document.addEventListener('pointercancel', onUp)
         }}
         style={{
           width: 6,
