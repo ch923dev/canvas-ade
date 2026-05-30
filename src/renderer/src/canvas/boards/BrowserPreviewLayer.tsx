@@ -101,9 +101,15 @@ interface LayerProps {
    * Browser board demotes to its dimmable snapshot (see `liveEligible`).
    */
   focusedId: string | null
+  /** The board currently in full view (its native view binds to the modal frame). */
+  fullViewId: string | null
 }
 
-export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactElement | null {
+export function BrowserPreviewLayer({
+  paneRef,
+  focusedId,
+  fullViewId
+}: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
   // Patch ONLY an existing entry — for main-driven lifecycle events that may arrive
@@ -129,6 +135,9 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   const idleRef = useRef(0)
   // Latest focused board id, read inside the (geometry-only-deps) liveEligible cb.
   const focusedIdRef = useRef<string | null>(focusedId)
+  // Latest full-view board id. When set, that board's native view binds to the
+  // portaled modal device frame (live DOM rect) and every other view detaches.
+  const fullViewIdRef = useRef<string | null>(fullViewId)
   // Latest store selection + the selected board's WORLD rect (any board type), kept
   // fresh by the store subscription. Used by the static-occlusion demote (LOT F #2/
   // #19/#20): a live Browser view overlapping a DIFFERENT selected board must demote
@@ -159,6 +168,16 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     },
     [boundsFor, preset]
   )
+
+  /** In full view, the native view binds to the portaled device frame's live DOM rect
+   *  (the board's HTML frame is relocated into the modal; camera math no longer applies). */
+  const fullViewBoundsFor = useCallback((id: string): Rect | null => {
+    const el = document.querySelector<HTMLElement>(`[data-bb-frame="${id}"]`)
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0 || r.height <= 0) return null
+    return roundRect({ x: r.left, y: r.top, width: r.width, height: r.height })
+  }, [])
 
   // The board's device-stage rect in screen (pane-local + offset) space — the raw,
   // un-rounded rect used for eligibility + viewport-distance ranking.
@@ -283,8 +302,9 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   const attachBoard = useCallback(
     async (g: BoardGeom): Promise<void> => {
       const r = rec(g.id)
-      const bounds = boundsFor(g)
-      const zoomFactor = zoomFor(g)
+      const fv = fullViewIdRef.current === g.id ? fullViewBoundsFor(g.id) : null
+      const bounds = fv ?? boundsFor(g)
+      const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
       // Diff-skip a redundant re-attach: if the view is already attached at exactly
       // these bounds/zoom, re-issuing attachPreview re-adds the child view (a wasted
       // IPC + attachSeq bump for nothing). The new selection-driven applyLiveness
@@ -321,7 +341,7 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
       }
       patchRuntime(g.id, { live: true })
     },
-    [rec, boundsFor, zoomFor, patchRuntime]
+    [rec, boundsFor, zoomFor, fullViewBoundsFor, preset, patchRuntime]
   )
 
   // Free a renderer (over the live cap / board removed). Last snapshot keeps showing.
@@ -344,8 +364,9 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     for (const g of geomRef.current.values()) {
       const r = recs.current.get(g.id)
       if (!r || !r.attached) continue
-      const bounds = boundsFor(g)
-      const zoomFactor = zoomFor(g)
+      const fv = fullViewIdRef.current === g.id ? fullViewBoundsFor(g.id) : null
+      const bounds = fv ?? boundsFor(g)
+      const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
       if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
       r.lastSent = bounds
       r.lastZoom = zoomFactor
@@ -354,7 +375,7 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
     if (!items.length) return false
     void window.api.setPreviewBoundsBatch(items)
     return true
-  }, [boundsFor, zoomFor])
+  }, [boundsFor, zoomFor, fullViewBoundsFor, preset])
 
   const startPump = useCallback((): void => {
     if (rafRef.current) return
@@ -423,6 +444,16 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   // reattach.
   const applyLiveness = useCallback((): void => {
     const all = [...geomRef.current.values()]
+    const fvId = fullViewIdRef.current
+    if (fvId) {
+      // Full view: only the full-view Browser board may be live (bound to the modal
+      // frame); detach every other native view (the modal scrim covers the canvas).
+      for (const g of all) {
+        if (g.id === fvId) void attachBoard(g)
+        else if (rec(g.id).attached) void demoteToSnapshot(g)
+      }
+      return
+    }
     // A board may go live only if base-eligible (zoom/on-pane/focus) AND not statically
     // occluding a selected board or the app chrome (LOT F #2/#19/#20/#21). The
     // occlusion-demoted set keeps its renderer + snapshot for a fast reattach once the
@@ -500,12 +531,13 @@ export function BrowserPreviewLayer({ paneRef, focusedId }: LayerProps): ReactEl
   const focusMounted = useRef(false)
   useEffect(() => {
     focusedIdRef.current = focusedId
+    fullViewIdRef.current = fullViewId
     if (!focusMounted.current) {
       focusMounted.current = true
       return
     }
     applyLiveness()
-  }, [focusedId, applyLiveness])
+  }, [focusedId, fullViewId, applyLiveness])
 
   // ── Reconcile the native views with the store's Browser boards ────────────────
   // Subscribe imperatively (NOT via a hook selector that re-renders) so geometry +

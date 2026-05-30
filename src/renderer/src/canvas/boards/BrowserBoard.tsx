@@ -225,6 +225,7 @@ export function BrowserBoard({
       <div className="bb-stage" style={{ top: URLBAR_H }}>
         <div
           className="bb-frame"
+          data-bb-frame={board.id}
           style={{
             left: frame.x,
             top: frameTopInStage,
