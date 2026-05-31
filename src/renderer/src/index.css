@@ -837,47 +837,6 @@ body {
   opacity: 1;
   transform: scale(1);
 }
-/* §6.1 top band: `FULL VIEW` label + `✕ Esc` exit, above the board's own chrome. */
-.fullview-band {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 36px;
-  padding: 0 12px;
-  background: var(--surface-raised);
-  border-bottom: 1px solid var(--border);
-}
-.fullview-label {
-  font-family: var(--ui);
-  font-size: var(--fs-micro);
-  line-height: var(--lh-micro);
-  font-weight: var(--fw-micro);
-  letter-spacing: var(--tr-micro);
-  text-transform: uppercase;
-  color: var(--text-3);
-}
-.fullview-close {
-  font-family: var(--ui);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  color: var(--text-2);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--r-ctl);
-  padding: 4px 8px;
-  cursor: pointer;
-}
-.fullview-close:hover {
-  color: var(--text);
-  background: var(--accent-wash);
-  border-color: var(--accent);
-}
-.fullview-close:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 1.5px var(--accent);
-}
 .fullview-host {
   flex: 1;
   position: relative;

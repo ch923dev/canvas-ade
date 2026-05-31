@@ -1,11 +1,10 @@
 /**
  * Full-view modal: a fullscreen overlay over a 66%-black scrim with an accent-ringed
- * frame and a portal host that the matching board relocates its live content into. A
- * §6.1 top band (`FULL VIEW` label + `✕ Esc` exit) sits above the host; the relocated
- * board also keeps its own title bar (whose maximize ⤢ toggles full view off). Does NOT
- * move the camera. Closes on the band ✕, the board's maximize toggle, Esc, or a scrim
- * click. Renders the host immediately and publishes it on mount so the BoardNode can
- * portal into it the same frame.
+ * frame and a portal host that the matching board relocates its live content into. The
+ * relocated board keeps its own title bar (whose maximize ⤢ toggles full view off) — that
+ * toggle is the sole in-frame exit affordance. Does NOT move the camera. Closes on the
+ * board's maximize toggle, Esc, or a scrim click. Renders the host immediately and
+ * publishes it on mount so the BoardNode can portal into it the same frame.
  *
  * Motion (Slice 5 / §9): mounts in the closed state, then flips `open` on the next frame
  * so the CSS transition runs scrim opacity 0→1 + frame scale(.98→1). On `closing` it
@@ -76,12 +75,6 @@ export function FullViewModal({
       }}
     >
       <div className="fullview-frame" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="fullview-band">
-          <span className="fullview-label">Full view</span>
-          <button className="fullview-close" onClick={onClose} title="Close (Esc)">
-            ✕ Esc
-          </button>
-        </div>
         <div className="fullview-host" ref={setHostEl} />
       </div>
     </div>

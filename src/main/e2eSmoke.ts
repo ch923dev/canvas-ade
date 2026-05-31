@@ -325,39 +325,36 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : JSON.stringify(emu)
   })
 
-  // ── Slice 5 (§6.1 top band + close-motion state machine): full view must render the
-  // band (`FULL VIEW` label + `✕ Esc` exit), and clicking the ✕ must run the real close
-  // path (exit tween → onExited → unmount). Open via the e2e hook (raw setFullView), read
-  // the band, then dispatch a real click on `.fullview-close` and assert the modal is gone
-  // after the tween — proving the band + the deferred-unmount state machine end to end. ──
+  // ── Slice 5 (close-motion state machine): full view renders a chrome-less frame (no
+  // §6.1 band — removed so the only exit affordances are the board's own ⤢ toggle, Esc, or
+  // a scrim click). Open via the e2e hook (raw setFullView), assert the frame mounts and
+  // the band is GONE, then dispatch a real Escape keydown and assert the modal is gone
+  // after the tween — proving the deferred-unmount close state machine end to end. ──
   await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
   await delay(400) // modal mounts + enter tween settles
-  const band = await evalIn<{ found: boolean; label: string; hasClose: boolean }>(
+  const fvClose = await evalIn<{ frame: boolean; bandGone: boolean }>(
     win,
-    `(() => {
-       const b = document.querySelector('.fullview-band');
-       const close = document.querySelector('.fullview-close');
-       return {
-         found: !!b,
-         label: (document.querySelector('.fullview-label')?.textContent || '').trim(),
-         hasClose: !!close
-       };
-     })()`
+    `(() => ({
+       frame: !!document.querySelector('.fullview-scrim .fullview-frame .fullview-host'),
+       bandGone: document.querySelector('.fullview-band') === null
+     }))()`
   )
-  await evalIn(win, `document.querySelector('.fullview-close')?.click()`)
+  await evalIn(
+    win,
+    `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`
+  )
   await delay(400) // exit tween (200ms) + onExited unmount
-  const bandClosed = await evalIn<boolean>(
+  const fvCloseGone = await evalIn<boolean>(
     win,
     `document.querySelector('.fullview-scrim') === null`
   )
-  const bandOk =
-    band.found && /full view/i.test(band.label) && band.hasClose && bandClosed
+  const fvCloseOk = fvClose.frame && fvClose.bandGone && fvCloseGone
   parts.push({
-    name: 'fullview-band',
-    ok: bandOk,
-    detail: bandOk
-      ? 'band shows FULL VIEW + ✕ Esc; ✕ animates closed and unmounts'
-      : `found=${band.found} label=${JSON.stringify(band.label)} hasClose=${band.hasClose} closed=${bandClosed}`
+    name: 'fullview-close',
+    ok: fvCloseOk,
+    detail: fvCloseOk
+      ? 'chrome-less frame mounts (no band); Esc animates closed and unmounts'
+      : `frame=${fvClose.frame} bandGone=${fvClose.bandGone} closed=${fvCloseGone}`
   })
 
   // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
