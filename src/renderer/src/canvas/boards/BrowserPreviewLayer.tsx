@@ -218,7 +218,20 @@ export function BrowserPreviewLayer({
     if (!el || !host.contains(el)) return null
     const r = el.getBoundingClientRect()
     if (r.width <= 0 || r.height <= 0) return null
-    return roundRect({ x: r.left, y: r.top, width: r.width, height: r.height })
+    // Inset by the 1px device-frame border so the unrounded native rect tucks INSIDE the
+    // rounded HTML bezel — mirrors the on-canvas deviceStageRect inset. Two reasons it
+    // matters in full view specifically: (1) the frame is flex-centred, so its left/width
+    // are fractional and roundRect rounds x and width independently — round(x)+round(w) can
+    // land 1px past the frame's right edge, letting the native page overflow the bezel on
+    // the right; (2) without the inset the native view paints over the 1px border on every
+    // edge. Insetting tucks it inside on all sides and absorbs the sub-pixel rounding.
+    const border = 1
+    return roundRect({
+      x: r.left + border,
+      y: r.top + border,
+      width: Math.max(0, r.width - border * 2),
+      height: Math.max(0, r.height - border * 2)
+    })
   }, [])
 
   // The board's device-stage rect in screen (pane-local + offset) space — the raw,
