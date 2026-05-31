@@ -409,6 +409,45 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : `running=${dashRunning} down=${dashDown}`
   })
 
+  // ── Duplicating a linked Browser keeps the preview link: a Browser connected to a
+  // terminal (previewSourceId) should, when duplicated, leave the COPY linked to the SAME
+  // terminal — so both previews (e.g. Desktop + Mobile of one dev server) keep their
+  // connector arrow. Link the browser, duplicate it, assert the clone carries the same
+  // previewSourceId AND that its own preview edge renders, then delete the clone (restore
+  // the seed count) and unlink the original. ──
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: ${JSON.stringify(termId)} })`
+  )
+  const cloneId = await evalIn<string | null>(
+    win,
+    `window.__canvasE2E.duplicateBoard(${JSON.stringify(browserId)})`
+  )
+  await evalIn(win, 'window.__canvasE2E.fitView()') // frame all (incl. the clone) so its edge renders
+  await delay(250)
+  const dup = await evalIn<{ cloneSource: string | null; edgePresent: boolean }>(
+    win,
+    `(() => {
+       const clone = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(cloneId)});
+       const cloneSource = clone && clone.type === 'browser' ? (clone.previewSourceId ?? null) : null;
+       const edgePresent = !!document.querySelector('.react-flow__edge[data-id="preview-${cloneId}"]');
+       return { cloneSource, edgePresent };
+     })()`
+  )
+  if (cloneId) await evalIn(win, `window.__canvasE2E.deleteBoard(${JSON.stringify(cloneId)})`) // restore seed count
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: undefined })`
+  ) // unlink the original → restore baseline
+  const dupOk = !!cloneId && dup.cloneSource === termId && dup.edgePresent
+  parts.push({
+    name: 'duplicate-keeps-link',
+    ok: dupOk,
+    detail: dupOk
+      ? 'duplicated Browser stays linked to the same terminal + its own preview edge renders'
+      : JSON.stringify({ cloneId, ...dup })
+  })
+
   // ── Bugs 8/9 + 11/12 (board ⋯ menu): drive the REAL menu through the DOM. Bug 11/12
   // only reproduces with a pointerdown→click sequence (pre-fix the document pointerdown
   // close-listener unmounted the item before its click fired); bug 8/9 needs the popover

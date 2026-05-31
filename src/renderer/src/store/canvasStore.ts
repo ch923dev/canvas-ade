@@ -210,7 +210,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     delete clone.z // re-stacks on top via array order, like a freshly added board
     if (clone.type === 'browser') {
       clone.viewport = nextViewport(clone.viewport)
-      delete clone.previewSourceId // a copy starts unlinked (Slice C′)
+      // Keep `previewSourceId` (copied by structuredClone): duplicating a Browser that's
+      // linked to a terminal should leave the copy linked to the SAME terminal, so both
+      // previews (e.g. Desktop + Mobile of one dev server) track that server and each
+      // draws its own connector arrow. The link is still cleared if that terminal is
+      // later removed (removeBoard). Primary use is forking a preview to a 2nd viewport.
     }
     if (clone.type === 'planning') {
       clone.elements = clone.elements.map((e) => ({ ...structuredClone(e), id: newId() }))

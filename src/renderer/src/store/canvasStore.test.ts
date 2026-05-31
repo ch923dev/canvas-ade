@@ -402,7 +402,7 @@ describe('preview link cleanup', () => {
     expect(b && b.type === 'browser' ? b.previewSourceId : 'X').toBeUndefined()
   })
 
-  it('drops the link when a linked Browser board is duplicated', () => {
+  it('keeps the preview link when a linked Browser board is duplicated', () => {
     const { addBoard, updateBoard, duplicateBoard } = useCanvasStore.getState()
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
     const termId = addBoard('terminal', { x: 0, y: 0 })
@@ -410,6 +410,23 @@ describe('preview link cleanup', () => {
     updateBoard(browserId, { previewSourceId: termId } as never)
     const cloneId = duplicateBoard(browserId)!
     const clone = useCanvasStore.getState().boards.find((x) => x.id === cloneId)
-    expect(clone && clone.type === 'browser' ? clone.previewSourceId : 'X').toBeUndefined()
+    // The copy stays linked to the SAME terminal (e.g. a Desktop + Mobile preview pair).
+    expect(clone && clone.type === 'browser' ? clone.previewSourceId : 'X').toBe(termId)
+  })
+
+  it('clears the duplicated link too when the shared source terminal is removed', () => {
+    const { addBoard, updateBoard, duplicateBoard, removeBoard } = useCanvasStore.getState()
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const termId = addBoard('terminal', { x: 0, y: 0 })
+    const browserId = addBoard('browser', { x: 800, y: 0 })
+    updateBoard(browserId, { previewSourceId: termId } as never)
+    const cloneId = duplicateBoard(browserId)!
+    removeBoard(termId)
+    const get = (bid: string): string | undefined => {
+      const b = useCanvasStore.getState().boards.find((x) => x.id === bid)
+      return b && b.type === 'browser' ? b.previewSourceId : 'X'
+    }
+    expect(get(browserId)).toBeUndefined()
+    expect(get(cloneId)).toBeUndefined()
   })
 })
