@@ -39,24 +39,49 @@ export function AlignmentGuides({
           const l = projectGuide(g, transform)
           return <line key={`a${i}`} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />
         }
-        const v = projectGapGuide(g, transform)
-        // Connector + two perpendicular end ticks. Ticks are perpendicular to the connector axis.
-        const vertical = g.axis === 'y'
-        const tick = (cx: number, cy: number): ReactElement =>
-          vertical ? (
-            <line className="align-tick" x1={cx - TICK} y1={cy} x2={cx + TICK} y2={cy} />
-          ) : (
-            <line className="align-tick" x1={cx} y1={cy - TICK} x2={cx} y2={cy + TICK} />
-          )
+        // gap (single gutter) and distribute (two equal segments) share the connector+pill visual.
+        const segments =
+          g.kind === 'gap'
+            ? [{ pos: g.pos, perp: g.perp, distance: g.distance, axis: g.axis }]
+            : g.gaps.map((seg) => ({
+                pos: (seg.from + seg.to) / 2,
+                perp: g.perp,
+                distance: seg.to - seg.from,
+                axis: g.axis
+              }))
         return (
-          <g key={`g${i}`} className="align-gap">
-            <line className="align-connector" x1={v.ax} y1={v.ay} x2={v.bx} y2={v.by} />
-            <g>{tick(v.ax, v.ay)}</g>
-            <g>{tick(v.bx, v.by)}</g>
-            <rect className="align-pill" x={v.lx - 14} y={v.ly - 8} width={28} height={16} rx={3} />
-            <text className="align-pill-text" x={v.lx} y={v.ly} textAnchor="middle" dominantBaseline="central">
-              {v.distance}
-            </text>
+          <g key={`g${i}`} className={g.kind === 'gap' ? 'align-gap' : 'align-distribute'}>
+            {segments.map((s, j) => {
+              const v = projectGapGuide(
+                { kind: 'gap', axis: s.axis, pos: s.pos, perp: s.perp, distance: s.distance },
+                transform
+              )
+              // Connector + two perpendicular end ticks (perpendicular to the connector axis).
+              const vertical = s.axis === 'y'
+              const tick = (cx: number, cy: number): ReactElement =>
+                vertical ? (
+                  <line className="align-tick" x1={cx - TICK} y1={cy} x2={cx + TICK} y2={cy} />
+                ) : (
+                  <line className="align-tick" x1={cx} y1={cy - TICK} x2={cx} y2={cy + TICK} />
+                )
+              return (
+                <g key={j}>
+                  <line className="align-connector" x1={v.ax} y1={v.ay} x2={v.bx} y2={v.by} />
+                  <g>{tick(v.ax, v.ay)}</g>
+                  <g>{tick(v.bx, v.by)}</g>
+                  <rect className="align-pill" x={v.lx - 14} y={v.ly - 8} width={28} height={16} rx={3} />
+                  <text
+                    className="align-pill-text"
+                    x={v.lx}
+                    y={v.ly}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                  >
+                    {Math.round(v.distance)}
+                  </text>
+                </g>
+              )
+            })}
           </g>
         )
       })}
