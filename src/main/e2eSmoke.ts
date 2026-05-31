@@ -522,6 +522,49 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : JSON.stringify(chrome)
   })
 
+  // ── Menu-over-preview occlusion: a native WebContentsView paints above ALL HTML,
+  // even the body-portaled ⋯ popover, so a menu dropping over a live Browser board's
+  // device stage renders UNDER the preview. Fix: while a board ⋯ menu is open the preview
+  // layer detaches live views → HTML snapshot (z-ordered, so the menu shows on top), then
+  // reattaches on close. Assert the live→detached→reattached transition on the Browser
+  // board (the detach is exactly what un-occludes the menu; pixels aren't observable in
+  // the harness, the liveness flag is). Negative control: without the fix `live` stays
+  // true while the menu is open. ──
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(250) // let the browser view attach live at rest
+  const occl = await evalIn<{
+    found: boolean
+    liveBefore: boolean
+    liveDuringMenu: boolean
+    liveAfter: boolean
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const sel = (s, root) => (root || document).querySelector(s);
+       const id = ${JSON.stringify(browserId)};
+       const live = () => !!(window.__canvasE2E.getRuntime(id) || {}).live;
+       const node = sel('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+       const more = node && sel('button[title="More"]', node);
+       if (!more) return { found: false, liveBefore: false, liveDuringMenu: false, liveAfter: false };
+       const liveBefore = live();
+       more.click(); await sleep(250);          // open ⋯ → layer detaches live views
+       const liveDuringMenu = live();
+       more.click(); await sleep(300);           // close ⋯ → reattach eligible views
+       const liveAfter = live();
+       return { found: true, liveBefore, liveDuringMenu, liveAfter };
+     })()`
+  )
+  const occlOk = occl.found && occl.liveBefore && !occl.liveDuringMenu && occl.liveAfter
+  parts.push({
+    name: 'menu-preview-detach',
+    ok: occlOk,
+    detail: occlOk
+      ? 'live preview detaches while ⋯ menu open (un-occluded) → reattaches on close'
+      : JSON.stringify(occl)
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 4, detail: `${count} boards` })
 

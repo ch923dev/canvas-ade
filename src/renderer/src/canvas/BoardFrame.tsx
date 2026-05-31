@@ -9,6 +9,7 @@ import type { MouseEvent, ReactNode, ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
+import { usePreviewStore } from '../store/previewStore'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
 
@@ -91,6 +92,16 @@ export function BoardMenu({
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: -9999, left: -9999 })
   const triggerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+
+  // A native preview `WebContentsView` paints above ALL HTML — even this body-portaled
+  // popover — so a menu dropping over a live Browser board's device stage renders under
+  // it. Signal the preview layer to detach live views to their HTML snapshot while open,
+  // then reattach on close (mirrors the node-gesture detach path). ADR 0002.
+  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
+  useEffect(() => {
+    setMenuOpen(open)
+    if (open) return () => setMenuOpen(false)
+  }, [open, setMenuOpen])
 
   useEffect(() => {
     if (!open) return

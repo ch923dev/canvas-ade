@@ -128,6 +128,10 @@ export function BrowserPreviewLayer({
   // A board drag/resize is in progress (React Flow node-drag / NodeResizer). Unlike
   // a camera move it never fires useOnViewportChange, so we detach live views here.
   const nodeGesture = usePreviewStore((s) => s.nodeGesture)
+  // A board ⋯ menu / device-overlapping popover is open. A native view paints above the
+  // body-portaled menu, so suppress live views (→ HTML snapshot) the same way as a
+  // gesture while the menu is open, then reattach on close. ADR 0002.
+  const menuOpen = usePreviewStore((s) => s.menuOpen)
 
   // paneOffset = the RF pane top-left in window CSS px. The canvas is now full-bleed
   // (App.tsx → position:fixed inset:0), so this is ~ (0,0) — but MEASURE it (a future
@@ -561,22 +565,24 @@ export function BrowserPreviewLayer({
 
   useOnViewportChange({ onStart: beginMotion, onChange: startPump, onEnd: endMotion })
 
-  // ── Node drag/resize gestures + focus changes (no camera move → no viewport event) ──
-  // A node drag/resize START detaches every live view → HTML snapshot (so a board
-  // dragged over a live Browser board isn't occluded by its always-above native
-  // layer); the gesture END reattaches the eligible ones. Skip the initial mount tick
-  // (gesture is already false). begin/endMotion are stable (deps don't include
-  // nodeGesture), so this effect runs on real gesture toggles; re-running on a rare
-  // callback-identity change is safe (begin guards on gestureRef, end is idempotent).
+  // ── Node drag/resize gestures + ⋯-menu open + focus changes (no camera move → no
+  // viewport event) ──
+  // A node drag/resize START — or an open board ⋯ menu — detaches every live view → HTML
+  // snapshot (so a board dragged over a live Browser board, or a menu dropping over one,
+  // isn't occluded by its always-above native layer); the gesture/menu END reattaches the
+  // eligible ones. Skip the initial mount tick (both flags are already false). begin/
+  // endMotion are stable (deps don't include the flags), so this effect runs on real
+  // toggles; re-running on a rare callback-identity change is safe (begin guards on
+  // gestureRef, end is idempotent).
   const gestureMounted = useRef(false)
   useEffect(() => {
     if (!gestureMounted.current) {
       gestureMounted.current = true
       return
     }
-    if (nodeGesture) beginMotion()
+    if (nodeGesture || menuOpen) beginMotion()
     else endMotion()
-  }, [nodeGesture, beginMotion, endMotion])
+  }, [nodeGesture, menuOpen, beginMotion, endMotion])
 
   // Focus change → re-evaluate liveness (focused board stays live, others demote to
   // their dimmable snapshot). Focus also fits the camera (→ onMoveEnd already
