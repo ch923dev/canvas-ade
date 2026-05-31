@@ -37,7 +37,7 @@ import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
-import { computeAlignment, SNAP_THRESHOLD_PX, type Guide } from '../lib/alignmentGuides'
+import { computeAlignment, SNAP_THRESHOLD_PX, type Guide, type Rect } from '../lib/alignmentGuides'
 import { AlignmentGuides } from './AlignmentGuides'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
@@ -119,6 +119,9 @@ function CanvasInner(): ReactElement {
   // Active alignment guide lines (ephemeral drag UI — never persisted). Set by the snap
   // pass in onNodesChange, cleared on drag stop.
   const [guides, setGuides] = useState<Guide[]>([])
+  // World-space intersection rects of the snapped dragged board vs overlapped boards — drawn as
+  // a render-only tint by AlignmentGuides. Set alongside guides in the snap pass, cleared on stop.
+  const [overlaps, setOverlaps] = useState<Rect[]>([])
   // True while Ctrl/⌘ is held — suppresses snapping mid-drag (Figma parity). A ref so the
   // snap pass reads it without re-creating onNodesChange.
   const snapSuppressRef = useRef(false)
@@ -216,10 +219,12 @@ function CanvasInner(): ReactElement {
           single.position.x = snap.x
           single.position.y = snap.y
           setGuides(snap.guides)
+          setOverlaps(snap.overlaps)
         }
       } else if (active.length > 0) {
-        // Dragging but suppressed or multi-select → no guides (no-op if already empty).
+        // Dragging but suppressed or multi-select → no guides/overlaps (no-op if already empty).
         setGuides((g) => (g.length ? [] : g))
+        setOverlaps((o) => (o.length ? [] : o))
       }
 
       let nextSel: string | null | undefined
@@ -289,6 +294,7 @@ function CanvasInner(): ReactElement {
   const onNodeDragStop = useCallback(() => {
     setNodeGesture(false)
     setGuides((g) => (g.length ? [] : g))
+    setOverlaps((o) => (o.length ? [] : o))
   }, [setNodeGesture])
 
   const clearSelection = useCallback(() => {
@@ -510,7 +516,7 @@ function CanvasInner(): ReactElement {
             />
           </ReactFlow>
 
-          <AlignmentGuides guides={guides} />
+          <AlignmentGuides guides={guides} overlaps={overlaps} />
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
           <AppChrome onAdd={addCentered} />
