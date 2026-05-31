@@ -73,6 +73,40 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: termOk ? 'sentinel in framebuffer' : 'no sentinel'
   })
 
+  // ── Bug 1 (full-view PTY survival): opening full view must RELOCATE the terminal's
+  // live subtree (stable portal host), not remount it — a remount tears down the PTY.
+  // Assert the SAME pid + intact scrollback after toggling full view on and back off.
+  // Pre-fix (inline↔portal ternary) this remounted → killTerminal + fresh pid. ──
+  const fvPidBefore = debugTerminalPid(termId)
+  await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
+  await delay(400) // modal mounts + publishes host → BoardNode relocates the subtree
+  const fvMounted = await evalIn<boolean>(
+    win,
+    `window.__canvasE2E.terminalMounted(${JSON.stringify(termId)})`
+  )
+  const fvText = await evalIn<string | null>(
+    win,
+    `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+  )
+  const fvPidDuring = debugTerminalPid(termId)
+  await evalIn(win, 'window.__canvasE2E.setFullView(null)')
+  await delay(300)
+  const fvPidAfter = debugTerminalPid(termId)
+  const fvOk =
+    fvMounted &&
+    fvPidBefore !== null &&
+    fvPidDuring === fvPidBefore &&
+    fvPidAfter === fvPidBefore &&
+    typeof fvText === 'string' &&
+    fvText.includes(TERM_SENTINEL)
+  parts.push({
+    name: 'terminal-fullview',
+    ok: fvOk,
+    detail: fvOk
+      ? `same pid ${fvPidBefore} survived full view + scrollback intact`
+      : `pid before=${fvPidBefore} during=${fvPidDuring} after=${fvPidAfter} mounted=${fvMounted}`
+  })
+
   // ── Browser: seed pointing at the in-process localServer (deterministic), fit the
   // camera to it (forces zoom ≥ LOD so the native view attaches), wait for the
   // connected status, then assert a NON-BLANK per-view capturePage (the gap). ──
@@ -147,6 +181,39 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     ok: planOk,
     detail: `elements=[${planProbe.kinds.join(',')}] roundTrip=${planProbe.roundTrip}`
   })
+
+  // ── Bug 4 (full view ignores other browser views): with a live Browser board and a
+  // DIFFERENT board in full view, a store mutation (note/checklist edit) must NOT
+  // re-attach the browser's native view over the modal scrim. Pre-fix, reconcile's
+  // new-board path re-attached it (it never consulted fullViewId). Assert it stays
+  // detached THROUGH a mutation, then reattaches on exit (no leak). ──
+  let fvPrevOk = false
+  let fvPrevDetail = 'browser not live before full view'
+  const browserLiveBefore = await poll(async () => {
+    const rt = await evalIn<{ live: boolean } | null>(
+      win,
+      `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+    )
+    return rt?.live === true
+  }, 4000)
+  if (browserLiveBefore) {
+    await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(planId)})`)
+    await delay(400) // applyLiveness full-view branch closes the browser view
+    await evalIn(win, `window.__canvasE2E.addChecklist(${JSON.stringify(planId)})`) // mutate → reconcile (the bug path)
+    await delay(400)
+    const capDuring = await debugCaptureView(browserId)
+    const rtDuring = await evalIn<{ live: boolean } | null>(
+      win,
+      `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+    )
+    fvPrevOk = !capDuring.attached && rtDuring?.live !== true
+    fvPrevDetail = fvPrevOk
+      ? 'browser stayed detached through a full-view mutation'
+      : `browser re-attached over modal (attached=${capDuring.attached} live=${rtDuring?.live})`
+    await evalIn(win, 'window.__canvasE2E.setFullView(null)') // exit → browser reattaches
+    await delay(300)
+  }
+  parts.push({ name: 'fullview-preview', ok: fvPrevOk, detail: fvPrevDetail })
 
   // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
   // kill its PTY. e2eTerminals registration tracks the xterm mount, so the board

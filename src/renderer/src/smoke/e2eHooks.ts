@@ -48,6 +48,13 @@ export interface CanvasE2E {
   deleteBoard: (id: string) => void
   /** Undo the last store change (restores a deleted board → adopt path). */
   undo: () => void
+  /** Open/close the full-view modal for a board id (null clears). Bug 1/4 harness. */
+  setFullView: (id: string | null) => void
+}
+
+/** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
+export interface E2EHostHooks {
+  setFullView: (id: string | null) => void
 }
 
 declare global {
@@ -58,7 +65,7 @@ declare global {
 
 let seedX = 0
 
-export function installE2EHooks(rf: ReactFlowInstance): void {
+export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void {
   seedX = 0 // reset the seed cursor so a re-install (e.g. HMR) starts fresh + idempotent
   const api: CanvasE2E = {
     seedBoard(type, patch) {
@@ -123,6 +130,9 @@ export function installE2EHooks(rf: ReactFlowInstance): void {
     },
     undo() {
       useCanvasStore.getState().undo()
+    },
+    setFullView(id) {
+      host.setFullView(id)
     }
   }
   window.__canvasE2E = api
