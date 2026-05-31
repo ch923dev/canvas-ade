@@ -8,7 +8,7 @@
  * board type owns exactly one file under `canvas/boards/`. Do not collapse the
  * dispatch back into this file.
  */
-import { useContext, useEffect, useState, type ReactElement } from 'react'
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
@@ -148,6 +148,26 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     )
   }
 
+  // Stable per-board content host: created ONCE and always the createPortal target, so
+  // toggling full view never changes the fiber structure (which would remount the subtree
+  // and kill a live PTY — bug 1). We RELOCATE this element in the DOM between the in-node
+  // anchor and the modal host; React keeps rendering into the same node, so no remount.
+  const contentHostRef = useRef<HTMLDivElement | null>(null)
+  if (!contentHostRef.current) {
+    const d = document.createElement('div')
+    d.style.position = 'absolute'
+    d.style.inset = '0'
+    contentHostRef.current = d
+  }
+  const anchorRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const host = contentHostRef.current
+    if (!host) return
+    const target = fullView && fullViewHost ? fullViewHost : anchorRef.current
+    if (target && host.parentNode !== target) target.appendChild(host)
+  }, [fullView, fullViewHost])
+
   const common = { selected, hovered, dimmed }
   const subtree = (
     <div
@@ -186,11 +206,9 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
-      {/* In full view the SAME subtree element is portaled into the modal host →
-          React relocates (not remounts) it, so the live PTY/xterm and planning
-          elements survive. The on-canvas NodeResizer stays put (empty handle frame
-          behind the scrim — harmless). */}
-      {fullView && fullViewHost ? createPortal(subtree, fullViewHost) : subtree}
+      {/* In-node mount point; the stable content host is appended here when not full-view. */}
+      <div ref={anchorRef} style={{ position: 'absolute', inset: 0 }} />
+      {createPortal(subtree, contentHostRef.current)}
     </>
   )
 }
