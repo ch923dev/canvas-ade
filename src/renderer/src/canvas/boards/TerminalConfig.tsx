@@ -64,7 +64,9 @@ export function TerminalConfig({
   return (
     <div
       style={pop}
+      className="nowheel"
       tabIndex={-1}
+      onWheel={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         e.stopPropagation()
