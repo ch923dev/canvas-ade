@@ -901,3 +901,21 @@ body {
   border: none;
   cursor: pointer;
 }
+
+/* Smart alignment guides (drag-time): screen-space SVG over the canvas, never
+   interactive. Dashed accent so it reads distinct from the solid select ring. */
+.align-guides {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 5; /* above board nodes, below floating app chrome */
+}
+.align-guides line {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 6;
+  shape-rendering: crispEdges;
+}
