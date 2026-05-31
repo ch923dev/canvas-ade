@@ -140,9 +140,12 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 Durable contract is above. The full phase-by-phase build history (Phase 0 → Phase 2
 follow-up) lives in **`docs/handoffs/status-archive.md`** to keep this file lean.
 
-**Current state (2026-05-31):** Phase 2 complete (Terminal · Browser · Planning+Checklist, on
-`main`). **Phase 3 is feature-complete** across three stacked branches (A persistence · B board
-actions · C′ port-detect preview), not yet merged to `main`. **Phase 3 Slice A — Persistence** built
+**Current state (2026-05-31):** **Phase 3 is SHIPPED on `main`** (`139bc69` — A persistence · B
+board actions · C′ port-detect preview + the 2026-05-31 bug-fix batch). All Phase 3 branches are
+merged + pruned (local + remote). Baseline at merge: **303 unit tests** green, e2e harness
+**19/19 `ok:true`**, lint + typecheck clean. Phase 2 (Terminal · Browser · Planning+Checklist) and
+Phase 3 both on `main`. Next: **Phase 4 — Design pass & polish** (handoff:
+`docs/handoffs/phase-4.md`). **Phase 3 Slice A — Persistence** built
 on branch `phase-3-persistence` (273
 tests green): projects = a folder + `canvas.json` (schema **v2**, adds persisted camera
 `viewport`; real `migrate(1→2)`); atomic write + `.bak` rotation (`main/projectStore.ts`);
@@ -180,11 +183,14 @@ delete/duplicate. Read-only (no Browser→PTY path). Spec + plan:
 `docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`. Known minor gap: no IPC
 frame-guard unit test (pre-existing pattern — no `pty:*` handler has one).
 
-**Start here next:** **Phase 3 is feature-complete** (A persistence · B board actions · C′ port-detect
-preview) across three branches. To land it: merge `phase-3-persistence` (PR #5) → `phase-3-board-actions`
-→ `phase-3-slice-c` into `main` (each branch stacks on the prior; rebase as needed). Then **Phase 4 —
-Design pass & polish** (apply every DESIGN.md token/state/motion). Deferred (own slices): **agentic
-session resume** (roadmap note) · **full-view enter/exit animation** (Phase 4) · **Feature Workspaces /
-worktrees** (post-MCP; FW-1). Still open from Phase 2 follow-up: Stage-2 Playwright `_electron`
-harness; the `connected`-on-dead-URL Browser bug.
+**Start here next:** **Phase 4 — Design pass & polish.** Apply every DESIGN.md token/state/motion
+(+ `prefers-reduced-motion`); load Geist fonts; harden CSP to nonce-based for the packaged build;
+code-split the renderer. **Full cold-start context + a 6-group checklist + a DESIGN.md→code map are
+in `docs/handoffs/phase-4.md` — read it first.** Known items folded into Phase 4: the `fit` camera
+op snaps with no animation (should be 200ms, `AppChrome.tsx`); the full-view enter/exit animation
+(deferred from Slice B; mind the native `WebContentsView` can't be CSS-animated). Deferred beyond
+Phase 4: **agentic session resume** (roadmap note) · **Feature Workspaces / worktrees** (post-MCP;
+FW-1) · Stage-2 Playwright `_electron` harness (the `CANVAS_SMOKE=e2e` harness is the stand-in).
+Known e2e flakes (env/timing, not regressions): the `browser`/`browser-gesture`/`focus-detach`
+live-`WebContentsView` parts — rerun on a clean `electron` process.
 
