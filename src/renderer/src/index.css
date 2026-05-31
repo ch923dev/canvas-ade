@@ -1,3 +1,23 @@
+/* §3 Fonts — self-hosted Geist (Vercel, OFL). Variable woff2: one file per family
+   spans weight 100–900, covering every type-scale role (body 400, meta 450,
+   label/micro 500, h 600). Bundled into the renderer (CSP font-src 'self' — no
+   network fetch). The token stacks (--ui/--mono) keep system-ui as the fallback
+   while the font loads (font-display: swap). */
+@font-face {
+  font-family: 'Geist';
+  src: url('./assets/fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./assets/fonts/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Canvas ADE design tokens — faithful mirror of DESIGN.md §2-4 (authoritative
    visual contract). Seeded in Phase 0, completed in Phase 2.0-A. Board chrome
    consumes these from 2.0-C onward. DESIGN.md wins on visual; on any drift,

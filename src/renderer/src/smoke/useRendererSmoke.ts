@@ -34,5 +34,25 @@ export function useRendererSmoke(): void {
     host.remove()
     // eslint-disable-next-line no-console
     console.log('RENDERER_SMOKE ' + JSON.stringify(r))
+
+    // Font probe (Phase 4 §D): confirm self-hosted Geist actually LOADS (not the
+    // system-ui fallback). Uses fonts.load() to force the woff2 fetch — works even
+    // in the headless smoke window (which never paints, so fonts.ready/check alone
+    // would stay idle). Logged on a separate line so RENDERER_SMOKE stays untouched.
+    if (typeof document !== 'undefined' && document.fonts?.load) {
+      void Promise.all([
+        document.fonts.load('16px Geist'),
+        document.fonts.load('16px "Geist Mono"')
+      ])
+        .then(([sans, mono]) => {
+          const fonts = { geist: sans.length > 0, geistMono: mono.length > 0 }
+          // eslint-disable-next-line no-console
+          console.log('RENDERER_FONTS ' + JSON.stringify(fonts))
+        })
+        .catch((e: unknown) => {
+          // eslint-disable-next-line no-console
+          console.log('RENDERER_FONTS {"error":' + JSON.stringify(String(e)) + '}')
+        })
+    }
   }, [])
 }
