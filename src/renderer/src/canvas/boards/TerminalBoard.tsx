@@ -24,6 +24,7 @@ import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, isRunning, statusFor, type TerminalState } from './terminalState'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -111,6 +112,14 @@ export function TerminalBoard({
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
+
+  // Publish live PTY state so the preview-link edge can render stale when this
+  // terminal is not running (bug 3); clear on unmount so a removed board stops
+  // counting as a running source.
+  useEffect(() => {
+    useTerminalRuntimeStore.getState().setRunning(board.id, state)
+  }, [board.id, state])
+  useEffect(() => () => useTerminalRuntimeStore.getState().clear(board.id), [board.id])
 
   // A board with no explicit cwd spawns in the open project folder, not os.homedir().
   const projectDir = useCanvasStore((s) => s.project.dir)

@@ -37,11 +37,13 @@ export function PreviewEdge({
   source,
   target,
   markerEnd,
-  style
+  style,
+  data
 }: EdgeProps): React.ReactElement | null {
   const s = useInternalNode(source)
   const t = useInternalNode(target)
   if (!s || !t) return null
+  const stale = (data as { stale?: boolean } | undefined)?.stale ?? false
   const sBox = box(s.internals.positionAbsolute, s.measured.width ?? 0, s.measured.height ?? 0)
   const tBox = box(t.internals.positionAbsolute, t.measured.width ?? 0, t.measured.height ?? 0)
   const sp = borderPoint(sBox, tBox)
@@ -59,7 +61,13 @@ export function PreviewEdge({
       id={id}
       path={path}
       markerEnd={markerEnd}
-      style={{ stroke: 'var(--accent)', strokeWidth: 1.5, opacity: 0.9, ...style }}
+      style={{
+        stroke: 'var(--accent)',
+        strokeWidth: 1.5,
+        opacity: stale ? 0.4 : 0.9,
+        strokeDasharray: stale ? '5 5' : undefined,
+        ...style
+      }}
     />
   )
 }

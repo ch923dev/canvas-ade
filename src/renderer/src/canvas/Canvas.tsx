@@ -40,6 +40,7 @@ import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { previewEdges } from '../lib/previewEdges'
+import { useTerminalRuntimeStore, selectRunningIds } from '../store/terminalRuntimeStore'
 import { resolvePreviewTarget } from '../lib/previewTarget'
 import type { Board } from '../lib/boardSchema'
 import { BoardActionsContext, type BoardActions } from './boardActions'
@@ -128,13 +129,14 @@ function CanvasInner(): ReactElement {
 
   // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
   // a Terminal. Decorated here with an arrowhead; the path is computed by PreviewEdge.
+  const runningIds = useTerminalRuntimeStore(selectRunningIds)
   const edges = useMemo(
     () =>
-      previewEdges(boards).map((e) => ({
+      previewEdges(boards, runningIds).map((e) => ({
         ...e,
         markerEnd: { type: MarkerType.ArrowClosed, color: '#4f8cff', width: 16, height: 16 }
       })),
-    [boards]
+    [boards, runningIds]
   )
 
   // Translate React Flow changes into store mutations. Position covers both node
