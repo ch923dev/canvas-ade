@@ -34,7 +34,7 @@ import type {
   TextElement
 } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
-import { screenToBoard, pushBoardPoint } from '../../lib/pen'
+import { screenToBoard, pushBoardPoint, screenScale } from '../../lib/pen'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
@@ -119,10 +119,12 @@ export function PlanningBoard({
   /** Map a pointer event to a board-local point using the well's screen origin. */
   const toBoard = useCallback(
     (e: { clientX: number; clientY: number }): { x: number; y: number } => {
-      const r = wellRef.current?.getBoundingClientRect()
+      const wellEl = wellRef.current
+      const r = wellEl?.getBoundingClientRect()
+      const scale = screenScale(r?.width ?? 0, wellEl?.offsetWidth ?? 0, zoom)
       return screenToBoard(
         { x: e.clientX, y: e.clientY },
-        { originX: r?.left ?? 0, originY: r?.top ?? 0, zoom }
+        { originX: r?.left ?? 0, originY: r?.top ?? 0, zoom: scale }
       )
     },
     [zoom]
