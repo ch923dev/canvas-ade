@@ -683,9 +683,6 @@ body {
   margin: 4px 0;
 }
 .board-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
   min-width: 132px;
   background: var(--surface-overlay);
   border: 1px solid var(--border-subtle);
@@ -694,7 +691,7 @@ body {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  z-index: 10;
+  z-index: 250; /* above the fullview-scrim (200) so the menu works in full view too */
 }
 .board-menu-item {
   text-align: left;

@@ -6,7 +6,8 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
@@ -85,6 +86,8 @@ export function BoardMenu({
   onDelete?: () => void
 }): ReactElement {
   const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 })
+  const triggerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -95,16 +98,27 @@ export function BoardMenu({
     }
     document.addEventListener('pointerdown', close)
     document.addEventListener('keydown', onKey)
+    // Reposition on scroll/resize while open (the canvas can pan under it).
+    window.addEventListener('resize', close)
     return () => {
       document.removeEventListener('pointerdown', close)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', close)
     }
   }, [open])
+
+  const openMenu = (e: MouseEvent): void => {
+    e.stopPropagation()
+    const r = triggerRef.current?.getBoundingClientRect()
+    if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+    setOpen((v) => !v)
+  }
 
   const item = (label: string, danger: boolean, fn?: (e: MouseEvent) => void): ReactElement => (
     <button
       className="board-menu-item"
       data-danger={danger || undefined}
+      onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation()
@@ -117,29 +131,24 @@ export function BoardMenu({
   )
 
   return (
-    <div style={{ position: 'relative', display: 'inline-flex' }}>
-      <IconBtn
-        name="more"
-        title="More"
-        active={open}
-        onClick={(e) => {
-          e.stopPropagation()
-          setOpen((v) => !v)
-        }}
-      />
-      {open && (
-        <div
-          className="board-menu"
-          role="menu"
-          onPointerDown={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {onFull && item('Full view', false, onFull)}
-          {onDuplicate && item('Duplicate', false, () => onDuplicate())}
-          {onDelete && item('Delete', true, () => onDelete())}
-        </div>
-      )}
+    <div ref={triggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      <IconBtn name="more" title="More" active={open} onClick={openMenu} />
+      {open &&
+        createPortal(
+          <div
+            className="board-menu"
+            role="menu"
+            style={{ position: 'fixed', top: pos.top, right: pos.right }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {onFull && item('Full view', false, onFull)}
+            {onDuplicate && item('Duplicate', false, () => onDuplicate())}
+            {onDelete && item('Delete', true, () => onDelete())}
+          </div>,
+          document.body
+        )}
     </div>
   )
 }
