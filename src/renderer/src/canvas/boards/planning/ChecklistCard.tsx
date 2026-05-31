@@ -167,10 +167,9 @@ export function ChecklistCard({
           cursor: interactive ? 'grab' : 'default'
         }}
         onPointerDown={(e) => {
-          if (interactive && e.target === e.currentTarget) {
-            e.stopPropagation()
-            onDragStart(e, element.id)
-          }
+          if (!interactive) return
+          e.stopPropagation()
+          onDragStart(e, element.id)
         }}
       >
         <input
