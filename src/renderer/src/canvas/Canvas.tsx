@@ -234,7 +234,13 @@ function CanvasInner(): ReactElement {
     (_e: MouseEvent, node: BoardFlowNode) => {
       setFocusedId(node.id)
       selectBoard(node.id)
-      void rf.fitView(cameraAnim({ ...FOCUS_OPTIONS, nodes: [{ id: node.id }] }))
+      // Terminal/browser content is a raster bitmap (xterm WebGL/canvas, native-view
+      // snapshot) that the camera transform UPSCALES past 100% → blurry text. Cap their
+      // focus zoom at 1 so a focused board lands pixel-crisp; vector boards (planning
+      // notes/pen) re-rasterize sharp at any zoom and may fill the viewport (Z_MAX).
+      const raster = node.data.board.type === 'terminal' || node.data.board.type === 'browser'
+      const maxZoom = raster ? 1 : Z_MAX
+      void rf.fitView(cameraAnim({ ...FOCUS_OPTIONS, maxZoom, nodes: [{ id: node.id }] }))
     },
     [rf, selectBoard]
   )
@@ -283,6 +289,11 @@ function CanvasInner(): ReactElement {
         const target = resolvePreviewTarget(st.boards, st.selectedId, fromBoardId)
         const patch = { url, previewSourceId: fromBoardId } as Partial<Board>
         if (target.kind === 'existing') {
+          // Force a (re)load even when the pushed url equals the target's current url
+          // (same dev-server URL): bump the reload nonce BEFORE the store mutation so the
+          // reconcile that updateBoard triggers sees it and re-navigates — otherwise the
+          // url diff-skip (Bug #44) strands a load-failed view on its stale error page.
+          usePreviewStore.getState().requestReload(target.id)
           st.updateBoard(target.id, patch)
           st.selectBoard(target.id)
         } else {

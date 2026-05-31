@@ -85,6 +85,12 @@ interface BoardRec {
   /** Last loaded URL, so a board.url edit triggers a navigate. */
   lastUrl: string | null
   /**
+   * Last reload nonce seen (previewStore). A push-to-preview bumps the nonce; reconcile
+   * re-navigates when it changed even if `lastUrl` is identical — so a same-URL push
+   * reloads (and can recover a load-failed view) instead of being diff-skipped (Bug #44).
+   */
+  lastReloadNonce: number
+  /**
    * Bumped on every (re)attach. demoteToSnapshot snapshots this before its capture
    * await; if it changed when the await resolves, a concurrent attach re-claimed the
    * board (Bug #45) and the demote must not detach it.
@@ -312,6 +318,7 @@ export function BrowserPreviewLayer({
         lastSent: null,
         lastZoom: 0,
         lastUrl: null,
+        lastReloadNonce: 0,
         attachSeq: 0
       }
       recs.current.set(id, r)
@@ -392,6 +399,10 @@ export function BrowserPreviewLayer({
       } else {
         r.exists = true
         r.lastUrl = g.url
+        // openPreview loads g.url fresh, so adopt the current reload nonce here — else the
+        // next reconcile (existing branch) would see a nonce mismatch and re-navigate the
+        // url we just loaded (a redundant double-load).
+        r.lastReloadNonce = usePreviewStore.getState().byId[g.id]?.reloadNonce ?? 0
         patchRuntime(g.id, { status: 'connecting', live: true })
         await window.api.openPreview({ id: g.id, url: g.url, bounds, zoomFactor })
         // Bug #48/#30: the board may have been deleted during the open IPC round-trip
@@ -697,8 +708,14 @@ export function BrowserPreviewLayer({
             patchRuntime(g.id, { status: 'connecting' })
         } else if (r.exists) {
           // URL edit → navigate (resets zoom; did-finish-load re-applies the factor).
-          if (g.url !== r.lastUrl) {
+          // Also re-navigate on a reload-nonce bump (push-to-preview) even when the url is
+          // UNCHANGED — a same-URL push must reload, e.g. to recover a load-failed view once
+          // the dev server is up. Diff-skip is otherwise preserved (Bug #44): an unrelated
+          // store mutation leaves both url and nonce unchanged → no redundant navigate.
+          const nonce = usePreviewStore.getState().byId[g.id]?.reloadNonce ?? 0
+          if (g.url !== r.lastUrl || nonce !== r.lastReloadNonce) {
             r.lastUrl = g.url
+            r.lastReloadNonce = nonce
             patchRuntime(g.id, { status: 'connecting' })
             void window.api.navigatePreview(g.id, g.url)
           }
