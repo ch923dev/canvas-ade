@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { computeAlignment, projectGuide, SNAP_THRESHOLD_PX, GAP_SNAP_PX, type Rect } from './alignmentGuides'
+import { computeAlignment, projectGuide, projectGapGuide, projectRect, SNAP_THRESHOLD_PX, GAP_SNAP_PX, type Rect } from './alignmentGuides'
 
 const rect = (x: number, y: number, w = 100, h = 100): Rect => ({ x, y, w, h })
 
@@ -139,5 +139,30 @@ describe('projectGuide — world → screen', () => {
   test('identity transform is a pass-through', () => {
     const l = projectGuide({ kind: 'align', axis: 'x', pos: 5, start: 0, end: 10 }, [0, 0, 1])
     expect(l).toEqual({ x1: 5, y1: 0, x2: 5, y2: 10 })
+  })
+})
+
+describe('projectGapGuide + projectRect — world → screen', () => {
+  test('x-axis gap: horizontal connector at perp, label at gutter mid', () => {
+    const v = projectGapGuide(
+      { kind: 'gap', axis: 'x', pos: 100, perp: 50, distance: 16 },
+      [10, 20, 2]
+    )
+    // connector spans pos±d/2 = [92,108] on x, at y = 50*2+20 = 120
+    expect(v).toEqual({ ax: 194, ay: 120, bx: 226, by: 120, lx: 210, ly: 120, distance: 16 })
+  })
+
+  test('y-axis gap: vertical connector at perp', () => {
+    const v = projectGapGuide(
+      { kind: 'gap', axis: 'y', pos: 100, perp: 50, distance: 16 },
+      [10, 20, 2]
+    )
+    // connector spans pos±d/2 = [92,108] on y, at x = 50*2+10 = 110
+    expect(v).toEqual({ ax: 110, ay: 204, bx: 110, by: 236, lx: 110, ly: 220, distance: 16 })
+  })
+
+  test('projectRect maps a world rect to a screen rect', () => {
+    const s = projectRect({ x: 100, y: 50, w: 20, h: 30 }, [10, 20, 2])
+    expect(s).toEqual({ x: 210, y: 120, w: 40, h: 60 })
   })
 })

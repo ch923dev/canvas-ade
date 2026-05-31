@@ -186,7 +186,7 @@ export function computeAlignment(rect: Rect, others: Rect[], threshold: number):
   return { x, y, guides, overlaps }
 }
 
-/** A guide projected into screen-space pixels for SVG. */
+/** An align guide projected into screen-space pixels for SVG. */
 export interface ScreenLine {
   x1: number
   y1: number
@@ -195,10 +195,9 @@ export interface ScreenLine {
 }
 
 /**
- * Project a WORLD-space guide into screen pixels using React Flow's viewport
- * transform `[translateX, translateY, zoom]` (`useStore(s => s.transform)`):
- * screen = world*zoom + translate. Stroke width stays in screen px at the call site,
- * so the 1px line is crisp at any zoom.
+ * Project a WORLD-space ALIGN guide into screen pixels using React Flow's viewport transform
+ * `[translateX, translateY, zoom]`: screen = world*zoom + translate. Stroke width stays in screen
+ * px at the call site, so the 1px line is crisp at any zoom.
  */
 export function projectGuide(g: AlignGuide, transform: [number, number, number]): ScreenLine {
   const [tx, ty, zoom] = transform
@@ -208,4 +207,56 @@ export function projectGuide(g: AlignGuide, transform: [number, number, number])
   }
   const sy = g.pos * zoom + ty
   return { x1: g.start * zoom + tx, y1: sy, x2: g.end * zoom + tx, y2: sy }
+}
+
+/** A gap guide projected to screen: a connector segment (a→b) + a label anchor + the distance. */
+export interface GapVisual {
+  ax: number
+  ay: number
+  bx: number
+  by: number
+  lx: number
+  ly: number
+  distance: number
+}
+
+/** Project a WORLD-space GAP guide to screen pixels (connector + label anchor). */
+export function projectGapGuide(g: GapGuide, transform: [number, number, number]): GapVisual {
+  const [tx, ty, zoom] = transform
+  const half = g.distance / 2
+  if (g.axis === 'x') {
+    const y = g.perp * zoom + ty
+    return {
+      ax: (g.pos - half) * zoom + tx,
+      ay: y,
+      bx: (g.pos + half) * zoom + tx,
+      by: y,
+      lx: g.pos * zoom + tx,
+      ly: y,
+      distance: g.distance
+    }
+  }
+  const x = g.perp * zoom + tx
+  return {
+    ax: x,
+    ay: (g.pos - half) * zoom + ty,
+    bx: x,
+    by: (g.pos + half) * zoom + ty,
+    lx: x,
+    ly: g.pos * zoom + ty,
+    distance: g.distance
+  }
+}
+
+/** A world rect projected to a screen rect (for overlap tint). */
+export interface ScreenRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export function projectRect(r: Rect, transform: [number, number, number]): ScreenRect {
+  const [tx, ty, zoom] = transform
+  return { x: r.x * zoom + tx, y: r.y * zoom + ty, w: r.w * zoom, h: r.h * zoom }
 }
