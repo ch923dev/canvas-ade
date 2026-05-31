@@ -629,7 +629,13 @@ export function BrowserPreviewLayer({
         if (!r.exists && !r.attached) {
           // New board (or one whose renderer was freed): bring it live if eligible AND
           // not statically occluding a selected board / the app chrome (LOT F).
-          if (liveEligible(g) && !occludesProtected(g)) void attachBoard(g)
+          // Bug #4: while another board is in full view, a non-full-view Browser must
+          // stay closed — otherwise a store mutation (e.g. a note drag in the full-view
+          // board) re-runs reconcile and re-attaches the Browser at its canvas rect,
+          // painting the always-above native view over the modal scrim.
+          const fvId = fullViewIdRef.current
+          const blockedByFullView = fvId !== null && fvId !== g.id
+          if (!blockedByFullView && liveEligible(g) && !occludesProtected(g)) void attachBoard(g)
           // Bug #3: a board created below LOD / off-pane isn't yet eligible, so it
           // would otherwise sit on the dead idle default (empty stage, no label)
           // until a later zoom gesture attaches it. Show the 'Connecting…'
@@ -716,7 +722,10 @@ export function BrowserPreviewLayer({
       // is in flight → re-evaluate static occlusion so an already-attached Browser view
       // demotes (or reattaches) against the new selection. Geometry-driven changes are
       // already handled by reconcile's bounds re-push + the gesture/move paths.
-      if (selChanged && !gestureRef.current) applyLiveness()
+      // Bug #4: while a board is in full view, ANY mutation (a note drag, etc.) must also
+      // re-run the full-view-aware applyLiveness so a freshly-reconciled Browser is closed
+      // back down rather than left painting over the modal scrim.
+      if ((selChanged || fullViewIdRef.current !== null) && !gestureRef.current) applyLiveness()
     })
     return unsub
   }, [reconcile, applyLiveness])
