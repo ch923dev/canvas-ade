@@ -75,7 +75,7 @@ export function IconBtn({
 }
 
 /** ⋯ overflow popover: Full view · Duplicate · Delete (DESIGN §6.1). */
-function BoardMenu({
+export function BoardMenu({
   onFull,
   onDuplicate,
   onDelete
@@ -131,6 +131,7 @@ function BoardMenu({
         <div
           className="board-menu"
           role="menu"
+          onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
