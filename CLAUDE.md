@@ -140,12 +140,24 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 Durable contract is above. The full phase-by-phase build history (Phase 0 → Phase 2
 follow-up) lives in **`docs/handoffs/status-archive.md`** to keep this file lean.
 
-**Current state (2026-05-31):** **Phase 3 is SHIPPED on `main`** (`139bc69` — A persistence · B
+**Current state (2026-05-31):** **Phase 4 — Design pass & polish — 6/7 slices SHIPPED on branch
+`phase-4-design-pass`** (off `main` `65a0160`; NOT pushed/merged). Done: 1 motion (§9 camera
+cubic-bezier ease + reduced-motion gate, `lib/motion.ts`) · 2 token/chrome parity (§4 two-shadow,
+§6 ring-only select) · 3 Geist fonts (variable woff2 bundled) · 4 states (welcome tokens, terminal
+braille spinner) · 6 CSP (prod `script-src 'self'`, no unsafe-inline) · 7 code-split (React.lazy
+boards, entry chunk 1,286→672 kB). **311 unit** green, lint + typecheck clean; full e2e gated each
+slice. **Remaining: Slice 5 — full-view enter/exit motion + §6.1 top band** (deferred — most
+delicate; native `WebContentsView` can't be CSS-animated). **Handoff:
+`docs/handoffs/2026-05-31-phase-4-progress-handoff.md`** (read first); plan:
+`docs/superpowers/plans/2026-05-31-phase-4-design-pass.md`. Known e2e env-flake: the
+`browser`/`browser-gesture`/`focus-detach` live-`WebContentsView` trio (memory
+`e2e-browser-trio-flake`) — environmental, not a regression.
+
+**Phase 3 is SHIPPED on `main`** (`139bc69` — A persistence · B
 board actions · C′ port-detect preview + the 2026-05-31 bug-fix batch). All Phase 3 branches are
 merged + pruned (local + remote). Baseline at merge: **303 unit tests** green, e2e harness
 **19/19 `ok:true`**, lint + typecheck clean. Phase 2 (Terminal · Browser · Planning+Checklist) and
-Phase 3 both on `main`. Next: **Phase 4 — Design pass & polish** (handoff:
-`docs/handoffs/phase-4.md`). **Phase 3 Slice A — Persistence** built
+Phase 3 both on `main`. Phase 4 entry handoff: `docs/handoffs/phase-4.md`. **Phase 3 Slice A — Persistence** built
 on branch `phase-3-persistence` (273
 tests green): projects = a folder + `canvas.json` (schema **v2**, adds persisted camera
 `viewport`; real `migrate(1→2)`); atomic write + `.bak` rotation (`main/projectStore.ts`);
