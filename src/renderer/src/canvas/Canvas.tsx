@@ -34,10 +34,10 @@ import {
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore, selectLiveCount } from '../store/previewStore'
-import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
+import { DEFAULT_BOARD_SIZE, MIN_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
-import { computeAlignment, SNAP_THRESHOLD_PX, type Guide, type Rect } from '../lib/alignmentGuides'
+import { computeAlignment, computeResizeSnap, SNAP_THRESHOLD_PX, type Guide, type Rect } from '../lib/alignmentGuides'
 import { AlignmentGuides } from './AlignmentGuides'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
@@ -225,6 +225,44 @@ function CanvasInner(): ReactElement {
         // Dragging but suppressed or multi-select → no guides/overlaps (no-op if already empty).
         setGuides((g) => (g.length ? [] : g))
         setOverlaps((o) => (o.length ? [] : o))
+      }
+
+      // Resize-snap pass: snap the MOVING edge(s) of a NodeResizer resize to other boards' edges/
+      // centers (align line) or a 16px gutter (gap pill). Mutate the dimensions (+ N/W position)
+      // change before nodeChangesToIntents, like the drag pass. Skipped while Ctrl/⌘ is held.
+      const resizing = changes.find(
+        (c) => c.type === 'dimensions' && c.dimensions && c.resizing
+      )
+      if (resizing && resizing.type === 'dimensions' && resizing.dimensions && !snapSuppressRef.current) {
+        const old = boards.find((b) => b.id === resizing.id)
+        if (old) {
+          const posChange = changes.find(
+            (c) => c.type === 'position' && c.id === resizing.id && c.position
+          )
+          const px = posChange && posChange.type === 'position' && posChange.position ? posChange.position.x : old.x
+          const py = posChange && posChange.type === 'position' && posChange.position ? posChange.position.y : old.y
+          const others = boards
+            .filter((b) => b.id !== old.id)
+            .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
+          const prop: Rect = { x: px, y: py, w: resizing.dimensions.width, h: resizing.dimensions.height }
+          const snap = computeResizeSnap(
+            { x: old.x, y: old.y, w: old.w, h: old.h },
+            prop,
+            others,
+            SNAP_THRESHOLD_PX / rf.getZoom(),
+            MIN_BOARD_SIZE
+          )
+          resizing.dimensions.width = snap.w
+          resizing.dimensions.height = snap.h
+          if (posChange && posChange.type === 'position' && posChange.position) {
+            posChange.position.x = snap.x
+            posChange.position.y = snap.y
+          }
+          setGuides(snap.guides)
+        }
+      } else if (changes.some((c) => c.type === 'dimensions' && !c.resizing)) {
+        // Resize settled (NodeResizer emits a final dimensions change with resizing:false) → clear.
+        setGuides((g) => (g.length ? [] : g))
       }
 
       let nextSel: string | null | undefined
