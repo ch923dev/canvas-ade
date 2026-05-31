@@ -84,11 +84,50 @@ dashed `--accent`. Re-renders on camera move (transform changes) and on guide ch
 
 ## Slices
 
-- **Slice 1 — Edge + center alignment + snap + Ctrl-suppress + overlay.** Effort S–M. Plan:
-  `docs/superpowers/plans/2026-05-31-alignment-guides.md`. Ships green + committed.
-- **Slice 2 — Distribution / equal-spacing guides + spacing labels.** Effort L. Plan authored
-  AFTER slice 1 ships (builds on slice-1 overlay + util; planning with real code in hand avoids
-  drift). Port the Excalidraw gap algorithm (`getVisibleGaps`, gap-center, dedupe).
+- **Slice 1 — Edge + center alignment + snap + Ctrl-suppress + overlay.** Effort S–M. SHIPPED on
+  `feature/alignment-guides` (commits `7eaca8c`→`825fdb1`; gate green: 325 unit, e2e 20/20). Plan:
+  `docs/superpowers/plans/2026-05-31-alignment-guides.md`.
+- **Slice 2a — Gap-snap + gap pill + overlap deterrent.** Effort M. The user ask ("spacing lines +
+  don't overlap boards"). Plan: `docs/superpowers/plans/2026-06-01-alignment-guides-slice2a.md`.
+  Decisions below.
+- **Slice 2b — Equal-spacing distribution across 3+ boards.** Effort L. Optional, deferred. Port the
+  Excalidraw gap algorithm (`getVisibleGaps`, gap-center, dedupe). Planned after 2a ships.
+
+## Slice 2a design (decisions locked 2026-06-01)
+
+| Topic | Decision |
+|---|---|
+| Overlap handling | **Soft** — never block/clamp the drop (infinite canvas allows layering, Figma/tldraw allow overlap). Gap-snap nudges boards beside each other; a tint marks live overlap. |
+| Gap-snap margins | **Flush (0px) + 16px gutter** (`GAP_SNAP_PX = 16`). |
+| Overlap indicator | While dragging, the intersection rect of the dragged board with any other board is tinted (translucent `--accent`/red wash) as a nudge — no force. |
+| Gap pill | A small label showing the snapped gap distance (`0px` / `16px`) in the gutter between the two facing edges. Muted on-token text. |
+
+### Gap-snap detection
+A gap candidate engages only between **axis-neighbors** — boards whose perpendicular ranges overlap
+(`max(starts) < min(ends)`), so a side-by-side gutter is meaningful (not a 16px snap to a board far
+above). For axis X, candidates (each `gap ∈ {0, 16}`):
+- place dragged LEFT of other: `dragged.right = other.left − gap` → `x = other.left − gap − w`
+- place dragged RIGHT of other: `dragged.left = other.right + gap` → `x = other.right + gap`
+Y axis is the top/bottom analogue. Threshold is the same `8px ÷ zoom`. Flush (`gap 0`) overlaps the
+existing slice-1 edge-touch match (right↔left) — that's fine; it's reported as a **gap guide** (pill)
+when it wins via this path. Edge/center *alignment* (slice 1) still wins over a gap candidate at
+equal diff (aligning edges is primary; the gutter is the fallback that keeps boards apart).
+
+### Overlap detection
+Pure rect-intersection of the dragged candidate rect vs every other board → list of intersection
+rects (world coords). Rendered as tinted overlays. Zero-area (touching/flush) is NOT an overlap.
+
+### Guide model extension
+The slice-1 `Guide` becomes a tagged union:
+- `{ kind: 'align', axis, pos, start, end }` — slice-1 line (unchanged geometry).
+- `{ kind: 'gap', axis, pos, perp, distance }` — gutter indicator: short ticks at the two facing
+  edges along `axis` around `pos`, a pill at `perp` showing `distance`px.
+Overlaps are a separate `Overlap[] = Rect[]` returned alongside, rendered by the same overlay.
+
+### Rendering (extends slice-1 overlay)
+`AlignmentGuides` also draws: gap indicators (two short perpendicular ticks + a `<text>`/HTML pill)
+and overlap tint rects (translucent `<rect>`), all projected world→screen the same way. Pills/ticks
+stay constant-size in screen px. Reduced-motion: instant, no animation (unchanged).
 
 ## Acceptance (slice 1)
 
