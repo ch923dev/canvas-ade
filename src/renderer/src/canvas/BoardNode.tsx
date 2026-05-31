@@ -136,10 +136,14 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   })
   const anchorRef = useRef<HTMLDivElement>(null)
 
+  // `lod` is a dep because a non-terminal board UNMOUNTS its anchor on the LOD early-
+  // return below; when it returns to detail the anchor is a NEW element, so the effect
+  // must re-run to re-append contentHost — else the board's content stays orphaned
+  // (detached from the DOM) after a zoom-out→in and the board renders blank.
   useLayoutEffect(() => {
     const target = fullView && fullViewHost ? fullViewHost : anchorRef.current
     if (target && contentHost.parentNode !== target) target.appendChild(contentHost)
-  }, [contentHost, fullView, fullViewHost])
+  }, [contentHost, fullView, fullViewHost, lod])
 
   // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
   // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).

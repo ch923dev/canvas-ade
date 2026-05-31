@@ -316,6 +316,60 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: failedOk ? 'refused URL → load-failed' : `did not reach load-failed`
   })
 
+  // ── Bugs 8/9 + 11/12 (board ⋯ menu): drive the REAL menu through the DOM. Bug 11/12
+  // only reproduces with a pointerdown→click sequence (pre-fix the document pointerdown
+  // close-listener unmounted the item before its click fired); bug 8/9 needs the popover
+  // portaled to <body>, not clipped inside the board's overflow:hidden frame. Open the
+  // planning board's menu, Duplicate (count +1) then Delete the clone (count back). ──
+  // Bring the planning board into detail view + on-screen so its title-bar ⋯ menu renders.
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(150)
+  const menuProbe = await evalIn<{
+    portaled: boolean
+    base: number
+    afterDup: number
+    afterDel: number
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const sel = (s, root) => (root || document).querySelector(s);
+       const base = window.__canvasE2E.getBoards().length;
+       const node = sel('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(planId)}) + ']');
+       const more = node && sel('button[title="More"]', node);
+       if (!more) return { portaled: false, base, afterDup: -1, afterDel: -1 };
+       more.click(); await sleep(80);
+       const menu = sel('.board-menu');
+       const portaled = !!menu && menu.parentElement === document.body && !sel('.bb-frame .board-menu');
+       const dup = menu && [...menu.querySelectorAll('.board-menu-item')].find((b) => b.textContent.trim() === 'Duplicate');
+       if (dup) { dup.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); dup.click(); }
+       await sleep(150);
+       const afterDup = window.__canvasE2E.getBoards().length;
+       const dupId = window.__canvasE2E.getBoards().slice(-1)[0] && window.__canvasE2E.getBoards().slice(-1)[0].id;
+       const dupNode = dupId && sel('.react-flow__node[data-id=' + JSON.stringify(dupId) + ']');
+       const more2 = dupNode && sel('button[title="More"]', dupNode);
+       if (more2) {
+         more2.click(); await sleep(80);
+         const menu2 = sel('.board-menu');
+         const del = menu2 && [...menu2.querySelectorAll('.board-menu-item')].find((b) => b.textContent.trim() === 'Delete');
+         if (del) { del.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); del.click(); }
+       }
+       await sleep(150);
+       const afterDel = window.__canvasE2E.getBoards().length;
+       return { portaled, base, afterDup, afterDel };
+     })()`
+  )
+  const menuOk =
+    menuProbe.portaled &&
+    menuProbe.afterDup === menuProbe.base + 1 &&
+    menuProbe.afterDel === menuProbe.base
+  parts.push({
+    name: 'board-menu',
+    ok: menuOk,
+    detail: menuOk ? 'portaled to body + Duplicate/Delete fire' : JSON.stringify(menuProbe)
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 4, detail: `${count} boards` })
 
