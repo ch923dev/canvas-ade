@@ -95,7 +95,7 @@ function ProjectSwitcher(): ReactElement {
         <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>
           <Icon name="diamond" size={15} />
         </span>
-        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>
+        <span className="t-label" style={{ color: 'var(--text)' }}>
           {name ?? 'canvas-ade'}
         </span>
         <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>

@@ -66,18 +66,22 @@
   --fs-meta: 11px;
   --lh-meta: 16px;
   --fw-meta: 450;
+  --tr-meta: 0;
 
   --fs-label: 12px;
   --lh-label: 16px;
   --fw-label: 500;
+  --tr-label: 0;
 
   --fs-body: 13px;
   --lh-body: 20px;
   --fw-body: 400;
+  --tr-body: 0;
 
   --fs-term: 12.5px;
   --lh-term: 19px;
   --fw-term: 400;
+  --tr-term: 0;
 
   --fs-h: 15px;
   --lh-h: 22px;
@@ -123,22 +127,26 @@
   font-size: var(--fs-meta);
   line-height: var(--lh-meta);
   font-weight: var(--fw-meta);
+  letter-spacing: var(--tr-meta);
 }
 .t-label {
   font-size: var(--fs-label);
   line-height: var(--lh-label);
   font-weight: var(--fw-label);
+  letter-spacing: var(--tr-label);
 }
 .t-body {
   font-size: var(--fs-body);
   line-height: var(--lh-body);
   font-weight: var(--fw-body);
+  letter-spacing: var(--tr-body);
 }
 .t-term {
   font-family: var(--mono);
   font-size: var(--fs-term);
   line-height: var(--lh-term);
   font-weight: var(--fw-term);
+  letter-spacing: var(--tr-term);
 }
 .t-h {
   font-size: var(--fs-h);
@@ -559,6 +567,7 @@ body {
   padding: 12px;
   text-align: center;
   background: var(--surface);
+  transition: opacity 0.12s;
 }
 .bb-state-title {
   font-size: 12px;
@@ -609,6 +618,22 @@ body {
 }
 .pl-well:focus-visible {
   outline: none;
+}
+
+/* Phase 4 focus-ring cluster — accent ring (§6 select-ring convention) on
+   interactive controls that otherwise suppress/omit a :focus-visible state. */
+.pl-well input:focus-visible,
+.pl-well textarea:focus-visible,
+.welcome-actions button:focus-visible,
+.welcome-recents button:focus-visible,
+.bb-navbtn:not(:disabled):focus-visible,
+.project-switcher-menu button:focus-visible,
+.board-menu-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.pl-del:focus-visible {
+  opacity: 1;
 }
 
 /* ── Phase 3 persistence — welcome / project-picker screen (tokenised in §B) ── */
@@ -821,9 +846,10 @@ body {
 }
 .fullview-label {
   font-family: var(--ui);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  font-weight: var(--fw-micro);
+  letter-spacing: var(--tr-micro);
   text-transform: uppercase;
   color: var(--text-3);
 }
@@ -836,13 +862,17 @@ body {
   background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--r-ctl);
-  padding: 3px 8px;
+  padding: 4px 8px;
   cursor: pointer;
 }
 .fullview-close:hover {
   color: var(--text);
   background: var(--accent-wash);
   border-color: var(--accent);
+}
+.fullview-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
 }
 .fullview-host {
   flex: 1;
@@ -884,8 +914,15 @@ body {
   padding: 6px 8px;
   cursor: pointer;
 }
-.ca-port-choice:hover {
-  border-color: var(--accent);
+.ca-port-choice:hover,
+.ca-port-choice:focus-visible {
+  background: var(--accent-wash);
+  border-color: var(--accent-hover);
+  color: var(--text);
+}
+.ca-port-choice:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
 }
 .ca-preview-dismiss {
   align-self: flex-end;

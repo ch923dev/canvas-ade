@@ -180,12 +180,11 @@ export function NoteCard({
             width: '100%',
             resize: 'none',
             border: 'none',
-            outline: 'none',
             background: 'transparent',
             color: 'var(--text)',
             fontFamily: 'var(--ui)',
             fontSize: 12,
-            lineHeight: '17px',
+            lineHeight: '16px',
             padding: 0,
             overflow: 'hidden',
             cursor: interactive ? 'text' : 'default'

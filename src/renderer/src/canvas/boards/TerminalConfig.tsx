@@ -48,6 +48,15 @@ export function TerminalConfig({
     }
   }, [])
 
+  // Inline-styled fields can't use :focus-visible, so mirror the §6 select-ring
+  // (1.5px accent box-shadow) via focus/blur handlers for a visible keyboard state.
+  const ringOn = (e: { currentTarget: HTMLElement }): void => {
+    e.currentTarget.style.boxShadow = '0 0 0 1.5px var(--accent)'
+  }
+  const ringOff = (e: { currentTarget: HTMLElement }): void => {
+    e.currentTarget.style.boxShadow = ''
+  }
+
   const apply = (): void => {
     useCanvasStore.getState().beginChange()
     updateBoard(board.id, {
@@ -81,6 +90,8 @@ export function TerminalConfig({
           spellCheck={false}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          onFocus={ringOn}
+          onBlur={ringOff}
         />
       </label>
       <label style={lbl}>
@@ -92,6 +103,8 @@ export function TerminalConfig({
             shellTouched.current = true
             setShell(e.target.value)
           }}
+          onFocus={ringOn}
+          onBlur={ringOff}
         >
           {shells.map((s) => (
             <option key={s.path} value={s.path}>
@@ -109,6 +122,8 @@ export function TerminalConfig({
           spellCheck={false}
           value={launchCommand}
           onChange={(e) => setLaunchCommand(e.target.value)}
+          onFocus={ringOn}
+          onBlur={ringOff}
         />
       </label>
       <label style={lbl}>
@@ -119,6 +134,8 @@ export function TerminalConfig({
           spellCheck={false}
           value={cwd}
           onChange={(e) => setCwd(e.target.value)}
+          onFocus={ringOn}
+          onBlur={ringOff}
         />
       </label>
       <div style={footer}>

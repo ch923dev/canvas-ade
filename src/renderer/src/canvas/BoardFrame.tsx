@@ -9,6 +9,7 @@ import type { MouseEvent, ReactNode, ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
+import { prefersReducedMotion } from '../lib/motion'
 import { usePreviewStore } from '../store/previewStore'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
@@ -50,6 +51,7 @@ export function IconBtn({
   onClick?: (e: MouseEvent) => void
 }): ReactElement {
   const [hover, setHover] = useState(false)
+  const [focus, setFocus] = useState(false)
   const color = active
     ? 'var(--accent)'
     : danger && hover
@@ -63,6 +65,10 @@ export function IconBtn({
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      // Accent ring on keyboard focus so the title-bar controls are visible to keyboard
+      // users (matches the §6 board select-ring treatment).
+      onFocus={() => setFocus(true)}
+      onBlur={() => setFocus(false)}
       // Stop the title-bar drag from starting when a control is pressed.
       onMouseDown={(e) => e.stopPropagation()}
       style={{
@@ -75,6 +81,8 @@ export function IconBtn({
         cursor: 'pointer',
         background: hover ? 'var(--surface-overlay)' : 'transparent',
         color,
+        outline: 'none',
+        boxShadow: focus ? '0 0 0 1.5px var(--accent)' : 'none',
         transition: 'color .1s, background .1s'
       }}
     >
@@ -275,8 +283,10 @@ export function BoardFrame({
         <div style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{
-              fontSize: 9,
-              letterSpacing: '0.08em',
+              // §3 micro role — 10px is the on-canvas minimum (was 9px, below it).
+              fontSize: 'var(--fs-micro)',
+              letterSpacing: 'var(--tr-micro)',
+              fontWeight: 'var(--fw-micro)',
               color: 'var(--text-faint)',
               fontFamily: 'var(--mono)'
             }}
@@ -325,7 +335,11 @@ export function BoardFrame({
         display: 'flex',
         flexDirection: 'column',
         // §9: board select ring animates 120ms ease-out (the ring is the box-shadow).
-        transition: 'opacity .15s, border-color .1s, box-shadow .12s ease-out'
+        // An inline transition can't be suppressed by the CSS reduced-motion @media, so
+        // drop the box-shadow segment here when reduced motion is requested.
+        transition: prefersReducedMotion()
+          ? 'opacity .15s, border-color .1s'
+          : 'opacity .15s, border-color .1s, box-shadow .12s ease-out'
       }}
     >
       {running && (
