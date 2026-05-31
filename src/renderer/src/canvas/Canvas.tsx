@@ -37,6 +37,8 @@ import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
+import { computeAlignment, SNAP_THRESHOLD_PX, type Guide } from '../lib/alignmentGuides'
+import { AlignmentGuides } from './AlignmentGuides'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
@@ -114,6 +116,12 @@ function CanvasInner(): ReactElement {
   // from a close request until the exit tween settles (fullViewId stays set throughout).
   const [fullViewEntering, setFullViewEntering] = useState(false)
   const [fullViewClosing, setFullViewClosing] = useState(false)
+  // Active alignment guide lines (ephemeral drag UI — never persisted). Set by the snap
+  // pass in onNodesChange, cleared on drag stop.
+  const [guides, setGuides] = useState<Guide[]>([])
+  // True while Ctrl/⌘ is held — suppresses snapping mid-drag (Figma parity). A ref so the
+  // snap pass reads it without re-creating onNodesChange.
+  const snapSuppressRef = useRef(false)
   // The native WebContentsView can't be CSS-animated and a frame scale() pollutes the
   // rect it binds to, so the full-view Browser view is HELD detached while the frame is
   // mid-transform (enter OR exit) and snaps in at settle.
@@ -191,6 +199,29 @@ function CanvasInner(): ReactElement {
   // resizing) covers size; select/remove mirror straight through.
   const onNodesChange = useCallback(
     (changes: NodeChange<BoardFlowNode>[]) => {
+      // Smart-align pass: snap a single active board-drag onto edge/center matches and
+      // surface the guide lines. Mutate change.position BEFORE translating to intents — the
+      // controlled-nodes path, which avoids the xyflow #4593 setNodes-mid-drag jitter. Skip
+      // while Ctrl/⌘ is held (freehand) and on multi-select drag (canonical single-node only).
+      const active = changes.filter((c) => c.type === 'position' && c.dragging)
+      const single = active.length === 1 ? active[0] : null
+      if (single && single.type === 'position' && single.position && !snapSuppressRef.current) {
+        const dragged = boards.find((b) => b.id === single.id)
+        if (dragged) {
+          const others = boards
+            .filter((b) => b.id !== single.id)
+            .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
+          const rect = { x: single.position.x, y: single.position.y, w: dragged.w, h: dragged.h }
+          const snap = computeAlignment(rect, others, SNAP_THRESHOLD_PX / rf.getZoom())
+          single.position.x = snap.x
+          single.position.y = snap.y
+          setGuides(snap.guides)
+        }
+      } else if (active.length > 0) {
+        // Dragging but suppressed or multi-select → no guides (no-op if already empty).
+        setGuides((g) => (g.length ? [] : g))
+      }
+
       let nextSel: string | null | undefined
       for (const intent of nodeChangesToIntents(changes)) {
         if (intent.kind === 'move') updateBoard(intent.id, { x: intent.x, y: intent.y })
@@ -210,7 +241,7 @@ function CanvasInner(): ReactElement {
       }
       if (nextSel !== undefined) selectBoard(nextSel)
     },
-    [updateBoard, resizeBoard, removeBoard, selectBoard]
+    [updateBoard, resizeBoard, removeBoard, selectBoard, boards, rf]
   )
 
   // Add a board centered in the current view, then select it (store auto-selects).
@@ -255,7 +286,10 @@ function CanvasInner(): ReactElement {
     // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
     void window.api.detachAllPreviews?.()
   }, [beginChange, setNodeGesture])
-  const onNodeDragStop = useCallback(() => setNodeGesture(false), [setNodeGesture])
+  const onNodeDragStop = useCallback(() => {
+    setNodeGesture(false)
+    setGuides((g) => (g.length ? [] : g))
+  }, [setNodeGesture])
 
   const clearSelection = useCallback(() => {
     selectBoard(null)
@@ -395,6 +429,20 @@ function CanvasInner(): ReactElement {
     return () => window.removeEventListener('keydown', onEscapeCapture, true)
   }, [fullViewId, closeFullView])
 
+  // Track Ctrl/⌘ for the snap-suppress escape hatch. keydown AND keyup both read the live
+  // modifier state so holding/releasing mid-drag toggles snapping without a stale latch.
+  useEffect(() => {
+    const update = (e: KeyboardEvent): void => {
+      snapSuppressRef.current = e.ctrlKey || e.metaKey
+    }
+    window.addEventListener('keydown', update)
+    window.addEventListener('keyup', update)
+    return () => {
+      window.removeEventListener('keydown', update)
+      window.removeEventListener('keyup', update)
+    }
+  }, [])
+
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
   useEffect(() => {
@@ -461,6 +509,8 @@ function CanvasInner(): ReactElement {
               onRequestCloseFullView={closeFullView}
             />
           </ReactFlow>
+
+          <AlignmentGuides guides={guides} />
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
           <AppChrome onAdd={addCentered} />
