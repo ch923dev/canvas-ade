@@ -16,6 +16,8 @@ export function AlignmentGuides({ guides }: { guides: Guide[] }): ReactElement |
   return (
     <svg className="align-guides" aria-hidden="true">
       {guides.map((g, i) => {
+        // Only ALIGN guides draw a line here; GAP guides get their own rendering in slice 2a Task 3.
+        if (g.kind !== 'align') return null
         const l = projectGuide(g, transform)
         return <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />
       })}

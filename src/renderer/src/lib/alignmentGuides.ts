@@ -200,7 +200,7 @@ export interface ScreenLine {
  * screen = world*zoom + translate. Stroke width stays in screen px at the call site,
  * so the 1px line is crisp at any zoom.
  */
-export function projectGuide(g: Guide, transform: [number, number, number]): ScreenLine {
+export function projectGuide(g: AlignGuide, transform: [number, number, number]): ScreenLine {
   const [tx, ty, zoom] = transform
   if (g.axis === 'x') {
     const sx = g.pos * zoom + tx
