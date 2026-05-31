@@ -111,13 +111,20 @@ interface LayerProps {
    * other read is the camera-scaled on-canvas frame and must be rejected.
    */
   fullViewHost: HTMLElement | null
+  /**
+   * The full-view modal frame is mid-transform (enter or exit tween, Slice 5). A CSS
+   * `scale()` pollutes the `.bb-frame` rect the native view binds to, so HOLD the
+   * full-view board's view detached for the tween and snap it in at settle.
+   */
+  fullViewMotion: boolean
 }
 
 export function BrowserPreviewLayer({
   paneRef,
   focusedId,
   fullViewId,
-  fullViewHost
+  fullViewHost,
+  fullViewMotion
 }: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
@@ -159,6 +166,9 @@ export function BrowserPreviewLayer({
   // contained by this host (= the relocated, untransformed modal frame) so it never
   // reads the camera-scaled on-canvas rect (the full-view native-bounds bug).
   const fullViewHostRef = useRef<HTMLElement | null>(fullViewHost)
+  // True while the modal frame is mid enter/exit tween — hold the full-view native view
+  // detached (a frame scale pollutes the rect it binds to); attach at settle.
+  const fullViewMotionRef = useRef<boolean>(fullViewMotion)
   // Latest store selection + the selected board's WORLD rect (any board type), kept
   // fresh by the store subscription. Used by the static-occlusion demote (LOT F #2/
   // #19/#20): a live Browser view overlapping a DIFFERENT selected board must demote
@@ -506,8 +516,13 @@ export function BrowserPreviewLayer({
       // scrim. On full-view EXIT the focus effect re-runs applyLiveness (non-full-view
       // path), which re-attaches the eligible views via reconcile's new-board path.
       for (const g of all) {
-        if (g.id === fvId) void attachBoard(g)
-        else if (rec(g.id).exists) closeBoard(g.id)
+        if (g.id === fvId) {
+          // Slice 5: while the modal frame is mid-transform, hold this view detached (a
+          // scale pollutes its bound rect) — close it if live; attach once motion settles.
+          if (fullViewMotionRef.current) {
+            if (rec(g.id).exists) closeBoard(g.id)
+          } else void attachBoard(g)
+        } else if (rec(g.id).exists) closeBoard(g.id)
       }
       return
     }
@@ -592,12 +607,15 @@ export function BrowserPreviewLayer({
     focusedIdRef.current = focusedId
     fullViewIdRef.current = fullViewId
     fullViewHostRef.current = fullViewHost
+    fullViewMotionRef.current = fullViewMotion
     if (!focusMounted.current) {
       focusMounted.current = true
       return
     }
+    // A motion flip (enter settled / exit started) re-reconciles: detach the full-view
+    // view while the frame transforms, attach it once settled (Slice 5 hold-then-snap).
     applyLiveness()
-  }, [focusedId, fullViewId, fullViewHost, applyLiveness])
+  }, [focusedId, fullViewId, fullViewHost, fullViewMotion, applyLiveness])
 
   // Full view: the camera never moves, so the camera-driven rAF pump (startPump, fired
   // by useOnViewportChange) never runs — yet the full-view board's native bounds must
@@ -610,14 +628,18 @@ export function BrowserPreviewLayer({
     if (!fullViewId) return
     let raf = 0
     const tick = (): void => {
-      // The full-view board's native view may not be attached yet — the initial
-      // applyLiveness attach is HELD until the portal relocates `.bb-frame` into the
-      // modal host (fullViewBoundsFor null → attachBoard early-returns). Once the host
-      // is ready, re-issue the attach here so the (held) view comes live at the modal
-      // rect; flushBatch (attached-only) then keeps it pinned across window resizes.
-      const g = geomRef.current.get(fullViewId)
-      if (g && !recs.current.get(fullViewId)?.attached) void attachBoard(g)
-      flushBatch()
+      // Skip while the modal frame is mid enter/exit tween (Slice 5) — the held view must
+      // not attach to a scale-polluted rect; applyLiveness reattaches it at settle.
+      if (!fullViewMotionRef.current) {
+        // The full-view board's native view may not be attached yet — the initial
+        // applyLiveness attach is HELD until the portal relocates `.bb-frame` into the
+        // modal host (fullViewBoundsFor null → attachBoard early-returns). Once the host
+        // is ready, re-issue the attach here so the (held) view comes live at the modal
+        // rect; flushBatch (attached-only) then keeps it pinned across window resizes.
+        const g = geomRef.current.get(fullViewId)
+        if (g && !recs.current.get(fullViewId)?.attached) void attachBoard(g)
+        flushBatch()
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)

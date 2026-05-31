@@ -209,6 +209,11 @@
   .react-flow__resize-control.handle {
     animation: none !important;
   }
+  /* Slice 5: full-view enter/exit collapses to instant (mirrors lib/motion.ts). */
+  .fullview-scrim,
+  .fullview-frame {
+    transition: none !important;
+  }
 }
 
 * {
@@ -774,6 +779,12 @@ body {
   background: rgba(0, 0, 0, 0.66);
   display: flex;
   padding: 5vh 5vw;
+  /* Slice 5 (§9): scrim opacity-fade. Starts closed; `[data-open]` plays it in. */
+  opacity: 0;
+  transition: opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.fullview-scrim[data-open] {
+  opacity: 1;
 }
 .fullview-frame {
   flex: 1;
@@ -785,6 +796,53 @@ body {
   box-shadow:
     0 0 0 1.5px var(--accent),
     var(--shadow-board);
+  /* Slice 5 (§9): scale/opacity tween toward the viewport centre. */
+  opacity: 0;
+  transform: scale(0.98);
+  transform-origin: center;
+  transition:
+    opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.fullview-scrim[data-open] .fullview-frame {
+  opacity: 1;
+  transform: scale(1);
+}
+/* §6.1 top band: `FULL VIEW` label + `✕ Esc` exit, above the board's own chrome. */
+.fullview-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+.fullview-label {
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.fullview-close {
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.fullview-close:hover {
+  color: var(--text);
+  background: var(--accent-wash);
+  border-color: var(--accent);
 }
 .fullview-host {
   flex: 1;

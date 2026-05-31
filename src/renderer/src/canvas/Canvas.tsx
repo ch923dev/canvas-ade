@@ -103,11 +103,48 @@ function CanvasInner(): ReactElement {
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
   // Board shown in the full-view modal (Task 5 feeds this to node data; Task 6 renders
-  // the modal). Tracked here so the ⋯ menu's Full view can set it immediately.
+  // the modal). Tracked here so the ⋯ menu's Full view can set it immediately. It must
+  // NOT clear until the exit fade completes (Slice 5) — clearing it earlier relocates the
+  // live subtree back to canvas mid-fade and tears the session.
   const [fullViewId, setFullViewId] = useState<string | null>(null)
   // The modal's portal host element — the full-view BoardNode portals its live subtree
   // into this so the board is relocated (not remounted) and its session survives.
   const [fullViewHost, setFullViewHost] = useState<HTMLElement | null>(null)
+  // Slice 5 motion flags. `entering`: from open until the enter tween settles. `closing`:
+  // from a close request until the exit tween settles (fullViewId stays set throughout).
+  const [fullViewEntering, setFullViewEntering] = useState(false)
+  const [fullViewClosing, setFullViewClosing] = useState(false)
+  // The native WebContentsView can't be CSS-animated and a frame scale() pollutes the
+  // rect it binds to, so the full-view Browser view is HELD detached while the frame is
+  // mid-transform (enter OR exit) and snaps in at settle.
+  const fullViewMotion = fullViewEntering || fullViewClosing
+  // Read the live full-view id inside the (stable) boardActions/Esc toggles without
+  // re-memoizing them on every open/close. Synced in an effect (no ref writes in render).
+  const fullViewIdRef = useRef<string | null>(fullViewId)
+  useEffect(() => {
+    fullViewIdRef.current = fullViewId
+  }, [fullViewId])
+
+  // Open full view on a board: start the enter tween, mark it as the relocated board.
+  const openFullView = useCallback((id: string) => {
+    setFullViewClosing(false)
+    setFullViewEntering(true)
+    setFullViewId(id)
+  }, [])
+  // Request the exit tween; keep fullViewId set so the board stays relocated in the modal
+  // host until the fade completes (the modal fires onExited → clears it). Idempotent.
+  const closeFullView = useCallback(() => {
+    if (fullViewIdRef.current) setFullViewClosing(true)
+  }, [])
+  // Clear full view instantly with no exit tween — for paths where the board is gone or
+  // changing under it (delete / duplicate / push-preview).
+  const hardCloseFullView = useCallback(() => {
+    setFullViewId(null)
+    setFullViewClosing(false)
+    setFullViewEntering(false)
+  }, [])
+  const handleFullViewEntered = useCallback(() => setFullViewEntering(false), [])
+  const handleFullViewExited = useCallback(() => hardCloseFullView(), [hardCloseFullView])
   const [diag, setDiag] = useState(import.meta.env.DEV)
 
   // Controlled nodes: one React Flow node per board, selection + dim mirrored from
@@ -225,16 +262,17 @@ function CanvasInner(): ReactElement {
   // live session then removes the board (mirrors the React Flow delete path).
   const boardActions = useMemo<BoardActions>(
     () => ({
-      // Maximize (⤢) toggles: open full view, or exit if this board is already full-view.
-      requestFullView: (id) => setFullViewId((cur) => (cur === id ? null : id)),
+      // Maximize (⤢) toggles: open full view, or animate it closed if already full-view.
+      requestFullView: (id) =>
+        fullViewIdRef.current === id ? closeFullView() : openFullView(id),
       duplicate: (id) => {
-        setFullViewId(null)
+        hardCloseFullView()
         duplicateBoard(id)
       },
       remove: (id) => {
         const removed = useCanvasStore.getState().boards.find((x) => x.id === id)
         if (removed?.type === 'terminal') void window.api.parkTerminal(id)
-        setFullViewId((f) => (f === id ? null : f))
+        if (fullViewIdRef.current === id) hardCloseFullView()
         removeBoard(id)
         setFocusedId((f) => (f === id ? null : f))
       },
@@ -252,10 +290,10 @@ function CanvasInner(): ReactElement {
           st.updateBoard(id, patch)
           st.selectBoard(id)
         }
-        setFullViewId(null)
+        hardCloseFullView()
       }
     }),
-    [duplicateBoard, removeBoard]
+    [duplicateBoard, removeBoard, openFullView, closeFullView, hardCloseFullView]
   )
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
@@ -309,7 +347,7 @@ function CanvasInner(): ReactElement {
       }
       if (e.key === 'Escape' && !typing) {
         if (fullViewId) {
-          setFullViewId(null)
+          closeFullView()
           return
         }
         clearSelection()
@@ -326,7 +364,7 @@ function CanvasInner(): ReactElement {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, doUndo, doRedo, fullViewId])
+  }, [rf, clearSelection, doUndo, doRedo, fullViewId, closeFullView])
 
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
@@ -390,6 +428,7 @@ function CanvasInner(): ReactElement {
               focusedId={focusedId}
               fullViewId={fullViewId}
               fullViewHost={fullViewHost}
+              fullViewMotion={fullViewMotion}
             />
           </ReactFlow>
 
@@ -398,7 +437,13 @@ function CanvasInner(): ReactElement {
           {diag && <DiagOverlay liveViews={liveViews} />}
         </div>
         {fullViewBoard && (
-          <FullViewModal onClose={() => setFullViewId(null)} onHost={setFullViewHost} />
+          <FullViewModal
+            closing={fullViewClosing}
+            onClose={closeFullView}
+            onEntered={handleFullViewEntered}
+            onExited={handleFullViewExited}
+            onHost={setFullViewHost}
+          />
         )}
       </FullViewContext.Provider>
     </BoardActionsContext.Provider>

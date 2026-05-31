@@ -325,6 +325,41 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : JSON.stringify(emu)
   })
 
+  // ── Slice 5 (§6.1 top band + close-motion state machine): full view must render the
+  // band (`FULL VIEW` label + `✕ Esc` exit), and clicking the ✕ must run the real close
+  // path (exit tween → onExited → unmount). Open via the e2e hook (raw setFullView), read
+  // the band, then dispatch a real click on `.fullview-close` and assert the modal is gone
+  // after the tween — proving the band + the deferred-unmount state machine end to end. ──
+  await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
+  await delay(400) // modal mounts + enter tween settles
+  const band = await evalIn<{ found: boolean; label: string; hasClose: boolean }>(
+    win,
+    `(() => {
+       const b = document.querySelector('.fullview-band');
+       const close = document.querySelector('.fullview-close');
+       return {
+         found: !!b,
+         label: (document.querySelector('.fullview-label')?.textContent || '').trim(),
+         hasClose: !!close
+       };
+     })()`
+  )
+  await evalIn(win, `document.querySelector('.fullview-close')?.click()`)
+  await delay(400) // exit tween (200ms) + onExited unmount
+  const bandClosed = await evalIn<boolean>(
+    win,
+    `document.querySelector('.fullview-scrim') === null`
+  )
+  const bandOk =
+    band.found && /full view/i.test(band.label) && band.hasClose && bandClosed
+  parts.push({
+    name: 'fullview-band',
+    ok: bandOk,
+    detail: bandOk
+      ? 'band shows FULL VIEW + ✕ Esc; ✕ animates closed and unmounts'
+      : `found=${band.found} label=${JSON.stringify(band.label)} hasClose=${band.hasClose} closed=${bandClosed}`
+  })
+
   // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
   // kill its PTY. e2eTerminals registration tracks the xterm mount, so the board
   // staying mounted across LOD proves the session survives (pre-fix BoardNode
