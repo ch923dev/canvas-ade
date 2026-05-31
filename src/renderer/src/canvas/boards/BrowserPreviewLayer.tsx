@@ -140,6 +140,10 @@ export function BrowserPreviewLayer({
   // Latest board geometry, refreshed from the store subscription (read in rAF).
   const geomRef = useRef<Map<string, BoardGeom>>(new Map())
   const gestureRef = useRef(false)
+  // Boards that beginMotion is actively demoting (captured but not yet detached). The
+  // per-frame flushBatch skips these so a view about to be pulled out is never trailed
+  // with setBounds during the ~tens-of-ms capture window (the #43961 ghost trigger).
+  const demoting = useRef<Set<string>>(new Set())
   const rafRef = useRef(0)
   const idleRef = useRef(0)
   // Latest focused board id, read inside the (geometry-only-deps) liveEligible cb.
@@ -395,6 +399,7 @@ export function BrowserPreviewLayer({
     for (const g of geomRef.current.values()) {
       const r = recs.current.get(g.id)
       if (!r || !r.attached) continue
+      if (demoting.current.has(g.id)) continue // about to detach — don't trail it (#43961)
       const isFullView = fullViewIdRef.current === g.id
       const fv = isFullView ? fullViewBoundsFor(g.id) : null
       // HOLD (mirror of attachBoard): in full view, never push the camera-scaled canvas
@@ -432,6 +437,10 @@ export function BrowserPreviewLayer({
     const live = [...geomRef.current.values()].filter((g) => recs.current.get(g.id)?.attached)
     if (!live.length) return
     gestureRef.current = true
+    // Mark every live board demoting BEFORE the capture await so flushBatch stops
+    // repositioning the still-attached view during the capture window (the per-frame-
+    // setBounds-then-detach #43961 trigger). Cleared at the end once detached.
+    live.forEach((g) => demoting.current.add(g.id))
     void (async () => {
       // Bug #8/#9: capture per-board with a per-item guard so ONE rejected
       // capturePage() (headless / GPU-contended host) can't reject the whole batch and
@@ -470,6 +479,8 @@ export function BrowserPreviewLayer({
         r.attached = false
         patchRuntime(g.id, { live: false })
       })
+      // Detach complete — the pump may resume positioning these ids if they reattach.
+      live.forEach((g) => demoting.current.delete(g.id))
     })()
   }, [startPump, patchRuntime])
 
