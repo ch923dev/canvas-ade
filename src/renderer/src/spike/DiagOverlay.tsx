@@ -110,7 +110,7 @@ const style: React.CSSProperties = {
   borderRadius: 6,
   padding: '6px 9px',
   minWidth: 116,
-  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.45)'
+  boxShadow: 'var(--shadow-pop)'
 }
 
 const rowStyle: React.CSSProperties = {

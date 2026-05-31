@@ -249,7 +249,8 @@ export function BoardFrame({
           inset: 0,
           borderRadius: 'var(--r-board)',
           background: 'var(--surface-raised)',
-          border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-subtle)'}`,
+          // §6 selected = accent ring (box-shadow) only; border stays neutral.
+          border: '1px solid var(--border-subtle)',
           boxShadow: selected
             ? '0 0 0 1.5px var(--accent), var(--shadow-board)'
             : 'var(--shadow-board)',
@@ -314,9 +315,9 @@ export function BoardFrame({
         borderRadius: 'var(--r-board)',
         background: contentBg,
         overflow: 'hidden',
-        border: `1px solid ${
-          selected ? 'var(--accent)' : hovered ? 'var(--border)' : 'var(--border-subtle)'
-        }`,
+        // §6 selected = the 1.5px --accent ring (box-shadow) is the ONLY accent edge
+        // treatment; the 1px border stays neutral (hover→--border else --border-subtle).
+        border: `1px solid ${hovered ? 'var(--border)' : 'var(--border-subtle)'}`,
         boxShadow: selected
           ? '0 0 0 1.5px var(--accent), var(--shadow-board)'
           : 'var(--shadow-board)',

@@ -83,7 +83,7 @@ export function NoteCard({
         background: tint.fill,
         border: `1px solid ${tint.edge}`,
         borderRadius: 'var(--r-inner)',
-        boxShadow: '0 6px 18px -8px rgba(0, 0, 0, 0.6)',
+        boxShadow: 'var(--shadow-pop)',
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {

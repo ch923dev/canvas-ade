@@ -128,7 +128,7 @@ export function ChecklistCard({
         border: '1px solid var(--border)',
         borderRadius: 'var(--r-board)',
         padding: '11px 12px 12px',
-        boxShadow: '0 6px 18px -8px rgba(0, 0, 0, 0.55)',
+        boxShadow: 'var(--shadow-pop)',
         display: 'flex',
         flexDirection: 'column',
         gap: 9
