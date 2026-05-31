@@ -23,6 +23,8 @@ import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, isRunning, statusFor, type TerminalState } from './terminalState'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
+import { useCanvasStore } from '../../store/canvasStore'
+import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -89,7 +91,11 @@ export function TerminalBoard({
   selected,
   hovered,
   dimmed,
-  lod = false
+  lod = false,
+  onFull,
+  onDuplicate,
+  onDelete,
+  onPushPreview
 }: BoardViewProps<TerminalBoardData>): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -106,6 +112,17 @@ export function TerminalBoard({
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
+
+  // Publish live PTY state so the preview-link edge can render stale when this
+  // terminal is not running (bug 3); clear on unmount so a removed board stops
+  // counting as a running source.
+  useEffect(() => {
+    useTerminalRuntimeStore.getState().setRunning(board.id, state)
+  }, [board.id, state])
+  useEffect(() => () => useTerminalRuntimeStore.getState().clear(board.id), [board.id])
+
+  // A board with no explicit cwd spawns in the open project folder, not os.homedir().
+  const projectDir = useCanvasStore((s) => s.project.dir)
 
   // `lod` read by the spawn effect (initial WebGL attach) without making it a spawn
   // dep — `lod` must NOT respawn the PTY (the session survives zoom-out by design).
@@ -203,7 +220,7 @@ export function TerminalBoard({
       .spawnTerminal({
         id: board.id,
         shell: board.shell,
-        cwd: board.cwd,
+        cwd: board.cwd ?? projectDir ?? undefined,
         launchCommand: board.launchCommand,
         cols: term.cols,
         rows: term.rows
@@ -220,7 +237,7 @@ export function TerminalBoard({
         setState('spawn-failed')
         term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
       })
-  }, [board.id, board.shell, board.cwd, board.launchCommand])
+  }, [board.id, board.shell, board.cwd, board.launchCommand, projectDir])
 
   // ── Bridge: spawn the PTY, wire the MessagePort, fit on resize ──────────────
   // Keyed by board id so re-mounts (LOD swaps, drags) reconnect the same session
@@ -327,7 +344,7 @@ export function TerminalBoard({
         .spawnTerminal({
           id: board.id,
           shell: board.shell,
-          cwd: board.cwd,
+          cwd: board.cwd ?? projectDir ?? undefined,
           launchCommand: board.launchCommand,
           cols: term.cols,
           rows: term.rows
@@ -399,7 +416,16 @@ export function TerminalBoard({
       termRef.current = null
       fitRef.current = null
     }
-  }, [board.id, board.shell, board.cwd, board.launchCommand, attachWebgl, detachWebgl, respawn])
+  }, [
+    board.id,
+    board.shell,
+    board.cwd,
+    board.launchCommand,
+    projectDir,
+    attachWebgl,
+    detachWebgl,
+    respawn
+  ])
 
   useEffect(() => spawn(), [spawn])
 
@@ -444,9 +470,33 @@ export function TerminalBoard({
     portRef.current?.postMessage({ t: 'input', d: '\x03' })
   }, [])
 
+  // Slice C′: detected dev-server URLs (picker when >1) + a transient "not found" note.
+  type DetectedUrl = { url: string; host: string; port: number }
+  const [portChoices, setPortChoices] = useState<DetectedUrl[]>([])
+  const [previewNote, setPreviewNote] = useState<string | null>(null)
+
+  const onPreview = useCallback(async () => {
+    setPreviewNote(null)
+    const urls = await window.api.detectPorts(board.id)
+    if (urls.length === 0) {
+      setPreviewNote('No dev server detected yet — start it, then try again.')
+      return
+    }
+    if (urls.length === 1) {
+      onPushPreview?.(urls[0].url)
+      return
+    }
+    setPortChoices(urls)
+  }, [board.id, onPushPreview])
+
   const actions = (
     <>
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
+      <IconBtn
+        name="globe"
+        title="Open preview from this server"
+        onClick={() => void onPreview()}
+      />
       <IconBtn
         name="settings"
         title="Configure terminal"
@@ -473,9 +523,40 @@ export function TerminalBoard({
         status={status}
         actions={actions}
         contentBg="var(--inset)"
+        onFull={onFull}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
       >
         <div style={lod ? shellHidden : shell}>
           {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+          {previewNote && (
+            <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
+              {previewNote}
+              <button className="ca-preview-dismiss" onClick={() => setPreviewNote(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {portChoices.length > 1 && (
+            <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="ca-port-picker-title">Multiple servers — choose one:</div>
+              {portChoices.map((u) => (
+                <button
+                  key={u.url}
+                  className="ca-port-choice"
+                  onClick={() => {
+                    setPortChoices([])
+                    onPushPreview?.(u.url)
+                  }}
+                >
+                  {u.host}:{u.port}
+                </button>
+              ))}
+              <button className="ca-preview-dismiss" onClick={() => setPortChoices([])}>
+                Cancel
+              </button>
+            </div>
+          )}
           {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
               `nodrag nowheel` stops React Flow from treating clicks as a node drag or
               wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF
@@ -503,6 +584,9 @@ export function TerminalBoard({
             lod
             running={running}
             status={{ dot: status.dot }}
+            onFull={onFull}
+            onDuplicate={onDuplicate}
+            onDelete={onDelete}
           />
         </div>
       )}

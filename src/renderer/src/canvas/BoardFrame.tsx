@@ -6,8 +6,10 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
+import { usePreviewStore } from '../store/previewStore'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
 
@@ -31,6 +33,8 @@ export function IconBtn({
   active = false,
   danger = false,
   size = 15,
+  sw,
+  restColor = 'var(--text-3)',
   onClick
 }: {
   name: IconName
@@ -38,6 +42,11 @@ export function IconBtn({
   active?: boolean
   danger?: boolean
   size?: number
+  /** Stroke width override for the glyph (sparse glyphs like ⋯ need more ink to read). */
+  sw?: number
+  /** Resting (non-hover, non-active) icon colour. Default `--text-3`; the ⋯ overflow
+   *  trigger uses `--text-2` so it isn't near-invisible at rest. */
+  restColor?: string
   onClick?: (e: MouseEvent) => void
 }): ReactElement {
   const [hover, setHover] = useState(false)
@@ -47,7 +56,7 @@ export function IconBtn({
       ? 'var(--err)'
       : hover
         ? 'var(--text-2)'
-        : 'var(--text-3)'
+        : restColor
   return (
     <button
       title={title}
@@ -69,8 +78,127 @@ export function IconBtn({
         transition: 'color .1s, background .1s'
       }}
     >
-      <Icon name={name} size={size} />
+      <Icon name={name} size={size} sw={sw} />
     </button>
+  )
+}
+
+/** ⋯ overflow popover: Full view · Duplicate · Delete (DESIGN §6.1). */
+export function BoardMenu({
+  onFull,
+  onDuplicate,
+  onDelete
+}: {
+  onFull?: (e: MouseEvent) => void
+  onDuplicate?: () => void
+  onDelete?: () => void
+}): ReactElement {
+  const [open, setOpen] = useState(false)
+  // Start off-screen; the layout effect below measures the real menu and clamps it
+  // into the viewport before paint (bug 14 — no flash at the stale corner).
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: -9999, left: -9999 })
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // A native preview `WebContentsView` paints above ALL HTML — even this body-portaled
+  // popover — so a menu dropping over a live Browser board's device stage renders under
+  // it. Signal the preview layer to detach live views to their HTML snapshot while open,
+  // then reattach on close (mirrors the node-gesture detach path). ADR 0002.
+  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
+  useEffect(() => {
+    setMenuOpen(open)
+    if (open) return () => setMenuOpen(false)
+  }, [open, setMenuOpen])
+
+  useEffect(() => {
+    if (!open) return
+    const close = (): void => setOpen(false)
+    // Close on any outside pointerdown or Escape.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    // Reposition on scroll/resize while open (the canvas can pan under it).
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  // Position once the popover has mounted: right-align to the trigger, then clamp into
+  // the viewport (left ≥ 8, right ≤ innerWidth − 8) and flip above the trigger if it
+  // would overflow the bottom edge (bug 14 — was anchored by `right` with no clamp/flip).
+  useLayoutEffect(() => {
+    if (!open) return
+    const t = triggerRef.current?.getBoundingClientRect()
+    const m = menuRef.current?.getBoundingClientRect()
+    if (!t || !m) return
+    const PAD = 8
+    let left = Math.min(t.right - m.width, window.innerWidth - m.width - PAD)
+    left = Math.max(PAD, left)
+    let top = t.bottom + 4
+    if (top + m.height > window.innerHeight - PAD) {
+      const flipped = t.top - m.height - 4
+      top = flipped >= PAD ? flipped : Math.max(PAD, window.innerHeight - m.height - PAD)
+    }
+    setPos({ top, left })
+  }, [open])
+
+  const openMenu = (e: MouseEvent): void => {
+    e.stopPropagation()
+    setOpen((v) => !v)
+  }
+
+  const item = (label: string, danger: boolean, fn?: (e: MouseEvent) => void): ReactElement => (
+    <button
+      className="board-menu-item"
+      data-danger={danger || undefined}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation()
+        setOpen(false)
+        fn?.(e)
+      }}
+    >
+      {label}
+    </button>
+  )
+
+  return (
+    <div ref={triggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      {/* The ⋯ dots are a near-inkless glyph; bump stroke + use a brighter rest colour so
+          the overflow affordance is actually visible at rest (not only when clicked). */}
+      <IconBtn
+        name="more"
+        title="More"
+        active={open}
+        size={16}
+        sw={2.6}
+        restColor="var(--text-2)"
+        onClick={openMenu}
+      />
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="board-menu"
+            role="menu"
+            style={{ position: 'fixed', top: pos.top, left: pos.left }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {onFull && item('Full view', false, onFull)}
+            {onDuplicate && item('Duplicate', false, () => onDuplicate())}
+            {onDelete && item('Delete', true, () => onDelete())}
+          </div>,
+          document.body
+        )}
+    </div>
   )
 }
 
@@ -90,7 +218,10 @@ export interface BoardFrameProps {
   contentBg?: string
   /** Provided only when the board is focusable → renders the maximize button. */
   onFull?: (e: MouseEvent) => void
-  onMore?: (e: MouseEvent) => void
+  /** ⋯ menu → Duplicate. When provided alongside onFull/onDelete, the ⋯ button shows. */
+  onDuplicate?: () => void
+  /** ⋯ menu → Delete (danger). */
+  onDelete?: () => void
   children?: ReactNode
 }
 
@@ -106,7 +237,8 @@ export function BoardFrame({
   actions,
   contentBg = 'var(--surface)',
   onFull,
-  onMore,
+  onDuplicate,
+  onDelete,
   children
 }: BoardFrameProps): ReactElement {
   if (lod) {
@@ -239,39 +371,61 @@ export function BoardFrame({
         >
           <TypeGlyph type={type} running={running} />
         </span>
-        <span
+        {/* Shrinkable middle (title + status label + per-type actions): collapses
+            BEFORE the universal maximize/⋯ controls so the ⋯ trigger never clips off
+            the title bar's right edge on a narrow board (bug 13). overflow:hidden keeps
+            an overlong per-type cluster from painting over the pinned controls. */}
+        <div
           style={{
-            fontSize: 12,
-            fontWeight: 500,
-            color: selected ? 'var(--text)' : 'var(--text-2)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
             flex: 1,
-            minWidth: 0
+            minWidth: 0,
+            overflow: 'hidden'
           }}
         >
-          {title}
-        </span>
-        {/* Status label is on-demand: only while hovered or selected, kept calm at
-            rest (the glyph colour carries the at-a-glance signal). */}
-        {status?.label && (hovered || selected) && (
           <span
             style={{
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              color: 'var(--text-3)',
+              fontSize: 12,
+              fontWeight: 500,
+              color: selected ? 'var(--text)' : 'var(--text-2)',
               whiteSpace: 'nowrap',
-              flex: 'none'
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              flex: 1,
+              minWidth: 0
             }}
           >
-            {status.label}
+            {title}
           </span>
-        )}
+          {/* Status label is on-demand: only while hovered or selected, kept calm at
+              rest (the glyph colour carries the at-a-glance signal). */}
+          {status?.label && (hovered || selected) && (
+            <span
+              style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 11,
+                color: 'var(--text-3)',
+                whiteSpace: 'nowrap',
+                flex: 'none'
+              }}
+            >
+              {status.label}
+            </span>
+          )}
+          {actions && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
+              {actions}
+            </div>
+          )}
+        </div>
+        {/* Universal controls, pinned at the far right — always visible & clickable. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
-          {actions}
           {onFull && <IconBtn name="maximize" title="Full view" size={14} onClick={onFull} />}
-          {onMore && <IconBtn name="more" title="More" onClick={onMore} />}
+          {(onFull || onDuplicate || onDelete) && (
+            <BoardMenu onFull={onFull} onDuplicate={onDuplicate} onDelete={onDelete} />
+          )}
         </div>
       </div>
 

@@ -3,6 +3,8 @@ out/
 dist/
 release/
 design-reference/
+# Local Claude Code skill/plugin artifacts (mirrors the .claude/** eslint ignore).
+.claude/
 # Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand). Do not reflow.
 src/vendor/
 pnpm-lock.yaml

@@ -5,6 +5,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import * as pty from 'node-pty'
+import { parsePortsFromOutput } from './portDetect'
 
 /**
  * Terminal data plane lives on a MessagePort (binary-ish, high-volume PTY
@@ -290,6 +291,13 @@ function isForeignSender(e: IpcMainInvokeEvent, getWin: () => BrowserWindow | nu
 
 export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
   ipcMain.handle('pty:shells', (e) => (isForeignSender(e, getWin) ? [] : enumerateShells()))
+
+  ipcMain.handle('terminal:detectPorts', (e, id: string) => {
+    if (isForeignSender(e, getWin)) return []
+    // Read whichever buffer holds this board's output — live session or parked.
+    const raw = sessions.get(id)?.buf.data ?? parked.get(id)?.buf.data ?? ''
+    return parsePortsFromOutput(raw)
+  })
 
   ipcMain.handle('pty:spawn', (e, opts: SpawnOpts) => {
     if (isForeignSender(e, getWin)) throw new Error('pty:spawn — forbidden sender')

@@ -11,6 +11,7 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
+import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { fromObject, type Board, type BoardType } from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { e2eTerminals } from './e2eRegistry'
@@ -38,6 +39,8 @@ export interface CanvasE2E {
   fitView: (id?: string) => void
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
+  /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
+  panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
   terminalMounted: (id: string) => boolean
   /** True if the live store round-trips through toObject→fromObject without throwing. */
@@ -46,8 +49,22 @@ export interface CanvasE2E {
   setGesture: (active: boolean) => void
   /** Delete a board the way the canvas does (parks a terminal's session first). */
   deleteBoard: (id: string) => void
+  /** Duplicate a board (store path); returns the clone id (null if the source is gone). */
+  duplicateBoard: (id: string) => string | null
   /** Undo the last store change (restores a deleted board → adopt path). */
   undo: () => void
+  /** Open/close the full-view modal for a board id (null clears). Bug 1/4 harness. */
+  setFullView: (id: string | null) => void
+  /** Mark a terminal's PTY as exited in the runtime store (drives stale preview edge, bug 3). */
+  setTerminalDown: (id: string) => void
+  /** Focus a board (dim others) or clear focus (null) — the double-click focus path. Bug 2. */
+  setFocus: (id: string | null) => void
+}
+
+/** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
+export interface E2EHostHooks {
+  setFullView: (id: string | null) => void
+  setFocus: (id: string | null) => void
 }
 
 declare global {
@@ -58,7 +75,7 @@ declare global {
 
 let seedX = 0
 
-export function installE2EHooks(rf: ReactFlowInstance): void {
+export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void {
   seedX = 0 // reset the seed cursor so a re-install (e.g. HMR) starts fresh + idempotent
   const api: CanvasE2E = {
     seedBoard(type, patch) {
@@ -102,6 +119,10 @@ export function installE2EHooks(rf: ReactFlowInstance): void {
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })
     },
+    panBy(dx, dy) {
+      const vp = rf.getViewport()
+      void rf.setViewport({ x: vp.x + dx, y: vp.y + dy, zoom: vp.zoom }, { duration: 0 })
+    },
     terminalMounted(id) {
       return e2eTerminals.has(id)
     },
@@ -121,8 +142,20 @@ export function installE2EHooks(rf: ReactFlowInstance): void {
       if (b?.type === 'terminal') void window.api.parkTerminal(id)
       useCanvasStore.getState().removeBoard(id)
     },
+    duplicateBoard(id) {
+      return useCanvasStore.getState().duplicateBoard(id)
+    },
     undo() {
       useCanvasStore.getState().undo()
+    },
+    setFullView(id) {
+      host.setFullView(id)
+    },
+    setTerminalDown(id) {
+      useTerminalRuntimeStore.getState().setRunning(id, 'exited')
+    },
+    setFocus(id) {
+      host.setFocus(id)
     }
   }
   window.__canvasE2E = api

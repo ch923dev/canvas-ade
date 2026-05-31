@@ -22,10 +22,13 @@ import {
 import {
   Background,
   BackgroundVariant,
+  MarkerType,
   ReactFlow,
   ReactFlowProvider,
+  useOnViewportChange,
   useReactFlow,
   useStore,
+  type EdgeTypes,
   type NodeChange,
   type NodeTypes
 } from '@xyflow/react'
@@ -35,6 +38,14 @@ import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
+import { PreviewEdge } from './edges/PreviewEdge'
+import { previewEdges } from '../lib/previewEdges'
+import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
+import { resolvePreviewTarget } from '../lib/previewTarget'
+import type { Board } from '../lib/boardSchema'
+import { BoardActionsContext, type BoardActions } from './boardActions'
+import { FullViewModal } from './FullViewModal'
+import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
@@ -43,6 +54,7 @@ import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
+const edgeTypes: EdgeTypes = { preview: PreviewEdge }
 const FIT_OPTIONS = { padding: 0.2, maxZoom: 1 } as const
 /** "Reset zoom" (0 / %): recenter on content pinned at 100% so it can't strand boards (#41). */
 const RESET_OPTIONS = { padding: 0.2, maxZoom: 1, minZoom: 1 } as const
@@ -74,6 +86,9 @@ function CanvasInner(): ReactElement {
   const beginChange = useCanvasStore((s) => s.beginChange)
   const undo = useCanvasStore((s) => s.undo)
   const redo = useCanvasStore((s) => s.redo)
+  const setViewport = useCanvasStore((s) => s.setViewport)
+  const duplicateBoard = useCanvasStore((s) => s.duplicateBoard)
+  const projectStatus = useCanvasStore((s) => s.project.status)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -84,6 +99,12 @@ function CanvasInner(): ReactElement {
   const setNodeGesture = usePreviewStore((s) => s.setNodeGesture)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
+  // Board shown in the full-view modal (Task 5 feeds this to node data; Task 6 renders
+  // the modal). Tracked here so the ⋯ menu's Full view can set it immediately.
+  const [fullViewId, setFullViewId] = useState<string | null>(null)
+  // The modal's portal host element — the full-view BoardNode portals its live subtree
+  // into this so the board is relocated (not remounted) and its session survives.
+  const [fullViewHost, setFullViewHost] = useState<HTMLElement | null>(null)
   const [diag, setDiag] = useState(import.meta.env.DEV)
 
   // Controlled nodes: one React Flow node per board, selection + dim mirrored from
@@ -95,11 +116,34 @@ function CanvasInner(): ReactElement {
         type: 'board',
         position: { x: b.x, y: b.y },
         style: { width: b.w, height: b.h },
-        data: { board: b, dimmed: focusedId !== null && focusedId !== b.id },
+        data: {
+          board: b,
+          dimmed: focusedId !== null && focusedId !== b.id,
+          fullView: fullViewId === b.id
+        },
         selected: b.id === selectedId,
         dragHandle: '.board-titlebar'
       })),
-    [boards, selectedId, focusedId]
+    [boards, selectedId, focusedId, fullViewId]
+  )
+
+  // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
+  // a Terminal. Decorated here with an arrowhead; the path is computed by PreviewEdge.
+  // Select the STABLE `running` record (changes ref only when a terminal's run-state
+  // flips), then derive the Set in a memo. Selecting `new Set(...)` directly returns a
+  // fresh reference every render → useSyncExternalStore infinite loop / React #185.
+  const running = useTerminalRuntimeStore((s) => s.running)
+  const runningIds = useMemo(
+    () => new Set(Object.keys(running).filter((id) => running[id])),
+    [running]
+  )
+  const edges = useMemo(
+    () =>
+      previewEdges(boards, runningIds).map((e) => ({
+        ...e,
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#4f8cff', width: 16, height: 16 }
+      })),
+    [boards, runningIds]
   )
 
   // Translate React Flow changes into store mutations. Position covers both node
@@ -160,6 +204,10 @@ function CanvasInner(): ReactElement {
   const onNodeDragStart = useCallback(() => {
     beginChange()
     setNodeGesture(true)
+    // Pull every live native view out IMMEDIATELY (before RF starts moving the node) so a
+    // dragged board can't be occluded by — or strand — an always-above native layer (#43961).
+    // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
+    void window.api.detachAllPreviews?.()
   }, [beginChange, setNodeGesture])
   const onNodeDragStop = useCallback(() => setNodeGesture(false), [setNodeGesture])
 
@@ -167,6 +215,45 @@ function CanvasInner(): ReactElement {
     selectBoard(null)
     setFocusedId(null)
   }, [selectBoard])
+
+  // Board-level actions handed to every BoardNode (via context) so the shared ⋯ menu
+  // / maximize button can call them per-id: Full view opens the modal layer (no camera
+  // move), Duplicate clones offset 36px + selects the copy, Delete parks a terminal's
+  // live session then removes the board (mirrors the React Flow delete path).
+  const boardActions = useMemo<BoardActions>(
+    () => ({
+      // Maximize (⤢) toggles: open full view, or exit if this board is already full-view.
+      requestFullView: (id) => setFullViewId((cur) => (cur === id ? null : id)),
+      duplicate: (id) => {
+        setFullViewId(null)
+        duplicateBoard(id)
+      },
+      remove: (id) => {
+        const removed = useCanvasStore.getState().boards.find((x) => x.id === id)
+        if (removed?.type === 'terminal') void window.api.parkTerminal(id)
+        setFullViewId((f) => (f === id ? null : f))
+        removeBoard(id)
+        setFocusedId((f) => (f === id ? null : f))
+      },
+      pushPreview: (fromBoardId, url) => {
+        const st = useCanvasStore.getState()
+        const from = st.boards.find((b) => b.id === fromBoardId)
+        if (!from) return
+        const target = resolvePreviewTarget(st.boards, st.selectedId, fromBoardId)
+        const patch = { url, previewSourceId: fromBoardId } as Partial<Board>
+        if (target.kind === 'existing') {
+          st.updateBoard(target.id, patch)
+          st.selectBoard(target.id)
+        } else {
+          const id = st.addBoard('browser', { x: from.x + from.w + 40, y: from.y })
+          st.updateBoard(id, patch)
+          st.selectBoard(id)
+        }
+        setFullViewId(null)
+      }
+    }),
+    [duplicateBoard, removeBoard]
+  )
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
   // state — clearing it here keeps focus following selection so undo/redo can't
@@ -191,8 +278,10 @@ function CanvasInner(): ReactElement {
   // the eslint-disable-next-line suppresses the react-hooks/set-state-in-effect rule
   // which fires on ANY setState in an effect body, including legitimate cases like this.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setFocusedId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
+    setFullViewId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [boards])
 
   // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
@@ -216,6 +305,10 @@ function CanvasInner(): ReactElement {
         return
       }
       if (e.key === 'Escape' && !typing) {
+        if (fullViewId) {
+          setFullViewId(null)
+          return
+        }
         clearSelection()
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
         e.preventDefault()
@@ -230,48 +323,82 @@ function CanvasInner(): ReactElement {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, doUndo, doRedo])
+  }, [rf, clearSelection, doUndo, doRedo, fullViewId])
 
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
   useEffect(() => {
-    if (isE2E()) installE2EHooks(rf)
+    if (isE2E()) installE2EHooks(rf, { setFullView: setFullViewId, setFocus: setFocusedId })
   }, [rf])
 
+  // Capture the live camera into the (untracked) store so autosave persists it.
+  // onChange fires on the rAF-coalesced camera updates React Flow emits — no new
+  // pump, and writing setViewport won't pollute undo history.
+  useOnViewportChange({
+    onChange: (vp) => setViewport({ x: vp.x, y: vp.y, zoom: vp.zoom })
+  })
+
+  // Apply the stored camera when a project becomes `open` (restore on load/switch);
+  // fall back to fitView when there's no persisted viewport (fit-on-load).
+  useEffect(() => {
+    if (projectStatus !== 'open') return
+    const vp = useCanvasStore.getState().viewport
+    if (vp) void rf.setViewport(vp)
+    else void rf.fitView(FIT_OPTIONS)
+    // Deps are intentionally just [projectStatus, rf]: this fires once per open
+    // (status flips welcome/loading → open on each load) — viewport is read live.
+  }, [projectStatus, rf])
+
+  const fullViewBoard = fullViewId ? boards.find((b) => b.id === fullViewId) : undefined
+
   return (
-    <div ref={paneRef} style={paneStyle}>
-      <ReactFlow
-        nodes={nodes}
-        onNodesChange={onNodesChange}
-        nodeTypes={nodeTypes}
-        onPaneClick={clearSelection}
-        onNodeDoubleClick={focusBoard}
-        onNodeDragStart={onNodeDragStart}
-        onNodeDragStop={onNodeDragStop}
-        minZoom={Z_MIN}
-        maxZoom={Z_MAX}
-        fitView
-        fitViewOptions={FIT_OPTIONS}
-        panOnScroll
-        zoomActivationKeyCode={['Meta', 'Control']}
-        deleteKeyCode={['Backspace', 'Delete']}
-        proOptions={{ hideAttribution: true }}
-        style={{ width: '100%', height: '100%' }}
-      >
-        <FadingDots />
-        {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
+    <BoardActionsContext.Provider value={boardActions}>
+      <FullViewContext.Provider value={fullViewHost}>
+        <div ref={paneRef} style={paneStyle}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onPaneClick={clearSelection}
+            onNodeDoubleClick={focusBoard}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDragStop={onNodeDragStop}
+            minZoom={Z_MIN}
+            maxZoom={Z_MAX}
+            fitView
+            fitViewOptions={FIT_OPTIONS}
+            panOnScroll
+            zoomActivationKeyCode={['Meta', 'Control']}
+            deleteKeyCode={['Backspace', 'Delete']}
+            proOptions={{ hideAttribution: true }}
+            style={{ width: '100%', height: '100%' }}
+          >
+            <FadingDots />
+            {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
             <ReactFlow> so it can read the live camera (useReactFlow /
             useOnViewportChange) and sync every Browser board's native
             WebContentsView to the camera. Renders nothing (returns null); it owns
             the native-view lifecycle only. The Browser board is the sole board type
             allowed to touch this file. */}
-        <BrowserPreviewLayer paneRef={paneRef} focusedId={focusedId} />
-      </ReactFlow>
+            <BrowserPreviewLayer
+              paneRef={paneRef}
+              focusedId={focusedId}
+              fullViewId={fullViewId}
+              fullViewHost={fullViewHost}
+            />
+          </ReactFlow>
 
-      {boards.length === 0 && <EmptyState onAdd={addCentered} />}
-      <AppChrome onAdd={addCentered} />
-      {diag && <DiagOverlay liveViews={liveViews} />}
-    </div>
+          {boards.length === 0 && <EmptyState onAdd={addCentered} />}
+          <AppChrome onAdd={addCentered} />
+          {diag && <DiagOverlay liveViews={liveViews} />}
+        </div>
+        {fullViewBoard && (
+          <FullViewModal onClose={() => setFullViewId(null)} onHost={setFullViewHost} />
+        )}
+      </FullViewContext.Provider>
+    </BoardActionsContext.Provider>
   )
 }
 

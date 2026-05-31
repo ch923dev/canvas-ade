@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { screenToBoard, pushBoardPoint, pointsToPairs } from './pen'
+import { screenToBoard, pushBoardPoint, pointsToPairs, screenScale } from './pen'
+
+describe('screenScale', () => {
+  it('returns the rendered/layout ratio (= camera zoom on-canvas, 1 in the modal)', () => {
+    expect(screenScale(180, 360)).toBe(0.5) // scaled to half → zoom 0.5
+    expect(screenScale(360, 360)).toBe(1) // untransformed modal
+  })
+  it('falls back to the provided zoom when not laid out (offsetWidth 0)', () => {
+    expect(screenScale(0, 0, 0.8)).toBe(0.8)
+  })
+})
 
 describe('screenToBoard (÷zoom mapping — the Planning gate)', () => {
   it('is the identity offset at zoom 1', () => {

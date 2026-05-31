@@ -284,12 +284,21 @@ function attach(e: Entry, bounds?: Rectangle, zoomFactor?: number): void {
     owner.contentView.addChildView(e.view)
     e.attached = true
   }
+  // Re-show: detach hides the view (see below) to kill the frozen-frame ghost, so a
+  // reattach must make it visible again.
+  e.view.setVisible(true)
   applyZoom(e, zoomFactor)
   if (bounds) e.view.setBounds(round(bounds))
 }
 
 function detach(e: Entry): void {
   if (!owner || !e.attached) return
+  // Hide the native layer BEFORE removing it from the view tree. `removeChildView`
+  // alone (even with the #44652 fix present in Electron ≥33.2.1) can leave a stale
+  // composited frame painted on screen across the rapid detach→reattach toggle a node
+  // drag performs — a persistent "ghost" copy of the page stuck at an old position
+  // (Electron #43961, still open). `setVisible(false)` stops the compositor painting it.
+  e.view.setVisible(false)
   owner.contentView.removeChildView(e.view)
   e.attached = false
 }
@@ -402,6 +411,12 @@ export function registerPreviewHandlers(
     if (isForeignSender(ev, getWin)) return true
     const e = views.get(id)
     if (e) detach(e)
+    return true
+  })
+
+  ipcMain.handle('preview:detachAll', (ev) => {
+    if (isForeignSender(ev, getWin)) return true
+    for (const e of views.values()) detach(e)
     return true
   })
 

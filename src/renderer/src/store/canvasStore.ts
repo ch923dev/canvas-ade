@@ -13,6 +13,7 @@ import {
   type Board,
   type BoardType,
   type CanvasDoc,
+  type CanvasViewport,
   createBoard,
   fromObject,
   toObject,
@@ -20,9 +21,32 @@ import {
   DEFAULT_BOARD_SIZE
 } from '../lib/boardSchema'
 import { recordPast, applyUndo, applyRedo } from './history'
+import { nextViewport } from '../lib/viewportCycle'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
+
+export type ProjectStatus = 'welcome' | 'loading' | 'open' | 'error'
+export interface ProjectState {
+  dir: string | null
+  name: string | null
+  status: ProjectStatus
+  error?: string
+}
+/** Result of a project open/create IPC call (mirrors preload `ProjectResult`). */
+export type OpenResult =
+  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: false; error: string }
+/**
+ * A recent-project entry (mirrors preload `RecentProject`). Re-declared here so
+ * renderer UI (welcome screen, project switcher) can import it from the store
+ * instead of reaching across to the preload module (outside the web tsconfig glob).
+ */
+export interface RecentProject {
+  path: string
+  name: string
+  lastOpenedAt: number
+}
 
 export interface CanvasState {
   boards: Board[]
@@ -31,11 +55,21 @@ export interface CanvasState {
   /** Undo/redo rails (internal — drive via beginChange/undo/redo, don't read directly). */
   past: Board[][]
   future: Board[][]
+  /** Persisted camera transform (null = not yet captured / fit on load). */
+  viewport: CanvasViewport | null
+  /** Current project lifecycle (welcome/loading/open/error). */
+  project: ProjectState
+  /** Apply an open/create IPC result: load on ok, set error otherwise (no clobber). */
+  applyOpenResult: (r: OpenResult) => void
+  /** Mark the project as loading (suppresses autosave mid-switch). */
+  setProjectLoading: () => void
 
   /** Add a board of `type` at a world position; selects it; returns its new id. */
   addBoard: (type: BoardType, at: { x: number; y: number }) => string
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
+  /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
+  duplicateBoard: (id: string) => string | null
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
@@ -47,6 +81,8 @@ export interface CanvasState {
    * (#BUG-024). Only ever grows; a no-op when the board is already tall enough.
    */
   growBoardHeight: (id: string, h: number) => void
+  /** Set the camera transform. UNTRACKED — never touches undo/redo (like growBoardHeight). */
+  setViewport: (vp: CanvasViewport) => void
   selectBoard: (id: string | null) => void
   setTool: (tool: Tool) => void
   /** Snapshot the current boards for undo (call at the start of a discrete edit). */
@@ -122,7 +158,7 @@ function freeSlot(
 const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z'] as const
 const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   terminal: [...COMMON_KEYS, 'shell', 'launchCommand', 'cwd', 'port'],
-  browser: [...COMMON_KEYS, 'url', 'viewport'],
+  browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements']
 }
 
@@ -132,6 +168,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   tool: 'select',
   past: [],
   future: [],
+  viewport: null,
+  project: { dir: null, name: null, status: 'welcome' },
 
   addBoard: (type, at) => {
     const id = newId()
@@ -150,9 +188,45 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((s) => ({
       past: recordPast(s.past, s.boards),
       future: [],
-      boards: s.boards.filter((b) => b.id !== id),
+      boards: s.boards
+        .filter((b) => b.id !== id)
+        // Clear a preview link whose source terminal was just removed (Slice C′).
+        .map((b) =>
+          b.type === 'browser' && b.previewSourceId === id
+            ? { ...b, previewSourceId: undefined }
+            : b
+        ),
       selectedId: s.selectedId === id ? null : s.selectedId
     })),
+
+  duplicateBoard: (id) => {
+    const src = get().boards.find((b) => b.id === id)
+    if (!src) return null
+    const cloneId = newId()
+    const clone = structuredClone(src)
+    clone.id = cloneId
+    clone.x = src.x + 36
+    clone.y = src.y + 36
+    delete clone.z // re-stacks on top via array order, like a freshly added board
+    if (clone.type === 'browser') {
+      clone.viewport = nextViewport(clone.viewport)
+      // Keep `previewSourceId` (copied by structuredClone): duplicating a Browser that's
+      // linked to a terminal should leave the copy linked to the SAME terminal, so both
+      // previews (e.g. Desktop + Mobile of one dev server) track that server and each
+      // draws its own connector arrow. The link is still cleared if that terminal is
+      // later removed (removeBoard). Primary use is forking a preview to a 2nd viewport.
+    }
+    if (clone.type === 'planning') {
+      clone.elements = clone.elements.map((e) => ({ ...structuredClone(e), id: newId() }))
+    }
+    set((s) => ({
+      past: recordPast(s.past, s.boards),
+      future: [],
+      boards: [...s.boards, clone],
+      selectedId: cloneId
+    }))
+    return cloneId
+  },
 
   updateBoard: (id, patch) =>
     set((s) => {
@@ -203,6 +277,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return changed ? { boards } : s
     }),
 
+  setViewport: (vp) => set({ viewport: vp }),
+
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),
   beginChange: () =>
@@ -231,7 +307,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return r ? { boards: r.present, past: r.past, future: r.future, selectedId: null } : s
     }),
 
-  toObject: () => toObject(get().boards),
-  loadObject: (doc) =>
-    set({ boards: fromObject(doc).boards, selectedId: null, past: [], future: [] })
+  toObject: () => toObject(get().boards, get().viewport),
+  loadObject: (doc) => {
+    const d = fromObject(doc)
+    set({ boards: d.boards, viewport: d.viewport, selectedId: null, past: [], future: [] })
+  },
+  setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
+  applyOpenResult: (r) => {
+    if (!r.ok) {
+      set((s) => ({ project: { ...s.project, status: 'error', error: r.error } }))
+      return
+    }
+    const d = fromObject(r.doc)
+    set({
+      boards: d.boards,
+      viewport: d.viewport,
+      selectedId: null,
+      past: [],
+      future: [],
+      project: { dir: r.dir, name: r.name, status: 'open' }
+    })
+  }
 }))

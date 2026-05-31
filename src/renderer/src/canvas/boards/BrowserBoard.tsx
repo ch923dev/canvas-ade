@@ -110,7 +110,11 @@ export function BrowserBoard({
   board,
   selected,
   hovered,
-  dimmed
+  dimmed,
+  fullView = false,
+  onFull,
+  onDuplicate,
+  onDelete
 }: BoardViewProps<BrowserBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -166,6 +170,9 @@ export function BrowserBoard({
       status={status}
       contentBg="var(--surface)"
       actions={<ViewportControl value={board.viewport} onChange={setViewport} />}
+      onFull={onFull}
+      onDuplicate={onDuplicate}
+      onDelete={onDelete}
     >
       {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
       <div className="bb-urlbar" style={{ height: URLBAR_H }}>
@@ -215,17 +222,46 @@ export function BrowserBoard({
 
       {/* Device stage: a hatched backing well + the rounded HTML device frame. The
           native view paints over the frame's inner area; the snapshot + states sit
-          UNDER it as the fallback layer. */}
-      <div className="bb-stage" style={{ top: URLBAR_H }}>
+          UNDER it as the fallback layer. In full view the stage centres the frame so the
+          letterbox (hatched backing) shows around an aspect-correct emulator. */}
+      <div
+        className="bb-stage"
+        style={
+          fullView
+            ? { top: URLBAR_H, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+            : { top: URLBAR_H }
+        }
+      >
         <div
           className="bb-frame"
-          style={{
-            left: frame.x,
-            top: frameTopInStage,
-            width: frame.width,
-            height: frame.height,
-            borderRadius: preset.radius
-          }}
+          data-bb-frame={board.id}
+          // In full view the frame is an EMULATOR: the board is portaled out of the
+          // camera-scaled canvas, so board-geometry sizing no longer applies. Size it to
+          // the preset's ASPECT RATIO (height-bound, centred, letterboxed) rather than
+          // stretching it edge-to-edge — a Mobile/Tablet preview then renders as a
+          // bigger phone/tablet, not a blown-up landscape. The native view binds to this
+          // element's live DOM rect (fullViewBoundsFor); fitZoomFactorForBounds keeps the
+          // held preset width filling that rect, so the scale stays uniform (no stretch).
+          // On canvas it keeps the fitted device box.
+          style={
+            fullView
+              ? {
+                  position: 'relative',
+                  height: '100%',
+                  width: 'auto',
+                  aspectRatio: `${preset.w} / ${preset.h}`,
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  borderRadius: preset.radius
+                }
+              : {
+                  left: frame.x,
+                  top: frameTopInStage,
+                  width: frame.width,
+                  height: frame.height,
+                  borderRadius: preset.radius
+                }
+          }
         >
           {preset.notch && <div className="bb-notch" />}
           <DeviceContent runtime={runtime} url={board.url} />

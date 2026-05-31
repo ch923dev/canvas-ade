@@ -571,3 +571,213 @@ body {
 .pl-well:focus-visible {
   outline: none;
 }
+
+/* ── Phase 3 persistence — welcome / project-picker screen ── */
+.welcome {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg, #0a0a0b);
+  color: #e6e6e6;
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+}
+.welcome h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0;
+}
+.welcome-error {
+  color: #ff6b6b;
+}
+.welcome-actions {
+  display: flex;
+  gap: 12px;
+}
+.welcome-actions button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid #2a2a2e;
+  background: #161618;
+  color: #e6e6e6;
+  cursor: pointer;
+}
+.welcome-actions button:first-child {
+  background: #4f8cff;
+  border-color: #4f8cff;
+  color: #fff;
+}
+.welcome-recents {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 420px;
+  max-width: 80vw;
+}
+.welcome-recents button {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.welcome-recents button:hover {
+  background: #161618;
+}
+.recent-name {
+  font-weight: 500;
+}
+.recent-path {
+  font-size: 12px;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Project switcher (top-left chrome dropdown) ── */
+.project-switcher {
+  position: relative;
+}
+.project-switcher-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  min-width: 220px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 60;
+  box-shadow: var(--shadow-pop);
+}
+.project-switcher-menu button {
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.project-switcher-menu button:hover {
+  background: var(--surface-overlay);
+}
+.project-switcher-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 0;
+}
+.board-menu {
+  min-width: 132px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 250; /* above the fullview-scrim (200) so the menu works in full view too */
+}
+.board-menu-item {
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: calc(var(--r-ctl) - 2px);
+  cursor: pointer;
+  font-size: 12px;
+}
+.board-menu-item:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.board-menu-item[data-danger]:hover {
+  color: var(--err);
+}
+
+.fullview-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.66);
+  display: flex;
+  padding: 5vh 5vw;
+}
+.fullview-frame {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-board);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    var(--shadow-board);
+}
+.fullview-host {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+/* Slice C′ — preview port note + picker (Terminal board overlay). */
+.ca-preview-note,
+.ca-port-picker {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 4;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  box-shadow: var(--shadow-board);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ca-port-picker-title {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.ca-port-choice {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.ca-port-choice:hover {
+  border-color: var(--accent);
+}
+.ca-preview-dismiss {
+  align-self: flex-end;
+  font-size: 11px;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}

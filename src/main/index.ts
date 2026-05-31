@@ -11,6 +11,7 @@ import {
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2eSmoke'
+import { registerProjectHandlers } from './projectIpc'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -156,6 +157,7 @@ app.whenReady().then(async () => {
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
+  registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
 
   createWindow()
 

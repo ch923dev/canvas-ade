@@ -6,7 +6,8 @@
  */
 import { useState, type CSSProperties, type ReactElement } from 'react'
 import { useReactFlow, useStore } from '@xyflow/react'
-import { useCanvasStore } from '../store/canvasStore'
+import { useCanvasStore, type RecentProject } from '../store/canvasStore'
+import { disposeLiveResources } from '../store/disposeLiveResources'
 import type { BoardType } from '../lib/boardSchema'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
@@ -32,23 +33,88 @@ export function AppChrome({ onAdd }: AppChromeProps): ReactElement {
   )
 }
 
-// ── Top-left: project switcher (placeholder until multi-project lands) ──────────
-// Rendered as a non-interactive label (no onClick, no pointer/chevron affordance)
-// so it doesn't present as a dead clickable control (#31). The chevron + click
-// menu land with real multi-project support in Phase 3.
+// ── Top-left: project switcher ──────────────────────────────────────────────
+// Dropdown: shows the current project name; lets the user open a recent project,
+// open a folder, or create one. On switch: flush-save → mark loading (suppress
+// autosave) → dispose live native views/PTYs → load the new project.
 function ProjectSwitcher(): ReactElement {
+  const name = useCanvasStore((s) => s.project.name)
   const count = useCanvasStore((s) => s.boards.length)
+  const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
+  const setProjectLoading = useCanvasStore((s) => s.setProjectLoading)
+  const toObject = useCanvasStore((s) => s.toObject)
+  const [open, setOpen] = useState(false)
+  const [recents, setRecents] = useState<RecentProject[]>([])
+
+  const toggle = async (): Promise<void> => {
+    if (!open) setRecents(await window.api.project.recents())
+    setOpen((v) => !v)
+  }
+
+  const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
+    setOpen(false)
+    // 1. Flush the current project to disk before tearing it down.
+    await window.api.project.save(toObject())
+    // 2. Suppress autosave + dispose native views/PTYs.
+    setProjectLoading()
+    await disposeLiveResources()
+    // 3. Load the new project.
+    applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
+  }
+
+  const openRecent = (dir: string): Promise<void> => switchTo(() => window.api.project.open(dir))
+  const openFolder = async (): Promise<void> => {
+    const dir = await window.api.dialog.openFolder()
+    if (dir) await switchTo(() => window.api.project.open(dir))
+    else setOpen(false)
+  }
+  const createNew = async (): Promise<void> => {
+    const dir = await window.api.dialog.openFolder()
+    if (!dir) {
+      setOpen(false)
+      return
+    }
+    const pname =
+      dir
+        .replace(/[/\\]+$/, '')
+        .split(/[/\\]/)
+        .pop() || dir
+    await switchTo(() => window.api.project.create(dir, pname, {}))
+  }
+
   return (
-    <div style={styles.tl}>
-      <div style={styles.proj}>
+    <div style={styles.tl} className="project-switcher">
+      <button
+        className="project-switcher-trigger"
+        style={styles.proj}
+        onClick={() => void toggle()}
+        title="Switch project"
+      >
         <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>
           <Icon name="diamond" size={15} />
         </span>
-        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>canvas-ade</span>
-      </div>
+        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>
+          {name ?? 'canvas-ade'}
+        </span>
+        <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
+          <Icon name="chevron" size={13} />
+        </span>
+      </button>
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
+      {open && (
+        <div className="project-switcher-menu" role="menu">
+          {recents.map((r) => (
+            <button key={r.path} onClick={() => void openRecent(r.path)} title={r.path}>
+              {r.name}
+            </button>
+          ))}
+          <div className="project-switcher-divider" />
+          <button onClick={() => void openFolder()}>Open folder…</button>
+          <button onClick={() => void createNew()}>Create project…</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -197,9 +263,9 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
     gap: 7,
     height: 34,
-    padding: '0 11px 0 10px',
+    padding: '0 10px',
     borderRadius: 8,
-    cursor: 'default',
+    cursor: 'pointer',
     background: 'var(--surface-raised)',
     border: '1px solid var(--border-subtle)',
     boxShadow: 'var(--shadow-pop)'

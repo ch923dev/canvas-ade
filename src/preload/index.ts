@@ -32,6 +32,13 @@ export interface SpawnTerminalResult {
   error?: string
 }
 
+/** A localhost URL detected from a terminal's dev-server output (Slice C′). */
+export interface DetectedUrl {
+  url: string
+  host: string
+  port: number
+}
+
 /**
  * Preview lifecycle event (Phase 2.2 browser). Structurally mirrors the main
  * process `PreviewEvent` (re-declared here to keep preload decoupled from main).
@@ -45,6 +52,16 @@ export type PreviewEvent =
   // (Bug #5). Kept in sync with the main-process union.
   | { id: string; type: 'did-start-navigation' }
 
+// ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
+export interface RecentProject {
+  path: string
+  name: string
+  lastOpenedAt: number
+}
+export type ProjectResult =
+  | { ok: true; dir: string; name: string; doc: unknown }
+  | { ok: false; error: string }
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -57,6 +74,9 @@ const api = {
     ipcRenderer.invoke('pty:adopt', id),
   // Phase 2.1: OS-aware shell list (best-default first) for the board picker.
   listShells: (): Promise<ShellInfo[]> => ipcRenderer.invoke('pty:shells'),
+  // Slice C′: parse the dev-server URL(s) out of a board's PTY output (read-only).
+  detectPorts: (id: string): Promise<DetectedUrl[]> =>
+    ipcRenderer.invoke('terminal:detectPorts', id),
 
   // ── Browser preview (WebContentsView, keyed by board id — 1-E) ──
   openPreview: (args: {
@@ -73,6 +93,7 @@ const api = {
   // motion / LOD while the native layer is pulled out of the tree (1-D).
   capturePreview: (id: string): Promise<string | null> => ipcRenderer.invoke('preview:capture', id),
   detachPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:detach', id),
+  detachAllPreviews: (): Promise<boolean> => ipcRenderer.invoke('preview:detachAll'),
   attachPreview: (args: { id: string; bounds: Rectangle; zoomFactor?: number }): Promise<boolean> =>
     ipcRenderer.invoke('preview:attach', args),
   closePreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:close', id),
@@ -96,6 +117,19 @@ const api = {
     const handler = (_e: IpcRendererEvent, ev: PreviewEvent): void => listener(ev)
     ipcRenderer.on('preview:event', handler)
     return () => ipcRenderer.removeListener('preview:event', handler)
+  },
+
+  // ── Phase 3 persistence ──
+  project: {
+    create: (dir: string, name: string, opts: { gitInit?: boolean }): Promise<ProjectResult> =>
+      ipcRenderer.invoke('project:create', { dir, name, opts }),
+    open: (dir: string): Promise<ProjectResult> => ipcRenderer.invoke('project:open', dir),
+    save: (doc: unknown): Promise<boolean> => ipcRenderer.invoke('project:save', doc),
+    recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
+    current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current')
+  },
+  dialog: {
+    openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
   }
 }
 

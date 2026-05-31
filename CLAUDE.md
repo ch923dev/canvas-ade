@@ -62,11 +62,17 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 - Atomic write (`write-file-atomic`), debounced autosave ~1s + sync flush on blur/`before-quit`. Root integer `schemaVersion` + migration pipeline.
 - App config + recent-projects list live in `app.getPath('userData')`, NEVER in the project folder.
 
-### Git / worktrees
-- One worktree per Terminal board at `.canvas-ade/worktrees/<board-id>` on branch `canvas-ade/<board-id>` (`.canvas-ade/` is gitignored in the project).
-- `git init` is **opt-in** (toggle on project create); reuse an existing repo; NEVER auto-init when nested inside a parent repo.
-- On board delete with a dirty worktree: **keep on disk + prompt** (commit/stash/discard/keep). Never silent `--force`. Always `git worktree remove`, never `rm -rf`.
-- Worktrees isolate files, NOT ports — assign per-board ports for localhost previews.
+### Git / worktrees — DEFERRED (re-scoped 2026-05-30)
+Worktrees are **deferred to a post-MCP phase** under a better model: **Feature Workspaces** — a
+worktree backs a *feature zone* (a cluster of boards: terminal + browser + planning), **not a single
+board**. Gated on the `canvas-ade-mcp` swarm layer. See `docs/roadmap.md` › Deferred › Feature
+Workspaces. What replaced the worktree-coupled "per-board ports" idea: runtime **port detection →
+push to preview** (Slice C′, shipped/shipping — `docs/superpowers/specs/2026-05-30-port-detect-preview-design.md`).
+Still-valid locked safety rules **for when it is built** (do not re-decide):
+- `git init` is **opt-in**; reuse an existing repo; NEVER auto-init when nested inside a parent repo.
+- On delete with a dirty worktree: **keep on disk + prompt** (commit/stash/discard/keep). Never
+  silent `--force`. Always `git worktree remove`, never `rm -rf`.
+- `simple-git` runs ONLY in MAIN, behind frame-guarded IPC; never weaken sandbox/isolation.
 
 ## Locked decisions
 
@@ -78,8 +84,9 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 | Shell | User-selectable per board; OS-aware default. |
 | Tweaks panel | Cut entirely. Ship fixed default tokens (blue / dots / compact / soft). |
 | Preview URL | Editable URL bar, persisted per board. |
-| git init | Opt-in toggle; reuse-if-exists; never nest-init. |
-| Dirty worktree on delete | Keep on disk + prompt. |
+| git init / worktrees | **Deferred** to the Feature Workspaces phase (post-MCP). When built: opt-in toggle; reuse-if-exists; never nest-init. |
+| Dirty worktree on delete | Keep on disk + prompt (rule stands for the deferred Feature Workspaces phase). |
+| Per-board ports | **Re-scoped** → runtime port **detection** (parse server-printed URL) + push-to-preview, NOT static assignment/injection. Slice C′. |
 | Preview liveness | Detach + snapshot while moving/LOD; cap ~4 live. |
 | Browser board scale | Scales WITH the camera (snapshot scales as a unit), not 1:1. Locked in 1-D. |
 | Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session syncs all presets. ADR 0002. |
@@ -133,13 +140,51 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 Durable contract is above. The full phase-by-phase build history (Phase 0 → Phase 2
 follow-up) lives in **`docs/handoffs/status-archive.md`** to keep this file lean.
 
-**Current state (2026-05-30):** Phase 2 complete — Terminal · Browser · Planning+Checklist
-all built, merged to `main`, 117 tests green. Stage-1 in-process self-smoke harness done
-(`CANVAS_SMOKE=e2e`).
+**Current state (2026-05-31):** Phase 2 complete (Terminal · Browser · Planning+Checklist, on
+`main`). **Phase 3 is feature-complete** across three stacked branches (A persistence · B board
+actions · C′ port-detect preview), not yet merged to `main`. **Phase 3 Slice A — Persistence** built
+on branch `phase-3-persistence` (273
+tests green): projects = a folder + `canvas.json` (schema **v2**, adds persisted camera
+`viewport`; real `migrate(1→2)`); atomic write + `.bak` rotation (`main/projectStore.ts`);
+recent-projects MRU in userData (`main/recentProjects.ts`); frame-guarded project IPC
+(`main/projectIpc.ts`) + `window.api.project`/`dialog` preload bridge; renderer-driven
+debounced autosave (`store/useAutosave.ts`, flush on blur/quit); boot auto-reopens the last
+project else a welcome screen; in-session project switch (flush → `disposeLiveResources`
+[close previews + kill PTYs] → load); restored terminals are **idle** (no auto-spawn) and
+default `cwd` to the project folder. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`.
 
-**Start here next:** `docs/handoffs/phase-2-followup.md` — two tracks: (1) Stage-2 Playwright
-`_electron` harness; (2) continue the Phase 2 review (Terminal port lifecycle · Browser
-rAF/attach races + the `connected`-on-dead-URL bug · Planning pen/drag/checklist edges).
-Then Phase 3: persistence (`canvas.json` I/O + autosave), Focus/Full view, Duplicate, git
-worktrees + per-board ports.
+**Phase 3 Slice B — Board actions** built on branch `phase-3-board-actions` (278 tests
+green): **Full view** (live portal-relocation — the matching `BoardNode` `createPortal`s its
+live subtree into the modal host so the PTY/xterm/native view survive, no remount; Browser's
+native `WebContentsView` is re-bound to the portaled device-frame's live DOM rect while all
+other views detach) · **Duplicate** (clone offset 36px, select copy, one undo step;
+Browser→next viewport preset, planning elements deep-cloned with fresh ids) · shared **⋯ menu**
+(Full view · Duplicate · Delete) in `BoardFrame`, threaded to all three board types via
+`BoardActionsContext`. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
+
+Slice B also fixed a pre-existing native-view ghost: `preview.ts` now `setVisible(false)` on
+detach so the drag detach→reattach toggle can't leave a frozen composited frame (Electron
+#43961; #44652 is already fixed in our 33.4.11).
+
+**Phase 3 Slice C′ — Port detect → push to preview** built on branch `phase-3-slice-c` (296 tests
+green; full gate verified). Git worktrees were **re-scoped 2026-05-30** out of Phase 3 → deferred to
+the post-MCP **Feature Workspaces** model (worktree backs a feature *zone* of boards, not a board;
+roadmap Deferred + proposals FW-1). The slice that shipped instead: a Terminal **Preview** (globe)
+button parses the dev-server URL from the PTY ring buffer (`main/portDetect.ts`, pure) over a
+frame-guarded `terminal:detectPorts` IPC; `Canvas.pushPreview` resolves a target Browser
+(follow-link → selected → sole → spawn-near, `lib/previewTarget.ts`) and sets its `url` +
+`previewSourceId`; a React Flow **floating connector arrow** Terminal→preview is derived from that
+field (`lib/previewEdges.ts` + `canvas/edges/PreviewEdge.tsx`, hidden anchors on BoardNode),
+auto-reroutes + persists (no schema bump — optional `BrowserBoard.previewSourceId`), cleaned up on
+delete/duplicate. Read-only (no Browser→PTY path). Spec + plan:
+`docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`. Known minor gap: no IPC
+frame-guard unit test (pre-existing pattern — no `pty:*` handler has one).
+
+**Start here next:** **Phase 3 is feature-complete** (A persistence · B board actions · C′ port-detect
+preview) across three branches. To land it: merge `phase-3-persistence` (PR #5) → `phase-3-board-actions`
+→ `phase-3-slice-c` into `main` (each branch stacks on the prior; rebase as needed). Then **Phase 4 —
+Design pass & polish** (apply every DESIGN.md token/state/motion). Deferred (own slices): **agentic
+session resume** (roadmap note) · **full-view enter/exit animation** (Phase 4) · **Feature Workspaces /
+worktrees** (post-MCP; FW-1). Still open from Phase 2 follow-up: Stage-2 Playwright `_electron`
+harness; the `connected`-on-dead-URL Browser bug.
 

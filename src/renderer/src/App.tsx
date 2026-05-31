@@ -1,17 +1,40 @@
+import { useEffect } from 'react'
 import Canvas from './canvas/Canvas'
+import WelcomeScreen from './canvas/WelcomeScreen'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
+import { useCanvasStore } from './store/canvasStore'
+import { useAutosave } from './store/useAutosave'
+import { isE2E } from './smoke/e2eRegistry'
 
 /**
- * App root = the full-bleed canvas. The old tab harness (Phase 0–1 smoke) is gone;
- * the smoke components live on under `smoke/` as salvage sources for the parallel
- * board work (FlowSmoke → 2.2 PreviewManager, TerminalSmoke → 2.1 xterm wiring).
- * `useRendererSmoke` keeps the headless RENDERER_SMOKE probe alive.
+ * App root. On boot, ask MAIN for the most-recent project (auto-reopen); fall back to
+ * the welcome screen. The canvas mounts only when a project is open; autosave is armed
+ * globally and self-gates on project status.
  */
 function App(): React.ReactElement {
   useRendererSmoke()
+  useAutosave()
+
+  const status = useCanvasStore((s) => s.project.status)
+  const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
+
+  useEffect(() => {
+    // E2E (CANVAS_SMOKE=e2e) seeds boards directly and never opens a project. Flip to
+    // `open` so the canvas mounts (and installs `window.__canvasE2E`); the disk path
+    // (project.current) is irrelevant under the harness.
+    if (isE2E()) {
+      useCanvasStore.setState({ project: { dir: null, name: 'e2e', status: 'open' } })
+      return
+    }
+    void window.api.project.current().then((r) => {
+      if (r && r.ok) applyOpenResult(r)
+      // null → stay on the welcome screen (initial status is 'welcome').
+    })
+  }, [applyOpenResult])
+
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
-      <Canvas />
+      {status === 'open' ? <Canvas /> : <WelcomeScreen />}
     </div>
   )
 }

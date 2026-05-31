@@ -8,9 +8,12 @@
  * board type owns exactly one file under `canvas/boards/`. Do not collapse the
  * dispatch back into this file.
  */
-import { useEffect, useState, type ReactElement } from 'react'
-import { NodeResizer, useStore, type Node, type NodeProps } from '@xyflow/react'
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
+import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
+import { BoardActionsContext } from './boardActions'
+import { FullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
@@ -20,10 +23,33 @@ import { TerminalBoard } from './boards/TerminalBoard'
 import { BrowserBoard } from './boards/BrowserBoard'
 import { PlanningBoard } from './boards/PlanningBoard'
 
+/** Hidden, non-connectable anchor handles so RF can attach the preview edge to any
+ *  board without exposing a connection UX or stealing pointer events (Slice C′). */
+const HIDDEN_HANDLE = {
+  opacity: 0,
+  width: 1,
+  height: 1,
+  minWidth: 1,
+  minHeight: 1,
+  border: 'none',
+  background: 'transparent',
+  pointerEvents: 'none' as const
+}
+function EdgeAnchors(): ReactElement {
+  return (
+    <>
+      <Handle type="target" position={Position.Left} isConnectable={false} style={HIDDEN_HANDLE} />
+      <Handle type="source" position={Position.Right} isConnectable={false} style={HIDDEN_HANDLE} />
+    </>
+  )
+}
+
 export interface BoardNodeData extends Record<string, unknown> {
   board: Board
   /** Dim to 55% when another board is focused (dimOnFocus, fixed-on). */
   dimmed?: boolean
+  /** This board is the one shown in the full-view modal (Task 6 portals it). */
+  fullView?: boolean
 }
 
 export type BoardFlowNode = Node<BoardNodeData, 'board'>
@@ -41,6 +67,21 @@ export interface BoardViewProps<T extends Board = Board> {
    * board types never receive it — BoardNode renders their LOD card itself.
    */
   lod?: boolean
+  /**
+   * This board is shown in the full-view modal (its subtree is portaled there).
+   * BrowserBoard reads it to fill the modal with its device frame instead of the
+   * board-geometry-sized frame, so the native view (bound to the frame's DOM rect)
+   * renders edge-to-edge.
+   */
+  fullView?: boolean
+  /** Title-bar maximize → request full view for this board. */
+  onFull?: () => void
+  /** ⋯ menu → duplicate this board. */
+  onDuplicate?: () => void
+  /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
+  onDelete?: () => void
+  /** Terminal "Preview" action → open/point a linked Browser board at `url`. */
+  onPushPreview?: (url: string) => void
 }
 
 /** Status dot shown on the LOD card (no label at LOD). */
@@ -58,6 +99,14 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const lod = useStore((s) => isLod(s.transform[2]))
   const [hovered, setHovered] = useState(false)
   const dimmed = data.dimmed ?? false
+  const acts = useContext(BoardActionsContext)
+  const fullViewHost = useContext(FullViewContext)
+  const fullView = data.fullView ?? false
+  const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
+  const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
+  const onDelete = acts ? (): void => acts.remove(board.id) : undefined
+  const onPushPreview = acts ? (url: string): void => acts.pushPreview(board.id, url) : undefined
+  const actions = { onFull, onDuplicate, onDelete, onPushPreview }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
@@ -71,14 +120,47 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     if (lod && board.type !== 'terminal') setHovered(false)
   }, [lod, board.type])
 
+  // Stable per-board content host: created ONCE and always the createPortal target, so
+  // toggling full view never changes the fiber structure (which would remount the subtree
+  // and kill a live PTY — bug 1). We RELOCATE this element in the DOM between the in-node
+  // anchor and the modal host; React keeps rendering into the same node, so no remount.
+  // Declared BEFORE the LOD early-return so these hooks run on EVERY render path
+  // (rules-of-hooks); in the LOD early-return path anchorRef is null so the effect no-ops.
+  // useState (not useRef) so the host element is created render-safe and stable, and the
+  // portal target is read from a value, not a ref during render (react-hooks/refs).
+  const [contentHost] = useState<HTMLDivElement>(() => {
+    const d = document.createElement('div')
+    d.style.position = 'absolute'
+    d.style.inset = '0'
+    return d
+  })
+  const anchorRef = useRef<HTMLDivElement>(null)
+
+  // `lod` is a dep because a non-terminal board UNMOUNTS its anchor on the LOD early-
+  // return below; when it returns to detail the anchor is a NEW element, so the effect
+  // must re-run to re-append contentHost — else the board's content stays orphaned
+  // (detached from the DOM) after a zoom-out→in and the board renders blank.
+  useLayoutEffect(() => {
+    const target = fullView && fullViewHost ? fullViewHost : anchorRef.current
+    if (target && contentHost.parentNode !== target) target.appendChild(contentHost)
+  }, [contentHost, fullView, fullViewHost, lod])
+
   // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
   // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).
   // TerminalBoard reads `lod` and swaps the xterm host for its own LOD card while
   // keeping the session alive. Other types are presentational at LOD — BoardNode
   // renders their static LOD card and unmounts the heavy content.
-  if (lod && board.type !== 'terminal') {
+  //
+  // EXCEPTION: a board in full view ALWAYS renders its real content (never the LOD
+  // card), even when the camera is zoomed out below LOD. The full-view board is
+  // portaled into the (untransformed) modal host, so its real `.bb-frame` must exist
+  // there for `fullViewBoundsFor` to read the modal rect; the LOD card has no
+  // `.bb-frame` and never portals, which would strand the native view at its
+  // camera-scaled canvas position (the full-view native-bounds bug).
+  if (lod && board.type !== 'terminal' && !fullView) {
     return (
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        <EdgeAnchors />
         <BoardFrame
           type={board.type}
           title={board.title}
@@ -92,8 +174,25 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   }
 
   const common = { selected, hovered, dimmed }
+  const subtree = (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ position: 'absolute', inset: 0 }}
+    >
+      {board.type === 'terminal' && (
+        <TerminalBoard board={board} lod={lod} {...common} {...actions} />
+      )}
+      {board.type === 'browser' && (
+        <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
+      )}
+      {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+    </div>
+  )
+
   return (
     <>
+      <EdgeAnchors />
       {/* Hidden in LOD: the design shows no resize handles on LOD cards. */}
       {!lod && (
         <NodeResizer
@@ -112,15 +211,9 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
-      <div
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{ position: 'absolute', inset: 0 }}
-      >
-        {board.type === 'terminal' && <TerminalBoard board={board} lod={lod} {...common} />}
-        {board.type === 'browser' && <BrowserBoard board={board} {...common} />}
-        {board.type === 'planning' && <PlanningBoard board={board} {...common} />}
-      </div>
+      {/* In-node mount point; the stable content host is appended here when not full-view. */}
+      <div ref={anchorRef} style={{ position: 'absolute', inset: 0 }} />
+      {createPortal(subtree, contentHost)}
     </>
   )
 }

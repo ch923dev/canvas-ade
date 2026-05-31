@@ -103,21 +103,78 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 ## Phase 3 — Board actions & projects ⛓ Phase 2
 
 - **Focus** (double-click → camera fit one board, dim others 55%) + **Full view** (modal overlay,
-  `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both; in full
-  view a Browser board renders via snapshot/reattach so HTML chrome isn't punched through.
+  `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both.
+  ✅ DONE — Focus shipped in Phase 2; **Full view** lands in Slice B (branch `phase-3-board-actions`,
+  2026-05-30) as a live **portal relocation** (the board's live subtree is `createPortal`-moved into
+  the modal — no remount, so PTY/xterm/native view survive) rather than the originally-planned
+  snapshot/reattach: in full view a Browser board's native `WebContentsView` is **re-bound to the
+  portaled device-frame's live DOM rect** while every other view detaches, so HTML chrome isn't
+  punched through. Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
 - **Duplicate** (⋯): clone geometry + state offset 36px, select copy; Browser clone → next viewport
-  preset, own independent `WebContentsView`.
-- **Project create / open**: folder picker; `canvas.json` (+`.bak`, `schemaVersion`) via atomic write,
-  debounced autosave + flush on blur/quit; recent-projects in `userData`; project switcher wired; migrations.
-- **Git worktrees**: opt-in toggle on create (reuse-if-exists, never nest-init); worktree per Terminal
-  board; keep-on-disk + prompt on dirty delete; per-board port assignment for previews.
+  preset, own independent `WebContentsView`. ✅ DONE (branch `phase-3-board-actions`, 2026-05-30):
+  `duplicateBoard(id)` offsets +36px, selects the copy, one undo step; Browser clones advance to the
+  next viewport preset (`lib/viewportCycle.ts`), planning elements are deep-cloned with fresh ids;
+  delivered alongside the shared **⋯ menu** (Full view · Duplicate · Delete) via `BoardActionsContext`.
+  Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
+- **Project create / open** ✅ DONE (branch `phase-3-persistence`, 2026-05-30): folder picker;
+  `canvas.json` (+`.bak`, `schemaVersion` **v2** w/ persisted camera `viewport` + real `migrate(1→2)`)
+  via atomic write; debounced autosave + flush on blur/quit; recent-projects in `userData`; project
+  switcher wired (flush → dispose previews+PTYs → load); restored terminals idle + `cwd`→project folder.
+  Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`. BUG-027 (alias) fixed.
+
+> 🔗 **Related bug-hunt finding:** BUG-025 (load validation accepts non-positive / sub-`MIN_BOARD_SIZE`
+> geometry) touches this area but is not fully resolved by this work — see bug-hunt-findings/findings/BUG-025.md.
+> 🔗 **Related bug-hunt finding:** BUG-027 (`fromObject`/`migrate` return the input doc by reference, so loaded
+> store boards alias the caller's input) touches this area but is not fully resolved by this work —
+> see bug-hunt-findings/findings/BUG-027.md.
+- **Port detect → push to preview** (Slice C′, replaces the old worktrees+ports slice): a Terminal
+  board reads the localhost URL its dev server printed and one click opens/points a Browser board at
+  it. **Detect, don't assign** — output-parse only, on-click, reuse-else-spawn target, read-only,
+  agent-agnostic, no git. ✅ DONE (branch `phase-3-slice-c`, 2026-05-31; 296 tests, full gate green):
+  pure `main/portDetect.ts` parser over a frame-guarded `terminal:detectPorts` IPC; `Canvas.pushPreview`
+  + `lib/previewTarget.ts` resolve the target; a React Flow floating connector arrow
+  (`lib/previewEdges.ts` + `canvas/edges/PreviewEdge.tsx`) is derived from the new optional
+  `BrowserBoard.previewSourceId` (no schema bump) and reroutes + persists; link cleaned up on
+  delete/duplicate. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`.
 - ✅📏 full reopen fidelity: zoom/pan/positions/contents/checklist state survive restart (integration test).
+
+> 🧰 **Re-scoped 2026-05-30 — git worktrees deferred.** The original Slice C bundled git
+> worktrees + static per-board port assignment. Both were re-scoped during brainstorming: static
+> assignment (inject `PORT`/`--port`) was dropped in favour of runtime **detection** (above), and
+> worktrees were deferred to a post-MCP phase under a better model — **Feature Workspaces** (see
+> Deferred). Rationale lives in the Slice C′ spec's "Decision record".
+
+> 💡 **Deferred feature — agentic session resume (own slice, post-Phase 3).** Restored Terminal
+> boards come back **idle** (fresh shell on Run; never auto-execute a stored command). A future
+> enhancement: persist a per-board session handle and resume the agent's prior conversation on Run
+> (e.g. `claude --resume <id>` / `claude -c`). Non-trivial + **agent-specific**: needs the session
+> id captured at runtime (scrape PTY output or read the CLI's session file) and a per-CLI resume
+> matrix, which cuts against the locked agent-agnostic `launchCommand`. Additive only — an optional
+> `resumeCommand?`/`sessionId?` field adds with **zero migration** when built, so nothing to reserve
+> now. Give it its own brainstorm + slice.
 
 ---
 
 ## Phase 4 — Design pass & polish ⛓ Phase 3
 
 - Apply every DESIGN.md token, board-chrome rule, state, and motion spec (+ `prefers-reduced-motion`).
+
+> 🎬 **Deferred polish — Full view enter/exit animation (noted 2026-05-30, Slice B).** Full view
+> (`FullViewModal`, branch `phase-3-board-actions`) currently opens/closes **instantly** — no
+> transition. Add a motion pass here: scrim fade-in + the frame scale/opacity in from the board's
+> on-canvas rect (and reverse on close), honoring `prefers-reduced-motion`. Intentionally cut from
+> Slice B (which shipped the live portal-relocation mechanics, not the motion). Note: a Browser
+> board's native `WebContentsView` cannot be CSS-animated (it's an OS layer) — animate the HTML
+> scrim/frame; the native view snaps to its final bounds (or carries the transition via its snapshot).
+
+> 🐛 **Bug-hunt finding (auto-noted 2026-05-30):** The codebase bug hunt independently
+> confirmed a bug that this planned work is expected to fix.
+> - **Location:** `src/renderer/src/canvas/AppChrome.tsx`
+> - **Severity:** Low
+> - **What:** Fit (button + '1' key) snaps the camera instantly with no animation, violating the DESIGN.md §9 contract that fit animate 200ms (inconsistent with the animated Overview/Focus siblings).
+> - **Verification:** Code-path trace — `rf.fitView(FIT)` passes no `duration`, so `@xyflow/system` `setViewport` runs duration 0; sibling camera ops pass `{ duration: 200 }`.
+> - **Status:** Skipped from active fix queue; expected to be resolved by this phase.
+> - **Ref:** bug-hunt-findings/skipped-roadmap.md
 - **Polished** empty / loading / error states throughout (building on Phase 2's basic ones).
 - Harden CSP to nonce-based (drop `unsafe-inline`) for the packaged build. Load Geist / Geist Mono.
 - Code-split the renderer bundle (xterm / React Flow lazy where sensible).
@@ -150,3 +207,18 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 
 CDP/debug attach to previews (build views CDP-ready, don't implement) · SQLite persistence ·
 multiplayer/collaboration · hand-drawn (roughjs) whiteboard aesthetic.
+
+> 🌳 **Feature Workspaces — worktree-backed board zones (post-MCP phase, deferred 2026-05-30).**
+> The deferred home for git worktrees, re-modelled. A project's infinite canvas hosts multiple
+> **feature zones** — clusters of boards that belong together (e.g. an "Auth/Login" zone = a Terminal
+> building auth + a Browser previewing the login page + a Planning board tracking the auth
+> checklist; a separate "Signup/Landing" zone with its own three). **Each zone is backed by one git
+> worktree + branch.** Every board in a zone operates against that branch's checkout — the agent
+> edits there, the browser previews that worktree's dev server, the plan tracks that feature. So a
+> worktree is **per-feature-region, not per-board** (the cleaner model the original Slice C lacked).
+> Gated on the planned `canvas-ade-mcp` swarm layer, which orchestrates agents across zones/branches.
+> Carries forward the still-valid locked safety rules: reuse-if-exists, never nest-init, keep-on-disk
+> + prompt on dirty delete, `git worktree remove` never `rm -rf`, `simple-git` in MAIN only behind
+> frame-guarded IPC. This subsumes the per-board-worktree assumptions in several
+> `docs/feature-proposals.md` entries (SB-3 fan-out, SB-5 diff, OS-1 commit/PR), which should be read
+> against the per-zone model.

@@ -169,7 +169,7 @@ describe('serialization bridge', () => {
   it('loadObject() replaces boards and clears selection', () => {
     get().addBoard('terminal', { x: 0, y: 0 })
     get().selectBoard(get().boards[0].id)
-    const incoming = toObject([createBoard('browser', { id: 'b1', x: 0, y: 0 })])
+    const incoming = toObject([createBoard('browser', { id: 'b1', x: 0, y: 0 })], null)
     get().loadObject(incoming)
     expect(get().boards).toHaveLength(1)
     expect(get().boards[0].id).toBe('b1')
@@ -257,5 +257,176 @@ describe('undo/redo history', () => {
     get().selectBoard(id)
     get().redo()
     expect(get().selectedId).toBeNull()
+  })
+})
+
+describe('canvasStore — viewport', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], viewport: null, selectedId: null, past: [], future: [] })
+  })
+
+  it('setViewport stores the camera', () => {
+    useCanvasStore.getState().setViewport({ x: 10, y: 20, zoom: 1.5 })
+    expect(useCanvasStore.getState().viewport).toEqual({ x: 10, y: 20, zoom: 1.5 })
+  })
+
+  it('setViewport is untracked — does not push undo history', () => {
+    const before = useCanvasStore.getState().past.length
+    useCanvasStore.getState().setViewport({ x: 1, y: 2, zoom: 1 })
+    expect(useCanvasStore.getState().past.length).toBe(before)
+  })
+
+  it('toObject embeds the current viewport', () => {
+    useCanvasStore.getState().setViewport({ x: 5, y: 6, zoom: 0.5 })
+    expect(useCanvasStore.getState().toObject().viewport).toEqual({ x: 5, y: 6, zoom: 0.5 })
+  })
+
+  it('loadObject restores boards and viewport', () => {
+    const doc = {
+      schemaVersion: 2,
+      viewport: { x: 7, y: 8, zoom: 2 },
+      boards: [{ id: 'b1', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }]
+    }
+    useCanvasStore.getState().loadObject(doc)
+    const s = useCanvasStore.getState()
+    expect(s.boards).toHaveLength(1)
+    expect(s.viewport).toEqual({ x: 7, y: 8, zoom: 2 })
+  })
+})
+
+describe('canvasStore — duplicateBoard', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], viewport: null, selectedId: null, past: [], future: [] })
+  })
+
+  it('offsets +36, assigns a new id, selects the copy, one undo step', () => {
+    const src = useCanvasStore.getState().addBoard('planning', { x: 100, y: 100 })
+    const pastLen = useCanvasStore.getState().past.length
+    const copyId = useCanvasStore.getState().duplicateBoard(src)
+    const s = useCanvasStore.getState()
+    expect(copyId).not.toBeNull()
+    expect(copyId).not.toBe(src)
+    const copy = s.boards.find((b) => b.id === copyId)!
+    const orig = s.boards.find((b) => b.id === src)!
+    expect(copy.x).toBe(orig.x + 36)
+    expect(copy.y).toBe(orig.y + 36)
+    expect(s.selectedId).toBe(copyId)
+    expect(s.past.length).toBe(pastLen + 1)
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().boards.some((b) => b.id === copyId)).toBe(false)
+  })
+
+  it('browser copy advances to the next viewport preset', () => {
+    const id = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 }) // default 'desktop'
+    const copyId = useCanvasStore.getState().duplicateBoard(id)
+    const copy = useCanvasStore.getState().boards.find((b) => b.id === copyId)!
+    expect(copy.type === 'browser' && copy.viewport).toBe('mobile') // desktop → mobile
+  })
+
+  it('planning copy deep-clones elements with fresh ids', () => {
+    const id = useCanvasStore.getState().addBoard('planning', { x: 0, y: 0 })
+    useCanvasStore.getState().updateBoard(id, {
+      elements: [{ id: 'e1', kind: 'text', x: 1, y: 1, text: 'hi' }]
+    } as never)
+    const copyId = useCanvasStore.getState().duplicateBoard(id)
+    const s = useCanvasStore.getState()
+    const orig = s.boards.find((b) => b.id === id)! as { elements: { id: string }[] }
+    const copy = s.boards.find((b) => b.id === copyId)! as { elements: { id: string }[] }
+    expect(copy.elements).toHaveLength(1)
+    expect(copy.elements[0].id).not.toBe('e1')
+    expect(copy.elements).not.toBe(orig.elements)
+  })
+
+  it('returns null for an unknown id and does not mutate', () => {
+    const before = useCanvasStore.getState().boards
+    expect(useCanvasStore.getState().duplicateBoard('nope')).toBeNull()
+    expect(useCanvasStore.getState().boards).toBe(before)
+  })
+})
+
+describe('canvasStore — project lifecycle', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({
+      boards: [],
+      viewport: null,
+      selectedId: null,
+      past: [],
+      future: [],
+      project: { dir: null, name: null, status: 'welcome' }
+    })
+  })
+
+  it('defaults to welcome status', () => {
+    expect(useCanvasStore.getState().project.status).toBe('welcome')
+  })
+
+  it('applyOpenResult(ok) loads the doc and marks open', () => {
+    useCanvasStore.getState().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: { schemaVersion: 2, viewport: { x: 1, y: 2, zoom: 1 }, boards: [] }
+    })
+    const s = useCanvasStore.getState()
+    expect(s.project).toEqual({ dir: 'C:/p', name: 'p', status: 'open' })
+    expect(s.viewport).toEqual({ x: 1, y: 2, zoom: 1 })
+  })
+
+  it('applyOpenResult(error) sets error status without clobbering boards', () => {
+    useCanvasStore.setState({
+      boards: [
+        { id: 'x', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+      ] as never
+    })
+    useCanvasStore.getState().applyOpenResult({ ok: false, error: 'bad' })
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.project.error).toBe('bad')
+    expect(s.boards).toHaveLength(1) // untouched
+  })
+})
+
+describe('preview link cleanup', () => {
+  it('keeps previewSourceId through updateBoard, and clears it when the source terminal is removed', () => {
+    const { addBoard, updateBoard, removeBoard } = useCanvasStore.getState()
+    // reset
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const termId = addBoard('terminal', { x: 0, y: 0 })
+    const browserId = addBoard('browser', { x: 800, y: 0 })
+    updateBoard(browserId, { previewSourceId: termId } as never)
+    let b = useCanvasStore.getState().boards.find((x) => x.id === browserId)
+    expect(b && b.type === 'browser' ? b.previewSourceId : 'X').toBe(termId)
+
+    removeBoard(termId)
+    b = useCanvasStore.getState().boards.find((x) => x.id === browserId)
+    expect(b && b.type === 'browser' ? b.previewSourceId : 'X').toBeUndefined()
+  })
+
+  it('keeps the preview link when a linked Browser board is duplicated', () => {
+    const { addBoard, updateBoard, duplicateBoard } = useCanvasStore.getState()
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const termId = addBoard('terminal', { x: 0, y: 0 })
+    const browserId = addBoard('browser', { x: 800, y: 0 })
+    updateBoard(browserId, { previewSourceId: termId } as never)
+    const cloneId = duplicateBoard(browserId)!
+    const clone = useCanvasStore.getState().boards.find((x) => x.id === cloneId)
+    // The copy stays linked to the SAME terminal (e.g. a Desktop + Mobile preview pair).
+    expect(clone && clone.type === 'browser' ? clone.previewSourceId : 'X').toBe(termId)
+  })
+
+  it('clears the duplicated link too when the shared source terminal is removed', () => {
+    const { addBoard, updateBoard, duplicateBoard, removeBoard } = useCanvasStore.getState()
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const termId = addBoard('terminal', { x: 0, y: 0 })
+    const browserId = addBoard('browser', { x: 800, y: 0 })
+    updateBoard(browserId, { previewSourceId: termId } as never)
+    const cloneId = duplicateBoard(browserId)!
+    removeBoard(termId)
+    const get = (bid: string): string | undefined => {
+      const b = useCanvasStore.getState().boards.find((x) => x.id === bid)
+      return b && b.type === 'browser' ? b.previewSourceId : 'X'
+    }
+    expect(get(browserId)).toBeUndefined()
+    expect(get(cloneId)).toBeUndefined()
   })
 })

@@ -73,6 +73,40 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: termOk ? 'sentinel in framebuffer' : 'no sentinel'
   })
 
+  // ── Bug 1 (full-view PTY survival): opening full view must RELOCATE the terminal's
+  // live subtree (stable portal host), not remount it — a remount tears down the PTY.
+  // Assert the SAME pid + intact scrollback after toggling full view on and back off.
+  // Pre-fix (inline↔portal ternary) this remounted → killTerminal + fresh pid. ──
+  const fvPidBefore = debugTerminalPid(termId)
+  await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
+  await delay(400) // modal mounts + publishes host → BoardNode relocates the subtree
+  const fvMounted = await evalIn<boolean>(
+    win,
+    `window.__canvasE2E.terminalMounted(${JSON.stringify(termId)})`
+  )
+  const fvText = await evalIn<string | null>(
+    win,
+    `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+  )
+  const fvPidDuring = debugTerminalPid(termId)
+  await evalIn(win, 'window.__canvasE2E.setFullView(null)')
+  await delay(300)
+  const fvPidAfter = debugTerminalPid(termId)
+  const fvOk =
+    fvMounted &&
+    fvPidBefore !== null &&
+    fvPidDuring === fvPidBefore &&
+    fvPidAfter === fvPidBefore &&
+    typeof fvText === 'string' &&
+    fvText.includes(TERM_SENTINEL)
+  parts.push({
+    name: 'terminal-fullview',
+    ok: fvOk,
+    detail: fvOk
+      ? `same pid ${fvPidBefore} survived full view + scrollback intact`
+      : `pid before=${fvPidBefore} during=${fvPidDuring} after=${fvPidAfter} mounted=${fvMounted}`
+  })
+
   // ── Browser: seed pointing at the in-process localServer (deterministic), fit the
   // camera to it (forces zoom ≥ LOD so the native view attaches), wait for the
   // connected status, then assert a NON-BLANK per-view capturePage (the gap). ──
@@ -129,6 +163,68 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }
   parts.push({ name: 'browser-gesture', ok: gestureOk, detail: gestureDetail })
 
+  // ── Bug 2 (focus webview ghost): double-clicking a terminal focuses it (animated
+  // fitView). A live Browser elsewhere must DETACH cleanly for the focus (no native view
+  // left attached → the #43961 ghost) and REATTACH on unfocus. The compositor pixel isn't
+  // code-assertable, but the detach/reattach invariant the fix preserves is. ──
+  let focusOk = false
+  let focusDetail = 'browser not live before focus'
+  if (browserOk) {
+    await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+    await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === true
+    }, 5000)
+    await evalIn(win, `window.__canvasE2E.setFocus(${JSON.stringify(termId)})`) // focus the terminal
+    await delay(500) // focus effect → applyLiveness demotes the non-focused browser
+    const capFocused = await debugCaptureView(browserId)
+    const detachedOnFocus = !capFocused.attached
+    await evalIn(win, 'window.__canvasE2E.setFocus(null)') // clear focus → browser reattaches
+    await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+    const reattached = await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === true
+    }, 8000)
+    focusOk = detachedOnFocus && reattached
+    focusDetail = `detachedOnFocus=${detachedOnFocus} reattached=${reattached}`
+  }
+  parts.push({
+    name: 'focus-detach',
+    ok: focusOk,
+    detail: focusOk ? 'browser detached on terminal focus, reattached on unfocus' : focusDetail
+  })
+
+  // ── Bug 7 (config-scroll ghost): the terminal Configure popover must carry React Flow's
+  // `nowheel` opt-out so scrolling it doesn't pan the canvas (a pan moves live native views
+  // → ghost). Open the config and assert the popover is a `.nowheel` element (the fix). ──
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(150)
+  const cfgOk = await evalIn<boolean>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const node = document.querySelector('.react-flow__node[data-id="${termId}"]');
+       const cfgBtn = node && node.querySelector('button[title="Configure terminal"]');
+       if (!cfgBtn) return false;
+       cfgBtn.click(); await sleep(150);
+       const ok = !!document.querySelector('.nowheel select'); // the config popover (nowheel) holds the Shell <select>
+       cfgBtn.click(); // close
+       return ok;
+     })()`
+  )
+  parts.push({
+    name: 'config-nowheel',
+    ok: cfgOk,
+    detail: cfgOk ? 'config popover has nowheel (no pan on scroll)' : 'config popover missing nowheel'
+  })
+
   // ── Planning: seed, add a checklist element, assert it persisted on the board AND
   // that the whole canvas round-trips through the schema (persistence-readiness). ──
   const planId = await evalIn<string>(win, "window.__canvasE2E.seedBoard('planning')")
@@ -146,6 +242,87 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     name: 'planning',
     ok: planOk,
     detail: `elements=[${planProbe.kinds.join(',')}] roundTrip=${planProbe.roundTrip}`
+  })
+
+  // ── Bug 4 (full view ignores other browser views): with a live Browser board and a
+  // DIFFERENT board in full view, a store mutation (note/checklist edit) must NOT
+  // re-attach the browser's native view over the modal scrim. Pre-fix, reconcile's
+  // new-board path re-attached it (it never consulted fullViewId). Assert it stays
+  // detached THROUGH a mutation, then reattaches on exit (no leak). ──
+  let fvPrevOk = false
+  let fvPrevDetail = 'browser not live before full view'
+  const browserLiveBefore = await poll(async () => {
+    const rt = await evalIn<{ live: boolean } | null>(
+      win,
+      `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+    )
+    return rt?.live === true
+  }, 4000)
+  if (browserLiveBefore) {
+    await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(planId)})`)
+    await delay(400) // applyLiveness full-view branch closes the browser view
+    await evalIn(win, `window.__canvasE2E.addChecklist(${JSON.stringify(planId)})`) // mutate → reconcile (the bug path)
+    await delay(400)
+    const capDuring = await debugCaptureView(browserId)
+    const rtDuring = await evalIn<{ live: boolean } | null>(
+      win,
+      `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+    )
+    fvPrevOk = !capDuring.attached && rtDuring?.live !== true
+    fvPrevDetail = fvPrevOk
+      ? 'browser stayed detached through a full-view mutation'
+      : `browser re-attached over modal (attached=${capDuring.attached} live=${rtDuring?.live})`
+    await evalIn(win, 'window.__canvasE2E.setFullView(null)') // exit → browser reattaches
+    await delay(300)
+  }
+  parts.push({ name: 'fullview-preview', ok: fvPrevOk, detail: fvPrevDetail })
+
+  // ── Full-view emulator: a Mobile/Tablet preset in full view must render as an
+  // aspect-correct device (height-bound, centred, letterboxed) — NOT stretched to fill
+  // the landscape modal. Set the browser to Mobile, full-view it, and assert the relocated
+  // device frame keeps the preset's portrait aspect (~390/844) AND is clearly narrower than
+  // its stage (letterbox). Pre-fix (inset:0) the frame fills the stage → landscape aspect,
+  // ~full width → both checks fail. ──
+  await evalIn(win, `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`)
+  await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
+  await delay(450) // modal mounts + portal relocates the device frame + layout settles
+  const emu = await evalIn<{
+    found: boolean
+    frameRatio: number
+    stageRatio: number
+    widthFrac: number
+  }>(
+    win,
+    `(() => {
+       const frame = document.querySelector('[data-bb-frame=' + JSON.stringify(${JSON.stringify(browserId)}) + ']');
+       const stage = frame && frame.closest('.bb-stage');
+       if (!frame || !stage) return { found: false, frameRatio: 0, stageRatio: 0, widthFrac: 0 };
+       const f = frame.getBoundingClientRect();
+       const s = stage.getBoundingClientRect();
+       return {
+         found: true,
+         frameRatio: f.width / f.height,
+         stageRatio: s.width / s.height,
+         widthFrac: f.width / s.width
+       };
+     })()`
+  )
+  await evalIn(win, 'window.__canvasE2E.setFullView(null)')
+  await delay(300)
+  // Mobile preset aspect = 390/844 ≈ 0.462. Allow tolerance; require the frame be portrait
+  // AND letterboxed (markedly narrower than the landscape stage), not stretched to fill.
+  const mobileRatio = 390 / 844
+  const emuOk =
+    emu.found &&
+    Math.abs(emu.frameRatio - mobileRatio) < 0.06 &&
+    emu.widthFrac < 0.9 &&
+    emu.frameRatio < emu.stageRatio
+  parts.push({
+    name: 'fullview-emulator',
+    ok: emuOk,
+    detail: emuOk
+      ? 'Mobile full view is an aspect-correct, letterboxed emulator (not stretched)'
+      : JSON.stringify(emu)
   })
 
   // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
@@ -247,6 +424,243 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     name: 'browser-deadurl',
     ok: failedOk,
     detail: failedOk ? 'refused URL → load-failed' : `did not reach load-failed`
+  })
+
+  // ── Bug 3 (stale preview link): the terminal→browser edge is solid while the source
+  // terminal runs, dashed/dimmed once it's down. Link the browser to the terminal, assert
+  // a non-dashed edge, mark the terminal down, assert it goes dashed. ──
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: ${JSON.stringify(termId)} })`
+  )
+  await evalIn(win, 'window.__canvasE2E.fitView()') // frame all → both nodes measured + edge rendered
+  await delay(250)
+  const edgeDash = (): Promise<string> =>
+    evalIn<string>(
+      win,
+      `(() => { const p = document.querySelector('.react-flow__edge[data-id="preview-${browserId}"] .react-flow__edge-path'); return p ? (p.style.strokeDasharray || 'none') : 'no-edge'; })()`
+    )
+  const dashRunning = await edgeDash()
+  await evalIn(win, `window.__canvasE2E.setTerminalDown(${JSON.stringify(termId)})`)
+  await delay(250)
+  const dashDown = await edgeDash()
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: undefined })`
+  ) // unlink → restore
+  const edgeOk = dashRunning === 'none' && dashDown.includes('5')
+  parts.push({
+    name: 'preview-edge-stale',
+    ok: edgeOk,
+    detail: edgeOk
+      ? 'solid while running → dashed when terminal down'
+      : `running=${dashRunning} down=${dashDown}`
+  })
+
+  // ── Duplicating a linked Browser keeps the preview link: a Browser connected to a
+  // terminal (previewSourceId) should, when duplicated, leave the COPY linked to the SAME
+  // terminal — so both previews (e.g. Desktop + Mobile of one dev server) keep their
+  // connector arrow. Link the browser, duplicate it, assert the clone carries the same
+  // previewSourceId AND that its own preview edge renders, then delete the clone (restore
+  // the seed count) and unlink the original. ──
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: ${JSON.stringify(termId)} })`
+  )
+  const cloneId = await evalIn<string | null>(
+    win,
+    `window.__canvasE2E.duplicateBoard(${JSON.stringify(browserId)})`
+  )
+  await evalIn(win, 'window.__canvasE2E.fitView()') // frame all (incl. the clone) so its edge renders
+  await delay(250)
+  const dup = await evalIn<{ cloneSource: string | null; edgePresent: boolean }>(
+    win,
+    `(() => {
+       const clone = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(cloneId)});
+       const cloneSource = clone && clone.type === 'browser' ? (clone.previewSourceId ?? null) : null;
+       const edgePresent = !!document.querySelector('.react-flow__edge[data-id="preview-${cloneId}"]');
+       return { cloneSource, edgePresent };
+     })()`
+  )
+  if (cloneId) await evalIn(win, `window.__canvasE2E.deleteBoard(${JSON.stringify(cloneId)})`) // restore seed count
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: undefined })`
+  ) // unlink the original → restore baseline
+  const dupOk = !!cloneId && dup.cloneSource === termId && dup.edgePresent
+  parts.push({
+    name: 'duplicate-keeps-link',
+    ok: dupOk,
+    detail: dupOk
+      ? 'duplicated Browser stays linked to the same terminal + its own preview edge renders'
+      : JSON.stringify({ cloneId, ...dup })
+  })
+
+  // ── Bugs 8/9 + 11/12 (board ⋯ menu): drive the REAL menu through the DOM. Bug 11/12
+  // only reproduces with a pointerdown→click sequence (pre-fix the document pointerdown
+  // close-listener unmounted the item before its click fired); bug 8/9 needs the popover
+  // portaled to <body>, not clipped inside the board's overflow:hidden frame. Open the
+  // planning board's menu, Duplicate (count +1) then Delete the clone (count back). ──
+  // Bring the planning board into detail view + on-screen so its title-bar ⋯ menu renders.
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(150)
+  const menuProbe = await evalIn<{
+    portaled: boolean
+    base: number
+    afterDup: number
+    afterDel: number
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const sel = (s, root) => (root || document).querySelector(s);
+       const base = window.__canvasE2E.getBoards().length;
+       const node = sel('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(planId)}) + ']');
+       const more = node && sel('button[title="More"]', node);
+       if (!more) return { portaled: false, base, afterDup: -1, afterDel: -1 };
+       more.click(); await sleep(80);
+       const menu = sel('.board-menu');
+       const portaled = !!menu && menu.parentElement === document.body && !sel('.bb-frame .board-menu');
+       const dup = menu && [...menu.querySelectorAll('.board-menu-item')].find((b) => b.textContent.trim() === 'Duplicate');
+       if (dup) { dup.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); dup.click(); }
+       await sleep(150);
+       const afterDup = window.__canvasE2E.getBoards().length;
+       const dupId = window.__canvasE2E.getBoards().slice(-1)[0] && window.__canvasE2E.getBoards().slice(-1)[0].id;
+       const dupNode = dupId && sel('.react-flow__node[data-id=' + JSON.stringify(dupId) + ']');
+       const more2 = dupNode && sel('button[title="More"]', dupNode);
+       if (more2) {
+         more2.click(); await sleep(80);
+         const menu2 = sel('.board-menu');
+         const del = menu2 && [...menu2.querySelectorAll('.board-menu-item')].find((b) => b.textContent.trim() === 'Delete');
+         if (del) { del.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); del.click(); }
+       }
+       await sleep(150);
+       const afterDel = window.__canvasE2E.getBoards().length;
+       return { portaled, base, afterDup, afterDel };
+     })()`
+  )
+  const menuOk =
+    menuProbe.portaled &&
+    menuProbe.afterDup === menuProbe.base + 1 &&
+    menuProbe.afterDel === menuProbe.base
+  parts.push({
+    name: 'board-menu',
+    ok: menuOk,
+    detail: menuOk ? 'portaled to body + Duplicate/Delete fire' : JSON.stringify(menuProbe)
+  })
+
+  // ── Bugs 13/14 (board ⋯ menu chrome). Narrow the terminal so its title-bar action
+  // cluster (globe·settings·restart + ⤢ + ⋯) would overflow the frame, then assert the
+  // ⋯ trigger stays WITHIN the title-bar's right edge (bug 13 — was clipped past it by
+  // the frame's overflow:hidden). Then pan the trigger PAST the window's right edge and
+  // open the menu: the popover must clamp back inside the viewport (bug 14 — was anchored
+  // by `right` with no clamp, so a trigger off the right edge pushed the menu off-screen).
+  await evalIn(win, `window.__canvasE2E.patchBoard(${JSON.stringify(termId)}, { w: 150 })`)
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(150)
+  const chrome = await evalIn<{
+    found: boolean
+    triggerInBar: boolean
+    restColor: string
+    strokeWidth: string
+    inViewport: boolean
+    items: string[]
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const sel = (s, root) => (root || document).querySelector(s);
+       const node = sel('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(termId)}) + ']');
+       const bar = node && sel('.board-titlebar', node);
+       const more = node && sel('button[title="More"]', node);
+       if (!bar || !more) return { found: false, triggerInBar: false, restColor: '', strokeWidth: '', inViewport: false, items: [] };
+       const b = bar.getBoundingClientRect();
+       const t = more.getBoundingClientRect();
+       // Bug 13: the ⋯ trigger sits fully inside the title bar (was clipped past the right edge).
+       const triggerInBar = t.width > 0 && t.left >= b.left - 0.5 && t.right <= b.right + 0.5;
+       // "Options not visible": the ⋯ glyph is near-inkless, so at REST (no hover/active) it
+       // must use the brighter --text-2 (#9b9ba1 = rgb(155,155,161)) and a bumped stroke so
+       // it reads. Measure before any interaction (hover would brighten regardless).
+       const svg = more.querySelector('svg');
+       const restColor = svg ? getComputedStyle(svg).color : '';
+       const strokeWidth = svg ? (svg.getAttribute('stroke-width') || '') : '';
+       // Bug 14: shove the trigger ~40px past the window's right edge, then open the menu.
+       // (panBy +x moves content right; the board is centred after fitView, so the delta
+       // that lands the trigger's right edge 40px beyond the window is positive.)
+       const overshoot = (window.innerWidth - t.right) + 40;
+       window.__canvasE2E.panBy(overshoot, 0);
+       await sleep(80);
+       const more2 = sel('button[title="More"]', node);
+       more2.click(); await sleep(80);
+       const menu = sel('.board-menu');
+       const m = menu && menu.getBoundingClientRect();
+       const items = menu ? [...menu.querySelectorAll('.board-menu-item')].map((x) => x.textContent.trim()) : [];
+       const inViewport = !!m && m.left >= 0 && m.top >= 0 && m.right <= window.innerWidth && m.bottom <= window.innerHeight;
+       more2.click(); await sleep(40);            // close the menu
+       window.__canvasE2E.panBy(-overshoot, 0);   // restore the camera
+       return { found: true, triggerInBar, restColor, strokeWidth, inViewport, items };
+     })()`
+  )
+  const wantItems = ['Full view', 'Duplicate', 'Delete']
+  const restVisible =
+    chrome.restColor === 'rgb(155, 155, 161)' && parseFloat(chrome.strokeWidth) >= 2
+  const chromeOk =
+    chrome.found &&
+    chrome.triggerInBar &&
+    chrome.inViewport &&
+    restVisible &&
+    wantItems.every((l) => chrome.items.includes(l))
+  parts.push({
+    name: 'menu-chrome',
+    ok: chromeOk,
+    detail: chromeOk
+      ? '⋯ within bar (13) + on-screen near edge (14) + visible at rest (text-2, sw≥2)'
+      : JSON.stringify(chrome)
+  })
+
+  // ── Menu-over-preview occlusion: a native WebContentsView paints above ALL HTML,
+  // even the body-portaled ⋯ popover, so a menu dropping over a live Browser board's
+  // device stage renders UNDER the preview. Fix: while a board ⋯ menu is open the preview
+  // layer detaches live views → HTML snapshot (z-ordered, so the menu shows on top), then
+  // reattaches on close. Assert the live→detached→reattached transition on the Browser
+  // board (the detach is exactly what un-occludes the menu; pixels aren't observable in
+  // the harness, the liveness flag is). Negative control: without the fix `live` stays
+  // true while the menu is open. ──
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(250) // let the browser view attach live at rest
+  const occl = await evalIn<{
+    found: boolean
+    liveBefore: boolean
+    liveDuringMenu: boolean
+    liveAfter: boolean
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const sel = (s, root) => (root || document).querySelector(s);
+       const id = ${JSON.stringify(browserId)};
+       const live = () => !!(window.__canvasE2E.getRuntime(id) || {}).live;
+       const node = sel('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+       const more = node && sel('button[title="More"]', node);
+       if (!more) return { found: false, liveBefore: false, liveDuringMenu: false, liveAfter: false };
+       const liveBefore = live();
+       more.click(); await sleep(250);          // open ⋯ → layer detaches live views
+       const liveDuringMenu = live();
+       more.click(); await sleep(300);           // close ⋯ → reattach eligible views
+       const liveAfter = live();
+       return { found: true, liveBefore, liveDuringMenu, liveAfter };
+     })()`
+  )
+  const occlOk = occl.found && occl.liveBefore && !occl.liveDuringMenu && occl.liveAfter
+  parts.push({
+    name: 'menu-preview-detach',
+    ok: occlOk,
+    detail: occlOk
+      ? 'live preview detaches while ⋯ menu open (un-occluded) → reattaches on close'
+      : JSON.stringify(occl)
   })
 
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')

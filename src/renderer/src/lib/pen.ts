@@ -52,6 +52,18 @@ export function screenToBoard(p: ScreenPoint, view: ViewMapping): BoardPoint {
 }
 
 /**
+ * Screen↔board scale measured from the well itself: rendered width (getBoundingClientRect,
+ * which includes any CSS transform) ÷ layout width (offsetWidth, pre-transform). On the
+ * camera-transformed canvas this equals the camera zoom; inside the untransformed full-view
+ * modal it is ~1 — so board-local mapping is correct in both modes without a fullView flag.
+ * Falls back to `fallbackZoom` when the well isn't laid out yet (offsetWidth 0).
+ */
+export function screenScale(renderedWidth: number, layoutWidth: number, fallbackZoom = 1): number {
+  if (layoutWidth > 0 && renderedWidth > 0) return renderedWidth / layoutWidth
+  return fallbackZoom
+}
+
+/**
  * Append a board-local point to a flat point list (`[x0, y0, x1, y1, …]`, the
  * `StrokeElement.points` shape). Returns a new array; never mutates the input.
  */

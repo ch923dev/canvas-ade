@@ -52,6 +52,15 @@ interface PreviewState {
    * board over a live Browser board leaves the native view painting over it.
    */
   nodeGesture: boolean
+  /**
+   * A board's ⋯ overflow menu (or a comparable HTML popover that drops over a device
+   * stage) is open. Like a node gesture, an HTML popover portaled to <body> still can't
+   * sit above a native `WebContentsView` — the menu renders UNDER the live preview that
+   * its rect overlaps (the menu-occluded-by-preview bug). While set, the layer detaches
+   * live views to their (z-ordered, clippable) HTML snapshot so the menu is visible, and
+   * reattaches on close — the same path `nodeGesture` drives.
+   */
+  menuOpen: boolean
   /** Shallow-merge a runtime patch for one board (creates the entry if absent). */
   patch: (id: string, patch: Partial<PreviewRuntime>) => void
   /**
@@ -66,11 +75,14 @@ interface PreviewState {
   clear: (id: string) => void
   /** Mark a node drag/resize gesture as started/ended (drives detach/reattach). */
   setNodeGesture: (active: boolean) => void
+  /** Mark a board ⋯ menu / device-overlapping popover as open/closed (drives detach/reattach). */
+  setMenuOpen: (active: boolean) => void
 }
 
 export const usePreviewStore = create<PreviewState>((set) => ({
   byId: {},
   nodeGesture: false,
+  menuOpen: false,
   patch: (id, patch) =>
     set((s) => ({
       byId: { ...s.byId, [id]: { ...DEFAULT_RUNTIME, ...s.byId[id], ...patch } }
@@ -84,7 +96,8 @@ export const usePreviewStore = create<PreviewState>((set) => ({
       delete next[id]
       return { byId: next }
     }),
-  setNodeGesture: (active) => set((s) => (s.nodeGesture === active ? s : { nodeGesture: active }))
+  setNodeGesture: (active) => set((s) => (s.nodeGesture === active ? s : { nodeGesture: active })),
+  setMenuOpen: (active) => set((s) => (s.menuOpen === active ? s : { menuOpen: active }))
 }))
 
 /** Read one board's runtime state, falling back to the idle default. */
