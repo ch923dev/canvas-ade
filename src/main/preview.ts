@@ -414,6 +414,12 @@ export function registerPreviewHandlers(
     return true
   })
 
+  ipcMain.handle('preview:detachAll', (ev) => {
+    if (isForeignSender(ev, getWin)) return true
+    for (const e of views.values()) detach(e)
+    return true
+  })
+
   ipcMain.handle('preview:attach', (ev, args: AttachArgs) => {
     if (isForeignSender(ev, getWin)) return true
     const e = views.get(args.id)

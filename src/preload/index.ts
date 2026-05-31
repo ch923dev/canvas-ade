@@ -93,6 +93,7 @@ const api = {
   // motion / LOD while the native layer is pulled out of the tree (1-D).
   capturePreview: (id: string): Promise<string | null> => ipcRenderer.invoke('preview:capture', id),
   detachPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:detach', id),
+  detachAllPreviews: (): Promise<boolean> => ipcRenderer.invoke('preview:detachAll'),
   attachPreview: (args: { id: string; bounds: Rectangle; zoomFactor?: number }): Promise<boolean> =>
     ipcRenderer.invoke('preview:attach', args),
   closePreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:close', id),

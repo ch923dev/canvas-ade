@@ -195,6 +195,10 @@ function CanvasInner(): ReactElement {
   const onNodeDragStart = useCallback(() => {
     beginChange()
     setNodeGesture(true)
+    // Pull every live native view out IMMEDIATELY (before RF starts moving the node) so a
+    // dragged board can't be occluded by — or strand — an always-above native layer (#43961).
+    // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
+    void window.api.detachAllPreviews?.()
   }, [beginChange, setNodeGesture])
   const onNodeDragStop = useCallback(() => setNodeGesture(false), [setNodeGesture])
 

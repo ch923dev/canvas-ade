@@ -654,7 +654,10 @@ export function BrowserPreviewLayer({
           // Bug #44: diff-skip an unchanged board (mirrors flushBatch) so a store
           // mutation on ANOTHER board (drag, select, setTool) doesn't fire a
           // redundant preview:attach IPC for every already-positioned view.
-          if (r.attached) {
+          // Bug #10: while a node/camera gesture is in flight, the motion paths own
+          // bounds — re-pushing here every drag tick re-shows a detached view mid-drag
+          // (the per-frame-setBounds-then-detach #43961 trigger). Bail during a gesture.
+          if (r.attached && !gestureRef.current) {
             const bounds = boundsFor(g)
             const zoomFactor = zoomFor(g)
             if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
