@@ -234,19 +234,20 @@ function CanvasInner(): ReactElement {
         (c) => c.type === 'dimensions' && c.dimensions && c.resizing
       )
       if (resizing && resizing.type === 'dimensions' && resizing.dimensions && !snapSuppressRef.current) {
-        const old = boards.find((b) => b.id === resizing.id)
-        if (old) {
+        const prevBoard = boards.find((b) => b.id === resizing.id)
+        if (prevBoard) {
           const posChange = changes.find(
             (c) => c.type === 'position' && c.id === resizing.id && c.position
           )
-          const px = posChange && posChange.type === 'position' && posChange.position ? posChange.position.x : old.x
-          const py = posChange && posChange.type === 'position' && posChange.position ? posChange.position.y : old.y
+          const posP = posChange?.type === 'position' ? posChange.position : undefined
+          const px = posP?.x ?? prevBoard.x
+          const py = posP?.y ?? prevBoard.y
           const others = boards
-            .filter((b) => b.id !== old.id)
+            .filter((b) => b.id !== prevBoard.id)
             .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
           const prop: Rect = { x: px, y: py, w: resizing.dimensions.width, h: resizing.dimensions.height }
           const snap = computeResizeSnap(
-            { x: old.x, y: old.y, w: old.w, h: old.h },
+            { x: prevBoard.x, y: prevBoard.y, w: prevBoard.w, h: prevBoard.h },
             prop,
             others,
             SNAP_THRESHOLD_PX / rf.getZoom(),
@@ -254,14 +255,20 @@ function CanvasInner(): ReactElement {
           )
           resizing.dimensions.width = snap.w
           resizing.dimensions.height = snap.h
-          if (posChange && posChange.type === 'position' && posChange.position) {
-            posChange.position.x = snap.x
-            posChange.position.y = snap.y
+          if (posP) {
+            // posP is the same object reference as posChange.position → mutating it writes back.
+            posP.x = snap.x
+            posP.y = snap.y
           }
           setGuides(snap.guides)
         }
-      } else if (changes.some((c) => c.type === 'dimensions' && !c.resizing)) {
+      } else if (resizing) {
+        // Resizing but suppressed (Ctrl/⌘ held mid-gesture) → clear guides, mirroring the drag pass.
+        setGuides((g) => (g.length ? [] : g))
+      } else if (changes.some((c) => c.type === 'dimensions' && c.resizing === false)) {
         // Resize settled (NodeResizer emits a final dimensions change with resizing:false) → clear.
+        // Strict `=== false`: RF's initial DOM-measurement dimensions change has no `resizing` field
+        // (undefined), and must not trigger guide cleanup during an unrelated drag.
         setGuides((g) => (g.length ? [] : g))
       }
 
