@@ -116,3 +116,27 @@ export function computeAlignment(rect: Rect, others: Rect[], threshold: number):
   if (yMatch) guides.push({ axis: 'y', pos: yMatch.pos, start: yMatch.spanMin, end: yMatch.spanMax })
   return { x: xMatch ? xMatch.origin : rect.x, y: yMatch ? yMatch.origin : rect.y, guides }
 }
+
+/** A guide projected into screen-space pixels for SVG. */
+export interface ScreenLine {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+/**
+ * Project a WORLD-space guide into screen pixels using React Flow's viewport
+ * transform `[translateX, translateY, zoom]` (`useStore(s => s.transform)`):
+ * screen = world*zoom + translate. Stroke width stays in screen px at the call site,
+ * so the 1px line is crisp at any zoom.
+ */
+export function projectGuide(g: Guide, transform: [number, number, number]): ScreenLine {
+  const [tx, ty, zoom] = transform
+  if (g.axis === 'x') {
+    const sx = g.pos * zoom + tx
+    return { x1: sx, y1: g.start * zoom + ty, x2: sx, y2: g.end * zoom + ty }
+  }
+  const sy = g.pos * zoom + ty
+  return { x1: g.start * zoom + tx, y1: sy, x2: g.end * zoom + tx, y2: sy }
+}

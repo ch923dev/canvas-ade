@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { computeAlignment, SNAP_THRESHOLD_PX, type Rect } from './alignmentGuides'
+import { computeAlignment, projectGuide, SNAP_THRESHOLD_PX, type Rect } from './alignmentGuides'
 
 const rect = (x: number, y: number, w = 100, h = 100): Rect => ({ x, y, w, h })
 
@@ -55,5 +55,23 @@ describe('computeAlignment — edge + center', () => {
 
   test('SNAP_THRESHOLD_PX is the documented 8', () => {
     expect(SNAP_THRESHOLD_PX).toBe(8)
+  })
+})
+
+describe('projectGuide — world → screen', () => {
+  test('vertical guide maps x by zoom+translate, y span scaled', () => {
+    // transform [tx, ty, zoom]
+    const l = projectGuide({ axis: 'x', pos: 100, start: 50, end: 500 }, [10, 20, 2])
+    expect(l).toEqual({ x1: 210, y1: 120, x2: 210, y2: 1020 })
+  })
+
+  test('horizontal guide maps y by zoom+translate, x span scaled', () => {
+    const l = projectGuide({ axis: 'y', pos: 100, start: 50, end: 500 }, [10, 20, 2])
+    expect(l).toEqual({ x1: 110, y1: 220, x2: 1010, y2: 220 })
+  })
+
+  test('identity transform is a pass-through', () => {
+    const l = projectGuide({ axis: 'x', pos: 5, start: 0, end: 10 }, [0, 0, 1])
+    expect(l).toEqual({ x1: 5, y1: 0, x2: 5, y2: 10 })
   })
 })
