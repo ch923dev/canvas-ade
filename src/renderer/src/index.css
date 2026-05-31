@@ -26,6 +26,12 @@
   /* §3 Typography — families */
   --ui: 'Geist', system-ui, -apple-system, sans-serif;
   --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Terminal GRID font only (the live xterm canvas). xterm rasterizes glyphs into a
+     grayscale-AA atlas with no ClearType subpixel AA, so a thin webfont (Geist Mono)
+     reads soft. A hinted, OS terminal font renders native-crisp on that atlas: Cascadia
+     Mono / Consolas (Windows), SF Mono / Menlo (mac), ui-monospace (Linux). All system
+     fonts → no webfont fetch, no load-timing softness. UI chrome keeps --mono (Geist). */
+  --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
 
   /* §2 Surfaces (furthest → closest) */
   --void: #0a0a0b;

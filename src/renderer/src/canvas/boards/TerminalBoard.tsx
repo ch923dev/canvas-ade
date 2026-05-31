@@ -249,12 +249,15 @@ export function TerminalBoard({
     if (!el) return () => {}
 
     // xterm paints glyphs onto a canvas/WebGL atlas where CSS var() does NOT
-    // resolve — passing 'var(--mono)' breaks the canvas font parse, so glyphs
+    // resolve — passing 'var(--term-mono)' breaks the canvas font parse, so glyphs
     // render tiny inside full-width cells (the wide letter-spacing). Resolve the
-    // --mono design token to its literal font stack before handing it to xterm.
+    // --term-mono token (hinted OS terminal stack — Cascadia Mono/Consolas/SF Mono)
+    // to its literal value before handing it to xterm. A hinted system font renders
+    // native-crisp on xterm's grayscale-AA atlas where the thin Geist Mono webfont read
+    // soft. UI chrome stays on --mono (Geist Mono); only the live grid uses this.
     const mono =
-      getComputedStyle(document.documentElement).getPropertyValue('--mono').trim() ||
-      'ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+      getComputedStyle(document.documentElement).getPropertyValue('--term-mono').trim() ||
+      'Consolas, ui-monospace, "SF Mono", Menlo, monospace'
 
     const term = new Terminal({
       fontFamily: mono,
