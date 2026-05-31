@@ -5,9 +5,9 @@
 ## TL;DR
 
 - Branch **`fix/phase-3-bugs`** (off `phase-3-slice-c`). NOT merged.
-- 12 user-reported bugs fixed + **3 self-inflicted regressions caught by e2e** (would never have been caught by unit tests).
-- State: `pnpm lint` clean · `pnpm typecheck` clean · **302 unit tests** · **e2e harness 15/15 `ok:true`**.
-- **2 bugs still OPEN** (board ⋯ menu chrome) — described below with root cause + fix direction. These are the next session's work.
+- **All 14 user-reported bugs fixed** + **3 self-inflicted regressions caught by e2e** (would never have been caught by unit tests).
+- State: `pnpm lint` clean · `pnpm typecheck` clean · **302 unit tests** · **e2e harness 16/16 `ok:true`** (added `menu-chrome`).
+- Bugs 13/14 (board ⋯ menu chrome) are now **DONE & VERIFIED** (see below) — negative-control proven.
 
 ## How to verify (do this first to confirm the baseline)
 
@@ -20,7 +20,24 @@ If an Electron instance is already running it locks userData (`cache: Access is 
 
 **Process rule for ALL further work (memory `e2e-before-handoff`):** set a goal → implement → run the FULL e2e harness in the live app → if anything breaks, diagnose (baseline-compare vs `3786d28`, read renderer console) → iterate to production-green. Unit/typecheck green is NOT proof. Prefer a negative control (reintroduce the bug, confirm the new e2e assertion fails).
 
-## OPEN BUGS (next session)
+## BUGS 13/14 — FIXED 2026-05-31 (board ⋯ menu chrome)
+
+Both resolved in `src/renderer/src/canvas/BoardFrame.tsx`. Guarded by the new e2e part
+`menu-chrome` (negative control proven: with the fix reverted it reports
+`triggerInBar:false` (13) + `inViewport:false` (14); with the fix both true).
+
+- **Bug 13** — the title bar's right side now pins the universal **maximize + ⋯** as a
+  `flex:none` cluster, while title + status-label + per-type `actions` live in a
+  shrinkable `flex:1 minWidth:0 overflow:hidden` middle. The ⋯ trigger can no longer be
+  clipped off the right edge regardless of board width / per-type action count.
+- **Bug 14** — `BoardMenu` now positions the portaled popover with **`left`/`top`**
+  measured in a `useLayoutEffect` against the menu's own `getBoundingClientRect()`,
+  clamped to `[8, innerWidth−8]` and flipped above the trigger if it would overflow the
+  bottom edge (was anchored by `right` with no clamp → spilled off-screen near edges).
+- Harness wiring: new `panBy(dx,dy)` e2e hook (`smoke/e2eHooks.ts`) pushes a board's
+  chrome past the window edge; `menu-chrome` probe added to `main/e2eSmoke.ts`.
+
+<details><summary>Original triage notes (kept for reference)</summary>
 
 ### Bug 13 — Terminal ⋯ menu trigger clipped / "not visible" (image #10)
 **Repro:** a Terminal board; the ⋯ (More) button at the top-right of the title bar is missing/clipped at the board's right border (red arrow in the screenshot points past the last visible icon, the ⤢ maximize).
@@ -33,6 +50,8 @@ If an Electron instance is already running it locks userData (`cache: Access is 
 **Fix direction:** after `setOpen(true)`, measure the rendered menu and clamp: `left = min(triggerRight - menuWidth, innerWidth - menuWidth - 8)` and `top = bottom+4`, flipping to `top - menuHeight - 4` if it would overflow the bottom; clamp `left>=8`, `top>=8`. Simplest robust approach: position with `left/top` (not `right`), measured against the menu's own `getBoundingClientRect()` in a `useLayoutEffect` after open, clamped to `[8, innerWidth-8]`. Add an e2e assertion (extend `board-menu` in `e2eSmoke.ts`): seed/position a board near the right edge, open the menu, assert `menu.getBoundingClientRect().right <= window.innerWidth` and `.left >= 0` and all three items present.
 
 Both bugs live in **`src/renderer/src/canvas/BoardFrame.tsx`** (`BoardMenu` + the title-bar action cluster) and possibly **`TerminalBoard.tsx`** (if moving actions into the menu). Low risk to the rest of the app (pure chrome) but MUST still be e2e-verified (the menu e2e already exists as `board-menu`).
+
+</details>
 
 ## DONE & VERIFIED (bugs 1-12)
 
@@ -47,7 +66,9 @@ All on `fix/phase-3-bugs`. e2e part name in brackets.
 | 5 checklist not draggable | drop `e.target===currentTarget` guard in `ChecklistCard` header | unit `ChecklistCard.test.tsx` |
 | 6 full-view note coords | measure well scale (`screenScale`) instead of camera zoom | unit `pen.test.ts` |
 | 7 config-scroll ghost | `nowheel` on the Configure popover | e2e `config-nowheel` (structural) |
-| 8/9 menu clipped | portal popover to `document.body` | e2e `board-menu` — **see Bugs 13/14, not fully done** |
+| 8/9 menu clipped | portal popover to `document.body` | e2e `board-menu` (trigger clip + edge-clamp finished in 13/14) |
+| 13 ⋯ trigger clipped | pin maximize+⋯ `flex:none`; title+actions shrinkable middle | e2e `menu-chrome` (negative-control proven) |
+| 14 menu off-screen | measure+clamp+flip popover via `left/top` in `useLayoutEffect` | e2e `menu-chrome` (negative-control proven) |
 | 10 browser drag ghost | gate `reconcile` re-push + sync-detach on drag start | e2e `browser-gesture` |
 | 11/12 menu items dead | stop `pointerdown` on the menu (matched event type) | e2e `board-menu` (pointerdown→click) |
 

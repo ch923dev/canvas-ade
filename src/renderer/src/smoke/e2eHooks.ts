@@ -39,6 +39,8 @@ export interface CanvasE2E {
   fitView: (id?: string) => void
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
+  /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
+  panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
   terminalMounted: (id: string) => boolean
   /** True if the live store round-trips through toObject→fromObject without throwing. */
@@ -114,6 +116,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })
+    },
+    panBy(dx, dy) {
+      const vp = rf.getViewport()
+      void rf.setViewport({ x: vp.x + dx, y: vp.y + dy, zoom: vp.zoom }, { duration: 0 })
     },
     terminalMounted(id) {
       return e2eTerminals.has(id)

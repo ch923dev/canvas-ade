@@ -463,6 +463,65 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: menuOk ? 'portaled to body + Duplicate/Delete fire' : JSON.stringify(menuProbe)
   })
 
+  // ── Bugs 13/14 (board ⋯ menu chrome). Narrow the terminal so its title-bar action
+  // cluster (globe·settings·restart + ⤢ + ⋯) would overflow the frame, then assert the
+  // ⋯ trigger stays WITHIN the title-bar's right edge (bug 13 — was clipped past it by
+  // the frame's overflow:hidden). Then pan the trigger PAST the window's right edge and
+  // open the menu: the popover must clamp back inside the viewport (bug 14 — was anchored
+  // by `right` with no clamp, so a trigger off the right edge pushed the menu off-screen).
+  await evalIn(win, `window.__canvasE2E.patchBoard(${JSON.stringify(termId)}, { w: 150 })`)
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(150)
+  const chrome = await evalIn<{
+    found: boolean
+    triggerInBar: boolean
+    inViewport: boolean
+    items: string[]
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const sel = (s, root) => (root || document).querySelector(s);
+       const node = sel('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(termId)}) + ']');
+       const bar = node && sel('.board-titlebar', node);
+       const more = node && sel('button[title="More"]', node);
+       if (!bar || !more) return { found: false, triggerInBar: false, inViewport: false, items: [] };
+       const b = bar.getBoundingClientRect();
+       const t = more.getBoundingClientRect();
+       // Bug 13: the ⋯ trigger sits fully inside the title bar (was clipped past the right edge).
+       const triggerInBar = t.width > 0 && t.left >= b.left - 0.5 && t.right <= b.right + 0.5;
+       // Bug 14: shove the trigger ~40px past the window's right edge, then open the menu.
+       // (panBy +x moves content right; the board is centred after fitView, so the delta
+       // that lands the trigger's right edge 40px beyond the window is positive.)
+       const overshoot = (window.innerWidth - t.right) + 40;
+       window.__canvasE2E.panBy(overshoot, 0);
+       await sleep(80);
+       const more2 = sel('button[title="More"]', node);
+       more2.click(); await sleep(80);
+       const menu = sel('.board-menu');
+       const m = menu && menu.getBoundingClientRect();
+       const items = menu ? [...menu.querySelectorAll('.board-menu-item')].map((x) => x.textContent.trim()) : [];
+       const inViewport = !!m && m.left >= 0 && m.top >= 0 && m.right <= window.innerWidth && m.bottom <= window.innerHeight;
+       more2.click(); await sleep(40);            // close the menu
+       window.__canvasE2E.panBy(-overshoot, 0);   // restore the camera
+       return { found: true, triggerInBar, inViewport, items };
+     })()`
+  )
+  const wantItems = ['Full view', 'Duplicate', 'Delete']
+  const chromeOk =
+    chrome.found &&
+    chrome.triggerInBar &&
+    chrome.inViewport &&
+    wantItems.every((l) => chrome.items.includes(l))
+  parts.push({
+    name: 'menu-chrome',
+    ok: chromeOk,
+    detail: chromeOk
+      ? '⋯ within title bar (13) + popover clamped on-screen near edge (14)'
+      : JSON.stringify(chrome)
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 4, detail: `${count} boards` })
 

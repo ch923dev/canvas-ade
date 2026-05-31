@@ -6,7 +6,7 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
 import { Icon, type IconName } from './Icon'
@@ -86,8 +86,11 @@ export function BoardMenu({
   onDelete?: () => void
 }): ReactElement {
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 })
+  // Start off-screen; the layout effect below measures the real menu and clamps it
+  // into the viewport before paint (bug 14 — no flash at the stale corner).
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: -9999, left: -9999 })
   const triggerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -107,10 +110,27 @@ export function BoardMenu({
     }
   }, [open])
 
+  // Position once the popover has mounted: right-align to the trigger, then clamp into
+  // the viewport (left ≥ 8, right ≤ innerWidth − 8) and flip above the trigger if it
+  // would overflow the bottom edge (bug 14 — was anchored by `right` with no clamp/flip).
+  useLayoutEffect(() => {
+    if (!open) return
+    const t = triggerRef.current?.getBoundingClientRect()
+    const m = menuRef.current?.getBoundingClientRect()
+    if (!t || !m) return
+    const PAD = 8
+    let left = Math.min(t.right - m.width, window.innerWidth - m.width - PAD)
+    left = Math.max(PAD, left)
+    let top = t.bottom + 4
+    if (top + m.height > window.innerHeight - PAD) {
+      const flipped = t.top - m.height - 4
+      top = flipped >= PAD ? flipped : Math.max(PAD, window.innerHeight - m.height - PAD)
+    }
+    setPos({ top, left })
+  }, [open])
+
   const openMenu = (e: MouseEvent): void => {
     e.stopPropagation()
-    const r = triggerRef.current?.getBoundingClientRect()
-    if (r) setPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
     setOpen((v) => !v)
   }
 
@@ -136,9 +156,10 @@ export function BoardMenu({
       {open &&
         createPortal(
           <div
+            ref={menuRef}
             className="board-menu"
             role="menu"
-            style={{ position: 'fixed', top: pos.top, right: pos.right }}
+            style={{ position: 'fixed', top: pos.top, left: pos.left }}
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
@@ -322,37 +343,57 @@ export function BoardFrame({
         >
           <TypeGlyph type={type} running={running} />
         </span>
-        <span
+        {/* Shrinkable middle (title + status label + per-type actions): collapses
+            BEFORE the universal maximize/⋯ controls so the ⋯ trigger never clips off
+            the title bar's right edge on a narrow board (bug 13). overflow:hidden keeps
+            an overlong per-type cluster from painting over the pinned controls. */}
+        <div
           style={{
-            fontSize: 12,
-            fontWeight: 500,
-            color: selected ? 'var(--text)' : 'var(--text-2)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
             flex: 1,
-            minWidth: 0
+            minWidth: 0,
+            overflow: 'hidden'
           }}
         >
-          {title}
-        </span>
-        {/* Status label is on-demand: only while hovered or selected, kept calm at
-            rest (the glyph colour carries the at-a-glance signal). */}
-        {status?.label && (hovered || selected) && (
           <span
             style={{
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              color: 'var(--text-3)',
+              fontSize: 12,
+              fontWeight: 500,
+              color: selected ? 'var(--text)' : 'var(--text-2)',
               whiteSpace: 'nowrap',
-              flex: 'none'
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              flex: 1,
+              minWidth: 0
             }}
           >
-            {status.label}
+            {title}
           </span>
-        )}
+          {/* Status label is on-demand: only while hovered or selected, kept calm at
+              rest (the glyph colour carries the at-a-glance signal). */}
+          {status?.label && (hovered || selected) && (
+            <span
+              style={{
+                fontFamily: 'var(--mono)',
+                fontSize: 11,
+                color: 'var(--text-3)',
+                whiteSpace: 'nowrap',
+                flex: 'none'
+              }}
+            >
+              {status.label}
+            </span>
+          )}
+          {actions && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
+              {actions}
+            </div>
+          )}
+        </div>
+        {/* Universal controls, pinned at the far right — always visible & clickable. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
-          {actions}
           {onFull && <IconBtn name="maximize" title="Full view" size={14} onClick={onFull} />}
           {(onFull || onDuplicate || onDelete) && (
             <BoardMenu onFull={onFull} onDuplicate={onDuplicate} onDelete={onDelete} />
