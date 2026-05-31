@@ -33,6 +33,8 @@ export function IconBtn({
   active = false,
   danger = false,
   size = 15,
+  sw,
+  restColor = 'var(--text-3)',
   onClick
 }: {
   name: IconName
@@ -40,6 +42,11 @@ export function IconBtn({
   active?: boolean
   danger?: boolean
   size?: number
+  /** Stroke width override for the glyph (sparse glyphs like ⋯ need more ink to read). */
+  sw?: number
+  /** Resting (non-hover, non-active) icon colour. Default `--text-3`; the ⋯ overflow
+   *  trigger uses `--text-2` so it isn't near-invisible at rest. */
+  restColor?: string
   onClick?: (e: MouseEvent) => void
 }): ReactElement {
   const [hover, setHover] = useState(false)
@@ -49,7 +56,7 @@ export function IconBtn({
       ? 'var(--err)'
       : hover
         ? 'var(--text-2)'
-        : 'var(--text-3)'
+        : restColor
   return (
     <button
       title={title}
@@ -71,7 +78,7 @@ export function IconBtn({
         transition: 'color .1s, background .1s'
       }}
     >
-      <Icon name={name} size={size} />
+      <Icon name={name} size={size} sw={sw} />
     </button>
   )
 }
@@ -163,7 +170,17 @@ export function BoardMenu({
 
   return (
     <div ref={triggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
-      <IconBtn name="more" title="More" active={open} onClick={openMenu} />
+      {/* The ⋯ dots are a near-inkless glyph; bump stroke + use a brighter rest colour so
+          the overflow affordance is actually visible at rest (not only when clicked). */}
+      <IconBtn
+        name="more"
+        title="More"
+        active={open}
+        size={16}
+        sw={2.6}
+        restColor="var(--text-2)"
+        onClick={openMenu}
+      />
       {open &&
         createPortal(
           <div

@@ -476,6 +476,8 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   const chrome = await evalIn<{
     found: boolean
     triggerInBar: boolean
+    restColor: string
+    strokeWidth: string
     inViewport: boolean
     items: string[]
   }>(
@@ -486,11 +488,17 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
        const node = sel('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(termId)}) + ']');
        const bar = node && sel('.board-titlebar', node);
        const more = node && sel('button[title="More"]', node);
-       if (!bar || !more) return { found: false, triggerInBar: false, inViewport: false, items: [] };
+       if (!bar || !more) return { found: false, triggerInBar: false, restColor: '', strokeWidth: '', inViewport: false, items: [] };
        const b = bar.getBoundingClientRect();
        const t = more.getBoundingClientRect();
        // Bug 13: the ⋯ trigger sits fully inside the title bar (was clipped past the right edge).
        const triggerInBar = t.width > 0 && t.left >= b.left - 0.5 && t.right <= b.right + 0.5;
+       // "Options not visible": the ⋯ glyph is near-inkless, so at REST (no hover/active) it
+       // must use the brighter --text-2 (#9b9ba1 = rgb(155,155,161)) and a bumped stroke so
+       // it reads. Measure before any interaction (hover would brighten regardless).
+       const svg = more.querySelector('svg');
+       const restColor = svg ? getComputedStyle(svg).color : '';
+       const strokeWidth = svg ? (svg.getAttribute('stroke-width') || '') : '';
        // Bug 14: shove the trigger ~40px past the window's right edge, then open the menu.
        // (panBy +x moves content right; the board is centred after fitView, so the delta
        // that lands the trigger's right edge 40px beyond the window is positive.)
@@ -505,20 +513,23 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
        const inViewport = !!m && m.left >= 0 && m.top >= 0 && m.right <= window.innerWidth && m.bottom <= window.innerHeight;
        more2.click(); await sleep(40);            // close the menu
        window.__canvasE2E.panBy(-overshoot, 0);   // restore the camera
-       return { found: true, triggerInBar, inViewport, items };
+       return { found: true, triggerInBar, restColor, strokeWidth, inViewport, items };
      })()`
   )
   const wantItems = ['Full view', 'Duplicate', 'Delete']
+  const restVisible =
+    chrome.restColor === 'rgb(155, 155, 161)' && parseFloat(chrome.strokeWidth) >= 2
   const chromeOk =
     chrome.found &&
     chrome.triggerInBar &&
     chrome.inViewport &&
+    restVisible &&
     wantItems.every((l) => chrome.items.includes(l))
   parts.push({
     name: 'menu-chrome',
     ok: chromeOk,
     detail: chromeOk
-      ? '⋯ within title bar (13) + popover clamped on-screen near edge (14)'
+      ? '⋯ within bar (13) + on-screen near edge (14) + visible at rest (text-2, sw≥2)'
       : JSON.stringify(chrome)
   })
 
