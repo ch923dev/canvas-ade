@@ -316,6 +316,37 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: failedOk ? 'refused URL → load-failed' : `did not reach load-failed`
   })
 
+  // ── Bug 3 (stale preview link): the terminal→browser edge is solid while the source
+  // terminal runs, dashed/dimmed once it's down. Link the browser to the terminal, assert
+  // a non-dashed edge, mark the terminal down, assert it goes dashed. ──
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: ${JSON.stringify(termId)} })`
+  )
+  await evalIn(win, 'window.__canvasE2E.fitView()') // frame all → both nodes measured + edge rendered
+  await delay(250)
+  const edgeDash = (): Promise<string> =>
+    evalIn<string>(
+      win,
+      `(() => { const p = document.querySelector('.react-flow__edge[data-id="preview-${browserId}"] .react-flow__edge-path'); return p ? (p.style.strokeDasharray || 'none') : 'no-edge'; })()`
+    )
+  const dashRunning = await edgeDash()
+  await evalIn(win, `window.__canvasE2E.setTerminalDown(${JSON.stringify(termId)})`)
+  await delay(250)
+  const dashDown = await edgeDash()
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: undefined })`
+  ) // unlink → restore
+  const edgeOk = dashRunning === 'none' && dashDown.includes('5')
+  parts.push({
+    name: 'preview-edge-stale',
+    ok: edgeOk,
+    detail: edgeOk
+      ? 'solid while running → dashed when terminal down'
+      : `running=${dashRunning} down=${dashDown}`
+  })
+
   // ── Bugs 8/9 + 11/12 (board ⋯ menu): drive the REAL menu through the DOM. Bug 11/12
   // only reproduces with a pointerdown→click sequence (pre-fix the document pointerdown
   // close-listener unmounted the item before its click fired); bug 8/9 needs the popover

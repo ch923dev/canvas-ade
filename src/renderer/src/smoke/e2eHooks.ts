@@ -11,6 +11,7 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
+import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { fromObject, type Board, type BoardType } from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { e2eTerminals } from './e2eRegistry'
@@ -50,6 +51,8 @@ export interface CanvasE2E {
   undo: () => void
   /** Open/close the full-view modal for a board id (null clears). Bug 1/4 harness. */
   setFullView: (id: string | null) => void
+  /** Mark a terminal's PTY as exited in the runtime store (drives stale preview edge, bug 3). */
+  setTerminalDown: (id: string) => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -133,6 +136,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setFullView(id) {
       host.setFullView(id)
+    },
+    setTerminalDown(id) {
+      useTerminalRuntimeStore.getState().setRunning(id, 'exited')
     }
   }
   window.__canvasE2E = api
