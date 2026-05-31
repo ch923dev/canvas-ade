@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { computeAlignment, projectGuide, projectGapGuide, projectRect, SNAP_THRESHOLD_PX, GAP_SNAP_PX, type Rect } from './alignmentGuides'
+import { computeAlignment, computeResizeSnap, projectGuide, projectGapGuide, projectRect, SNAP_THRESHOLD_PX, GAP_SNAP_PX, type Rect } from './alignmentGuides'
 
 const rect = (x: number, y: number, w = 100, h = 100): Rect => ({ x, y, w, h })
 
@@ -215,5 +215,92 @@ describe('computeAlignment — equal-spacing distribution (centered between two)
     const r = computeAlignment({ x: 0, y: 203, w: 100, h: 100 }, [T, B], 8)
     expect(r.y).toBe(200)
     expect(r.guides.some((g) => g.kind === 'distribute' && g.axis === 'y')).toBe(true)
+  })
+})
+
+describe('computeResizeSnap — moving-edge snapping', () => {
+  const MIN = { w: 40, h: 40 }
+  const other = { x: 300, y: 0, w: 100, h: 100 } // left=300, right=400
+
+  test('right edge (E handle) snaps to another board left edge', () => {
+    // old 0..100; resize right to 295 (right edge moved). other.left 300, diff 5 → snap right to 300.
+    const r = computeResizeSnap(
+      { x: 0, y: 0, w: 100, h: 100 },
+      { x: 0, y: 0, w: 295, h: 100 },
+      [other],
+      8,
+      MIN
+    )
+    expect(r.x).toBe(0)
+    expect(r.w).toBe(300) // right at 300, left fixed 0
+    expect(r.guides.some((g) => g.kind === 'align' && g.axis === 'x' && g.pos === 300)).toBe(true)
+  })
+
+  test('left edge (W handle) snaps to another board right edge; origin + width adjust', () => {
+    // old at x=300..400 (w100). other left=0..100 (right=100). Drag LEFT edge out to x=105 (right fixed 400).
+    const left = { x: 0, y: 0, w: 100, h: 100 }
+    const r = computeResizeSnap(
+      { x: 300, y: 0, w: 100, h: 100 },
+      { x: 105, y: 0, w: 295, h: 100 },
+      [left],
+      8,
+      MIN
+    )
+    expect(r.x).toBe(100) // snapped to other's right edge
+    expect(r.w).toBe(300) // right stays at 400 → 400-100
+    expect(r.guides.some((g) => g.kind === 'align' && g.pos === 100)).toBe(true)
+  })
+
+  test('bottom edge gap-snaps to a 16px gutter above a board below', () => {
+    const below = { x: 0, y: 300, w: 100, h: 100 } // top=300
+    // resize bottom from 100 down to 285; gutter target = 300 - 16 = 284, diff 1 → snap to 284.
+    const r = computeResizeSnap(
+      { x: 0, y: 0, w: 100, h: 100 },
+      { x: 0, y: 0, w: 100, h: 285 },
+      [below],
+      8,
+      MIN
+    )
+    expect(r.h).toBe(284) // bottom at 284 → height 284 (top fixed 0)
+    expect(r.guides.some((g) => g.kind === 'gap' && g.axis === 'y' && g.distance === 16)).toBe(true)
+  })
+
+  test('does not snap an edge that did not move', () => {
+    // Only the right edge moves; the left edge sits 3px from other.right=100 but must NOT snap.
+    const left = { x: 0, y: 0, w: 100, h: 100 }
+    const r = computeResizeSnap(
+      { x: 103, y: 0, w: 100, h: 100 }, // left at 103 (near other.right 100)
+      { x: 103, y: 0, w: 150, h: 100 }, // right moved 203→253; left UNCHANGED
+      [left],
+      8,
+      MIN
+    )
+    expect(r.x).toBe(103) // left untouched (it didn't move)
+  })
+
+  test('skips a snap that would shrink below the minimum size', () => {
+    const near = { x: 60, y: 0, w: 100, h: 100 } // left=60
+    // resize right edge to 58; snapping to other.left 60 would make w=58 (< min 40? no). Use min 80 to force skip:
+    const r = computeResizeSnap(
+      { x: 0, y: 0, w: 100, h: 100 },
+      { x: 0, y: 0, w: 58, h: 100 },
+      [near],
+      8,
+      { w: 80, h: 40 }
+    )
+    expect(r.w).toBe(58) // snap to 60 would give w=60 ≥ 80? no, 60<80 → skipped, stays 58
+    expect(r.guides.some((g) => g.kind === 'align')).toBe(false)
+  })
+
+  test('no snap when no edge is near a target', () => {
+    const r = computeResizeSnap(
+      { x: 0, y: 0, w: 100, h: 100 },
+      { x: 0, y: 0, w: 150, h: 100 },
+      [{ x: 500, y: 0, w: 100, h: 100 }],
+      8,
+      MIN
+    )
+    expect(r.w).toBe(150)
+    expect(r.guides).toEqual([])
   })
 })

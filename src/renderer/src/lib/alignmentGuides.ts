@@ -255,6 +255,133 @@ export function computeAlignment(rect: Rect, others: Rect[], threshold: number):
   return { x, y, guides, overlaps }
 }
 
+/** One snapped edge: the corrected edge coordinate + the guide to draw. */
+interface EdgeSnap {
+  value: number
+  guide: Guide
+}
+
+/**
+ * Snap a single moving edge (at `edgeVal`, with perpendicular extent [perpMin,perpMax]) on `axis`
+ * to the nearest other-board edge/center (align line) or a 16px gutter beside a perpendicular
+ * neighbor (gap pill). `others` is the axis-mapped neighbor list. Nearest qualifying wins; align
+ * beats gap on ties (added first, strict `<`).
+ */
+function snapEdge(
+  axis: 'x' | 'y',
+  edgeVal: number,
+  perpMin: number,
+  perpMax: number,
+  others: OtherAxis[],
+  threshold: number
+): EdgeSnap | null {
+  let best: (EdgeSnap & { diff: number }) | null = null
+  const consider = (diff: number, value: number, guide: Guide): void => {
+    if (diff > threshold) return
+    if (best && diff >= best.diff) return
+    best = { diff, value, guide }
+  }
+  for (const o of others) {
+    // Align: edge → other's near/center/far edge (any board, no neighbor requirement).
+    for (const os of stops(o.origin, o.size)) {
+      consider(Math.abs(edgeVal - os), os, {
+        kind: 'align',
+        axis,
+        pos: os,
+        start: Math.min(perpMin, o.perpMin),
+        end: Math.max(perpMax, o.perpMax)
+      })
+    }
+    // Gap: a 16px gutter to a facing edge — only between perpendicular neighbors.
+    if (rangesOverlap(perpMin, perpMax, o.perpMin, o.perpMax)) {
+      const g = GAP_SNAP_PX
+      const perp = (Math.max(perpMin, o.perpMin) + Math.min(perpMax, o.perpMax)) / 2
+      const leftVal = o.origin - g // edge sits a gutter to the LEFT of the other's near edge
+      consider(Math.abs(edgeVal - leftVal), leftVal, {
+        kind: 'gap',
+        axis,
+        pos: o.origin - g / 2,
+        perp,
+        distance: g
+      })
+      const rightVal = o.origin + o.size + g // a gutter to the RIGHT of the other's far edge
+      consider(Math.abs(edgeVal - rightVal), rightVal, {
+        kind: 'gap',
+        axis,
+        pos: o.origin + o.size + g / 2,
+        perp,
+        distance: g
+      })
+    }
+  }
+  return best
+}
+
+/** Result of resize snapping: a corrected rect + the guides to draw. */
+export interface ResizeResult {
+  x: number
+  y: number
+  w: number
+  h: number
+  guides: Guide[]
+}
+
+/**
+ * Snap the MOVING edge(s) of a resize. `old` is the pre-resize rect, `prop` the proposed rect from
+ * React Flow (dimensions ± N/W position shift). Only edges whose coordinate differs from `old` snap;
+ * a snap that would shrink the board below `min` is skipped. Returns the corrected rect + guides.
+ */
+export function computeResizeSnap(
+  old: Rect,
+  prop: Rect,
+  others: Rect[],
+  threshold: number,
+  min: { w: number; h: number }
+): ResizeResult {
+  let { x, y, w, h } = prop
+  const right0 = prop.x + prop.w
+  const bottom0 = prop.y + prop.h
+  const guides: Guide[] = []
+
+  const xOthers = others.map((o) => ({ origin: o.x, size: o.w, perpMin: o.y, perpMax: o.y + o.h }))
+  const yOthers = others.map((o) => ({ origin: o.y, size: o.h, perpMin: o.x, perpMax: o.x + o.w }))
+
+  // X edges (perpendicular extent = the board's current vertical span).
+  if (prop.x !== old.x) {
+    const m = snapEdge('x', prop.x, prop.y, prop.y + prop.h, xOthers, threshold)
+    if (m && right0 - m.value >= min.w) {
+      x = m.value
+      w = right0 - x
+      guides.push(m.guide)
+    }
+  }
+  if (right0 !== old.x + old.w) {
+    const m = snapEdge('x', right0, prop.y, prop.y + prop.h, xOthers, threshold)
+    if (m && m.value - x >= min.w) {
+      w = m.value - x
+      guides.push(m.guide)
+    }
+  }
+  // Y edges (perpendicular extent = the board's current horizontal span).
+  if (prop.y !== old.y) {
+    const m = snapEdge('y', prop.y, prop.x, prop.x + prop.w, yOthers, threshold)
+    if (m && bottom0 - m.value >= min.h) {
+      y = m.value
+      h = bottom0 - y
+      guides.push(m.guide)
+    }
+  }
+  if (bottom0 !== old.y + old.h) {
+    const m = snapEdge('y', bottom0, prop.x, prop.x + prop.w, yOthers, threshold)
+    if (m && m.value - y >= min.h) {
+      h = m.value - y
+      guides.push(m.guide)
+    }
+  }
+
+  return { x, y, w, h, guides }
+}
+
 /** An align guide projected into screen-space pixels for SVG. */
 export interface ScreenLine {
   x1: number
