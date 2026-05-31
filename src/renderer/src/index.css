@@ -902,8 +902,8 @@ body {
   cursor: pointer;
 }
 
-/* Smart alignment guides (drag-time): screen-space SVG over the canvas, never
-   interactive. Dashed accent so it reads distinct from the solid select ring. */
+/* Smart alignment guides (drag-time): screen-space SVG over the canvas, never interactive.
+   Dashed accent line = edge/center align; connector + Npx pill = gutter; wash = overlap nudge. */
 .align-guides {
   position: absolute;
   inset: 0;
@@ -918,4 +918,24 @@ body {
   stroke-width: 1;
   stroke-dasharray: 4 6;
   shape-rendering: crispEdges;
+}
+.align-guides .align-connector,
+.align-guides .align-tick {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: none; /* gutter marks are solid, distinct from dashed align lines */
+}
+.align-guides .align-pill {
+  fill: var(--accent);
+  stroke: none;
+}
+.align-guides .align-pill-text {
+  fill: #fff;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+/* Overlap nudge: a translucent accent wash over the intersection (no border, no force). */
+.align-guides .align-overlap {
+  fill: rgba(255, 92, 92, 0.18); /* soft red — reads as "you're stacking" without alarm */
+  stroke: none;
 }
