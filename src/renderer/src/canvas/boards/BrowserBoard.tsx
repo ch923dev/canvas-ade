@@ -222,18 +222,38 @@ export function BrowserBoard({
 
       {/* Device stage: a hatched backing well + the rounded HTML device frame. The
           native view paints over the frame's inner area; the snapshot + states sit
-          UNDER it as the fallback layer. */}
-      <div className="bb-stage" style={{ top: URLBAR_H }}>
+          UNDER it as the fallback layer. In full view the stage centres the frame so the
+          letterbox (hatched backing) shows around an aspect-correct emulator. */}
+      <div
+        className="bb-stage"
+        style={
+          fullView
+            ? { top: URLBAR_H, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+            : { top: URLBAR_H }
+        }
+      >
         <div
           className="bb-frame"
           data-bb-frame={board.id}
-          // In full view the frame FILLS the modal stage (board-geometry sizing no
-          // longer applies — the board is portaled out of the camera-scaled canvas);
-          // the native view binds to this element's live DOM rect (fullViewBoundsFor),
-          // so the page renders edge-to-edge. On canvas it keeps the fitted device box.
+          // In full view the frame is an EMULATOR: the board is portaled out of the
+          // camera-scaled canvas, so board-geometry sizing no longer applies. Size it to
+          // the preset's ASPECT RATIO (height-bound, centred, letterboxed) rather than
+          // stretching it edge-to-edge — a Mobile/Tablet preview then renders as a
+          // bigger phone/tablet, not a blown-up landscape. The native view binds to this
+          // element's live DOM rect (fullViewBoundsFor); fitZoomFactorForBounds keeps the
+          // held preset width filling that rect, so the scale stays uniform (no stretch).
+          // On canvas it keeps the fitted device box.
           style={
             fullView
-              ? { inset: 0, borderRadius: 0 }
+              ? {
+                  position: 'relative',
+                  height: '100%',
+                  width: 'auto',
+                  aspectRatio: `${preset.w} / ${preset.h}`,
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  borderRadius: preset.radius
+                }
               : {
                   left: frame.x,
                   top: frameTopInStage,

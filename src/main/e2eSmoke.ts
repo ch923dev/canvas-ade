@@ -277,6 +277,54 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }
   parts.push({ name: 'fullview-preview', ok: fvPrevOk, detail: fvPrevDetail })
 
+  // ── Full-view emulator: a Mobile/Tablet preset in full view must render as an
+  // aspect-correct device (height-bound, centred, letterboxed) — NOT stretched to fill
+  // the landscape modal. Set the browser to Mobile, full-view it, and assert the relocated
+  // device frame keeps the preset's portrait aspect (~390/844) AND is clearly narrower than
+  // its stage (letterbox). Pre-fix (inset:0) the frame fills the stage → landscape aspect,
+  // ~full width → both checks fail. ──
+  await evalIn(win, `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`)
+  await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
+  await delay(450) // modal mounts + portal relocates the device frame + layout settles
+  const emu = await evalIn<{
+    found: boolean
+    frameRatio: number
+    stageRatio: number
+    widthFrac: number
+  }>(
+    win,
+    `(() => {
+       const frame = document.querySelector('[data-bb-frame=' + JSON.stringify(${JSON.stringify(browserId)}) + ']');
+       const stage = frame && frame.closest('.bb-stage');
+       if (!frame || !stage) return { found: false, frameRatio: 0, stageRatio: 0, widthFrac: 0 };
+       const f = frame.getBoundingClientRect();
+       const s = stage.getBoundingClientRect();
+       return {
+         found: true,
+         frameRatio: f.width / f.height,
+         stageRatio: s.width / s.height,
+         widthFrac: f.width / s.width
+       };
+     })()`
+  )
+  await evalIn(win, 'window.__canvasE2E.setFullView(null)')
+  await delay(300)
+  // Mobile preset aspect = 390/844 ≈ 0.462. Allow tolerance; require the frame be portrait
+  // AND letterboxed (markedly narrower than the landscape stage), not stretched to fill.
+  const mobileRatio = 390 / 844
+  const emuOk =
+    emu.found &&
+    Math.abs(emu.frameRatio - mobileRatio) < 0.06 &&
+    emu.widthFrac < 0.9 &&
+    emu.frameRatio < emu.stageRatio
+  parts.push({
+    name: 'fullview-emulator',
+    ok: emuOk,
+    detail: emuOk
+      ? 'Mobile full view is an aspect-correct, letterboxed emulator (not stretched)'
+      : JSON.stringify(emu)
+  })
+
   // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
   // kill its PTY. e2eTerminals registration tracks the xterm mount, so the board
   // staying mounted across LOD proves the session survives (pre-fix BoardNode
