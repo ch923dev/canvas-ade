@@ -123,6 +123,13 @@ interface LayerProps {
    * full-view board's view detached for the tween and snap it in at settle.
    */
   fullViewMotion: boolean
+  /**
+   * Close the full-view modal. A focused native view's web content swallows keydown so
+   * the renderer's window Esc handler never fires for a full-view Browser board — main
+   * forwards an `escape` preview event (preview.ts before-input-event) and we invoke this
+   * to exit, matching the Esc-exits-full-view behaviour terminals/notes already get.
+   */
+  onRequestCloseFullView: () => void
 }
 
 export function BrowserPreviewLayer({
@@ -130,7 +137,8 @@ export function BrowserPreviewLayer({
   focusedId,
   fullViewId,
   fullViewHost,
-  fullViewMotion
+  fullViewMotion,
+  onRequestCloseFullView
 }: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
@@ -145,6 +153,14 @@ export function BrowserPreviewLayer({
   // body-portaled menu, so suppress live views (→ HTML snapshot) the same way as a
   // gesture while the menu is open, then reattach on close. ADR 0002.
   const menuOpen = usePreviewStore((s) => s.menuOpen)
+
+  // Live ref for the main-driven `escape` event handler so its subscription (below) need
+  // not re-bind when the close callback identity changes. (The full-view id it checks
+  // against has its own ref, kept in sync below.) Synced in an effect, not during render.
+  const onCloseFullViewRef = useRef(onRequestCloseFullView)
+  useEffect(() => {
+    onCloseFullViewRef.current = onRequestCloseFullView
+  }, [onRequestCloseFullView])
 
   // paneOffset = the RF pane top-left in window CSS px. The canvas is now full-bleed
   // (App.tsx → position:fixed inset:0), so this is ~ (0,0) — but MEASURE it (a future
@@ -826,6 +842,14 @@ export function BrowserPreviewLayer({
   // ── Lifecycle events from main (load / navigate / fail) → runtime store ────────
   useEffect(() => {
     const off = window.api.onPreviewEvent((ev) => {
+      // Esc pressed while the native view's web content owns focus (main forwards it via
+      // before-input-event). The renderer window never receives this keydown, so close
+      // full view here when the event's board is the full-view one — parity with the
+      // window Esc handler that already exits full view for terminals/notes.
+      if ((ev.type as string) === 'escape') {
+        if (ev.id === fullViewIdRef.current) onCloseFullViewRef.current()
+        return
+      }
       // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
       // Clear a stale `load-failed` latch so the following did-finish-load can promote
       // to `connected` after a successful recovery load (Bug #5). The preload

@@ -357,10 +357,9 @@ function CanvasInner(): ReactElement {
         return
       }
       if (e.key === 'Escape' && !typing) {
-        if (fullViewId) {
-          closeFullView()
-          return
-        }
+        // Full-view Esc is handled in the capture-phase listener below (it must beat
+        // xterm, which stopPropagation()s keydown so a bubble-phase listener never sees
+        // Esc from a focused terminal). Here, bubble phase, only the non-full-view case.
         clearSelection()
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
         e.preventDefault()
@@ -375,7 +374,26 @@ function CanvasInner(): ReactElement {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, doUndo, doRedo, fullViewId, closeFullView])
+  }, [rf, clearSelection, doUndo, doRedo])
+
+  // Esc ALWAYS exits full view — even when a board's own input owns focus. Must run in the
+  // CAPTURE phase (window → target): xterm calls stopPropagation() on keydown, so a
+  // bubble-phase listener never sees Esc from a focused full-view terminal. Capturing here
+  // beats both xterm and any note editor; preventDefault + stopPropagation keep the same
+  // Esc from also reaching them (the keystroke only exits full view). Browser boards can't
+  // deliver keydown to the renderer at all (focused native web content) — main forwards an
+  // `escape` preview event handled in BrowserPreviewLayer. No-op when not in full view.
+  useEffect(() => {
+    const onEscapeCapture = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && fullViewId) {
+        e.preventDefault()
+        e.stopPropagation()
+        closeFullView()
+      }
+    }
+    window.addEventListener('keydown', onEscapeCapture, true)
+    return () => window.removeEventListener('keydown', onEscapeCapture, true)
+  }, [fullViewId, closeFullView])
 
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
@@ -440,6 +458,7 @@ function CanvasInner(): ReactElement {
               fullViewId={fullViewId}
               fullViewHost={fullViewHost}
               fullViewMotion={fullViewMotion}
+              onRequestCloseFullView={closeFullView}
             />
           </ReactFlow>
 

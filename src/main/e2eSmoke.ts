@@ -325,36 +325,44 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : JSON.stringify(emu)
   })
 
-  // ── Slice 5 (close-motion state machine): full view renders a chrome-less frame (no
-  // §6.1 band — removed so the only exit affordances are the board's own ⤢ toggle, Esc, or
-  // a scrim click). Open via the e2e hook (raw setFullView), assert the frame mounts and
-  // the band is GONE, then dispatch a real Escape keydown and assert the modal is gone
-  // after the tween — proving the deferred-unmount close state machine end to end. ──
+  // ── Slice 5 (close-motion state machine) + Esc-through-typing fix: full view renders a
+  // chrome-less frame (no §6.1 band — removed; exits are the board's own ⤢ toggle, Esc, or
+  // a scrim click). Open via the e2e hook, assert the frame mounts and the band is GONE,
+  // then FOCUS the full-view terminal's xterm helper textarea and dispatch Escape FROM IT
+  // (target=TEXTAREA) — the window Esc handler must still close full view despite the
+  // typing guard (else a focused terminal traps the user in maximized mode). Assert the
+  // modal is gone after the tween — proving the close state machine + the typing-guard
+  // bypass end to end. ──
   await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
   await delay(400) // modal mounts + enter tween settles
-  const fvClose = await evalIn<{ frame: boolean; bandGone: boolean }>(
+  const fvClose = await evalIn<{ frame: boolean; bandGone: boolean; typed: boolean }>(
     win,
-    `(() => ({
-       frame: !!document.querySelector('.fullview-scrim .fullview-frame .fullview-host'),
-       bandGone: document.querySelector('.fullview-band') === null
-     }))()`
-  )
-  await evalIn(
-    win,
-    `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`
+    `(() => {
+       const ta = document.querySelector('.fullview-host .xterm-helper-textarea');
+       if (ta) ta.focus();
+       const typing = document.activeElement?.tagName === 'TEXTAREA';
+       (ta || document).dispatchEvent(
+         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+       );
+       return {
+         frame: !!document.querySelector('.fullview-scrim .fullview-frame .fullview-host'),
+         bandGone: document.querySelector('.fullview-band') === null,
+         typed: typing
+       };
+     })()`
   )
   await delay(400) // exit tween (200ms) + onExited unmount
   const fvCloseGone = await evalIn<boolean>(
     win,
     `document.querySelector('.fullview-scrim') === null`
   )
-  const fvCloseOk = fvClose.frame && fvClose.bandGone && fvCloseGone
+  const fvCloseOk = fvClose.frame && fvClose.bandGone && fvClose.typed && fvCloseGone
   parts.push({
     name: 'fullview-close',
     ok: fvCloseOk,
     detail: fvCloseOk
-      ? 'chrome-less frame mounts (no band); Esc animates closed and unmounts'
-      : `frame=${fvClose.frame} bandGone=${fvClose.bandGone} closed=${fvCloseGone}`
+      ? 'chrome-less frame (no band); Esc from focused terminal textarea closes + unmounts'
+      : `frame=${fvClose.frame} bandGone=${fvClose.bandGone} typing=${fvClose.typed} closed=${fvCloseGone}`
   })
 
   // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
