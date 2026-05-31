@@ -528,11 +528,15 @@ body {
 .bb-frame {
   position: absolute;
   overflow: hidden;
-  /* #fbfbfa = the emulated device's white page surface (device chrome, not an app
-     token). §7.2: device frame is 1px --border-strong + --r-inner + a SUBTLE inset.
-     The board already carries --shadow-board; a second heavy drop here was slop
-     (§4 two-shadow rule), so keep only the 1px inset highlight. */
-  background: #fbfbfa;
+  /* Dark device bezel (--inset). The native WebContentsView is an unrounded square that
+     can't be clipped, so the rounded-corner arcs + the 1px native inset always reveal a
+     sliver of this background. A WHITE surface (#fbfbfa) glared against any DARK preview
+     page (a white arc at the rounded corners/edges); a neutral dark bezel reads correctly
+     for both light and dark apps (a phone's bezel is dark) and the sliver disappears.
+     §7.2: device frame is 1px --border-strong + --r-inner + a SUBTLE inset. The board
+     already carries --shadow-board; a second heavy drop here was slop (§4 two-shadow
+     rule), so keep only the 1px inset highlight. */
+  background: var(--inset);
   border: 1px solid var(--border-strong);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
 }
