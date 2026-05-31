@@ -1,6 +1,4 @@
 import { useEffect } from 'react'
-import { Terminal } from '@xterm/xterm'
-import { WebglAddon } from '@xterm/addon-webgl'
 
 /**
  * Renderer-side dependency smoke, kept from the Phase 0 harness. On mount it
@@ -8,32 +6,40 @@ import { WebglAddon } from '@xterm/addon-webgl'
  * headless `CANVAS_SMOKE` run can assert the renderer toolchain is healthy. Runs
  * once; the offscreen terminal is disposed immediately. Load-bearing for the smoke
  * gate — do not remove without moving the probe.
+ *
+ * §F code-split: xterm is imported DYNAMICALLY here so this always-mounted probe
+ * doesn't pull @xterm into the renderer's entry chunk (which would defeat the lazy
+ * TerminalBoard split). It lands in the shared xterm chunk loaded on demand.
  */
 export function useRendererSmoke(): void {
   useEffect(() => {
-    const r = { reactflow: true, xterm: false, webgl: false }
-    const host = document.createElement('div')
-    host.style.cssText = 'position:absolute;left:-9999px;width:240px;height:120px'
-    document.body.appendChild(host)
-    try {
-      const term = new Terminal({ cols: 20, rows: 4 })
-      term.open(host)
-      r.xterm = true
+    void (async () => {
+      const r = { reactflow: true, xterm: false, webgl: false }
+      const host = document.createElement('div')
+      host.style.cssText = 'position:absolute;left:-9999px;width:240px;height:120px'
+      document.body.appendChild(host)
       try {
-        const gl = new WebglAddon()
-        term.loadAddon(gl)
-        r.webgl = true
-        gl.dispose()
+        const { Terminal } = await import('@xterm/xterm')
+        const term = new Terminal({ cols: 20, rows: 4 })
+        term.open(host)
+        r.xterm = true
+        try {
+          const { WebglAddon } = await import('@xterm/addon-webgl')
+          const gl = new WebglAddon()
+          term.loadAddon(gl)
+          r.webgl = true
+          gl.dispose()
+        } catch {
+          r.webgl = false
+        }
+        term.dispose()
       } catch {
-        r.webgl = false
+        r.xterm = false
       }
-      term.dispose()
-    } catch {
-      r.xterm = false
-    }
-    host.remove()
-    // eslint-disable-next-line no-console
-    console.log('RENDERER_SMOKE ' + JSON.stringify(r))
+      host.remove()
+      // eslint-disable-next-line no-console
+      console.log('RENDERER_SMOKE ' + JSON.stringify(r))
+    })()
 
     // Font probe (Phase 4 §D): confirm self-hosted Geist actually LOADS (not the
     // system-ui fallback). Uses fonts.load() to force the woff2 fetch — works even
