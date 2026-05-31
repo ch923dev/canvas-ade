@@ -40,7 +40,7 @@ import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { previewEdges } from '../lib/previewEdges'
-import { useTerminalRuntimeStore, selectRunningIds } from '../store/terminalRuntimeStore'
+import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { resolvePreviewTarget } from '../lib/previewTarget'
 import type { Board } from '../lib/boardSchema'
 import { BoardActionsContext, type BoardActions } from './boardActions'
@@ -129,7 +129,14 @@ function CanvasInner(): ReactElement {
 
   // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
   // a Terminal. Decorated here with an arrowhead; the path is computed by PreviewEdge.
-  const runningIds = useTerminalRuntimeStore(selectRunningIds)
+  // Select the STABLE `running` record (changes ref only when a terminal's run-state
+  // flips), then derive the Set in a memo. Selecting `new Set(...)` directly returns a
+  // fresh reference every render → useSyncExternalStore infinite loop / React #185.
+  const running = useTerminalRuntimeStore((s) => s.running)
+  const runningIds = useMemo(
+    () => new Set(Object.keys(running).filter((id) => running[id])),
+    [running]
+  )
   const edges = useMemo(
     () =>
       previewEdges(boards, runningIds).map((e) => ({
