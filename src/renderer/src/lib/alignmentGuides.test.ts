@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { computeAlignment, projectGuide, SNAP_THRESHOLD_PX, type Rect } from './alignmentGuides'
+import { computeAlignment, projectGuide, SNAP_THRESHOLD_PX, GAP_SNAP_PX, type Rect } from './alignmentGuides'
 
 const rect = (x: number, y: number, w = 100, h = 100): Rect => ({ x, y, w, h })
 
@@ -10,6 +10,7 @@ describe('computeAlignment — edge + center', () => {
     expect(r.y).toBe(400) // no Y match → unchanged
     const g = r.guides.find((g) => g.axis === 'x')
     expect(g).toBeDefined()
+    expect(g!.kind).toBe('align')
     expect(g!.pos).toBe(100)
     // line spans the union of both boards' y extent
     expect(g!.start).toBe(50)
@@ -51,10 +52,73 @@ describe('computeAlignment — edge + center', () => {
     expect(r.guides).toHaveLength(2)
     expect(r.guides.some((g) => g.axis === 'x')).toBe(true)
     expect(r.guides.some((g) => g.axis === 'y')).toBe(true)
+    expect(r.guides.every((g) => g.kind === 'align')).toBe(true)
   })
 
   test('SNAP_THRESHOLD_PX is the documented 8', () => {
     expect(SNAP_THRESHOLD_PX).toBe(8)
+  })
+})
+
+describe('computeAlignment — gap-snap (16px gutter between neighbors)', () => {
+  // Two boards that vertically overlap (axis-neighbors on X): dragged to the RIGHT of other.
+  test('snaps to a 16px gutter on the right of a vertical-neighbor', () => {
+    // other at x=100..200, y=0..100. dragged 100x100 approaching other's right edge (200)
+    // with a ~16px gap: dragged.left target = 200 + 16 = 216. Put it at 214 (diff 2).
+    const r = computeAlignment({ x: 214, y: 0, w: 100, h: 100 }, [{ x: 100, y: 0, w: 100, h: 100 }], 8)
+    expect(r.x).toBe(216) // snapped to other.right + 16
+    const gap = r.guides.find((g) => g.kind === 'gap')
+    expect(gap).toBeDefined()
+    expect(gap).toMatchObject({ kind: 'gap', axis: 'x', distance: 16 })
+  })
+
+  test('snaps to a 16px gutter on the left of a vertical-neighbor', () => {
+    // other x=300..400. dragged.right target = 300 - 16 = 284 ⇒ x = 184. approach at 186 (diff 2)
+    const r = computeAlignment({ x: 186, y: 0, w: 100, h: 100 }, [{ x: 300, y: 0, w: 100, h: 100 }], 8)
+    expect(r.x).toBe(184)
+    expect(r.guides.some((g) => g.kind === 'gap' && g.axis === 'x' && g.distance === 16)).toBe(true)
+  })
+
+  test('does NOT gap-snap to a non-neighbor (perpendicular ranges do not overlap)', () => {
+    // other is far below (y 500..600) — no Y overlap with dragged (y 0..100) → no gutter meaning.
+    const r = computeAlignment({ x: 214, y: 0, w: 100, h: 100 }, [{ x: 100, y: 500, w: 100, h: 100 }], 8)
+    expect(r.x).toBe(214) // unchanged
+    expect(r.guides.some((g) => g.kind === 'gap')).toBe(false)
+  })
+
+  test('edge/center ALIGN wins over a gap candidate at equal proximity', () => {
+    // Construct a case where an align stop and a gap target are both in range; align must win.
+    // other x=100..200,y=0..100. dragged left=205 → align(left↔right=200) diff5;
+    // gap right+16=216 vs dragged.left 205 diff 11. Align closer → align wins.
+    const r = computeAlignment({ x: 205, y: 0, w: 100, h: 100 }, [{ x: 100, y: 0, w: 100, h: 100 }], 8)
+    expect(r.x).toBe(200) // aligned dragged.left to other.right (edge touch), NOT the gutter
+    expect(r.guides.some((g) => g.kind === 'align')).toBe(true)
+  })
+})
+
+describe('computeAlignment — overlap detection', () => {
+  test('returns the intersection rect of the snapped dragged board vs an overlapped board', () => {
+    // dragged sits on top of other with no near snap (threshold tiny) → overlap reported.
+    const r = computeAlignment({ x: 150, y: 50, w: 100, h: 100 }, [{ x: 100, y: 0, w: 100, h: 100 }], 0)
+    expect(r.overlaps).toHaveLength(1)
+    expect(r.overlaps[0]).toEqual({ x: 150, y: 50, w: 50, h: 50 })
+  })
+
+  test('flush/touching boards are NOT an overlap (zero area)', () => {
+    // dragged.left = other.right exactly → edges touch, area 0.
+    const r = computeAlignment({ x: 200, y: 0, w: 100, h: 100 }, [{ x: 100, y: 0, w: 100, h: 100 }], 0)
+    expect(r.overlaps).toEqual([])
+  })
+
+  test('no overlap when boards are apart', () => {
+    const r = computeAlignment({ x: 400, y: 400, w: 100, h: 100 }, [{ x: 100, y: 0, w: 100, h: 100 }], 0)
+    expect(r.overlaps).toEqual([])
+  })
+})
+
+describe('GAP_SNAP_PX', () => {
+  test('is the documented 16', () => {
+    expect(GAP_SNAP_PX).toBe(16)
   })
 })
 
