@@ -36,6 +36,7 @@ import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
+import { cameraAnim } from '../lib/motion'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
@@ -55,11 +56,13 @@ import { installE2EHooks } from '../smoke/e2eHooks'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const edgeTypes: EdgeTypes = { preview: PreviewEdge }
+/** Fit/reset framing (no duration — used instant for fit-on-load & initial mount;
+ *  user-triggered fit/reset wrap these in `cameraAnim` for the §9 200ms tween). */
 const FIT_OPTIONS = { padding: 0.2, maxZoom: 1 } as const
 /** "Reset zoom" (0 / %): recenter on content pinned at 100% so it can't strand boards (#41). */
 const RESET_OPTIONS = { padding: 0.2, maxZoom: 1, minZoom: 1 } as const
-/** Single-board focus framing (DESIGN.md §5/§9: ~70px pad, 200ms animate). */
-const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX, duration: 200 } as const
+/** Single-board focus framing (DESIGN.md §5/§9: ~70px pad). Animated via `cameraAnim`. */
+const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX } as const
 
 /** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5). */
 function FadingDots(): ReactElement {
@@ -194,7 +197,7 @@ function CanvasInner(): ReactElement {
     (_e: MouseEvent, node: BoardFlowNode) => {
       setFocusedId(node.id)
       selectBoard(node.id)
-      void rf.fitView({ ...FOCUS_OPTIONS, nodes: [{ id: node.id }] })
+      void rf.fitView(cameraAnim({ ...FOCUS_OPTIONS, nodes: [{ id: node.id }] }))
     },
     [rf, selectBoard]
   )
@@ -314,11 +317,11 @@ function CanvasInner(): ReactElement {
         e.preventDefault()
         setDiag((v) => !v)
       } else if (e.key === '1' && !typing) {
-        void rf.fitView(FIT_OPTIONS)
+        void rf.fitView(cameraAnim(FIT_OPTIONS))
       } else if (e.key === '0' && !typing) {
         // Recenter content at 100% rather than zoomTo(1)-in-place, which can
         // strand every board off-screen after a far pan/zoom (#41).
-        void rf.fitView(RESET_OPTIONS)
+        void rf.fitView(cameraAnim(RESET_OPTIONS))
       }
     }
     window.addEventListener('keydown', onKey)

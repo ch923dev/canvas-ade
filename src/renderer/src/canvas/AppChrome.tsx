@@ -9,14 +9,16 @@ import { useReactFlow, useStore } from '@xyflow/react'
 import { useCanvasStore, type RecentProject } from '../store/canvasStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import type { BoardType } from '../lib/boardSchema'
+import { cameraAnim } from '../lib/motion'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
 
-/** Padding used by fit / overview framing (overview leaves more margin). */
+/** Padding used by fit / overview framing (overview leaves more margin). All three
+ *  are wrapped in `cameraAnim` at the callsite for the §9 200ms tween (reduced-motion safe). */
 const FIT = { padding: 0.2, maxZoom: 1 } as const
 /** "Reset zoom" (%): recenter on content pinned at 100% so it can't strand boards (#41). */
 const RESET = { padding: 0.2, maxZoom: 1, minZoom: 1 } as const
-const OVERVIEW = { padding: 0.35, duration: 240 } as const
+const OVERVIEW = { padding: 0.35 } as const
 
 export interface AppChromeProps {
   /** Add a board of `type` centered in the current view (shared with EmptyState). */
@@ -126,15 +128,15 @@ function CameraCluster(): ReactElement {
   return (
     <div style={styles.tr}>
       <div style={styles.pill}>
-        <ToolBtn name="fit" title="Zoom to fit (1)" onClick={() => void rf.fitView(FIT)} />
+        <ToolBtn name="fit" title="Zoom to fit (1)" onClick={() => void rf.fitView(cameraAnim(FIT))} />
         <span style={styles.divider} />
         <ToolBtn name="minus" title="Zoom out" onClick={() => void rf.zoomOut()} />
-        <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.fitView(RESET)}>
+        <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.fitView(cameraAnim(RESET))}>
           {Math.round(zoom * 100)}%
         </button>
         <ToolBtn name="plus" title="Zoom in" onClick={() => void rf.zoomIn()} />
         <span style={styles.divider} />
-        <ToolBtn name="overview" title="Overview" onClick={() => void rf.fitView(OVERVIEW)} />
+        <ToolBtn name="overview" title="Overview" onClick={() => void rf.fitView(cameraAnim(OVERVIEW))} />
       </div>
     </div>
   )

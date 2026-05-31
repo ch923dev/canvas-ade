@@ -128,8 +128,9 @@
 }
 
 /* §9 Motion — the ca-* keyframes referenced by board chrome (2.1+).
-   ca-pulse: --ok status dot halo · ca-progress(-bar): 1.25s indeterminate run
-   sliver · ca-blink: 1.05s step caret · ca-caret-run: 0.9s running glyph caret.
+   ca-pulse: --ok status dot halo · ca-progress(-bar): 1.2s indeterminate run
+   sliver · ca-blink: 1s step caret · ca-caret-run: 0.9s running glyph caret.
+   Camera fit/focus easing lives in lib/motion.ts (JS, reduced-motion gated).
    prefers-reduced-motion drops all loops (§9). */
 .ca-progress-bar {
   position: absolute;
@@ -138,7 +139,7 @@
   height: 100%;
   width: 32%;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  animation: ca-progress 1.25s linear infinite;
+  animation: ca-progress 1.2s linear infinite;
 }
 @keyframes ca-progress {
   0% {
@@ -150,7 +151,7 @@
 }
 
 .ca-blink {
-  animation: ca-blink 1.05s steps(1) infinite;
+  animation: ca-blink 1s steps(1) infinite;
 }
 .ca-caret-run {
   animation: ca-blink 0.9s steps(1) infinite;
@@ -184,7 +185,8 @@
   .ca-progress-bar,
   .ca-blink,
   .ca-caret-run,
-  .ca-pulse {
+  .ca-pulse,
+  .react-flow__resize-control.handle {
     animation: none !important;
   }
 }
@@ -380,6 +382,16 @@ body {
   border-radius: 2px;
   background: var(--surface-overlay);
   border: 1px solid var(--border-strong);
+  /* §9: handles fade in 100ms when they mount on hover/select (isVisible toggles). */
+  animation: ca-handle-in 0.1s ease-out;
+}
+@keyframes ca-handle-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .react-flow__resize-control.handle.bottom-right {
   box-shadow: 0 0 0 1px var(--accent);

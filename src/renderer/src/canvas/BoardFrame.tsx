@@ -323,7 +323,8 @@ export function BoardFrame({
         opacity: dimmed ? 0.55 : 1,
         display: 'flex',
         flexDirection: 'column',
-        transition: 'opacity .15s, border-color .1s'
+        // §9: board select ring animates 120ms ease-out (the ring is the box-shadow).
+        transition: 'opacity .15s, border-color .1s, box-shadow .12s ease-out'
       }}
     >
       {running && (
