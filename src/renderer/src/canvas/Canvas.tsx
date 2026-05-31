@@ -328,7 +328,7 @@ function CanvasInner(): ReactElement {
   // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
   useEffect(() => {
-    if (isE2E()) installE2EHooks(rf, { setFullView: setFullViewId })
+    if (isE2E()) installE2EHooks(rf, { setFullView: setFullViewId, setFocus: setFocusedId })
   }, [rf])
 
   // Capture the live camera into the (untracked) store so autosave persists it.

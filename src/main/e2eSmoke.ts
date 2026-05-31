@@ -163,6 +163,68 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }
   parts.push({ name: 'browser-gesture', ok: gestureOk, detail: gestureDetail })
 
+  // ── Bug 2 (focus webview ghost): double-clicking a terminal focuses it (animated
+  // fitView). A live Browser elsewhere must DETACH cleanly for the focus (no native view
+  // left attached → the #43961 ghost) and REATTACH on unfocus. The compositor pixel isn't
+  // code-assertable, but the detach/reattach invariant the fix preserves is. ──
+  let focusOk = false
+  let focusDetail = 'browser not live before focus'
+  if (browserOk) {
+    await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+    await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === true
+    }, 5000)
+    await evalIn(win, `window.__canvasE2E.setFocus(${JSON.stringify(termId)})`) // focus the terminal
+    await delay(500) // focus effect → applyLiveness demotes the non-focused browser
+    const capFocused = await debugCaptureView(browserId)
+    const detachedOnFocus = !capFocused.attached
+    await evalIn(win, 'window.__canvasE2E.setFocus(null)') // clear focus → browser reattaches
+    await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+    const reattached = await poll(async () => {
+      const rt = await evalIn<{ live: boolean } | null>(
+        win,
+        `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+      )
+      return rt?.live === true
+    }, 8000)
+    focusOk = detachedOnFocus && reattached
+    focusDetail = `detachedOnFocus=${detachedOnFocus} reattached=${reattached}`
+  }
+  parts.push({
+    name: 'focus-detach',
+    ok: focusOk,
+    detail: focusOk ? 'browser detached on terminal focus, reattached on unfocus' : focusDetail
+  })
+
+  // ── Bug 7 (config-scroll ghost): the terminal Configure popover must carry React Flow's
+  // `nowheel` opt-out so scrolling it doesn't pan the canvas (a pan moves live native views
+  // → ghost). Open the config and assert the popover is a `.nowheel` element (the fix). ──
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  await delay(150)
+  const cfgOk = await evalIn<boolean>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const node = document.querySelector('.react-flow__node[data-id="${termId}"]');
+       const cfgBtn = node && node.querySelector('button[title="Configure terminal"]');
+       if (!cfgBtn) return false;
+       cfgBtn.click(); await sleep(150);
+       const ok = !!document.querySelector('.nowheel select'); // the config popover (nowheel) holds the Shell <select>
+       cfgBtn.click(); // close
+       return ok;
+     })()`
+  )
+  parts.push({
+    name: 'config-nowheel',
+    ok: cfgOk,
+    detail: cfgOk ? 'config popover has nowheel (no pan on scroll)' : 'config popover missing nowheel'
+  })
+
   // ── Planning: seed, add a checklist element, assert it persisted on the board AND
   // that the whole canvas round-trips through the schema (persistence-readiness). ──
   const planId = await evalIn<string>(win, "window.__canvasE2E.seedBoard('planning')")

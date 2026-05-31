@@ -53,11 +53,14 @@ export interface CanvasE2E {
   setFullView: (id: string | null) => void
   /** Mark a terminal's PTY as exited in the runtime store (drives stale preview edge, bug 3). */
   setTerminalDown: (id: string) => void
+  /** Focus a board (dim others) or clear focus (null) — the double-click focus path. Bug 2. */
+  setFocus: (id: string | null) => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
 export interface E2EHostHooks {
   setFullView: (id: string | null) => void
+  setFocus: (id: string | null) => void
 }
 
 declare global {
@@ -139,6 +142,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setTerminalDown(id) {
       useTerminalRuntimeStore.getState().setRunning(id, 'exited')
+    },
+    setFocus(id) {
+      host.setFocus(id)
     }
   }
   window.__canvasE2E = api
