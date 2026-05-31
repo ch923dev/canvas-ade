@@ -42,7 +42,7 @@ import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { previewEdges } from '../lib/previewEdges'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
-import { resolvePreviewTarget } from '../lib/previewTarget'
+import type { ResolvedPushTarget } from '../lib/previewTarget'
 import type { Board } from '../lib/boardSchema'
 import { BoardActionsContext, type BoardActions } from './boardActions'
 import { FullViewModal } from './FullViewModal'
@@ -266,8 +266,34 @@ function CanvasInner(): ReactElement {
   // / maximize button can call them per-id: Full view opens the modal layer (no camera
   // move), Duplicate clones offset 36px + selects the copy, Delete parks a terminal's
   // live session then removes the board (mirrors the React Flow delete path).
-  const boardActions = useMemo<BoardActions>(
-    () => ({
+  const boardActions = useMemo<BoardActions>(() => {
+    // Apply a resolved push target: re-point an existing browser (forcing a reload) or
+    // spawn a fresh one beside the source terminal. Shared by the auto path (pushPreview)
+    // and the explicit multi-browser picker (pushPreviewTo).
+    const applyPush = (
+      st: ReturnType<typeof useCanvasStore.getState>,
+      from: Board,
+      url: string,
+      target: ResolvedPushTarget
+    ): void => {
+      const patch = { url, previewSourceId: from.id } as Partial<Board>
+      if (target.kind === 'existing') {
+        // Force a (re)load even when the pushed url equals the target's current url
+        // (same dev-server URL): bump the reload nonce BEFORE the store mutation so the
+        // reconcile that updateBoard triggers sees it and re-navigates — otherwise the
+        // url diff-skip (Bug #44) strands a load-failed view on its stale error page.
+        usePreviewStore.getState().requestReload(target.id)
+        st.updateBoard(target.id, patch)
+        st.selectBoard(target.id)
+      } else {
+        const id = st.addBoard('browser', { x: from.x + from.w + 40, y: from.y })
+        st.updateBoard(id, patch)
+        st.selectBoard(id)
+      }
+      hardCloseFullView()
+    }
+
+    return {
       // Maximize (⤢) toggles: open full view, or animate it closed if already full-view.
       requestFullView: (id) =>
         fullViewIdRef.current === id ? closeFullView() : openFullView(id),
@@ -282,30 +308,14 @@ function CanvasInner(): ReactElement {
         removeBoard(id)
         setFocusedId((f) => (f === id ? null : f))
       },
-      pushPreview: (fromBoardId, url) => {
+      pushPreviewTo: (fromBoardId, url, target) => {
         const st = useCanvasStore.getState()
         const from = st.boards.find((b) => b.id === fromBoardId)
         if (!from) return
-        const target = resolvePreviewTarget(st.boards, st.selectedId, fromBoardId)
-        const patch = { url, previewSourceId: fromBoardId } as Partial<Board>
-        if (target.kind === 'existing') {
-          // Force a (re)load even when the pushed url equals the target's current url
-          // (same dev-server URL): bump the reload nonce BEFORE the store mutation so the
-          // reconcile that updateBoard triggers sees it and re-navigates — otherwise the
-          // url diff-skip (Bug #44) strands a load-failed view on its stale error page.
-          usePreviewStore.getState().requestReload(target.id)
-          st.updateBoard(target.id, patch)
-          st.selectBoard(target.id)
-        } else {
-          const id = st.addBoard('browser', { x: from.x + from.w + 40, y: from.y })
-          st.updateBoard(id, patch)
-          st.selectBoard(id)
-        }
-        hardCloseFullView()
+        applyPush(st, from, url, target)
       }
-    }),
-    [duplicateBoard, removeBoard, openFullView, closeFullView, hardCloseFullView]
-  )
+    }
+  }, [duplicateBoard, removeBoard, openFullView, closeFullView, hardCloseFullView])
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
   // state — clearing it here keeps focus following selection so undo/redo can't
