@@ -120,6 +120,27 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     if (lod && board.type !== 'terminal') setHovered(false)
   }, [lod, board.type])
 
+  // Stable per-board content host: created ONCE and always the createPortal target, so
+  // toggling full view never changes the fiber structure (which would remount the subtree
+  // and kill a live PTY — bug 1). We RELOCATE this element in the DOM between the in-node
+  // anchor and the modal host; React keeps rendering into the same node, so no remount.
+  // Declared BEFORE the LOD early-return so these hooks run on EVERY render path
+  // (rules-of-hooks); in the LOD early-return path anchorRef is null so the effect no-ops.
+  // useState (not useRef) so the host element is created render-safe and stable, and the
+  // portal target is read from a value, not a ref during render (react-hooks/refs).
+  const [contentHost] = useState<HTMLDivElement>(() => {
+    const d = document.createElement('div')
+    d.style.position = 'absolute'
+    d.style.inset = '0'
+    return d
+  })
+  const anchorRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const target = fullView && fullViewHost ? fullViewHost : anchorRef.current
+    if (target && contentHost.parentNode !== target) target.appendChild(contentHost)
+  }, [contentHost, fullView, fullViewHost])
+
   // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
   // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).
   // TerminalBoard reads `lod` and swaps the xterm host for its own LOD card while
@@ -147,26 +168,6 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
       </div>
     )
   }
-
-  // Stable per-board content host: created ONCE and always the createPortal target, so
-  // toggling full view never changes the fiber structure (which would remount the subtree
-  // and kill a live PTY — bug 1). We RELOCATE this element in the DOM between the in-node
-  // anchor and the modal host; React keeps rendering into the same node, so no remount.
-  const contentHostRef = useRef<HTMLDivElement | null>(null)
-  if (!contentHostRef.current) {
-    const d = document.createElement('div')
-    d.style.position = 'absolute'
-    d.style.inset = '0'
-    contentHostRef.current = d
-  }
-  const anchorRef = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    const host = contentHostRef.current
-    if (!host) return
-    const target = fullView && fullViewHost ? fullViewHost : anchorRef.current
-    if (target && host.parentNode !== target) target.appendChild(host)
-  }, [fullView, fullViewHost])
 
   const common = { selected, hovered, dimmed }
   const subtree = (
@@ -208,7 +209,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
       )}
       {/* In-node mount point; the stable content host is appended here when not full-view. */}
       <div ref={anchorRef} style={{ position: 'absolute', inset: 0 }} />
-      {createPortal(subtree, contentHostRef.current)}
+      {createPortal(subtree, contentHost)}
     </>
   )
 }
