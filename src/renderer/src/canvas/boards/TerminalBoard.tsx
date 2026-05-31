@@ -21,7 +21,8 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import { agentIdentity, isRunning, statusFor, type TerminalState } from './terminalState'
+import { agentIdentity, brailleFrame, isRunning, statusFor, type TerminalState } from './terminalState'
+import { prefersReducedMotion } from '../../lib/motion'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
@@ -463,7 +464,20 @@ export function TerminalBoard({
     }
   }, [respawn, board.id])
 
+  // §9/§7.1 braille spinner: advance one frame every 80ms while running. Reduced
+  // motion holds it on a static glyph (no interval → frame stays put).
+  const [spinnerFrame, setSpinnerFrame] = useState(0)
+  useEffect(() => {
+    if (!running || prefersReducedMotion()) return
+    const id = setInterval(() => setSpinnerFrame((f) => f + 1), 80)
+    return () => clearInterval(id)
+  }, [running])
+
   const status = statusFor(state, identity)
+  // Prefix the running label with the spinner glyph (the §7.1 "working" indicator).
+  const displayStatus = running
+    ? { ...status, label: `${brailleFrame(spinnerFrame)} ${status.label}` }
+    : status
 
   /** Interrupt: send Ctrl-C (SIGINT) over the data plane to the running agent. */
   const interrupt = useCallback(() => {
@@ -520,7 +534,7 @@ export function TerminalBoard({
         hovered={hovered}
         dimmed={dimmed}
         running={running}
-        status={status}
+        status={displayStatus}
         actions={actions}
         contentBg="var(--inset)"
         onFull={onFull}

@@ -92,7 +92,7 @@ export function formatTimer(seconds: number): string {
   return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
-/** Braille spinner frames (DESIGN.md §9: ~90ms/frame cycle while running). */
+/** Braille spinner frames (DESIGN.md §9: 80ms/frame cycle while running). */
 export const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
 
 /** Spinner glyph for a monotonically increasing frame index (wraps). */
