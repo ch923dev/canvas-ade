@@ -38,7 +38,18 @@ export interface GapGuide {
   distance: number
 }
 
-export type Guide = AlignGuide | GapGuide
+/** An equal-spacing indicator (slice 2b): the dragged board is centered between two neighbors so
+ *  both gaps match. Each entry in `gaps` is an equal segment on `axis` (world coords from→to);
+ *  `perp` anchors the connectors+pills; `distance` is the (equal) gap size. */
+export interface DistributionGuide {
+  kind: 'distribute'
+  axis: 'x' | 'y'
+  gaps: { from: number; to: number }[]
+  perp: number
+  distance: number
+}
+
+export type Guide = AlignGuide | GapGuide | DistributionGuide
 
 export interface AlignResult {
   /** Snapped top-left (unchanged on an axis with no match). */
@@ -149,24 +160,82 @@ function intersect(a: Rect, b: Rect): Rect | null {
   return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
 }
 
+/**
+ * Best centered-distribution match on one axis: if the dragged board has BOTH an immediate
+ * perpendicular-neighbor to each side with room between them, the position that makes the two side
+ * gaps equal. Returns the snapped origin + a `distribute` guide, or null. `others` is the axis-mapped
+ * neighbor list (same shape `bestAxisMatch` consumes).
+ */
+function bestDistribution(
+  axis: 'x' | 'y',
+  dragOrigin: number,
+  dragSize: number,
+  dragPerpMin: number,
+  dragPerpMax: number,
+  others: OtherAxis[],
+  threshold: number
+): AxisMatch | null {
+  const dragCenter = dragOrigin + dragSize / 2
+  let L: OtherAxis | null = null // immediate left (rightmost far edge among left neighbors)
+  let R: OtherAxis | null = null // immediate right (leftmost near edge among right neighbors)
+  for (const o of others) {
+    if (!rangesOverlap(dragPerpMin, dragPerpMax, o.perpMin, o.perpMax)) continue
+    const oCenter = o.origin + o.size / 2
+    if (oCenter < dragCenter) {
+      if (!L || o.origin + o.size > L.origin + L.size) L = o
+    } else if (oCenter > dragCenter) {
+      if (!R || o.origin < R.origin) R = o
+    }
+  }
+  if (!L || !R) return null
+
+  const lFar = L.origin + L.size
+  const rNear = R.origin
+  const free = rNear - lFar - dragSize
+  if (free < 0) return null // no room → would overlap; not a distribution
+
+  const gap = free / 2
+  const origin = lFar + gap
+  const diff = Math.abs(dragOrigin - origin)
+  if (diff > threshold) return null
+
+  // Indicator row: center of the perp overlap shared by L, dragged, and R (fallback: dragged center).
+  const pMin = Math.max(dragPerpMin, L.perpMin, R.perpMin)
+  const pMax = Math.min(dragPerpMax, L.perpMax, R.perpMax)
+  const perp = pMin < pMax ? (pMin + pMax) / 2 : (dragPerpMin + dragPerpMax) / 2
+
+  const guide: DistributionGuide = {
+    kind: 'distribute',
+    axis,
+    gaps: [
+      { from: lFar, to: lFar + gap },
+      { from: origin + dragSize, to: rNear }
+    ],
+    perp,
+    distance: gap
+  }
+  return { diff, origin, guide }
+}
+
+/** Pick the better of two axis candidates: smaller diff wins; on an exact tie keep `primary`
+ *  (edge/center align or gutter), since alignment is the primary intent over distribution. */
+function pickAxis(primary: AxisMatch | null, distribution: AxisMatch | null): AxisMatch | null {
+  if (!primary) return distribution
+  if (!distribution) return primary
+  return distribution.diff < primary.diff ? distribution : primary
+}
+
 export function computeAlignment(rect: Rect, others: Rect[], threshold: number): AlignResult {
-  const xMatch = bestAxisMatch(
-    'x',
-    rect.x,
-    rect.w,
-    rect.y,
-    rect.y + rect.h,
-    others.map((o) => ({ origin: o.x, size: o.w, perpMin: o.y, perpMax: o.y + o.h })),
-    threshold
+  const xOthers = others.map((o) => ({ origin: o.x, size: o.w, perpMin: o.y, perpMax: o.y + o.h }))
+  const yOthers = others.map((o) => ({ origin: o.y, size: o.h, perpMin: o.x, perpMax: o.x + o.w }))
+
+  const xMatch = pickAxis(
+    bestAxisMatch('x', rect.x, rect.w, rect.y, rect.y + rect.h, xOthers, threshold),
+    bestDistribution('x', rect.x, rect.w, rect.y, rect.y + rect.h, xOthers, threshold)
   )
-  const yMatch = bestAxisMatch(
-    'y',
-    rect.y,
-    rect.h,
-    rect.x,
-    rect.x + rect.w,
-    others.map((o) => ({ origin: o.y, size: o.h, perpMin: o.x, perpMax: o.x + o.w })),
-    threshold
+  const yMatch = pickAxis(
+    bestAxisMatch('y', rect.y, rect.h, rect.x, rect.x + rect.w, yOthers, threshold),
+    bestDistribution('y', rect.y, rect.h, rect.x, rect.x + rect.w, yOthers, threshold)
   )
 
   const x = xMatch ? xMatch.origin : rect.x

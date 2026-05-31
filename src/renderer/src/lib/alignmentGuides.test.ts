@@ -11,9 +11,9 @@ describe('computeAlignment — edge + center', () => {
     const g = r.guides.find((g) => g.axis === 'x')
     expect(g).toBeDefined()
     expect(g!.kind).toBe('align')
-    expect(g!.pos).toBe(100)
     // narrow to AlignGuide so .start/.end are in scope (a gap guide has neither)
     if (g?.kind !== 'align') throw new Error('expected an align guide')
+    expect(g.pos).toBe(100)
     // line spans the union of both boards' y extent
     expect(g.start).toBe(50)
     expect(g.end).toBe(500)
@@ -31,7 +31,7 @@ describe('computeAlignment — edge + center', () => {
     // dragged right = x+100; want it to land on other.left = 300
     const r = computeAlignment(rect(205, 400), [rect(300, 400)], 8)
     expect(r.x).toBe(200) // right 305 → 300 ⇒ x 200
-    expect(r.guides.some((g) => g.axis === 'x' && g.pos === 300)).toBe(true)
+    expect(r.guides.some((g) => g.kind === 'align' && g.axis === 'x' && g.pos === 300)).toBe(true)
   })
 
   test('no match beyond threshold returns rect unchanged with no guides', () => {
@@ -164,5 +164,56 @@ describe('projectGapGuide + projectRect — world → screen', () => {
   test('projectRect maps a world rect to a screen rect', () => {
     const s = projectRect({ x: 100, y: 50, w: 20, h: 30 }, [10, 20, 2])
     expect(s).toEqual({ x: 210, y: 120, w: 40, h: 60 })
+  })
+})
+
+describe('computeAlignment — equal-spacing distribution (centered between two)', () => {
+  const L = { x: 0, y: 0, w: 100, h: 100 }
+  const R = { x: 400, y: 0, w: 100, h: 100 }
+
+  test('centers a board equally between two perpendicular-neighbors', () => {
+    // free = (R.left 400 - L.right 100) - w 100 = 200 → gap 100 → origin 200. Approach at 198.
+    const r = computeAlignment({ x: 198, y: 0, w: 100, h: 100 }, [L, R], 8)
+    expect(r.x).toBe(200)
+    const d = r.guides.find((g) => g.kind === 'distribute')
+    expect(d).toBeDefined()
+    expect(d).toMatchObject({ kind: 'distribute', axis: 'x', distance: 100 })
+    if (d && d.kind === 'distribute') {
+      expect(d.gaps).toHaveLength(2)
+      // left gap [100,200], right gap [300,400] — each length 100
+      expect(d.gaps[0]).toEqual({ from: 100, to: 200 })
+      expect(d.gaps[1]).toEqual({ from: 300, to: 400 })
+    }
+  })
+
+  test('no distribution snap beyond the threshold', () => {
+    const r = computeAlignment({ x: 185, y: 0, w: 100, h: 100 }, [L, R], 8) // diff 15 > 8
+    expect(r.guides.some((g) => g.kind === 'distribute')).toBe(false)
+  })
+
+  test('no distribution when there is not enough room (would overlap)', () => {
+    const tightR = { x: 150, y: 0, w: 100, h: 100 } // free = (150-100)-100 = -50
+    const r = computeAlignment({ x: 110, y: 0, w: 100, h: 100 }, [L, tightR], 8)
+    expect(r.guides.some((g) => g.kind === 'distribute')).toBe(false)
+  })
+
+  test('no distribution with only one neighbor', () => {
+    const r = computeAlignment({ x: 198, y: 0, w: 100, h: 100 }, [L], 8)
+    expect(r.guides.some((g) => g.kind === 'distribute')).toBe(false)
+  })
+
+  test('ignores non-neighbors (no perpendicular overlap) when picking L/R', () => {
+    const farR = { x: 400, y: 500, w: 100, h: 100 } // no Y overlap with the dragged board
+    const r = computeAlignment({ x: 198, y: 0, w: 100, h: 100 }, [L, farR], 8)
+    expect(r.guides.some((g) => g.kind === 'distribute')).toBe(false)
+  })
+
+  test('distributes on the Y axis too (vertical stack)', () => {
+    const T = { x: 0, y: 0, w: 100, h: 100 }
+    const B = { x: 0, y: 400, w: 100, h: 100 }
+    // free = (400 - 100) - 100 = 200 → gap 100 → origin y 200. Approach at 203.
+    const r = computeAlignment({ x: 0, y: 203, w: 100, h: 100 }, [T, B], 8)
+    expect(r.y).toBe(200)
+    expect(r.guides.some((g) => g.kind === 'distribute' && g.axis === 'y')).toBe(true)
   })
 })
