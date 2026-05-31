@@ -161,10 +161,13 @@ function intersect(a: Rect, b: Rect): Rect | null {
 }
 
 /**
- * Best centered-distribution match on one axis: if the dragged board has BOTH an immediate
- * perpendicular-neighbor to each side with room between them, the position that makes the two side
- * gaps equal. Returns the snapped origin + a `distribute` guide, or null. `others` is the axis-mapped
- * neighbor list (same shape `bestAxisMatch` consumes).
+ * Best equal-spacing distribution match on one axis. Two cases, whichever snaps closest:
+ *  - Case A (centered): the board has an immediate perpendicular-neighbor on EACH side with room
+ *    between them → the position that makes both side gaps equal.
+ *  - Case B (end-of-row rhythm): the board sits BEYOND the outermost neighbor on a side and there
+ *    are ≥2 neighbors → snap so the new gap equals the existing gap between the two outermost
+ *    neighbors (extending an even row/column). Both emit a `distribute` guide. `others` is the
+ *    axis-mapped neighbor list.
  */
 function bestDistribution(
   axis: 'x' | 'y',
@@ -175,11 +178,30 @@ function bestDistribution(
   others: OtherAxis[],
   threshold: number
 ): AxisMatch | null {
+  const neighbors = others
+    .filter((o) => rangesOverlap(dragPerpMin, dragPerpMax, o.perpMin, o.perpMax))
+    .sort((a, b) => a.origin - b.origin)
+
+  let best: AxisMatch | null = null
+  const consider = (origin: number, guide: DistributionGuide): void => {
+    const diff = Math.abs(dragOrigin - origin)
+    if (diff > threshold) return
+    if (best && diff >= best.diff) return
+    best = { diff, origin, guide }
+  }
+  // Perp anchor: center of the shared perpendicular overlap of the dragged board and `o`.
+  const perpOf = (o: OtherAxis): number => {
+    const pMin = Math.max(dragPerpMin, o.perpMin)
+    const pMax = Math.min(dragPerpMax, o.perpMax)
+    return pMin < pMax ? (pMin + pMax) / 2 : (dragPerpMin + dragPerpMax) / 2
+  }
+
   const dragCenter = dragOrigin + dragSize / 2
-  let L: OtherAxis | null = null // immediate left (rightmost far edge among left neighbors)
-  let R: OtherAxis | null = null // immediate right (leftmost near edge among right neighbors)
-  for (const o of others) {
-    if (!rangesOverlap(dragPerpMin, dragPerpMax, o.perpMin, o.perpMax)) continue
+
+  // ── Case A: centered between the immediate left + right neighbors ───────────────
+  let L: OtherAxis | null = null
+  let R: OtherAxis | null = null
+  for (const o of neighbors) {
     const oCenter = o.origin + o.size / 2
     if (oCenter < dragCenter) {
       if (!L || o.origin + o.size > L.origin + L.size) L = o
@@ -187,34 +209,72 @@ function bestDistribution(
       if (!R || o.origin < R.origin) R = o
     }
   }
-  if (!L || !R) return null
-
-  const lFar = L.origin + L.size
-  const rNear = R.origin
-  const free = rNear - lFar - dragSize
-  if (free < 0) return null // no room → would overlap; not a distribution
-
-  const gap = free / 2
-  const origin = lFar + gap
-  const diff = Math.abs(dragOrigin - origin)
-  if (diff > threshold) return null
-
-  // Indicator row: center of the perp overlap shared by L, dragged, and R (fallback: dragged center).
-  const pMin = Math.max(dragPerpMin, L.perpMin, R.perpMin)
-  const pMax = Math.min(dragPerpMax, L.perpMax, R.perpMax)
-  const perp = pMin < pMax ? (pMin + pMax) / 2 : (dragPerpMin + dragPerpMax) / 2
-
-  const guide: DistributionGuide = {
-    kind: 'distribute',
-    axis,
-    gaps: [
-      { from: lFar, to: lFar + gap },
-      { from: origin + dragSize, to: rNear }
-    ],
-    perp,
-    distance: gap
+  if (L && R) {
+    const lFar = L.origin + L.size
+    const rNear = R.origin
+    const free = rNear - lFar - dragSize
+    if (free >= 0) {
+      const gap = free / 2
+      const origin = lFar + gap
+      const pMin = Math.max(dragPerpMin, L.perpMin, R.perpMin)
+      const pMax = Math.min(dragPerpMax, L.perpMax, R.perpMax)
+      const perp = pMin < pMax ? (pMin + pMax) / 2 : (dragPerpMin + dragPerpMax) / 2
+      consider(origin, {
+        kind: 'distribute',
+        axis,
+        perp,
+        distance: gap,
+        gaps: [
+          { from: lFar, to: lFar + gap },
+          { from: origin + dragSize, to: rNear }
+        ]
+      })
+    }
   }
-  return { diff, origin, guide }
+
+  // ── Case B: end-of-row rhythm — match the adjacent existing gap ─────────────────
+  if (neighbors.length >= 2) {
+    // Right end: dragged sits to the right of the rightmost neighbor.
+    const b = neighbors[neighbors.length - 1]
+    const a = neighbors[neighbors.length - 2]
+    if (dragCenter > b.origin + b.size / 2) {
+      const refGap = b.origin - (a.origin + a.size)
+      if (refGap >= 0) {
+        const origin = b.origin + b.size + refGap // dragged near-edge
+        consider(origin, {
+          kind: 'distribute',
+          axis,
+          perp: perpOf(b),
+          distance: refGap,
+          gaps: [
+            { from: a.origin + a.size, to: b.origin }, // reference gap
+            { from: b.origin + b.size, to: origin } // new equal gap
+          ]
+        })
+      }
+    }
+    // Left end: dragged sits to the left of the leftmost neighbor.
+    const a2 = neighbors[0]
+    const b2 = neighbors[1]
+    if (dragCenter < a2.origin + a2.size / 2) {
+      const refGap = b2.origin - (a2.origin + a2.size)
+      if (refGap >= 0) {
+        const origin = a2.origin - refGap - dragSize // dragged near-edge
+        consider(origin, {
+          kind: 'distribute',
+          axis,
+          perp: perpOf(a2),
+          distance: refGap,
+          gaps: [
+            { from: origin + dragSize, to: a2.origin }, // new equal gap
+            { from: a2.origin + a2.size, to: b2.origin } // reference gap
+          ]
+        })
+      }
+    }
+  }
+
+  return best
 }
 
 /** Pick the better of two axis candidates: smaller diff wins; on an exact tie keep `primary`

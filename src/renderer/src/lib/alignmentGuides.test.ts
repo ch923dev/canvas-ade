@@ -304,3 +304,53 @@ describe('computeResizeSnap — moving-edge snapping', () => {
     expect(r.guides).toEqual([])
   })
 })
+
+describe('computeAlignment — end-of-row rhythm distribution (Case B)', () => {
+  const N0 = { x: 0, y: 0, w: 100, h: 100 }
+  const N1 = { x: 200, y: 0, w: 100, h: 100 } // gap 100 between N0.right(100) and N1.left(200)
+
+  test('snaps a board past the RIGHT end to match the existing gap', () => {
+    // refGap = N1.left(200) - N0.right(100) = 100. origin = N1.right(300) + 100 = 400. approach 398.
+    const r = computeAlignment({ x: 398, y: 0, w: 100, h: 100 }, [N0, N1], 8)
+    expect(r.x).toBe(400)
+    const d = r.guides.find((g) => g.kind === 'distribute')
+    expect(d).toBeDefined()
+    if (d && d.kind === 'distribute') {
+      expect(d.distance).toBe(100)
+      expect(d.gaps).toHaveLength(2)
+      expect(d.gaps).toContainEqual({ from: 100, to: 200 }) // reference gap (N0↔N1)
+      expect(d.gaps).toContainEqual({ from: 300, to: 400 }) // new equal gap (N1↔dragged)
+    }
+  })
+
+  test('snaps a board past the LEFT end to match the existing gap', () => {
+    const A = { x: 200, y: 0, w: 100, h: 100 }
+    const B = { x: 400, y: 0, w: 100, h: 100 } // refGap = 400 - 300 = 100
+    // origin = A.left(200) - refGap(100) - w(100) = 0. approach at 3.
+    const r = computeAlignment({ x: 3, y: 0, w: 100, h: 100 }, [A, B], 8)
+    expect(r.x).toBe(0)
+    expect(r.guides.some((g) => g.kind === 'distribute' && g.distance === 100)).toBe(true)
+  })
+
+  test('no rhythm snap beyond the threshold', () => {
+    const r = computeAlignment({ x: 380, y: 0, w: 100, h: 100 }, [N0, N1], 8) // target 400, diff 20
+    expect(r.guides.some((g) => g.kind === 'distribute')).toBe(false)
+  })
+
+  test('no rhythm with only one neighbor', () => {
+    const r = computeAlignment({ x: 398, y: 0, w: 100, h: 100 }, [N0], 8)
+    expect(r.guides.some((g) => g.kind === 'distribute')).toBe(false)
+  })
+
+  test('ignores non-neighbors (no perpendicular overlap)', () => {
+    const far = { x: 200, y: 500, w: 100, h: 100 }
+    const r = computeAlignment({ x: 398, y: 0, w: 100, h: 100 }, [N0, far], 8)
+    expect(r.guides.some((g) => g.kind === 'distribute')).toBe(false)
+  })
+
+  test('still centers between two (Case A) when the board is between them', () => {
+    // regression: between N0(0..100) and a board at 400..500 → centered, not rhythm.
+    const r = computeAlignment({ x: 198, y: 0, w: 100, h: 100 }, [N0, { x: 400, y: 0, w: 100, h: 100 }], 8)
+    expect(r.x).toBe(200)
+  })
+})
