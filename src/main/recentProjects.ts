@@ -3,8 +3,9 @@
  * Pure file I/O keyed by an explicit userDataDir + caller-supplied timestamp, so it's
  * fully testable without Electron's `app`. MRU-ordered, capped, prunes dead folders.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
+import writeFileAtomic from 'write-file-atomic'
 
 export const RECENT_LIMIT = 10
 
@@ -43,5 +44,8 @@ export function touchRecent(userDataDir: string, path: string, name: string, at:
   mkdirSync(userDataDir, { recursive: true })
   const others = listRecents(userDataDir).filter((r) => r.path !== path)
   const next = [{ path, name, lastOpenedAt: at }, ...others].slice(0, RECENT_LIMIT)
-  writeFileSync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
+  // Atomic write (mirrors projectStore): a torn writeFileSync could zero the MRU,
+  // making listRecents silently return [] (BUG-L5). write-file-atomic stages to a
+  // temp file + rename, so a crash mid-write leaves the prior good file intact.
+  writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
 }

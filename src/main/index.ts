@@ -168,10 +168,12 @@ app.whenReady().then(async () => {
         process.exitCode = code
         // app.exit() (not app.quit()): on Windows app.quit() ignores process.exitCode,
         // so the harness exit code wouldn't reach the shell. app.exit() propagates it
-        // but bypasses `before-quit` — so call shutdown() explicitly first to drain the
-        // PTY tree / preview views / local server (shutdown is idempotent). AWAIT the
-        // drain (the PTY tree-kill is now awaitable, #49) before exiting so a deep
-        // child tree is reaped instead of orphaned by a fixed timer race.
+        // but bypasses `before-quit` — so flush the renderer autosave (BUG-M2) and call
+        // shutdown() explicitly first to drain the PTY tree / preview views / local
+        // server (shutdown is idempotent). AWAIT the drain (the PTY tree-kill is now
+        // awaitable, #49) before exiting so a deep child tree is reaped instead of
+        // orphaned by a fixed timer race.
+        await flushRenderer()
         await shutdown()
         app.exit(code)
       } else {
@@ -201,6 +203,38 @@ function shutdown(): Promise<void> {
   return drained
 }
 
+/**
+ * Ask the renderer to flush its debounced autosave before we hard-exit (BUG-M2).
+ * The quit path calls `app.exit(0)`, which never fires the renderer `beforeunload`,
+ * so the autosave flush handler (useAutosave) would be skipped and the last ~1s of
+ * edits lost. We post `project:flush` with a unique reply channel; the renderer runs
+ * its flush (awaiting `project:save`) and replies. We resolve on the reply OR a short
+ * timeout fallback so a wedged/closed renderer can never hang the quit.
+ */
+function flushRenderer(timeoutMs = 1500): Promise<void> {
+  const win = mainWindow
+  const wc = win?.webContents
+  if (!win || !wc || wc.isDestroyed()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const replyChannel = `project:flush:done:${Date.now()}:${Math.random().toString(36).slice(2)}`
+    let done = false
+    const finish = (): void => {
+      if (done) return
+      done = true
+      ipcMain.removeAllListeners(replyChannel)
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(finish, timeoutMs)
+    ipcMain.once(replyChannel, finish)
+    try {
+      wc.send('project:flush', replyChannel)
+    } catch {
+      finish() // renderer gone — nothing to flush
+    }
+  })
+}
+
 app.on('window-all-closed', () => {
   // Route through app.quit() (non-darwin) so the guarded before-quit handler below
   // performs the awaited PTY-tree drain (#49) instead of racing a fire-and-forget
@@ -208,8 +242,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Guarded async quit (#49/BUG-031): on first entry, defer the quit, drain the PTY
-// tree (bounded by shutdown()'s own 2s timeout) so a deep agent child tree is reaped
+// Guarded async quit (#49/BUG-031): on first entry, defer the quit, flush the renderer
+// autosave (BUG-M2 — the hard app.exit bypasses the renderer beforeunload), drain the
+// PTY tree (bounded by shutdown()'s own 2s timeout) so a deep agent child tree is reaped
 // instead of orphaned, then exit. The `quitting` flag lets the post-drain app.exit(0)
 // proceed without re-deferring.
 let quitting = false
@@ -217,7 +252,9 @@ app.on('before-quit', (event) => {
   if (quitting) return
   quitting = true
   event.preventDefault()
-  void shutdown().finally(() => app.exit(0))
+  void flushRenderer()
+    .then(() => shutdown())
+    .finally(() => app.exit(0))
 })
 
 // Crash-path / signal cleanup (#50): before-quit/window-all-closed don't fire on an
