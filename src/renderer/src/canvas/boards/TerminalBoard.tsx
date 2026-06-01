@@ -458,6 +458,10 @@ export function TerminalBoard({
   const restart = useCallback(() => {
     const term = termRef.current
     if (!term) return
+    // A Restart is explicit start intent — drop the idle-on-mount flag (mirrors the
+    // Start button) so a later spawn-effect re-run (config Apply) doesn't render the
+    // idle overlay over this now-live PTY and let Start spawn a 2nd session (PTY-2).
+    clearIdleOnMount(board.id)
     void window.api.killTerminal(board.id)
     try {
       portRef.current?.close()
