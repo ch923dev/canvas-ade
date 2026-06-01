@@ -11,6 +11,7 @@ contract is `../design-reference/`.
 |---|---|---|
 | [`roadmap.md`](roadmap.md) | Phase-by-phase build order + status (Phases 0–4 shipped; Phase 5 = packaging). | ✅ live |
 | [`roadmap-whiteboard.md`](roadmap-whiteboard.md) | Separate feature track — Excalidraw feature integration for the Planning whiteboard (W1–W5, shapes deferred). Parallel to the main roadmap. | ✅ live |
+| [`roadmap-drawio.md`](roadmap-drawio.md) | Separate feature track — draw.io diagram/dev-tooling integration (D1–D3). Mermaid = decision gate. Shapes epic deferred (co-owned with the whiteboard track). | ✅ live |
 | [`feature-proposals.md`](feature-proposals.md) | Research-backed feature ideas (proposals only, nothing committed). | ✅ live |
 | [`decisions/`](decisions/) | ADRs — `0001-stack.md` (React Flow / custom whiteboard), `0002-preview-gate.md` (WebContentsView). | ✅ live |
 | [`reviews/`](reviews/) | All code reviews & bug hunts, newest first. [`reviews/README.md`](reviews/README.md) is the index; the newest dated file holds the **current open backlog**. | ✅ live |
