@@ -264,6 +264,21 @@ function firstFile(...candidates: Array<string | null | undefined>): string | nu
 }
 
 /**
+ * SEC-1: validate a spawn cwd. The renderer's `opts.cwd` is trusted-user input but a
+ * corrupt/hand-edited canvas.json can carry a missing or non-dir path; an invalid cwd
+ * throws inside pty.spawn. Mirror the `shell`/`dir` hardening: fall back to home unless
+ * cwd is an existing directory.
+ */
+export function safeCwd(cwd?: string): string {
+  try {
+    if (cwd && fs.statSync(cwd).isDirectory()) return cwd
+  } catch {
+    /* not accessible / does not exist → fall through */
+  }
+  return os.homedir()
+}
+
+/**
  * Git for Windows' `bash.exe` (Git Bash), if installed. Probes the install root
  * derived from `git` on PATH (`…\Git\cmd\git.exe` → `…\Git\bin\bash.exe`) plus
  * the usual Program Files / per-user locations. This is the REAL Git Bash, not
@@ -427,7 +442,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         name: 'xterm-256color',
         cols: opts.cols ?? 80,
         rows: opts.rows ?? 24,
-        cwd: opts.cwd || os.homedir(),
+        cwd: safeCwd(opts.cwd),
         env: { ...process.env } as Record<string, string>
       })
     } catch (err) {

@@ -3,7 +3,7 @@ import { usePreviewStore, DEFAULT_RUNTIME } from './previewStore'
 
 describe('previewStore.requestReload', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, menuOpen: false })
+    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
   })
 
   test('bumps reloadNonce so a same-URL push forces a re-navigate', () => {
@@ -44,7 +44,7 @@ describe('previewStore.requestReload', () => {
 
 describe('previewStore.patchIfPresent', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, menuOpen: false })
+    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
   })
 
   test('does NOT create an entry for an absent id (Bug #32 guard)', () => {
@@ -72,7 +72,7 @@ describe('previewStore.patchIfPresent', () => {
 
 describe('previewStore.clear', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, menuOpen: false })
+    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
   })
 
   test('removes an existing entry', () => {
@@ -99,7 +99,7 @@ describe('previewStore.clear', () => {
 
 describe('previewStore.setNodeGesture / setMenuOpen', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, menuOpen: false })
+    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
   })
 
   test('setNodeGesture toggles the flag', () => {
@@ -116,15 +116,36 @@ describe('previewStore.setNodeGesture / setMenuOpen', () => {
   })
 
   test('setMenuOpen toggles the flag', () => {
-    usePreviewStore.getState().setMenuOpen(true)
+    usePreviewStore.getState().setMenuOpen('a', true)
     expect(usePreviewStore.getState().menuOpen).toBe(true)
-    usePreviewStore.getState().setMenuOpen(false)
+    usePreviewStore.getState().setMenuOpen('a', false)
     expect(usePreviewStore.getState().menuOpen).toBe(false)
   })
 
   test('setMenuOpen is a no-op (same state) when unchanged', () => {
     const before = usePreviewStore.getState()
-    usePreviewStore.getState().setMenuOpen(false)
+    usePreviewStore.getState().setMenuOpen('a', false)
     expect(usePreviewStore.getState()).toBe(before)
+  })
+
+  test('PREV-C: stays open while ANY menu token is open', () => {
+    const { setMenuOpen } = usePreviewStore.getState()
+    setMenuOpen('a', true)
+    setMenuOpen('b', true)
+    expect(usePreviewStore.getState().menuOpen).toBe(true)
+    setMenuOpen('a', false) // first to close
+    expect(usePreviewStore.getState().menuOpen).toBe(true) // b still open
+    setMenuOpen('b', false)
+    expect(usePreviewStore.getState().menuOpen).toBe(false)
+  })
+
+  test('PREV-C: idempotent on repeat open/close of the same token', () => {
+    const { setMenuOpen } = usePreviewStore.getState()
+    setMenuOpen('a', true)
+    const afterOpen = usePreviewStore.getState()
+    setMenuOpen('a', true) // redundant open → no new state
+    expect(usePreviewStore.getState()).toBe(afterOpen)
+    setMenuOpen('a', false)
+    expect(usePreviewStore.getState().menuOpen).toBe(false)
   })
 })

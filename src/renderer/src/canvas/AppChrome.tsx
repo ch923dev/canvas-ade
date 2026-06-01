@@ -6,6 +6,7 @@
  */
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -62,8 +63,17 @@ function ProjectSwitcher(): ReactElement {
 
   const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
     setOpen(false)
-    // 1. Flush the current project to disk before tearing it down.
-    await window.api.project.save(toObject())
+    // 1. Flush the current project to disk before tearing it down. project:save returns
+    //    false on a write failure; the debounced autosaver is gated off once we flip to
+    //    'loading', so a swallowed false here loses the outgoing project's tail edits with
+    //    no signal (PERSIST-A / the SAVE-1 silent-loss class). Surface it and abort the
+    //    switch so the outgoing project stays open and editable for a retry.
+    const saved = await window.api.project.save(toObject())
+    if (saved === false) {
+      // eslint-disable-next-line no-console
+      console.error('project switch: final flush failed; aborting switch to avoid data loss')
+      return
+    }
     // 2. Suppress autosave + dispose native views/PTYs.
     setProjectLoading()
     await disposeLiveResources()
@@ -201,13 +211,16 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: -9999, left: -9999 })
   const triggerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuToken = useId()
   const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
 
   // Detach live previews while the picker is open (un-occlude it), like the board menu.
+  // Token-keyed so closing this picker can't reattach views under a still-open board ⋯
+  // menu, or vice versa (PREV-C).
   useEffect(() => {
-    setMenuOpen(open)
-    if (open) return () => setMenuOpen(false)
-  }, [open, setMenuOpen])
+    setMenuOpen(menuToken, open)
+    if (open) return () => setMenuOpen(menuToken, false)
+  }, [open, setMenuOpen, menuToken])
 
   useEffect(() => {
     if (!open) return

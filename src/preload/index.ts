@@ -161,7 +161,9 @@ const api = {
  * The renderer listens for { __ptyPort, id } and reads event.ports[0].
  */
 ipcRenderer.on('pty:port', (e, msg: { id: string }) => {
-  window.postMessage({ __ptyPort: true, id: msg.id }, '*', e.ports)
+  // Same-origin re-post (SEC-2): pin the target origin instead of '*' so this stays
+  // safe if an iframe is ever introduced. The MessagePorts ride in the transfer list.
+  window.postMessage({ __ptyPort: true, id: msg.id }, window.location.origin, e.ports)
 })
 
 if (process.contextIsolated) {

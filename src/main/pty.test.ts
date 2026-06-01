@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import * as os from 'node:os'
 import * as path from 'node:path'
 import {
   canonicalizeShellPath,
@@ -10,9 +11,26 @@ import {
   adoptCore,
   reapParkedCore,
   cleanupCore,
-  disposeAllPtysCore
+  disposeAllPtysCore,
+  safeCwd
 } from './pty'
 import type { ShellInfo } from './pty'
+
+describe('safeCwd (SEC-1)', () => {
+  it('returns an existing directory unchanged', () => {
+    expect(safeCwd(os.tmpdir())).toBe(os.tmpdir())
+  })
+  it('falls back to homedir for a non-existent path', () => {
+    expect(safeCwd(path.join(os.tmpdir(), 'definitely-not-real-xyzzy-9f3'))).toBe(os.homedir())
+  })
+  it('falls back to homedir for undefined cwd', () => {
+    expect(safeCwd(undefined)).toBe(os.homedir())
+  })
+  it('falls back to homedir when cwd is a file, not a dir', () => {
+    // process.execPath is the node/electron binary — exists, but is not a directory.
+    expect(safeCwd(process.execPath)).toBe(os.homedir())
+  })
+})
 
 describe('appendRing', () => {
   it('concatenates when the result is under the cap', () => {

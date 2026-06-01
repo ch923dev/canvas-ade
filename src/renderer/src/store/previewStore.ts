@@ -68,7 +68,13 @@ interface PreviewState {
    * its rect overlaps (the menu-occluded-by-preview bug). While set, the layer detaches
    * live views to their (z-ordered, clippable) HTML snapshot so the menu is visible, and
    * reattaches on close — the same path `nodeGesture` drives.
+   *
+   * Derived from `openMenus`: true while ANY popover is open. Multiple popovers can be
+   * registered at once (a board ⋯ menu + the Tidy picker), so a single boolean is wrong —
+   * the first to close would clear the flag and reattach live views UNDER a still-open
+   * second popover (occluded by the always-above native layer). PREV-C.
    */
+  openMenus: Set<string>
   menuOpen: boolean
   /** Shallow-merge a runtime patch for one board (creates the entry if absent). */
   patch: (id: string, patch: Partial<PreviewRuntime>) => void
@@ -89,13 +95,16 @@ interface PreviewState {
   requestReload: (id: string) => void
   /** Mark a node drag/resize gesture as started/ended (drives detach/reattach). */
   setNodeGesture: (active: boolean) => void
-  /** Mark a board ⋯ menu / device-overlapping popover as open/closed (drives detach/reattach). */
-  setMenuOpen: (active: boolean) => void
+  /** Mark a board ⋯ menu / device-overlapping popover as open/closed BY TOKEN (one stable
+   *  token per popover instance) so one closing can't reattach live views under another
+   *  still-open popover (PREV-C). `menuOpen` stays true while ANY token is registered. */
+  setMenuOpen: (token: string, active: boolean) => void
 }
 
 export const usePreviewStore = create<PreviewState>((set) => ({
   byId: {},
   nodeGesture: false,
+  openMenus: new Set<string>(),
   menuOpen: false,
   patch: (id, patch) =>
     set((s) => ({
@@ -116,7 +125,16 @@ export const usePreviewStore = create<PreviewState>((set) => ({
       return { byId: { ...s.byId, [id]: { ...cur, reloadNonce: cur.reloadNonce + 1 } } }
     }),
   setNodeGesture: (active) => set((s) => (s.nodeGesture === active ? s : { nodeGesture: active })),
-  setMenuOpen: (active) => set((s) => (s.menuOpen === active ? s : { menuOpen: active }))
+  setMenuOpen: (token, active) =>
+    set((s) => {
+      // Ref-count popovers by token; menuOpen = any open. Skip the open-already / closed-
+      // already cases so a redundant call doesn't emit a new state (PREV-C).
+      if (active ? s.openMenus.has(token) : !s.openMenus.has(token)) return s
+      const openMenus = new Set(s.openMenus)
+      if (active) openMenus.add(token)
+      else openMenus.delete(token)
+      return { openMenus, menuOpen: openMenus.size > 0 }
+    })
 }))
 
 /** Read one board's runtime state, falling back to the idle default. */

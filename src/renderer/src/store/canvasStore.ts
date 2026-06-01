@@ -305,9 +305,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (b.id !== id) return b
         const allowed = PATCHABLE_KEYS[b.type]
         const safe: Record<string, unknown> = {}
+        let diff = false
         for (const key of allowed) {
-          if (key in src) safe[key] = src[key]
+          if (key in src) {
+            safe[key] = src[key]
+            // Reference/value compare: a patch re-applying identical values must NOT
+            // mint a new boards ref or clear the redo branch (STATE-2). New-array refs
+            // (e.g. elements) on a real edit still differ, so genuine edits register.
+            if ((b as unknown as Record<string, unknown>)[key] !== src[key]) diff = true
+          }
         }
+        if (!diff) return b
         changed = true
         return { ...b, ...safe } as Board
       })
@@ -321,8 +329,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       let changed = false
       const boards = s.boards.map((b) => {
         if (b.id !== id) return b
+        const nw = Math.max(MIN_BOARD_SIZE.w, w)
+        const nh = Math.max(MIN_BOARD_SIZE.h, h)
+        // No-op resize (clamped to the same w/h) must not clear redo / re-ref (STATE-2).
+        if (nw === b.w && nh === b.h) return b
         changed = true
-        return { ...b, w: Math.max(MIN_BOARD_SIZE.w, w), h: Math.max(MIN_BOARD_SIZE.h, h) }
+        return { ...b, w: nw, h: nh }
       })
       if (!changed) return s
       return s.future.length ? { boards, future: [] } : { boards }
