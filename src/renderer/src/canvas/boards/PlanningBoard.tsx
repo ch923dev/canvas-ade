@@ -42,6 +42,7 @@ import { FreeText } from './planning/FreeText'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { eraseHitTest } from './planning/erase'
+import { rectFromPoints, marqueeHits } from './planning/marquee'
 import { shortcutTool, type PlanTool } from './planning/tools'
 import {
   makeArrow,
@@ -130,8 +131,14 @@ export function PlanningBoard({
     | { mode: 'arrow'; id: string }
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
+    | { mode: 'marquee'; startX: number; startY: number; additive: boolean }
     | null
   >(null)
+  // Live marquee box (board-local) while box-selecting; null when idle. Transient,
+  // session-only (never serialized); resolved to a selection set on pointer-up.
+  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(
+    null
+  )
 
   // Ids the in-flight erase swipe has marked for deletion. While set, those
   // elements are hidden from the render (immediate feedback) and committed as ONE
@@ -259,8 +266,15 @@ export function PlanningBoard({
       // An empty-well press focuses the well so the board-scoped letter shortcuts
       // (onKeyDown below) have a focus target. A press on a card focuses that card.
       if (e.target === e.currentTarget) e.currentTarget.focus()
-      clearSel()
       const p = toBoard(e)
+      if (tool === 'select') {
+        // Empty-well press → begin a marquee (Shift = additive). Selection is resolved
+        // on pointer-up (a no-move click clears unless Shift) — see onWellPointerUp.
+        drag.current = { mode: 'marquee', startX: p.x, startY: p.y, additive: e.shiftKey }
+        setMarqueeRect({ x: p.x, y: p.y, w: 0, h: 0 })
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
 
       if (tool === 'note') {
         beginChange()
@@ -305,7 +319,7 @@ export function PlanningBoard({
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
-    [tool, elements, commit, toBoard, beginChange, clearSel]
+    [tool, elements, commit, toBoard, beginChange]
   )
 
   const onWellPointerMove = useCallback(
@@ -331,6 +345,8 @@ export function PlanningBoard({
           }
         }
         if (grew) setPendingErase(new Set(d.removed))
+      } else if (d.mode === 'marquee') {
+        setMarqueeRect(rectFromPoints(d.startX, d.startY, p.x, p.y))
       }
     },
     [toBoard, elements]
@@ -393,8 +409,26 @@ export function PlanningBoard({
         beginChange()
         commit(elements.filter((el) => !removed.has(el.id)))
       }
+    } else if (d.mode === 'marquee') {
+      // No pointer event in scope here — read the box from marqueeRect (updated on
+      // every move). Selection is ephemeral (never serialized) → ZERO checkpoints.
+      const rect = marqueeRect ?? { x: d.startX, y: d.startY, w: 0, h: 0 }
+      setMarqueeRect(null)
+      const moved = rect.w > 2 || rect.h > 2
+      if (moved) {
+        const hits = marqueeHits(elements, rect) // → marqueeHits(elements, rect, measuredRef.current) in Task 8
+        setSelectedIds((prev) => {
+          if (!d.additive) return new Set(hits)
+          const next = new Set(prev)
+          for (const id of hits) next.add(id)
+          return next
+        })
+      } else if (!d.additive) {
+        // A bare click on the empty well (no drag, no Shift) clears the selection.
+        clearSel()
+      }
     }
-  }, [draftArrow, dragPos, commit, elements, beginChange])
+  }, [draftArrow, dragPos, commit, elements, beginChange, marqueeRect, clearSel])
 
   const onWellPointerCancel = useCallback(() => {
     // An OS pointer-cancel (palm/stylus/system gesture) mid-erase must NOT commit a
@@ -403,6 +437,11 @@ export function PlanningBoard({
     if (drag.current?.mode === 'erase') {
       drag.current = null
       setPendingErase(null)
+      return
+    }
+    if (drag.current?.mode === 'marquee') {
+      drag.current = null
+      setMarqueeRect(null)
       return
     }
     onWellPointerUp()
@@ -536,6 +575,7 @@ export function PlanningBoard({
           draftArrow={draftArrow}
           draftStroke={draftStroke}
           selectedIds={selectedIds}
+          marquee={marqueeRect}
           // Disable committed-vector hit-testing for ANY non-select tool (not just
           // pen/arrow) so a note/check placement over committed ink falls through
           // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).

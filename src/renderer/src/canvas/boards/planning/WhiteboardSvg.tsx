@@ -38,6 +38,8 @@ export interface WhiteboardSvgProps {
   draftStroke?: number[] | null
   /** Ids of the currently selected vector elements (arrows/strokes). */
   selectedIds?: ReadonlySet<string>
+  /** Live marquee box (board-local) while box-selecting; null when idle. */
+  marquee?: { x: number; y: number; w: number; h: number } | null
   /** Called when a committed arrow/stroke is pressed; `additive` = Shift was held. */
   onSelect?: (id: string, additive: boolean) => void
   /**
@@ -63,6 +65,7 @@ export function WhiteboardSvg({
   draftArrow,
   draftStroke,
   selectedIds,
+  marquee,
   onSelect,
   onDragStart,
   drawing = false
@@ -149,6 +152,20 @@ export function WhiteboardSvg({
         ) : null
       )}
       {draftPath && <path d={draftPath} fill="var(--text-2)" />}
+
+      {marquee && (marquee.w > 0 || marquee.h > 0) && (
+        <rect
+          x={marquee.x}
+          y={marquee.y}
+          width={marquee.w}
+          height={marquee.h}
+          fill="var(--accent)"
+          fillOpacity={0.08}
+          stroke="var(--accent)"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+        />
+      )}
     </svg>
   )
 }
