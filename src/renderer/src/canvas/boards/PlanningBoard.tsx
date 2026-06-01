@@ -52,7 +52,7 @@ import {
   makeText,
   nextNoteIndex,
   patchElement,
-  translateElement,
+  translateMany,
   removeElement,
   toggleItem,
   addItem,
@@ -123,11 +123,11 @@ export function PlanningBoard({
   // single undo checkpoint, not one mutation per frame (#9). A delta (not an
   // absolute top-left) so it translates EVERY kind uniformly, including arrows +
   // strokes which have no single top-left (#28, #37).
-  const [dragPos, setDragPos] = useState<{ id: string; dx: number; dy: number } | null>(null)
+  const [dragPos, setDragPos] = useState<{ ids: string[]; dx: number; dy: number } | null>(null)
   // Active drag (an element move, an arrow, or a pen stroke) → captured pointer.
   // A move records the grab point in board space so the delta = pointer − grab.
   const drag = useRef<
-    | { mode: 'move'; id: string; grabX: number; grabY: number }
+    | { mode: 'move'; ids: string[]; grabX: number; grabY: number }
     | { mode: 'arrow'; id: string }
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
@@ -244,15 +244,23 @@ export function PlanningBoard({
       // Do NOT checkpoint here: a zero-movement grab (plain click) would push a
       // no-op undo snapshot and wipe an armed redo branch (#11). The checkpoint is
       // taken lazily in onWellPointerUp, only if the move actually committed.
+      // Selection-aware moving set (Figma grammar). Pressing an already-selected
+      // element drags the whole set; pressing an unselected one (no Shift) replaces
+      // the selection with just it. (The card/vector onSelect already ran
+      // selectOnPress with the Shift flag, so read the resulting intent here off the
+      // live set — React state is async, so this is the PRE-press set, which is
+      // correct: already-selected keeps the set, unselected → [id].)
+      const sel = selectedIds
+      const movingIds = sel.has(id) ? [...sel] : [id]
       const p = toBoard(e)
       // Record the grab point; the live delta is pointer − grab. Works for every
       // kind (cards + arrows + strokes) since we translate by delta (#28, #37).
-      drag.current = { mode: 'move', id, grabX: p.x, grabY: p.y }
+      drag.current = { mode: 'move', ids: movingIds, grabX: p.x, grabY: p.y }
       // Capture on the WELL (not the card) so move/up route to the well handlers
       // even when the cursor leaves the card during a fast drag.
       wellRef.current?.setPointerCapture(e.pointerId)
     },
-    [elements, toBoard]
+    [elements, toBoard, selectedIds]
   )
 
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
@@ -328,9 +336,9 @@ export function PlanningBoard({
       if (!d) return
       const p = toBoard(e)
       if (d.mode === 'move') {
-        // Transient: render the dragged element shifted by the live delta; the
-        // store is written once on pointer-up so undo stays one checkpoint (#9).
-        setDragPos({ id: d.id, dx: Math.round(p.x - d.grabX), dy: Math.round(p.y - d.grabY) })
+        // Transient: render the dragged set shifted by the live delta; the store is
+        // written once on pointer-up so undo stays one checkpoint (#9).
+        setDragPos({ ids: d.ids, dx: Math.round(p.x - d.grabX), dy: Math.round(p.y - d.grabY) })
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
       } else if (d.mode === 'pen') {
@@ -373,15 +381,15 @@ export function PlanningBoard({
     drag.current = null
     if (!d) return
     if (d.mode === 'move') {
-      // Checkpoint + commit the final position ONCE, and only if the element
-      // actually moved (dragPos set on the first move frame). A zero-movement grab
-      // leaves dragPos null → no snapshot, no future-wipe (#11). The whole drag is
-      // a single undo checkpoint (#9).
+      // Checkpoint + commit the final position ONCE, and only if the set actually
+      // moved (dragPos set on the first move frame). A zero-movement grab leaves
+      // dragPos null → no snapshot, no future-wipe (#11). The whole drag is a single
+      // undo checkpoint (#9), even when the set has many elements.
       const pos = dragPos
       setDragPos(null)
       if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
         beginChange()
-        commit(translateElement(elements, pos.id, pos.dx, pos.dy))
+        commit(translateMany(elements, pos.ids, pos.dx, pos.dy))
       }
     } else if (d.mode === 'arrow') {
       const a = draftArrow
@@ -484,7 +492,7 @@ export function PlanningBoard({
   // Any kind is movable now (cards + arrows + strokes), so derive the SVG vectors
   // from viewElements too so a dragged arrow/stroke tracks the cursor live (#28, #37).
   const viewElements = dragPos
-    ? translateElement(elements, dragPos.id, dragPos.dx, dragPos.dy)
+    ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy)
     : pendingErase && pendingErase.size > 0
       ? elements.filter((el) => !pendingErase.has(el.id))
       : elements
