@@ -192,7 +192,16 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
 
 // ── Serialization + migration ─────────────────────────────────────────────────
 
-/** Boards + camera → a versioned document. Deep-clones so the doc owns its data. */
+/**
+ * Boards + camera → a versioned document. Deep-clones so the doc owns its data.
+ *
+ * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion,
+ * viewport, boards}. Ephemeral session state (selected tool, selected element,
+ * in-flight draft/erase, hover) lives in React/Zustand and MUST NEVER be routed
+ * into `board.elements[]` or a board patch key, or it bloats every autosave and
+ * resurrects stale tool/selection state on reload. (Excalidraw's
+ * cleanAppStateForExport discipline, enforced here by omission.)
+ */
 export function toObject(boards: Board[], viewport: CanvasViewport | null): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,

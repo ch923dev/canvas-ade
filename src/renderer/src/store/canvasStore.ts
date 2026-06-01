@@ -213,6 +213,10 @@ function freeSlot(
  * off-type field (e.g. `url`) must never land on a board it doesn't belong to (that
  * would forge a cross-type hybrid the discriminated union forbids). The common,
  * geometry/title keys are mergeable on every type.
+ *
+ * SCENE/SESSION CONTRACT: never add an ephemeral key here (selected tool/element,
+ * in-flight draft/erase, hover). Those stay in component/Zustand session state and
+ * are never serialized — see boardSchema.toObject.
  */
 const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z'] as const
 const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {

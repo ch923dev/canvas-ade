@@ -61,6 +61,10 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 - Project = a user-chosen folder. Whole canvas = single `canvas.json` at root + `canvas.json.bak` (parse-fail fallback). Heavy blobs in `assets/` by path, not inlined.
 - Atomic write (`write-file-atomic`), debounced autosave ~1s + sync flush on blur/`before-quit`. Root integer `schemaVersion` + migration pipeline.
 - App config + recent-projects list live in `app.getPath('userData')`, NEVER in the project folder.
+- **Scene/session split (whiteboard + boards):** only `{schemaVersion, viewport, boards}` is
+  serialized (`boardSchema.toObject`). Ephemeral session state — selected tool/element, in-flight
+  draft/erase, hover — stays in React/Zustand and is NEVER routed into `elements[]` or a board patch
+  key (`PATCHABLE_KEYS`). Borrowed from Excalidraw's `cleanAppStateForExport` discipline.
 
 ### Git / worktrees — DEFERRED (re-scoped 2026-05-30)
 Worktrees are **deferred to a post-MCP phase** under a better model: **Feature Workspaces** — a
