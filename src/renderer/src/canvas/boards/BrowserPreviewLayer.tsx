@@ -737,6 +737,12 @@ export function BrowserPreviewLayer({
         }
       }
 
+      // Bug M1: count the views already live ONCE before the pass (O(n), not O(n²)).
+      // Only the new-board branch below attaches within this loop (the r.exists branch
+      // never closes a board here), so incrementing on each attach keeps the count exact.
+      let liveNow = 0
+      for (const rr of recs.current.values()) if (rr.attached) liveNow++
+
       for (const g of boards) {
         const r = rec(g.id)
         if (!r.exists && !r.attached) {
@@ -755,10 +761,10 @@ export function BrowserPreviewLayer({
           // already live this pass and stop attaching once the cap is reached; a freed
           // slot (LOD / move-end → applyLiveness, which honours the cap) brings the
           // held boards live later.
-          let liveNow = 0
-          for (const rr of recs.current.values()) if (rr.attached) liveNow++
-          if (!blockedByFullView && liveNow < MAX_LIVE && liveEligible(g) && !occludesProtected(g))
+          if (!blockedByFullView && liveNow < MAX_LIVE && liveEligible(g) && !occludesProtected(g)) {
             void attachBoard(g)
+            liveNow++
+          }
           // Bug #3: a board created below LOD / off-pane isn't yet eligible, so it
           // would otherwise sit on the dead idle default (empty stage, no label)
           // until a later zoom gesture attaches it. Show the 'Connecting…'
