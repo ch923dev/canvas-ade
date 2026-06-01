@@ -600,3 +600,20 @@ export async function debugCaptureView(id: string): Promise<{ attached: boolean;
 export function debugViewIds(): string[] {
   return [...views.keys()]
 }
+
+/**
+ * E2E ONLY — the live webContents id for a board's view, or null if none exists. A
+ * close + reopen (`disposeOne` → `openPreview`) mints a NEW webContents (new id); a
+ * detach + reattach keeps the SAME one. Lets a probe assert page-state survival across
+ * a full-view toggle deterministically (no reliance on a status blip's timing), mirroring
+ * the terminal pid-survival assertion.
+ */
+export function debugViewWebContentsId(id: string): number | null {
+  const e = views.get(id)
+  if (!e) return null
+  try {
+    return e.view.webContents.id
+  } catch {
+    return null
+  }
+}

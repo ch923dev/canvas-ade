@@ -19,6 +19,20 @@ at that commit.
 | 4 — Design pass & polish | Every DESIGN.md token / board-chrome rule / state / motion (+ `prefers-reduced-motion`); full-view motion; §6.1 top band descoped into the title-bar toggle. | `abd7fa2` (PR #9) |
 | 5 — Packaging & release | **Not started.** CI matrix unsigned until here; signing (mac notarize + Win Authenticode), electron-updater feed, app icons. | — |
 
+**Post-Phase-4 fixes (chronological):**
+- **Full-view preview state-preservation** (`fix/fullview-preview-reset`, 2026-06-02) — toggling full
+  view **restarted** Browser boards: `applyLiveness`'s full-view branch tore down native views with
+  `webContents.close()` (both the full-viewed board, in the motion sub-branch, and every OTHER board),
+  which discards the page — so on exit `attachBoard` re-`openPreview`d at the durable `board.url`,
+  snapping the user's navigated page back to the root. Now both paths **detach** (snapshot + keep the
+  live `WebContentsView`); on exit `attachBoard` re-attaches via `attachPreview` (no `loadURL`), state
+  intact. The #44652 over-modal ghost stays handled by `detach()`'s `setVisible(false)`. Removed the
+  now-dead `evictLiveBoard`. **Test-gap closed:** the e2e harness wired `setFullView` to the raw id
+  setter, so it never set `fullViewEntering` → never reached the motion branch; added an animated
+  harness path (`openFullViewAnimated`/`closeFullViewAnimated`) + a `debugViewWebContentsId` accessor,
+  and two probes — `fullview-preserve` (other board) + `fullview-self-preserve` (webContents-id
+  survival across the enter+exit tween).
+
 ## Per-slice specs & plans (in git history under `docs/superpowers/`)
 
 Each followed the cadence **brainstorm → spec → plan → execute (subagent workflow)**.

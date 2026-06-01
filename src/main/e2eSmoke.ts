@@ -10,7 +10,7 @@
  */
 import type { BrowserWindow } from 'electron'
 import { summarizeE2E, type E2EPart } from './e2eReport'
-import { debugCaptureView } from './preview'
+import { debugCaptureView, debugViewIds, debugViewWebContentsId } from './preview'
 import { debugTerminalPid, debugWriteTerminal } from './pty'
 
 // Markers go to stdout via bare console.log — safe here because index.ts installs a
@@ -251,6 +251,16 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   // detached THROUGH a mutation, then reattaches on exit (no leak). ──
   let fvPrevOk = false
   let fvPrevDetail = 'browser not live before full view'
+  // PREV-STATE: full-viewing a DIFFERENT board must DETACH the other Browser's native view
+  // (not painting over the modal), but NOT destroy its webContents — destroying it discards
+  // the page's navigated state, so on full-view EXIT the board reloads at its persisted
+  // board.url instead of the page the user navigated to (the full-view-resets-other-browser
+  // bug). Assert the view stays DETACHED through a full-view mutation (no modal occlusion)
+  // AND survives in the main-side `views` map (its renderer is not closed). debugViewIds is
+  // the clean discriminator: close → id gone; detach → id retained. (Independent of the
+  // flaky capturePage.)
+  let fvSurviveOk = false
+  let fvSurviveDetail = 'browser not live before full view'
   const browserLiveBefore = await poll(async () => {
     const rt = await evalIn<{ live: boolean } | null>(
       win,
@@ -260,7 +270,7 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }, 4000)
   if (browserLiveBefore) {
     await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(planId)})`)
-    await delay(400) // applyLiveness full-view branch closes the browser view
+    await delay(400) // applyLiveness full-view branch detaches the other browser view
     await evalIn(win, `window.__canvasE2E.addChecklist(${JSON.stringify(planId)})`) // mutate → reconcile (the bug path)
     await delay(400)
     const capDuring = await debugCaptureView(browserId)
@@ -268,14 +278,60 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       win,
       `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
     )
+    // The other browser's webContents must NOT have been closed (its id stays in `views`),
+    // so its navigated page state survives the full-view session and no reload happens on exit.
+    const survived = debugViewIds().includes(browserId)
     fvPrevOk = !capDuring.attached && rtDuring?.live !== true
     fvPrevDetail = fvPrevOk
       ? 'browser stayed detached through a full-view mutation'
       : `browser re-attached over modal (attached=${capDuring.attached} live=${rtDuring?.live})`
+    fvSurviveOk = survived
+    fvSurviveDetail = survived
+      ? 'browser webContents survived full view (no reload on exit)'
+      : 'browser webContents was closed during full view → resets to board.url on exit'
     await evalIn(win, 'window.__canvasE2E.setFullView(null)') // exit → browser reattaches
     await delay(300)
   }
   parts.push({ name: 'fullview-preview', ok: fvPrevOk, detail: fvPrevDetail })
+  parts.push({ name: 'fullview-preserve', ok: fvSurviveOk, detail: fvSurviveDetail })
+
+  // ── PREV-SELF: full-viewing the Browser board ITSELF must not restart it. The fvId
+  // branch holds the view across the enter/exit MOTION tween — but via closeBoard (a real
+  // webContents.close), which discards the page; on settle attachBoard re-OPENs it at
+  // board.url, snapping the user's navigated page back to the root (the inverse of the
+  // other-board reset). Must drive the REAL animated path (openFullViewAnimated) — the
+  // plain setFullView raw-setter never sets fullViewEntering, so it skips the motion branch
+  // entirely and can't see this bug. Deterministic check (no status-blip timing): the live
+  // webContents id. A close+reopen mints a NEW id; a detach+reattach keeps the SAME one —
+  // exactly the terminal pid-survival assertion, applied to the native view. ──
+  const readStatus = async (): Promise<string | null> => {
+    const rt = await evalIn<{ status: string } | null>(
+      win,
+      `window.__canvasE2E.getRuntime(${JSON.stringify(browserId)})`
+    )
+    return rt?.status ?? null
+  }
+  let selfOk = false
+  let selfDetail = 'browser never reconnected before self-full-view'
+  const reconnected = await poll(async () => (await readStatus()) === 'connected', 6000)
+  if (reconnected) {
+    const wcBefore = debugViewWebContentsId(browserId)
+    await evalIn(win, `window.__canvasE2E.openFullViewAnimated(${JSON.stringify(browserId)})`)
+    await delay(700) // enter tween settles (fullViewEntering → false)
+    const wcDuring = debugViewWebContentsId(browserId)
+    await evalIn(win, 'window.__canvasE2E.closeFullViewAnimated()')
+    await delay(700) // exit tween + onExited → fullViewId cleared, view back on canvas
+    const wcAfter = debugViewWebContentsId(browserId)
+    // Same webContents id throughout = the view was detached/reattached, never closed, so
+    // the page (and its navigated state) survived. Any change/null = it was destroyed+reopened.
+    const survivedSelf =
+      wcBefore !== null && wcDuring === wcBefore && wcAfter === wcBefore
+    selfOk = survivedSelf
+    selfDetail = survivedSelf
+      ? `full-viewing the browser kept the same webContents #${wcBefore} (no restart)`
+      : `browser restarted across full view (wc before=${wcBefore} during=${wcDuring} after=${wcAfter})`
+  }
+  parts.push({ name: 'fullview-self-preserve', ok: selfOk, detail: selfDetail })
 
   // ── Full-view emulator: a Mobile/Tablet preset in full view must render as an
   // aspect-correct device (height-bound, centred, letterboxed) — NOT stretched to fill
