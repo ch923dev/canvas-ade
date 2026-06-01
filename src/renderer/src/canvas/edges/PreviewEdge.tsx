@@ -32,6 +32,33 @@ function borderPoint(from: Box, to: Box): { x: number; y: number } {
   return { x: from.x + dx * scale, y: from.y + dy * scale }
 }
 
+/**
+ * Bug M4: derive the source/target `Position` pair from the two centers' geometry so
+ * the bezier control arms pull toward the actual relationship between the boards. The
+ * old code hardcoded Right→Left, which fishhooks/S-curves when the target is to the
+ * left, above, or below the source. Pick the dominant axis (the larger absolute delta)
+ * and orient along it: the source leaves toward the target, the target receives from
+ * the opposite side. Pure — unit-tested over the four cardinal relationships.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper co-located with the edge it serves; exported for its unit test.
+export function edgePositions(
+  sourceCenter: { x: number; y: number },
+  targetCenter: { x: number; y: number }
+): { sourcePosition: Position; targetPosition: Position } {
+  const dx = targetCenter.x - sourceCenter.x
+  const dy = targetCenter.y - sourceCenter.y
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // Horizontal-dominant: target right → leave Right / enter Left; else mirror.
+    return dx >= 0
+      ? { sourcePosition: Position.Right, targetPosition: Position.Left }
+      : { sourcePosition: Position.Left, targetPosition: Position.Right }
+  }
+  // Vertical-dominant: target below → leave Bottom / enter Top; else mirror.
+  return dy >= 0
+    ? { sourcePosition: Position.Bottom, targetPosition: Position.Top }
+    : { sourcePosition: Position.Top, targetPosition: Position.Bottom }
+}
+
 export function PreviewEdge({
   id,
   source,
@@ -48,13 +75,14 @@ export function PreviewEdge({
   const tBox = box(t.internals.positionAbsolute, t.measured.width ?? 0, t.measured.height ?? 0)
   const sp = borderPoint(sBox, tBox)
   const tp = borderPoint(tBox, sBox)
+  const { sourcePosition, targetPosition } = edgePositions(sBox, tBox)
   const [path] = getBezierPath({
     sourceX: sp.x,
     sourceY: sp.y,
     targetX: tp.x,
     targetY: tp.y,
-    sourcePosition: Position.Right,
-    targetPosition: Position.Left
+    sourcePosition,
+    targetPosition
   })
   return (
     <BaseEdge
