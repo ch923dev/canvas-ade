@@ -43,6 +43,7 @@ import { ChecklistCard } from './planning/ChecklistCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { eraseHitTest } from './planning/erase'
 import { rectFromPoints, marqueeHits } from './planning/marquee'
+import { computeSnap, SNAP_TOL, type Guide } from './planning/snapping'
 import { shortcutTool, type PlanTool } from './planning/tools'
 import {
   makeArrow,
@@ -57,7 +58,9 @@ import {
   toggleItem,
   addItem,
   removeItem,
-  setItemLabel
+  setItemLabel,
+  elementBBox,
+  unionBBox
 } from './planning/elements'
 
 const TOOLS: ReadonlyArray<{
@@ -89,6 +92,10 @@ export function PlanningBoard({
   const zoom = useStore((s) => s.transform[2])
 
   const [tool, setTool] = useState<PlanTool>('select')
+  // In-board snapping (W2.2): edge/center alignment to neighbors while dragging.
+  // Default ON, toggled by the snap pill; guides are transient (session-only).
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [snapGuides, setSnapGuides] = useState<Guide[] | null>(null)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
   // Selection mutators (board-local, ephemeral — never serialized).
   const toggleSel = useCallback(
@@ -346,7 +353,30 @@ export function PlanningBoard({
       if (d.mode === 'move') {
         // Transient: render the dragged set shifted by the live delta; the store is
         // written once on pointer-up so undo stays one checkpoint (#9).
-        setDragPos({ ids: d.ids, dx: Math.round(p.x - d.grabX), dy: Math.round(p.y - d.grabY) })
+        let dx = Math.round(p.x - d.grabX)
+        let dy = Math.round(p.y - d.grabY)
+        if (snapEnabled) {
+          // Snap the moving set's union box to static neighbors' edges/centers, in
+          // board-local px (zoom-stable). Bias the raw delta + surface the guide lines.
+          const moving = new Set(d.ids)
+          const movingUnion = unionBBox(
+            d.ids
+              .map((mid) => elements.find((el) => el.id === mid))
+              .filter((el): el is PlanningElement => !!el)
+              .map((el) => {
+                const b = elementBBox(el, measuredRef.current.get(el.id))
+                return { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }
+              })
+          )
+          const statics = elements
+            .filter((el) => !moving.has(el.id))
+            .map((el) => elementBBox(el, measuredRef.current.get(el.id)))
+          const snap = computeSnap(movingUnion, statics, SNAP_TOL)
+          dx += snap.dx
+          dy += snap.dy
+          setSnapGuides(snap.guides.length > 0 ? snap.guides : null)
+        }
+        setDragPos({ ids: d.ids, dx, dy })
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
       } else if (d.mode === 'pen') {
@@ -365,7 +395,7 @@ export function PlanningBoard({
         setMarqueeRect(rectFromPoints(d.startX, d.startY, p.x, p.y))
       }
     },
-    [toBoard, elements]
+    [toBoard, elements, snapEnabled]
   )
 
   // Double-click empty whiteboard in select mode → drop a free-text element.
@@ -395,6 +425,7 @@ export function PlanningBoard({
       // undo checkpoint (#9), even when the set has many elements.
       const pos = dragPos
       setDragPos(null)
+      setSnapGuides(null)
       if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
         beginChange()
         commit(translateMany(elements, pos.ids, pos.dx, pos.dy))
@@ -450,6 +481,8 @@ export function PlanningBoard({
     // An OS pointer-cancel (palm/stylus/system gesture) mid-erase must NOT commit a
     // destructive delete the user never finished — discard the in-flight swipe. Other
     // gestures (move/arrow/pen) keep their existing pointer-up behavior on cancel.
+    // Always drop any live snap guides so they never linger past a cancelled move.
+    setSnapGuides(null)
     if (drag.current?.mode === 'erase') {
       drag.current = null
       setPendingErase(null)
@@ -492,6 +525,16 @@ export function PlanningBoard({
           }}
         />
       ))}
+      <div
+        style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-subtle)', margin: '0 2px' }}
+      />
+      <IconBtn
+        name="magnet"
+        title={snapEnabled ? 'Snapping on' : 'Snapping off'}
+        size={15}
+        active={snapEnabled}
+        onClick={() => setSnapEnabled((v) => !v)}
+      />
     </div>
   ) : undefined
 
@@ -592,6 +635,7 @@ export function PlanningBoard({
           draftStroke={draftStroke}
           selectedIds={selectedIds}
           marquee={marqueeRect}
+          guides={snapGuides}
           // Disable committed-vector hit-testing for ANY non-select tool (not just
           // pen/arrow) so a note/check placement over committed ink falls through
           // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).

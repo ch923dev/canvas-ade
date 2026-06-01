@@ -37,6 +37,7 @@ export type IconName =
   | 'trash'
   | 'settings'
   | 'globe'
+  | 'magnet'
 
 /** Icons drawn from multiple primitives (rect + path) rather than one path. */
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
@@ -74,7 +75,8 @@ const PATHS: Record<IconName, string> = {
   trash: 'M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13',
   settings: 'M4 8h7M15 8h5M4 16h5M13 16h7M13 6v4M9 14v4',
   globe:
-    'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18'
+    'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18',
+  magnet: 'M7 4v7a5 5 0 0 0 10 0V4M7 4h3.5M13.5 4H17M7 9h3.5M13.5 9H17'
 }
 
 interface SvgProps {

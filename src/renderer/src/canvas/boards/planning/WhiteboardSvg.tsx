@@ -40,6 +40,8 @@ export interface WhiteboardSvgProps {
   selectedIds?: ReadonlySet<string>
   /** Live marquee box (board-local) while box-selecting; null when idle. */
   marquee?: { x: number; y: number; w: number; h: number } | null
+  /** Live alignment guides (board-local) while dragging; null when idle. */
+  guides?: { axis: 'x' | 'y'; at: number; from: number; to: number }[] | null
   /** Called when a committed arrow/stroke is pressed; `additive` = Shift was held. */
   onSelect?: (id: string, additive: boolean) => void
   /**
@@ -66,6 +68,7 @@ export function WhiteboardSvg({
   draftStroke,
   selectedIds,
   marquee,
+  guides,
   onSelect,
   onDragStart,
   drawing = false
@@ -165,6 +168,14 @@ export function WhiteboardSvg({
           strokeWidth={1}
           strokeDasharray="4 3"
         />
+      )}
+
+      {guides?.map((g, i) =>
+        g.axis === 'x' ? (
+          <line key={i} x1={g.at} y1={g.from} x2={g.at} y2={g.to} stroke="var(--accent)" strokeWidth={1} />
+        ) : (
+          <line key={i} x1={g.from} y1={g.at} x2={g.to} y2={g.at} stroke="var(--accent)" strokeWidth={1} />
+        )
       )}
     </svg>
   )

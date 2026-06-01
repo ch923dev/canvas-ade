@@ -1081,7 +1081,16 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
        const a2 = note('w2-a'), b2 = note('w2-b');
        const afterMoveUndo = a2.x === ax0 && b2.x === bx0;
 
-       return { marqueeDel, afterDelUndo, multiMovedBoth, afterMoveUndo, snapX: 0 };
+       // (3) Snap: drag note B so its left edge lands within tol of A's left (x=40).
+       // After the multidrag undo, both notes are at their seeded positions (A x=40, B x=260).
+       // Clear selection with an empty-well click, then press B alone and drag it left.
+       ev(well, 'pointerdown', at(560, 300)); ev(well, 'pointerup', at(560, 300)); await sleep(30);
+       // B center board ≈ (338,88). Drag to board (122,88): raw dx ≈ -216 → B.x ≈ 44,
+       // within SNAP_TOL(6) of A's left (40) → committed B.x snaps to 40.
+       await drag(at(338, 88), at(122, 88), { downTarget: noteEl(1) });
+       const snapX = note('w2-b').x;
+
+       return { marqueeDel, afterDelUndo, multiMovedBoth, afterMoveUndo, snapX };
      })()`
   )
   const groupDeleteOk = w2.marqueeDel === 0 && w2.afterDelUndo === 2
@@ -1095,6 +1104,12 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     name: 'whiteboard-multidrag',
     ok: multidragOk,
     detail: multidragOk ? 'marquee 2 → drag one moves both; undo restores both in one step' : JSON.stringify(w2)
+  })
+  const snapOk = Math.abs(w2.snapX - 40) <= 1
+  parts.push({
+    name: 'whiteboard-snap',
+    ok: snapOk,
+    detail: snapOk ? "drag aligns B's left edge to neighbor (x=40)" : JSON.stringify(w2)
   })
 
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
