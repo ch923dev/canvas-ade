@@ -141,6 +141,69 @@ export function registerPreviewNavGuards(wc: NavGuardTarget): void {
   wc.on('will-frame-navigate', (details) => guard(details, details.url))
 }
 
+/** A holder for the mutable `failed` latch (the live `Entry` satisfies this). */
+interface FailedLatch {
+  failed: boolean
+}
+/** The minimal webContents surface the load latch listens on (testable). */
+interface LoadLatchTarget {
+  on(
+    event: 'did-start-navigation',
+    listener: (details: { isMainFrame: boolean }) => void
+  ): unknown
+  on(event: 'did-finish-load', listener: () => void): unknown
+  on(
+    event: 'did-fail-load',
+    listener: (
+      ev: unknown,
+      errorCode: number,
+      errorDescription: string,
+      validatedURL: string,
+      isMainFrame: boolean
+    ) => void
+  ): unknown
+}
+
+/**
+ * The `failed`-latch lifecycle (Bug #5), extracted so it can be unit-tested without
+ * Electron (TEST T5). A dead/refused main-frame load fires `did-fail-load`, then
+ * Chromium loads an error page whose `did-finish-load` must NOT promote the board back
+ * to "connected" — the latch suppresses that spurious success. A fresh main-frame
+ * `did-start-navigation` clears the latch so a successful reload/back/forward can
+ * promote again. `onSuccess(getUrl())` is the connected emit; `onFail(...)` is the
+ * load-failed emit; `onNavStart()` lets the renderer clear its own stale latch.
+ *
+ * Sub-resource / aborted main-frame failures (errorCode -3) and subframe loads are not
+ * board-level failures and don't latch. `applyZoom` runs on every finish (even the
+ * error page lays out) regardless of the latch.
+ */
+export function registerLoadLatch(
+  wc: LoadLatchTarget,
+  latch: FailedLatch,
+  hooks: {
+    getUrl: () => string
+    applyZoom: () => void
+    onNavStart: () => void
+    onSuccess: (url: string) => void
+    onFail: (errorCode: number, errorDescription: string, validatedURL: string) => void
+  }
+): void {
+  wc.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame) return
+    latch.failed = false
+    hooks.onNavStart()
+  })
+  wc.on('did-finish-load', () => {
+    hooks.applyZoom()
+    if (!latch.failed) hooks.onSuccess(hooks.getUrl())
+  })
+  wc.on('did-fail-load', (_ev, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return
+    latch.failed = true
+    hooks.onFail(errorCode, errorDescription, validatedURL)
+  })
+}
+
 function round(b: Rectangle): Rectangle {
   return {
     x: Math.round(b.x),
@@ -206,30 +269,33 @@ function ensure(id: string, win: BrowserWindow): Entry {
     wc.on('before-input-event', (_ev, input) => {
       if (input.type === 'keyDown' && input.key === 'Escape') emit({ id, type: 'escape' })
     })
-    // A fresh main-frame navigation clears the failed latch — until proven otherwise
-    // (a later did-fail-load), this load is assumed good. Tell the renderer too so a
-    // stale `load-failed` latch is cleared and the following did-finish-load can
-    // promote to `connected` after a successful reload/back/forward (Bug #5). This
-    // does NOT fire for Chromium's error-page commit (it reuses the failed
-    // navigation, no new did-start-navigation), so the error page's own
-    // did-finish-load suppression is preserved.
-    wc.on('did-start-navigation', (details) => {
-      if (!details.isMainFrame) return
-      e!.failed = false
-      emit({ id, type: 'did-start-navigation' })
-    })
-    // Re-apply the held zoom factor after each load so the page keeps laying out at
-    // its fixed CSS width W (otherwise a load resets the factor to 1). ALWAYS re-apply
-    // zoom (even the error page lays out), but only report "connected" when the load
-    // didn't fail — Chromium's error page fires its own did-finish-load AFTER
-    // did-fail-load, which would otherwise clobber the load-failed state (Bug #5).
-    wc.on('did-finish-load', () => {
-      try {
-        wc.setZoomFactor(e!.zoom)
-      } catch {
-        /* view gone */
-      }
-      if (!e!.failed) emit({ id, type: 'did-finish-load', url: wc.getURL() })
+    // The `failed`-latch lifecycle (Bug #5), wired via the extracted, unit-tested
+    // `registerLoadLatch` (TEST T5):
+    //  • did-start-navigation (main frame) clears the latch — until proven otherwise
+    //    this load is assumed good — and tells the renderer to clear its own stale
+    //    `load-failed` so the following did-finish-load can promote to `connected`
+    //    after a successful reload/back/forward. Does NOT fire for Chromium's
+    //    error-page commit (it reuses the failed navigation), so the error page's
+    //    own did-finish-load suppression is preserved.
+    //  • did-finish-load ALWAYS re-applies the held zoom factor (even the error page
+    //    lays out, and a load resets the factor to 1) but only reports "connected"
+    //    when the latch is clear — Chromium's error page fires its own did-finish-load
+    //    AFTER did-fail-load, which would otherwise clobber the load-failed state.
+    //  • did-fail-load latches `failed` for a real main-frame failure (ignoring the
+    //    aborted/-3 case) so the error page's subsequent did-finish-load is suppressed.
+    registerLoadLatch(wc, e, {
+      getUrl: () => wc.getURL(),
+      applyZoom: () => {
+        try {
+          wc.setZoomFactor(e!.zoom)
+        } catch {
+          /* view gone */
+        }
+      },
+      onNavStart: () => emit({ id, type: 'did-start-navigation' }),
+      onSuccess: (url) => emit({ id, type: 'did-finish-load', url }),
+      onFail: (errorCode, errorDescription, validatedURL) =>
+        emit({ id, type: 'did-fail-load', url: validatedURL, errorCode, errorDescription })
     })
     // Surface navigation so the renderer can update the URL bar + back/fwd state.
     // An error page navigates with httpResponseCode 0 (or ≥400 for HTTP errors) →
@@ -267,14 +333,6 @@ function ensure(id: string, win: BrowserWindow): Entry {
         canGoBack: wc.navigationHistory.canGoBack(),
         canGoForward: wc.navigationHistory.canGoForward()
       })
-    })
-    // Only the top-level (main-frame) load failure is a board-level "load-failed"
-    // state; sub-resource/aborted loads (errorCode -3) are ignored. Latch `failed`
-    // AFTER that guard so the error page's subsequent did-finish-load is suppressed.
-    wc.on('did-fail-load', (_ev, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3) return
-      e!.failed = true
-      emit({ id, type: 'did-fail-load', url: validatedURL, errorCode, errorDescription })
     })
   }
   return e
@@ -353,9 +411,14 @@ interface AttachArgs {
  * to the absence of a preview preload. A synthetic/internal call (no senderFrame) is
  * allowed; only a real foreign frame is blocked.
  */
-function isForeignSender(e: IpcMainInvokeEvent, getWin: () => BrowserWindow | null): boolean {
+export function isForeignSender(
+  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
+  getWin: () => BrowserWindow | null
+): boolean {
   const main = getWin()?.webContents.mainFrame
-  return !!main && !!e.senderFrame && e.senderFrame !== main
+  if (!e.senderFrame) return false // synthetic/internal call — allow
+  if (!main) return true // real sender but window unresolved — treat as foreign, DENY
+  return e.senderFrame !== main
 }
 
 export function registerPreviewHandlers(
