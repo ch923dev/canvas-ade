@@ -337,6 +337,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   toObject: () => toObject(get().boards, get().viewport),
   loadObject: (doc) => {
     const d = fromObject(doc)
+    // Clear the dedup ref: it points at the pre-load boards array; a fresh project's
+    // history starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
+    lastRecorded = null
     set({ boards: d.boards, viewport: d.viewport, selectedId: null, past: [], future: [] })
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
@@ -346,6 +349,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return
     }
     const d = fromObject(r.doc)
+    // Clear the dedup ref (see loadObject): the opened project's history starts empty.
+    lastRecorded = null
     set({
       boards: d.boards,
       viewport: d.viewport,
