@@ -88,7 +88,29 @@ export function PlanningBoard({
   const zoom = useStore((s) => s.transform[2])
 
   const [tool, setTool] = useState<PlanTool>('select')
-  const [selectedElId, setSelectedElId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
+  // Selection mutators (board-local, ephemeral — never serialized).
+  const toggleSel = useCallback(
+    (id: string) =>
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      }),
+    []
+  )
+  const clearSel = useCallback(() => setSelectedIds(new Set()), [])
+  // Select on element press: additive (Shift) toggles; plain press replaces the
+  // set with just this element unless it is already in the selection (a press on
+  // an already-selected element keeps the multi-selection — Figma drag grammar).
+  const selectOnPress = useCallback(
+    (id: string, additive: boolean) => {
+      if (additive) toggleSel(id)
+      else setSelectedIds((prev) => (prev.has(id) ? prev : new Set([id])))
+    },
+    [toggleSel]
+  )
   const wellRef = useRef<HTMLDivElement>(null)
   const elements = board.elements
 
@@ -237,7 +259,7 @@ export function PlanningBoard({
       // An empty-well press focuses the well so the board-scoped letter shortcuts
       // (onKeyDown below) have a focus target. A press on a card focuses that card.
       if (e.target === e.currentTarget) e.currentTarget.focus()
-      setSelectedElId(null)
+      clearSel()
       const p = toBoard(e)
 
       if (tool === 'note') {
@@ -283,7 +305,7 @@ export function PlanningBoard({
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
-    [tool, elements, commit, toBoard, beginChange]
+    [tool, elements, commit, toBoard, beginChange, clearSel]
   )
 
   const onWellPointerMove = useCallback(
@@ -411,7 +433,7 @@ export function PlanningBoard({
           active={tool === t}
           onClick={() => {
             setTool(t)
-            setSelectedElId(null)
+            clearSel()
           }}
         />
       ))}
@@ -459,12 +481,12 @@ export function PlanningBoard({
         onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
         onKeyDown={(e) => {
-          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElId) {
+          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
             e.stopPropagation()
             e.preventDefault()
             beginChange()
-            commit(removeElement(elements, selectedElId))
-            setSelectedElId(null)
+            commit(elements.filter((el) => !selectedIds.has(el.id)))
+            clearSel()
             return
           }
           const next = shortcutTool(e.key, {
@@ -482,7 +504,7 @@ export function PlanningBoard({
             e.stopPropagation()
             e.preventDefault()
             setTool(next)
-            setSelectedElId(null)
+            clearSel()
           }
         }}
         style={{
@@ -513,13 +535,13 @@ export function PlanningBoard({
           strokes={strokes}
           draftArrow={draftArrow}
           draftStroke={draftStroke}
-          selectedId={selectedElId}
+          selectedIds={selectedIds}
           // Disable committed-vector hit-testing for ANY non-select tool (not just
           // pen/arrow) so a note/check placement over committed ink falls through
           // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
           drawing={tool !== 'select'}
-          onSelect={(id) => {
-            setSelectedElId(id)
+          onSelect={(id, additive) => {
+            selectOnPress(id, additive)
             wellRef.current?.focus()
           }}
           onDragStart={startElementDrag}
@@ -537,6 +559,8 @@ export function PlanningBoard({
                 onChangeText={setNoteText}
                 onDelete={deleteEl}
                 onEditStart={beginChange}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
               />
             )
           }
@@ -550,6 +574,8 @@ export function PlanningBoard({
                 onChangeText={setTextText}
                 onDelete={deleteEl}
                 onEditStart={beginChange}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
               />
             )
           }
@@ -568,6 +594,8 @@ export function PlanningBoard({
                 onDelete={deleteEl}
                 onEditStart={beginChange}
                 onMeasureBottom={growForChecklist}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
               />
             )
           }

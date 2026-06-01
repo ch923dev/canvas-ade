@@ -1010,6 +1010,93 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : JSON.stringify(wb)
   })
 
+  // ── W2 selection core (multi-select + snapping). Seed two notes, drive the REAL
+  // DOM on .pl-well, and assert the EFFECTS via getBoards() (selection is ephemeral
+  // component state). A marquee that selects both is proven by the group it then
+  // deletes / drags; snapping is proven by the committed coordinate.
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { elements: [
+       { id: 'w2-a', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: '', rotation: 0 },
+       { id: 'w2-b', kind: 'note', x: 260, y: 40, w: 156, h: 96, tint: 'blue', text: '', rotation: 0 }
+     ] })`
+  )
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+  await delay(200)
+  const w2 = await evalIn<{
+    marqueeDel: number
+    afterDelUndo: number
+    multiMovedBoth: boolean
+    afterMoveUndo: boolean
+    snapX: number
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const id = ${JSON.stringify(planId)};
+       const board = () => window.__canvasE2E.getBoards().find((x) => x.id === id);
+       const els = () => { const b = board(); return b && b.type === 'planning' ? b.elements : []; };
+       const note = (nid) => els().find((e) => e.id === nid);
+       const count = () => els().length;
+       const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+       const well = node && node.querySelector('.pl-well');
+       if (!well) return { marqueeDel: -1, afterDelUndo: -1, multiMovedBoth: false, afterMoveUndo: false, snapX: -1 };
+       const r = well.getBoundingClientRect();
+       const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1;
+       const at = (bx, by) => ({ x: r.left + bx * scale, y: r.top + by * scale });
+       const noteEl = (i) => node.querySelectorAll('.pl-note')[i];
+       const ev = (target, type, p, shift) => {
+         try { target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: p.x, clientY: p.y, shiftKey: !!shift })); } catch (e) {}
+       };
+       // down on downTarget, then N moves + up on the WELL (it owns pointer capture).
+       const drag = async (from, to, opts) => {
+         const o = opts || {};
+         const downT = o.downTarget || well;
+         ev(downT, 'pointerdown', from, o.shift); await sleep(20);
+         const steps = 4;
+         for (let i = 1; i <= steps; i++) {
+           const t = i / steps;
+           ev(well, 'pointermove', { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }, o.shift);
+           await sleep(15);
+         }
+         ev(well, 'pointerup', to, o.shift); await sleep(40);
+       };
+       const press = (k) => { well.focus(); well.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); };
+
+       well.focus(); await sleep(20);
+       // (1) marquee a box over BOTH notes from an empty corner, then Delete the group.
+       await drag(at(10, 10), at(440, 150)); // empty start, covers w2-a + w2-b
+       press('Delete'); await sleep(60);
+       const marqueeDel = count();
+       window.__canvasE2E.undo(); await sleep(60);
+       const afterDelUndo = count();
+
+       // (2) re-marquee both, then drag note A by board-local (40,40): BOTH move (one undo step).
+       await drag(at(10, 10), at(440, 150)); await sleep(20);
+       const ax0 = note('w2-a').x, bx0 = note('w2-b').x;
+       await drag(at(118, 88), at(158, 128), { downTarget: noteEl(0) }); // press the (selected) note A
+       const a1 = note('w2-a'), b1 = note('w2-b');
+       const multiMovedBoth = a1.x - ax0 >= 30 && b1.x - bx0 >= 30;
+       window.__canvasE2E.undo(); await sleep(60);
+       const a2 = note('w2-a'), b2 = note('w2-b');
+       const afterMoveUndo = a2.x === ax0 && b2.x === bx0;
+
+       return { marqueeDel, afterDelUndo, multiMovedBoth, afterMoveUndo, snapX: 0 };
+     })()`
+  )
+  const groupDeleteOk = w2.marqueeDel === 0 && w2.afterDelUndo === 2
+  parts.push({
+    name: 'whiteboard-group-delete',
+    ok: groupDeleteOk,
+    detail: groupDeleteOk ? 'marquee selects 2 → Delete removes both; undo restores both in one step' : JSON.stringify(w2)
+  })
+  const multidragOk = w2.multiMovedBoth && w2.afterMoveUndo
+  parts.push({
+    name: 'whiteboard-multidrag',
+    ok: multidragOk,
+    detail: multidragOk ? 'marquee 2 → drag one moves both; undo restores both in one step' : JSON.stringify(w2)
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 4, detail: `${count} boards` })
 

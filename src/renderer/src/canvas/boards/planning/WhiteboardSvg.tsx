@@ -36,10 +36,10 @@ export interface WhiteboardSvgProps {
   draftArrow?: ArrowElement | null
   /** In-progress freehand points while dragging the `pen` tool (board-local). */
   draftStroke?: number[] | null
-  /** Id of the currently selected vector element (arrow or stroke). */
-  selectedId?: string | null
-  /** Called when a committed arrow or stroke is clicked. */
-  onSelect?: (id: string) => void
+  /** Ids of the currently selected vector elements (arrows/strokes). */
+  selectedIds?: ReadonlySet<string>
+  /** Called when a committed arrow/stroke is pressed; `additive` = Shift was held. */
+  onSelect?: (id: string, additive: boolean) => void
   /**
    * Begin a board-local drag of a committed vector (arrow/stroke) — wired to the
    * same `startElementDrag` the cards use so vectors are repositionable, not just
@@ -62,7 +62,7 @@ export function WhiteboardSvg({
   strokes,
   draftArrow,
   draftStroke,
-  selectedId,
+  selectedIds,
   onSelect,
   onDragStart,
   drawing = false
@@ -111,14 +111,14 @@ export function WhiteboardSvg({
         <path
           key={a.id}
           d={arrowPath(a)}
-          stroke={a.id === selectedId ? 'var(--accent)' : 'var(--border-strong)'}
-          strokeWidth={a.id === selectedId ? 2.5 : 1.5}
+          stroke={selectedIds?.has(a.id) ? 'var(--accent)' : 'var(--border-strong)'}
+          strokeWidth={selectedIds?.has(a.id) ? 2.5 : 1.5}
           fill="none"
-          markerEnd={a.id === selectedId ? `url(#${markerId}-sel)` : `url(#${markerId})`}
+          markerEnd={selectedIds?.has(a.id) ? `url(#${markerId}-sel)` : `url(#${markerId})`}
           style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
           onPointerDown={(e) => {
             e.stopPropagation()
-            onSelect?.(a.id)
+            onSelect?.(a.id, e.shiftKey)
             onDragStart?.(e, a.id)
           }}
         />
@@ -138,11 +138,11 @@ export function WhiteboardSvg({
           <path
             key={strokes[i].id}
             d={d}
-            fill={strokes[i].id === selectedId ? 'var(--accent)' : 'var(--text-2)'}
+            fill={selectedIds?.has(strokes[i].id) ? 'var(--accent)' : 'var(--text-2)'}
             style={{ pointerEvents: drawing ? 'none' : 'auto', cursor: 'grab' }}
             onPointerDown={(e) => {
               e.stopPropagation()
-              onSelect?.(strokes[i].id)
+              onSelect?.(strokes[i].id, e.shiftKey)
               onDragStart?.(e, strokes[i].id)
             }}
           />

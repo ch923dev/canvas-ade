@@ -35,6 +35,10 @@ export interface ChecklistCardProps {
    * a tall checklist + its "Add item" button under overflow:hidden (#12).
    */
   onMeasureBottom?: (id: string, bottom: number) => void
+  /** True when this element is in the board selection set (draws the accent ring). */
+  selected?: boolean
+  /** Select this element on grip press; `additive` = Shift held. */
+  onSelect?: (id: string, additive: boolean) => void
 }
 
 const delBtn: CSSProperties = {
@@ -87,7 +91,9 @@ export function ChecklistCard({
   onRemoveItem,
   onDelete,
   onEditStart,
-  onMeasureBottom
+  onMeasureBottom,
+  selected,
+  onSelect
 }: ChecklistCardProps): ReactElement {
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
@@ -126,6 +132,8 @@ export function ChecklistCard({
         width: element.w,
         background: 'var(--surface-raised)',
         border: '1px solid var(--border)',
+        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outlineOffset: 2,
         borderRadius: 'var(--r-board)',
         padding: '11px 12px 12px',
         boxShadow: 'var(--shadow-pop)',
@@ -169,6 +177,7 @@ export function ChecklistCard({
         onPointerDown={(e) => {
           if (!interactive) return
           e.stopPropagation()
+          onSelect?.(element.id, e.shiftKey)
           onDragStart(e, element.id)
         }}
       >

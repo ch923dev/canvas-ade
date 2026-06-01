@@ -22,6 +22,10 @@ export interface NoteCardProps {
   onDelete: (id: string) => void
   /** Called when the textarea gains focus — used to checkpoint undo. */
   onEditStart?: () => void
+  /** True when this element is in the board selection set (draws the accent ring). */
+  selected?: boolean
+  /** Select this element on grip press; `additive` = Shift held. */
+  onSelect?: (id: string, additive: boolean) => void
 }
 
 const delBtn: CSSProperties = {
@@ -47,7 +51,9 @@ export function NoteCard({
   onDragStart,
   onChangeText,
   onDelete,
-  onEditStart
+  onEditStart,
+  selected,
+  onSelect
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -84,6 +90,8 @@ export function NoteCard({
         border: `1px solid ${tint.edge}`,
         borderRadius: 'var(--r-inner)',
         boxShadow: 'var(--shadow-pop)',
+        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outlineOffset: 2,
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {
@@ -122,6 +130,7 @@ export function NoteCard({
           // mode this band is the drag handle (the textarea owns its own press).
           if (!interactive) return
           e.stopPropagation()
+          onSelect?.(note.id, e.shiftKey)
           // Suppress the empty-note blur-prune this gesture is about to trigger.
           dragging.current = true
           onDragStart(e, note.id)
