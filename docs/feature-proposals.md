@@ -318,7 +318,7 @@ side-by-side for visual comparison is exactly what a canvas does better than tab
 
 ### Implementation sketch
 - Reuse the planned Duplicate logic × N, each clone gets its own worktree
-  (`canvas-ade/<board-id>`) and per-board port.
+  (`expanse/<board-id>`) and per-board port.
 - Lay out adjacently via the existing free-space placement (`170cfc6`).
 - Optional visual group (could ride SB-4 connectors or a frame).
 - Seed identical first prompt via the spawn flow's `launchCommand` / first PTY line.
