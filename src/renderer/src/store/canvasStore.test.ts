@@ -235,14 +235,34 @@ describe('undo/redo history', () => {
     get().undo() // back to x=0, future = [x=200] armed
     expect(get().boards[0].x).toBe(0)
     expect(get().future).toHaveLength(1)
+    const pastLen = get().past.length
     // A no-op gesture (zero-movement titlebar/resize click, degenerate arrow/pen tap)
     // fires beginChange at gesture-start but commits nothing — it must NOT discard the
-    // armed redo branch.
+    // armed redo branch, and (Bug M3) must NOT push a duplicate snapshot whose present
+    // equals the post-undo boards.
     get().beginChange()
     expect(get().future).toHaveLength(1)
+    // No phantom undo step recorded — the past stack must not have grown.
+    expect(get().past.length).toBe(pastLen)
     // Redo still re-applies the undone move.
     get().redo()
     expect(get().boards[0].x).toBe(200)
+  })
+
+  it('a no-op beginChange after undo records no phantom step (Bug M3)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 }) // checkpoint 1: boards = []
+    get().beginChange() // snapshot [board@x=0]
+    get().updateBoard(id, { x: 200 }) // boards = [board@x=200]
+    get().undo() // back to [board@x=0]; past tail is now the pre-add []
+    const pastLen = get().past.length
+    // A no-op beginChange right after undo (boards unchanged) must not record a
+    // duplicate snapshot — otherwise it would leave a phantom undo step.
+    get().beginChange()
+    expect(get().past.length).toBe(pastLen)
+    // A single further undo must reach a GENUINELY different state (the empty canvas),
+    // not a phantom identical [board@x=0] left by a duplicate snapshot.
+    get().undo()
+    expect(get().boards).toHaveLength(0)
   })
 
   // The Canvas-side focus-clear on undo/redo (#30 / #38) relies on undo/redo
@@ -274,6 +294,32 @@ describe('canvasStore — viewport', () => {
     const before = useCanvasStore.getState().past.length
     useCanvasStore.getState().setViewport({ x: 1, y: 2, zoom: 1 })
     expect(useCanvasStore.getState().past.length).toBe(before)
+  })
+
+  it('setViewport with equal values does not change state identity (Bug L2)', () => {
+    useCanvasStore.getState().setViewport({ x: 10, y: 20, zoom: 1.5 })
+    const after = useCanvasStore.getState()
+    const vpRef = after.viewport
+    let notified = 0
+    const unsub = useCanvasStore.subscribe(() => {
+      notified++
+    })
+    // A camera frame that reports the SAME x/y/zoom must be a no-op: no set(), no
+    // subscriber notification, same viewport object reference.
+    useCanvasStore.getState().setViewport({ x: 10, y: 20, zoom: 1.5 })
+    expect(notified).toBe(0)
+    expect(useCanvasStore.getState().viewport).toBe(vpRef)
+    // A genuinely different value still updates and notifies.
+    useCanvasStore.getState().setViewport({ x: 11, y: 20, zoom: 1.5 })
+    expect(notified).toBe(1)
+    expect(useCanvasStore.getState().viewport).toEqual({ x: 11, y: 20, zoom: 1.5 })
+    unsub()
+  })
+
+  it('setViewport from null updates (Bug L2 guard handles no prior viewport)', () => {
+    useCanvasStore.setState({ viewport: null })
+    useCanvasStore.getState().setViewport({ x: 1, y: 2, zoom: 1 })
+    expect(useCanvasStore.getState().viewport).toEqual({ x: 1, y: 2, zoom: 1 })
   })
 
   it('toObject embeds the current viewport', () => {
