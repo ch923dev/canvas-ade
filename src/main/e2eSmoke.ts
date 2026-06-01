@@ -1017,17 +1017,20 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   await evalIn(
     win,
     `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { elements: [
-       { id: 'w2-a', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: '', rotation: 0 },
-       { id: 'w2-b', kind: 'note', x: 260, y: 40, w: 156, h: 96, tint: 'blue', text: '', rotation: 0 }
+       { id: 'w2-a', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 },
+       { id: 'w2-b', kind: 'note', x: 260, y: 40, w: 156, h: 96, tint: 'blue', text: 'B', rotation: 0 }
      ] })`
   )
   await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
   await delay(200)
   const w2 = await evalIn<{
+    stage: string
+    ids: string
     marqueeDel: number
     afterDelUndo: number
     multiMovedBoth: boolean
     afterMoveUndo: boolean
+    shiftAddMoved: boolean
     snapX: number
   }>(
     win,
@@ -1040,11 +1043,13 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
        const count = () => els().length;
        const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
        const well = node && node.querySelector('.pl-well');
-       if (!well) return { marqueeDel: -1, afterDelUndo: -1, multiMovedBoth: false, afterMoveUndo: false, snapX: -1 };
+       if (!well) return { stage: 'no-well', ids: '', marqueeDel: -1, afterDelUndo: -1, multiMovedBoth: false, afterMoveUndo: false, shiftAddMoved: false, snapX: -1 };
        const r = well.getBoundingClientRect();
        const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1;
        const at = (bx, by) => ({ x: r.left + bx * scale, y: r.top + by * scale });
-       const noteEl = (i) => node.querySelectorAll('.pl-note')[i];
+       // A board-local drag STARTS from the note's grip ring (.pl-note-grip), not the
+       // outer .pl-note (which only stops propagation). Press the grip to begin a move.
+       const grip = (i) => node.querySelectorAll('.pl-note-grip')[i];
        const ev = (target, type, p, shift) => {
          try { target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: p.x, clientY: p.y, shiftKey: !!shift })); } catch (e) {}
        };
@@ -1063,34 +1068,64 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
        };
        const press = (k) => { well.focus(); well.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); };
 
-       well.focus(); await sleep(20);
-       // (1) marquee a box over BOTH notes from an empty corner, then Delete the group.
-       await drag(at(10, 10), at(440, 150)); // empty start, covers w2-a + w2-b
-       press('Delete'); await sleep(60);
-       const marqueeDel = count();
-       window.__canvasE2E.undo(); await sleep(60);
-       const afterDelUndo = count();
+       // Crash-safe x reader + stage tracker: a probe bug must surface as a diagnostic
+       // (which stage, which elements survive), never an uncaught throw that aborts the
+       // whole harness before any E2E_ line prints.
+       const nx = (nid) => { const n = note(nid); return n ? n.x : -999999; };
+       const idsNow = () => els().map((e) => e.id).join('|');
+       // Each sub-test RE-SEEDS two fresh notes + clears selection so it is INDEPENDENT:
+       // a chained undo→edit across tests hits the lastRecorded dedup edge (the documented
+       // undo-lastrecorded-phantom / D1.1 class) which churns shared state. Re-seeding sets
+       // a fresh boards array, so the next deferred beginChange always records its checkpoint.
+       // Notes carry text so a no-move grip click never triggers the empty-note prune.
+       const seedEls = () => window.__canvasE2E.patchBoard(id, { elements: [
+         { id: 'w2-a', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 },
+         { id: 'w2-b', kind: 'note', x: 260, y: 40, w: 156, h: 96, tint: 'blue', text: 'B', rotation: 0 }
+       ] });
+       const clearSel = () => { ev(well, 'pointerdown', at(560, 300)); ev(well, 'pointerup', at(560, 300)); };
+       const fresh = async () => { seedEls(); await sleep(140); clearSel(); await sleep(40); well.focus(); await sleep(20); };
+       let stage = 'start';
+       try {
+         // (1) group-delete: marquee both → Delete → 0; undo restores both in ONE step.
+         stage = 'group-delete';
+         await fresh();
+         await drag(at(10, 10), at(440, 150)); // marquee covers w2-a + w2-b
+         press('Delete'); await sleep(60);
+         const marqueeDel = count();
+         window.__canvasE2E.undo(); await sleep(60);
+         const afterDelUndo = count();
 
-       // (2) re-marquee both, then drag note A by board-local (40,40): BOTH move (one undo step).
-       await drag(at(10, 10), at(440, 150)); await sleep(20);
-       const ax0 = note('w2-a').x, bx0 = note('w2-b').x;
-       await drag(at(118, 88), at(158, 128), { downTarget: noteEl(0) }); // press the (selected) note A
-       const a1 = note('w2-a'), b1 = note('w2-b');
-       const multiMovedBoth = a1.x - ax0 >= 30 && b1.x - bx0 >= 30;
-       window.__canvasE2E.undo(); await sleep(60);
-       const a2 = note('w2-a'), b2 = note('w2-b');
-       const afterMoveUndo = a2.x === ax0 && b2.x === bx0;
+         // (2) multidrag: marquee both → drag one's grip +40,+40 → BOTH move; undo restores both.
+         stage = 'multidrag';
+         await fresh();
+         await drag(at(10, 10), at(440, 150)); await sleep(20); // select both
+         const ax0 = nx('w2-a'), bx0 = nx('w2-b');
+         await drag(at(118, 88), at(158, 128), { downTarget: grip(0) });
+         const multiMovedBoth = nx('w2-a') - ax0 >= 30 && nx('w2-b') - bx0 >= 30;
+         window.__canvasE2E.undo(); await sleep(60);
+         const afterMoveUndo = nx('w2-a') === ax0 && nx('w2-b') === bx0;
 
-       // (3) Snap: drag note B so its left edge lands within tol of A's left (x=40).
-       // After the multidrag undo, both notes are at their seeded positions (A x=40, B x=260).
-       // Clear selection with an empty-well click, then press B alone and drag it left.
-       ev(well, 'pointerdown', at(560, 300)); ev(well, 'pointerup', at(560, 300)); await sleep(30);
-       // B center board ≈ (338,88). Drag to board (122,88): raw dx ≈ -216 → B.x ≈ 44,
-       // within SNAP_TOL(6) of A's left (40) → committed B.x snaps to 40.
-       await drag(at(338, 88), at(122, 88), { downTarget: noteEl(1) });
-       const snapX = note('w2-b').x;
+         // (3) shift-add: click A (grip, no move → selects A), Shift-click B (toggle-add),
+         // then drag A → BOTH move. Proves additive ELEMENT selection (selectOnPress/toggle).
+         stage = 'shift-add';
+         await fresh();
+         ev(grip(0), 'pointerdown', at(60, 60)); ev(well, 'pointerup', at(60, 60)); await sleep(40); // click A -> {A}
+         ev(grip(1), 'pointerdown', at(280, 60), true); ev(well, 'pointerup', at(280, 60), true); await sleep(40); // Shift-click B -> {A,B}
+         const sa0 = nx('w2-a'), sb0 = nx('w2-b');
+         await drag(at(60, 60), at(100, 60), { downTarget: grip(0) });
+         const shiftAddMoved = nx('w2-a') - sa0 >= 30 && nx('w2-b') - sb0 >= 30;
 
-       return { marqueeDel, afterDelUndo, multiMovedBoth, afterMoveUndo, snapX };
+         // (4) snap: press B alone (unselected) and drag its left edge to within tol of A's
+         // left (x=40) → committed B.x snaps to 40 (A is the static neighbor).
+         stage = 'snap';
+         await fresh();
+         await drag(at(338, 88), at(122, 88), { downTarget: grip(1) });
+         const snapX = nx('w2-b');
+
+         return { stage: 'done', ids: idsNow(), marqueeDel, afterDelUndo, multiMovedBoth, afterMoveUndo, shiftAddMoved, snapX };
+       } catch (err) {
+         return { stage: 'ERR@' + stage + ':' + String((err && err.message) || err), ids: idsNow(), marqueeDel: -9, afterDelUndo: -9, multiMovedBoth: false, afterMoveUndo: false, shiftAddMoved: false, snapX: -9 };
+       }
      })()`
   )
   const groupDeleteOk = w2.marqueeDel === 0 && w2.afterDelUndo === 2
@@ -1104,6 +1139,12 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     name: 'whiteboard-multidrag',
     ok: multidragOk,
     detail: multidragOk ? 'marquee 2 → drag one moves both; undo restores both in one step' : JSON.stringify(w2)
+  })
+  const shiftAddOk = w2.shiftAddMoved
+  parts.push({
+    name: 'whiteboard-shift-add',
+    ok: shiftAddOk,
+    detail: shiftAddOk ? 'click A + Shift-click B selects both; dragging A moves both' : JSON.stringify(w2)
   })
   const snapOk = Math.abs(w2.snapX - 40) <= 1
   parts.push({

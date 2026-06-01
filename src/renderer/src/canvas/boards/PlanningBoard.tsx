@@ -375,6 +375,10 @@ export function PlanningBoard({
           dx += snap.dx
           dy += snap.dy
           setSnapGuides(snap.guides.length > 0 ? snap.guides : null)
+        } else {
+          // Snap toggled OFF mid-drag → clear any guides on the very next move frame
+          // (don't wait for pointer-up to stop showing stale guides).
+          setSnapGuides(null)
         }
         setDragPos({ ids: d.ids, dx, dy })
       } else if (d.mode === 'arrow') {

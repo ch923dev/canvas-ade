@@ -170,11 +170,11 @@ export function WhiteboardSvg({
         />
       )}
 
-      {guides?.map((g, i) =>
+      {guides?.map((g) =>
         g.axis === 'x' ? (
-          <line key={i} x1={g.at} y1={g.from} x2={g.at} y2={g.to} stroke="var(--accent)" strokeWidth={1} />
+          <line key={`x${g.at}`} x1={g.at} y1={g.from} x2={g.at} y2={g.to} stroke="var(--accent)" strokeWidth={1} />
         ) : (
-          <line key={i} x1={g.from} y1={g.at} x2={g.to} y2={g.at} stroke="var(--accent)" strokeWidth={1} />
+          <line key={`y${g.at}`} x1={g.from} y1={g.at} x2={g.to} y2={g.at} stroke="var(--accent)" strokeWidth={1} />
         )
       )}
     </svg>
