@@ -454,35 +454,6 @@ export function BrowserPreviewLayer({
     [rec, patchRuntime]
   )
 
-  // PREV-1: tear down a non-focused live board for full view, but never leave it BLANK.
-  // The full-view path closes the renderer outright (it can't keep a native view painting
-  // over the modal). If the board was never snapshotted (freshly attached, or its last
-  // capture was skipped) it would fall through to the empty device frame dimmed behind the
-  // scrim. When a snapshot already exists (the common case after any motion/LOD), close
-  // immediately. Only when one is missing, capture WHILE the view is still attached, then
-  // close — so the HTML fallback shows the page, not a blank frame.
-  const evictLiveBoard = useCallback(
-    (id: string): void => {
-      const r = rec(id)
-      if (!r.exists) return
-      if (usePreviewStore.getState().byId[id]?.snapshot) {
-        closeBoard(id)
-        return
-      }
-      void (async () => {
-        let url: string | null = null
-        try {
-          url = await window.api.capturePreview(id)
-        } catch {
-          url = null
-        }
-        if (url) patchRuntime(id, { snapshot: url })
-        closeBoard(id)
-      })()
-    },
-    [rec, closeBoard, patchRuntime]
-  )
-
   // One coalesced batch per frame for every attached board, diff-skipped.
   const flushBatch = useCallback((): boolean => {
     const items: Array<{ id: string; bounds: Rect; zoomFactor: number }> = []
@@ -592,21 +563,31 @@ export function BrowserPreviewLayer({
     const fvId = fullViewIdRef.current
     if (fvId) {
       // Full view: only the full-view Browser board may be live (bound to the modal
-      // frame). Every OTHER native view must be torn down — NOT demoted via the async
-      // detach (removeChildView), which Electron 33 (#44652) can leave stuck painting at
-      // its old canvas bounds over the modal (the "second copy" ghost), and which also
-      // races the full-view rAF pump. closeBoard does a real webContents.close(); the
-      // board's last snapshot keeps showing as its HTML fallback on the canvas behind the
-      // scrim. On full-view EXIT the focus effect re-runs applyLiveness (non-full-view
-      // path), which re-attaches the eligible views via reconcile's new-board path.
+      // frame). Every OTHER native view must stop painting over the modal — but DETACH it
+      // (snapshot-then-detach), NOT close it. closeBoard does a real webContents.close(),
+      // which DISCARDS that board's navigated page state; on full-view EXIT the new-board
+      // path then re-opens it at its persisted `board.url`, snapping it back from wherever
+      // the user had navigated to the root URL (the full-view-resets-other-browser bug).
+      // demoteToSnapshot captures an HTML fallback (shown on the canvas behind the scrim)
+      // then detaches via detach() — whose setVisible(false)-before-removeChildView already
+      // kills the Electron #44652 "second copy" ghost (the same path the node-drag detach
+      // relies on), so the view leaves no stuck frame over the modal. The webContents stays
+      // alive, so on EXIT applyLiveness (non-full-view path) re-ATTACHES it (attachPreview,
+      // no loadURL) with its page state intact. The full-view rAF pump only ever touches
+      // fvId, so detaching the OTHER boards here can't race it.
       for (const g of all) {
         if (g.id === fvId) {
-          // Slice 5: while the modal frame is mid-transform, hold this view detached (a
-          // scale pollutes its bound rect) — close it if live; attach once motion settles.
+          // Slice 5: while the modal frame is mid-transform a CSS scale() pollutes the rect
+          // the native view binds to, so HOLD this view DETACHED for the tween and snap it
+          // in at settle. DETACH (snapshot-then-detach) — never close: a webContents.close()
+          // here discards the page, so on settle attachBoard re-OPENs it at board.url and the
+          // user's navigated page snaps back to the root (full-viewing restarts the board —
+          // and again on the exit tween). A detach keeps the webContents alive, so attachBoard
+          // re-attaches it (attachPreview, no loadURL) at the modal/canvas rect, state intact.
           if (fullViewMotionRef.current) {
-            if (rec(g.id).exists) closeBoard(g.id)
+            if (rec(g.id).attached) void demoteToSnapshot(g)
           } else void attachBoard(g)
-        } else if (rec(g.id).exists) evictLiveBoard(g.id) // PREV-1: snapshot-before-close
+        } else if (rec(g.id).attached) void demoteToSnapshot(g) // detach (keep webContents)
       }
       return
     }
@@ -647,7 +628,6 @@ export function BrowserPreviewLayer({
     rec,
     attachBoard,
     closeBoard,
-    evictLiveBoard,
     demoteToSnapshot
   ])
 

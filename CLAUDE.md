@@ -144,11 +144,18 @@ is summarized in **`docs/archive/build-history.md`** (originals in git history).
 history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
 file = open findings).
 
-**Current state (2026-06-01):** **Phases 0–4 SHIPPED on `main`.** Phase 4 design pass = `abd7fa2`
-(PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified bugs) · `94baab9` (4 open-medium)
-· `1a0c615` (7 round-2 review findings + a doc/repo cleanup). Latest baseline: **438 unit** green,
-lint + typecheck clean; e2e **22/25** (the 3 = the documented `browser`/`browser-gesture`/`focus-detach`
-live-`WebContentsView` env flake, memory `e2e-browser-trio-flake` — environmental, not a regression).
+**Current state (2026-06-02):** **Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
+Phase 4 design pass = `abd7fa2` (PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified
+bugs) · `94baab9` (4 open-medium) · `1a0c615` (7 round-2 review findings + a doc/repo cleanup). Latest
+baseline: **482 unit** green, lint + typecheck clean; e2e **25/25** (clean runs; the
+`browser`/`browser-gesture`/`focus-detach` trio is a known live-`WebContentsView` env flake on a
+contended host, memory `e2e-browser-trio-flake` — rerun for clean, not a regression).
+
+**In flight (`fix/fullview-preview-reset`):** full-view no longer **restarts** Browser boards. Both
+the full-viewed board (motion sub-branch) and every OTHER board now **detach** (snapshot + keep the
+live `WebContentsView`) instead of `webContents.close()` — a close discarded the page, so on full-view
+exit the board re-opened at `board.url` and snapped back from the user's navigated page to the root.
+New e2e probes `fullview-preserve` + `fullview-self-preserve` (webContents-id survival) lock it.
 
 **Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:
 **healthy, no Critical/High** (the prior-round High MBC-1 did not reproduce). 12 residual Low/Nit/Info

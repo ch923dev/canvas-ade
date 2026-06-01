@@ -61,6 +61,15 @@ export interface CanvasE2E {
   undo: () => void
   /** Open/close the full-view modal for a board id (null clears). Bug 1/4 harness. */
   setFullView: (id: string | null) => void
+  /**
+   * Open full view via the REAL animated path (sets `fullViewEntering` → `fullViewMotion`),
+   * unlike `setFullView` which jumps the raw id setter and never triggers motion. The
+   * full-view motion branch is where a Browser view is held across the tween — exercising
+   * it is the only way the harness reaches the close-vs-detach-during-motion path.
+   */
+  openFullViewAnimated: (id: string) => void
+  /** Close full view via the real animated exit path (sets `fullViewClosing`). */
+  closeFullViewAnimated: () => void
   /** Mark a terminal's PTY as exited in the runtime store (drives stale preview edge, bug 3). */
   setTerminalDown: (id: string) => void
   /** Focus a board (dim others) or clear focus (null) — the double-click focus path. Bug 2. */
@@ -70,6 +79,8 @@ export interface CanvasE2E {
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
 export interface E2EHostHooks {
   setFullView: (id: string | null) => void
+  openFullViewAnimated: (id: string) => void
+  closeFullViewAnimated: () => void
   setFocus: (id: string | null) => void
 }
 
@@ -162,6 +173,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setFullView(id) {
       host.setFullView(id)
+    },
+    openFullViewAnimated(id) {
+      host.openFullViewAnimated(id)
+    },
+    closeFullViewAnimated() {
+      host.closeFullViewAnimated()
     },
     setTerminalDown(id) {
       useTerminalRuntimeStore.getState().setRunning(id, 'exited')
