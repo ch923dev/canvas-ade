@@ -496,45 +496,53 @@ export function BrowserPreviewLayer({
     // setBounds-then-detach #43961 trigger). Cleared at the end once detached.
     live.forEach((g) => demoting.current.add(g.id))
     void (async () => {
-      // Bug #8/#9: capture per-board with a per-item guard so ONE rejected
-      // capturePage() (headless / GPU-contended host) can't reject the whole batch and
-      // abort every board's detach. A failed/empty capture resolves to null.
-      const shots = await Promise.all(
-        live.map((g) => window.api.capturePreview(g.id).catch(() => null))
-      )
-      if (!gestureRef.current) return // gesture ended before capture → keep live
-      // Detach EVERY live native view for the gesture, even one whose capture came back
-      // empty/failed (a blank/loading page, or a GPU-contended host). A native view
-      // can't keep up with a fast NODE DRAG over IPC — it lags / appears stuck at the
-      // old position — whereas the HTML snapshot (or the device-frame fallback) follows
-      // the board pixel-perfect. A missing fresh snapshot just leaves the prior snapshot
-      // / device frame; that brief staleness during a gesture is far better than a
-      // trailing native layer. Fresh snapshot is applied only when one was captured.
-      const detached: BoardGeom[] = []
-      // Snapshot each board's attachSeq BEFORE the detach await so a concurrent
-      // endMotion → applyLiveness → attachBoard reattach (which bumps attachSeq) is
-      // detected below and not clobbered (Bug #15).
-      const seqOf = new Map<string, number>()
-      live.forEach((g, i) => {
-        // Bug #48: a board deleted mid-capture had its rec removed + runtime cleared by
-        // reconcile; patching here would resurrect an orphaned previewStore entry.
-        if (!recs.current.has(g.id)) return
-        if (shots[i]) patchRuntime(g.id, { snapshot: shots[i] })
-        detached.push(g)
-        seqOf.set(g.id, recs.current.get(g.id)!.attachSeq)
-      })
-      await Promise.all(detached.map((g) => window.api.detachPreview(g.id)))
-      detached.forEach((g) => {
-        const r = recs.current.get(g.id)
-        // Bug #15/#48: skip the detach state-write if the board was removed (no rec),
-        // a concurrent attachBoard re-claimed it (attachSeq bumped), or the gesture
-        // already ended (endMotion now owns liveness) — otherwise we'd undo a reattach.
-        if (!r || r.attachSeq !== seqOf.get(g.id) || !gestureRef.current) return
-        r.attached = false
-        patchRuntime(g.id, { live: false })
-      })
-      // Detach complete — the pump may resume positioning these ids if they reattach.
-      live.forEach((g) => demoting.current.delete(g.id))
+      // Bug H1: the just-added ids MUST always be drained from demoting.current — even
+      // on the early gesture-abandon return below. If they leak, every later flushBatch
+      // skips repositioning those boards' WebContentsViews forever (the `demoting.has`
+      // guard at the top of flushBatch). try/finally guarantees the drain on all paths.
+      try {
+        // Bug #8/#9: capture per-board with a per-item guard so ONE rejected
+        // capturePage() (headless / GPU-contended host) can't reject the whole batch and
+        // abort every board's detach. A failed/empty capture resolves to null.
+        const shots = await Promise.all(
+          live.map((g) => window.api.capturePreview(g.id).catch(() => null))
+        )
+        if (!gestureRef.current) return // gesture ended before capture → keep live
+        // Detach EVERY live native view for the gesture, even one whose capture came back
+        // empty/failed (a blank/loading page, or a GPU-contended host). A native view
+        // can't keep up with a fast NODE DRAG over IPC — it lags / appears stuck at the
+        // old position — whereas the HTML snapshot (or the device-frame fallback) follows
+        // the board pixel-perfect. A missing fresh snapshot just leaves the prior snapshot
+        // / device frame; that brief staleness during a gesture is far better than a
+        // trailing native layer. Fresh snapshot is applied only when one was captured.
+        const detached: BoardGeom[] = []
+        // Snapshot each board's attachSeq BEFORE the detach await so a concurrent
+        // endMotion → applyLiveness → attachBoard reattach (which bumps attachSeq) is
+        // detected below and not clobbered (Bug #15).
+        const seqOf = new Map<string, number>()
+        live.forEach((g, i) => {
+          // Bug #48: a board deleted mid-capture had its rec removed + runtime cleared by
+          // reconcile; patching here would resurrect an orphaned previewStore entry.
+          if (!recs.current.has(g.id)) return
+          if (shots[i]) patchRuntime(g.id, { snapshot: shots[i] })
+          detached.push(g)
+          seqOf.set(g.id, recs.current.get(g.id)!.attachSeq)
+        })
+        await Promise.all(detached.map((g) => window.api.detachPreview(g.id)))
+        detached.forEach((g) => {
+          const r = recs.current.get(g.id)
+          // Bug #15/#48: skip the detach state-write if the board was removed (no rec),
+          // a concurrent attachBoard re-claimed it (attachSeq bumped), or the gesture
+          // already ended (endMotion now owns liveness) — otherwise we'd undo a reattach.
+          if (!r || r.attachSeq !== seqOf.get(g.id) || !gestureRef.current) return
+          r.attached = false
+          patchRuntime(g.id, { live: false })
+        })
+      } finally {
+        // Detach complete (or aborted) — always drop these ids so the pump may resume
+        // positioning them; leaking them freezes their bounds updates forever (Bug H1).
+        live.forEach((g) => demoting.current.delete(g.id))
+      }
     })()
   }, [startPump, patchRuntime])
 
@@ -571,6 +579,8 @@ export function BrowserPreviewLayer({
     // occlusion-demoted set keeps its renderer + snapshot for a fast reattach once the
     // overlap clears (handled in the else-branch, like LOD), so it is NOT closed.
     const wantLive = all.filter((g) => liveEligible(g) && !occludesProtected(g))
+    // Bug L3: O(1) membership for the per-board loop below (was wantLive.includes → O(n²)).
+    const wantLiveIds = new Set(wantLive.map((g) => g.id))
     // Bug #8: rank the live winners by distance to the viewport centre so the board
     // the user navigated to wins a live slot over off-screen earlier-created boards.
     const candidates = wantLive.map((g) => {
@@ -585,7 +595,7 @@ export function BrowserPreviewLayer({
     for (const g of all) {
       const r = rec(g.id)
       if (liveIds.has(g.id)) void attachBoard(g)
-      else if (wantLive.includes(g)) {
+      else if (wantLiveIds.has(g.id)) {
         // Over the live cap. Free the renderer ONLY when there is a snapshot (or a
         // still-attached native view) to fall back on; a never-captured board would
         // otherwise show a blank device frame (Bug #24) — leave it for reconcile to
@@ -667,9 +677,17 @@ export function BrowserPreviewLayer({
   useEffect(() => {
     if (!fullViewId) return
     let raf = 0
+    // Bug L4: self-terminate once settled — without this the pump ran a
+    // getBoundingClientRect (fullViewBoundsFor) + flushBatch EVERY frame for the entire
+    // full-view session. Mirror startPump's idle-frame counter: a frame is "active" if
+    // it (re)attached the held view OR flushBatch pushed an update; after ~4 idle frames
+    // the loop stops. A window resize or a motion settle re-arms it (re-runs the pump).
+    let idle = 0
     const tick = (): void => {
+      let active = false
       // Skip while the modal frame is mid enter/exit tween (Slice 5) — the held view must
-      // not attach to a scale-polluted rect; applyLiveness reattaches it at settle.
+      // not attach to a scale-polluted rect; applyLiveness reattaches it at settle. Keep
+      // pumping (don't idle out) through the tween so we resume promptly at settle.
       if (!fullViewMotionRef.current) {
         // The full-view board's native view may not be attached yet — the initial
         // applyLiveness attach is HELD until the portal relocates `.bb-frame` into the
@@ -677,13 +695,29 @@ export function BrowserPreviewLayer({
         // is ready, re-issue the attach here so the (held) view comes live at the modal
         // rect; flushBatch (attached-only) then keeps it pinned across window resizes.
         const g = geomRef.current.get(fullViewId)
-        if (g && !recs.current.get(fullViewId)?.attached) void attachBoard(g)
-        flushBatch()
+        if (g && !recs.current.get(fullViewId)?.attached) {
+          void attachBoard(g)
+          active = true
+        }
+        if (flushBatch()) active = true
+      } else {
+        active = true // mid-tween: stay armed so settle is caught immediately
       }
-      raf = requestAnimationFrame(tick)
+      idle = active ? 0 : idle + 1
+      raf = idle < 4 ? requestAnimationFrame(tick) : 0
     }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    const arm = (): void => {
+      idle = 0
+      if (!raf) raf = requestAnimationFrame(tick)
+    }
+    arm()
+    // A window resize moves the modal frame's DOM rect with no React re-render → re-arm
+    // the (possibly idled-out) pump so the native view re-pins to the new rect.
+    window.addEventListener('resize', arm)
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      window.removeEventListener('resize', arm)
+    }
   }, [fullViewId, flushBatch, attachBoard])
 
   // ── Reconcile the native views with the store's Browser boards ────────────────
@@ -714,7 +748,17 @@ export function BrowserPreviewLayer({
           // painting the always-above native view over the modal scrim.
           const fvId = fullViewIdRef.current
           const blockedByFullView = fvId !== null && fvId !== g.id
-          if (!blockedByFullView && liveEligible(g) && !occludesProtected(g)) void attachBoard(g)
+          // Bug M1: enforce the MAX_LIVE cap on the CREATION path. reconcile is the
+          // sole driver for brand-new boards (the subscribe-side applyLiveness only
+          // fires on selChanged || fullView), so without this guard N eligible boards
+          // created in one tick all go live, blowing past the cap. Count the views
+          // already live this pass and stop attaching once the cap is reached; a freed
+          // slot (LOD / move-end → applyLiveness, which honours the cap) brings the
+          // held boards live later.
+          let liveNow = 0
+          for (const rr of recs.current.values()) if (rr.attached) liveNow++
+          if (!blockedByFullView && liveNow < MAX_LIVE && liveEligible(g) && !occludesProtected(g))
+            void attachBoard(g)
           // Bug #3: a board created below LOD / off-pane isn't yet eligible, so it
           // would otherwise sit on the dead idle default (empty stage, no label)
           // until a later zoom gesture attaches it. Show the 'Connecting…'
