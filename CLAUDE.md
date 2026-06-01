@@ -131,6 +131,24 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - Match the design tokens in `src/renderer/src/index.css` (mirror of DESIGN.md §2-4).
 - Each phase ends runnable + committed.
 
+### Parallel sessions (worktree coordination)
+- **One session per worktree; never two sessions in the same dir.** Main = integration/merge only.
+- Before editing, read the shared board `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md` (the
+  SessionStart hook injects it automatically). **Stay in YOUR declared zone**; cross-zone edits → note
+  them on the board first. Your edits are auto-logged so the next session sees what you touched.
+- New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
+  node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially,
+  re-running the full gate + e2e after EACH merge. (Native Agent Teams = broken on Windows; this is the
+  Windows-safe substitute.)
+- **Feature work lives on a worktree, not `main`. `main` is the stable version.** Anything scoped to a
+  single feature / fix / refactor — its **docs (specs, plans, roadmaps, research) AND its
+  implementation** — is created and committed on that work's `feat/*` (or `fix/*`) worktree branch, never
+  directly on `main`. We ship different features per session, so `main` only ever carries
+  already-integrated, stable work plus the durable contract (this file, ADRs). Only **durable
+  cross-feature contract changes** (CLAUDE.md, ADRs, top-level `docs/roadmap.md` status) land on `main`
+  directly. Promote a feature's docs/impl to `main` via the sequential merge above once the gate + e2e
+  are green.
+
 ## Environment notes (this machine)
 
 - Node 22.17, pnpm 9.15 (via corepack), git 2.54, Python 3.12.4, VS Build Tools 2022 (VC++ x64). node-pty builds locally.
