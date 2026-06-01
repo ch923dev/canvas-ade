@@ -21,6 +21,7 @@ export type IconName =
   | 'text'
   | 'arrow'
   | 'pen'
+  | 'erase'
   | 'refresh'
   | 'back'
   | 'forward'
@@ -55,6 +56,7 @@ const PATHS: Record<IconName, string> = {
   text: 'M5 6h14M12 6v12M9 18h6',
   arrow: 'M5 19L19 5M19 5h-7M19 5v7',
   pen: 'M5 19l2-6 9-9 4 4-9 9-6 2zM14 6l4 4',
+  erase: 'M16 7l5 5-9 9H7l-3-3z M9 21h12',
   refresh: 'M4 12a8 8 0 1 0 2.3-5.6M5 4v3.5H8.5',
   back: 'M15 6l-6 6 6 6',
   forward: 'M9 6l6 6-6 6',
