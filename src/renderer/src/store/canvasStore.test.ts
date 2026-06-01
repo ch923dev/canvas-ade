@@ -295,6 +295,36 @@ describe('undo/redo history', () => {
     expect(get().boards[0].x).toBe(200)
   })
 
+  it('updateBoard re-applying identical values preserves the armed redo branch (STATE-2)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 50 })
+    get().undo() // back to x=0, future = [x=50] armed
+    expect(get().future).toHaveLength(1)
+    const boardsRef = get().boards
+    // A no-op patch (current x re-applied) must NOT clear redo or mint a new boards ref.
+    get().updateBoard(id, { x: get().boards[0].x })
+    expect(get().future).toHaveLength(1)
+    expect(get().boards).toBe(boardsRef)
+    get().redo()
+    expect(get().boards[0].x).toBe(50)
+  })
+
+  it('resizeBoard with identical clamped w/h preserves the armed redo branch (STATE-2)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().resizeBoard(id, 500, 400)
+    get().undo() // back to default size, future armed
+    expect(get().future).toHaveLength(1)
+    const boardsRef = get().boards
+    const cur = get().boards[0]
+    get().resizeBoard(id, cur.w, cur.h) // no-op
+    expect(get().future).toHaveLength(1)
+    expect(get().boards).toBe(boardsRef)
+    get().redo()
+    expect(get().boards[0]).toMatchObject({ w: 500, h: 400 })
+  })
+
   it('a no-op beginChange after undo records no phantom step (Bug M3)', () => {
     const id = get().addBoard('terminal', { x: 0, y: 0 }) // checkpoint 1: boards = []
     get().beginChange() // snapshot [board@x=0]
