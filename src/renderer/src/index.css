@@ -18,7 +18,7 @@
   font-display: swap;
 }
 
-/* Canvas ADE design tokens — faithful mirror of DESIGN.md §2-4 (authoritative
+/* Expanse design tokens — faithful mirror of DESIGN.md §2-4 (authoritative
    visual contract). Seeded in Phase 0, completed in Phase 2.0-A. Board chrome
    consumes these from 2.0-C onward. DESIGN.md wins on visual; on any drift,
    align here to it. */
@@ -666,6 +666,11 @@ body {
   font-weight: var(--fw-h);
   letter-spacing: var(--tr-h);
   margin: 0;
+}
+.welcome-tagline {
+  margin: 8px 0 0;
+  font-size: var(--fs-label);
+  color: var(--text-2);
 }
 .welcome-error {
   color: var(--err);

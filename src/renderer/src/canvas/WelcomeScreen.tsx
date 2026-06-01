@@ -40,7 +40,8 @@ export default function WelcomeScreen(): React.ReactElement {
 
   return (
     <div className="welcome">
-      <h1>Canvas ADE</h1>
+      <h1>Expanse</h1>
+      <p className="welcome-tagline">An infinite surface for AI-assisted development.</p>
       {error && <p className="welcome-error">Could not open project: {error}</p>}
       <div className="welcome-actions">
         <button onClick={onCreate}>Create project…</button>
