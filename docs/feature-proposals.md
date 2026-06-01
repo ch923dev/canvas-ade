@@ -127,6 +127,66 @@ multi-feature parallel development. Subsumes the worktree dependency of SB-3 / S
 
 ---
 
+## SA-1 · AI semantic arrange — smart auto-tidy ◆
+
+- **Status:** deferred (post-MCP phase)
+- **Effort:** medium (layout heuristics + an MCP tool surface; no native/process work)
+- **Roadmap slot:** post-MCP, gated on the `canvas-ade-mcp` swarm layer.
+- **Depends on:** `canvas-ade-mcp` (a tool the agent can call to read board metadata + write
+  positions); the **shipped deterministic tidy** it upgrades.
+
+### Shipped baseline (this is the thing it upgrades)
+A **FancyZones-style preset picker** already ships: the camera-cluster **Tidy** button opens a grid
+of layout thumbnails (`lib/layoutPresets.ts`); the `t` key applies Smart. Each preset arranges the
+boards then fits the camera (`auto-fit`). Two paradigms:
+- **Smart (link-aware, default)** — reposition-only, keeps board sizes. Reads the `previewSourceId`
+  graph (`lib/tidyLayout.ts`): each Browser preview groups with the Terminal that drives it; the
+  source terminal lands centered under its row of previews; standalone terminals flank it. (`by-type`
+  and naive `grid` modes also exist in tidyLayout but aren't surfaced in the picker.)
+- **Tiling templates** — window-manager RESIZE-to-fill (`lib/tileLayout.ts`): `2/3/4 columns`,
+  `main + sidebar` (largest board = main), `grid` (adaptive). Carve a pane-aspect block into zones
+  and resize every board to fill its zone edge-to-edge, then fit → fills the screen like FancyZones.
+  (Decision recorded 2026-06-01: user wanted these specifically over the text menu.)
+
+**Bake-off evidence (2026-06-01, judged on a real 6-board canvas):** link-aware **smart** scored
+12/20 and *beat* a free-form LLM arrange (11/20) — and the LLM mis-reported its own layout (claimed a
+terminal centered under a trio; it was 506px off). Conclusion: when the link graph exists, a
+deterministic preset gives AI-quality grouping with **zero cost, full determinism, and no
+hallucination**. AI is reserved for canvases the graph can't describe (below).
+
+### What AI adds
+A **semantic** arrange mode that groups boards by relationship instead of raw position:
+- keep a Browser next to the **Terminal that drives it** (the `previewSourceId` link / connector
+  arrow) so a preview never drifts away from its server;
+- cluster the boards of one **feature zone** (FW-1) together, zones laid out as neighbourhoods;
+- read a Planning board's checklist / a terminal's task to infer intent and place related work
+  adjacently ("these three boards are all the auth feature → pack them as a group").
+
+The geometric packer stays the default (fast, offline, deterministic); semantic arrange is an opt-in
+"Arrange by feature" that calls the model.
+
+### Implementation sketch (needs its own brainstorm + spec when the MCP lands)
+- **MCP tool:** `arrange_canvas` — input: board summaries (id, type, title, size, `previewSourceId`,
+  zone, checklist titles); output: an ordered grouping. The model only decides *grouping + order*; the
+  existing `tidyLayout` shelf-packer turns each group into non-overlapping coordinates (so the AI never
+  emits raw geometry → no overlap/NaN risk, stays deterministic per group).
+- **Reuse:** feed the AI's group order into `tidyLayout` per cluster, then place clusters as blocks —
+  one tracked undo step via the same `tidyBoards` store path.
+- **Guardrails:** a pure post-pass asserts no overlaps and clamps to the canvas; if the model is
+  unavailable, silently fall back to geometric tidy (no hard dependency on a live model).
+
+### Viability checklist (run at ship time)
+- [ ] `canvas-ade-mcp` exists and can expose a read-boards / write-positions tool to the agent.
+- [ ] FW-1 zones (or at least the `previewSourceId` link) provide the relationship signal to group on.
+- [ ] AI output is grouping-only; final geometry still flows through `tidyLayout` (no model-emitted
+      coordinates) and a no-overlap post-pass.
+- [ ] Falls back to geometric tidy when no model is available (feature degrades, never breaks).
+- **Acceptance:** a canvas of mixed, scattered boards → "Arrange by feature" packs each terminal with
+  its linked browser and each zone's boards as a neighbourhood, no overlaps, one undo step; with the
+  model off, the same button still geometric-tidies.
+
+---
+
 # Signature bets
 
 ## SB-1 · Board status states + "needs you" attention queue + notifications ⭐

@@ -807,6 +807,34 @@ body {
   color: var(--err);
 }
 
+/* Tidy-layout picker: a thumbnail tile per preset. Hover lifts the tile and turns its
+   zones accent so the chosen layout previews on the button itself. */
+.ca-tidy-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 74px;
+  padding: 6px 3px 5px;
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.ca-tidy-preset span {
+  color: var(--text-2);
+}
+.ca-tidy-preset:hover {
+  background: var(--surface-raised);
+}
+.ca-tidy-preset:hover .ca-zone {
+  background: var(--accent);
+}
+.ca-tidy-preset:hover span {
+  color: var(--text);
+}
+
 .fullview-scrim {
   position: fixed;
   inset: 0;

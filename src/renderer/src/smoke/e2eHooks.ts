@@ -13,6 +13,8 @@ import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { fromObject, type Board, type BoardType } from '../lib/boardSchema'
+import type { TidyMode } from '../lib/tidyLayout'
+import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { e2eTerminals } from './e2eRegistry'
 
@@ -37,6 +39,10 @@ export interface CanvasE2E {
   patchBoard: (id: string, patch: Partial<Board>) => void
   /** Fit the camera to one board (id) or all boards — forces zoom ≥ LOD for capture. */
   fitView: (id?: string) => void
+  /** Auto-tidy: repack every board with `mode` (default smart); `aspect` steers grid. */
+  tidy: (mode?: TidyMode, aspect?: number) => void
+  /** Tile: resize + move every board to fill zones of `area` with `template`. */
+  tile: (template: TileTemplate, area: { x: number; y: number; w: number; h: number }) => void
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
   /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
@@ -115,6 +121,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     fitView(id) {
       const opts = { maxZoom: 1, padding: 0.2, duration: 0 } as const
       void rf.fitView(id ? { ...opts, nodes: [{ id }] } : opts)
+    },
+    tidy(mode, aspect) {
+      useCanvasStore.getState().tidyBoards(mode, aspect)
+    },
+    tile(template, area) {
+      useCanvasStore.getState().tileBoards(template, area)
     },
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })

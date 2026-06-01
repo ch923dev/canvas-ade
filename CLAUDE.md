@@ -12,7 +12,7 @@ Each item is a resizable **board**. A **project = one canvas**. Board types:
 - **Planning** — whiteboard: notes, arrows, text, freehand, **and checklists** (interactive task cards).
 - **Checklist** — NOT a separate board type. A first-class **element inside a Planning board** (toggleable
   items + progress bar), alongside notes/arrows/text/pen. (Decided 2026-05-29; was previously framed as its
-  own type — see `docs/handoffs/phase-2.md`.)
+  own type — see `docs/archive/build-history.md` › Phase 2.)
 
 ## Authoritative design reference
 
@@ -67,7 +67,7 @@ Worktrees are **deferred to a post-MCP phase** under a better model: **Feature W
 worktree backs a *feature zone* (a cluster of boards: terminal + browser + planning), **not a single
 board**. Gated on the `canvas-ade-mcp` swarm layer. See `docs/roadmap.md` › Deferred › Feature
 Workspaces. What replaced the worktree-coupled "per-board ports" idea: runtime **port detection →
-push to preview** (Slice C′, shipped/shipping — `docs/superpowers/specs/2026-05-30-port-detect-preview-design.md`).
+push to preview** (Slice C′, shipped — see `docs/archive/build-history.md` › Phase 3-C′).
 Still-valid locked safety rules **for when it is built** (do not re-decide):
 - `git init` is **opt-in**; reuse an existing repo; NEVER auto-init when nested inside a parent repo.
 - On delete with a dirty worktree: **keep on disk + prompt** (commit/stash/discard/keep). Never
@@ -91,7 +91,7 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 | Browser board scale | Scales WITH the camera (snapshot scales as a unit), not 1:1. Locked in 1-D. |
 | Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session syncs all presets. ADR 0002. |
 | Checklist | A Planning **element** (card inside a Planning board), not a 4th board type / dock button. Decided 2026-05-29. |
-| Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/handoffs/phase-2.md`. |
+| Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/archive/build-history.md`. |
 | Build matrix | Full: win + mac + linux × x64/arm64 (CI). Local verify = Windows x64 only here. |
 | Target | Single-user desktop (no multiplayer). |
 
@@ -103,9 +103,9 @@ src/
   preload/   index.ts (contextBridge + MessagePort forwarding) · index.d.ts
   renderer/  index.html · src/{main.tsx, App.tsx, index.css, env.d.ts} · src/smoke/*
 design-reference/   authoritative design bundle (read-only)
-docs/        roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0002) · handoffs/ ·
-             research/ · superpowers/{plans,specs}/ · archive/ (superseded Round-1 bug-hunt docs)
-bug-hunt-findings/   Round-2 fix package (INDEX · FIX-REPORT · skipped-roadmap · findings/BUG-0NN.md)
+docs/        README.md (map) · roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0002) ·
+             reviews/ (all hunts+reviews; README index + newest = open backlog) · research/ ·
+             archive/ (build-history.md + git pointers for collapsed per-slice/handoff docs)
 .github/workflows/build.yml   6-target CI matrix (unsigned until Phase 5)
 electron.vite.config.ts · electron-builder.yml · tsconfig.{json,node,preload,web}.json
 ```
@@ -139,73 +139,27 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 
 ## Status
 
-Durable contract is above. The full phase-by-phase build history (Phase 0 → Phase 2
-follow-up) lives in **`docs/handoffs/status-archive.md`** to keep this file lean.
+Durable contract is above. **Build history** (phases 0–5, per-slice specs/plans, phase handoffs)
+is summarized in **`docs/archive/build-history.md`** (originals in git history). **Review/bug-hunt
+history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
+file = open findings).
 
-**Current state (2026-06-01):** **Phase 4 — Design pass & polish — SHIPPED on `main`** (`abd7fa2`,
-PR #9 — all 7 slices incl. Slice 5 full-view motion; §6.1 top band descoped into the title-bar
-toggle). Two post-Phase-4 review rounds also merged: PR #12 (`ed1d551`, 13 verified bugs) +
-`94baab9` (4 open-medium findings M-1/M-5/M-6/M-7). **Round-2 in-depth review (2026-06-01)** —
-9-dimension workflow + adversarial verify, no High — fixes on branch `fix/review-2026-06-01-round2`:
-**PTY-1** parked-PTY reaped on project switch (new `pty:disposeAll` IPC → `disposeAllPtys` drains
-both maps; `disposeLiveResources` calls it) · **PREV-1** full-view eviction snapshots before close
-(`evictLiveBoard`, no blank frame behind scrim) · **ATTACH-1** `attachBoard` post-await recheck
-(no resurrected live-count) · **PERSIST-1** `writeProject` envelope-guards the incoming doc ·
-**SAVE-1** `project:save` failures surfaced (handler try/catch → false; autosaver `onError`) ·
-**NOTE-1/TEXT-1** empty-element Backspace guarded on the non-`select` tool. **438 unit** green, lint
-+ typecheck clean; e2e **22/25** (the 3 = the documented browser-trio env flake). Cards:
-`docs/bug-hunt-findings/2026-06-01-review-2/`. Known e2e env-flake: the
-`browser`/`browser-gesture`/`focus-detach` live-`WebContentsView` trio (memory
-`e2e-browser-trio-flake`) — environmental, not a regression.
+**Current state (2026-06-01):** **Phases 0–4 SHIPPED on `main`.** Phase 4 design pass = `abd7fa2`
+(PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified bugs) · `94baab9` (4 open-medium)
+· `1a0c615` (7 round-2 review findings + a doc/repo cleanup). Latest baseline: **438 unit** green,
+lint + typecheck clean; e2e **22/25** (the 3 = the documented `browser`/`browser-gesture`/`focus-detach`
+live-`WebContentsView` env flake, memory `e2e-browser-trio-flake` — environmental, not a regression).
 
-**Phase 3 is SHIPPED on `main`** (`139bc69` — A persistence · B
-board actions · C′ port-detect preview + the 2026-05-31 bug-fix batch). All Phase 3 branches are
-merged + pruned (local + remote). Baseline at merge: **303 unit tests** green, e2e harness
-**19/19 `ok:true`**, lint + typecheck clean. Phase 2 (Terminal · Browser · Planning+Checklist) and
-Phase 3 both on `main`. Phase 4 entry handoff: `docs/handoffs/phase-4.md`. **Phase 3 Slice A — Persistence** built
-on branch `phase-3-persistence` (273
-tests green): projects = a folder + `canvas.json` (schema **v2**, adds persisted camera
-`viewport`; real `migrate(1→2)`); atomic write + `.bak` rotation (`main/projectStore.ts`);
-recent-projects MRU in userData (`main/recentProjects.ts`); frame-guarded project IPC
-(`main/projectIpc.ts`) + `window.api.project`/`dialog` preload bridge; renderer-driven
-debounced autosave (`store/useAutosave.ts`, flush on blur/quit); boot auto-reopens the last
-project else a welcome screen; in-session project switch (flush → `disposeLiveResources`
-[close previews + kill PTYs] → load); restored terminals are **idle** (no auto-spawn) and
-default `cwd` to the project folder. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`.
+**Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:
+**healthy, no Critical/High** (the prior-round High MBC-1 did not reproduce). 12 residual Low/Nit/Info
+findings (preview resurrection/ghost, duplicate-while-focused dim, redo-wipe, terminal idle-flag,
+degenerate-draw phantom undo, `cwd`/`'*'` hardening). Full backlog + fix lanes:
+**`docs/reviews/2026-06-01-round3.md`**. None gate a release.
 
-**Phase 3 Slice B — Board actions** built on branch `phase-3-board-actions` (278 tests
-green): **Full view** (live portal-relocation — the matching `BoardNode` `createPortal`s its
-live subtree into the modal host so the PTY/xterm/native view survive, no remount; Browser's
-native `WebContentsView` is re-bound to the portaled device-frame's live DOM rect while all
-other views detach) · **Duplicate** (clone offset 36px, select copy, one undo step;
-Browser→next viewport preset, planning elements deep-cloned with fresh ids) · shared **⋯ menu**
-(Full view · Duplicate · Delete) in `BoardFrame`, threaded to all three board types via
-`BoardActionsContext`. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
-
-Slice B also fixed a pre-existing native-view ghost: `preview.ts` now `setVisible(false)` on
-detach so the drag detach→reattach toggle can't leave a frozen composited frame (Electron
-#43961; #44652 is already fixed in our 33.4.11).
-
-**Phase 3 Slice C′ — Port detect → push to preview** built on branch `phase-3-slice-c` (296 tests
-green; full gate verified). Git worktrees were **re-scoped 2026-05-30** out of Phase 3 → deferred to
-the post-MCP **Feature Workspaces** model (worktree backs a feature *zone* of boards, not a board;
-roadmap Deferred + proposals FW-1). The slice that shipped instead: a Terminal **Preview** (globe)
-button parses the dev-server URL from the PTY ring buffer (`main/portDetect.ts`, pure) over a
-frame-guarded `terminal:detectPorts` IPC; `Canvas.pushPreview` resolves a target Browser
-(follow-link → selected → sole → spawn-near, `lib/previewTarget.ts`) and sets its `url` +
-`previewSourceId`; a React Flow **floating connector arrow** Terminal→preview is derived from that
-field (`lib/previewEdges.ts` + `canvas/edges/PreviewEdge.tsx`, hidden anchors on BoardNode),
-auto-reroutes + persists (no schema bump — optional `BrowserBoard.previewSourceId`), cleaned up on
-delete/duplicate. Read-only (no Browser→PTY path). Spec + plan:
-`docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`. Known minor gap: no IPC
-frame-guard unit test (pre-existing pattern — no `pty:*` handler has one).
-
-**Start here next:** Phases 0–4 are shipped on `main`. Open candidates (see `docs/roadmap.md`):
-**Phase 5 — packaging/signing** (CI matrix is unsigned until Phase 5) · the **`canvas-ade-mcp` swarm
-layer** (planned MCP package; memory `canvas-ade-mcp`) · and the post-MCP **Feature Workspaces /
-worktrees** model (FW-1). Deferred: **agentic session resume** (roadmap note) · Stage-2 Playwright
-`_electron` harness (the `CANVAS_SMOKE=e2e` harness is the stand-in). First merge the open round-2
-fix branch `fix/review-2026-06-01-round2`. Known e2e flakes (env/timing, not regressions): the
-`browser`/`browser-gesture`/`focus-detach` live-`WebContentsView` parts — rerun on a clean
-`electron` process.
+**Start here next:** Open candidates (see `docs/roadmap.md`): **Phase 5 — packaging/signing** (CI
+matrix unsigned until Phase 5) · the **`canvas-ade-mcp` swarm layer** (planned MCP package, memory
+`canvas-ade-mcp`) · the post-MCP **Feature Workspaces / worktrees** model (FW-1) · or burning down the
+**Round-3 Low backlog** (`docs/reviews/2026-06-01-round3.md`, 4 file-disjoint lanes). Deferred:
+**agentic session resume** (roadmap note) · Stage-2 Playwright `_electron` harness (the
+`CANVAS_SMOKE=e2e` harness is the stand-in).
 

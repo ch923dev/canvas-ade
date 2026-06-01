@@ -522,3 +522,182 @@ describe('preview link cleanup', () => {
     expect(get(cloneId)).toBeUndefined()
   })
 })
+
+describe('tidyBoards', () => {
+  const overlaps = (
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number }
+  ): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+
+  it('repacks overlapping boards into a non-overlapping block', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    // Three boards stacked on the SAME spot — freeSlot would normally cascade, but
+    // force the overlap to prove tidy resolves it. updateBoard moves them onto each other.
+    const a = st.addBoard('terminal', { x: 0, y: 0 })
+    const b = st.addBoard('terminal', { x: 0, y: 0 })
+    const c = st.addBoard('terminal', { x: 0, y: 0 })
+    get().updateBoard(b, { x: 10, y: 10 })
+    get().updateBoard(c, { x: 20, y: 20 })
+
+    get().tidyBoards('smart')
+    const boards = get().boards
+    for (let i = 0; i < boards.length; i++)
+      for (let j = i + 1; j < boards.length; j++)
+        expect(overlaps(boards[i], boards[j])).toBe(false)
+    expect(boards.map((x) => x.id).sort()).toEqual([a, b, c].sort())
+  })
+
+  it('is a no-op for fewer than two boards (no undo step pushed)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    get().addBoard('terminal', { x: 5, y: 5 })
+    const pastLen = get().past.length
+    const before = get().boards
+    get().tidyBoards('smart')
+    expect(get().boards).toBe(before) // same reference — untouched
+    expect(get().past.length).toBe(pastLen) // no phantom undo step
+  })
+
+  it('records ONE undo step that restores the pre-tidy positions', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    const a = st.addBoard('terminal', { x: 0, y: 0 })
+    const b = st.addBoard('browser', { x: 5, y: 5 }) // overlaps a → tidy will move them
+    const beforeA = { ...get().boards.find((x) => x.id === a)! }
+    const beforeB = { ...get().boards.find((x) => x.id === b)! }
+    const pastLen = get().past.length
+
+    get().tidyBoards('smart')
+    expect(get().past.length).toBe(pastLen + 1) // exactly one checkpoint
+
+    get().undo()
+    const afterA = get().boards.find((x) => x.id === a)!
+    const afterB = get().boards.find((x) => x.id === b)!
+    expect({ x: afterA.x, y: afterA.y }).toEqual({ x: beforeA.x, y: beforeA.y })
+    expect({ x: afterB.x, y: afterB.y }).toEqual({ x: beforeB.x, y: beforeB.y })
+  })
+
+  it('a no-op gesture after tidy pushes no phantom undo step (lastRecorded synced)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    st.addBoard('terminal', { x: 0, y: 0 })
+    st.addBoard('browser', { x: 5, y: 5 }) // overlaps → tidy moves them
+    get().tidyBoards('smart')
+    const tidied = get().boards
+    const pastLen = get().past.length
+    // A gesture starts (titlebar/resize-handle click) but commits nothing. beginChange
+    // must recognise the just-tidied present and NOT record a phantom snapshot — else a
+    // zero-movement gesture leaves a no-op undo step, so Undo #1 does nothing and Undo #2
+    // is needed to actually reverse the tidy (same defect class as #BUG M3 / Bug #7).
+    get().beginChange()
+    expect(get().past.length).toBe(pastLen) // no phantom step
+    // A single undo reverses the tidy (it is NOT a no-op first).
+    get().undo()
+    expect(get().boards).not.toBe(tidied)
+  })
+
+  it('is a no-op when the boards are already tidy (no second undo step)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    st.addBoard('terminal', { x: 0, y: 0 })
+    st.addBoard('browser', { x: 5, y: 5 })
+    get().tidyBoards('smart') // first tidy moves them
+    const settled = get().boards
+    const pastLen = get().past.length
+    get().tidyBoards('smart') // second tidy: already packed → nothing changes
+    expect(get().boards).toBe(settled) // same reference — no mutation
+    expect(get().past.length).toBe(pastLen) // no phantom undo step
+  })
+
+  it("smart mode groups a browser with the terminal that drives it (store passes type + link through)", () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    const src = st.addBoard('terminal', { x: 0, y: 0 })
+    const b1 = st.addBoard('browser', { x: 2000, y: 2000 })
+    const b2 = st.addBoard('browser', { x: 4000, y: 4000 })
+    // Link both browsers to the terminal (the previewSourceId graph smart reads).
+    get().updateBoard(b1, { previewSourceId: src } as never)
+    get().updateBoard(b2, { previewSourceId: src } as never)
+    get().tidyBoards('smart')
+    const at = (id: string): { x: number; y: number } => {
+      const board = get().boards.find((x) => x.id === id)!
+      return { x: board.x, y: board.y }
+    }
+    // Both linked browsers share one row; the source terminal sits on the row below.
+    expect(at(b1).y).toBe(at(b2).y)
+    expect(at(src).y).toBeGreaterThan(at(b1).y)
+  })
+})
+
+describe('tileBoards (resize-to-fill)', () => {
+  const AREA = { x: 0, y: 0, w: 1600, h: 1000 }
+
+  it('resizes + repositions boards to fill the area (2 columns), one undo step', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    st.addBoard('terminal', { x: 0, y: 0 })
+    st.addBoard('browser', { x: 5000, y: 5000 })
+    const pastLen = get().past.length
+    get().tileBoards('cols-2', AREA)
+    const boards = get().boards
+    expect(get().past.length).toBe(pastLen + 1) // exactly one checkpoint
+    // Union bounding box fills the area edge-to-edge.
+    const minX = Math.min(...boards.map((b) => b.x))
+    const minY = Math.min(...boards.map((b) => b.y))
+    const maxX = Math.max(...boards.map((b) => b.x + b.w))
+    const maxY = Math.max(...boards.map((b) => b.y + b.h))
+    expect(minX).toBe(0)
+    expect(minY).toBe(0)
+    expect(maxX).toBeCloseTo(1600, 0)
+    expect(maxY).toBeCloseTo(1000, 0)
+    // Boards were genuinely resized (not just moved).
+    expect(boards.every((b) => b.w > 240 && b.h > 160)).toBe(true)
+  })
+
+  it('clamps a tiny zone to the board minimum size', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    for (let i = 0; i < 6; i++) st.addBoard('terminal', { x: i * 600, y: 0 })
+    get().tileBoards('grid', { x: 0, y: 0, w: 300, h: 200 }) // tiny area → zones below min
+    expect(get().boards.every((b) => b.w >= 240 && b.h >= 160)).toBe(true)
+  })
+
+  it('record=false reflow changes geometry but pushes NO undo step (live window-resize path)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    st.addBoard('terminal', { x: 0, y: 0 })
+    st.addBoard('browser', { x: 900, y: 0 })
+    get().tileBoards('cols-2', AREA) // tracked apply (1 step)
+    const pastLen = get().past.length
+    const tiled = get().boards
+    // Simulate a window resize → reflow into a taller area, untracked.
+    get().tileBoards('cols-2', { x: 0, y: 0, w: 1000, h: 1400 }, false)
+    expect(get().past.length).toBe(pastLen) // NO new undo step
+    expect(get().boards).not.toBe(tiled) // geometry actually changed
+    // The new heights reflect the taller area (reflowed, not the original).
+    const heights = get().boards.map((b) => b.h)
+    expect(Math.max(...heights)).toBeGreaterThan(Math.max(...tiled.map((b) => b.h)))
+  })
+
+  it('undo restores the pre-tile geometry; re-tiling the same area is a no-op', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    const id = st.addBoard('terminal', { x: 10, y: 20 })
+    st.addBoard('browser', { x: 900, y: 0 })
+    const before = { ...get().boards.find((b) => b.id === id)! }
+    get().tileBoards('cols-2', AREA)
+    const settled = get().boards
+    const pastLen = get().past.length
+    get().tileBoards('cols-2', AREA) // already tiled → nothing changes
+    expect(get().boards).toBe(settled)
+    expect(get().past.length).toBe(pastLen)
+    get().undo()
+    const after = get().boards.find((b) => b.id === id)!
+    expect({ x: after.x, y: after.y, w: after.w, h: after.h }).toEqual({
+      x: before.x,
+      y: before.y,
+      w: before.w,
+      h: before.h
+    })
+  })
+})

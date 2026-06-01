@@ -6,7 +6,7 @@
 - **Source git tag:** `v1.2.3` (the monorepo tag that publishes npm `1.2.2`)
 - **Source path:** `packages/perfect-freehand/src/*.ts`
 - **Vendored on:** 2026-05-29
-- **By:** Phase 2.3 (Planning board) — see `docs/handoffs/phase-2.md`.
+- **By:** Phase 2.3 (Planning board) — see `docs/archive/build-history.md` › Phase 2.
 
 ## Why vendored, not an npm dependency
 
