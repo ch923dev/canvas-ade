@@ -16,7 +16,8 @@ interface AutosaverOpts {
 
 export interface Autosaver {
   schedule: () => void
-  flush: () => void
+  /** Flush any pending save NOW; resolves once the underlying save settles. */
+  flush: () => Promise<void>
   cancel: () => void
 }
 
@@ -26,21 +27,21 @@ export function createAutosaver(opts: AutosaverOpts): Autosaver {
   let timer: ReturnType<typeof setTimeout> | null = null
   let dirty = false
 
-  const run = (): void => {
+  const run = (): Promise<void> => {
     timer = null
-    if (!dirty || opts.getStatus() !== 'open') return
+    if (!dirty || opts.getStatus() !== 'open') return Promise.resolve()
     dirty = false
-    void opts.save()
+    return Promise.resolve(opts.save()).then(() => undefined)
   }
   return {
     schedule: () => {
       dirty = true
       if (timer) clearTimeout(timer)
-      timer = setTimeout(run, delay)
+      timer = setTimeout(() => void run(), delay)
     },
     flush: () => {
       if (timer) clearTimeout(timer)
-      run()
+      return run()
     },
     cancel: () => {
       if (timer) clearTimeout(timer)
@@ -73,15 +74,22 @@ export function useAutosave(): void {
       }
     })
 
-    const onBlur = (): void => saver.flush()
-    const onUnload = (): void => saver.flush()
+    const onBlur = (): void => void saver.flush()
+    const onUnload = (): void => void saver.flush()
     window.addEventListener('blur', onBlur)
     window.addEventListener('beforeunload', onUnload)
 
+    // BUG-M2: main hard-exits with app.exit(0) on quit, which bypasses `beforeunload`,
+    // so the flush above would never run and the last ~1s of edits is lost. Main posts
+    // `project:flush` right before exit and awaits our reply — flush (awaiting the save)
+    // so the on-disk canvas.json is current before the process dies.
+    const offFlush = window.api.project.onFlush(() => saver.flush())
+
     return () => {
-      saver.flush()
+      void saver.flush()
       saver.cancel()
       unsub()
+      offFlush()
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('beforeunload', onUnload)
     }
