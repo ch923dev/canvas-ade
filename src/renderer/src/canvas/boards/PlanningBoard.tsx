@@ -371,6 +371,18 @@ export function PlanningBoard({
     }
   }, [draftArrow, dragPos, commit, elements, beginChange])
 
+  const onWellPointerCancel = useCallback(() => {
+    // An OS pointer-cancel (palm/stylus/system gesture) mid-erase must NOT commit a
+    // destructive delete the user never finished — discard the in-flight swipe. Other
+    // gestures (move/arrow/pen) keep their existing pointer-up behavior on cancel.
+    if (drag.current?.mode === 'erase') {
+      drag.current = null
+      setPendingErase(null)
+      return
+    }
+    onWellPointerUp()
+  }, [onWellPointerUp])
+
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
     <div
@@ -441,7 +453,7 @@ export function PlanningBoard({
         onPointerDown={onWellPointerDown}
         onPointerMove={onWellPointerMove}
         onPointerUp={onWellPointerUp}
-        onPointerCancel={onWellPointerUp}
+        onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
         onKeyDown={(e) => {
           if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElId) {
@@ -552,7 +564,7 @@ export function PlanningBoard({
               pointerEvents: 'none'
             }}
           >
-            {selected ? 'pick a tool above · note · check · arrow · pen' : 'empty plan'}
+            {selected ? 'pick a tool above · note · check · arrow · pen · erase' : 'empty plan'}
           </div>
         )}
       </div>
