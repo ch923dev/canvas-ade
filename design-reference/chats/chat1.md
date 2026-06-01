@@ -1,4 +1,4 @@
-# # Canvas ADE UI Design
+# # Expanse UI Design
 
 ## DESIGN.md
 
@@ -12,7 +12,7 @@ _Started 2026-05-28 21:07 UTC_
 
 ## User
 
-You are designing the UI for "Canvas ADE," a desktop app for AI-assisted development.
+You are designing the UI for "Expanse," a desktop app for AI-assisted development.
 
 Concept: an infinite, zoomable canvas (think Figma/tldraw) where each item is a
 resizable "board." There are three board types:

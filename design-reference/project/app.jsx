@@ -9,8 +9,8 @@
   // ── Scene data ─────────────────────────────────────────────────────────
   let _id = 0; const uid = () => "b" + ++_id;
   const PROJECTS = {
-    "canvas-ade": {
-      label: "canvas-ade", boards: [
+    "expanse": {
+      label: "expanse", boards: [
         { id: uid(), type: "planning", x: 30,  y: -404, w: 516, h: 366, title: "plan · canvas rebuild" },
         { id: uid(), type: "terminal", x: 596, y: -404, w: 410, h: 320, title: "agent · tests", running: false, live: false,
           log: [ { k:"user", t:"add unit tests for useCamera()" }, { k:"tool", t:"Read  src/canvas/useCamera.ts" }, { k:"edit", t:"useCamera.test.ts", add:64, del:0 }, { k:"tool", t:"Run   pnpm test useCamera" }, { k:"ok", t:"7 passed (212ms)" } ], working:"" },
@@ -80,8 +80,8 @@
 
   function App() {
     const [t, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
-    const [projId, setProjId] = useState("canvas-ade");
-    const [boards, setBoards] = useState(PROJECTS["canvas-ade"].boards);
+    const [projId, setProjId] = useState("expanse");
+    const [boards, setBoards] = useState(PROJECTS["expanse"].boards);
     const [sel, setSel] = useState(null);
     const [focusId, setFocusId] = useState(null);
     const [hover, setHover] = useState(null);
@@ -96,7 +96,7 @@
     // open as LOD cards in a small window
     useEffect(() => {
       const r = wrapRef.current.getBoundingClientRect();
-      const box = boardsBox(PROJECTS["canvas-ade"].boards);
+      const box = boardsBox(PROJECTS["expanse"].boards);
       const z = clamp(fitBox(box, r.width, r.height, 130).z, 0.5, 0.82);
       setCam({ x: r.width / 2 - (box.x + box.w / 2) * z, y: r.height / 2 - (box.y + box.h / 2) * z, z });
     }, []);

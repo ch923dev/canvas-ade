@@ -1,4 +1,4 @@
-# Canvas ADE — Design Spec
+# Expanse — Design Spec
 
 A desktop (Electron + React + tldraw) app for AI-assisted development. Each
 **project** is an infinite, zoomable **canvas**. Items on the canvas are
@@ -9,7 +9,7 @@ arrows). Zoom out to see the whole project; zoom in to work one board.
 This document is the implementation contract: design tokens + board chrome
 rules. Two reference artifacts ship alongside it:
 
-- `Canvas ADE.html` — the live pan/zoom prototype.
+- `Expanse.html` — the live pan/zoom prototype.
 - `Frames Overview.html` — every key state laid out flat for inspection.
 
 ---
@@ -238,7 +238,7 @@ LOD and only the title (rendered at a zoom-compensated size) shows.
 ## 8. App chrome (screen-space, floats over canvas)
 
 - **Top-left:** app mark (`◇` 16px) + **project switcher**
-  `canvas-ade ▾` (`label`, `--text`), opens a menu of projects (each = its own
+  `expanse ▾` (`label`, `--text`), opens a menu of projects (each = its own
   canvas). To its right, a faint board count `· 4 boards` (`meta`, `--text-3`).
 - **Top-right:** camera cluster — `⤢ fit`, then `−  142%  +` (mono `meta`),
   divider, `⊞ overview`. All 28px controls on a single

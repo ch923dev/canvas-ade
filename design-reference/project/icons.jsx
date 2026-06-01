@@ -1,4 +1,4 @@
-// icons.jsx — monochrome line icons + board type glyphs for Canvas ADE.
+// icons.jsx — monochrome line icons + board type glyphs for Expanse.
 // All 1.5px stroke, currentColor, 16px default. Exported to window.
 (function () {
   const S = ({ d, size = 16, sw = 1.5, fill = "none", children, style, vb = 24 }) =>
