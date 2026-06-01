@@ -22,6 +22,7 @@ import { createPortal } from 'react-dom'
 import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
 import { BoardActionsContext } from './boardActions'
+import type { ResolvedPushTarget } from '../lib/previewTarget'
 import { FullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
@@ -101,8 +102,9 @@ export interface BoardViewProps<T extends Board = Board> {
   onDuplicate?: () => void
   /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
   onDelete?: () => void
-  /** Terminal "Preview" action → open/point a linked Browser board at `url`. */
-  onPushPreview?: (url: string) => void
+  /** Terminal "Preview" action → push `url` to a chosen Browser target (refresh linked,
+   *  connect, re-target, or spawn). Target chosen by gesture + the multi-select picker. */
+  onPushPreviewTo?: (url: string, target: ResolvedPushTarget) => void
 }
 
 /** Status dot shown on the LOD card (no label at LOD). */
@@ -126,8 +128,10 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
   const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
   const onDelete = acts ? (): void => acts.remove(board.id) : undefined
-  const onPushPreview = acts ? (url: string): void => acts.pushPreview(board.id, url) : undefined
-  const actions = { onFull, onDuplicate, onDelete, onPushPreview }
+  const onPushPreviewTo = acts
+    ? (url: string, target: ResolvedPushTarget): void => acts.pushPreviewTo(board.id, url, target)
+    : undefined
+  const actions = { onFull, onDuplicate, onDelete, onPushPreviewTo }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover

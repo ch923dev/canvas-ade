@@ -36,7 +36,10 @@ export function IconBtn({
   size = 15,
   sw,
   restColor = 'var(--text-3)',
-  onClick
+  onClick,
+  onLongPress,
+  longPressMs = 500,
+  onContextMenu
 }: {
   name: IconName
   title: string
@@ -49,9 +52,43 @@ export function IconBtn({
    *  trigger uses `--text-2` so it isn't near-invisible at rest. */
   restColor?: string
   onClick?: (e: MouseEvent) => void
+  /** Press-and-hold handler. When the pointer is held ≥`longPressMs`, this fires and the
+   *  subsequent click (the release) is suppressed so `onClick` does NOT also run. */
+  onLongPress?: () => void
+  longPressMs?: number
+  /** Right-click (context-menu) handler — an accessible, no-timing alternative to
+   *  `onLongPress`. Suppresses the native context menu when set. */
+  onContextMenu?: () => void
 }): ReactElement {
   const [hover, setHover] = useState(false)
   const [focus, setFocus] = useState(false)
+  // Long-press: a timer armed on pointer-down fires onLongPress; `heldRef` then gates the
+  // trailing click so a hold never doubles as a tap. Cleared on up/leave (= a short tap).
+  const heldRef = useRef(false)
+  const timerRef = useRef<number | null>(null)
+  const clearTimer = (): void => {
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+  }
+  const handlePointerDown = (): void => {
+    if (!onLongPress) return
+    heldRef.current = false
+    timerRef.current = window.setTimeout(() => {
+      heldRef.current = true
+      onLongPress()
+    }, longPressMs)
+  }
+  const handleClick = (e: MouseEvent): void => {
+    clearTimer()
+    if (heldRef.current) {
+      // A long-press already fired — swallow the release click.
+      heldRef.current = false
+      return
+    }
+    onClick?.(e)
+  }
   const color = active
     ? 'var(--accent)'
     : danger && hover
@@ -62,15 +99,32 @@ export function IconBtn({
   return (
     <button
       title={title}
-      onClick={onClick}
+      onClick={handleClick}
+      onContextMenu={
+        onContextMenu
+          ? (e) => {
+              e.preventDefault()
+              clearTimer()
+              onContextMenu()
+            }
+          : undefined
+      }
       onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseLeave={() => {
+        setHover(false)
+        clearTimer() // pointer left the button before the hold fired → cancel
+      }}
       // Accent ring on keyboard focus so the title-bar controls are visible to keyboard
       // users (matches the §6 board select-ring treatment).
       onFocus={() => setFocus(true)}
       onBlur={() => setFocus(false)}
-      // Stop the title-bar drag from starting when a control is pressed.
-      onMouseDown={(e) => e.stopPropagation()}
+      // Stop the title-bar drag from starting when a control is pressed; also arm/disarm
+      // the long-press timer on press/release.
+      onMouseDown={(e) => {
+        e.stopPropagation()
+        handlePointerDown()
+      }}
+      onMouseUp={clearTimer}
       style={{
         width: 24,
         height: 24,
