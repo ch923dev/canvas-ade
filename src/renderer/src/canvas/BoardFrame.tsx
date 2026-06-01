@@ -6,7 +6,7 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
 import { prefersReducedMotion } from '../lib/motion'
@@ -167,11 +167,12 @@ export function BoardMenu({
   // popover — so a menu dropping over a live Browser board's device stage renders under
   // it. Signal the preview layer to detach live views to their HTML snapshot while open,
   // then reattach on close (mirrors the node-gesture detach path). ADR 0002.
+  const menuToken = useId()
   const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
   useEffect(() => {
-    setMenuOpen(open)
-    if (open) return () => setMenuOpen(false)
-  }, [open, setMenuOpen])
+    setMenuOpen(menuToken, open)
+    if (open) return () => setMenuOpen(menuToken, false)
+  }, [open, setMenuOpen, menuToken])
 
   useEffect(() => {
     if (!open) return
