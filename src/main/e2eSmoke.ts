@@ -325,6 +325,46 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : JSON.stringify(emu)
   })
 
+  // ── Slice 5 (close-motion state machine) + Esc-through-typing fix: full view renders a
+  // chrome-less frame (no §6.1 band — removed; exits are the board's own ⤢ toggle, Esc, or
+  // a scrim click). Open via the e2e hook, assert the frame mounts and the band is GONE,
+  // then FOCUS the full-view terminal's xterm helper textarea and dispatch Escape FROM IT
+  // (target=TEXTAREA) — the window Esc handler must still close full view despite the
+  // typing guard (else a focused terminal traps the user in maximized mode). Assert the
+  // modal is gone after the tween — proving the close state machine + the typing-guard
+  // bypass end to end. ──
+  await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
+  await delay(400) // modal mounts + enter tween settles
+  const fvClose = await evalIn<{ frame: boolean; bandGone: boolean; typed: boolean }>(
+    win,
+    `(() => {
+       const ta = document.querySelector('.fullview-host .xterm-helper-textarea');
+       if (ta) ta.focus();
+       const typing = document.activeElement?.tagName === 'TEXTAREA';
+       (ta || document).dispatchEvent(
+         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+       );
+       return {
+         frame: !!document.querySelector('.fullview-scrim .fullview-frame .fullview-host'),
+         bandGone: document.querySelector('.fullview-band') === null,
+         typed: typing
+       };
+     })()`
+  )
+  await delay(400) // exit tween (200ms) + onExited unmount
+  const fvCloseGone = await evalIn<boolean>(
+    win,
+    `document.querySelector('.fullview-scrim') === null`
+  )
+  const fvCloseOk = fvClose.frame && fvClose.bandGone && fvClose.typed && fvCloseGone
+  parts.push({
+    name: 'fullview-close',
+    ok: fvCloseOk,
+    detail: fvCloseOk
+      ? 'chrome-less frame (no band); Esc from focused terminal textarea closes + unmounts'
+      : `frame=${fvClose.frame} bandGone=${fvClose.bandGone} typing=${fvClose.typed} closed=${fvCloseGone}`
+  })
+
   // ── Fix #2 (LOD-survival): zooming below LOD must NOT unmount the terminal and
   // kill its PTY. e2eTerminals registration tracks the xterm mount, so the board
   // staying mounted across LOD proves the session survives (pre-fix BoardNode
@@ -661,6 +701,108 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: occlOk
       ? 'live preview detaches while ⋯ menu open (un-occluded) → reattaches on close'
       : JSON.stringify(occl)
+  })
+
+  // ── Multi-browser connect (gesture routing): the terminal globe routes by gesture.
+  // A plain TAP refreshes the browser(s) already linked to this terminal; a press-and-HOLD
+  // (≥500ms) or a RIGHT-CLICK opens the multi-select connect picker over candidate browsers
+  // (unconnected + connected-elsewhere). Print a dev-server URL into the terminal so port
+  // detection succeeds, then drive all three gestures through the real DOM. Both seeded
+  // browsers are currently unlinked → 2 candidates; connecting one then makes a tap refresh
+  // it (no picker). Restores the link at the end so the baseline is unchanged. ──
+  const DETECTED_URL = 'http://localhost:3000' // parser drops the trailing slash
+  await evalIn(win, `window.__canvasE2E.patchBoard(${JSON.stringify(termId)}, { w: 360 })`) // menu-chrome narrowed it; widen so the globe is clickable
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
+  await evalIn(win, 'window.__canvasE2E.setZoom(1)')
+  debugWriteTerminal(termId, 'echo http://localhost:3000/\r')
+  const urlSeen = await poll(async () => {
+    const t = await evalIn<string | null>(
+      win,
+      `window.__canvasE2E.readTerminal(${JSON.stringify(termId)})`
+    )
+    return typeof t === 'string' && t.includes('localhost:3000')
+  }, 8000)
+  const gesture = await evalIn<{
+    detected: string[]
+    holdOpened: boolean
+    holdTitle: boolean
+    holdCount: number
+    rightOpened: boolean
+    tapOpened: boolean
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const detected = (await window.api.detectPorts(${JSON.stringify(termId)})).map((u) => u.url);
+       const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(termId)}) + ']');
+       const globe = node && node.querySelector('button[title*="choose browser"]');
+       const picker = () => node.querySelector('.ca-port-picker');
+       const pickerHas = (txt) => { const p = picker(); return !!p && p.textContent.includes(txt); };
+       if (!globe) return { detected, holdOpened: false, holdTitle: false, holdCount: 0, rightOpened: false, tapOpened: false };
+
+       // (1) LONG-PRESS: mousedown arms the ~500ms timer → onLongPress opens the picker.
+       globe.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+       await sleep(700);                                  // hold past the threshold
+       globe.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+       globe.dispatchEvent(new MouseEvent('click', { bubbles: true })); // release-click (swallowed after a hold)
+       await sleep(600);                                  // detectPorts + render
+       const holdOpened = !!picker();
+       const holdTitle = pickerHas('Push to which browser');
+       const holdCount = picker() ? picker().querySelectorAll('.ca-browser-choice input').length : 0;
+       const cancel = picker() && picker().querySelector('.ca-preview-dismiss');
+       if (cancel) cancel.click();
+       await sleep(120);
+
+       // (2) RIGHT-CLICK: contextmenu opens the same picker (no timing). Then check the first
+       // candidate + Connect → wires that browser to this terminal.
+       globe.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+       await sleep(600);
+       const rightOpened = !!picker();
+       const firstBox = picker() && picker().querySelector('.ca-browser-choice input');
+       if (firstBox) {
+         firstBox.click();                                // check candidate[0] (the first browser)
+         await sleep(60);
+         const connect = picker().querySelector('.ca-browser-connect');
+         if (connect) connect.click();
+       }
+       await sleep(200);
+
+       // (3) TAP: a plain click now refreshes the just-linked browser — NO picker opens.
+       globe.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+       globe.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+       globe.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+       await sleep(700);
+       const tapOpened = !!picker();
+       return { detected, holdOpened, holdTitle, holdCount, rightOpened, tapOpened };
+     })()`
+  )
+  await delay(150)
+  const linkAfter = await evalIn<{ source: string | null; url: string }>(
+    win,
+    `(() => {
+       const b = window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(browserId)});
+       return { source: (b && b.type === 'browser' ? (b.previewSourceId ?? null) : null), url: (b && b.type === 'browser' ? b.url : '') };
+     })()`
+  )
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: undefined })`
+  ) // restore baseline (unlink)
+  const connectedOk = linkAfter.source === termId && linkAfter.url === DETECTED_URL
+  const connectGestureOk =
+    urlSeen &&
+    gesture.holdOpened &&
+    gesture.holdTitle &&
+    gesture.holdCount >= 2 &&
+    gesture.rightOpened &&
+    connectedOk &&
+    !gesture.tapOpened
+  parts.push({
+    name: 'preview-connect-gesture',
+    ok: connectGestureOk,
+    detail: connectGestureOk
+      ? 'hold + right-click open the connect picker; Connect links the browser; tap refreshes (no picker)'
+      : JSON.stringify({ urlSeen, ...gesture, ...linkAfter })
   })
 
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')

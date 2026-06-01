@@ -21,10 +21,12 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import { agentIdentity, isRunning, statusFor, type TerminalState } from './terminalState'
+import { agentIdentity, brailleFrame, isRunning, statusFor, type TerminalState } from './terminalState'
+import { prefersReducedMotion } from '../../lib/motion'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
+import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -95,7 +97,7 @@ export function TerminalBoard({
   onFull,
   onDuplicate,
   onDelete,
-  onPushPreview
+  onPushPreviewTo
 }: BoardViewProps<TerminalBoardData>): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -248,12 +250,15 @@ export function TerminalBoard({
     if (!el) return () => {}
 
     // xterm paints glyphs onto a canvas/WebGL atlas where CSS var() does NOT
-    // resolve — passing 'var(--mono)' breaks the canvas font parse, so glyphs
+    // resolve — passing 'var(--term-mono)' breaks the canvas font parse, so glyphs
     // render tiny inside full-width cells (the wide letter-spacing). Resolve the
-    // --mono design token to its literal font stack before handing it to xterm.
+    // --term-mono token (hinted OS terminal stack — Cascadia Mono/Consolas/SF Mono)
+    // to its literal value before handing it to xterm. A hinted system font renders
+    // native-crisp on xterm's grayscale-AA atlas where the thin Geist Mono webfont read
+    // soft. UI chrome stays on --mono (Geist Mono); only the live grid uses this.
     const mono =
-      getComputedStyle(document.documentElement).getPropertyValue('--mono').trim() ||
-      'ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+      getComputedStyle(document.documentElement).getPropertyValue('--term-mono').trim() ||
+      'Consolas, ui-monospace, "SF Mono", Menlo, monospace'
 
     const term = new Terminal({
       fontFamily: mono,
@@ -463,7 +468,20 @@ export function TerminalBoard({
     }
   }, [respawn, board.id])
 
+  // §9/§7.1 braille spinner: advance one frame every 80ms while running. Reduced
+  // motion holds it on a static glyph (no interval → frame stays put).
+  const [spinnerFrame, setSpinnerFrame] = useState(0)
+  useEffect(() => {
+    if (!running || prefersReducedMotion()) return
+    const id = setInterval(() => setSpinnerFrame((f) => f + 1), 80)
+    return () => clearInterval(id)
+  }, [running])
+
   const status = statusFor(state, identity)
+  // Prefix the running label with the spinner glyph (the §7.1 "working" indicator).
+  const displayStatus = running
+    ? { ...status, label: `${brailleFrame(spinnerFrame)} ${status.label}` }
+    : status
 
   /** Interrupt: send Ctrl-C (SIGINT) over the data plane to the running agent. */
   const interrupt = useCallback(() => {
@@ -472,30 +490,80 @@ export function TerminalBoard({
 
   // Slice C′: detected dev-server URLs (picker when >1) + a transient "not found" note.
   type DetectedUrl = { url: string; host: string; port: number }
-  const [portChoices, setPortChoices] = useState<DetectedUrl[]>([])
+  /** Gesture that opened the flow: a tap refreshes the linked browser(s); a long-press
+   *  always opens the connect picker (so does a tap when nothing is linked yet). */
+  type Gesture = 'tap' | 'hold'
+  const [portChoices, setPortChoices] = useState<{ urls: DetectedUrl[]; gesture: Gesture } | null>(null)
   const [previewNote, setPreviewNote] = useState<string | null>(null)
+  // Multi-select connect picker (long-press, or tap with nothing linked): pick one or more
+  // browsers (B + C) and/or a fresh spawn to wire to this terminal and push the url to each.
+  const [browserPick, setBrowserPick] = useState<{ url: string; candidates: PreviewCandidate[] } | null>(null)
+  const NEW_BROWSER = ' new' // sentinel checkbox key for "+ New browser"
+  const [checked, setChecked] = useState<Set<string>>(new Set())
 
-  const onPreview = useCallback(async () => {
-    setPreviewNote(null)
-    const urls = await window.api.detectPorts(board.id)
-    if (urls.length === 0) {
-      setPreviewNote('No dev server detected yet — start it, then try again.')
-      return
-    }
-    if (urls.length === 1) {
-      onPushPreview?.(urls[0].url)
-      return
-    }
-    setPortChoices(urls)
-  }, [board.id, onPushPreview])
+  // Route a resolved url by gesture. Tap + linked browser(s) → refresh them. Otherwise
+  // (long-press, or tap with nothing linked) open the multi-select connect picker over the
+  // candidates (B + C); with zero candidates just spawn a fresh browser.
+  const routeUrl = useCallback(
+    (url: string, gesture: Gesture) => {
+      const { linkedIds, candidates } = classifyPushTargets(useCanvasStore.getState().boards, board.id)
+      if (gesture === 'tap' && linkedIds.length > 0) {
+        linkedIds.forEach((id) => onPushPreviewTo?.(url, { kind: 'existing', id }))
+        return
+      }
+      if (candidates.length === 0) {
+        onPushPreviewTo?.(url, { kind: 'spawn' }) // nothing to choose between → fresh browser
+        return
+      }
+      setChecked(new Set())
+      setBrowserPick({ url, candidates })
+    },
+    [board.id, onPushPreviewTo]
+  )
+
+  const onPreview = useCallback(
+    async (gesture: Gesture) => {
+      setPreviewNote(null)
+      const urls = await window.api.detectPorts(board.id)
+      if (urls.length === 0) {
+        setPreviewNote('No dev server detected yet — start it, then try again.')
+        return
+      }
+      if (urls.length === 1) {
+        routeUrl(urls[0].url, gesture)
+        return
+      }
+      setPortChoices({ urls, gesture }) // disambiguate the server first, then route by gesture
+    },
+    [board.id, routeUrl]
+  )
+
+  // Apply the multi-select connect picker: wire every checked browser to this terminal
+  // (re-pointing its previewSourceId, severing any prior link) + push the url; spawn a
+  // fresh browser if "+ New browser" is checked.
+  const confirmBrowserPick = useCallback(() => {
+    if (!browserPick) return
+    const { url } = browserPick
+    checked.forEach((key) => {
+      if (key === NEW_BROWSER) onPushPreviewTo?.(url, { kind: 'spawn' })
+      else onPushPreviewTo?.(url, { kind: 'existing', id: key })
+    })
+    setBrowserPick(null)
+  }, [browserPick, checked, onPushPreviewTo])
+
+  const severCount = browserPick
+    ? [...checked].filter((k) => browserPick.candidates.find((c) => c.id === k)?.connectedTo).length
+    : 0
 
   const actions = (
     <>
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
       <IconBtn
         name="globe"
-        title="Open preview from this server"
-        onClick={() => void onPreview()}
+        title="Click: preview in linked browser · Hold / right-click: choose browser(s)"
+        onClick={() => void onPreview('tap')}
+        onLongPress={() => void onPreview('hold')}
+        onContextMenu={() => void onPreview('hold')}
       />
       <IconBtn
         name="settings"
@@ -520,7 +588,7 @@ export function TerminalBoard({
         hovered={hovered}
         dimmed={dimmed}
         running={running}
-        status={status}
+        status={displayStatus}
         actions={actions}
         contentBg="var(--inset)"
         onFull={onFull}
@@ -537,24 +605,85 @@ export function TerminalBoard({
               </button>
             </div>
           )}
-          {portChoices.length > 1 && (
+          {portChoices && portChoices.urls.length > 1 && (
             <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
               <div className="ca-port-picker-title">Multiple servers — choose one:</div>
-              {portChoices.map((u) => (
+              {portChoices.urls.map((u) => (
                 <button
                   key={u.url}
                   className="ca-port-choice"
                   onClick={() => {
-                    setPortChoices([])
-                    onPushPreview?.(u.url)
+                    const { gesture } = portChoices
+                    setPortChoices(null)
+                    routeUrl(u.url, gesture)
                   }}
                 >
                   {u.host}:{u.port}
                 </button>
               ))}
-              <button className="ca-preview-dismiss" onClick={() => setPortChoices([])}>
+              <button className="ca-preview-dismiss" onClick={() => setPortChoices(null)}>
                 Cancel
               </button>
+            </div>
+          )}
+          {browserPick && (
+            <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="ca-port-picker-title">Push to which browser(s)?</div>
+              {browserPick.candidates.map((c) => (
+                <label key={c.id} className="ca-browser-choice" title={c.url}>
+                  <input
+                    type="checkbox"
+                    checked={checked.has(c.id)}
+                    onChange={(e) =>
+                      setChecked((prev) => {
+                        const next = new Set(prev)
+                        if (e.target.checked) next.add(c.id)
+                        else next.delete(c.id)
+                        return next
+                      })
+                    }
+                  />
+                  <span className="ca-browser-choice-label">{c.title}</span>
+                  {c.connectedTo && (
+                    <span className="ca-browser-choice-warn" title={`Connected to ${c.connectedTo.title}`}>
+                      ⚠ on {c.connectedTo.title}
+                    </span>
+                  )}
+                </label>
+              ))}
+              <label className="ca-browser-choice">
+                <input
+                  type="checkbox"
+                  checked={checked.has(NEW_BROWSER)}
+                  onChange={(e) =>
+                    setChecked((prev) => {
+                      const next = new Set(prev)
+                      if (e.target.checked) next.add(NEW_BROWSER)
+                      else next.delete(NEW_BROWSER)
+                      return next
+                    })
+                  }
+                />
+                <span className="ca-browser-choice-label">+ New browser</span>
+              </label>
+              {severCount > 0 && (
+                <div className="ca-browser-sever">
+                  ⚠ Disconnects {severCount} browser{severCount > 1 ? 's' : ''} from{' '}
+                  {severCount > 1 ? 'their' : 'its'} current terminal.
+                </div>
+              )}
+              <div className="ca-browser-actions">
+                <button className="ca-preview-dismiss" onClick={() => setBrowserPick(null)}>
+                  Cancel
+                </button>
+                <button
+                  className="ca-browser-connect"
+                  disabled={checked.size === 0}
+                  onClick={confirmBrowserPick}
+                >
+                  Connect{checked.size > 0 ? ` ${checked.size}` : ''}
+                </button>
+              </div>
             </div>
           )}
           {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).

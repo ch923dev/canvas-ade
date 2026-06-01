@@ -15,6 +15,9 @@ export type PreviewEvent =
   // Lets the renderer clear a stale `load-failed` latch so the following
   // did-finish-load can promote to `connected` (Bug #5).
   | { id: string; type: 'did-start-navigation' }
+  // Esc pressed while the native view's web content owns focus. The renderer window
+  // never sees this keydown, so forward it to let the renderer exit full view.
+  | { id: string; type: 'escape' }
 
 /**
  * PreviewManager (1-E): N native WebContentsViews keyed by board id, synced to the
@@ -194,6 +197,15 @@ function ensure(id: string, win: BrowserWindow): Entry {
     // file viewer. The URL bar drives navigation via `preview:navigate` → loadURL
     // (already scheme-gated), not through these, so legitimate localhost nav is fine.
     registerPreviewNavGuards(wc)
+    // Esc inside a focused native view: its web content consumes the keydown, so the
+    // renderer's window-level Esc handler never fires and a full-view Browser board can't
+    // be exited from the keyboard. Forward an `escape` event (only on keyDown so we don't
+    // double-fire on the keyUp) so the renderer can close full view — matching the
+    // Esc-exits-full-view behaviour terminals/notes get from the window handler. We don't
+    // preventDefault: the page may also use Esc, and full view is gated renderer-side.
+    wc.on('before-input-event', (_ev, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape') emit({ id, type: 'escape' })
+    })
     // A fresh main-frame navigation clears the failed latch — until proven otherwise
     // (a later did-fail-load), this load is assumed good. Tell the renderer too so a
     // stale `load-failed` latch is cleared and the following did-finish-load can

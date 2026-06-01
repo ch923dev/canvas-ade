@@ -28,6 +28,14 @@ export interface PreviewRuntime {
   live: boolean
   /** Last load error description, for the load-failed state. */
   error: string | null
+  /**
+   * Monotonic "please (re)load" counter, bumped by `requestReload` (push-to-preview).
+   * The board's durable `url` can be pushed UNCHANGED (same dev-server URL), which the
+   * reconcile diff-skip (Bug #44) would otherwise swallow → the native view stays on a
+   * stale Chromium error page. Reconcile re-navigates when `url` OR this nonce changed,
+   * so an explicit push always reloads and can recover a `load-failed` board.
+   */
+  reloadNonce: number
 }
 
 export const DEFAULT_RUNTIME: PreviewRuntime = {
@@ -37,7 +45,8 @@ export const DEFAULT_RUNTIME: PreviewRuntime = {
   canGoBack: false,
   canGoForward: false,
   live: false,
-  error: null
+  error: null,
+  reloadNonce: 0
 }
 
 interface PreviewState {
@@ -73,6 +82,11 @@ interface PreviewState {
   patchIfPresent: (id: string, patch: Partial<PreviewRuntime>) => void
   /** Drop a board's runtime state (on board removal). */
   clear: (id: string) => void
+  /**
+   * Bump a board's `reloadNonce` (create-if-absent) to force a (re)load on the next
+   * reconcile even when the board's `url` is unchanged — the push-to-preview signal.
+   */
+  requestReload: (id: string) => void
   /** Mark a node drag/resize gesture as started/ended (drives detach/reattach). */
   setNodeGesture: (active: boolean) => void
   /** Mark a board ⋯ menu / device-overlapping popover as open/closed (drives detach/reattach). */
@@ -95,6 +109,11 @@ export const usePreviewStore = create<PreviewState>((set) => ({
       const next = { ...s.byId }
       delete next[id]
       return { byId: next }
+    }),
+  requestReload: (id) =>
+    set((s) => {
+      const cur = s.byId[id] ?? DEFAULT_RUNTIME
+      return { byId: { ...s.byId, [id]: { ...cur, reloadNonce: cur.reloadNonce + 1 } } }
     }),
   setNodeGesture: (active) => set((s) => (s.nodeGesture === active ? s : { nodeGesture: active })),
   setMenuOpen: (active) => set((s) => (s.menuOpen === active ? s : { menuOpen: active }))

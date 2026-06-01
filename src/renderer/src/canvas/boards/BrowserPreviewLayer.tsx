@@ -85,6 +85,12 @@ interface BoardRec {
   /** Last loaded URL, so a board.url edit triggers a navigate. */
   lastUrl: string | null
   /**
+   * Last reload nonce seen (previewStore). A push-to-preview bumps the nonce; reconcile
+   * re-navigates when it changed even if `lastUrl` is identical — so a same-URL push
+   * reloads (and can recover a load-failed view) instead of being diff-skipped (Bug #44).
+   */
+  lastReloadNonce: number
+  /**
    * Bumped on every (re)attach. demoteToSnapshot snapshots this before its capture
    * await; if it changed when the await resolves, a concurrent attach re-claimed the
    * board (Bug #45) and the demote must not detach it.
@@ -111,13 +117,28 @@ interface LayerProps {
    * other read is the camera-scaled on-canvas frame and must be rejected.
    */
   fullViewHost: HTMLElement | null
+  /**
+   * The full-view modal frame is mid-transform (enter or exit tween, Slice 5). A CSS
+   * `scale()` pollutes the `.bb-frame` rect the native view binds to, so HOLD the
+   * full-view board's view detached for the tween and snap it in at settle.
+   */
+  fullViewMotion: boolean
+  /**
+   * Close the full-view modal. A focused native view's web content swallows keydown so
+   * the renderer's window Esc handler never fires for a full-view Browser board — main
+   * forwards an `escape` preview event (preview.ts before-input-event) and we invoke this
+   * to exit, matching the Esc-exits-full-view behaviour terminals/notes already get.
+   */
+  onRequestCloseFullView: () => void
 }
 
 export function BrowserPreviewLayer({
   paneRef,
   focusedId,
   fullViewId,
-  fullViewHost
+  fullViewHost,
+  fullViewMotion,
+  onRequestCloseFullView
 }: LayerProps): ReactElement | null {
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
@@ -132,6 +153,14 @@ export function BrowserPreviewLayer({
   // body-portaled menu, so suppress live views (→ HTML snapshot) the same way as a
   // gesture while the menu is open, then reattach on close. ADR 0002.
   const menuOpen = usePreviewStore((s) => s.menuOpen)
+
+  // Live ref for the main-driven `escape` event handler so its subscription (below) need
+  // not re-bind when the close callback identity changes. (The full-view id it checks
+  // against has its own ref, kept in sync below.) Synced in an effect, not during render.
+  const onCloseFullViewRef = useRef(onRequestCloseFullView)
+  useEffect(() => {
+    onCloseFullViewRef.current = onRequestCloseFullView
+  }, [onRequestCloseFullView])
 
   // paneOffset = the RF pane top-left in window CSS px. The canvas is now full-bleed
   // (App.tsx → position:fixed inset:0), so this is ~ (0,0) — but MEASURE it (a future
@@ -159,6 +188,9 @@ export function BrowserPreviewLayer({
   // contained by this host (= the relocated, untransformed modal frame) so it never
   // reads the camera-scaled on-canvas rect (the full-view native-bounds bug).
   const fullViewHostRef = useRef<HTMLElement | null>(fullViewHost)
+  // True while the modal frame is mid enter/exit tween — hold the full-view native view
+  // detached (a frame scale pollutes the rect it binds to); attach at settle.
+  const fullViewMotionRef = useRef<boolean>(fullViewMotion)
   // Latest store selection + the selected board's WORLD rect (any board type), kept
   // fresh by the store subscription. Used by the static-occlusion demote (LOT F #2/
   // #19/#20): a live Browser view overlapping a DIFFERENT selected board must demote
@@ -208,7 +240,20 @@ export function BrowserPreviewLayer({
     if (!el || !host.contains(el)) return null
     const r = el.getBoundingClientRect()
     if (r.width <= 0 || r.height <= 0) return null
-    return roundRect({ x: r.left, y: r.top, width: r.width, height: r.height })
+    // Inset by the 1px device-frame border so the unrounded native rect tucks INSIDE the
+    // rounded HTML bezel — mirrors the on-canvas deviceStageRect inset. Two reasons it
+    // matters in full view specifically: (1) the frame is flex-centred, so its left/width
+    // are fractional and roundRect rounds x and width independently — round(x)+round(w) can
+    // land 1px past the frame's right edge, letting the native page overflow the bezel on
+    // the right; (2) without the inset the native view paints over the 1px border on every
+    // edge. Insetting tucks it inside on all sides and absorbs the sub-pixel rounding.
+    const border = 1
+    return roundRect({
+      x: r.left + border,
+      y: r.top + border,
+      width: Math.max(0, r.width - border * 2),
+      height: Math.max(0, r.height - border * 2)
+    })
   }, [])
 
   // The board's device-stage rect in screen (pane-local + offset) space — the raw,
@@ -289,6 +334,7 @@ export function BrowserPreviewLayer({
         lastSent: null,
         lastZoom: 0,
         lastUrl: null,
+        lastReloadNonce: 0,
         attachSeq: 0
       }
       recs.current.set(id, r)
@@ -369,6 +415,10 @@ export function BrowserPreviewLayer({
       } else {
         r.exists = true
         r.lastUrl = g.url
+        // openPreview loads g.url fresh, so adopt the current reload nonce here — else the
+        // next reconcile (existing branch) would see a nonce mismatch and re-navigate the
+        // url we just loaded (a redundant double-load).
+        r.lastReloadNonce = usePreviewStore.getState().byId[g.id]?.reloadNonce ?? 0
         patchRuntime(g.id, { status: 'connecting', live: true })
         await window.api.openPreview({ id: g.id, url: g.url, bounds, zoomFactor })
         // Bug #48/#30: the board may have been deleted during the open IPC round-trip
@@ -506,8 +556,13 @@ export function BrowserPreviewLayer({
       // scrim. On full-view EXIT the focus effect re-runs applyLiveness (non-full-view
       // path), which re-attaches the eligible views via reconcile's new-board path.
       for (const g of all) {
-        if (g.id === fvId) void attachBoard(g)
-        else if (rec(g.id).exists) closeBoard(g.id)
+        if (g.id === fvId) {
+          // Slice 5: while the modal frame is mid-transform, hold this view detached (a
+          // scale pollutes its bound rect) — close it if live; attach once motion settles.
+          if (fullViewMotionRef.current) {
+            if (rec(g.id).exists) closeBoard(g.id)
+          } else void attachBoard(g)
+        } else if (rec(g.id).exists) closeBoard(g.id)
       }
       return
     }
@@ -592,12 +647,15 @@ export function BrowserPreviewLayer({
     focusedIdRef.current = focusedId
     fullViewIdRef.current = fullViewId
     fullViewHostRef.current = fullViewHost
+    fullViewMotionRef.current = fullViewMotion
     if (!focusMounted.current) {
       focusMounted.current = true
       return
     }
+    // A motion flip (enter settled / exit started) re-reconciles: detach the full-view
+    // view while the frame transforms, attach it once settled (Slice 5 hold-then-snap).
     applyLiveness()
-  }, [focusedId, fullViewId, fullViewHost, applyLiveness])
+  }, [focusedId, fullViewId, fullViewHost, fullViewMotion, applyLiveness])
 
   // Full view: the camera never moves, so the camera-driven rAF pump (startPump, fired
   // by useOnViewportChange) never runs — yet the full-view board's native bounds must
@@ -610,14 +668,18 @@ export function BrowserPreviewLayer({
     if (!fullViewId) return
     let raf = 0
     const tick = (): void => {
-      // The full-view board's native view may not be attached yet — the initial
-      // applyLiveness attach is HELD until the portal relocates `.bb-frame` into the
-      // modal host (fullViewBoundsFor null → attachBoard early-returns). Once the host
-      // is ready, re-issue the attach here so the (held) view comes live at the modal
-      // rect; flushBatch (attached-only) then keeps it pinned across window resizes.
-      const g = geomRef.current.get(fullViewId)
-      if (g && !recs.current.get(fullViewId)?.attached) void attachBoard(g)
-      flushBatch()
+      // Skip while the modal frame is mid enter/exit tween (Slice 5) — the held view must
+      // not attach to a scale-polluted rect; applyLiveness reattaches it at settle.
+      if (!fullViewMotionRef.current) {
+        // The full-view board's native view may not be attached yet — the initial
+        // applyLiveness attach is HELD until the portal relocates `.bb-frame` into the
+        // modal host (fullViewBoundsFor null → attachBoard early-returns). Once the host
+        // is ready, re-issue the attach here so the (held) view comes live at the modal
+        // rect; flushBatch (attached-only) then keeps it pinned across window resizes.
+        const g = geomRef.current.get(fullViewId)
+        if (g && !recs.current.get(fullViewId)?.attached) void attachBoard(g)
+        flushBatch()
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
@@ -662,8 +724,14 @@ export function BrowserPreviewLayer({
             patchRuntime(g.id, { status: 'connecting' })
         } else if (r.exists) {
           // URL edit → navigate (resets zoom; did-finish-load re-applies the factor).
-          if (g.url !== r.lastUrl) {
+          // Also re-navigate on a reload-nonce bump (push-to-preview) even when the url is
+          // UNCHANGED — a same-URL push must reload, e.g. to recover a load-failed view once
+          // the dev server is up. Diff-skip is otherwise preserved (Bug #44): an unrelated
+          // store mutation leaves both url and nonce unchanged → no redundant navigate.
+          const nonce = usePreviewStore.getState().byId[g.id]?.reloadNonce ?? 0
+          if (g.url !== r.lastUrl || nonce !== r.lastReloadNonce) {
             r.lastUrl = g.url
+            r.lastReloadNonce = nonce
             patchRuntime(g.id, { status: 'connecting' })
             void window.api.navigatePreview(g.id, g.url)
           }
@@ -774,6 +842,14 @@ export function BrowserPreviewLayer({
   // ── Lifecycle events from main (load / navigate / fail) → runtime store ────────
   useEffect(() => {
     const off = window.api.onPreviewEvent((ev) => {
+      // Esc pressed while the native view's web content owns focus (main forwards it via
+      // before-input-event). The renderer window never receives this keydown, so close
+      // full view here when the event's board is the full-view one — parity with the
+      // window Esc handler that already exits full view for terminals/notes.
+      if ((ev.type as string) === 'escape') {
+        if (ev.id === fullViewIdRef.current) onCloseFullViewRef.current()
+        return
+      }
       // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
       // Clear a stale `load-failed` latch so the following did-finish-load can promote
       // to `connected` after a successful recovery load (Bug #5). The preload

@@ -418,10 +418,10 @@ export function PlanningBoard({
           inset: 0,
           overflow: 'hidden',
           cursor: drawing ? 'crosshair' : tool === 'note' || tool === 'check' ? 'copy' : 'default',
-          // 13px dot grid — finer than the canvas lattice, to read as a sketch
+          // 12px dot grid — finer than the canvas lattice, to read as a sketch
           // surface (DESIGN.md §7.3).
           backgroundImage: 'radial-gradient(var(--grid-dot) 1px, transparent 1px)',
-          backgroundSize: '13px 13px',
+          backgroundSize: '12px 12px',
           backgroundPosition: '6px 6px',
           // Tool gestures own this layer; React Flow node-drag stays on the title.
           touchAction: 'none'

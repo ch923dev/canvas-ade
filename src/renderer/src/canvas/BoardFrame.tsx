@@ -9,6 +9,7 @@ import type { MouseEvent, ReactNode, ReactElement } from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
+import { prefersReducedMotion } from '../lib/motion'
 import { usePreviewStore } from '../store/previewStore'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
@@ -35,7 +36,10 @@ export function IconBtn({
   size = 15,
   sw,
   restColor = 'var(--text-3)',
-  onClick
+  onClick,
+  onLongPress,
+  longPressMs = 500,
+  onContextMenu
 }: {
   name: IconName
   title: string
@@ -48,8 +52,43 @@ export function IconBtn({
    *  trigger uses `--text-2` so it isn't near-invisible at rest. */
   restColor?: string
   onClick?: (e: MouseEvent) => void
+  /** Press-and-hold handler. When the pointer is held ≥`longPressMs`, this fires and the
+   *  subsequent click (the release) is suppressed so `onClick` does NOT also run. */
+  onLongPress?: () => void
+  longPressMs?: number
+  /** Right-click (context-menu) handler — an accessible, no-timing alternative to
+   *  `onLongPress`. Suppresses the native context menu when set. */
+  onContextMenu?: () => void
 }): ReactElement {
   const [hover, setHover] = useState(false)
+  const [focus, setFocus] = useState(false)
+  // Long-press: a timer armed on pointer-down fires onLongPress; `heldRef` then gates the
+  // trailing click so a hold never doubles as a tap. Cleared on up/leave (= a short tap).
+  const heldRef = useRef(false)
+  const timerRef = useRef<number | null>(null)
+  const clearTimer = (): void => {
+    if (timerRef.current != null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+  }
+  const handlePointerDown = (): void => {
+    if (!onLongPress) return
+    heldRef.current = false
+    timerRef.current = window.setTimeout(() => {
+      heldRef.current = true
+      onLongPress()
+    }, longPressMs)
+  }
+  const handleClick = (e: MouseEvent): void => {
+    clearTimer()
+    if (heldRef.current) {
+      // A long-press already fired — swallow the release click.
+      heldRef.current = false
+      return
+    }
+    onClick?.(e)
+  }
   const color = active
     ? 'var(--accent)'
     : danger && hover
@@ -60,11 +99,32 @@ export function IconBtn({
   return (
     <button
       title={title}
-      onClick={onClick}
+      onClick={handleClick}
+      onContextMenu={
+        onContextMenu
+          ? (e) => {
+              e.preventDefault()
+              clearTimer()
+              onContextMenu()
+            }
+          : undefined
+      }
       onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      // Stop the title-bar drag from starting when a control is pressed.
-      onMouseDown={(e) => e.stopPropagation()}
+      onMouseLeave={() => {
+        setHover(false)
+        clearTimer() // pointer left the button before the hold fired → cancel
+      }}
+      // Accent ring on keyboard focus so the title-bar controls are visible to keyboard
+      // users (matches the §6 board select-ring treatment).
+      onFocus={() => setFocus(true)}
+      onBlur={() => setFocus(false)}
+      // Stop the title-bar drag from starting when a control is pressed; also arm/disarm
+      // the long-press timer on press/release.
+      onMouseDown={(e) => {
+        e.stopPropagation()
+        handlePointerDown()
+      }}
+      onMouseUp={clearTimer}
       style={{
         width: 24,
         height: 24,
@@ -75,6 +135,8 @@ export function IconBtn({
         cursor: 'pointer',
         background: hover ? 'var(--surface-overlay)' : 'transparent',
         color,
+        outline: 'none',
+        boxShadow: focus ? '0 0 0 1.5px var(--accent)' : 'none',
         transition: 'color .1s, background .1s'
       }}
     >
@@ -249,7 +311,8 @@ export function BoardFrame({
           inset: 0,
           borderRadius: 'var(--r-board)',
           background: 'var(--surface-raised)',
-          border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-subtle)'}`,
+          // §6 selected = accent ring (box-shadow) only; border stays neutral.
+          border: '1px solid var(--border-subtle)',
           boxShadow: selected
             ? '0 0 0 1.5px var(--accent), var(--shadow-board)'
             : 'var(--shadow-board)',
@@ -274,8 +337,10 @@ export function BoardFrame({
         <div style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{
-              fontSize: 9,
-              letterSpacing: '0.08em',
+              // §3 micro role — 10px is the on-canvas minimum (was 9px, below it).
+              fontSize: 'var(--fs-micro)',
+              letterSpacing: 'var(--tr-micro)',
+              fontWeight: 'var(--fw-micro)',
               color: 'var(--text-faint)',
               fontFamily: 'var(--mono)'
             }}
@@ -314,16 +379,21 @@ export function BoardFrame({
         borderRadius: 'var(--r-board)',
         background: contentBg,
         overflow: 'hidden',
-        border: `1px solid ${
-          selected ? 'var(--accent)' : hovered ? 'var(--border)' : 'var(--border-subtle)'
-        }`,
+        // §6 selected = the 1.5px --accent ring (box-shadow) is the ONLY accent edge
+        // treatment; the 1px border stays neutral (hover→--border else --border-subtle).
+        border: `1px solid ${hovered ? 'var(--border)' : 'var(--border-subtle)'}`,
         boxShadow: selected
           ? '0 0 0 1.5px var(--accent), var(--shadow-board)'
           : 'var(--shadow-board)',
         opacity: dimmed ? 0.55 : 1,
         display: 'flex',
         flexDirection: 'column',
-        transition: 'opacity .15s, border-color .1s'
+        // §9: board select ring animates 120ms ease-out (the ring is the box-shadow).
+        // An inline transition can't be suppressed by the CSS reduced-motion @media, so
+        // drop the box-shadow segment here when reduced motion is requested.
+        transition: prefersReducedMotion()
+          ? 'opacity .15s, border-color .1s'
+          : 'opacity .15s, border-color .1s, box-shadow .12s ease-out'
       }}
     >
       {running && (

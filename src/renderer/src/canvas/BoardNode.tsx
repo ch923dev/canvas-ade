@@ -8,20 +8,42 @@
  * board type owns exactly one file under `canvas/boards/`. Do not collapse the
  * dispatch back into this file.
  */
-import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import {
+  lazy,
+  Suspense,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement
+} from 'react'
 import { createPortal } from 'react-dom'
 import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Board, BoardType } from '../lib/boardSchema'
 import { BoardActionsContext } from './boardActions'
+import type { ResolvedPushTarget } from '../lib/previewTarget'
 import { FullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
 import { isLod } from '../lib/canvasView'
 import { BoardFrame, type BoardStatus } from './BoardFrame'
-import { TerminalBoard } from './boards/TerminalBoard'
-import { BrowserBoard } from './boards/BrowserBoard'
-import { PlanningBoard } from './boards/PlanningBoard'
+
+// §F code-split: each board type is its own lazy chunk so its heavy deps load only
+// when a board of that type first mounts — a no-terminal project never fetches xterm
+// (TerminalBoard chunk), a no-planning project never fetches the pen/freehand code.
+// The boards keep stable identity once loaded (React.lazy caches the module), so the
+// createPortal relocation that keeps the live PTY/native view alive is unaffected.
+const TerminalBoard = lazy(() =>
+  import('./boards/TerminalBoard').then((m) => ({ default: m.TerminalBoard }))
+)
+const BrowserBoard = lazy(() =>
+  import('./boards/BrowserBoard').then((m) => ({ default: m.BrowserBoard }))
+)
+const PlanningBoard = lazy(() =>
+  import('./boards/PlanningBoard').then((m) => ({ default: m.PlanningBoard }))
+)
 
 /** Hidden, non-connectable anchor handles so RF can attach the preview edge to any
  *  board without exposing a connection UX or stealing pointer events (Slice C′). */
@@ -80,8 +102,9 @@ export interface BoardViewProps<T extends Board = Board> {
   onDuplicate?: () => void
   /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
   onDelete?: () => void
-  /** Terminal "Preview" action → open/point a linked Browser board at `url`. */
-  onPushPreview?: (url: string) => void
+  /** Terminal "Preview" action → push `url` to a chosen Browser target (refresh linked,
+   *  connect, re-target, or spawn). Target chosen by gesture + the multi-select picker. */
+  onPushPreviewTo?: (url: string, target: ResolvedPushTarget) => void
 }
 
 /** Status dot shown on the LOD card (no label at LOD). */
@@ -105,8 +128,10 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
   const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
   const onDelete = acts ? (): void => acts.remove(board.id) : undefined
-  const onPushPreview = acts ? (url: string): void => acts.pushPreview(board.id, url) : undefined
-  const actions = { onFull, onDuplicate, onDelete, onPushPreview }
+  const onPushPreviewTo = acts
+    ? (url: string, target: ResolvedPushTarget): void => acts.pushPreviewTo(board.id, url, target)
+    : undefined
+  const actions = { onFull, onDuplicate, onDelete, onPushPreviewTo }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
@@ -180,13 +205,18 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
       onMouseLeave={() => setHovered(false)}
       style={{ position: 'absolute', inset: 0 }}
     >
-      {board.type === 'terminal' && (
-        <TerminalBoard board={board} lod={lod} {...common} {...actions} />
-      )}
-      {board.type === 'browser' && (
-        <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
-      )}
-      {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+      {/* fallback=null: the brief gap before a board's chunk resolves on first mount.
+          The board renders its own BoardFrame chrome once loaded; subsequent mounts
+          are synchronous (module cached). */}
+      <Suspense fallback={null}>
+        {board.type === 'terminal' && (
+          <TerminalBoard board={board} lod={lod} {...common} {...actions} />
+        )}
+        {board.type === 'browser' && (
+          <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
+        )}
+        {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+      </Suspense>
     </div>
   )
 

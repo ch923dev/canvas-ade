@@ -4,9 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      Dev-friendly CSP. Phase 4 hardens this to a nonce-based policy with no
-      'unsafe-inline' for the packaged build. 'unsafe-inline' is needed in dev
-      for the Vite React-refresh preamble and xterm's inline styles.
+      CSP is rewritten at build time by the `canvas-ade-csp-meta` plugin
+      (electron.vite.config.ts): DEV keeps script-src 'unsafe-inline' for Vite's
+      HMR preamble; the packaged build drops it → script-src 'self'. The content
+      below is the dev placeholder (used if the plugin ever no-ops). style-src
+      keeps 'unsafe-inline' (pervasive React inline style attributes can't be
+      nonce'd). See the plugin's doc comment for the full rationale.
     -->
     <meta
       http-equiv="Content-Security-Policy"
