@@ -247,7 +247,6 @@ export function PlanningBoard({
         return
       }
       if (tool === 'arrow') {
-        beginChange()
         const arrow = makeArrow(newId(), p)
         drag.current = { mode: 'arrow', id: arrow.id }
         setDraftArrow(arrow)
@@ -255,7 +254,6 @@ export function PlanningBoard({
         return
       }
       if (tool === 'pen') {
-        beginChange()
         const points = pushBoardPoint([], p)
         drag.current = { mode: 'pen', points }
         setDraftStroke(points)
@@ -321,15 +319,20 @@ export function PlanningBoard({
     } else if (d.mode === 'arrow') {
       const a = draftArrow
       setDraftArrow(null)
-      // Discard a degenerate (no-drag) arrow.
+      // Discard a degenerate (no-drag) arrow. Checkpoint ONLY when we actually commit,
+      // so a tap-without-drag pushes no phantom undo snapshot (WB-1; mirrors move).
       if (a && (Math.abs(a.x2 - a.x) > 4 || Math.abs(a.y2 - a.y) > 4)) {
+        beginChange()
         commit([...elements, a])
       }
       setTool('select')
     } else if (d.mode === 'pen') {
       const pts = d.points
       setDraftStroke(null)
-      if (pts.length >= 4) commit([...elements, makeStroke(newId(), pts)])
+      if (pts.length >= 4) {
+        beginChange()
+        commit([...elements, makeStroke(newId(), pts)])
+      }
       setTool('select')
     }
   }, [draftArrow, dragPos, commit, elements, beginChange])
