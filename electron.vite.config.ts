@@ -30,7 +30,7 @@ const PROD_CSP =
 
 function cspMeta(): Plugin {
   return {
-    name: 'canvas-ade-csp-meta',
+    name: 'expanse-csp-meta',
     transformIndexHtml(html, ctx): string {
       // ctx.server is present in `serve` (dev) and undefined in `build` (prod).
       const csp = ctx.server ? DEV_CSP : PROD_CSP
