@@ -63,7 +63,7 @@ with the user before Phase 2.
 (2.0-A tokens · 2.0-B store+schema · 2.0-C canvas+`BoardFrame`+`NodeResizer`+LOD · 2.0-D app chrome).
 Then the board types build **in PARALLEL** (independent). **Checklist is a Planning element, not a 4th
 board type** (decided 2026-05-29) → folded into 2.3; old "2.4 Checklist board" dropped. Full plan + exact
-design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
+design specs + salvage map + parallel guidance: **`docs/archive/build-history.md`** (originals in git).
 
 **2.0 — Production canvas foundation** (adjustments A + C) — *split into 2.0-A…2.0-D in the handoff*
 - Promote the salvaged spike into the real canvas: pan/zoom (`minZoom 0.1`/`maxZoom 2.5`,
@@ -109,24 +109,22 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
   the modal — no remount, so PTY/xterm/native view survive) rather than the originally-planned
   snapshot/reattach: in full view a Browser board's native `WebContentsView` is **re-bound to the
   portaled device-frame's live DOM rect** while every other view detaches, so HTML chrome isn't
-  punched through. Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
+  punched through. Spec/plan: `docs/archive/build-history.md` › Phase 3-B (originals in git).
 - **Duplicate** (⋯): clone geometry + state offset 36px, select copy; Browser clone → next viewport
   preset, own independent `WebContentsView`. ✅ DONE (branch `phase-3-board-actions`, 2026-05-30):
   `duplicateBoard(id)` offsets +36px, selects the copy, one undo step; Browser clones advance to the
   next viewport preset (`lib/viewportCycle.ts`), planning elements are deep-cloned with fresh ids;
   delivered alongside the shared **⋯ menu** (Full view · Duplicate · Delete) via `BoardActionsContext`.
-  Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-board-actions*.md`.
+  Spec/plan: `docs/archive/build-history.md` › Phase 3-B (originals in git).
 - **Project create / open** ✅ DONE (branch `phase-3-persistence`, 2026-05-30): folder picker;
   `canvas.json` (+`.bak`, `schemaVersion` **v2** w/ persisted camera `viewport` + real `migrate(1→2)`)
   via atomic write; debounced autosave + flush on blur/quit; recent-projects in `userData`; project
   switcher wired (flush → dispose previews+PTYs → load); restored terminals idle + `cwd`→project folder.
-  Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`. BUG-027 (alias) fixed.
+  Spec/plan: `docs/archive/build-history.md` › Phase 3-A (originals in git).
 
-> 🔗 **Related bug-hunt finding:** BUG-025 (load validation accepts non-positive / sub-`MIN_BOARD_SIZE`
-> geometry) touches this area but is not fully resolved by this work — see ../bug-hunt-findings/findings/BUG-025.md.
-> 🔗 **Related bug-hunt finding:** BUG-027 (`fromObject`/`migrate` return the input doc by reference, so loaded
-> store boards alias the caller's input) touches this area but is not fully resolved by this work —
-> see ../bug-hunt-findings/findings/BUG-027.md.
+> 🔗 **Bug-hunt cross-refs (both FIXED):** BUG-025 (load validation rejecting non-positive /
+> sub-`MIN_BOARD_SIZE` geometry) and BUG-027 (`fromObject`/`migrate` deep-cloning so loaded boards no
+> longer alias the caller's input) were both closed by the Round-2 hunt — see `docs/reviews/README.md`.
 - **Port detect → push to preview** (Slice C′, replaces the old worktrees+ports slice): a Terminal
   board reads the localhost URL its dev server printed and one click opens/points a Browser board at
   it. **Detect, don't assign** — output-parse only, on-click, reuse-else-spawn target, read-only,
@@ -135,7 +133,7 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
   + `lib/previewTarget.ts` resolve the target; a React Flow floating connector arrow
   (`lib/previewEdges.ts` + `canvas/edges/PreviewEdge.tsx`) is derived from the new optional
   `BrowserBoard.previewSourceId` (no schema bump) and reroutes + persists; link cleaned up on
-  delete/duplicate. Spec + plan: `docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`.
+  delete/duplicate. Spec + plan: `docs/archive/build-history.md` › Phase 3-C′ (originals in git).
 - ✅📏 full reopen fidelity: zoom/pan/positions/contents/checklist state survive restart (integration test).
 
 > 🧰 **Re-scoped 2026-05-30 — git worktrees deferred.** The original Slice C bundled git
@@ -167,14 +165,11 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 > board's native `WebContentsView` cannot be CSS-animated (it's an OS layer) — animate the HTML
 > scrim/frame; the native view snaps to its final bounds (or carries the transition via its snapshot).
 
-> 🐛 **Bug-hunt finding (auto-noted 2026-05-30):** The codebase bug hunt independently
-> confirmed a bug that this planned work is expected to fix.
-> - **Location:** `src/renderer/src/canvas/AppChrome.tsx`
-> - **Severity:** Low
-> - **What:** Fit (button + '1' key) snaps the camera instantly with no animation, violating the DESIGN.md §9 contract that fit animate 200ms (inconsistent with the animated Overview/Focus siblings).
-> - **Verification:** Code-path trace — `rf.fitView(FIT)` passes no `duration`, so `@xyflow/system` `setViewport` runs duration 0; sibling camera ops pass `{ duration: 200 }`.
-> - **Status:** Skipped from active fix queue; expected to be resolved by this phase.
-> - **Ref:** ../bug-hunt-findings/skipped-roadmap.md
+> 🐛 **Bug-hunt finding (noted 2026-05-30, RESOLVED in Phase 4):** Fit (button + '1' key) used to
+> snap the camera with no animation, violating the DESIGN.md §9 200ms contract. Phase 4 wrapped
+> fit/reset/overview/focus in `cameraAnim` (200ms, collapsed to 0 under reduced-motion) — confirmed by
+> the Round-3 review. Residual: the zoom **+/−** buttons may still snap (tracked, Low — see
+> `docs/reviews/2026-06-01-round3.md` / the in-depth review's L1).
 - **Polished** empty / loading / error states throughout (building on Phase 2's basic ones).
 - Harden CSP to nonce-based (drop `unsafe-inline`) for the packaged build. Load Geist / Geist Mono.
 - Code-split the renderer bundle (xterm / React Flow lazy where sensible).
