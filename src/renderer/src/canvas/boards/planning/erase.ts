@@ -26,7 +26,16 @@ export const ERASE_TOL = 8
  * Auto-sized text persists no w/h, so give it a nominal hit box anchored at its
  * top-left. Approximate; W2 refines this with a DOM-measured bbox.
  */
-export const TEXT_HIT = { w: 96, h: 24 } as const
+export const TEXT_HIT = { w: 160, h: 24 } as const
+
+/**
+ * Approximate `ChecklistCard.tsx` row metrics — the checklist element persists h:0
+ * (it grows with content), so the eraser reconstructs a nominal height. Approximate;
+ * keep roughly in sync with ChecklistCard if its layout changes (W2 may measure live).
+ */
+const CHECKLIST_HEADER_H = 30
+const CHECKLIST_ROW_H = 24
+const CHECKLIST_FOOTER_H = 24
 
 /** Point-in-rectangle with a tolerance band (board-local). */
 function inRect(p: HitPoint, x: number, y: number, w: number, h: number, tol: number): boolean {
@@ -74,6 +83,7 @@ function nearStroke(s: StrokeElement, p: HitPoint, tol: number): boolean {
   const pts = s.points
   if (pts.length < 2) return false
   if (pts.length === 2) return Math.hypot(p.x - pts[0], p.y - pts[1]) <= tol
+  // points are an even-length flat list (schema-validated); each (i, i+2) pair is a segment.
   for (let i = 0; i + 3 < pts.length; i += 2) {
     if (distToSegment(p, pts[i], pts[i + 1], pts[i + 2], pts[i + 3]) <= tol) return true
   }
@@ -90,8 +100,7 @@ export function eraseHitTest(el: PlanningElement, p: HitPoint, tol = ERASE_TOL):
     case 'note':
       return inRect(p, el.x, el.y, el.w, el.h, tol)
     case 'checklist': {
-      // Approximate the rendered card height: header + item rows + add-item button.
-      const h = 30 + el.items.length * 24 + 24
+      const h = CHECKLIST_HEADER_H + el.items.length * CHECKLIST_ROW_H + CHECKLIST_FOOTER_H
       return inRect(p, el.x, el.y, el.w, h, tol)
     }
     case 'text':

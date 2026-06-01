@@ -43,4 +43,19 @@ describe('eraseHitTest — vectors (distance)', () => {
     expect(eraseHitTest(s, { x: 12, y: 12 })).toBe(true)
     expect(eraseHitTest(s, { x: 40, y: 40 })).toBe(false)
   })
+
+  it('treats the tolerance band as inclusive (<= tol)', () => {
+    const s = makeStroke('s', [0, 0, 100, 0]) // horizontal segment on y=0
+    // exactly ERASE_TOL away → inclusive hit
+    expect(eraseHitTest(s, { x: 50, y: ERASE_TOL })).toBe(true)
+    // just beyond the band → miss
+    expect(eraseHitTest(s, { x: 50, y: ERASE_TOL + 1 })).toBe(false)
+  })
+
+  it('hits a curved (diagonal) arrow on its sampled bezier', () => {
+    // (0,0)->(100,100): the bowed cubic passes through (50,50) at t=0.5
+    const a = { ...makeArrow('a', { x: 0, y: 0 }), x2: 100, y2: 100 }
+    expect(eraseHitTest(a, { x: 50, y: 50 })).toBe(true)
+    expect(eraseHitTest(a, { x: 50, y: 95 })).toBe(false) // clearly off the curve
+  })
 })
