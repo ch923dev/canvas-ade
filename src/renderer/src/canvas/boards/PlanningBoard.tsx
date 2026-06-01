@@ -140,6 +140,14 @@ export function PlanningBoard({
     null
   )
 
+  // Live DOM sizes (board-local px) for the auto-sized kinds (text, checklist), fed by
+  // the cards. Refines elementBBox for marquee/snap; a plain ref (no re-render needed —
+  // reads happen at gesture time). Stale-on-first-frame is bounded by elementBBox's nominal fallback.
+  const measuredRef = useRef<Map<string, { w: number; h: number }>>(new Map())
+  const reportMeasure = useCallback((id: string, w: number, h: number) => {
+    measuredRef.current.set(id, { w, h })
+  }, [])
+
   // Ids the in-flight erase swipe has marked for deletion. While set, those
   // elements are hidden from the render (immediate feedback) and committed as ONE
   // checkpoint on pointer-up. Null when not erasing.
@@ -424,7 +432,7 @@ export function PlanningBoard({
       setMarqueeRect(null)
       const moved = rect.w > 2 || rect.h > 2
       if (moved) {
-        const hits = marqueeHits(elements, rect) // → marqueeHits(elements, rect, measuredRef.current) in Task 8
+        const hits = marqueeHits(elements, rect, measuredRef.current)
         setSelectedIds((prev) => {
           if (!d.additive) return new Set(hits)
           const next = new Set(prev)
@@ -624,6 +632,7 @@ export function PlanningBoard({
                 onEditStart={beginChange}
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
+                onMeasure={reportMeasure}
               />
             )
           }
@@ -644,6 +653,7 @@ export function PlanningBoard({
                 onMeasureBottom={growForChecklist}
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
+                onMeasure={reportMeasure}
               />
             )
           }
