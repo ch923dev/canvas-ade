@@ -42,7 +42,7 @@ import { FreeText } from './planning/FreeText'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { eraseHitTest } from './planning/erase'
-import type { PlanTool } from './planning/tools'
+import { shortcutTool, type PlanTool } from './planning/tools'
 import {
   makeArrow,
   makeChecklist,
@@ -234,6 +234,9 @@ export function PlanningBoard({
       // a card (cards no longer stop it — #6), so proceed regardless of target and
       // let the well capture the whole gesture below.
       if (tool === 'select' && e.target !== e.currentTarget) return
+      // An empty-well press focuses the well so the board-scoped letter shortcuts
+      // (onKeyDown below) have a focus target. A press on a card focuses that card.
+      if (e.target === e.currentTarget) e.currentTarget.focus()
       setSelectedElId(null)
       const p = toBoard(e)
 
@@ -461,6 +464,22 @@ export function PlanningBoard({
             e.preventDefault()
             beginChange()
             commit(removeElement(elements, selectedElId))
+            setSelectedElId(null)
+            return
+          }
+          const next = shortcutTool(e.key, {
+            ctrl: e.ctrlKey,
+            meta: e.metaKey,
+            alt: e.altKey
+          })
+          if (next) {
+            // Stop the bare key from ALSO firing the global Canvas window-keydown
+            // bindings: React dispatches at the root container, so this native stop
+            // prevents the bubble up to window (the global typing-guard only covers
+            // INPUT/TEXTAREA/contentEditable, not this focusable div).
+            e.stopPropagation()
+            e.preventDefault()
+            setTool(next)
             setSelectedElId(null)
           }
         }}
