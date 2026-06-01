@@ -131,35 +131,40 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - Match the design tokens in `src/renderer/src/index.css` (mirror of DESIGN.md §2-4).
 - Each phase ends runnable + committed.
 
+### Parallel sessions (worktree coordination)
+- **One session per worktree; never two sessions in the same dir.** Main = integration/merge only.
+- Before editing, read the shared board `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md` (the
+  SessionStart hook injects it automatically). **Stay in YOUR declared zone**; cross-zone edits → note
+  them on the board first. Your edits are auto-logged so the next session sees what you touched.
+- New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
+  node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially,
+  re-running the full gate + e2e after EACH merge. (Native Agent Teams = broken on Windows; this is the
+  Windows-safe substitute.)
+- **Feature work lives on a worktree, not `main`. `main` is the stable version.** Anything scoped to a
+  single feature / fix / refactor — its **docs (specs, plans, roadmaps, research), AND its
+  implementation** — is created and committed on that work's `feat/*` (or `fix/*`) worktree branch, never
+  directly on `main`. We ship different features per session, so `main` only ever carries
+  already-integrated, stable work plus the durable contract (this file, ADRs). Only **durable
+  cross-feature contract changes** (CLAUDE.md, ADRs, top-level `docs/roadmap.md` status) land on `main`
+  directly. Promote a feature's docs/impl to `main` via the sequential merge above once the gate + e2e
+  are green.
+
 ## Environment notes (this machine)
 
 - Node 22.17, pnpm 9.15 (via corepack), git 2.54, Python 3.12.4, VS Build Tools 2022 (VC++ x64). node-pty builds locally.
 - `.npmrc` sets `node-linker=hoisted` so @electron/rebuild + electron-builder work with pnpm.
-- **Repo path has a space** → node-pty MUST stay winpty-free (the beta). See Stack.
+- Spaced repo path → node-pty stays winpty-free (the beta). Rationale in Stack, do not re-derive.
 
 ## Status
 
-Durable contract is above. **Build history** (phases 0–5, per-slice specs/plans, phase handoffs)
-is summarized in **`docs/archive/build-history.md`** (originals in git history). **Review/bug-hunt
-history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
-file = open findings).
+This file = durable contract only. **Per-session state (current baseline, open findings, next steps)
+is NOT kept here** — it goes stale and crowds out the rules above. Look it up live:
 
-**Current state (2026-06-01):** **Phases 0–4 SHIPPED on `main`.** Phase 4 design pass = `abd7fa2`
-(PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified bugs) · `94baab9` (4 open-medium)
-· `1a0c615` (7 round-2 review findings + a doc/repo cleanup). Latest baseline: **438 unit** green,
-lint + typecheck clean; e2e **22/25** (the 3 = the documented `browser`/`browser-gesture`/`focus-detach`
-live-`WebContentsView` env flake, memory `e2e-browser-trio-flake` — environmental, not a regression).
+- **Build history** (phases 0–5, specs, handoffs) → `docs/archive/build-history.md`.
+- **Reviews + open backlog** → `docs/reviews/` (`README.md` = index; newest dated file = open findings).
+- **Roadmap / next candidates** → `docs/roadmap.md`.
+- **Cross-session learnings** → auto-memory `MEMORY.md` (loaded each session).
 
-**Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:
-**healthy, no Critical/High** (the prior-round High MBC-1 did not reproduce). 12 residual Low/Nit/Info
-findings (preview resurrection/ghost, duplicate-while-focused dim, redo-wipe, terminal idle-flag,
-degenerate-draw phantom undo, `cwd`/`'*'` hardening). Full backlog + fix lanes:
-**`docs/reviews/2026-06-01-round3.md`**. None gate a release.
-
-**Start here next:** Open candidates (see `docs/roadmap.md`): **Phase 5 — packaging/signing** (CI
-matrix unsigned until Phase 5) · the **`canvas-ade-mcp` swarm layer** (planned MCP package, memory
-`canvas-ade-mcp`) · the post-MCP **Feature Workspaces / worktrees** model (FW-1) · or burning down the
-**Round-3 Low backlog** (`docs/reviews/2026-06-01-round3.md`, 4 file-disjoint lanes). Deferred:
-**agentic session resume** (roadmap note) · Stage-2 Playwright `_electron` harness (the
-`CANVAS_SMOKE=e2e` harness is the stand-in).
+**Snapshot (2026-06-01, verify before trusting):** Phases 0–4 shipped on `main`; 438 unit green,
+lint+typecheck clean, e2e 22/25 (3 = documented `WebContentsView` env flake, not a regression).
 
