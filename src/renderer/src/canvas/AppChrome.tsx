@@ -103,7 +103,7 @@ function ProjectSwitcher(): ReactElement {
           <Icon name="diamond" size={15} />
         </span>
         <span className="t-label" style={{ color: 'var(--text)' }}>
-          {name ?? 'canvas-ade'}
+          {name ?? 'Expanse'}
         </span>
         <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
           <Icon name="chevron" size={13} />

@@ -39,7 +39,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0a0a0b',
-    title: 'Canvas ADE',
+    title: 'Expanse',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -136,7 +136,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.canvasade.app')
+  electronApp.setAppUserModelId('com.expanse.app')
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
