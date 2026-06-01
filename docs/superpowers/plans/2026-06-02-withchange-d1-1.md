@@ -34,7 +34,9 @@ The roadmap prose ("collapse `tidyBoards`/`tileBoards`/add/remove/duplicate/undo
 | `tidyBoards` (`:343`) | ✅ yes (`:364`) |
 | `tileBoards` record branch (`:369`) | ✅ yes (`:399`) |
 
-**Bonus closed by this refactor:** `addBoard`/`removeBoard`/`duplicateBoard` currently DON'T sync `lastRecorded` — so a no-op gesture (a zero-movement titlebar click) immediately after one of them pushes a phantom undo step (the tolerated edge documented in the `tileBoards` comment + memory `undo-lastrecorded-phantom`: "add/remove/duplicate likely share the latent edge"). Routing them through `trackedChange` syncs `lastRecorded` for free → that latent edge is **closed**, and it's testable (Task 2).
+**⚠️ Plan correction (found during implementation, TDD):** the original "bonus" — *route add/remove/duplicate through `trackedChange` and sync `lastRecorded` for free, closing the phantom-after-no-op edge* — is **NOT safe and was abandoned.** Syncing `lastRecorded` on `addBoard` makes the next `beginChange` see `lastRecorded === boards` and **skip a real move's pre-edit checkpoint**, so `undo` jumps past the move (e.g. add → move → undo removes the board instead of returning it to the add-position). This broke 6 existing undo/redo tests immediately. The phantom-after edge is the **same deliberate tradeoff** the `tileBoards(record:false)` comment already documents: you cannot close it at the store layer without losing granular move-undo — it needs a *gesture-layer lazy-checkpoint* (like the WB-1 fix in `PlanningBoard`), which is out of scope here.
+
+**Actual outcome:** `trackedChange` is a **pure centralization** of `recordPast` + future-clear, with the `lastRecorded` sync **gated behind `opts.reflectPresent`** — ON for tidy/tile (they accept coalescing a nudge into the bulk op), OFF for add/remove/duplicate (granular move-undo preserved). No phantom edge is closed; the add/remove/duplicate phantom stays the tolerated edge. Task 2's tests were rewritten to lock the *correct* invariant (a move right after add/remove/duplicate stays granularly undoable), guarding against a future re-introduction of the unsafe sync.
 
 ---
 

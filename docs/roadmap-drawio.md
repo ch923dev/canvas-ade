@@ -226,7 +226,8 @@ C4, mind maps, BPMN, wireframes).
 
 | Phase | Status |
 |---|---|
-| D1 — Internal discipline (`withChange` · `z` decision · license ADR) | not started |
+| D1.1 — `withChange` (`trackedChange`) undo-rail refactor | 🚧 in progress (branch `feat/drawio/d1.1`) — pure centralization; phantom-after edge **not** closed (would break granular move-undo — see plan) |
+| D1.2 — dead `z` field decision · D1.3 — license ADR | not started |
 | D2 — Mermaid-as-element 🚦 decision gate | not started |
 | D3.1 — PNG export (embedded source) | not started |
 | D3.2 — Anchored Planning arrows | not started |
