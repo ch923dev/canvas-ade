@@ -140,6 +140,16 @@ describe('removeBoard', () => {
     get().removeBoard(drop)
     expect(get().selectedId).toBe(keep)
   })
+
+  it('removing an unknown id is a no-op: no boards change, no undo step (no phantom)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    get().addBoard('terminal', { x: 0, y: 0 })
+    const before = get().boards
+    const pastLen = get().past.length
+    get().removeBoard('does-not-exist')
+    expect(get().boards).toBe(before) // same reference — untouched
+    expect(get().past.length).toBe(pastLen) // no dead undo step recorded
+  })
 })
 
 describe('updateBoard', () => {
@@ -632,6 +642,21 @@ describe('tidyBoards', () => {
     get().tidyBoards('smart')
     expect(get().boards).toBe(before) // same reference — untouched
     expect(get().past.length).toBe(pastLen) // no phantom undo step
+  })
+
+  // trackedChange OMITS selectedId for tidy/tile (reflectPresent:true, no selectedId opt) so
+  // the current selection survives — it must NOT be written as `selectedId: undefined`, which
+  // Zustand's shallow merge would clobber. Guards a "simplify by always spreading" regression.
+  it('preserves the current selection (does not clobber selectedId)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    const a = st.addBoard('terminal', { x: 0, y: 0 })
+    st.addBoard('browser', { x: 5, y: 5 }) // overlaps → tidy/tile move them
+    get().selectBoard(a)
+    get().tidyBoards('smart')
+    expect(get().selectedId).toBe(a) // selection survives tidy
+    get().tileBoards('cols-2', { x: 0, y: 0, w: 1600, h: 1000 })
+    expect(get().selectedId).toBe(a) // selection survives tile
   })
 
   it('records ONE undo step that restores the pre-tidy positions', () => {

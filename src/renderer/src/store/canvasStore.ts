@@ -135,15 +135,23 @@ let lastRecorded: Board[] | null = null
  * the five tracked actions each hand-rolled. Pure: takes state, returns a partial — side
  * values (a new id) are computed by the caller.
  *
- * `opts.reflectPresent` marks the NEW present as the state the undo stack already reflects
+ * `opts.reflectPresent` is REQUIRED (not optional) — every caller must make the layout-vs-
+ * mutation decision explicitly so a future tracked action can't silently inherit the wrong
+ * one. `true` marks the NEW present as the state the undo stack already reflects
  * (`lastRecorded = next`) so a following no-op gesture's beginChange skips a phantom snapshot
  * — BUT it also makes the next *real* gesture's beginChange skip its pre-edit checkpoint, so
  * a move right after is coalesced into THIS step (undo jumps back past it). Only bulk LAYOUT
- * ops (tidy/tile) opt in: that coalescing reads as "tidy, then nudge = one logical step", an
- * accepted tradeoff. add/remove/duplicate leave it OFF — a board's first move must stay
+ * ops (tidy/tile) pass `true`: that coalescing reads as "tidy, then nudge = one logical step",
+ * an accepted tradeoff. add/remove/duplicate pass `false` — a board's first move must stay
  * granularly undoable to the add-position. Their post-no-op phantom is the TOLERATED edge
  * (#BUG M3); a store-layer flag can't close it without breaking granular move-undo (proven by
  * the undo/redo suite) — that needs a gesture-layer lazy-checkpoint, see `beginChange`.
+ *
+ * Returns a `Partial<CanvasState>` patch on a real change, or the full `s` (a same-ref no-op
+ * merge) when `next` is null / unchanged — hence the `| CanvasState` in the return type.
+ * `selectedId` is conditionally spread: callers that OMIT it (tidy/tile) must leave the
+ * current selection untouched, so it must NOT be written as `selectedId: undefined` (Zustand's
+ * shallow merge would clobber the selection). add/remove/duplicate pass it (string | null).
  *
  * NOTE: the gesture-driven path (`beginChange` + `updateBoard`/`resizeBoard`) and the
  * untracked paths (`tileBoards(record:false)`, `growBoardHeight`, `setViewport`, `undo`/
@@ -152,8 +160,8 @@ let lastRecorded: Board[] | null = null
 function trackedChange(
   s: CanvasState,
   next: Board[] | null,
-  opts: { selectedId?: string | null; reflectPresent?: boolean } = {}
-): Partial<CanvasState> {
+  opts: { selectedId?: string | null; reflectPresent: boolean }
+): Partial<CanvasState> | CanvasState {
   if (next == null || next === s.boards) return s
   if (opts.reflectPresent) lastRecorded = next
   const base: Partial<CanvasState> = {
@@ -272,12 +280,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const board = createBoard(type, { id, x: pos.x, y: pos.y })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
-    set((s) => trackedChange(s, [...s.boards, board], { selectedId: id }))
+    set((s) => trackedChange(s, [...s.boards, board], { selectedId: id, reflectPresent: false }))
     return id
   },
 
   removeBoard: (id) =>
     set((s) => {
+      // No such board → true no-op (don't record a dead undo step). `filter` alone would
+      // yield a fresh array even on a miss, so trackedChange's `next === s.boards` guard can't
+      // catch it — guard explicitly here, mirroring duplicateBoard's unknown-id early return.
+      if (!s.boards.some((b) => b.id === id)) return s
       const next = s.boards
         .filter((b) => b.id !== id)
         // Clear a preview link whose source terminal was just removed (Slice C′).
@@ -286,9 +298,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ? { ...b, previewSourceId: undefined }
             : b
         )
-      // filter always yields a fresh array (even for an absent id) → trackedChange records
-      // on every call, matching prior behavior; no existence guard added this pass.
-      return trackedChange(s, next, { selectedId: s.selectedId === id ? null : s.selectedId })
+      return trackedChange(s, next, {
+        selectedId: s.selectedId === id ? null : s.selectedId,
+        reflectPresent: false
+      })
     }),
 
   duplicateBoard: (id) => {
@@ -314,7 +327,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // A duplicated terminal starts IDLE — cloning must not silently spin up a second
     // agent (M-1). The user starts it explicitly via the Start affordance.
     if (clone.type === 'terminal') idleOnMountIds.add(cloneId)
-    set((s) => trackedChange(s, [...s.boards, clone], { selectedId: cloneId }))
+    set((s) => trackedChange(s, [...s.boards, clone], { selectedId: cloneId, reflectPresent: false }))
     return cloneId
   },
 
