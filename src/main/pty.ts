@@ -518,6 +518,15 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     return true
   })
 
+  // PTY-1: tear down EVERY session — live AND parked — for a project switch. The
+  // per-board `pty:kill` loop missed parked sessions (a terminal deleted <PARK_TTL
+  // ago, awaiting undo, lives in the `parked` map, not `sessions`), leaking its
+  // child tree until the 120s TTL fired. disposeAllPtys() drains both maps now.
+  ipcMain.handle('pty:disposeAll', (e) => {
+    if (isForeignSender(e, getMainFrame)) return false
+    return disposeAllPtys().then(() => true)
+  })
+
   ipcMain.handle('pty:park', (e, id: string) => {
     if (isForeignSender(e, getMainFrame)) return false
     park(id)

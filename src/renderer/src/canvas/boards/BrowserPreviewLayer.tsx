@@ -410,6 +410,7 @@ export function BrowserPreviewLayer({
       r.lastZoom = zoomFactor
       r.attached = true
       r.attachSeq++
+      const attachSeq = r.attachSeq
       if (r.exists) {
         void window.api.attachPreview({ id: g.id, bounds, zoomFactor })
       } else {
@@ -427,6 +428,12 @@ export function BrowserPreviewLayer({
         // (create-if-absent) resurrects a cleared entry with live:true, leaking it and
         // inflating the live-view count. Mirrors demoteToSnapshot / beginMotion.
         if (!recs.current.has(g.id)) return
+        // ATTACH-1: a concurrent closeBoard (over-cap eviction / full-view tear-down /
+        // gesture) can run DURING the open await — it clears r.attached/r.exists but does
+        // NOT delete the rec, so the existence guard above passes. Re-patching live:true
+        // here would resurrect a closed board in the store + DiagOverlay live-count. Bail
+        // if we were closed (r.attached false) or a newer attach superseded us (seq bump).
+        if (!r.attached || r.attachSeq !== attachSeq) return
       }
       patchRuntime(g.id, { live: true })
     },
@@ -445,6 +452,35 @@ export function BrowserPreviewLayer({
       patchRuntime(id, { live: false })
     },
     [rec, patchRuntime]
+  )
+
+  // PREV-1: tear down a non-focused live board for full view, but never leave it BLANK.
+  // The full-view path closes the renderer outright (it can't keep a native view painting
+  // over the modal). If the board was never snapshotted (freshly attached, or its last
+  // capture was skipped) it would fall through to the empty device frame dimmed behind the
+  // scrim. When a snapshot already exists (the common case after any motion/LOD), close
+  // immediately. Only when one is missing, capture WHILE the view is still attached, then
+  // close — so the HTML fallback shows the page, not a blank frame.
+  const evictLiveBoard = useCallback(
+    (id: string): void => {
+      const r = rec(id)
+      if (!r.exists) return
+      if (usePreviewStore.getState().byId[id]?.snapshot) {
+        closeBoard(id)
+        return
+      }
+      void (async () => {
+        let url: string | null = null
+        try {
+          url = await window.api.capturePreview(id)
+        } catch {
+          url = null
+        }
+        if (url) patchRuntime(id, { snapshot: url })
+        closeBoard(id)
+      })()
+    },
+    [rec, closeBoard, patchRuntime]
   )
 
   // One coalesced batch per frame for every attached board, diff-skipped.
@@ -570,7 +606,7 @@ export function BrowserPreviewLayer({
           if (fullViewMotionRef.current) {
             if (rec(g.id).exists) closeBoard(g.id)
           } else void attachBoard(g)
-        } else if (rec(g.id).exists) closeBoard(g.id)
+        } else if (rec(g.id).exists) evictLiveBoard(g.id) // PREV-1: snapshot-before-close
       }
       return
     }
@@ -611,6 +647,7 @@ export function BrowserPreviewLayer({
     rec,
     attachBoard,
     closeBoard,
+    evictLiveBoard,
     demoteToSnapshot
   ])
 

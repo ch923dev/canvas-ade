@@ -3,16 +3,14 @@
  * WebContentsView and kill every Terminal PTY tree. Without this, switching projects
  * leaks renderers + orphans node-pty child trees. Idempotent / best-effort.
  */
-import { useCanvasStore } from './canvasStore'
 
 export async function disposeLiveResources(): Promise<void> {
-  const boards = useCanvasStore.getState().boards
   // Close all preview views in one shot (cheaper than per-id).
   await window.api.closeAllPreviews().catch(() => false)
-  // Kill each terminal's PTY tree.
-  await Promise.all(
-    boards
-      .filter((b) => b.type === 'terminal')
-      .map((b) => window.api.killTerminal(b.id).catch(() => false))
-  )
+  // PTY-1: reap EVERY PTY — live AND parked — in one main-side call. Iterating the
+  // board list (terminal boards) and killing per-id missed PARKED sessions: a
+  // terminal deleted within PARK_TTL (120s) awaiting undo is no longer in the board
+  // list, and its proc lives in main's `parked` map, so its child tree leaked until
+  // the TTL fired. disposeAllTerminals drains both maps.
+  await window.api.disposeAllTerminals().catch(() => false)
 }

@@ -165,6 +165,10 @@ export function FreeText({
         }}
         onKeyDown={(e) => {
           e.stopPropagation()
+          // TEXT-1: readOnly blocks typing but not keyDown — guard delete on the
+          // `select` tool only so a Backspace while a draw tool is active can't prune
+          // the element out from under the user (mirrors NoteCard).
+          if (!interactive) return
           if (e.key === 'Backspace' && element.text.length === 0) onDelete(element.id)
         }}
         style={{

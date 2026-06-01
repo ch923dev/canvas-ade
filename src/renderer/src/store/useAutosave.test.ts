@@ -66,4 +66,24 @@ describe('createAutosaver', () => {
     await a.flush() // must not hang when there is nothing to save
     expect(save).not.toHaveBeenCalled()
   })
+
+  it('surfaces a rejected save via onError instead of floating it silently (SAVE-1)', async () => {
+    vi.useRealTimers()
+    const onError = vi.fn()
+    const save = vi.fn().mockRejectedValue(new Error('ENOSPC'))
+    const a = createAutosaver({ save, getStatus: () => 'open', onError })
+    a.schedule()
+    await a.flush() // must not throw / leave an unhandled rejection
+    expect(onError).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces a save that resolves false via onError (SAVE-1)', async () => {
+    vi.useRealTimers()
+    const onError = vi.fn()
+    const save = vi.fn().mockResolvedValue(false)
+    const a = createAutosaver({ save, getStatus: () => 'open', onError })
+    a.schedule()
+    await a.flush()
+    expect(onError).toHaveBeenCalledTimes(1)
+  })
 })

@@ -67,6 +67,9 @@ const api = {
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
     ipcRenderer.invoke('pty:spawn', opts),
   killTerminal: (id: string): Promise<boolean> => ipcRenderer.invoke('pty:kill', id),
+  // PTY-1: reap EVERY session (live + parked) on project switch — `killTerminal`
+  // per-board missed parked (deleted-but-undoable) sessions, leaking child trees.
+  disposeAllTerminals: (): Promise<boolean> => ipcRenderer.invoke('pty:disposeAll'),
   // Park the session on delete (keep the proc alive for adopt-on-undo, #15).
   parkTerminal: (id: string): Promise<boolean> => ipcRenderer.invoke('pty:park', id),
   // Adopt a parked session on undo; { adopted:false } → caller spawns fresh (#15).

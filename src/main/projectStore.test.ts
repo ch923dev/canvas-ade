@@ -67,4 +67,13 @@ describe('projectStore', () => {
   it('returns an error when no canvas.json exists', () => {
     expect(readProject(dir).ok).toBe(false)
   })
+
+  it('rejects an envelope-invalid doc and never touches the primary (PERSIST-1)', async () => {
+    await writeProject(dir, doc) // seed a valid primary
+    await expect(writeProject(dir, { nope: true })).rejects.toThrow()
+    // The good primary must survive — a renderer bug must not clobber it with junk.
+    const r = readProject(dir)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.doc).toEqual(doc)
+  })
 })

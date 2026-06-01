@@ -100,8 +100,17 @@ export function registerProjectHandlers(
     if (guard(e)) return false
     const dir = getCurrentDir()
     if (!dir) return false
-    await writeProject(dir, doc)
-    return true
+    // SAVE-1: a write failure (disk full, permission denied, envelope-invalid doc)
+    // must report failure to the renderer, not reject opaquely. The renderer's
+    // autosaver surfaces a `false`/rejection via its onError hook so a failing disk
+    // is visible instead of silently swallowed.
+    try {
+      await writeProject(dir, doc)
+      return true
+    } catch (err) {
+      console.error('project:save failed', err)
+      return false
+    }
   })
 
   ipcMain.handle('project:recents', (e): RecentProject[] => {

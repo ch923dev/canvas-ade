@@ -1,0 +1,240 @@
+{
+  "summary": "Re-verify the review findings whose files changed in the #12 fix (ed1d551) against current main",
+  "agentCount": 33,
+  "logs": [],
+  "result": {
+    "results": [
+      {
+        "key": "FV-3",
+        "statusVsMain": "partially-fixed",
+        "residualSeverity": "Low",
+        "evidence": "The primary fix (full view not closing on Esc from a focused terminal) is confirmed resolved by Canvas.tsx:481-491 — a capture-phase window listener that calls closeFullView() when e.key === 'Escape' && fullViewId. The residual identified in the verdict remains: Canvas.tsx:484-485 calls e.stopPropagation() in the capture phase, which prevents the event from reaching BoardFrame.tsx:179-181's bubble-phase document.addEventListener('keydown', onKey) handler. That handler is the only path that calls setOpen(false) for the menu's local state. Neither closeFullView() (Canvas.tsx:147-149) nor hardCloseFullView() (Canvas.tsx:152-156) calls setMenuOpen(false) — confirmed by grepping Canvas.tsx for setMenuOpen (zero results). Therefore, if a BoardMenu is open when the user presses Esc inside a full-view terminal, the menu's local open state stays true and previewStore's menuOpen flag stays true (the useEffect cleanup at BoardFrame.tsx:172 only fires when open changes, which it doesn't). The flag self-heals on subsequent pointerdown (BoardFrame.tsx:182), so permanent session-long detach does not occur, keeping severity at Low.",
+        "fixCommitHint": "The #12 fix only added the capture-phase Esc handler (Canvas.tsx:481-491) to close full view from terminals; it did not add a setMenuOpen(false) call to closeFullView/hardCloseFullView, leaving the menuOpen stuck-true residual unaddressed."
+      },
+      {
+        "key": "MBC-1",
+        "statusVsMain": "partially-fixed",
+        "residualSeverity": "High",
+        "evidence": "Canvas.tsx lines 282-290: the onNodesChange remove branch still calls only removeBoard(intent.id) and setFocusedId(...) — no hardCloseFullView() or setFullViewId(null). Canvas.tsx lines 411-420: doUndo/doRedo still have no hardCloseFullView() call. Canvas.tsx lines 427-432 (the fix): line 430 now adds `setFullViewId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))` to the heal effect, which WILL eventually clear fullViewId after the deletion. However, BrowserPreviewLayer.tsx lines 856-867 subscribes synchronously to canvasStore: on removeBoard the subscriber immediately calls reconcile() (which updates geomRef, line 729) then at line 866 checks `fullViewIdRef.current !== null` and calls applyLiveness(). At this point fullViewIdRef.current is still the stale deleted-board id (the heal effect has not yet run; fullViewIdRef is synced only in Canvas.tsx lines 135-137 via a useEffect on [fullViewId]). applyLiveness() line 557 reads the stale fvId, enters the full-view branch (lines 557-575), iterates geomRef (deleted board already removed), and calls closeBoard() on every other Browser board (line 573: `else if (rec(g.id).exists) closeBoard(g.id)`), tearing down all other live Browser renderers. The heal effect's null-set arrives one React commit later — after the damage is done.",
+        "fixCommitHint": "The #12 fix added Canvas.tsx line 430 (heal effect now also clears fullViewId when board is gone), which prevents the ref from staying stale indefinitely and fixes the persistent/long-term stale-ref state. But it does not address the synchronous window between removeBoard firing the Zustand subscriber and the React heal effect running — the one-render-cycle gap where applyLiveness() still sees the stale fullViewIdRef.current and closes all other Browser renderers."
+      },
+      {
+        "key": "MBC-3",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "previewStore.ts:113-117 — `requestReload` implementation is byte-for-byte identical to abd7fa2: `const cur = s.byId[id] ?? DEFAULT_RUNTIME; return { byId: { ...s.byId, [id]: { ...cur, reloadNonce: cur.reloadNonce + 1 } } }`. The `?? DEFAULT_RUNTIME` fallback unconditionally creates a phantom entry when `id` is absent from `byId`. The reconcile cleanup loop at BrowserPreviewLayer.tsx:732-737 still iterates `recs.current.keys()` (not `previewStore.byId` keys), so a phantom entry created for a deleted board id is invisible to every subsequent cleanup pass. No guard was added at the call site Canvas.tsx:370 (`usePreviewStore.getState().requestReload(target.id)`) to verify the board still exists in canvasStore before calling requestReload. The fix commit's diff shows zero changes to previewStore.ts between abd7fa2 and ed1d551 (`git diff abd7fa2 ed1d551 -- src/renderer/src/store/previewStore.ts` produces no output). The test added at previewStore.test.ts:24-30 explicitly asserts that calling `requestReload('fresh')` on an absent id DOES create a new entry, confirming the create-if-absent behaviour is intentional and was not changed.",
+        "fixCommitHint": "MBC-3 was not addressed by #12. The commit message lists H1/M1/M2/M3/M4/M5/M6/L1/L2/L3/L4/L5/T1/T5 fixes but no MBC-3 fix. The previewStore.ts file was not part of any changed files in the fix commit (it was only in the test additions for other bugs)."
+      },
+      {
+        "key": "PREV-1",
+        "statusVsMain": "fixed",
+        "residualSeverity": "none",
+        "evidence": "Z:/Canvas ADE/src/renderer/src/canvas/boards/BrowserPreviewLayer.tsx lines 499-544: the #12 fix wraps the entire async IIFE body in a try/finally block. The `demoting.current.add(g.id)` calls still happen at line 497 (before the await), but the finally block at lines 541-544 unconditionally runs `live.forEach((g) => demoting.current.delete(g.id))` on ALL exit paths — including the early return at line 510 (`if (!gestureRef.current) return`). The comment at lines 499-502 explicitly labels this \"Bug H1\" and describes the exact stale-ID scenario from PREV-1. Previously the delete only ran on the happy path; now it always runs.",
+        "fixCommitHint": "The try/finally wrapper introduced in beginMotion's async IIFE (lines 503-545 of BrowserPreviewLayer.tsx) directly addresses PREV-1 — the finally clause at lines 541-544 drains demoting.current on every path including the gesture-abandon early return."
+      },
+      {
+        "key": "PREV-3",
+        "statusVsMain": "partially-fixed",
+        "residualSeverity": "Info",
+        "evidence": "src/renderer/src/canvas/boards/BrowserPreviewLayer.tsx:905-910 — the comment at lines 905-909 states \"The preload `PreviewEvent` union doesn't declare this additive variant, so compare via a widened string\", but `did-start-navigation` is now a proper union member at src/preload/index.ts:53 (`| { id: string; type: 'did-start-navigation' }`). The `as string` cast at line 910 (`if ((ev.type as string) === 'did-start-navigation')`) therefore remains as an unnecessary widening cast and the explanatory comment is now factually incorrect/stale. The fix added the variant to the union (addressing the root type-safety concern) but did not remove the now-redundant cast or update the comment.",
+        "fixCommitHint": "#12 added `did-start-navigation` to both the preload PreviewEvent union (src/preload/index.ts:53) and the main-process union (src/main/preview.ts:17), resolving the original missing-type concern, but did not clean up the now-stale `as string` cast and comment in BrowserPreviewLayer.tsx."
+      },
+      {
+        "key": "PREV-4",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Info",
+        "evidence": "Z:/Canvas ADE/src/renderer/src/canvas/boards/BrowserPreviewLayer.tsx lines 437-448: closeBoard sets r.attached=false, r.exists=false, r.lastSent=null, r.lastUrl=null but never resets r.lastZoom. The protective invariant (attachBoard lines 399-408 requires r.exists && r.attached for the diff-skip, so every re-attach after closeBoard unconditionally executes line 410 r.lastZoom=zoomFactor before any IPC) is unchanged. The #12 commit did not modify closeBoard or attachBoard logic for this finding.",
+        "fixCommitHint": "Not addressed — #12 did not touch the closeBoard/lastZoom logic."
+      },
+      {
+        "key": "NEW-CAM-1",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "Z:/Canvas ADE/src/renderer/src/canvas/boards/BrowserPreviewLayer.tsx lines 423-431: after `await window.api.openPreview(...)` the only guard is `if (!recs.current.has(g.id)) return` (line 429). The suggested second guard `if (!r.exists) return` (to catch a concurrent `closeBoard` that resets `r.exists = false` without removing the key from `recs.current`) was NOT added. `closeBoard` at lines 437-448 still only sets `r.attached = false; r.exists = false` without calling `recs.current.delete(id)`, leaving the race window fully intact.",
+        "fixCommitHint": "The #12 commit comment on line 424-428 only references Bug #48/#30 (deletion race); the closeBoard concurrent-close race described in NEW-CAM-1 was not addressed."
+      },
+      {
+        "key": "NEW-CAM-2",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "Z:/Canvas ADE/src/renderer/src/canvas/boards/BrowserPreviewLayer.tsx line 220: zoomFor still calls boundsFor(g) internally (`return fitZoomFactorForBounds(boundsFor(g).width, preset(g.viewport).w)`). Line 463: flushBatch calls `boundsFor(g)` explicitly, and line 464 calls `zoomFor(g)` which triggers a second `boundsFor(g)` call. Lines 796–797: reconcile calls `boundsFor(g)` then `zoomFor(g)` separately, same double-evaluation. No change was made to these lines by the #12 commit.",
+        "fixCommitHint": "Not addressed — the #12 fix commit (ed1d551) did not modify the zoomFor definition or the flushBatch/reconcile call sites for this finding."
+      },
+      {
+        "key": "NEW-CAM-3",
+        "statusVsMain": "fixed",
+        "residualSeverity": "none",
+        "evidence": "/Canvas ADE/src/renderer/src/canvas/boards/BrowserPreviewLayer.tsx lines 679–721: the full-view rAF tick now uses an `idle` counter (line 685) and an `active` flag (line 687); the loop self-terminates via `raf = idle < 4 ? requestAnimationFrame(tick) : 0` (line 707) after 4 idle frames. An `arm()` helper (lines 709–712) resets `idle = 0` and re-arms the stopped loop; a `window.addEventListener('resize', arm)` (line 716) restarts the pump on window resize. The commit comment at lines 680–684 labels this as \"Bug L4\" — the exact defect described in NEW-CAM-3. The previously unconditional `raf = requestAnimationFrame(tick)` is gone.",
+        "fixCommitHint": "The #12 fix introduced the idle-frame counter and self-termination logic (Bug L4) in the full-view dedicated rAF effect, replacing the unconditional re-queue with a 4-frame idle-stop and a resize-driven re-arm, directly addressing the finding's described defect and implementing the suggested fix direction verbatim."
+      },
+      {
+        "key": "NEW-CAM-4",
+        "statusVsMain": "fixed",
+        "residualSeverity": "none",
+        "evidence": "src/renderer/src/canvas/boards/BrowserPreviewLayer.tsx lines 498–545: the async IIFE in `beginMotion` is now wrapped in a `try/finally` block. The `finally` at lines 541–544 unconditionally calls `live.forEach((g) => demoting.current.delete(g.id))`, so even when the early-return guard `if (!gestureRef.current) return` at line 510 fires (the exact race NEW-CAM-4 described), control falls into `finally` and every board is removed from `demoting.current`. The inline comment at lines 499–502 explicitly documents this as \"Bug H1\" — the demoting-set leak that caused `flushBatch` to skip repositioning boards forever.",
+        "fixCommitHint": "The #12 commit introduced the `try/finally` wrapper around the beginMotion async IIFE and moved the `demoting.current.delete` drain into the `finally` block (labelled \"Bug H1\" in the comment), which is precisely the fix the finding's \"Suggested fix direction\" section recommended."
+      },
+      {
+        "key": "NEW-ORCH-2",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Medium",
+        "evidence": "Canvas.tsx:140-144 — `openFullView` still sets `fullViewEntering=true` with no settle timer: `const openFullView = useCallback((id: string) => { setFullViewClosing(false); setFullViewEntering(true); setFullViewId(id) }, [])`. Canvas.tsx:157 — `handleFullViewEntered = useCallback(() => setFullViewEntering(false), [])` remains a stable zero-dep identity. FullViewModal.tsx:46-54 — enter effect dep array is still `[onEntered]` (a stable identity), so it fires only on mount; if the component stays mounted through an exit→reopen cycle, no new settle timer fires and `fullViewEntering` stays `true` indefinitely. BrowserPreviewLayer.tsx:691 — full-view rAF tick is still gated on `if (!fullViewMotionRef.current)`, which is stuck `true` when `fullViewEntering` never clears.",
+        "fixCommitHint": "The #12 fix did not address NEW-ORCH-2; none of the suggested changes (adding an enterTimerRef to openFullView, clearing it in hardCloseFullView, or removing the setTimeout from FullViewModal's enter effect) are present in the current code."
+      },
+      {
+        "key": "PPD-1",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Medium",
+        "evidence": "Canvas.tsx lines 365-372: the `existing` branch of `applyPush` calls `st.updateBoard(target.id, patch)` (line 371) and `st.selectBoard(target.id)` (line 372) with no preceding `st.beginChange()`. canvasStore.ts lines 242-264 confirms that `updateBoard` only clears `future` but never writes the current state to `past`, so the push-to-existing-browser action is still non-undoable and silently destroys any armed redo branch. The `addBoard` path (line 374, else branch) still records a proper checkpoint via `recordPast` (canvasStore.ts line 190), leaving the asymmetry intact. The #12 commit touched neither file in a way that inserts `beginChange` here.",
+        "fixCommitHint": "The #12 fix did not address PPD-1; no beginChange() was added to the existing branch of applyPush."
+      },
+      {
+        "key": "PTY-3",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "TerminalBoard.tsx line 112: `useState<TerminalState>('spawning')` — initial state is always 'spawning', never 'idle'. Lines 337–379 of the spawn effect: every mount calls `window.api.adoptTerminal(board.id)`, and when `res.adopted === false` (i.e. no parked session exists, which is always the case on a clean project open from persistence), it unconditionally sets `spawnAllowed = true` and calls `launch()`, which invokes `window.api.spawnTerminal(...)`. There is no `isRestored` flag in the TerminalBoard data schema (boardSchema.ts lines 34–40 show only `type`, `shell`, `launchCommand`, `cwd`, `port`) and no restored-idle guard anywhere in canvasStore.ts `applyOpenResult` (lines 346–362) or `loadObject` (lines 338–344). The `'idle'` TerminalState exists in terminalState.ts line 18 but is never set on initial mount. The CLAUDE.md contract at line 170 (\"restored terminals are **idle** (no auto-spawn)\") and the persistence spec at docs/superpowers/specs/2026-05-30-persistence-design.md line 23 (\"restore idle — config preserved, no auto-spawn, no auto-run\") are still violated. The #12 fix commit touched TerminalBoard.tsx for other findings (WebGL budget, respawn deferral) but added no restored-idle guard.",
+        "fixCommitHint": "Not addressed — #12 made no changes to the spawn-on-restore path; no isRestored flag, no idle initial state, no guard in applyOpenResult."
+      },
+      {
+        "key": "STATE-1",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Medium",
+        "evidence": "PlanningBoard.tsx:93 — `const elements = board.elements` captures a render-time snapshot from props. All mutation callbacks (setNoteText line 138, setTextText line 143, deleteEl line 149, toggle line 157, setTitle line 163, setItem line 168, appendItem line 174, dropItem line 181, onWellPointerUp line 319/326/332, onWellPointerDown lines 239/245, onWellDoubleClick line 301) still list `elements` in their useCallback deps and pass pre-computed arrays derived from this stale snapshot to `commit`. canvasStore.ts:242-264 shows `updateBoard` uses a functional set updater for `s.boards`, which is fresh — but the `patch` argument (e.g., `{ elements: next }`) is already computed from the stale closure before `updateBoard` is ever called, so the store-level functional updater does not protect against this race. No `useCanvasStore.getState()` call, no functional-updater pattern for elements, and no other mechanism to read fresh elements at call-time was introduced in PlanningBoard.tsx.",
+        "fixCommitHint": "The #12 fix commit (ed1d551) did not address STATE-1; no changes to the stale-closure pattern in PlanningBoard.tsx element mutation callbacks are present."
+      },
+      {
+        "key": "STATE-3",
+        "statusVsMain": "fixed",
+        "residualSeverity": "none",
+        "evidence": "canvasStore.ts:110 introduces `let lastRecorded: Board[] | null = null`. canvasStore.ts:333 sets `lastRecorded = r.present` inside `redo()` after computing `applyRedo`. canvasStore.ts:310 guards `beginChange()` with `if (s.past[s.past.length - 1] === s.boards || lastRecorded === s.boards) return s` — the second clause (`lastRecorded === s.boards`) matches the exact `future[0]` reference that `redo()` placed in `boards`, so no phantom snapshot is pushed after a redo. The old guard (past-tail check alone) that caused the duplicate is now supplemented by this `lastRecorded` check, directly resolving the described stale-reference miss.",
+        "fixCommitHint": "The #12 fix introduced the module-level `lastRecorded` variable and wired it into both `undo()` (line 326) and `redo()` (line 333), then updated the `beginChange()` guard (line 310) to also check `lastRecorded === s.boards`. The comment at lines 305-309 explicitly references \"#BUG M3\", which is the alias for STATE-3."
+      },
+      {
+        "key": "STATE-5",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Info",
+        "evidence": "PlanningBoard.tsx:154-159 — the `toggle` callback still calls `beginChange()` immediately before `commit(toggleItem(...))` for every checkbox tick, unchanged from abd7fa2. canvasStore.ts:302-318 — `beginChange` still pushes a `recordPast` snapshot per call; the new `lastRecorded` dedup guard (line 310) only skips a snapshot when `boards` is unchanged since the last checkpoint, which does not help for sequential ticks that each mutate boards. The #12 commit added `growBoardHeight` (canvasStore.ts:278-289, BUG-024) and the `lastRecorded` phantom-snapshot fix (BUG M3), neither of which addresses the toggle-per-undo design. No documentation marking the per-tick undo behavior as intentional was added to either file.",
+        "fixCommitHint": "Not addressed — #12 fixed BUG-024 (growBoardHeight untracked) and BUG M3 (phantom post-undo snapshots); STATE-5's toggle-per-undo-checkpoint concern was not part of the #12 fix set."
+      },
+      {
+        "key": "NEW-BOARD-1",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "The defect mechanism is fully present in the current code at ed1d551:\n\n1. PlanningBoard.tsx:373-375 — during a drag, `viewElements` is the translateElement-shifted array (element.y = original + dy), and this shifted element is passed as `element={el}` to ChecklistCard at line 479.\n\n2. ChecklistCard.tsx:108-116 — the `useEffect` has `element.y` in its dependency array (line 116: `[element.id, element.y, onMeasureBottom]`). Each drag frame changes `element.y`, re-running the effect. Line 111 calls `onMeasureBottom(element.id, element.y + el.offsetHeight)` with the current (mid-drag, shifted) y.\n\n3. PlanningBoard.tsx:192-202 — `growForChecklist` computes `needed = Math.ceil(bottom + TITLEBAR_H + WELL_PAD)` and calls `useCanvasStore.getState().growBoardHeight(board.id, needed)` whenever `needed > board.h`.\n\n4. canvasStore.ts:278-289 — `growBoardHeight` is strictly only-grows: `if (b.id !== id || b.h >= h) return b`. The board is never shrunk back.\n\nResult: drag a checklist card downward to a peak y, then back up — the board has been grown to accommodate the peak-y position and permanently stays that tall even after the element is committed at its (smaller) final y.",
+        "fixCommitHint": "The #12 fix introduced the onMeasureBottom / growForChecklist / growBoardHeight mechanism to solve checklist overflow clipping, but did not guard the auto-grow against mid-drag transient positions. The over-grow bug was not addressed."
+      },
+      {
+        "key": "PERS-1",
+        "statusVsMain": "fixed",
+        "residualSeverity": "none",
+        "evidence": "useAutosave.ts:20 — flush is now typed `() => Promise<void>` (was `(): void`); lines 42-45 return run() which awaits the save. Lines 82-89 register `window.api.project.onFlush(() => saver.flush())` so main can trigger an awaited flush before exit. preload/index.ts:137-147 — onFlush protocol posts a replyChannel; the listener awaits the handler then sends the reply. index.ts:214-235 — flushRenderer() sends `project:flush` with a unique reply channel and resolves on the reply or a 1500ms timeout. index.ts:251-258 — before-quit handler calls `void flushRenderer().then(() => shutdown()).finally(() => app.exit(0))`, fully awaiting the renderer flush before hard-exiting.",
+        "fixCommitHint": "The #12 fix introduced the full project:flush IPC round-trip (flushRenderer in index.ts, onFlush in preload/index.ts, and the onFlush registration in useAutosave.ts), plus changed flush() from void to Promise<void>, closing the entire data-loss-on-quit race."
+      },
+      {
+        "key": "PERS-2",
+        "statusVsMain": "fixed",
+        "residualSeverity": "none",
+        "evidence": "Z:/Canvas ADE/src/main/recentProjects.ts line 8: `import writeFileAtomic from 'write-file-atomic'` is now present, and line 50 calls `writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')` — replacing the old non-atomic `writeFileSync`. The inline comment on lines 47-49 explicitly documents the fix and references the original bug (BUG-L5).",
+        "fixCommitHint": "The #12 fix added the `write-file-atomic` import at line 8 and replaced the `writeFileSync` call with `writeFileAtomic.sync` at line 50 in recentProjects.ts, fully addressing the non-atomic write concern."
+      },
+      {
+        "key": "PERS-4",
+        "statusVsMain": "partially-fixed",
+        "residualSeverity": "Low",
+        "evidence": "Z:/Canvas ADE/src/main/projectStore.ts lines 62-73: the .bak rotation is now guarded (line 65: `if (tryParse(primary) !== undefined)`) so a previously-valid primary is only promoted to .bak when it is itself envelope-valid — protecting the backup. However, line 72 (`await writeFileAtomic(primary, JSON.stringify(doc, null, 2), 'utf8')`) still writes the incoming `doc` unconditionally without calling `isEnvelope(doc)`. The `isEnvelope` helper (lines 33-40) remains read-path-only. A caller supplying a malformed doc still silently overwrites canvas.json with corrupt data; only the .bak survival scenario improved.",
+        "fixCommitHint": "The #12 fix hardened the .bak rotation by conditioning it on `tryParse(primary) !== undefined` (line 65), protecting the backup from being overwritten when the existing primary is already corrupt. It did not add an `isEnvelope(doc)` guard on the write path itself, leaving the core defect (no validation of incoming doc before write) unresolved."
+      },
+      {
+        "key": "SEC-2",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Medium",
+        "evidence": "projectStore.ts:62-73 — writeProject accepts doc: unknown and calls writeFileAtomic at line 72 without ever calling isEnvelope(doc). isEnvelope is defined at lines 33-40 and is called inside tryParse (line 46) only on the prior on-disk file to decide .bak rotation (line 65), never on the incoming payload. projectIpc.ts:80-86 — the project:save handler receives doc: unknown and passes it directly to writeProject(dir, doc) at line 84 with no envelope check. No change in #12 added validation of the incoming doc; the only fix in #12 visible in projectIpc.ts was the isForeignSender guard improvement described in lines 21-24 (BUG-M6 / foreign-frame null-window fix).",
+        "fixCommitHint": "PR #12 did not address SEC-2. It fixed the foreign-frame guard (isForeignSender null-window path, BUG-M6) in projectIpc.ts but added no isEnvelope validation of the incoming doc in writeProject or the project:save handler."
+      },
+      {
+        "key": "SEC-1",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "preload/index.ts:161 — `window.postMessage({ __ptyPort: true, id: msg.id }, '*', e.ports)` still uses wildcard targetOrigin. TerminalBoard.tsx:305-320 — `onWinMsg` checks only `data.__ptyPort` and `data.id !== board.id`; no `e.origin` guard is present. TerminalSmoke.tsx:50-63 — identical pattern, no origin check. Neither the wildcard send nor the missing receive-side origin validation was touched by the #12 fix commit.",
+        "fixCommitHint": "The #12 commit modified TerminalBoard.tsx extensively (WebGL budget pooling, deferred-spawn LOD fix, respawn deferral #23) but none of those changes addressed the SEC-1 pattern: the wildcard postMessage targetOrigin and the absent e.origin check in both onWinMsg handlers remain exactly as they were on abd7fa2."
+      },
+      {
+        "key": "SEC-4",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "Z:/Canvas ADE/src/preload/index.ts lines 164-169: the silent window.api fallback else-branch is unchanged at ed1d551 — `if (process.contextIsolated) { contextBridge.exposeInMainWorld('api', api) } else { // Fallback when contextIsolation is somehow off (should never happen). ;(window as unknown as Record<string, unknown>).api = api }`. No part of the #12 fix touched this block; the permissive silent fallback with no throw/error signal remains exactly as confirmed in the original verdict.",
+        "fixCommitHint": "The #12 fix did not address SEC-4; no changes were made to src/preload/index.ts's else-branch."
+      },
+      {
+        "key": "PTY-4",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "Z:/Canvas ADE/src/renderer/src/store/disposeLiveResources.ts:13-17 — still iterates only live boards and calls window.api.killTerminal(b.id); no call to reap parked sessions. Z:/Canvas ADE/src/preload/index.ts — no new IPC entry for reapParked or bulk-kill of parked map. Z:/Canvas ADE/src/main/pty.ts:649-651 — disposeAllPtys() drains both maps but is only wired to app-quit (index.ts:199), not to the project-switch path.",
+        "fixCommitHint": "The #12 commit added disposeAllPtysCore draining both maps (pty.ts:587-595) and disposeAllPtys() calling it (pty.ts:649-651), but only connected this to the app-quit shutdown() path. The project-switch path (disposeLiveResources → window.api.killTerminal per board) was not updated to call a parked-reaping IPC, so the PTY-4 gap (parked sessions not reaped on project switch) remains fully open."
+      },
+      {
+        "key": "PTY-5",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Info",
+        "evidence": "Z:/Canvas ADE/src/main/pty.ts lines 630-641: the Unix branch of killTree sends SIGKILL (line 632) then immediately returns Promise.resolve() at line 640. The JSDoc at lines 598-604 documents that killTree \"Returns a Promise that resolves when the tree-kill child process has exited (or a short safety timeout elapses)\" — a guarantee only the Windows taskkill branch (lines 607-629, backed by execFile callback + setTimeout fallback) actually fulfills. The Unix branch is structurally unchanged from the pre-fix commit; #12 introduced no drain/wait mechanism on that path.",
+        "fixCommitHint": "The #12 fix did not address PTY-5. The commit touched pty.ts for other findings (parked-session reaping, identity guards, stale-exit logic) but left the Unix killTree branch returning Promise.resolve() immediately."
+      },
+      {
+        "key": "PTY-6",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Info",
+        "evidence": "TerminalBoard.tsx:305-320 — onWinMsg checks data.__ptyPort and data.id !== board.id but has no e.origin check. preload/index.ts:161 — postMessage still uses wildcard '*' targetOrigin. TerminalSmoke.tsx:50-59 — same pattern, no e.origin check. The #12 commit touched none of these lines for this issue.",
+        "fixCommitHint": "None — PTY-6 was not addressed by the #12 fix. The wildcard postMessage origin in preload/index.ts:161 and the missing e.origin checks in TerminalBoard.tsx and TerminalSmoke.tsx are unchanged. The finding's own verdict noted that an origin check would be ineffective anyway since the preload uses '*', so this was intentionally left as-is."
+      },
+      {
+        "key": "TQ-1",
+        "statusVsMain": "partially-fixed",
+        "residualSeverity": "Low",
+        "evidence": "src/main/projectIpc.test.ts lines 52–74 add a describe('isForeignSender (BUG-M6)') block with four unit tests, fixing the \"no unit tests for the frame-guard\" half of TQ-1. However, isForeignSender remains independently copy-pasted in all three files: projectIpc.ts:28–36, preview.ts:414–422, and pty.ts:372–384 — no shared utility module was created. Each has a slightly different signature (projectIpc.ts injects a typed mainFrame getter; preview.ts injects getWin; pty.ts uses unknown). The duplication and regression risk from three diverging implementations remain.",
+        "fixCommitHint": "PR #12 added src/main/projectIpc.test.ts with unit tests for projectIpc's isForeignSender, but did not consolidate the three copy-pasted implementations into a shared source."
+      },
+      {
+        "key": "TQ-2",
+        "statusVsMain": "partially-fixed",
+        "residualSeverity": "Info",
+        "evidence": "Z:/Canvas ADE/src/renderer/src/store/previewStore.test.ts lines 45-130 now contain full test coverage for patchIfPresent (3 tests), clear (3 tests), setNodeGesture (2 tests), and setMenuOpen (2 tests) — the four functions that were untested at abd7fa2. However, selectLiveCount (defined at previewStore.ts:128) has no test anywhere: Grep for \"selectLiveCount\" returns only the source definition with zero hits in any *.test.ts file, and the 131-line test file has no describe block for it.",
+        "fixCommitHint": "The #12 fix added four new describe blocks (lines 45-130) covering patchIfPresent, clear, setNodeGesture, and setMenuOpen, reducing the original five-function gap to a single remaining gap for selectLiveCount."
+      },
+      {
+        "key": "TQ-5",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "Z:/Canvas ADE/src/main/pty.test.ts lines 3-14: `enumerateShells` is not imported. No `describe` or `it` block for `enumerateShells` exists anywhere in the 374-line test file (confirmed by grep returning only comment-line hits at lines 61 and 95). The three uncovered paths in `pty.ts` remain: `seenLabels` label-dedup guard (pty.ts:298, 308, 310), no-shells fallback push (pty.ts:334), and `found[0].default = true` assignment (pty.ts:335). The #12 fix added tests for `parkCore`, `adoptCore`, `reapParkedCore`, `cleanupCore`, `disposeAllPtysCore`, `resolveShell`, and `isForeignSender` — but not for `enumerateShells`.",
+        "fixCommitHint": "Not addressed — #12 did not add any enumerateShells test coverage."
+      },
+      {
+        "key": "NEW-BOARD-2",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Medium",
+        "evidence": "BrowserBoard.tsx:135-144 — commitUrl stores draftUrl.trim() verbatim with no scheme normalization (no \"http://\" prepend for bare hostnames). preview.ts:80-88 — isAllowedPreviewUrl still only allows http:/https:, so \"localhost:5173\" parses as protocol \"localhost:\" and is rejected. preview.ts:439-450 and 527-537 — rejected URLs emit did-fail-load with errorDescription 'blocked scheme'. BrowserBoard.tsx:308-317 — DeviceContent shows \"Couldn't load\" and runtime.error (which would be 'blocked scheme'), with no user guidance to prepend \"http://\". No normalization or helpful hint was added anywhere in either file by the #12 fix.",
+        "fixCommitHint": "Not addressed — neither BrowserBoard.tsx nor preview.ts received any URL-normalization or user-guidance change in commit ed1d551."
+      },
+      {
+        "key": "PPD-2",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "Z:/Canvas ADE/src/renderer/src/canvas/edges/PreviewEdge.tsx:29-31 — sx = from.w/2 and sy = from.h/2 are still computed from width/height that default to 0 (line 74: s.measured.width ?? 0). When a node is unmeasured (w=0, h=0) and the two centers are axis-aligned (e.g. dx=0, dy≠0), Math.abs(dx)/sx = 0/0 = NaN; Math.max(NaN, Infinity) = NaN; scale = 1/NaN = NaN. The only guard added is line 28 (dx===0 && dy===0, identical centers), which does not cover the axis-aligned-but-offset case. No sx===0 / sy===0 guard exists.",
+        "fixCommitHint": "The #12 fix did not touch the NaN-scale path in borderPoint; it added the edgePositions helper (lines 44-60) and an early null-return for missing nodes (line 72), but left the zero-dimension division unguarded."
+      },
+      {
+        "key": "NEW-A11Y-3",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "BoardFrame.tsx:251 still has role=\"menu\" on the container div; the item() helper at lines 217-230 renders plain &lt;button className=\"board-menu-item\"&gt; with no role=\"menuitem\". AppChrome.tsx:109 still has role=\"menu\" on the project-switcher-menu div; the child &lt;button&gt; elements at lines 111-117 have no role=\"menuitem\". The #12 commit added no role=\"menuitem\" attributes in either file.",
+        "fixCommitHint": "Not addressed — #12 did not touch the ARIA roles on menu-item children in BoardFrame.tsx or AppChrome.tsx."
+      },
+      {
+        "key": "NEW-A11Y-4",
+        "statusVsMain": "still-open",
+        "residualSeverity": "Low",
+        "evidence": "BoardFrame.tsx lines 237-245: IconBtn rendered with active={open} (visual-only) but no aria-expanded or aria-haspopup. The IconBtn component's button element (lines 100-144) has no ARIA state attributes at all. AppChrome.tsx lines 89-104: the project-switcher trigger button still has only title=\"Switch project\" with no aria-expanded or aria-haspopup; the open state (line 48) is never reflected on the button element.",
+        "fixCommitHint": "The #12 fix did not address this finding; neither BoardFrame.tsx nor AppChrome.tsx received any aria-expanded or aria-haspopup additions in ed1d551."
+      }
+    ]
+  }
+}

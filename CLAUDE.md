@@ -142,18 +142,19 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 Durable contract is above. The full phase-by-phase build history (Phase 0 → Phase 2
 follow-up) lives in **`docs/handoffs/status-archive.md`** to keep this file lean.
 
-**Current state (2026-05-31):** **Phase 4 — Design pass & polish — 6/7 slices SHIPPED on branch
-`phase-4-design-pass`** (off `main` `65a0160`; NOT pushed/merged). Done: 1 motion (§9 camera
-cubic-bezier ease + reduced-motion gate, `lib/motion.ts`) · 2 token/chrome parity (§4 two-shadow,
-§6 ring-only select) · 3 Geist fonts (variable woff2 bundled) · 4 states (welcome tokens, terminal
-braille spinner) · 6 CSP (prod `script-src 'self'`, no unsafe-inline) · 7 code-split (React.lazy
-boards, entry chunk 1,286→672 kB). **311 unit** green, lint + typecheck clean; full e2e gated each
-slice. **Remaining: Slice 5 — full-view enter/exit MOTION** (deferred — most delicate; native
-`WebContentsView` can't be CSS-animated). The §6.1 **top band is DESCOPED** (decided 2026-06-01):
-no separate band — full-view enter/exit folds into the title-bar full-view toggle icon (which
-becomes "Exit full view"), alongside Esc / scrim click. **Handoff:
-`docs/handoffs/2026-05-31-phase-4-progress-handoff.md`** (read first); plan:
-`docs/superpowers/plans/2026-05-31-phase-4-design-pass.md`. Known e2e env-flake: the
+**Current state (2026-06-01):** **Phase 4 — Design pass & polish — SHIPPED on `main`** (`abd7fa2`,
+PR #9 — all 7 slices incl. Slice 5 full-view motion; §6.1 top band descoped into the title-bar
+toggle). Two post-Phase-4 review rounds also merged: PR #12 (`ed1d551`, 13 verified bugs) +
+`94baab9` (4 open-medium findings M-1/M-5/M-6/M-7). **Round-2 in-depth review (2026-06-01)** —
+9-dimension workflow + adversarial verify, no High — fixes on branch `fix/review-2026-06-01-round2`:
+**PTY-1** parked-PTY reaped on project switch (new `pty:disposeAll` IPC → `disposeAllPtys` drains
+both maps; `disposeLiveResources` calls it) · **PREV-1** full-view eviction snapshots before close
+(`evictLiveBoard`, no blank frame behind scrim) · **ATTACH-1** `attachBoard` post-await recheck
+(no resurrected live-count) · **PERSIST-1** `writeProject` envelope-guards the incoming doc ·
+**SAVE-1** `project:save` failures surfaced (handler try/catch → false; autosaver `onError`) ·
+**NOTE-1/TEXT-1** empty-element Backspace guarded on the non-`select` tool. **438 unit** green, lint
++ typecheck clean; e2e **22/25** (the 3 = the documented browser-trio env flake). Cards:
+`docs/bug-hunt-findings/2026-06-01-review-2/`. Known e2e env-flake: the
 `browser`/`browser-gesture`/`focus-detach` live-`WebContentsView` trio (memory
 `e2e-browser-trio-flake`) — environmental, not a regression.
 
@@ -199,14 +200,12 @@ delete/duplicate. Read-only (no Browser→PTY path). Spec + plan:
 `docs/superpowers/{specs,plans}/2026-05-30-port-detect-preview*.md`. Known minor gap: no IPC
 frame-guard unit test (pre-existing pattern — no `pty:*` handler has one).
 
-**Start here next:** **Phase 4 — Design pass & polish.** Apply every DESIGN.md token/state/motion
-(+ `prefers-reduced-motion`); load Geist fonts; harden CSP to nonce-based for the packaged build;
-code-split the renderer. **Full cold-start context + a 6-group checklist + a DESIGN.md→code map are
-in `docs/handoffs/phase-4.md` — read it first.** Known items folded into Phase 4: the `fit` camera
-op snaps with no animation (should be 200ms, `AppChrome.tsx`); the full-view enter/exit animation
-(deferred from Slice B; mind the native `WebContentsView` can't be CSS-animated). Deferred beyond
-Phase 4: **agentic session resume** (roadmap note) · **Feature Workspaces / worktrees** (post-MCP;
-FW-1) · Stage-2 Playwright `_electron` harness (the `CANVAS_SMOKE=e2e` harness is the stand-in).
-Known e2e flakes (env/timing, not regressions): the `browser`/`browser-gesture`/`focus-detach`
-live-`WebContentsView` parts — rerun on a clean `electron` process.
+**Start here next:** Phases 0–4 are shipped on `main`. Open candidates (see `docs/roadmap.md`):
+**Phase 5 — packaging/signing** (CI matrix is unsigned until Phase 5) · the **`canvas-ade-mcp` swarm
+layer** (planned MCP package; memory `canvas-ade-mcp`) · and the post-MCP **Feature Workspaces /
+worktrees** model (FW-1). Deferred: **agentic session resume** (roadmap note) · Stage-2 Playwright
+`_electron` harness (the `CANVAS_SMOKE=e2e` harness is the stand-in). First merge the open round-2
+fix branch `fix/review-2026-06-01-round2`. Known e2e flakes (env/timing, not regressions): the
+`browser`/`browser-gesture`/`focus-detach` live-`WebContentsView` parts — rerun on a clean
+`electron` process.
 

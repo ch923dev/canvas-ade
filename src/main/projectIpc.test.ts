@@ -122,6 +122,17 @@ describe('registerProjectHandlers (T4)', () => {
     expect(store.writeProject).toHaveBeenCalledWith('/proj', doc)
   })
 
+  it('project:save returns false (no crash) when writeProject throws (SAVE-1)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    store.writeProject.mockRejectedValue(new Error('ENOSPC: disk full'))
+    const { ipcMain, invoke } = makeIpcMain()
+    registerProjectHandlers(ipcMain, getWin, '/userData')
+
+    // The handler must catch the I/O error and report failure to the renderer,
+    // not let the rejection escape (which the renderer floats silently).
+    await expect(invoke('project:save', { schemaVersion: 2, boards: [] })).resolves.toBe(false)
+  })
+
   it('project:current sets currentDir only on ok', async () => {
     recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
     store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })

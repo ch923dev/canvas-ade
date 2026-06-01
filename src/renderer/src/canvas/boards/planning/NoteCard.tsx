@@ -174,6 +174,10 @@ export function NoteCard({
           }}
           onKeyDown={(e) => {
             e.stopPropagation()
+            // NOTE-1: readOnly blocks typing but not keyDown, so guard delete on the
+            // `select` tool only — a Backspace while a draw tool is active (textarea
+            // still focused) must not silently prune the note.
+            if (!interactive) return
             if (e.key === 'Backspace' && note.text.length === 0) onDelete(note.id)
           }}
           style={{

@@ -17,6 +17,9 @@ export default tseslint.config(
       'design-reference/**',
       // Harness-managed agent worktrees (each carries its own out/ build bundle).
       '.claude/**',
+      // Agent tooling — workflow scripts run with injected globals (phase/agent/…),
+      // not lintable as standalone modules; not project source.
+      '.agents/**',
       // Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand).
       'src/vendor/**',
       // Tooling configs are authored loosely and don't benefit from TS linting.

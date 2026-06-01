@@ -12,6 +12,8 @@ interface AutosaverOpts {
   save: () => Promise<boolean>
   getStatus: () => ProjectStatus
   delayMs?: number
+  /** SAVE-1: called when a save rejects OR resolves false, so a failing disk is visible. */
+  onError?: (e: unknown) => void
 }
 
 export interface Autosaver {
@@ -31,7 +33,14 @@ export function createAutosaver(opts: AutosaverOpts): Autosaver {
     timer = null
     if (!dirty || opts.getStatus() !== 'open') return Promise.resolve()
     dirty = false
-    return Promise.resolve(opts.save()).then(() => undefined)
+    // SAVE-1: surface a failed save (rejection OR a `false` result from main's
+    // project:save) instead of floating it silently — otherwise a failing disk loses
+    // every edit with zero signal to the user.
+    return Promise.resolve(opts.save())
+      .then((ok) => {
+        if (ok === false) opts.onError?.(new Error('autosave: project:save returned false'))
+      })
+      .catch((e) => opts.onError?.(e))
   }
   return {
     schedule: () => {
@@ -60,7 +69,12 @@ export function useAutosave(): void {
       // compiles + no-ops (status 'welcome' → gate closed) until that slice exists.
       getStatus: () =>
         (useCanvasStore.getState() as { project?: { status?: ProjectStatus } }).project?.status ??
-        'welcome'
+        'welcome',
+      // SAVE-1: a swallowed autosave failure means silent data loss. Log it so a
+      // failing disk is at least visible in diagnostics (a non-blocking toast can hang
+      // off this hook later without re-plumbing the autosaver).
+      // eslint-disable-next-line no-console
+      onError: (e) => console.error('autosave failed', e)
     })
 
     // Save when boards or camera change (skip pure selection/tool churn).

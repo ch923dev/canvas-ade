@@ -60,6 +60,14 @@ export function readProject(dir: string): ProjectResult {
 
 /** Rotate the prior good canvas.json → .bak, then atomic-write the new doc. */
 export async function writeProject(dir: string, doc: unknown): Promise<void> {
+  // PERSIST-1: envelope-guard the INCOMING doc before any disk touch. MAIN trusts the
+  // renderer's deep validation, but a renderer serialization bug could otherwise write a
+  // structurally-invalid primary (and the next write would rotate that junk into .bak,
+  // eroding the recovery path). Reject loudly instead of persisting garbage; the prior
+  // good primary + .bak stay intact. Mirrors the read-side envelope check.
+  if (!isEnvelope(doc)) {
+    throw new Error('writeProject: refusing to write an envelope-invalid document')
+  }
   mkdirSync(dir, { recursive: true })
   const primary = join(dir, CANVAS)
   if (tryParse(primary) !== undefined) {
