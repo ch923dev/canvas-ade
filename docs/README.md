@@ -10,10 +10,11 @@ contract is `../design-reference/`.
 | Path | Purpose | Live? |
 |---|---|---|
 | [`roadmap.md`](roadmap.md) | Phase-by-phase build order + status (Phases 0–4 shipped; Phase 5 = packaging). | ✅ live |
+| [`roadmap-whiteboard.md`](roadmap-whiteboard.md) | Separate feature track — Excalidraw feature integration for the Planning whiteboard (W1–W5, shapes deferred). Parallel to the main roadmap. | ✅ live |
 | [`feature-proposals.md`](feature-proposals.md) | Research-backed feature ideas (proposals only, nothing committed). | ✅ live |
 | [`decisions/`](decisions/) | ADRs — `0001-stack.md` (React Flow / custom whiteboard), `0002-preview-gate.md` (WebContentsView). | ✅ live |
 | [`reviews/`](reviews/) | All code reviews & bug hunts, newest first. [`reviews/README.md`](reviews/README.md) is the index; the newest dated file holds the **current open backlog**. | ✅ live |
-| [`research/`](research/) | Standalone research notes (e.g. `self-smoke-testing.md`). | ✅ live |
+| [`research/`](research/) | Standalone research notes (`self-smoke-testing.md`, `excalidraw-feature-borrowing.md`, `drawio-feature-borrowing.md`). | ✅ live |
 | [`archive/`](archive/) | Historical record — `build-history.md` (phases + per-slice specs/plans + handoffs) and pointers to git for collapsed docs. | 🗄 history |
 
 ## Conventions
