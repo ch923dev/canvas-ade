@@ -129,6 +129,50 @@ const newId = (): string => crypto.randomUUID()
 let lastRecorded: Board[] | null = null
 
 /**
+ * Apply a self-contained board mutation as ONE tracked undo step. `next` is the
+ * already-computed next boards array, or the SAME reference / null to signal "no change"
+ * (push nothing, leave undo/redo untouched). Centralizes the `recordPast` + future-clear
+ * the five tracked actions each hand-rolled. Pure: takes state, returns a partial — side
+ * values (a new id) are computed by the caller.
+ *
+ * `opts.reflectPresent` is REQUIRED (not optional) — every caller must make the layout-vs-
+ * mutation decision explicitly so a future tracked action can't silently inherit the wrong
+ * one. `true` marks the NEW present as the state the undo stack already reflects
+ * (`lastRecorded = next`) so a following no-op gesture's beginChange skips a phantom snapshot
+ * — BUT it also makes the next *real* gesture's beginChange skip its pre-edit checkpoint, so
+ * a move right after is coalesced into THIS step (undo jumps back past it). Only bulk LAYOUT
+ * ops (tidy/tile) pass `true`: that coalescing reads as "tidy, then nudge = one logical step",
+ * an accepted tradeoff. add/remove/duplicate pass `false` — a board's first move must stay
+ * granularly undoable to the add-position. Their post-no-op phantom is the TOLERATED edge
+ * (#BUG M3); a store-layer flag can't close it without breaking granular move-undo (proven by
+ * the undo/redo suite) — that needs a gesture-layer lazy-checkpoint, see `beginChange`.
+ *
+ * Returns a `Partial<CanvasState>` patch on a real change, or the full `s` (a same-ref no-op
+ * merge) when `next` is null / unchanged — hence the `| CanvasState` in the return type.
+ * `selectedId` is conditionally spread: callers that OMIT it (tidy/tile) must leave the
+ * current selection untouched, so it must NOT be written as `selectedId: undefined` (Zustand's
+ * shallow merge would clobber the selection). add/remove/duplicate pass it (string | null).
+ *
+ * NOTE: the gesture-driven path (`beginChange` + `updateBoard`/`resizeBoard`) and the
+ * untracked paths (`tileBoards(record:false)`, `growBoardHeight`, `setViewport`, `undo`/
+ * `redo`) deliberately do NOT route through here — see their own comments.
+ */
+function trackedChange(
+  s: CanvasState,
+  next: Board[] | null,
+  opts: { selectedId?: string | null; reflectPresent: boolean }
+): Partial<CanvasState> | CanvasState {
+  if (next == null || next === s.boards) return s
+  if (opts.reflectPresent) lastRecorded = next
+  const base: Partial<CanvasState> = {
+    past: recordPast(s.past, s.boards),
+    future: [],
+    boards: next
+  }
+  return opts.selectedId === undefined ? base : { ...base, selectedId: opts.selectedId }
+}
+
+/**
  * Terminal board ids that must mount IDLE (no PTY auto-spawn): terminals RESTORED from
  * disk (`loadObject`/`applyOpenResult`) and DUPLICATED clones (`duplicateBoard`). A
  * terminal added FRESH this session (`addBoard`) is NOT here, so it auto-spawns. The set
@@ -240,29 +284,29 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const board = createBoard(type, { id, x: pos.x, y: pos.y })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
-    set((s) => ({
-      past: recordPast(s.past, s.boards),
-      future: [],
-      boards: [...s.boards, board],
-      selectedId: id
-    }))
+    set((s) => trackedChange(s, [...s.boards, board], { selectedId: id, reflectPresent: false }))
     return id
   },
 
   removeBoard: (id) =>
-    set((s) => ({
-      past: recordPast(s.past, s.boards),
-      future: [],
-      boards: s.boards
+    set((s) => {
+      // No such board → true no-op (don't record a dead undo step). `filter` alone would
+      // yield a fresh array even on a miss, so trackedChange's `next === s.boards` guard can't
+      // catch it — guard explicitly here, mirroring duplicateBoard's unknown-id early return.
+      if (!s.boards.some((b) => b.id === id)) return s
+      const next = s.boards
         .filter((b) => b.id !== id)
         // Clear a preview link whose source terminal was just removed (Slice C′).
         .map((b) =>
           b.type === 'browser' && b.previewSourceId === id
             ? { ...b, previewSourceId: undefined }
             : b
-        ),
-      selectedId: s.selectedId === id ? null : s.selectedId
-    })),
+        )
+      return trackedChange(s, next, {
+        selectedId: s.selectedId === id ? null : s.selectedId,
+        reflectPresent: false
+      })
+    }),
 
   duplicateBoard: (id) => {
     const src = get().boards.find((b) => b.id === id)
@@ -287,12 +331,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // A duplicated terminal starts IDLE — cloning must not silently spin up a second
     // agent (M-1). The user starts it explicitly via the Start affordance.
     if (clone.type === 'terminal') idleOnMountIds.add(cloneId)
-    set((s) => ({
-      past: recordPast(s.past, s.boards),
-      future: [],
-      boards: [...s.boards, clone],
-      selectedId: cloneId
-    }))
+    set((s) => trackedChange(s, [...s.boards, clone], { selectedId: cloneId, reflectPresent: false }))
     return cloneId
   },
 
@@ -358,16 +397,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, x: p.x, y: p.y }
       })
-      // Already tidy → no-op (don't push a phantom undo step / invalidate redo).
-      if (!changed) return s
-      // The tidied present IS the history-reflected state — record it so a following
-      // no-op beginChange (a zero-movement titlebar/resize click) recognises it and does
-      // NOT push a phantom snapshot. Without this, a no-op gesture after tidy leaves a
-      // dead undo step (Undo #1 a no-op, Undo #2 needed to reverse tidy) — the same
-      // defect class the undo/redo paths guard via `lastRecorded` (#BUG M3).
-      lastRecorded = boards
-      // One undo step for the whole re-pack; a real edit invalidates the redo branch.
-      return { past: recordPast(s.past, s.boards), future: [], boards }
+      // One tracked step for the whole re-pack. trackedChange no-ops when nothing moved
+      // (already tidy → no phantom step, redo branch kept). reflectPresent syncs lastRecorded
+      // so a following zero-movement gesture doesn't push a phantom snapshot (#BUG M3) — at
+      // the accepted cost that an immediate nudge coalesces into this tidy step.
+      return trackedChange(s, changed ? boards : null, { reflectPresent: true })
     }),
 
   tileBoards: (template, area, record = true) =>
@@ -389,8 +423,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (!changed) return s
       // Live reflow (window resize): layout-only, leave undo/redo untouched (like
       // growBoardHeight) so a resize storm can't flood the history.
-      // Deliberately do NOT update `lastRecorded` here. It must keep meaning "the boards the
-      // undo stack reflects" — and the stack reflects the PRE-tile snapshot, not this reflow.
+      // Deliberately do NOT update `lastRecorded` here (and do NOT route through
+      // trackedChange, which would). It must keep meaning "the boards the undo stack
+      // reflects" — and the stack reflects the PRE-tile snapshot, not this reflow.
       // Setting it to `boards` would make the next beginChange think the reflowed layout is
       // already in history and SKIP the pre-drag checkpoint, so a real drag after a reflow
       // couldn't be undone granularly (undo would jump past it to pre-tile). The only cost of
@@ -398,10 +433,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // reflow — the same tolerated edge as addBoard/removeBoard (Bug #7 / #BUG M3). A real
       // drag stays correctly undoable. Do not "fix" by syncing lastRecorded.
       if (!record) return { boards }
-      // Tracked apply: one undo step, sync lastRecorded so a no-op gesture after tiling
-      // doesn't push a phantom snapshot (#BUG M3), invalidate the redo branch.
-      lastRecorded = boards
-      return { past: recordPast(s.past, s.boards), future: [], boards }
+      // Tracked apply: one undo step + lastRecorded sync via trackedChange (reflectPresent).
+      return trackedChange(s, boards, { reflectPresent: true })
     }),
 
   growBoardHeight: (id, h) =>

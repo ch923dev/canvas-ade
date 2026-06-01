@@ -226,7 +226,8 @@ C4, mind maps, BPMN, wireframes).
 
 | Phase | Status |
 |---|---|
-| D1 — Internal discipline (`withChange` · `z` decision · license ADR) | not started |
+| D1.1 — `withChange` (`trackedChange`) undo-rail refactor | ✅ done — PR #18 (`f7ffbbf`, squash). Pure centralization; phantom-after edge **not** closed (would break granular move-undo — see plan + memory `undo-lastrecorded-phantom`). 495 unit · e2e 24/24 green |
+| D1.2 — dead `z` field decision · D1.3 — license ADR | not started |
 | D2 — Mermaid-as-element 🚦 decision gate | not started |
 | D3.1 — PNG export (embedded source) | not started |
 | D3.2 — Anchored Planning arrows | not started |

@@ -140,6 +140,16 @@ describe('removeBoard', () => {
     get().removeBoard(drop)
     expect(get().selectedId).toBe(keep)
   })
+
+  it('removing an unknown id is a no-op: no boards change, no undo step (no phantom)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    get().addBoard('terminal', { x: 0, y: 0 })
+    const before = get().boards
+    const pastLen = get().past.length
+    get().removeBoard('does-not-exist')
+    expect(get().boards).toBe(before) // same reference — untouched
+    expect(get().past.length).toBe(pastLen) // no dead undo step recorded
+  })
 })
 
 describe('updateBoard', () => {
@@ -353,6 +363,52 @@ describe('undo/redo history', () => {
     get().selectBoard(id)
     get().redo()
     expect(get().selectedId).toBeNull()
+  })
+})
+
+// add/remove/duplicate are TRACKED but must NOT mark their new present as "already reflected"
+// (no lastRecorded sync) — otherwise the next beginChange skips its checkpoint and a board's
+// FIRST move coalesces into the add/remove/duplicate step (undo jumps past it). They keep the
+// granular-move-undo invariant; their post-no-op phantom step is the TOLERATED edge a
+// store-layer flag cannot close without breaking this (it needs a gesture-layer lazy
+// checkpoint — see WB-1). tidy/tile DO sync (they accept that coalescing for a bulk op).
+// These guard against a future "fix" that re-introduces the regression by syncing here.
+describe('tracked actions keep a following move granularly undoable (no present-reflect)', () => {
+  it('addBoard → move → undo returns to the add-position, not removal', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange() // gesture start for a real move
+    get().updateBoard(id, { x: 200 })
+    get().undo()
+    expect(get().boards).toHaveLength(1)
+    expect(get().boards[0].x).toBe(0) // move undone granularly, board still present
+    get().undo()
+    expect(get().boards).toHaveLength(0) // second undo removes the board
+  })
+
+  it('duplicateBoard → move the copy → undo returns the copy to its duplicate-position', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const src = get().addBoard('planning', { x: 0, y: 0 })
+    const copy = get().duplicateBoard(src)!
+    const copyX = get().boards.find((b) => b.id === copy)!.x
+    get().beginChange()
+    get().updateBoard(copy, { x: copyX + 500 })
+    get().undo()
+    expect(get().boards.find((b) => b.id === copy)!.x).toBe(copyX) // copy stays, move undone
+    get().undo()
+    expect(get().boards.some((b) => b.id === copy)).toBe(false) // then the duplicate undoes
+  })
+
+  it('removeBoard → move another board → undo undoes the move, removed board stays gone', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const a = get().addBoard('terminal', { x: 0, y: 0 })
+    const b = get().addBoard('browser', { x: 900, y: 0 })
+    get().removeBoard(a)
+    get().beginChange()
+    get().updateBoard(b, { x: 1200 })
+    get().undo()
+    expect(get().boards.find((x) => x.id === b)!.x).toBe(900) // move undone granularly
+    expect(get().boards.some((x) => x.id === a)).toBe(false) // removed board not resurrected
   })
 })
 
@@ -586,6 +642,21 @@ describe('tidyBoards', () => {
     get().tidyBoards('smart')
     expect(get().boards).toBe(before) // same reference — untouched
     expect(get().past.length).toBe(pastLen) // no phantom undo step
+  })
+
+  // trackedChange OMITS selectedId for tidy/tile (reflectPresent:true, no selectedId opt) so
+  // the current selection survives — it must NOT be written as `selectedId: undefined`, which
+  // Zustand's shallow merge would clobber. Guards a "simplify by always spreading" regression.
+  it('preserves the current selection (does not clobber selectedId)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    const a = st.addBoard('terminal', { x: 0, y: 0 })
+    st.addBoard('browser', { x: 5, y: 5 }) // overlaps → tidy/tile move them
+    get().selectBoard(a)
+    get().tidyBoards('smart')
+    expect(get().selectedId).toBe(a) // selection survives tidy
+    get().tileBoards('cols-2', { x: 0, y: 0, w: 1600, h: 1000 })
+    expect(get().selectedId).toBe(a) // selection survives tile
   })
 
   it('records ONE undo step that restores the pre-tidy positions', () => {
