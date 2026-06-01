@@ -16,9 +16,23 @@ import {
 } from './projectStore'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
 
-function isForeignSender(e: IpcMainInvokeEvent, getWin: () => BrowserWindow | null): boolean {
-  const main = getWin()?.webContents.mainFrame
-  return !!main && !!e.senderFrame && e.senderFrame !== main
+/**
+ * True when an IPC sender is NOT the main window's main frame (foreign → deny).
+ * BUG-M6: the old guard returned `false` (allowed) when `getWin()` was null (window
+ * destroyed), letting a real-but-unresolved sender through. Now: a synthetic call
+ * (no `senderFrame`) is internal → allow; a real sender against an unresolved window
+ * is treated as foreign → deny; otherwise compare against the live main frame.
+ *
+ * Exported (with an injectable main-frame getter) so it is unit-testable.
+ */
+export function isForeignSender(
+  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
+  getMainFrame: () => BrowserWindow['webContents']['mainFrame'] | null | undefined
+): boolean {
+  const main = getMainFrame()
+  if (!e.senderFrame) return false // synthetic/internal call — allow
+  if (!main) return true // real sender but window unresolved — treat as foreign, DENY
+  return e.senderFrame !== main
 }
 
 export function registerProjectHandlers(
@@ -27,7 +41,8 @@ export function registerProjectHandlers(
   userDataDir: string,
   now: () => number = () => Date.now()
 ): void {
-  const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
+  const guard = (e: IpcMainInvokeEvent): boolean =>
+    isForeignSender(e, () => getWin()?.webContents.mainFrame)
 
   ipcMain.handle('dialog:openFolder', async (e): Promise<string | null> => {
     if (guard(e)) return null

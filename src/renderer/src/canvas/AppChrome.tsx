@@ -130,11 +130,11 @@ function CameraCluster(): ReactElement {
       <div style={styles.pill}>
         <ToolBtn name="fit" title="Zoom to fit (1)" onClick={() => void rf.fitView(cameraAnim(FIT))} />
         <span style={styles.divider} />
-        <ToolBtn name="minus" title="Zoom out" onClick={() => void rf.zoomOut()} />
+        <ToolBtn name="minus" title="Zoom out" onClick={() => void rf.zoomOut(cameraAnim({}))} />
         <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.fitView(cameraAnim(RESET))}>
           {Math.round(zoom * 100)}%
         </button>
-        <ToolBtn name="plus" title="Zoom in" onClick={() => void rf.zoomIn()} />
+        <ToolBtn name="plus" title="Zoom in" onClick={() => void rf.zoomIn(cameraAnim({}))} />
         <span style={styles.divider} />
         <ToolBtn name="overview" title="Overview" onClick={() => void rf.fitView(cameraAnim(OVERVIEW))} />
       </div>

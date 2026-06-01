@@ -40,4 +40,30 @@ describe('createAutosaver', () => {
     a.flush()
     expect(save).not.toHaveBeenCalled()
   })
+
+  it('flush() resolves only after the underlying save settles (BUG-M2 handshake)', async () => {
+    vi.useRealTimers() // exercise the real async settle
+    let resolveSave: (v: boolean) => void = () => {}
+    const save = vi.fn(() => new Promise<boolean>((r) => (resolveSave = r)))
+    const a = createAutosaver({ save, getStatus: () => 'open', delayMs: 1000 })
+    a.schedule()
+    let settled = false
+    const p = a.flush().then(() => {
+      settled = true
+    })
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(settled).toBe(false) // save still in flight → handshake not yet complete
+    resolveSave(true)
+    await p
+    expect(settled).toBe(true) // main can now safely app.exit
+  })
+
+  it('flush() resolves immediately (no save) when status is not "open"', async () => {
+    vi.useRealTimers()
+    const save = vi.fn().mockResolvedValue(true)
+    const a = createAutosaver({ save, getStatus: () => 'loading', delayMs: 1000 })
+    a.schedule()
+    await a.flush() // must not hang when there is nothing to save
+    expect(save).not.toHaveBeenCalled()
+  })
 })

@@ -41,3 +41,90 @@ describe('previewStore.requestReload', () => {
     expect(DEFAULT_RUNTIME.reloadNonce).toBe(0)
   })
 })
+
+describe('previewStore.patchIfPresent', () => {
+  beforeEach(() => {
+    usePreviewStore.setState({ byId: {}, nodeGesture: false, menuOpen: false })
+  })
+
+  test('does NOT create an entry for an absent id (Bug #32 guard)', () => {
+    // A main-driven lifecycle event (did-navigate / did-fail-load) that arrives after
+    // the board was deleted must not resurrect a cleared orphan entry.
+    usePreviewStore.getState().patchIfPresent('ghost', { status: 'connected' })
+    expect(usePreviewStore.getState().byId.ghost).toBeUndefined()
+    expect(usePreviewStore.getState().byId).toEqual({})
+  })
+
+  test('patches an existing entry, preserving other fields', () => {
+    usePreviewStore.getState().patch('b1', { status: 'connecting' })
+    usePreviewStore.getState().patchIfPresent('b1', { liveUrl: 'http://localhost:3000' })
+    const rt = usePreviewStore.getState().byId.b1
+    expect(rt.liveUrl).toBe('http://localhost:3000')
+    expect(rt.status).toBe('connecting')
+  })
+
+  test('returns the same state object when the id is absent (no-op set)', () => {
+    const before = usePreviewStore.getState().byId
+    usePreviewStore.getState().patchIfPresent('ghost', { status: 'connected' })
+    expect(usePreviewStore.getState().byId).toBe(before)
+  })
+})
+
+describe('previewStore.clear', () => {
+  beforeEach(() => {
+    usePreviewStore.setState({ byId: {}, nodeGesture: false, menuOpen: false })
+  })
+
+  test('removes an existing entry', () => {
+    usePreviewStore.getState().patch('b1', { status: 'connected' })
+    expect(usePreviewStore.getState().byId.b1).toBeDefined()
+    usePreviewStore.getState().clear('b1')
+    expect(usePreviewStore.getState().byId.b1).toBeUndefined()
+  })
+
+  test('leaves sibling entries intact', () => {
+    usePreviewStore.getState().patch('b1', { status: 'connected' })
+    usePreviewStore.getState().patch('b2', { status: 'connecting' })
+    usePreviewStore.getState().clear('b1')
+    expect(usePreviewStore.getState().byId.b1).toBeUndefined()
+    expect(usePreviewStore.getState().byId.b2?.status).toBe('connecting')
+  })
+
+  test('is a no-op for an absent id (returns same state object)', () => {
+    const before = usePreviewStore.getState().byId
+    usePreviewStore.getState().clear('ghost')
+    expect(usePreviewStore.getState().byId).toBe(before)
+  })
+})
+
+describe('previewStore.setNodeGesture / setMenuOpen', () => {
+  beforeEach(() => {
+    usePreviewStore.setState({ byId: {}, nodeGesture: false, menuOpen: false })
+  })
+
+  test('setNodeGesture toggles the flag', () => {
+    usePreviewStore.getState().setNodeGesture(true)
+    expect(usePreviewStore.getState().nodeGesture).toBe(true)
+    usePreviewStore.getState().setNodeGesture(false)
+    expect(usePreviewStore.getState().nodeGesture).toBe(false)
+  })
+
+  test('setNodeGesture is a no-op (same state) when unchanged', () => {
+    const before = usePreviewStore.getState()
+    usePreviewStore.getState().setNodeGesture(false)
+    expect(usePreviewStore.getState()).toBe(before)
+  })
+
+  test('setMenuOpen toggles the flag', () => {
+    usePreviewStore.getState().setMenuOpen(true)
+    expect(usePreviewStore.getState().menuOpen).toBe(true)
+    usePreviewStore.getState().setMenuOpen(false)
+    expect(usePreviewStore.getState().menuOpen).toBe(false)
+  })
+
+  test('setMenuOpen is a no-op (same state) when unchanged', () => {
+    const before = usePreviewStore.getState()
+    usePreviewStore.getState().setMenuOpen(false)
+    expect(usePreviewStore.getState()).toBe(before)
+  })
+})

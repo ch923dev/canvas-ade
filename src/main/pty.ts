@@ -57,7 +57,13 @@ const PARK_TTL_MS = 120_000
 /** Cap of each session's replay buffer (#15). */
 const RING_CAP_BYTES = 256 * 1024
 
-interface Session {
+/**
+ * Live + parked session shapes. Declared as the structural surface the core
+ * park / adopt / reap / dispose logic operates on, so that logic can be
+ * unit-tested against mock procs and ports without the electron/node-pty
+ * runtime. The real `pty.IPty` / `MessagePortMain` satisfy these.
+ */
+interface SessionLike {
   proc: pty.IPty
   port: MessagePortMain
   /**
@@ -67,61 +73,89 @@ interface Session {
    */
   buf: { data: string }
 }
-
-const sessions = new Map<string, Session>()
-
-interface Parked {
+interface ParkedLike {
   proc: pty.IPty
   buf: { data: string }
   timer: ReturnType<typeof setTimeout>
 }
 
-/** Deleted-but-undoable sessions, kept alive up to PARK_TTL_MS for adopt-on-undo. */
-const parked = new Map<string, Parked>()
+const sessions = new Map<string, SessionLike>()
 
-/** Reap a parked session: stop its TTL timer and kill its process tree. */
-function reapParked(id: string): Promise<void> {
-  const p = parked.get(id)
-  if (!p) return Promise.resolve()
-  parked.delete(id)
-  clearTimeout(p.timer)
-  return killTree(p.proc)
+/** Deleted-but-undoable sessions, kept alive up to PARK_TTL_MS for adopt-on-undo. */
+const parked = new Map<string, ParkedLike>()
+
+/** A freshly minted port pair (real `MessageChannelMain` or a test double). */
+interface PortPair {
+  port1: MessagePortMain
+  port2: MessagePortMain
+}
+/** Injectable dependencies for the session-lifecycle core (real ones in prod). */
+interface SessionDeps {
+  killTree: (proc: pty.IPty) => Promise<void>
+  newChannel: () => PortPair
+  parkTtlMs: number
 }
 
 /**
- * Park the live session for `id` instead of killing it (#15): move it out of
- * `sessions` (so the board-unmount's `pty:kill` no-ops), close the renderer port
- * (the proc keeps running and the onData listener keeps recording into `buf`), and
- * start a TTL after which the process tree is reaped if no undo adopts it.
+ * Core of `reapParked`: stop the TTL timer and kill the process tree. Pure of
+ * module state — operates on the passed `parked` map + injected `killTree`.
  */
-function park(id: string): void {
-  const s = sessions.get(id)
+export function reapParkedCore(
+  id: string,
+  parkedMap: Map<string, ParkedLike>,
+  deps: Pick<SessionDeps, 'killTree'>
+): Promise<void> {
+  const p = parkedMap.get(id)
+  if (!p) return Promise.resolve()
+  parkedMap.delete(id)
+  clearTimeout(p.timer)
+  return deps.killTree(p.proc)
+}
+
+/**
+ * Core of `park` (#15): move the live session out of `sessions`, close its
+ * renderer port, arm a TTL whose expiry reaps the tree, and store it in `parked`.
+ * `reap` is the bound reaper invoked when the timer fires.
+ */
+export function parkCore(
+  id: string,
+  sessionsMap: Map<string, SessionLike>,
+  parkedMap: Map<string, ParkedLike>,
+  reap: (id: string) => void,
+  parkTtlMs: number
+): void {
+  const s = sessionsMap.get(id)
   if (!s) return
-  sessions.delete(id)
+  sessionsMap.delete(id)
   try {
     s.port.close()
   } catch {
     /* already closed */
   }
-  const timer = setTimeout(() => void reapParked(id), PARK_TTL_MS)
+  const timer = setTimeout(() => reap(id), parkTtlMs)
   timer.unref?.()
-  parked.set(id, { proc: s.proc, buf: s.buf, timer })
+  parkedMap.set(id, { proc: s.proc, buf: s.buf, timer })
 }
 
 /**
- * Adopt a parked session for `id` (#15): clear its TTL, bind a fresh MessagePort
- * to the still-running proc, move it back into `sessions`, replay the recorded
- * output buffer so the re-mounted xterm reconstructs its scrollback, and re-emit
- * `running`. Returns the live pid so the e2e can assert process identity. If no
- * session is parked, returns `{ adopted: false }` and the caller spawns fresh.
+ * Core of `adopt` (#15): clear the TTL, bind a fresh MessagePort to the
+ * still-running proc, move it back into `sessions`, replay scrollback, re-emit
+ * `running`, and hand the renderer port off via `transferPort`. Returns the live
+ * pid so the e2e can assert process identity. No second spawn — same proc.
  */
-function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number } {
-  const p = parked.get(id)
+export function adoptCore(
+  id: string,
+  sessionsMap: Map<string, SessionLike>,
+  parkedMap: Map<string, ParkedLike>,
+  deps: Pick<SessionDeps, 'newChannel'>,
+  transferPort: (port2: MessagePortMain) => void
+): { adopted: boolean; pid?: number } {
+  const p = parkedMap.get(id)
   if (!p) return { adopted: false }
   clearTimeout(p.timer)
-  parked.delete(id)
+  parkedMap.delete(id)
 
-  const { port1, port2 } = new MessageChannelMain()
+  const { port1, port2 } = deps.newChannel()
   port1.on('message', (e) => {
     const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
     // Guard as in the spawn handler: a write/resize on an exited pty throws and
@@ -137,14 +171,48 @@ function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number
 
   // Back into `sessions` with the SAME boxed buffer; the spawn-time onData listener
   // now forwards live output to this new port (it looks up sessions.get(id)).
-  sessions.set(id, { proc: p.proc, port: port1, buf: p.buf })
-  win.webContents.postMessage('pty:port', { id }, [port2])
+  sessionsMap.set(id, { proc: p.proc, port: port1, buf: p.buf })
+  transferPort(port2)
 
   // Replay recorded scrollback, then re-announce running.
   if (p.buf.data) port1.postMessage({ t: 'data', d: p.buf.data })
   port1.postMessage({ t: 'state', state: 'running' satisfies PtyState })
 
   return { adopted: true, pid: p.proc.pid }
+}
+
+const sessionDeps: SessionDeps = {
+  killTree: (proc) => killTree(proc),
+  newChannel: () => new MessageChannelMain(),
+  parkTtlMs: PARK_TTL_MS
+}
+
+/** Reap a parked session: stop its TTL timer and kill its process tree. */
+function reapParked(id: string): Promise<void> {
+  return reapParkedCore(id, parked, sessionDeps)
+}
+
+/**
+ * Park the live session for `id` instead of killing it (#15): move it out of
+ * `sessions` (so the board-unmount's `pty:kill` no-ops), close the renderer port
+ * (the proc keeps running and the onData listener keeps recording into `buf`), and
+ * start a TTL after which the process tree is reaped if no undo adopts it.
+ */
+function park(id: string): void {
+  parkCore(id, sessions, parked, (pid) => void reapParked(pid), sessionDeps.parkTtlMs)
+}
+
+/**
+ * Adopt a parked session for `id` (#15): clear its TTL, bind a fresh MessagePort
+ * to the still-running proc, move it back into `sessions`, replay the recorded
+ * output buffer so the re-mounted xterm reconstructs its scrollback, and re-emit
+ * `running`. Returns the live pid so the e2e can assert process identity. If no
+ * session is parked, returns `{ adopted: false }` and the caller spawns fresh.
+ */
+function adopt(id: string, win: BrowserWindow): { adopted: boolean; pid?: number } {
+  return adoptCore(id, sessions, parked, sessionDeps, (port2) =>
+    win.webContents.postMessage('pty:port', { id }, [port2])
+  )
 }
 
 /**
@@ -276,6 +344,23 @@ function defaultShell(): string {
 }
 
 /**
+ * M5 (defense-in-depth): validate a board's persisted `shell` before it reaches
+ * `pty.spawn`. A corrupt/hand-edited `canvas.json` could otherwise name an
+ * arbitrary binary that main would execute. Accept `shell` ONLY if (after
+ * canonicalization) it matches one of the enumerated, system-discovered shells;
+ * otherwise fall back to the OS-aware default (`shells[0]`). `undefined`/empty
+ * also falls back. Pure (the canonicalize probe is the only side effect) so it
+ * is unit-testable against a fixed `shells` list.
+ */
+export function resolveShell(shell: string | undefined, shells: ShellInfo[]): string {
+  const fallback = shells[0]?.path ?? defaultShell()
+  if (!shell) return fallback
+  const wanted = canonicalizeShellPath(shell).toLowerCase()
+  const ok = shells.some((s) => canonicalizeShellPath(s.path).toLowerCase() === wanted)
+  return ok ? shell : fallback
+}
+
+/**
  * Bug #33 (defense-in-depth): reject IPC that did not originate from the main
  * window's main frame. ipcMain channels are shared by ALL webContents, including the
  * per-board preview WebContentsViews that load untrusted localhost content. Today
@@ -284,23 +369,36 @@ function defaultShell(): string {
  * the absence of a preview preload. A synthetic/internal call (no senderFrame) is
  * allowed; only a real foreign frame is blocked.
  */
-function isForeignSender(e: IpcMainInvokeEvent, getWin: () => BrowserWindow | null): boolean {
-  const main = getWin()?.webContents.mainFrame
-  return !!main && !!e.senderFrame && e.senderFrame !== main
+export function isForeignSender(
+  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
+  getMainFrame: () => unknown | null
+): boolean {
+  const main = getMainFrame()
+  // A synthetic/internal call has no senderFrame — always allow (e.g. our own
+  // in-process e2e harness invoking a handler directly).
+  if (!e.senderFrame) return false
+  // A REAL sender but the window/main-frame is unresolved (destroyed/closing):
+  // we can't prove it's the trusted frame, so treat it as foreign and DENY.
+  if (!main) return true
+  return e.senderFrame !== main
 }
 
 export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
-  ipcMain.handle('pty:shells', (e) => (isForeignSender(e, getWin) ? [] : enumerateShells()))
+  // Resolve the trusted main frame lazily at call time — the window may be
+  // (re)created or destroyed across a handler's lifetime.
+  const getMainFrame = (): unknown | null => getWin()?.webContents.mainFrame ?? null
+
+  ipcMain.handle('pty:shells', (e) => (isForeignSender(e, getMainFrame) ? [] : enumerateShells()))
 
   ipcMain.handle('terminal:detectPorts', (e, id: string) => {
-    if (isForeignSender(e, getWin)) return []
+    if (isForeignSender(e, getMainFrame)) return []
     // Read whichever buffer holds this board's output — live session or parked.
     const raw = sessions.get(id)?.buf.data ?? parked.get(id)?.buf.data ?? ''
     return parsePortsFromOutput(raw)
   })
 
   ipcMain.handle('pty:spawn', (e, opts: SpawnOpts) => {
-    if (isForeignSender(e, getWin)) throw new Error('pty:spawn — forbidden sender')
+    if (isForeignSender(e, getMainFrame)) throw new Error('pty:spawn — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('pty:spawn — no window')
 
@@ -314,7 +412,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     // via the isStaleExit guard.)
     if (sessions.has(opts.id)) void cleanup(opts.id)
 
-    const shell = opts.shell || enumerateShells()[0].path
+    // M5: validate the persisted shell against the system-discovered list — a
+    // corrupt canvas.json must not be able to spawn an arbitrary binary in main.
+    const shell = resolveShell(opts.shell, enumerateShells())
     // Git Bash with no explicit args: launch as a login+interactive shell so it
     // sources its profile (otherwise PATH/prompt are bare under ConPTY).
     let args = opts.args ?? []
@@ -413,19 +513,19 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
   })
 
   ipcMain.handle('pty:kill', (e, id: string) => {
-    if (isForeignSender(e, getWin)) return false
+    if (isForeignSender(e, getMainFrame)) return false
     cleanup(id)
     return true
   })
 
   ipcMain.handle('pty:park', (e, id: string) => {
-    if (isForeignSender(e, getWin)) return false
+    if (isForeignSender(e, getMainFrame)) return false
     park(id)
     return true
   })
 
   ipcMain.handle('pty:adopt', (e, id: string) => {
-    if (isForeignSender(e, getWin)) return { adopted: false }
+    if (isForeignSender(e, getMainFrame)) return { adopted: false }
     const win = getWin()
     if (!win) return { adopted: false }
     return adopt(id, win)
@@ -450,18 +550,48 @@ export function isStaleExit<T>(stored: T, exiting: T | undefined): boolean {
  * session that has since respawned under the same id. An explicit `pty:kill`
  * passes no `proc` and always tears down the current session.
  */
-function cleanup(id: string, proc?: pty.IPty): Promise<void> {
-  const s = sessions.get(id)
+/**
+ * Core of `cleanup`: identity-aware teardown of one session. Pure of module
+ * state — operates on the passed `sessions` map + injected `killTree`. When
+ * `proc` is supplied (a process's own `onExit`), no-op unless the stored session
+ * still owns that exact process (stale-exit guard).
+ */
+export function cleanupCore(
+  id: string,
+  sessionsMap: Map<string, SessionLike>,
+  deps: Pick<SessionDeps, 'killTree'>,
+  proc?: pty.IPty
+): Promise<void> {
+  const s = sessionsMap.get(id)
   if (!s) return Promise.resolve()
   if (isStaleExit(s.proc, proc)) return Promise.resolve()
-  sessions.delete(id)
-  const done = killTree(s.proc)
+  sessionsMap.delete(id)
+  const done = deps.killTree(s.proc)
   try {
     s.port.close()
   } catch {
     /* port already closed */
   }
   return done
+}
+
+function cleanup(id: string, proc?: pty.IPty): Promise<void> {
+  return cleanupCore(id, sessions, sessionDeps, proc)
+}
+
+/**
+ * Core of `disposeAllPtys`: drain BOTH maps — reap every parked session and tear
+ * down every live one — resolving once each tree-kill has been reaped. Pure of
+ * module state for unit testing.
+ */
+export function disposeAllPtysCore(
+  sessionsMap: Map<string, SessionLike>,
+  parkedMap: Map<string, ParkedLike>,
+  deps: Pick<SessionDeps, 'killTree'>
+): Promise<void> {
+  const parkedDone = [...parkedMap.keys()].map((id) => reapParkedCore(id, parkedMap, deps))
+  const liveDone = [...sessionsMap.keys()].map((id) => cleanupCore(id, sessionsMap, deps))
+  return Promise.all([...parkedDone, ...liveDone]).then(() => undefined)
 }
 
 /**
@@ -517,9 +647,7 @@ function killTree(proc: pty.IPty): Promise<void> {
  * before exiting instead of racing a fixed timer and orphaning a child tree.
  */
 export function disposeAllPtys(): Promise<void> {
-  const parkedDone = [...parked.keys()].map((id) => reapParked(id))
-  const liveDone = [...sessions.keys()].map((id) => cleanup(id))
-  return Promise.all([...parkedDone, ...liveDone]).then(() => undefined)
+  return disposeAllPtysCore(sessions, parked, sessionDeps)
 }
 
 /**

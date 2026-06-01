@@ -4,8 +4,11 @@ import {
   isHttpErrorCode,
   isAllowedPreviewUrl,
   isAllowedExternal,
-  registerPreviewNavGuards
+  registerPreviewNavGuards,
+  registerLoadLatch,
+  isForeignSender
 } from './preview'
+import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 
 // Bug #5: a dead/refused URL loads a Chromium error page whose did-finish-load must
 // not flip the board back to "connected". The httpResponseCode from did-navigate is
@@ -167,5 +170,120 @@ describe('registerPreviewNavGuards', () => {
     expect(nav.preventDefault).not.toHaveBeenCalled()
     expect(redir.preventDefault).not.toHaveBeenCalled()
     expect(frame.preventDefault).not.toHaveBeenCalled()
+  })
+})
+
+// TEST T5 (Bug #5): the `failed` latch suppresses the spurious did-finish-load that
+// Chromium fires for its error page AFTER a real did-fail-load, and a fresh
+// did-start-navigation resets it so a later successful load can promote to
+// "connected". Drive the extracted registerLoadLatch with a fake emitter.
+describe('registerLoadLatch (failed-latch lifecycle)', () => {
+  type Listener = (...args: unknown[]) => void
+
+  function fakeWc(): {
+    on: (event: string, listener: Listener) => unknown
+    emit: (event: string, ...args: unknown[]) => void
+  } {
+    const handlers = new Map<string, Listener>()
+    return {
+      on: (event, listener) => {
+        handlers.set(event, listener)
+        return undefined
+      },
+      emit: (event, ...args) => handlers.get(event)?.(...args)
+    }
+  }
+
+  function setup(): {
+    wc: ReturnType<typeof fakeWc>
+    latch: { failed: boolean }
+    hooks: {
+      applyZoom: ReturnType<typeof vi.fn>
+      onNavStart: ReturnType<typeof vi.fn>
+      onSuccess: ReturnType<typeof vi.fn>
+      onFail: ReturnType<typeof vi.fn>
+    }
+  } {
+    const wc = fakeWc()
+    const latch = { failed: false }
+    const hooks = {
+      getUrl: () => 'http://localhost:5173/',
+      applyZoom: vi.fn(),
+      onNavStart: vi.fn(),
+      onSuccess: vi.fn(),
+      onFail: vi.fn()
+    }
+    registerLoadLatch(wc as never, latch, hooks)
+    return { wc, latch, hooks }
+  }
+
+  it('suppresses the error page did-finish-load while failed is latched', () => {
+    const { wc, latch, hooks } = setup()
+    // Connection refused: a real main-frame did-fail-load latches failed.
+    wc.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'http://localhost:5173/', true)
+    expect(latch.failed).toBe(true)
+    expect(hooks.onFail).toHaveBeenCalledTimes(1)
+    // Chromium then loads its error page → did-finish-load. Success must NOT emit.
+    wc.emit('did-finish-load')
+    expect(hooks.onSuccess).not.toHaveBeenCalled()
+    // Zoom is still re-applied for the error page (it lays out).
+    expect(hooks.applyZoom).toHaveBeenCalledTimes(1)
+  })
+
+  it('did-start-navigation resets the latch so a later did-finish-load promotes', () => {
+    const { wc, latch, hooks } = setup()
+    wc.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'http://localhost:5173/', true)
+    expect(latch.failed).toBe(true)
+    // A fresh main-frame navigation (reload/back/forward) clears the latch.
+    wc.emit('did-start-navigation', { isMainFrame: true })
+    expect(latch.failed).toBe(false)
+    expect(hooks.onNavStart).toHaveBeenCalledTimes(1)
+    // The successful load now promotes to "connected".
+    wc.emit('did-finish-load')
+    expect(hooks.onSuccess).toHaveBeenCalledWith('http://localhost:5173/')
+  })
+
+  it('ignores subframe did-start-navigation and aborted/-3 + subframe did-fail-load', () => {
+    const { wc, latch, hooks } = setup()
+    // Latch first so we can observe non-resets.
+    wc.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'http://localhost:5173/', true)
+    // Subframe nav start must not clear the main-frame latch.
+    wc.emit('did-start-navigation', { isMainFrame: false })
+    expect(latch.failed).toBe(true)
+    expect(hooks.onNavStart).not.toHaveBeenCalled()
+    // Reset, then assert non-board-level failures don't latch.
+    latch.failed = false
+    hooks.onFail.mockClear()
+    wc.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'http://localhost:5173/', true) // aborted
+    wc.emit('did-fail-load', {}, -102, 'ERR_FAILED', 'http://localhost:5173/sub', false) // subframe
+    expect(latch.failed).toBe(false)
+    expect(hooks.onFail).not.toHaveBeenCalled()
+  })
+})
+
+// Bug M6: the frame guard must DENY when the window is unresolved but the sender is a
+// real frame (a destroyed/reloading window must not let a foreign frame slip through),
+// allow a synthetic/internal call (no senderFrame), allow the genuine main frame, and
+// block any other frame.
+describe('isForeignSender', () => {
+  const mainFrame = { name: 'main' } as unknown as IpcMainInvokeEvent['senderFrame']
+  const foreignFrame = { name: 'foreign' } as unknown as IpcMainInvokeEvent['senderFrame']
+  const winWithMain = (): BrowserWindow =>
+    ({ webContents: { mainFrame } }) as unknown as BrowserWindow
+
+  it('allows a synthetic/internal call with no senderFrame', () => {
+    expect(isForeignSender({ senderFrame: null }, () => winWithMain())).toBe(false)
+  })
+
+  it('blocks a real foreign frame', () => {
+    expect(isForeignSender({ senderFrame: foreignFrame }, () => winWithMain())).toBe(true)
+  })
+
+  it('allows the genuine main frame', () => {
+    expect(isForeignSender({ senderFrame: mainFrame }, () => winWithMain())).toBe(false)
+  })
+
+  it('blocks a real sender when the window is unresolved (null)', () => {
+    expect(isForeignSender({ senderFrame: mainFrame }, () => null)).toBe(true)
   })
 })

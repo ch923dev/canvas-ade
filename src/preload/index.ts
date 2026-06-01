@@ -126,7 +126,25 @@ const api = {
     open: (dir: string): Promise<ProjectResult> => ipcRenderer.invoke('project:open', dir),
     save: (doc: unknown): Promise<boolean> => ipcRenderer.invoke('project:save', doc),
     recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
-    current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current')
+    current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current'),
+    /**
+     * Register a handler that main invokes (`project:flush`) right before it hard-exits
+     * on quit (BUG-M2). The hard `app.exit(0)` bypasses the renderer `beforeunload`, so
+     * the autosave flush would otherwise never run and the last ~1s edit is lost. The
+     * handler runs (awaiting the underlying `project:save`) and main awaits the reply
+     * before exiting. Returns an unsubscribe fn.
+     */
+    onFlush: (handler: () => void | Promise<void>): (() => void) => {
+      const listener = async (_e: IpcRendererEvent, replyChannel: string): Promise<void> => {
+        try {
+          await handler()
+        } finally {
+          ipcRenderer.send(replyChannel)
+        }
+      }
+      ipcRenderer.on('project:flush', listener)
+      return () => ipcRenderer.removeListener('project:flush', listener)
+    }
   },
   dialog: {
     openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
