@@ -1,5 +1,9 @@
 # CODING AGENTS: READ THIS FIRST
 
+> **In-repo path note:** this bundle's `canvas-ade/` root maps to `design-reference/` here.
+> So `canvas-ade/project/Canvas ADE.html` → `design-reference/project/Canvas ADE.html`,
+> `canvas-ade/chats/` → `design-reference/chats/`, etc.
+
 This is a **handoff bundle** from Claude Design (claude.ai/design).
 
 A user mocked up designs in HTML/CSS/JS using an AI design tool, then exported this bundle so a coding agent can implement the designs for real.

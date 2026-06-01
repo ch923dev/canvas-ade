@@ -1,5 +1,10 @@
 # Handoff — Phase 2: Core boards (production canvas + the board types)
 
+> **HISTORICAL — Phase 2 is complete (2026-05-30).** This is the original pre-build plan, kept for
+> history. Current state is in `CLAUDE.md` Status + `docs/handoffs/status-archive.md`; do not treat
+> this doc as live implementation truth. The locked decisions it captures (checklist = Planning
+> element; parallel board build) are already in `CLAUDE.md`.
+
 > For a fresh session. Self-contained. **Phase 1 GATE is PASSED** (ADR 0002) — native `WebContentsView`
 > preview is feasible. Phase 2 promotes the salvaged spike into the real canvas, then builds the board
 > types. Phase 2 is **too big for one shot** → decomposed below. Each step ends **runnable + committed**.

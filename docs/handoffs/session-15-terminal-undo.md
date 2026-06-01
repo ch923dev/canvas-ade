@@ -1,5 +1,10 @@
 # Handoff — build bug #15 (terminal session park/adopt on undo)
 
+> **DONE / HISTORICAL (2026-05-30).** This work landed — terminal park/adopt-on-undo is
+> implemented and on the integrated history (see `docs/handoffs/status-archive.md`). The
+> branch instructions below are stale (the named branches are merged). Kept for design
+> rationale only; do not run the git workflow.
+
 > For a fresh session. Self-contained. **Design + plan are done and committed; NO
 > implementation code is written yet.** Your job: execute the plan task-by-task.
 
