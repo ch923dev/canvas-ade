@@ -1,8 +1,10 @@
 /**
- * Pure cross-kind hit-testing for the Planning whiteboard's eraser (W1.1) — and,
- * later, multi-select's marquee + snapping anchors (W2). No React, no DOM: takes
- * an element + a board-local point and answers "is this point on/near it?" so a
- * swipe can collect the ids to delete atomically. Unit-tested like elements.test.ts.
+ * Pure cross-kind hit-testing for the Planning whiteboard's eraser (W1.1). No
+ * React, no DOM: takes an element + a board-local point and answers "is this point
+ * on/near it?" so a swipe can collect the ids to delete atomically. Unit-tested
+ * like elements.test.ts. The per-kind geometry (rect/bezier/polyline) is a base for
+ * W2 — snapping anchors reuse it directly; the marquee will need a SIBLING
+ * rect-overlaps-element test (point-near is the wrong predicate for a box select).
  *
  * Atomic only: a hit removes the WHOLE element — partial stroke/arrow erasing
  * (Excalidraw #4904) is out of scope.

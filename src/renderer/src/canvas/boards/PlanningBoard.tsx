@@ -473,10 +473,12 @@ export function PlanningBoard({
             alt: e.altKey
           })
           if (next) {
-            // Stop the bare key from ALSO firing the global Canvas window-keydown
-            // bindings: React dispatches at the root container, so this native stop
-            // prevents the bubble up to window (the global typing-guard only covers
-            // INPUT/TEXTAREA/contentEditable, not this focusable div).
+            // Keep a handled tool key from also reaching the global Canvas
+            // window-keydown handler. Our letters (s/n/c/a/p/e) don't collide with
+            // today's bare-key globals (1/0/t), but the global typing-guard only
+            // suppresses INPUT/TEXTAREA/contentEditable — NOT this focusable div — so
+            // this native stop (React dispatches at the root container) future-proofs
+            // against a new bare-letter global silently double-firing here.
             e.stopPropagation()
             e.preventDefault()
             setTool(next)
