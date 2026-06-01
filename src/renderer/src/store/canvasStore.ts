@@ -129,6 +129,33 @@ const newId = (): string => crypto.randomUUID()
 let lastRecorded: Board[] | null = null
 
 /**
+ * Apply a self-contained board mutation as ONE tracked undo step. `next` is the
+ * already-computed next boards array, or the SAME reference / null to signal "no change"
+ * (push nothing, leave undo/redo untouched). Centralizes the `recordPast` + future-clear +
+ * `lastRecorded` sync that addBoard/removeBoard/duplicateBoard/tidyBoards/tileBoards each
+ * hand-rolled — and, by syncing `lastRecorded` here in ONE place, closes the phantom-after-
+ * no-op edge (#BUG M3) the add/remove/duplicate actions left open by skipping that sync.
+ * Pure: takes state, returns a partial — side values (a new id) are computed by the caller.
+ * NOTE: the gesture-driven path (`beginChange` + `updateBoard`/`resizeBoard`) and the
+ * untracked paths (`tileBoards(record:false)`, `growBoardHeight`, `setViewport`, `undo`/
+ * `redo`) deliberately do NOT route through here — see their own comments.
+ */
+function trackedChange(
+  s: CanvasState,
+  next: Board[] | null,
+  selectedId?: string | null
+): Partial<CanvasState> {
+  if (next == null || next === s.boards) return s
+  lastRecorded = next
+  const base: Partial<CanvasState> = {
+    past: recordPast(s.past, s.boards),
+    future: [],
+    boards: next
+  }
+  return selectedId === undefined ? base : { ...base, selectedId }
+}
+
+/**
  * Terminal board ids that must mount IDLE (no PTY auto-spawn): terminals RESTORED from
  * disk (`loadObject`/`applyOpenResult`) and DUPLICATED clones (`duplicateBoard`). A
  * terminal added FRESH this session (`addBoard`) is NOT here, so it auto-spawns. The set
@@ -354,16 +381,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         changed = true
         return { ...b, x: p.x, y: p.y }
       })
-      // Already tidy → no-op (don't push a phantom undo step / invalidate redo).
-      if (!changed) return s
-      // The tidied present IS the history-reflected state — record it so a following
-      // no-op beginChange (a zero-movement titlebar/resize click) recognises it and does
-      // NOT push a phantom snapshot. Without this, a no-op gesture after tidy leaves a
-      // dead undo step (Undo #1 a no-op, Undo #2 needed to reverse tidy) — the same
-      // defect class the undo/redo paths guard via `lastRecorded` (#BUG M3).
-      lastRecorded = boards
-      // One undo step for the whole re-pack; a real edit invalidates the redo branch.
-      return { past: recordPast(s.past, s.boards), future: [], boards }
+      // One tracked step for the whole re-pack. trackedChange no-ops when nothing moved
+      // (already tidy → no phantom undo step, redo branch kept) and syncs `lastRecorded`
+      // so a following zero-movement gesture doesn't push a phantom snapshot (#BUG M3).
+      return trackedChange(s, changed ? boards : null)
     }),
 
   tileBoards: (template, area, record = true) =>
@@ -385,8 +406,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (!changed) return s
       // Live reflow (window resize): layout-only, leave undo/redo untouched (like
       // growBoardHeight) so a resize storm can't flood the history.
-      // Deliberately do NOT update `lastRecorded` here. It must keep meaning "the boards the
-      // undo stack reflects" — and the stack reflects the PRE-tile snapshot, not this reflow.
+      // Deliberately do NOT update `lastRecorded` here (and do NOT route through
+      // trackedChange, which would). It must keep meaning "the boards the undo stack
+      // reflects" — and the stack reflects the PRE-tile snapshot, not this reflow.
       // Setting it to `boards` would make the next beginChange think the reflowed layout is
       // already in history and SKIP the pre-drag checkpoint, so a real drag after a reflow
       // couldn't be undone granularly (undo would jump past it to pre-tile). The only cost of
@@ -394,10 +416,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // reflow — the same tolerated edge as addBoard/removeBoard (Bug #7 / #BUG M3). A real
       // drag stays correctly undoable. Do not "fix" by syncing lastRecorded.
       if (!record) return { boards }
-      // Tracked apply: one undo step, sync lastRecorded so a no-op gesture after tiling
-      // doesn't push a phantom snapshot (#BUG M3), invalidate the redo branch.
-      lastRecorded = boards
-      return { past: recordPast(s.past, s.boards), future: [], boards }
+      // Tracked apply: one undo step + lastRecorded sync via trackedChange.
+      return trackedChange(s, boards)
     }),
 
   growBoardHeight: (id, h) =>
