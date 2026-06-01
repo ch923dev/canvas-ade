@@ -243,7 +243,14 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           onResizeStart={() => {
             useCanvasStore.getState().beginChange()
           }}
-          onResize={() => usePreviewStore.getState().setNodeGesture(true)}
+          onResize={() => {
+            usePreviewStore.getState().setNodeGesture(true)
+            // Pull live native views out IMMEDIATELY (mirrors onNodeDragStart): the async
+            // beginMotion snapshot lags the first resize frames, during which flushBatch
+            // repositions an always-above native layer that can ghost at the old size
+            // (PREV-B / #43961). Idempotent; reattach happens on resize end.
+            void window.api.detachAllPreviews?.()
+          }}
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
