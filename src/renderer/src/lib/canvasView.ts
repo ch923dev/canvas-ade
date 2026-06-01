@@ -7,10 +7,42 @@
  * fades out below 30% zoom"). Kept pure so it can be unit-tested and called from
  * a viewport-change subscription without DOM coupling.
  */
+import type { FitViewOptions } from '@xyflow/react'
 
 /** Camera zoom range (React Flow minZoom/maxZoom). */
 export const Z_MIN = 0.1
 export const Z_MAX = 2.5
+
+// ── Camera framing presets (DESIGN.md §5/§8/§9) ───────────────────────────────
+// Single source of truth shared by Canvas (keys 1/0, fit-on-load, RF defaults) and
+// AppChrome (the camera-cluster buttons) so the two can't drift. Each callsite wraps
+// these in `cameraAnim` for the §9 200ms tween (reduced-motion safe).
+
+/**
+ * "Zoom to fit" — frame ALL boards with a 64px margin (DESIGN.md §122). `maxZoom: 2`
+ * lets a small board/cluster zoom IN to fill the viewport instead of being stranded
+ * small at 100%, while staying readable for raster boards (terminal/browser).
+ *
+ * History: was `{ padding: 0.2, maxZoom: 1 }` — the 0.2 proportional pad is ≈8.3%
+ * of the viewport PER SIDE (≈230px on a wide pane), and the 100% cap blocked any
+ * fill-in; together they left the large empty margins the design forbids. The 64px
+ * fixed pad matches the spec exactly.
+ *
+ * NOTE: residual slack remains ONLY when the content cluster's aspect ratio differs
+ * from the viewport's — that is inherent to aspect-preserving fit (`zoom =
+ * min(xZoom, yZoom)`) and cannot be removed by any padding/zoom tweak. Tidy
+ * (`tidyLayout`) repacks boards toward the viewport aspect so the subsequent fit
+ * actually fills the screen.
+ */
+export const FIT_FRAME: FitViewOptions = { padding: '64px', maxZoom: 2 }
+
+/** "Reset zoom" (the % button / key 0): recenter content pinned at 100% so a far
+ *  pan/zoom can't strand every board off-screen (#41). */
+export const RESET_FRAME: FitViewOptions = { padding: '64px', maxZoom: 1, minZoom: 1 }
+
+/** "Overview": frame all boards with extra breathing room (intentionally airier
+ *  than fit — a bird's-eye, not a tight crop). Proportional pad scales with the pane. */
+export const OVERVIEW_FRAME: FitViewOptions = { padding: 0.3 }
 
 /** Below this camera zoom a board renders as an LOD card (glyph + title + dot). */
 export const LOD_ZOOM = 0.4

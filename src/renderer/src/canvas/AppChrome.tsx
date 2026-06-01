@@ -4,32 +4,39 @@
  * All sit on `--surface-raised` with the popover shadow. Camera controls drive
  * React Flow via `useReactFlow`; the dock adds store boards centered in view.
  */
-import { useState, type CSSProperties, type ReactElement } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement
+} from 'react'
+import { createPortal } from 'react-dom'
 import { useReactFlow, useStore } from '@xyflow/react'
 import { useCanvasStore, type RecentProject } from '../store/canvasStore'
+import { usePreviewStore } from '../store/previewStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import type { BoardType } from '../lib/boardSchema'
+import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
+import { FIT_FRAME, OVERVIEW_FRAME, RESET_FRAME } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
 
-/** Padding used by fit / overview framing (overview leaves more margin). All three
- *  are wrapped in `cameraAnim` at the callsite for the §9 200ms tween (reduced-motion safe). */
-const FIT = { padding: 0.2, maxZoom: 1 } as const
-/** "Reset zoom" (%): recenter on content pinned at 100% so it can't strand boards (#41). */
-const RESET = { padding: 0.2, maxZoom: 1, minZoom: 1 } as const
-const OVERVIEW = { padding: 0.35 } as const
-
 export interface AppChromeProps {
   /** Add a board of `type` centered in the current view (shared with EmptyState). */
   onAdd: (type: BoardType) => void
+  /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
+   *  templates) and the `t` key (Smart). */
+  onTidy: (preset: LayoutPreset) => void
 }
 
-export function AppChrome({ onAdd }: AppChromeProps): ReactElement {
+export function AppChrome({ onAdd, onTidy }: AppChromeProps): ReactElement {
   return (
     <>
       <ProjectSwitcher />
-      <CameraCluster />
+      <CameraCluster onTidy={onTidy} />
       <Dock onAdd={onAdd} />
     </>
   )
@@ -122,28 +129,152 @@ function ProjectSwitcher(): ReactElement {
 }
 
 // ── Top-right: camera cluster ───────────────────────────────────────────────
-function CameraCluster(): ReactElement {
+function CameraCluster({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): ReactElement {
   const rf = useReactFlow()
   const zoom = useStore((s) => s.transform[2])
   return (
     <div style={styles.tr}>
       <div style={styles.pill}>
-        <ToolBtn name="fit" title="Zoom to fit (1)" onClick={() => void rf.fitView(cameraAnim(FIT))} />
+        <ToolBtn name="fit" title="Zoom to fit (1)" onClick={() => void rf.fitView(cameraAnim(FIT_FRAME))} />
         <span style={styles.divider} />
         <ToolBtn name="minus" title="Zoom out" onClick={() => void rf.zoomOut(cameraAnim({}))} />
-        <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.fitView(cameraAnim(RESET))}>
+        <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.fitView(cameraAnim(RESET_FRAME))}>
           {Math.round(zoom * 100)}%
         </button>
         <ToolBtn name="plus" title="Zoom in" onClick={() => void rf.zoomIn(cameraAnim({}))} />
         <span style={styles.divider} />
-        <ToolBtn name="overview" title="Overview" onClick={() => void rf.fitView(cameraAnim(OVERVIEW))} />
+        <ToolBtn name="overview" title="Overview" onClick={() => void rf.fitView(cameraAnim(OVERVIEW_FRAME))} />
+        {/* Auto-tidy: a FancyZones-style picker of layout presets (Smart link-aware + tiling
+            templates) that arranges the boards then fits. Keyboard `t` = Smart. See
+            Canvas.tidyAndFit. */}
+        <TidyMenu onTidy={onTidy} />
       </div>
     </div>
   )
 }
 
+// A single preset thumbnail — draws the preset's fractional `zones` as mini rounded rects,
+// so the picker reads like a FancyZones template grid. Zones go accent on hover (CSS).
+function PresetThumb({ preset }: { preset: LayoutPreset }): ReactElement {
+  return (
+    <div
+      style={{
+        position: 'relative',
+        width: 66,
+        height: 42,
+        borderRadius: 5,
+        background: 'var(--inset)',
+        border: '1px solid var(--border-subtle)',
+        overflow: 'hidden'
+      }}
+    >
+      {preset.zones.map((z, i) => (
+        <div
+          key={i}
+          className="ca-zone"
+          style={{
+            position: 'absolute',
+            left: `${z.x * 100}%`,
+            top: `${z.y * 100}%`,
+            width: `${z.w * 100}%`,
+            height: `${z.h * 100}%`,
+            borderRadius: 2,
+            background: 'var(--text-3)',
+            transition: 'background .1s'
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+// The Tidy preset PICKER (FancyZones-style). Mirrors the board ⋯ menu plumbing: portaled to
+// <body>, signals the preview layer to detach live native views while open (a WebContentsView
+// paints above all HTML, so it would otherwise cover this popover — ADR 0002), clamps into the
+// viewport, closes on outside pointerdown / Escape. Each thumbnail applies its preset.
+// KNOWN (matches the board ⋯ menu, BoardFrame.tsx): setMenuOpen runs in an effect + the detach
+// IPC is async, so a live Browser view overlapping this popover can occlude it for a few frames
+// before detaching. Accepted limitation of the menu-detach pattern; a fix would need sync IPC
+// across BrowserPreviewLayer too. The camera cluster is top-right, where live views rarely sit.
+function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): ReactElement {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: -9999, left: -9999 })
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
+
+  // Detach live previews while the picker is open (un-occlude it), like the board menu.
+  useEffect(() => {
+    setMenuOpen(open)
+    if (open) return () => setMenuOpen(false)
+  }, [open, setMenuOpen])
+
+  useEffect(() => {
+    if (!open) return
+    const close = (): void => setOpen(false)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
+
+  // Right-align the picker under the trigger, clamped into the viewport.
+  useLayoutEffect(() => {
+    if (!open) return
+    const t = triggerRef.current?.getBoundingClientRect()
+    const m = menuRef.current?.getBoundingClientRect()
+    if (!t || !m) return
+    const PAD = 8
+    const left = Math.max(PAD, Math.min(t.right - m.width, window.innerWidth - m.width - PAD))
+    setPos({ top: t.bottom + 6, left })
+  }, [open])
+
+  return (
+    <div ref={triggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      <ToolBtn name="grid" title="Tidy layout (T)" active={open} onClick={() => setOpen((v) => !v)} />
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ ...styles.tidyPop, top: pos.top, left: pos.left }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div style={styles.tidyHead}>Tidy layout</div>
+            <div style={styles.tidyGrid}>
+              {LAYOUT_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  className="ca-tidy-preset"
+                  role="menuitem"
+                  title={p.hint}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    setOpen(false)
+                    onTidy(p)
+                  }}
+                >
+                  <PresetThumb preset={p} />
+                  <span style={styles.tidyLabel}>{p.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>,
+          document.body
+        )}
+    </div>
+  )
+}
+
 // ── Bottom-center: board dock ─────────────────────────────────────────────────
-function Dock({ onAdd }: AppChromeProps): ReactElement {
+function Dock({ onAdd }: { onAdd: (type: BoardType) => void }): ReactElement {
   const tool = useCanvasStore((s) => s.tool)
   const setTool = useCanvasStore((s) => s.setTool)
   return (
@@ -292,5 +423,24 @@ const styles: Record<string, CSSProperties> = {
     border: 'none',
     background: 'none',
     cursor: 'pointer'
-  }
+  },
+  tidyPop: {
+    position: 'fixed',
+    zIndex: 250, // above the fullview-scrim (200), matching .board-menu
+    background: 'var(--surface-overlay)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--r-ctl)',
+    boxShadow: 'var(--shadow-pop)',
+    padding: 8,
+    width: 248
+  },
+  tidyHead: {
+    fontSize: 11,
+    color: 'var(--text-3)',
+    fontWeight: 600,
+    letterSpacing: '0.02em',
+    padding: '0 2px 6px'
+  },
+  tidyGrid: { display: 'flex', flexWrap: 'wrap', gap: 4 },
+  tidyLabel: { fontSize: 10.5, lineHeight: '12px', textAlign: 'center' }
 }

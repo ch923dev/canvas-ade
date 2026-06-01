@@ -22,6 +22,8 @@ import {
 } from '../lib/boardSchema'
 import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
+import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
+import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -74,6 +76,23 @@ export interface CanvasState {
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
   resizeBoard: (id: string, w: number, h: number) => void
+  /**
+   * Auto-tidy: repack every board with the chosen layout `mode` (default 'smart' —
+   * link-aware grouping). `aspect` steers the 'grid' mode toward the viewport ratio.
+   * One tracked undo step; a no-op for <2 boards or when nothing actually moves.
+   */
+  tidyBoards: (mode?: TidyMode, aspect?: number) => void
+  /**
+   * Window-manager TILING: resize + move every board to fill a zone of `area` (a world-space,
+   * pane-aspect block the caller frames after). w/h clamped to the board minimum.
+   * `record` (default true) takes one undo step; pass `false` for live reflow on window resize
+   * (UNTRACKED — never touches undo/redo, like growBoardHeight, so a resize storm can't spam it).
+   */
+  tileBoards: (
+    template: TileTemplate,
+    area: { x: number; y: number; w: number; h: number },
+    record?: boolean
+  ) => void
   /**
    * Grow a board's height to fit measured content (checklist auto-grow). UNTRACKED,
    * layout-only: never touches the undo/redo rails, so a measured height bump on
@@ -307,6 +326,66 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       })
       if (!changed) return s
       return s.future.length ? { boards, future: [] } : { boards }
+    }),
+
+  tidyBoards: (mode, aspect) =>
+    set((s) => {
+      // Nothing to organise with fewer than two boards.
+      if (s.boards.length < 2) return s
+      // Board carries id/x/y/w/h/type (+ viewport/previewSourceId on browsers) — exactly
+      // the fields tidyLayout reads for smart/by-type grouping.
+      const pos = new Map(tidyLayout(s.boards, { mode, aspect }).map((p) => [p.id, p]))
+      let changed = false
+      const boards = s.boards.map((b) => {
+        const p = pos.get(b.id)
+        if (!p || (p.x === b.x && p.y === b.y)) return b
+        changed = true
+        return { ...b, x: p.x, y: p.y }
+      })
+      // Already tidy → no-op (don't push a phantom undo step / invalidate redo).
+      if (!changed) return s
+      // The tidied present IS the history-reflected state — record it so a following
+      // no-op beginChange (a zero-movement titlebar/resize click) recognises it and does
+      // NOT push a phantom snapshot. Without this, a no-op gesture after tidy leaves a
+      // dead undo step (Undo #1 a no-op, Undo #2 needed to reverse tidy) — the same
+      // defect class the undo/redo paths guard via `lastRecorded` (#BUG M3).
+      lastRecorded = boards
+      // One undo step for the whole re-pack; a real edit invalidates the redo branch.
+      return { past: recordPast(s.past, s.boards), future: [], boards }
+    }),
+
+  tileBoards: (template, area, record = true) =>
+    set((s) => {
+      if (s.boards.length < 1) return s
+      const rects = new Map(tileLayout(s.boards, template, area).map((r) => [r.id, r]))
+      let changed = false
+      const boards = s.boards.map((b) => {
+        const r = rects.get(b.id)
+        if (!r) return b
+        // Tiling sets SIZE too; clamp to the board minimum so a tiny zone can't make a
+        // degenerate board (the resizeBoard floor, applied inline here).
+        const w = Math.max(MIN_BOARD_SIZE.w, r.w)
+        const h = Math.max(MIN_BOARD_SIZE.h, r.h)
+        if (b.x === r.x && b.y === r.y && b.w === w && b.h === h) return b
+        changed = true
+        return { ...b, x: r.x, y: r.y, w, h }
+      })
+      if (!changed) return s
+      // Live reflow (window resize): layout-only, leave undo/redo untouched (like
+      // growBoardHeight) so a resize storm can't flood the history.
+      // Deliberately do NOT update `lastRecorded` here. It must keep meaning "the boards the
+      // undo stack reflects" — and the stack reflects the PRE-tile snapshot, not this reflow.
+      // Setting it to `boards` would make the next beginChange think the reflowed layout is
+      // already in history and SKIP the pre-drag checkpoint, so a real drag after a reflow
+      // couldn't be undone granularly (undo would jump past it to pre-tile). The only cost of
+      // leaving it stale is a phantom no-op step on a ZERO-movement titlebar press after a
+      // reflow — the same tolerated edge as addBoard/removeBoard (Bug #7 / #BUG M3). A real
+      // drag stays correctly undoable. Do not "fix" by syncing lastRecorded.
+      if (!record) return { boards }
+      // Tracked apply: one undo step, sync lastRecorded so a no-op gesture after tiling
+      // doesn't push a phantom snapshot (#BUG M3), invalidate the redo branch.
+      lastRecorded = boards
+      return { past: recordPast(s.past, s.boards), future: [], boards }
     }),
 
   growBoardHeight: (id, h) =>
