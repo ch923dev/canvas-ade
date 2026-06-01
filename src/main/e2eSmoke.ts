@@ -940,6 +940,76 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
       : JSON.stringify(tileProbe)
   })
 
+  // ── W1.1 Eraser + W1.2 letter shortcuts (whiteboard slice 1). Drive the REAL DOM:
+  // seed a single note on the planning board, focus the well, press 'e' (the erase
+  // shortcut — proves W1.2 sets the tool), then "tap" the note's computed screen point.
+  // The erase pointer-down hit-tests the note → pointer-up commits its removal as ONE
+  // undo step (W1.1); undo must restore it. Then press 'n' and tap an empty spot — the
+  // note tool creates a fresh note, proving a second shortcut routes through. All
+  // assertions read element counts off the store (deterministic; no component-state peek).
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { elements: [{ id: 'e2e-erase-note', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: '', rotation: 0 }] })`
+  )
+  await evalIn(win, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+  await delay(200) // node measured + well laid out + above LOD
+  const wb = await evalIn<{
+    start: number
+    afterErase: number
+    afterUndo: number
+    afterCreate: number
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const id = ${JSON.stringify(planId)};
+       const elems = () => {
+         const b = window.__canvasE2E.getBoards().find((x) => x.id === id);
+         return b && b.type === 'planning' ? b.elements.length : -1;
+       };
+       const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+       const well = node && node.querySelector('.pl-well');
+       if (!well) return { start: -1, afterErase: -1, afterUndo: -1, afterCreate: -1 };
+       const r = well.getBoundingClientRect();
+       const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1; // board-local → screen
+       const at = (bx, by) => ({ x: r.left + bx * scale, y: r.top + by * scale });
+       const press = (k) => { well.focus(); well.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); };
+       const tap = (p) => {
+         for (const t of ['pointerdown', 'pointerup']) {
+           try { well.dispatchEvent(new PointerEvent(t, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: p.x, clientY: p.y })); } catch (e) {}
+         }
+       };
+       const start = elems();
+       // W1.2: 'e' selects the eraser. W1.1: tap the note (board-local centre 118,88) → removed.
+       press('e'); await sleep(40);
+       tap(at(118, 88)); await sleep(80);
+       const afterErase = elems();
+       window.__canvasE2E.undo(); await sleep(80);     // one undo step restores the swipe
+       const afterUndo = elems();
+       // W1.2: 'n' selects the note tool → a tap on an empty spot creates a note.
+       press('n'); await sleep(40);
+       tap(at(230, 210)); await sleep(80);
+       const afterCreate = elems();
+       return { start, afterErase, afterUndo, afterCreate };
+     })()`
+  )
+  const eraseOk = wb.start === 1 && wb.afterErase === 0 && wb.afterUndo === 1
+  parts.push({
+    name: 'whiteboard-erase',
+    ok: eraseOk,
+    detail: eraseOk
+      ? "'e' erases the note on tap; undo restores it in one step"
+      : JSON.stringify(wb)
+  })
+  const shortcutOk = wb.afterUndo === 1 && wb.afterCreate === 2
+  parts.push({
+    name: 'whiteboard-shortcut',
+    ok: shortcutOk,
+    detail: shortcutOk
+      ? "'n' selects the note tool → tap creates a note"
+      : JSON.stringify(wb)
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 4, detail: `${count} boards` })
 

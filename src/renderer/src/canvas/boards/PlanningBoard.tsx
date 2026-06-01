@@ -41,6 +41,8 @@ import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
+import { eraseHitTest } from './planning/erase'
+import { shortcutTool, type PlanTool } from './planning/tools'
 import {
   makeArrow,
   makeChecklist,
@@ -57,18 +59,16 @@ import {
   setItemLabel
 } from './planning/elements'
 
-/** The whiteboard tools (board-internal; distinct from the dock add-board tool). */
-type PlanTool = 'select' | 'note' | 'check' | 'arrow' | 'pen'
-
 const TOOLS: ReadonlyArray<{
   tool: PlanTool
-  icon: 'select' | 'note' | 'check' | 'arrow' | 'pen'
+  icon: 'select' | 'note' | 'check' | 'arrow' | 'pen' | 'erase'
 }> = [
   { tool: 'select', icon: 'select' },
   { tool: 'note', icon: 'note' },
   { tool: 'check', icon: 'check' },
   { tool: 'arrow', icon: 'arrow' },
-  { tool: 'pen', icon: 'pen' }
+  { tool: 'pen', icon: 'pen' },
+  { tool: 'erase', icon: 'erase' }
 ]
 
 const newId = (): string => crypto.randomUUID()
@@ -107,8 +107,14 @@ export function PlanningBoard({
     | { mode: 'move'; id: string; grabX: number; grabY: number }
     | { mode: 'arrow'; id: string }
     | { mode: 'pen'; points: number[] }
+    | { mode: 'erase'; removed: Set<string> }
     | null
   >(null)
+
+  // Ids the in-flight erase swipe has marked for deletion. While set, those
+  // elements are hidden from the render (immediate feedback) and committed as ONE
+  // checkpoint on pointer-up. Null when not erasing.
+  const [pendingErase, setPendingErase] = useState<Set<string> | null>(null)
 
   /** Commit a new elements array to the store. */
   const commit = useCallback(
@@ -228,6 +234,9 @@ export function PlanningBoard({
       // a card (cards no longer stop it — #6), so proceed regardless of target and
       // let the well capture the whole gesture below.
       if (tool === 'select' && e.target !== e.currentTarget) return
+      // An empty-well press focuses the well so the board-scoped letter shortcuts
+      // (onKeyDown below) have a focus target. A press on a card focuses that card.
+      if (e.target === e.currentTarget) e.currentTarget.focus()
       setSelectedElId(null)
       const p = toBoard(e)
 
@@ -260,6 +269,17 @@ export function PlanningBoard({
         e.currentTarget.setPointerCapture(e.pointerId)
         return
       }
+      if (tool === 'erase') {
+        // Do NOT beginChange() here — an empty swipe must not push a phantom undo
+        // snapshot (the move/draw paths defer for the same reason; WB-1 class). The
+        // checkpoint is taken in onWellPointerUp only if something was erased.
+        const removed = new Set<string>()
+        for (const el of elements) if (eraseHitTest(el, p)) removed.add(el.id)
+        drag.current = { mode: 'erase', removed }
+        setPendingErase(new Set(removed))
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
@@ -280,9 +300,18 @@ export function PlanningBoard({
       } else if (d.mode === 'pen') {
         d.points = pushBoardPoint(d.points, p)
         setDraftStroke(d.points)
+      } else if (d.mode === 'erase') {
+        let grew = false
+        for (const el of elements) {
+          if (!d.removed.has(el.id) && eraseHitTest(el, p)) {
+            d.removed.add(el.id)
+            grew = true
+          }
+        }
+        if (grew) setPendingErase(new Set(d.removed))
       }
     },
-    [toBoard]
+    [toBoard, elements]
   )
 
   // Double-click empty whiteboard in select mode → drop a free-text element.
@@ -334,8 +363,28 @@ export function PlanningBoard({
         commit([...elements, makeStroke(newId(), pts)])
       }
       setTool('select')
+    } else if (d.mode === 'erase') {
+      const removed = d.removed
+      setPendingErase(null)
+      if (removed.size > 0) {
+        // One checkpoint for the whole swipe (phantom-undo discipline).
+        beginChange()
+        commit(elements.filter((el) => !removed.has(el.id)))
+      }
     }
   }, [draftArrow, dragPos, commit, elements, beginChange])
+
+  const onWellPointerCancel = useCallback(() => {
+    // An OS pointer-cancel (palm/stylus/system gesture) mid-erase must NOT commit a
+    // destructive delete the user never finished — discard the in-flight swipe. Other
+    // gestures (move/arrow/pen) keep their existing pointer-up behavior on cancel.
+    if (drag.current?.mode === 'erase') {
+      drag.current = null
+      setPendingErase(null)
+      return
+    }
+    onWellPointerUp()
+  }, [onWellPointerUp])
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
@@ -375,7 +424,9 @@ export function PlanningBoard({
   // from viewElements too so a dragged arrow/stroke tracks the cursor live (#28, #37).
   const viewElements = dragPos
     ? translateElement(elements, dragPos.id, dragPos.dx, dragPos.dy)
-    : elements
+    : pendingErase && pendingErase.size > 0
+      ? elements.filter((el) => !pendingErase.has(el.id))
+      : elements
 
   const arrows = viewElements.filter((e): e is ArrowElement => e.kind === 'arrow')
   const strokes = viewElements.filter((e): e is StrokeElement => e.kind === 'stroke')
@@ -405,7 +456,7 @@ export function PlanningBoard({
         onPointerDown={onWellPointerDown}
         onPointerMove={onWellPointerMove}
         onPointerUp={onWellPointerUp}
-        onPointerCancel={onWellPointerUp}
+        onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
         onKeyDown={(e) => {
           if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElId) {
@@ -414,13 +465,38 @@ export function PlanningBoard({
             beginChange()
             commit(removeElement(elements, selectedElId))
             setSelectedElId(null)
+            return
+          }
+          const next = shortcutTool(e.key, {
+            ctrl: e.ctrlKey,
+            meta: e.metaKey,
+            alt: e.altKey
+          })
+          if (next) {
+            // Keep a handled tool key from also reaching the global Canvas
+            // window-keydown handler. Our letters (s/n/c/a/p/e) don't collide with
+            // today's bare-key globals (1/0/t), but the global typing-guard only
+            // suppresses INPUT/TEXTAREA/contentEditable — NOT this focusable div — so
+            // this native stop (React dispatches at the root container) future-proofs
+            // against a new bare-letter global silently double-firing here.
+            e.stopPropagation()
+            e.preventDefault()
+            setTool(next)
+            setSelectedElId(null)
           }
         }}
         style={{
           position: 'absolute',
           inset: 0,
           overflow: 'hidden',
-          cursor: drawing ? 'crosshair' : tool === 'note' || tool === 'check' ? 'copy' : 'default',
+          cursor:
+            tool === 'erase'
+              ? 'cell'
+              : drawing
+                ? 'crosshair'
+                : tool === 'note' || tool === 'check'
+                  ? 'copy'
+                  : 'default',
           // 12px dot grid — finer than the canvas lattice, to read as a sketch
           // surface (DESIGN.md §7.3).
           backgroundImage: 'radial-gradient(var(--grid-dot) 1px, transparent 1px)',
@@ -509,7 +585,7 @@ export function PlanningBoard({
               pointerEvents: 'none'
             }}
           >
-            {selected ? 'pick a tool above · note · check · arrow · pen' : 'empty plan'}
+            {selected ? 'pick a tool above · note · check · arrow · pen · erase' : 'empty plan'}
           </div>
         )}
       </div>

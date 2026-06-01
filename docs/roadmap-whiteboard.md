@@ -202,7 +202,7 @@ Also out: calligraphic pressure-taper pen (deliberately tuned OFF — `thinning:
 
 | Phase | Status |
 |---|---|
-| W1 — Quick wins | not started |
+| W1 — Quick wins | ✅ done (2026-06-02) — eraser (W1.1) · letter shortcuts (W1.2) · scene/session guardrail (W1.3). Integrated on top of #15 (WB-1); 502 unit green, lint+typecheck clean, e2e PLANNING ok (browser-trio = known env flake). Branch `feat/whiteboard-w1-integ`. |
 | W2 — Selection core | not started |
 | W3 — Selection follow-ons | not started |
 | W4 — Image + assets | not started |
