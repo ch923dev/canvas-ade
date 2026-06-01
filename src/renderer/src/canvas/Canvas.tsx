@@ -499,6 +499,8 @@ function CanvasInner(): ReactElement {
         st.updateBoard(target.id, patch)
         st.selectBoard(target.id)
       } else {
+        // Exit focus so the freshly spawned browser isn't born dimmed (STATE-1).
+        setFocusedId(null)
         const id = st.addBoard('browser', { x: from.x + from.w + 40, y: from.y })
         st.updateBoard(id, patch)
         st.selectBoard(id)
@@ -512,6 +514,8 @@ function CanvasInner(): ReactElement {
         fullViewIdRef.current === id ? closeFullView() : openFullView(id),
       duplicate: (id) => {
         hardCloseFullView()
+        // Exit focus so the clone isn't born dimmed (mirrors addCentered, #14 / STATE-1).
+        setFocusedId(null)
         duplicateBoard(id)
       },
       remove: (id) => {
