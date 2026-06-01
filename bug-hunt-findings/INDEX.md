@@ -2,7 +2,7 @@
 
 Generated: 2026-05-30 · Scope: `src/**` (Electron main · preload · renderer · vendor) · Confirmed in-scope: 33
 
-Adversarial dynamic-workflow hunt (17 discovery agents → independent refuter per candidate, 2nd refuter for High/Critical). **78 candidates → 42 confirmed → 34 after root-cause merge → 1 skipped to roadmap → 33 in-scope.** Every card below was reproduced or concretely demonstrated; unverified candidates are in `unconfirmed.md`. Most findings are **incomplete remediations** of the prior 50-bug hunt (`docs/bug-hunt-findings.md`).
+Adversarial dynamic-workflow hunt (17 discovery agents → independent refuter per candidate, 2nd refuter for High/Critical). **78 candidates → 42 confirmed → 34 after root-cause merge → 1 skipped to roadmap → 33 in-scope.** Every card below was reproduced or concretely demonstrated; unverified candidates are in `unconfirmed.md`. Most findings are **incomplete remediations** of the prior 50-bug hunt (`docs/archive/bug-hunt-findings.md`, archived 2026-05-30).
 
 Severity mix: 1 High · 13 Medium · 19 Low.
 

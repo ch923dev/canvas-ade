@@ -123,10 +123,10 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
   Spec/plan: `docs/superpowers/{specs,plans}/2026-05-30-persistence*.md`. BUG-027 (alias) fixed.
 
 > 🔗 **Related bug-hunt finding:** BUG-025 (load validation accepts non-positive / sub-`MIN_BOARD_SIZE`
-> geometry) touches this area but is not fully resolved by this work — see bug-hunt-findings/findings/BUG-025.md.
+> geometry) touches this area but is not fully resolved by this work — see ../bug-hunt-findings/findings/BUG-025.md.
 > 🔗 **Related bug-hunt finding:** BUG-027 (`fromObject`/`migrate` return the input doc by reference, so loaded
 > store boards alias the caller's input) touches this area but is not fully resolved by this work —
-> see bug-hunt-findings/findings/BUG-027.md.
+> see ../bug-hunt-findings/findings/BUG-027.md.
 - **Port detect → push to preview** (Slice C′, replaces the old worktrees+ports slice): a Terminal
   board reads the localhost URL its dev server printed and one click opens/points a Browser board at
   it. **Detect, don't assign** — output-parse only, on-click, reuse-else-spawn target, read-only,
@@ -174,7 +174,7 @@ design specs + salvage map + parallel guidance: **`docs/handoffs/phase-2.md`**.
 > - **What:** Fit (button + '1' key) snaps the camera instantly with no animation, violating the DESIGN.md §9 contract that fit animate 200ms (inconsistent with the animated Overview/Focus siblings).
 > - **Verification:** Code-path trace — `rf.fitView(FIT)` passes no `duration`, so `@xyflow/system` `setViewport` runs duration 0; sibling camera ops pass `{ duration: 200 }`.
 > - **Status:** Skipped from active fix queue; expected to be resolved by this phase.
-> - **Ref:** bug-hunt-findings/skipped-roadmap.md
+> - **Ref:** ../bug-hunt-findings/skipped-roadmap.md
 - **Polished** empty / loading / error states throughout (building on Phase 2's basic ones).
 - Harden CSP to nonce-based (drop `unsafe-inline`) for the packaged build. Load Geist / Geist Mono.
 - Code-split the renderer bundle (xterm / React Flow lazy where sensible).

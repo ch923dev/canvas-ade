@@ -103,7 +103,9 @@ src/
   preload/   index.ts (contextBridge + MessagePort forwarding) · index.d.ts
   renderer/  index.html · src/{main.tsx, App.tsx, index.css, env.d.ts} · src/smoke/*
 design-reference/   authoritative design bundle (read-only)
-docs/        decisions/ (ADRs) · roadmap.md
+docs/        roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0002) · handoffs/ ·
+             research/ · superpowers/{plans,specs}/ · archive/ (superseded Round-1 bug-hunt docs)
+bug-hunt-findings/   Round-2 fix package (INDEX · FIX-REPORT · skipped-roadmap · findings/BUG-0NN.md)
 .github/workflows/build.yml   6-target CI matrix (unsigned until Phase 5)
 electron.vite.config.ts · electron-builder.yml · tsconfig.{json,node,preload,web}.json
 ```
