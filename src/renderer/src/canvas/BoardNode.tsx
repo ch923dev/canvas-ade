@@ -23,7 +23,7 @@ import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } fr
 import type { Board, BoardType } from '../lib/boardSchema'
 import { BoardActionsContext } from './boardActions'
 import type { ResolvedPushTarget } from '../lib/previewTarget'
-import { FullViewContext } from './fullViewContext'
+import { BoardFullViewContext, FullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
@@ -199,25 +199,31 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   }
 
   const common = { selected, hovered, dimmed }
+  // Provide this board's full-view flag to its whole subtree so every board type's
+  // BoardFrame lights the title-bar EXIT affordance when this board is the one in the
+  // modal — without threading a `fullView` prop through each per-type board (only
+  // BrowserBoard reads the prop, for its native-view re-bind). Context drives the chrome.
   const subtree = (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{ position: 'absolute', inset: 0 }}
-    >
-      {/* fallback=null: the brief gap before a board's chunk resolves on first mount.
-          The board renders its own BoardFrame chrome once loaded; subsequent mounts
-          are synchronous (module cached). */}
-      <Suspense fallback={null}>
-        {board.type === 'terminal' && (
-          <TerminalBoard board={board} lod={lod} {...common} {...actions} />
-        )}
-        {board.type === 'browser' && (
-          <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
-        )}
-        {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
-      </Suspense>
-    </div>
+    <BoardFullViewContext.Provider value={fullView}>
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{ position: 'absolute', inset: 0 }}
+      >
+        {/* fallback=null: the brief gap before a board's chunk resolves on first mount.
+            The board renders its own BoardFrame chrome once loaded; subsequent mounts
+            are synchronous (module cached). */}
+        <Suspense fallback={null}>
+          {board.type === 'terminal' && (
+            <TerminalBoard board={board} lod={lod} {...common} {...actions} />
+          )}
+          {board.type === 'browser' && (
+            <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
+          )}
+          {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+        </Suspense>
+      </div>
+    </BoardFullViewContext.Provider>
   )
 
   return (

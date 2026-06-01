@@ -3,6 +3,7 @@
  * MAIN owns the "current dir"; the renderer drives saves (Approach A). All handlers
  * reject foreign senders (BUG-033 defense-in-depth), matching pty/preview.
  */
+import path from 'node:path'
 import { dialog } from 'electron'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import {
@@ -35,6 +36,22 @@ export function isForeignSender(
   return e.senderFrame !== main
 }
 
+/**
+ * True when a renderer-supplied project dir must be REJECTED before any fs touch
+ * (M-6): a non-empty absolute path with no `..` traversal segment is required.
+ * Real OS-dialog results are already absolute + normalized, so legit flows pass.
+ * Pure + exported for unit tests.
+ */
+export function isUnsafeProjectDir(dir: string): boolean {
+  if (typeof dir !== 'string' || dir.length === 0) return true
+  if (!path.isAbsolute(dir)) return true
+  // `path.normalize` collapses `..`, so a traversal that fully resolves
+  // (e.g. `C:\Users\x\..\..\evil` → `C:\evil`) would slip past a check on the
+  // normalized form. Reject any `..` segment in the ORIGINAL input instead —
+  // legit OS-dialog paths never contain one.
+  return path.normalize(dir).split(/[/\\]/).includes('..') || dir.split(/[/\\]/).includes('..')
+}
+
 export function registerProjectHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
@@ -62,6 +79,7 @@ export function registerProjectHandlers(
 
   ipcMain.handle('project:open', (e, dir: string): ProjectResult => {
     if (guard(e)) return { ok: false, error: 'forbidden' }
+    if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     const r = readProject(dir)
     remember(r)
     return r
@@ -71,6 +89,7 @@ export function registerProjectHandlers(
     'project:create',
     (e, args: { dir: string; name: string; opts: { gitInit?: boolean } }): ProjectResult => {
       if (guard(e)) return { ok: false, error: 'forbidden' }
+      if (isUnsafeProjectDir(args.dir)) return { ok: false, error: 'invalid path' }
       const r = createProject(args.dir, args.name, args.opts ?? {})
       remember(r)
       return r

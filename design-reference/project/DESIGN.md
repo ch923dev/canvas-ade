@@ -160,16 +160,18 @@ LOD and only the title (rendered at a zoom-compensated size) shows.
 | Hover | edge → `--border`; resize handles fade in |
 | Selected | 1.5px `--accent` ring (`box-shadow: 0 0 0 1.5px --accent`); title text → `--text`; title-bar tint `--accent-wash` |
 | Focused (zoomed-in) | as selected; canvas dims other boards to 55% opacity |
-| Full view | board opens edge-to-edge over a 66%-black scrim, accent ring, top band with `FULL VIEW` label + `✕ Esc` exit; content renders at full chrome scale |
+| Full view | board opens edge-to-edge over a 66%-black scrim, accent ring; exit via the title-bar full-view toggle icon (becomes "Exit full view"), Esc, or scrim click — no separate top band (descoped 2026-06-01); content renders at full chrome scale |
 | LOD (z < .4) | single card: glyph + title + status dot, centered; no content, no chrome divider |
 
 ### 6.1 Full view & duplicate
 - **Full view** (maximize button, `⋯` menu, or via the overflow) lifts a single
   board into a fullscreen overlay — distinct from **focus** (which animates the
   *camera* to fit a board but stays on-canvas). Full view is a modal layer: it
-  does not move the camera, dims the canvas, and exits on `Esc`, the `✕` button,
-  or backdrop click. Use it to read a long terminal run or inspect a preview at
-  size. The board keeps all its chrome and controls (e.g. viewport toggles).
+  does not move the camera, dims the canvas, and exits via the title-bar
+  full-view toggle icon (which becomes "Exit full view"), or `Esc` / scrim click.
+  No separate top band (descoped 2026-06-01). Use it to read a long terminal run
+  or inspect a preview at size. The board keeps all its chrome and controls
+  (e.g. viewport toggles).
 - **Duplicate** clones a board (geometry + state) offset by 36px and selects the
   copy. Primary use: fork a **Browser** board so one can sit on Mobile and
   another on Tablet side-by-side. Available from the `⋯` menu.

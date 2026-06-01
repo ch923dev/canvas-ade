@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useCanvasStore } from './canvasStore'
+import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from './canvasStore'
 import { SCHEMA_VERSION, toObject, createBoard } from '../lib/boardSchema'
 
 const get = () => useCanvasStore.getState()
@@ -71,6 +71,52 @@ describe('addBoard', () => {
     const [a, b] = get().boards
     const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
     expect(overlap).toBe(false)
+  })
+})
+
+describe('idle-on-mount registry (M-1: restored terminals stay idle)', () => {
+  it('a freshly added terminal is NOT idle-on-mount → auto-spawns, and stays non-idle across reads', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    expect(isIdleOnMount(id)).toBe(false)
+    // Non-consuming: a later remount / in-session respawn must still spawn (not flip idle).
+    expect(isIdleOnMount(id)).toBe(false)
+  })
+
+  it('an id never seen this session is not idle-on-mount', () => {
+    expect(isIdleOnMount('never-added')).toBe(false)
+  })
+
+  it('loadObject flags every restored terminal idle-on-mount', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    // Reload a document containing that same id → it is now a DISK-restored board.
+    const doc = toObject([createBoard('terminal', { id, x: 0, y: 0 })], null)
+    get().loadObject(doc)
+    expect(isIdleOnMount(id)).toBe(true)
+  })
+
+  it('applyOpenResult flags every restored terminal idle-on-mount', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: toObject([createBoard('terminal', { id, x: 0, y: 0 })], null)
+    })
+    expect(isIdleOnMount(id)).toBe(true)
+  })
+
+  it('duplicateBoard flags the terminal clone idle-on-mount (no second agent spun up)', () => {
+    const src = get().addBoard('terminal', { x: 0, y: 0 })
+    const cloneId = get().duplicateBoard(src)!
+    expect(isIdleOnMount(cloneId)).toBe(true)
+  })
+
+  it('clearIdleOnMount drops the flag so an explicit Start / later respawn spawns', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().loadObject(toObject([createBoard('terminal', { id, x: 0, y: 0 })], null))
+    expect(isIdleOnMount(id)).toBe(true)
+    clearIdleOnMount(id)
+    expect(isIdleOnMount(id)).toBe(false)
   })
 })
 

@@ -6,11 +6,12 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
 import { prefersReducedMotion } from '../lib/motion'
 import { usePreviewStore } from '../store/previewStore'
+import { BoardFullViewContext } from './fullViewContext'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
 
@@ -272,6 +273,9 @@ export interface BoardFrameProps {
   dimmed?: boolean
   /** Render the zoomed-out LOD card instead of full chrome. */
   lod?: boolean
+  /** This board is the one shown in the full-view modal → the maximize control
+   *  flips to the EXIT affordance (restore glyph + "Exit full view (Esc)"). */
+  fullView?: boolean
   running?: boolean
   status?: BoardStatus | null
   /** Per-type action controls shown left of maximize/⋯ in the title bar. */
@@ -294,6 +298,7 @@ export function BoardFrame({
   hovered = false,
   dimmed = false,
   lod = false,
+  fullView = false,
   running = false,
   status,
   actions,
@@ -303,6 +308,11 @@ export function BoardFrame({
   onDelete,
   children
 }: BoardFrameProps): ReactElement {
+  // Effective full-view: the explicit prop wins; otherwise read the ambient flag
+  // BoardNode provides around this board's subtree (the per-type boards don't all
+  // forward a prop). This is what lights the exit affordance at runtime.
+  const ctxFullView = useContext(BoardFullViewContext)
+  const isFullView = fullView || ctxFullView
   if (lod) {
     return (
       <div
@@ -427,9 +437,8 @@ export function BoardFrame({
           borderBottom: '1px solid var(--border-subtle)'
         }}
       >
-        {/* The type glyph itself carries status: tinted to the status colour (green
-            running / red failed / neutral idle), so no separate persistent status dot
-            or uppercase type tag is needed — the glyph + title already say the type. */}
+        {/* The type glyph carries status: tinted to the status colour (green running /
+            red failed / neutral idle). */}
         <span
           className={status?.dot === 'var(--ok)' && running ? 'ca-pulse' : ''}
           style={{
@@ -441,10 +450,11 @@ export function BoardFrame({
         >
           <TypeGlyph type={type} running={running} />
         </span>
-        {/* Shrinkable middle (title + status label + per-type actions): collapses
-            BEFORE the universal maximize/⋯ controls so the ⋯ trigger never clips off
-            the title bar's right edge on a narrow board (bug 13). overflow:hidden keeps
-            an overlong per-type cluster from painting over the pinned controls. */}
+        {/* Shrinkable middle (type tag + title + status label + per-type actions):
+            collapses BEFORE the universal maximize/⋯ controls so the ⋯ trigger never
+            clips off the title bar's right edge on a narrow board (bug 13). overflow:hidden
+            keeps the tag + an overlong per-type cluster from pushing out / painting over
+            the pinned controls. */}
         <div
           style={{
             display: 'flex',
@@ -455,6 +465,21 @@ export function BoardFrame({
             overflow: 'hidden'
           }}
         >
+          {/* §6 mandates a 10px micro type tag (TERMINAL/BROWSER/PLANNING) left of the
+              title. Inside the shrinkable middle (the title collapses first) so a narrow
+              board clips the tag rather than overflowing the pinned controls (menu-chrome). */}
+          <span
+            style={{
+              fontSize: 'var(--fs-micro)',
+              letterSpacing: 'var(--tr-micro)',
+              fontWeight: 'var(--fw-micro)',
+              color: 'var(--text-3)',
+              fontFamily: 'var(--mono)',
+              flex: 'none'
+            }}
+          >
+            {TYPE_TAG[type]}
+          </span>
           <span
             style={{
               fontSize: 12,
@@ -492,7 +517,17 @@ export function BoardFrame({
         </div>
         {/* Universal controls, pinned at the far right — always visible & clickable. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
-          {onFull && <IconBtn name="maximize" title="Full view" size={14} onClick={onFull} />}
+          {/* In full view this same toggle is the EXIT affordance (USER DECISION
+              2026-06-01: no separate top band) — restore glyph + an Esc-hinting title.
+              onFull already toggles full view off. */}
+          {onFull && (
+            <IconBtn
+              name={isFullView ? 'minimize' : 'maximize'}
+              title={isFullView ? 'Exit full view (Esc)' : 'Full view'}
+              size={14}
+              onClick={onFull}
+            />
+          )}
           {(onFull || onDuplicate || onDelete) && (
             <BoardMenu onFull={onFull} onDuplicate={onDuplicate} onDelete={onDelete} />
           )}

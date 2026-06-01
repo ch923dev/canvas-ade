@@ -21,7 +21,7 @@ const { store, recents } = vi.hoisted(() => ({
 vi.mock('./projectStore', () => store)
 vi.mock('./recentProjects', () => recents)
 
-import { registerProjectHandlers, isForeignSender } from './projectIpc'
+import { registerProjectHandlers, isForeignSender, isUnsafeProjectDir } from './projectIpc'
 
 /** A minimal ipcMain stub that records handlers so a test can invoke them directly. */
 function makeIpcMain(): {
@@ -70,6 +70,30 @@ describe('isForeignSender (BUG-M6)', () => {
   it('blocks a real sender when the window is unresolved (getMainFrame → null)', () => {
     const e = { senderFrame: { id: 'real' } } as unknown as IpcMainInvokeEvent
     expect(isForeignSender(e, () => null)).toBe(true)
+  })
+})
+
+describe('isUnsafeProjectDir (M-6)', () => {
+  it('accepts a normal absolute path (Windows + POSIX)', () => {
+    expect(isUnsafeProjectDir('C:\\Users\\x\\proj')).toBe(false)
+    expect(isUnsafeProjectDir('/home/x/proj')).toBe(false)
+  })
+
+  it('rejects a relative path', () => {
+    expect(isUnsafeProjectDir('proj')).toBe(true)
+    expect(isUnsafeProjectDir('./proj')).toBe(true)
+  })
+
+  it('rejects an absolute path that still contains traversal', () => {
+    expect(isUnsafeProjectDir('C:\\Users\\x\\..\\..\\evil')).toBe(true)
+    expect(isUnsafeProjectDir('/home/x/../../etc')).toBe(true)
+  })
+
+  it('rejects empty / non-string input', () => {
+    expect(isUnsafeProjectDir('')).toBe(true)
+    expect(isUnsafeProjectDir(undefined as unknown as string)).toBe(true)
+    expect(isUnsafeProjectDir(null as unknown as string)).toBe(true)
+    expect(isUnsafeProjectDir(42 as unknown as string)).toBe(true)
   })
 })
 

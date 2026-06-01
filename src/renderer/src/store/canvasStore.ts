@@ -109,6 +109,35 @@ const newId = (): string => crypto.randomUUID()
  */
 let lastRecorded: Board[] | null = null
 
+/**
+ * Terminal board ids that must mount IDLE (no PTY auto-spawn): terminals RESTORED from
+ * disk (`loadObject`/`applyOpenResult`) and DUPLICATED clones (`duplicateBoard`). A
+ * terminal added FRESH this session (`addBoard`) is NOT here, so it auto-spawns. The set
+ * is NON-consuming on read — a restored terminal stays idle across LOD remounts; an id is
+ * removed only when the user explicitly Starts it (`clearIdleOnMount`), so a later
+ * in-session respawn (config change / restart) of an already-started terminal spawns
+ * normally (the bug the one-shot predecessor caused). CLAUDE.md LOCKED rule: "restored
+ * terminals are idle". Module-scoped (mirrors `lastRecorded`); never persisted.
+ */
+const idleOnMountIds = new Set<string>()
+
+/** Whether `id` must mount idle (restored/duplicated, not yet started). Non-consuming. */
+export function isIdleOnMount(id: string): boolean {
+  return idleOnMountIds.has(id)
+}
+
+/** Drop the idle flag — called when the user explicitly Starts a restored terminal, so a
+ *  subsequent in-session respawn / remount of that board spawns normally. */
+export function clearIdleOnMount(id: string): void {
+  idleOnMountIds.delete(id)
+}
+
+/** Mark every terminal in a freshly-loaded doc as idle-on-mount (restore path). */
+function markRestoredIdle(boards: Board[]): void {
+  idleOnMountIds.clear()
+  for (const b of boards) if (b.type === 'terminal') idleOnMountIds.add(b.id)
+}
+
 /** Gap (world px) kept between boards when auto-placing a new one. */
 const PLACE_GAP = 28
 /** How many expanding rings the free-slot search probes before giving up. */
@@ -186,6 +215,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const id = newId()
     const pos = freeSlot(get().boards, at, DEFAULT_BOARD_SIZE[type])
     const board = createBoard(type, { id, x: pos.x, y: pos.y })
+    // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
+    // on mount. Only restored/duplicated boards are flagged idle (M-1).
     set((s) => ({
       past: recordPast(s.past, s.boards),
       future: [],
@@ -230,6 +261,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (clone.type === 'planning') {
       clone.elements = clone.elements.map((e) => ({ ...structuredClone(e), id: newId() }))
     }
+    // A duplicated terminal starts IDLE — cloning must not silently spin up a second
+    // agent (M-1). The user starts it explicitly via the Start affordance.
+    if (clone.type === 'terminal') idleOnMountIds.add(cloneId)
     set((s) => ({
       past: recordPast(s.past, s.boards),
       future: [],
@@ -340,6 +374,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // Clear the dedup ref: it points at the pre-load boards array; a fresh project's
     // history starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
     lastRecorded = null
+    // Disk-restored terminals must start IDLE (no auto-spawn / no launchCommand on
+    // reopen) — flag every loaded terminal idle-on-mount (M-1).
+    markRestoredIdle(d.boards)
     set({ boards: d.boards, viewport: d.viewport, selectedId: null, past: [], future: [] })
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
@@ -351,6 +388,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const d = fromObject(r.doc)
     // Clear the dedup ref (see loadObject): the opened project's history starts empty.
     lastRecorded = null
+    // Restored terminals start idle — flag every loaded terminal idle-on-mount (M-1).
+    markRestoredIdle(d.boards)
     set({
       boards: d.boards,
       viewport: d.viewport,

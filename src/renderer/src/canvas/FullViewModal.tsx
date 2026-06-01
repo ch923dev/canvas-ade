@@ -1,10 +1,11 @@
 /**
  * Full-view modal: a fullscreen overlay over a 66%-black scrim with an accent-ringed
  * frame and a portal host that the matching board relocates its live content into. The
- * relocated board keeps its own title bar (whose maximize ⤢ toggles full view off) — that
- * toggle is the sole in-frame exit affordance. Does NOT move the camera. Closes on the
- * board's maximize toggle, Esc, or a scrim click. Renders the host immediately and
- * publishes it on mount so the BoardNode can portal into it the same frame.
+ * relocated board keeps its own title bar, whose full-view toggle icon flips to "Exit
+ * full view" — that toggle is the in-frame exit affordance (USER DECISION 2026-06-01:
+ * no separate top band). Does NOT move the camera. Closes on the board's title-bar
+ * toggle, Esc, or a scrim click. Renders the host immediately and publishes it on mount
+ * so the BoardNode can portal into it the same frame.
  *
  * Motion (Slice 5 / §9): mounts in the closed state, then flips `open` on the next frame
  * so the CSS transition runs scrim opacity 0→1 + frame scale(.98→1). On `closing` it
@@ -25,7 +26,8 @@ export function FullViewModal({
 }: {
   /** Parent requests the exit animation; the modal plays it then calls onExited. */
   closing: boolean
-  /** A user-initiated close (band ✕ or scrim click) — parent starts the exit. */
+  /** A user-initiated close (Esc or scrim click; the title-bar toggle also routes
+   *  here) — parent starts the exit. */
   onClose: () => void
   /** Enter tween settled — parent drops `entering` so the native view can attach. */
   onEntered: () => void

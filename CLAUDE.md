@@ -148,8 +148,10 @@ cubic-bezier ease + reduced-motion gate, `lib/motion.ts`) · 2 token/chrome pari
 §6 ring-only select) · 3 Geist fonts (variable woff2 bundled) · 4 states (welcome tokens, terminal
 braille spinner) · 6 CSP (prod `script-src 'self'`, no unsafe-inline) · 7 code-split (React.lazy
 boards, entry chunk 1,286→672 kB). **311 unit** green, lint + typecheck clean; full e2e gated each
-slice. **Remaining: Slice 5 — full-view enter/exit motion + §6.1 top band** (deferred — most
-delicate; native `WebContentsView` can't be CSS-animated). **Handoff:
+slice. **Remaining: Slice 5 — full-view enter/exit MOTION** (deferred — most delicate; native
+`WebContentsView` can't be CSS-animated). The §6.1 **top band is DESCOPED** (decided 2026-06-01):
+no separate band — full-view enter/exit folds into the title-bar full-view toggle icon (which
+becomes "Exit full view"), alongside Esc / scrim click. **Handoff:
 `docs/handoffs/2026-05-31-phase-4-progress-handoff.md`** (read first); plan:
 `docs/superpowers/plans/2026-05-31-phase-4-design-pass.md`. Known e2e env-flake: the
 `browser`/`browser-gesture`/`focus-detach` live-`WebContentsView` trio (memory

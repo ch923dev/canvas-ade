@@ -29,6 +29,7 @@ export type IconName =
   | 'diamond'
   | 'grid'
   | 'maximize'
+  | 'minimize'
   | 'x'
   | 'copy'
   | 'check'
@@ -62,6 +63,9 @@ const PATHS: Record<IconName, string> = {
   diamond: 'M12 3l9 9-9 9-9-9z',
   grid: 'M4 9h16M4 15h16M9 4v16M15 4v16',
   maximize: 'M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7',
+  // Restore/exit-full-view: the maximize arrows reversed — brackets at the inner
+  // corners with the strokes pointing back toward each board corner.
+  minimize: 'M20 10h-6V4M14 10l6-6M4 14h6v6M10 14l-6 6',
   x: 'M6 6l12 12M18 6L6 18',
   copy: 'M9 9.5A1.5 1.5 0 0 1 10.5 8H18a1.5 1.5 0 0 1 1.5 1.5V18A1.5 1.5 0 0 1 18 19.5h-7.5A1.5 1.5 0 0 1 9 18zM6 15.5A1.5 1.5 0 0 1 4.5 14V5.5A1.5 1.5 0 0 1 6 4h7.5A1.5 1.5 0 0 1 15 5.5',
   check: 'M5 12.5l4.5 4.5L19 7',

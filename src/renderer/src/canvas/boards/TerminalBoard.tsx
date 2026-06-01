@@ -24,7 +24,7 @@ import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, brailleFrame, isRunning, statusFor, type TerminalState } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
-import { useCanvasStore } from '../../store/canvasStore'
+import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
 
@@ -108,6 +108,10 @@ export function TerminalBoard({
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
   // let the spawn effect's ResizeObserver consume this flag on the first good fit.
   const pendingRespawnRef = useRef(false)
+  // M-1: the idle-state "Start" button calls back into the CURRENT mount's `launch()`
+  // (the spawn closure is local per mount). The spawn effect points this ref at a
+  // launcher that flips `spawnAllowed` and fires; null while no live term exists.
+  const startLaunchRef = useRef<(() => void) | null>(null)
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
@@ -366,12 +370,26 @@ export function TerminalBoard({
         })
     }
     // Decide adopt-vs-spawn once. Adopted → the reposted port + replayed buffer
-    // arrive over onWinMsg (no spawn). Not adopted → allow the normal spawn flow
-    // (immediate try here + the ResizeObserver's deferred try for the #34 LOD case).
+    // arrive over onWinMsg (no spawn, in-session undo reattach). Not adopted →
+    // spawn UNLESS this board must mount idle (`isIdleOnMount`): a disk-restored or
+    // duplicated terminal starts IDLE with a Start affordance so a reopened project
+    // never silently spawns shells / fires launchCommand (M-1, the CLAUDE.md LOCKED
+    // "restored terminals are idle" rule). The flag is NON-consuming (a restored board
+    // stays idle across LOD remounts) and cleared only by an explicit Start, so an
+    // in-session respawn (config change / restart) of an already-started terminal
+    // spawns normally. The Start button wires back through `startLaunchRef` → launch().
+    startLaunchRef.current = () => {
+      clearIdleOnMount(board.id)
+      spawnAllowed = true
+      setState('spawning')
+      launch()
+    }
     void window.api.adoptTerminal(board.id).then((res) => {
       if (disposed) return
       if (res.adopted) {
         setState('running')
+      } else if (isIdleOnMount(board.id)) {
+        setState('idle')
       } else {
         spawnAllowed = true
         launch()
@@ -420,6 +438,7 @@ export function TerminalBoard({
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      startLaunchRef.current = null
     }
   }, [
     board.id,
@@ -597,6 +616,15 @@ export function TerminalBoard({
       >
         <div style={lod ? shellHidden : shell}>
           {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+          {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
+              explicit Start that spawns the shell + fires launchCommand on click. */}
+          {state === 'idle' && (
+            <div className="nodrag" style={idleOverlay} onMouseDown={(e) => e.stopPropagation()}>
+              <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
+                Start {identity}
+              </button>
+            </div>
+          )}
           {previewNote && (
             <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
               {previewNote}
@@ -744,4 +772,27 @@ const screen: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
   padding: '12px 12px 4px'
+}
+
+/** Idle (restored/duplicated, not yet started) overlay: centered Start affordance
+ *  over the empty --inset well so the terminal never silently auto-spawns (M-1). */
+const idleOverlay: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  zIndex: 2,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'var(--inset)'
+}
+
+const startBtn: React.CSSProperties = {
+  font: 'inherit',
+  fontSize: 12.5,
+  color: 'var(--text)',
+  background: 'var(--surface)',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--r-ctl)',
+  padding: '6px 14px',
+  cursor: 'pointer'
 }
