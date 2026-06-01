@@ -1,4 +1,4 @@
-# Canvas ADE — Feature Proposals (research-backed)
+# Expanse — Feature Proposals (research-backed)
 
 > **Status:** proposals only — nothing here is committed to the roadmap or built. Source: web
 > research (6-agent workflow, 2026-05-30) cross-referenced against the codebase + `docs/roadmap.md`.
@@ -32,7 +32,7 @@ The competitive field converges on **four pillars** for AI-assisted dev tooling:
 3. **Parallel / best-of-N execution** — run several attempts, keep the best.
 4. **On-surface git integration** — commit/merge/PR without leaving the tool.
 
-Canvas ADE's differentiator: it can do all four **spatially** — status as a glanceable map, diffs
+Expanse's differentiator: it can do all four **spatially** — status as a glanceable map, diffs
 scoped to the board that owns the worktree, fan-out laid out side-by-side, and a persistent
 ownership graph (connectors) that no list/kanban tool can express. The **signature bets** lean into
 that spatial + multi-agent edge; the **quick wins** are table-stakes parity that the locked stack
@@ -313,7 +313,7 @@ discard the rest.
 
 ### Why valuable
 Best-of-N is becoming a standard high-value workflow (Cursor `/best-of-n`, Warp
-compare-diffs-across-worktrees). Canvas ADE's spatial layout is uniquely suited: placing N attempts
+compare-diffs-across-worktrees). Expanse's spatial layout is uniquely suited: placing N attempts
 side-by-side for visual comparison is exactly what a canvas does better than tabs or a kanban column.
 
 ### Implementation sketch
@@ -585,7 +585,7 @@ pasting into a Planning note or an agent prompt.
 
 ### Why valuable
 Grabbing a screenshot of the running UI to drop into a bug note, a checklist item, or straight into
-the agent's prompt ("fix this layout") is an extremely common loop. Also feeds Canvas ADE's own
+the agent's prompt ("fix this layout") is an extremely common loop. Also feeds Expanse's own
 Planning boards, tightening the preview→plan→agent cycle inside one app.
 
 ### Implementation sketch
@@ -699,7 +699,7 @@ selected terminals at once, with a tinted-border indicator on broadcasting board
 the same prompt to several agents and compare" workflow.
 
 ### Why valuable
-Canvas ADE's defining use case is running several agents side-by-side, each in its own worktree.
+Expanse's defining use case is running several agents side-by-side, each in its own worktree.
 Broadcasting one prompt to N agents and visually comparing their diverging outputs across boards is
 the parallel-agent pattern devs are adopting (iTerm2 broadcast-input, NTM broadcast prompts) — and
 the spatial canvas is the ideal surface for it.

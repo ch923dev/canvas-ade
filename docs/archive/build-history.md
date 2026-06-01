@@ -1,6 +1,6 @@
 # Build history — phases, slices & superseded plans
 
-Point-in-time record of how Canvas ADE was built, phase by phase. **Not live truth** — the
+Point-in-time record of how Expanse was built, phase by phase. **Not live truth** — the
 durable contract is `CLAUDE.md`; the build order + current status is `docs/roadmap.md`.
 
 Per-slice **specs, plans, and phase handoffs were collapsed into this summary on 2026-06-01**

@@ -1,4 +1,4 @@
-# Canvas ADE — docs
+# Expanse — docs
 
 Map of the documentation. **Current-only**: stale per-slice plans, old phase handoffs, and
 fixed-bug finding cards were collapsed into summary indexes on 2026-06-01 (git history retains

@@ -61,7 +61,7 @@ driver (Playwright)**, not jsdom.
   microsoft/playwright#38370).
 - **Don't hardcode coordinates** (a viewport-relative-CSS-pixel claim was refuted, 1-2) —
   derive targets from rendered element boxes + the live camera transform; verify.
-- **Spaced path** (`Z:\Canvas ADE`) does **not** break Playwright; the known spaced-path
+- **Spaced path** (`Z:\Expanse`) does **not** break Playwright; the known spaced-path
   hazard is node-pty's winpty build, already mitigated by the pinned beta. Quote/absolute
   paths in launch args.
 - To enumerate live preview views from `evaluate()` **without weakening** `sandbox:true`/

@@ -1,4 +1,4 @@
-# CLAUDE.md — Canvas ADE
+# CLAUDE.md — Expanse  <!-- formerly "Canvas ADE" — renamed 2026-06-02 (see docs/superpowers/specs/2026-06-02-rebrand-expanse-design.md) -->
 
 Guidance for any agent/session working in this repo. Keep it current as decisions land.
 
@@ -30,7 +30,7 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 - **Canvas engine: `@xyflow/react` (React Flow) v12** — NOT tldraw (see ADR 0001). Each board = a custom React Flow node.
 - **Whiteboard: custom** — vendored `perfect-freehand` (pen) + React Flow edges/bezier for arrows. NOT Excalidraw (see ADR 0001).
 - **Terminal: `@xterm/xterm` ≥5.5** (+ fit + webgl addons) ⇄ **`node-pty`** in MAIN.
-- **`node-pty` 1.2.0-beta.13** (pinned) — winpty-free / ConPTY-only. REQUIRED: the repo path `Z:\Canvas ADE` has a space, and node-pty ≤1.1 bundles winpty whose build (`GetCommitHash.bat`) hard-fails on spaced paths. The beta drops winpty and builds clean. Do not downgrade without relocating the repo to a space-free path.
+- **`node-pty` 1.2.0-beta.13** (pinned) — winpty-free / ConPTY-only. REQUIRED: the repo path `Z:\Expanse` has a space, and node-pty ≤1.1 bundles winpty whose build (`GetCommitHash.bat`) hard-fails on spaced paths. The beta drops winpty and builds clean. Do not downgrade without relocating the repo to a space-free path.
 - **Preview: Electron `WebContentsView`** (NOT iframe/webview). Multiple views, synced to the camera by a PreviewManager.
 - **State: Zustand** (app/ephemeral). **Persistence: JSON per project** (see below).
 - **Git: `simple-git`** in MAIN for per-agent worktrees. **`write-file-atomic`** for saves.
@@ -133,7 +133,7 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 
 ### Parallel sessions (worktree coordination)
 - **One session per worktree; never two sessions in the same dir.** Main = integration/merge only.
-- Before editing, read the shared board `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md` (the
+- Before editing, read the shared board `Z:\Expanse\.claude\coordination\ACTIVE-WORK.md` (the
   SessionStart hook injects it automatically). **Stay in YOUR declared zone**; cross-zone edits → note
   them on the board first. Your edits are auto-logged so the next session sees what you touched.
 - New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the

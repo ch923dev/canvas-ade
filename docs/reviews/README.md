@@ -1,6 +1,6 @@
 # Reviews & bug hunts — consolidated index
 
-Every code review / bug-hunt run on Canvas ADE, newest first. Each round's **full
+Every code review / bug-hunt run on Expanse, newest first. Each round's **full
 finding cards live in git history** (this repo keeps current-only docs; the individual
 cards were collapsed here on 2026-06-01 during the docs centralization). To recover a
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that

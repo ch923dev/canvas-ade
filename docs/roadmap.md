@@ -1,4 +1,4 @@
-# Canvas ADE — Roadmap
+# Expanse — Roadmap
 
 Guides work after Phase 0. Each phase/step ends in a **runnable, committed checkpoint**. The
 `design-reference/` bundle is the authoritative UX contract; this roadmap is the build order.

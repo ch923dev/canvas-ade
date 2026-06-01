@@ -1,8 +1,8 @@
-# Rebrand Canvas ADE → Expanse — Implementation Plan
+# Rebrand Expanse → Expanse — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rename the product from "Canvas ADE" to "Expanse" across app strings, build/packaging/config identifiers, the internal package name, and all documentation — leaving the repo folder, worktree dirs, and git remote unchanged.
+**Goal:** Rename the product from "Expanse" to "Expanse" across app strings, build/packaging/config identifiers, the internal package name, and all documentation — leaving the repo folder, worktree dirs, and git remote unchanged.
 
 **Architecture:** Pure rename/refactor — no behavior change. Each task swaps a coherent group of strings, then verifies with a red/green **grep gate** (old string present → absent) plus typecheck/test where code is touched. Frequent commits. Two string edits (`src/main/index.ts`, `AppChrome.tsx`) are owned by active worktrees and are isolated into their own task; expect trivial merge conflicts when this branch merges **last**.
 
@@ -43,7 +43,7 @@ Run all commands from the worktree root `Z:\canvas-ade-rebrand-expanse`.
 
 - [ ] **Step 1: Grep gate (red) — confirm old IDs present**
 
-Run: `git grep -n "com.canvasade.app\|productName: Canvas ADE\|\"name\": \"canvas-ade\""`
+Run: `git grep -n "com.canvasade.app\|productName: Expanse\|\"name\": \"canvas-ade\""`
 Expected: 3 matches (electron-builder.yml ×2, package.json ×1).
 
 - [ ] **Step 2: Edit `electron-builder.yml`**
@@ -52,7 +52,7 @@ Change the first two lines from:
 
 ```yaml
 appId: com.canvasade.app
-productName: Canvas ADE
+productName: Expanse
 ```
 
 to:
@@ -80,7 +80,7 @@ to:
 
 - [ ] **Step 4: Grep gate (green)**
 
-Run: `git grep -n "canvasade\|productName: Canvas ADE\|\"name\": \"canvas-ade\""`
+Run: `git grep -n "canvasade\|productName: Expanse\|\"name\": \"canvas-ade\""`
 Expected: no matches.
 
 - [ ] **Step 5: Sanity — install metadata still parses**
@@ -174,12 +174,12 @@ git commit -m "chore(rebrand): CSP plugin + CI artifact names -> Expanse"
 
 - [ ] **Step 1: Grep gate (red)**
 
-Run: `git grep -n "Canvas ADE" -- src/renderer`
+Run: `git grep -n "Expanse" -- src/renderer`
 Expected: matches at `index.html:18`, `WelcomeScreen.tsx:43`, `index.css:21`.
 
 - [ ] **Step 2: Edit `src/renderer/index.html:18`**
 
-Change `<title>Canvas ADE</title>` to:
+Change `<title>Expanse</title>` to:
 
 ```html
     <title>Expanse</title>
@@ -190,7 +190,7 @@ Change `<title>Canvas ADE</title>` to:
 Change the heading and add a tagline line directly beneath it. From:
 
 ```tsx
-      <h1>Canvas ADE</h1>
+      <h1>Expanse</h1>
 ```
 
 to:
@@ -202,7 +202,7 @@ to:
 
 - [ ] **Step 4: Update the token comment in `src/renderer/src/index.css:21`**
 
-Change the comment opening from `Canvas ADE design tokens` to:
+Change the comment opening from `Expanse design tokens` to:
 
 ```css
 /* Expanse design tokens — faithful mirror of DESIGN.md §2-4 (authoritative
@@ -224,7 +224,7 @@ Insert:
 
 - [ ] **Step 6: Grep gate (green) + typecheck + tests**
 
-Run: `git grep -n "Canvas ADE" -- src/renderer`
+Run: `git grep -n "Expanse" -- src/renderer`
 Expected: no matches.
 
 Run: `pnpm typecheck && pnpm test`
@@ -249,7 +249,7 @@ git commit -m "feat(rebrand): welcome screen + window title read Expanse + tagli
 
 - [ ] **Step 1: Grep gate (red)**
 
-Run: `git grep -n "title: 'Canvas ADE'\|'canvas-ade'"`
+Run: `git grep -n "title: 'Expanse'\|'canvas-ade'"`
 Expected: `src/main/index.ts:42` and `src/renderer/src/canvas/AppChrome.tsx:106`.
 
 - [ ] **Step 2: Edit `src/main/index.ts:42`**
@@ -257,7 +257,7 @@ Expected: `src/main/index.ts:42` and `src/renderer/src/canvas/AppChrome.tsx:106`
 Change:
 
 ```ts
-    title: 'Canvas ADE',
+    title: 'Expanse',
 ```
 
 to:
@@ -282,7 +282,7 @@ to:
 
 - [ ] **Step 4: Grep gate (green) + typecheck**
 
-Run: `git grep -n "Canvas ADE\|canvas-ade" -- src/`
+Run: `git grep -n "Expanse\|canvas-ade" -- src/`
 Expected: no matches anywhere under `src/`.
 
 Run: `pnpm typecheck`
@@ -304,17 +304,17 @@ git commit -m "feat(rebrand): window title + chrome fallback -> Expanse (cross-z
 
 - [ ] **Step 1: List the doc targets (red)**
 
-Run: `git grep -l "Canvas ADE" -- '*.md'`
+Run: `git grep -l "Expanse" -- '*.md'`
 Expected: the docs set above (plus `design-reference/**`, handled in Task 6 — skip those here).
 
 - [ ] **Step 2: Bulk replace in docs (exclude design-reference)**
 
-For each markdown file under `CLAUDE.md`, `README.md`, and `docs/` (NOT `design-reference/`), replace every occurrence of `Canvas ADE` with `Expanse`. PowerShell one-liner:
+For each markdown file under `CLAUDE.md`, `README.md`, and `docs/` (NOT `design-reference/`), replace every occurrence of `Expanse` with `Expanse`. PowerShell one-liner:
 
 ```powershell
 Get-ChildItem -Path CLAUDE.md,README.md,docs -Recurse -Filter *.md |
   ForEach-Object {
-    (Get-Content $_.FullName -Raw).Replace('Canvas ADE','Expanse') |
+    (Get-Content $_.FullName -Raw).Replace('Expanse','Expanse') |
       Set-Content $_.FullName -NoNewline
   }
 ```
@@ -332,21 +332,21 @@ In `CLAUDE.md`, change the top heading line from:
 to:
 
 ```markdown
-# Expanse  <!-- formerly "Canvas ADE" — renamed 2026-06-02 (see docs/superpowers/specs/2026-06-02-rebrand-expanse-design.md) -->
+# Expanse  <!-- formerly "Expanse" — renamed 2026-06-02 (see docs/superpowers/specs/2026-06-02-rebrand-expanse-design.md) -->
 ```
 
-(If the original heading was `# CLAUDE.md — Canvas ADE`, it will now read `# CLAUDE.md — Expanse`; append the same breadcrumb comment.)
+(If the original heading was `# CLAUDE.md — Expanse`, it will now read `# CLAUDE.md — Expanse`; append the same breadcrumb comment.)
 
 - [ ] **Step 4: Grep gate (green) for docs**
 
-Run: `git grep -n "Canvas ADE" -- '*.md' ':!design-reference'`
+Run: `git grep -n "Expanse" -- '*.md' ':!design-reference'`
 Expected: exactly **one** match — the breadcrumb comment in `CLAUDE.md`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add CLAUDE.md README.md docs
-git commit -m "docs(rebrand): Canvas ADE -> Expanse across docs (+1 breadcrumb)"
+git commit -m "docs(rebrand): Expanse -> Expanse across docs (+1 breadcrumb)"
 ```
 
 ---
@@ -355,14 +355,14 @@ git commit -m "docs(rebrand): Canvas ADE -> Expanse across docs (+1 breadcrumb)"
 
 **Files:**
 - Modify: `design-reference/**` (all files containing the old name)
-- Rename: `design-reference/project/Canvas ADE.html` → `design-reference/project/Expanse.html`
+- Rename: `design-reference/project/Expanse.html` → `design-reference/project/Expanse.html`
 
 > Design *content* (layout, tokens, visuals) is unchanged — only the product-name string and the one filename.
 
 - [ ] **Step 1: List targets (red)**
 
-Run: `git grep -l "Canvas ADE\|canvas-ade" -- design-reference`
-Expected: `README.md`, `chats/chat1.md`, `project/Canvas ADE.html`, `project/DESIGN.md`, `project/Frames Overview.html`, `project/icons.jsx`, `project/app.jsx`.
+Run: `git grep -l "Expanse\|canvas-ade" -- design-reference`
+Expected: `README.md`, `chats/chat1.md`, `project/Expanse.html`, `project/DESIGN.md`, `project/Frames Overview.html`, `project/icons.jsx`, `project/app.jsx`.
 
 - [ ] **Step 2: Bulk replace strings in design-reference**
 
@@ -371,7 +371,7 @@ Get-ChildItem -Path design-reference -Recurse -File |
   Where-Object { $_.Extension -in '.md','.html','.jsx' } |
   ForEach-Object {
     $c = Get-Content $_.FullName -Raw
-    $c = $c.Replace('Canvas ADE','Expanse').Replace('canvas-ade','expanse')
+    $c = $c.Replace('Expanse','Expanse').Replace('canvas-ade','expanse')
     Set-Content $_.FullName $c -NoNewline
   }
 ```
@@ -379,24 +379,24 @@ Get-ChildItem -Path design-reference -Recurse -File |
 - [ ] **Step 3: Rename the prototype HTML file (git-tracked move)**
 
 ```bash
-git mv "design-reference/project/Canvas ADE.html" "design-reference/project/Expanse.html"
+git mv "design-reference/project/Expanse.html" "design-reference/project/Expanse.html"
 ```
 
 - [ ] **Step 4: Fix any internal references to the renamed file**
 
-Run: `git grep -n "Canvas ADE.html"`
-For each hit, replace `Canvas ADE.html` with `Expanse.html`. (Likely in `design-reference/README.md` and/or `DESIGN.md`.)
+Run: `git grep -n "Expanse.html"`
+For each hit, replace `Expanse.html` with `Expanse.html`. (Likely in `design-reference/README.md` and/or `DESIGN.md`.)
 
 - [ ] **Step 5: Grep gate (green)**
 
-Run: `git grep -n "Canvas ADE\|canvas-ade" -- design-reference`
+Run: `git grep -n "Expanse\|canvas-ade" -- design-reference`
 Expected: no matches.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add design-reference
-git commit -m "docs(rebrand): rename design-reference bundle Canvas ADE -> Expanse"
+git commit -m "docs(rebrand): rename design-reference bundle Expanse -> Expanse"
 ```
 
 ---
@@ -405,11 +405,11 @@ git commit -m "docs(rebrand): rename design-reference bundle Canvas ADE -> Expan
 
 **Files:**
 - Modify: memory `C:\Users\De Asis PC\.claude\projects\Z--Canvas-ADE\memory\rebrand-expanse.md`
-- Modify: `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md` (shared board — update this worktree's row)
+- Modify: `Z:\Expanse\.claude\coordination\ACTIVE-WORK.md` (shared board — update this worktree's row)
 
 - [ ] **Step 1: Whole-repo grep gate (green)**
 
-Run: `git grep -n "Canvas ADE\|canvas-ade\|canvasade"`
+Run: `git grep -n "Expanse\|canvas-ade\|canvasade"`
 Expected: exactly **one** match — the `CLAUDE.md` breadcrumb. Nothing else.
 
 - [ ] **Step 2: Full local gate**
@@ -433,7 +433,7 @@ Edit the memory body so "scope so far" reads: code + app strings + build IDs + p
 
 - [ ] **Step 6: Update the coordination board row**
 
-In `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md`, set this worktree's row Status to `done` and Notes to "rebrand complete; awaiting merge-last after in-flight worktrees; 2 cross-zone 1-liners (index.ts, AppChrome.tsx) to resolve at merge."
+In `Z:\Expanse\.claude\coordination\ACTIVE-WORK.md`, set this worktree's row Status to `done` and Notes to "rebrand complete; awaiting merge-last after in-flight worktrees; 2 cross-zone 1-liners (index.ts, AppChrome.tsx) to resolve at merge."
 
 - [ ] **Step 7: Commit**
 
@@ -446,7 +446,7 @@ git commit -m "chore(rebrand): final verification + bookkeeping"
 
 ## Merge (separate step, after in-flight worktrees land)
 
-> Not a task in this plan's execution — run from `Z:\Canvas ADE` (main, integration-only) once `canvas-ade-wiring`, `r3-backlog`, `whiteboard-w1`, `fullview-reset`, and the MCP branches have merged.
+> Not a task in this plan's execution — run from `Z:\Expanse` (main, integration-only) once `canvas-ade-wiring`, `r3-backlog`, `whiteboard-w1`, `fullview-reset`, and the MCP branches have merged.
 
 1. `git checkout main && git pull`
 2. `git merge chore/rebrand-expanse`
