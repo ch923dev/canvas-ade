@@ -1,4 +1,4 @@
-# Rebrand: Expanse → Expanse — Design Spec
+# Rebrand: Canvas ADE → Expanse — Design Spec
 
 **Date:** 2026-06-02
 **Branch:** `chore/rebrand-expanse` (merges into `main` **last**, after all in-flight worktrees)
@@ -8,7 +8,7 @@
 
 ## 1. Goal
 
-Rename the product from **"Expanse"** to **"Expanse"** across the app, build/packaging
+Rename the product from **"Canvas ADE"** to **"Expanse"** across the app, build/packaging
 identifiers, internal package name, and all documentation. Marketing teaser assets already use
 Expanse (`marketing/teaser/`); this spec covers the application + repo metadata + docs so the brand
 is consistent everywhere a user, installer, or contributor sees it.
@@ -34,16 +34,16 @@ memory `rebrand-expanse`.
 - **Build/packaging IDs** — `productName`, `appId`, installer artifact name (auto-follows
   `productName`), `package.json` `name`, and every `canvas-ade` identifier in build/CI/config that is
   not a filesystem path or git remote.
-- **All documentation** — full text rename Expanse → Expanse across `CLAUDE.md`, `README`,
+- **All documentation** — full text rename Canvas ADE → Expanse across `CLAUDE.md`, `README`,
   `docs/**` (including `docs/archive/` history and `docs/research/`), and the `design-reference/`
-  bundle (including renaming the file `design-reference/project/Expanse.html` → `Expanse.html` and
+  bundle (including renaming the file `design-reference/project/Canvas ADE.html` → `Expanse.html` and
   its internal references). Design *content* (layout, tokens, prototype visuals) is unchanged — only
   the product-name string is swapped.
-- **One breadcrumb retained:** a single "(formerly Expanse)" note in `CLAUDE.md` for git
+- **One breadcrumb retained:** a single "(formerly Canvas ADE)" note in `CLAUDE.md` for git
   archaeology / newcomer context. This is the only place the old name survives intentionally.
 
 ### Out of scope (this pass — deliberate)
-- **Repo folder** `Z:\Expanse` — stays. Renaming to a space-free path is *safer* for node-pty long
+- **Repo folder** `Z:\Canvas ADE` — stays. Renaming to a space-free path is *safer* for node-pty long
   term but is a big-bang move that breaks worktree `node_modules` junctions and absolute paths in the
   coordination board. Separate chore, separate session, quiet tree.
 - **Worktree directories** `Z:\canvas-ade-*` and the **git remote** — filesystem/remote plumbing, no
@@ -55,7 +55,7 @@ memory `rebrand-expanse`.
 ### Tier 1 — user-facing strings
 | File | Change | Note |
 |---|---|---|
-| `src/renderer/index.html` | `<title>Expanse` → `Expanse` | safe zone |
+| `src/renderer/index.html` | `<title>Canvas ADE` → `Expanse` | safe zone |
 | `src/renderer/src/canvas/WelcomeScreen.tsx` | `<h1>` → `Expanse`; add tagline subtitle | safe zone |
 | `src/main/index.ts` (~L42) | window `title` → `Expanse` | ⚠ **cross-zone**: owned by `canvas-ade-wiring`. 1-line change, resolve at merge. |
 
@@ -67,16 +67,16 @@ memory `rebrand-expanse`.
 | `electron.vite.config.ts` | swap `canvas-ade` refs (out dir / build ids) if present | confirm no path breakage |
 | `.github/workflows/build.yml` | swap `canvas-ade` refs (artifact/job names) | CI only |
 | `src/renderer/src/canvas/AppChrome.tsx` | swap `canvas-ade` ref (class/data hook) | ⚠ **cross-zone**: owned by `r3-backlog`. 1-line, resolve at merge. |
-| `src/renderer/src/index.css` (~L21) | comment header "Expanse design tokens" | cosmetic |
+| `src/renderer/src/index.css` (~L21) | comment header "Canvas ADE design tokens" | cosmetic |
 
 ### Tier 3 — documentation (full rename)
 | Target | Change |
 |---|---|
-| `CLAUDE.md` | title + prose → Expanse; keep ONE "(formerly Expanse)" breadcrumb |
+| `CLAUDE.md` | title + prose → Expanse; keep ONE "(formerly Canvas ADE)" breadcrumb |
 | `README.md`, `docs/README.md` | product name → Expanse |
 | `docs/roadmap.md`, `docs/reviews/README.md`, `docs/feature-proposals.md` | product name → Expanse |
 | `docs/archive/build-history.md`, `docs/research/*` | product name → Expanse (history rewrite, per decision) |
-| `design-reference/**` | product-name strings → Expanse; rename `project/Expanse.html` → `Expanse.html` + fix internal refs. Design content untouched. |
+| `design-reference/**` | product-name strings → Expanse; rename `project/Canvas ADE.html` → `Expanse.html` + fix internal refs. Design content untouched. |
 
 ## 5. Verification (definition of done)
 
@@ -84,7 +84,7 @@ memory `rebrand-expanse`.
 2. `pnpm test` — green (expected 482+; no functional code touched).
 3. `pnpm build` — succeeds.
 4. `pnpm pack:dir` — spot-check the produced installer/dir name is `Expanse-*` (not a full signed build).
-5. Grep gate: **zero** "Expanse" / "canvas-ade" in shipping surfaces (src/**, electron-builder.yml,
+5. Grep gate: **zero** "Canvas ADE" / "canvas-ade" in shipping surfaces (src/**, electron-builder.yml,
    package.json, index.html). Only the single CLAUDE.md breadcrumb may remain.
 6. e2e harness (`CANVAS_SMOKE=e2e`) — same pass rate as baseline (known browser-trio env flake aside).
 7. Manual: launch app → window title, taskbar, and welcome screen all read **Expanse**.
