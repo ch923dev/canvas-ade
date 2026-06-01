@@ -20,7 +20,8 @@ Carried from the research + locked decisions. A slice that violates one is wrong
 - **Calm Linear/Raycast aesthetic** — one accent, no Tweaks panel, no decorative scribble.
 - **One undo checkpoint per gesture** + the `lastRecorded` phantom-undo discipline (sync the
   module-level `lastRecorded` or a no-op gesture pushes a phantom step). See memory
-  `undo-lastrecorded-phantom`; this is the exact class of the open Round-3 finding **WB-1**.
+  `undo-lastrecorded-phantom`; this is the exact class of Round-3 finding **WB-1** (fixed
+  2026-06-02 on `fix/round3-backlog` — arrow/pen now defer the checkpoint to commit, like move).
 - **SVG-under-DOM two-layer split** is fixed (arrows/strokes render *under* the DOM cards so cards
   stay clickable) — this caps cross-kind z-ordering; do not assume it can change without a rewrite.
 - **Sandbox/isolation locked** — pasted/loaded content stays in renderer DOM, NEVER near the PTY.
