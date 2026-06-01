@@ -98,6 +98,17 @@ export interface CanvasState {
 
 const newId = (): string => crypto.randomUUID()
 
+/**
+ * The boards snapshot that the undo stack already reflects — either the value last
+ * pushed onto `past`, or the present `boards` after an undo/redo. `beginChange` skips
+ * recording when the current `boards` is this same reference, so a no-op gesture never
+ * pushes a duplicate snapshot. This is what the in-store `past[last] === boards` guard
+ * MISSES after an undo: undo pops the tail and sets `boards` to it, so the new past tail
+ * is the entry *before* it (≠ boards) even though boards is unchanged — without this ref
+ * a post-undo no-op beginChange would push a phantom snapshot (#BUG M3).
+ */
+let lastRecorded: Board[] | null = null
+
 /** Gap (world px) kept between boards when auto-placing a new one. */
 const PLACE_GAP = 28
 /** How many expanding rings the free-slot search probes before giving up. */
@@ -277,34 +288,50 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return changed ? { boards } : s
     }),
 
-  setViewport: (vp) => set({ viewport: vp }),
+  setViewport: (vp) =>
+    set((s) => {
+      // Camera frames fire continuously; skip when the transform is unchanged so a
+      // no-op frame doesn't re-set state and notify every store subscriber (#BUG L2).
+      const cur = s.viewport
+      if (cur && cur.x === vp.x && cur.y === vp.y && cur.zoom === vp.zoom) return s
+      return { viewport: vp }
+    }),
 
   selectBoard: (id) => set({ selectedId: id }),
   setTool: (tool) => set({ tool }),
   beginChange: () =>
     set((s) => {
-      // No change since the last checkpoint (boards array ref unchanged) → skip,
-      // so a no-op gesture doesn't push a duplicate snapshot.
-      if (s.past[s.past.length - 1] === s.boards) return s
+      // No change since the last checkpoint → skip, so a no-op gesture doesn't push a
+      // duplicate snapshot. Two cases of "unchanged": the boards array ref matches the
+      // past tail (normal post-edit), OR it matches `lastRecorded` — the present left by
+      // an undo/redo. The past-tail check alone MISSES the post-undo case (#BUG M3):
+      // undo pops the tail, so `boards` (the popped value) ≠ the new past tail even
+      // though boards is unchanged → a no-op beginChange would push a phantom snapshot.
+      if (s.past[s.past.length - 1] === s.boards || lastRecorded === s.boards) return s
       // Take the pre-edit snapshot but do NOT clear the redo branch here (Bug #7).
       // beginChange fires at GESTURE START, before we know whether the gesture will
       // commit anything — a zero-movement titlebar/resize-handle click or a degenerate
       // arrow/pen tap calls it but mutates nothing. The redo branch is correctly
       // invalidated by the actual mutation: updateBoard/resizeBoard clear `future` only
-      // when boards truly change. Clearing it here too would wipe an armed redo on a
-      // no-op gesture performed right after an undo (the guard above misses the
-      // post-undo case, where past tail !== boards even though boards is unchanged).
+      // when boards truly change.
+      lastRecorded = s.boards
       return { past: recordPast(s.past, s.boards) }
     }),
   undo: () =>
     set((s) => {
       const r = applyUndo(s.past, s.boards, s.future)
-      return r ? { boards: r.present, past: r.past, future: r.future, selectedId: null } : s
+      if (!r) return s
+      // The present after undo IS the history-reflected state — record it so a following
+      // no-op beginChange recognizes it and doesn't push a phantom snapshot (#BUG M3).
+      lastRecorded = r.present
+      return { boards: r.present, past: r.past, future: r.future, selectedId: null }
     }),
   redo: () =>
     set((s) => {
       const r = applyRedo(s.past, s.boards, s.future)
-      return r ? { boards: r.present, past: r.past, future: r.future, selectedId: null } : s
+      if (!r) return s
+      lastRecorded = r.present
+      return { boards: r.present, past: r.past, future: r.future, selectedId: null }
     }),
 
   toObject: () => toObject(get().boards, get().viewport),
