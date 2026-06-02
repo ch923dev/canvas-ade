@@ -143,9 +143,12 @@ export function PlanningBoard({
   >(null)
   // Live marquee box (board-local) while box-selecting; null when idle. Transient,
   // session-only (never serialized); resolved to a selection set on pointer-up.
-  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(
-    null
-  )
+  const [marqueeRect, setMarqueeRect] = useState<{
+    x: number
+    y: number
+    w: number
+    h: number
+  } | null>(null)
 
   // Live DOM sizes (board-local px) for the auto-sized kinds (text, checklist), fed by
   // the cards. Refines elementBBox for marquee/snap; a plain ref (no re-render needed —
@@ -530,7 +533,12 @@ export function PlanningBoard({
         />
       ))}
       <div
-        style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-subtle)', margin: '0 2px' }}
+        style={{
+          width: 1,
+          alignSelf: 'stretch',
+          background: 'var(--border-subtle)',
+          margin: '0 2px'
+        }}
       />
       <IconBtn
         name="magnet"

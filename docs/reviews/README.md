@@ -11,7 +11,7 @@ in this folder — start there, not in the tables below.
 
 | # | File / status |
 |---|---|
-| Round 3 — in-depth (2026-06-01) | [`2026-06-01-round3.md`](2026-06-01-round3.md) — **9 fixed** (`fix/round3-backlog`, 2026-06-02); **3 deferred remain open**: PREV-A, PERSIST-B, PERSIST-C |
+| Round 3 — in-depth (2026-06-01) | [`2026-06-01-round3.md`](2026-06-01-round3.md) — **ALL CLEARED** (`fix/round3-backlog` 9 fixed + `fix/round3-lows-remainder` final 3: PREV-A was already fixed by PR #14, PERSIST-B + PERSIST-C fixed). No open findings. |
 
 ---
 
@@ -20,9 +20,10 @@ in this folder — start there, not in the tables below.
 - **Method:** 6-dimension parallel subagent audit (security/IPC · PTY · preview · persistence ·
   canvas-state/camera/edges · whiteboard) with adversarial self-refutation per finding.
 - **Findings:** see [`2026-06-01-round3.md`](2026-06-01-round3.md). Verdict: healthy, no Critical/High.
-- **Status:** **9 of 12 fixed** on `fix/round3-backlog` (2026-06-02; +8 unit tests, 490 green,
-  e2e 25/25) — see that file's Resolution banner. **Open:** PREV-A (deferred to the
-  `canvas-ade-fullview-reset` worktree's zone), PERSIST-B (benign), PERSIST-C (info).
+- **Status:** **ALL 12 cleared.** 9 fixed on `fix/round3-backlog` (2026-06-02; +8 unit tests,
+  490 green, e2e 25/25); the final 3 on `fix/round3-lows-remainder` (2026-06-02): **PREV-A** was
+  already resolved by PR #14's fullview-reset refactor (no change needed), **PERSIST-B** + **PERSIST-C**
+  fixed (+4 unit tests, 499 green). See that file's two Resolution banners.
 
 ## Round-2 review (2026-06-01) — 9-dimension workflow + adversarial verify
 

@@ -374,7 +374,9 @@ describe('disposeAllPtysCore (T1)', () => {
     const liveProc = makeProc(10).proc
     const parkProc = makeProc(20).proc
     const livePort = makePort()
-    const sessions = new Map<string, any>([['live', { proc: liveProc, port: livePort, buf: { data: '' } }]])
+    const sessions = new Map<string, any>([
+      ['live', { proc: liveProc, port: livePort, buf: { data: '' } }]
+    ])
     const parked = new Map<string, any>([
       ['park', { proc: parkProc, buf: { data: '' }, timer: setTimeout(() => {}, 100000) }]
     ])

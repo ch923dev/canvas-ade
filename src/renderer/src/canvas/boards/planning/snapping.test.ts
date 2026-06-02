@@ -33,6 +33,10 @@ describe('computeSnap (edge/center, board-local, axis-independent)', () => {
   })
 
   it('no neighbors → no snap', () => {
-    expect(computeSnap({ x: 0, y: 0, w: 10, h: 10 }, [], SNAP_TOL)).toEqual({ dx: 0, dy: 0, guides: [] })
+    expect(computeSnap({ x: 0, y: 0, w: 10, h: 10 }, [], SNAP_TOL)).toEqual({
+      dx: 0,
+      dy: 0,
+      guides: []
+    })
   })
 })

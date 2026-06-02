@@ -23,16 +23,27 @@ function browsableHost(host: string): string {
 export function parsePortsFromOutput(raw: string): DetectedUrl[] {
   if (!raw) return []
   const text = raw.replace(ANSI, '')
-  const found: { host: string; port: number; scheme: string; idx: number }[] = []
+  type Hit = { host: string; port: number; scheme: string; idx: number; text: string }
+  const found: Hit[] = []
   for (const m of text.matchAll(URL_RE)) {
     const scheme = m[1].toLowerCase()
     const port = m[3] ? Number(m[3]) : scheme === 'https' ? 443 : 80
     if (!Number.isInteger(port) || port < 1 || port > 65535) continue
-    found.push({ host: browsableHost(m[2]), port, scheme, idx: m.index ?? 0 })
+    found.push({ host: browsableHost(m[2]), port, scheme, idx: m.index ?? 0, text: m[0] })
   }
+  // Drop terminal soft-wrap fragments. A long URL printed into a narrow terminal
+  // board wraps at the column width, and ConPTY bakes that wrap into the raw output
+  // detectPorts reads — leaving a truncated PREFIX of the real URL (e.g. a bare
+  // `http://localhost` → :80, or `http://localhost:300` before the real
+  // `http://localhost:3000`). The fragment's matched text is always a strict prefix
+  // of the fuller match; a genuinely distinct URL never is. (Edge case: two real
+  // ports in a prefix relation like :80 vs :8000 — vanishingly rare, accepted.)
+  const real = found.filter(
+    (a) => !found.some((b) => b.text.length > a.text.length && b.text.startsWith(a.text))
+  )
   // Dedupe by host:port, keeping the LAST (most-recent) occurrence.
-  const byKey = new Map<string, { host: string; port: number; scheme: string; idx: number }>()
-  for (const f of found) {
+  const byKey = new Map<string, Hit>()
+  for (const f of real) {
     const key = `${f.host}:${f.port}`
     const prev = byKey.get(key)
     if (!prev || f.idx > prev.idx) byKey.set(key, f)

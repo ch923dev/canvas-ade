@@ -629,8 +629,7 @@ describe('tidyBoards', () => {
     get().tidyBoards('smart')
     const boards = get().boards
     for (let i = 0; i < boards.length; i++)
-      for (let j = i + 1; j < boards.length; j++)
-        expect(overlaps(boards[i], boards[j])).toBe(false)
+      for (let j = i + 1; j < boards.length; j++) expect(overlaps(boards[i], boards[j])).toBe(false)
     expect(boards.map((x) => x.id).sort()).toEqual([a, b, c].sort())
   })
 
@@ -710,7 +709,7 @@ describe('tidyBoards', () => {
     expect(get().past.length).toBe(pastLen) // no phantom undo step
   })
 
-  it("smart mode groups a browser with the terminal that drives it (store passes type + link through)", () => {
+  it('smart mode groups a browser with the terminal that drives it (store passes type + link through)', () => {
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
     const st = get()
     const src = st.addBoard('terminal', { x: 0, y: 0 })

@@ -79,9 +79,7 @@ function columns(ordered: TileBoard[], k: number, area: TileArea, gap: number): 
 /** Largest board = a 62% main zone; the rest stack in a 38% sidebar. */
 function mainSidebar(boards: TileBoard[], area: TileArea, gap: number): TiledRect[] {
   if (boards.length === 1) return [{ id: boards[0].id, x: area.x, y: area.y, w: area.w, h: area.h }]
-  const main = [...boards].sort(
-    (a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : 1)
-  )[0]
+  const main = [...boards].sort((a, b) => b.w * b.h - a.w * a.h || (a.id < b.id ? -1 : 1))[0]
   const rest = boards.filter((b) => b.id !== main.id).sort(byReading)
   // Clamp every zone dim to the board minimum (see `columns`): keeps size == stride so a
   // small area / tall sidebar overflows rather than overlaps.
@@ -92,7 +90,9 @@ function mainSidebar(boards: TileBoard[], area: TileArea, gap: number): TiledRec
   const m = rest.length
   const cellH = Math.max(MIN_BOARD_SIZE.h, (area.h - (m - 1) * gap) / m)
   const sx = area.x + mainW + gap
-  rest.forEach((b, i) => out.push({ id: b.id, x: sx, y: area.y + i * (cellH + gap), w: sideW, h: cellH }))
+  rest.forEach((b, i) =>
+    out.push({ id: b.id, x: sx, y: area.y + i * (cellH + gap), w: sideW, h: cellH })
+  )
   return out
 }
 
@@ -110,7 +110,13 @@ function grid(ordered: TileBoard[], area: TileArea, gap: number): TiledRect[] {
     const rowCount = Math.min(cols, n - rowStart) // last row may be short → wider cells
     const cellW = Math.max(MIN_BOARD_SIZE.w, (area.w - (rowCount - 1) * gap) / rowCount)
     const c = i - rowStart
-    out.push({ id: ordered[i].id, x: area.x + c * (cellW + gap), y: area.y + r * (cellH + gap), w: cellW, h: cellH })
+    out.push({
+      id: ordered[i].id,
+      x: area.x + c * (cellW + gap),
+      y: area.y + r * (cellH + gap),
+      w: cellW,
+      h: cellH
+    })
   }
   return out
 }

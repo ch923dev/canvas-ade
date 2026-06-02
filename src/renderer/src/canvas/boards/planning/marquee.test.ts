@@ -11,9 +11,12 @@ describe('rectFromPoints', () => {
 
 describe('rectIntersectsBBox (intersect/touch predicate)', () => {
   const b = { x: 10, y: 10, w: 20, h: 20 } // 10..30
-  it('true when overlapping', () => expect(rectIntersectsBBox({ x: 0, y: 0, w: 15, h: 15 }, b)).toBe(true))
-  it('true when merely touching an edge', () => expect(rectIntersectsBBox({ x: 30, y: 10, w: 5, h: 5 }, b)).toBe(true))
-  it('false when fully disjoint', () => expect(rectIntersectsBBox({ x: 40, y: 40, w: 5, h: 5 }, b)).toBe(false))
+  it('true when overlapping', () =>
+    expect(rectIntersectsBBox({ x: 0, y: 0, w: 15, h: 15 }, b)).toBe(true))
+  it('true when merely touching an edge', () =>
+    expect(rectIntersectsBBox({ x: 30, y: 10, w: 5, h: 5 }, b)).toBe(true))
+  it('false when fully disjoint', () =>
+    expect(rectIntersectsBBox({ x: 40, y: 40, w: 5, h: 5 }, b)).toBe(false))
 })
 
 describe('marqueeHits', () => {

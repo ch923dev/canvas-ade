@@ -3,7 +3,12 @@ import { usePreviewStore, DEFAULT_RUNTIME } from './previewStore'
 
 describe('previewStore.requestReload', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+    usePreviewStore.setState({
+      byId: {},
+      nodeGesture: false,
+      openMenus: new Set(),
+      menuOpen: false
+    })
   })
 
   test('bumps reloadNonce so a same-URL push forces a re-navigate', () => {
@@ -44,7 +49,12 @@ describe('previewStore.requestReload', () => {
 
 describe('previewStore.patchIfPresent', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+    usePreviewStore.setState({
+      byId: {},
+      nodeGesture: false,
+      openMenus: new Set(),
+      menuOpen: false
+    })
   })
 
   test('does NOT create an entry for an absent id (Bug #32 guard)', () => {
@@ -72,7 +82,12 @@ describe('previewStore.patchIfPresent', () => {
 
 describe('previewStore.clear', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+    usePreviewStore.setState({
+      byId: {},
+      nodeGesture: false,
+      openMenus: new Set(),
+      menuOpen: false
+    })
   })
 
   test('removes an existing entry', () => {
@@ -99,7 +114,12 @@ describe('previewStore.clear', () => {
 
 describe('previewStore.setNodeGesture / setMenuOpen', () => {
   beforeEach(() => {
-    usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+    usePreviewStore.setState({
+      byId: {},
+      nodeGesture: false,
+      openMenus: new Set(),
+      menuOpen: false
+    })
   })
 
   test('setNodeGesture toggles the flag', () => {

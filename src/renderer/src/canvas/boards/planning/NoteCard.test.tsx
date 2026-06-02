@@ -6,14 +6,24 @@ import type { NoteElement } from '../../../lib/boardSchema'
 afterEach(cleanup)
 
 const note = {
-  id: 'n1', kind: 'note', x: 0, y: 0, w: 160, h: 120, text: '', tint: 'yellow'
+  id: 'n1',
+  kind: 'note',
+  x: 0,
+  y: 0,
+  w: 160,
+  h: 120,
+  text: '',
+  tint: 'yellow'
 } as unknown as NoteElement
 
 function renderNote(interactive: boolean, onDelete = vi.fn()): ReturnType<typeof vi.fn> {
   render(
     <NoteCard
-      note={note} interactive={interactive}
-      onDragStart={() => {}} onChangeText={() => {}} onDelete={onDelete}
+      note={note}
+      interactive={interactive}
+      onDragStart={() => {}}
+      onChangeText={() => {}}
+      onDelete={onDelete}
     />
   )
   return onDelete

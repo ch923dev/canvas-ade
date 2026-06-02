@@ -320,7 +320,12 @@ export function shiftElement<E extends PlanningElement>(el: E, dx: number, dy: n
     return { ...el, x: el.x + dx, y: el.y + dy, x2: el.x2 + dx, y2: el.y2 + dy }
   }
   if (el.kind === 'stroke') {
-    return { ...el, x: el.x + dx, y: el.y + dy, points: el.points.map((v, i) => (i % 2 === 0 ? v + dx : v + dy)) }
+    return {
+      ...el,
+      x: el.x + dx,
+      y: el.y + dy,
+      points: el.points.map((v, i) => (i % 2 === 0 ? v + dx : v + dy))
+    }
   }
   return { ...el, x: el.x + dx, y: el.y + dy }
 }

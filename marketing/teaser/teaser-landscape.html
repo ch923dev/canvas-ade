@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #6a6a70;
+        --accent: #4f8cff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #e8b339;
+        --ui: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1200px;
+        height: 675px;
+        background: var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+      .stage {
+        position: relative;
+        width: 1200px;
+        height: 675px;
+        background:
+          radial-gradient(circle at 1px 1px, var(--grid-dot) 1.4px, transparent 0) 0 0/32px 32px,
+          var(--void);
+      }
+      .vignette {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(120% 100% at 64% 40%, transparent 52%, rgba(0, 0, 0, 0.6) 100%);
+        pointer-events: none;
+      }
+      .board {
+        position: absolute;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 13px;
+        box-shadow: 0 22px 54px -20px rgba(0, 0, 0, 0.7);
+        overflow: hidden;
+      }
+      .chrome {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+      }
+      .ttl {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-2);
+        margin-left: 2px;
+      }
+      .badge {
+        margin-left: auto;
+        font-size: 9px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        border: 1px solid var(--border-subtle);
+        border-radius: 5px;
+        padding: 2px 6px;
+      }
+
+      .b-term {
+        right: 300px;
+        top: 88px;
+        width: 430px;
+        height: 262px;
+      }
+      .term-body {
+        padding: 14px 16px;
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.8;
+        background: var(--inset);
+        height: calc(100% - 34px);
+      }
+      .p {
+        color: var(--accent);
+      }
+      .c {
+        color: var(--text);
+      }
+      .m {
+        color: var(--text-3);
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 15px;
+        background: var(--accent);
+        vertical-align: -2px;
+        margin-left: 3px;
+      }
+
+      .b-browser {
+        right: 64px;
+        top: 250px;
+        width: 340px;
+        height: 250px;
+      }
+      .urlbar {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        height: 30px;
+        margin: 9px 11px 0;
+        padding: 0 11px;
+        background: var(--inset);
+        border: 1px solid var(--border-subtle);
+        border-radius: 7px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--text-3);
+      }
+      .lock {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--ok);
+      }
+      .viewport {
+        margin: 9px 11px 11px;
+        height: calc(100% - 34px - 39px - 20px);
+        background: linear-gradient(180deg, #101013, #0d0d10);
+        border: 1px solid var(--border-subtle);
+        border-radius: 7px;
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+        padding: 15px;
+      }
+      .skel {
+        height: 10px;
+        border-radius: 5px;
+        background: var(--surface-raised);
+      }
+      .skel.a {
+        width: 60%;
+        background: var(--accent-wash);
+      }
+      .skel.b {
+        width: 88%;
+      }
+      .skel.c {
+        width: 72%;
+      }
+      .skel.box {
+        flex: 1;
+        width: 100%;
+        background: #0f0f13;
+        border: 1px solid var(--border-subtle);
+      }
+
+      .b-plan {
+        right: 430px;
+        top: 300px;
+        width: 300px;
+        height: 236px;
+      }
+      .plan-body {
+        padding: 16px;
+        height: calc(100% - 34px);
+      }
+      .plan-h {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 3px;
+      }
+      .plan-sub {
+        font-size: 10.5px;
+        color: var(--text-3);
+        margin-bottom: 13px;
+      }
+      .bar {
+        height: 5px;
+        border-radius: 4px;
+        background: var(--inset);
+        overflow: hidden;
+        margin-bottom: 13px;
+      }
+      .bar > i {
+        display: block;
+        height: 100%;
+        width: 66%;
+        background: var(--accent);
+      }
+      .item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 5px 0;
+        font-size: 12px;
+      }
+      .ck {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1.5px solid var(--border-strong);
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .ck.on {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .ck.on::after {
+        content: '';
+        width: 8px;
+        height: 4px;
+        border-left: 2px solid #07121f;
+        border-bottom: 2px solid #07121f;
+        transform: translateY(-1px) rotate(-45deg);
+      }
+      .item.done span {
+        color: var(--text-3);
+        text-decoration: line-through;
+      }
+
+      svg.wires {
+        position: absolute;
+        inset: 0;
+        width: 1200px;
+        height: 675px;
+        pointer-events: none;
+      }
+
+      .copy {
+        position: absolute;
+        left: 72px;
+        top: 0;
+        height: 675px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 22px;
+        width: 430px;
+      }
+      .mark {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .glyph {
+        width: 42px;
+        height: 42px;
+        border-radius: 10px;
+        border: 1.6px solid var(--accent);
+        position: relative;
+        flex: none;
+      }
+      .glyph::before {
+        content: '';
+        position: absolute;
+        inset: 8px;
+        border: 1.6px solid var(--accent);
+        border-radius: 4px;
+        opacity: 0.55;
+      }
+      .glyph::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 6px;
+        height: 6px;
+        background: var(--accent);
+        border-radius: 2px;
+        transform: translate(-50%, -50%);
+      }
+      .wm {
+        font-size: 32px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .wm b {
+        color: var(--accent);
+      }
+      .hl {
+        font-size: 40px;
+        font-weight: 600;
+        letter-spacing: -0.03em;
+        line-height: 1.12;
+      }
+      .hl em {
+        color: var(--accent);
+        font-style: normal;
+      }
+      .tag {
+        font-size: 16px;
+        color: var(--text-2);
+        font-weight: 450;
+        line-height: 1.5;
+        max-width: 400px;
+      }
+      .kick {
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <svg class="wires">
+        <path
+          d="M 870 350 C 930 350, 900 375, 960 375"
+          fill="none"
+          stroke="#4f8cff"
+          stroke-width="2"
+          stroke-dasharray="2 7"
+          stroke-linecap="round"
+          opacity=".7"
+        />
+        <circle cx="870" cy="350" r="4" fill="#4f8cff" />
+        <circle cx="960" cy="375" r="4" fill="#4f8cff" />
+      </svg>
+
+      <div class="board b-term">
+        <div class="chrome">
+          <span class="dot" style="background: var(--accent)"></span
+          ><span class="ttl">agent · zsh</span><span class="badge">running</span>
+        </div>
+        <div class="term-body">
+          <div><span class="p">❯</span> <span class="c">claude</span></div>
+          <div class="m">› reading project context…</div>
+          <div class="m">› drafting plan across 3 boards</div>
+          <div>
+            <span class="ok">✓</span> <span class="c">boards in sync</span
+            ><span class="cursor"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="board b-plan">
+        <div class="chrome">
+          <span class="dot" style="background: #2a2a2e"></span><span class="ttl">planning</span
+          ><span class="badge">4 / 6</span>
+        </div>
+        <div class="plan-body">
+          <div class="plan-h">Ship the redesign</div>
+          <div class="plan-sub">one project · one surface</div>
+          <div class="bar"><i></i></div>
+          <div class="item done"><span class="ck on"></span><span>Terminal boards</span></div>
+          <div class="item done"><span class="ck on"></span><span>Browser preview</span></div>
+          <div class="item"><span class="ck"></span><span>Tell the world</span></div>
+        </div>
+      </div>
+
+      <div class="board b-browser">
+        <div class="chrome">
+          <span class="dot" style="background: #2a2a2e"></span
+          ><span class="dot" style="background: #2a2a2e"></span
+          ><span class="ttl">preview · 390</span><span class="badge">live</span>
+        </div>
+        <div class="urlbar"><span class="lock"></span>localhost:5173</div>
+        <div class="viewport">
+          <div class="skel a"></div>
+          <div class="skel b"></div>
+          <div class="skel c"></div>
+          <div class="skel box"></div>
+        </div>
+      </div>
+
+      <div class="vignette"></div>
+
+      <div class="copy">
+        <div class="mark">
+          <div class="glyph"></div>
+          <div class="wm">Expanse</div>
+        </div>
+        <div class="hl">Your agents.<br />One <em>infinite</em> surface.</div>
+        <div class="tag">
+          Live terminal agents, browser previews and plans — on one zoomable surface. No tabs. No
+          window juggling.
+        </div>
+        <div class="kick">Early access · coming soon →</div>
+      </div>
+    </div>
+  </body>
+</html>

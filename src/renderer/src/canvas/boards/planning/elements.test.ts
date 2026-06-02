@@ -273,12 +273,21 @@ describe('elementBBox (per-kind, ± measured) — W2', () => {
 describe('anchors / unionBBox — W2', () => {
   it('anchors derives edges + centers', () => {
     expect(anchors({ x: 10, y: 20, w: 100, h: 40 })).toEqual({
-      left: 10, centerX: 60, right: 110, top: 20, centerY: 40, bottom: 60
+      left: 10,
+      centerX: 60,
+      right: 110,
+      top: 20,
+      centerY: 40,
+      bottom: 60
     })
   })
   it('unionBBox spans all boxes; single box is itself; empty is a zero box', () => {
-    expect(unionBBox([{ x: 0, y: 0, w: 10, h: 10 }, { x: 20, y: 5, w: 10, h: 30 }]))
-      .toEqual({ x: 0, y: 0, w: 30, h: 35 })
+    expect(
+      unionBBox([
+        { x: 0, y: 0, w: 10, h: 10 },
+        { x: 20, y: 5, w: 10, h: 30 }
+      ])
+    ).toEqual({ x: 0, y: 0, w: 30, h: 35 })
     expect(unionBBox([])).toEqual({ x: 0, y: 0, w: 0, h: 0 })
   })
 })
@@ -288,10 +297,12 @@ describe('shiftElement / translateMany — W2', () => {
     // makeNote centres on the drop point, so assert the shift relative to its base x/y.
     const n = makeNote('n', { x: 0, y: 0 }, 0)
     expect(shiftElement(n, 5, 7)).toMatchObject({ x: n.x + 5, y: n.y + 7 })
-    expect(shiftElement({ ...makeArrow('a', { x: 1, y: 2 }), x2: 3, y2: 4 }, 10, 10))
-      .toMatchObject({ x: 11, y: 12, x2: 13, y2: 14 })
-    expect((shiftElement(makeStroke('s', [0, 0, 2, 2]), 1, 1) as { points: number[] }).points)
-      .toEqual([1, 1, 3, 3])
+    expect(shiftElement({ ...makeArrow('a', { x: 1, y: 2 }), x2: 3, y2: 4 }, 10, 10)).toMatchObject(
+      { x: 11, y: 12, x2: 13, y2: 14 }
+    )
+    expect(
+      (shiftElement(makeStroke('s', [0, 0, 2, 2]), 1, 1) as { points: number[] }).points
+    ).toEqual([1, 1, 3, 3])
   })
   it('translateMany shifts only ids in the set, in one immutable pass', () => {
     const els: PlanningElement[] = [

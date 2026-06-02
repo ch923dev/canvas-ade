@@ -147,10 +147,7 @@ interface FailedLatch {
 }
 /** The minimal webContents surface the load latch listens on (testable). */
 interface LoadLatchTarget {
-  on(
-    event: 'did-start-navigation',
-    listener: (details: { isMainFrame: boolean }) => void
-  ): unknown
+  on(event: 'did-start-navigation', listener: (details: { isMainFrame: boolean }) => void): unknown
   on(event: 'did-finish-load', listener: () => void): unknown
   on(
     event: 'did-fail-load',
