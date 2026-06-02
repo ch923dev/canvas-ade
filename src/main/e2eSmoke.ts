@@ -222,7 +222,9 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   parts.push({
     name: 'config-nowheel',
     ok: cfgOk,
-    detail: cfgOk ? 'config popover has nowheel (no pan on scroll)' : 'config popover missing nowheel'
+    detail: cfgOk
+      ? 'config popover has nowheel (no pan on scroll)'
+      : 'config popover missing nowheel'
   })
 
   // ── Planning: seed, add a checklist element, assert it persisted on the board AND
@@ -324,8 +326,7 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     const wcAfter = debugViewWebContentsId(browserId)
     // Same webContents id throughout = the view was detached/reattached, never closed, so
     // the page (and its navigated state) survived. Any change/null = it was destroyed+reopened.
-    const survivedSelf =
-      wcBefore !== null && wcDuring === wcBefore && wcAfter === wcBefore
+    const survivedSelf = wcBefore !== null && wcDuring === wcBefore && wcAfter === wcBefore
     selfOk = survivedSelf
     selfDetail = survivedSelf
       ? `full-viewing the browser kept the same webContents #${wcBefore} (no restart)`
@@ -339,7 +340,10 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   // device frame keeps the preset's portrait aspect (~390/844) AND is clearly narrower than
   // its stage (letterbox). Pre-fix (inset:0) the frame fills the stage → landscape aspect,
   // ~full width → both checks fail. ──
-  await evalIn(win, `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`)
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`
+  )
   await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
   await delay(450) // modal mounts + portal relocates the device frame + layout settles
   const emu = await evalIn<{
@@ -911,7 +915,12 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   // area's zones. Tile into a fixed 1600×1000 area with cols-2 and assert the union of the
   // boards fills that area edge-to-edge (each axis within tolerance) AND no overlaps — i.e.
   // boards were genuinely resized to their zones, not just moved. Deterministic store path. ──
-  const tileProbe = await evalIn<{ fills: boolean; overlap: boolean; resized: boolean; count: number }>(
+  const tileProbe = await evalIn<{
+    fills: boolean
+    overlap: boolean
+    resized: boolean
+    count: number
+  }>(
     win,
     `(() => {
        const area = { x: 0, y: 0, w: 1600, h: 1000 };
@@ -1005,9 +1014,7 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   parts.push({
     name: 'whiteboard-shortcut',
     ok: shortcutOk,
-    detail: shortcutOk
-      ? "'n' selects the note tool → tap creates a note"
-      : JSON.stringify(wb)
+    detail: shortcutOk ? "'n' selects the note tool → tap creates a note" : JSON.stringify(wb)
   })
 
   // ── W2 selection core (multi-select + snapping). Seed two notes, drive the REAL
@@ -1132,25 +1139,146 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   parts.push({
     name: 'whiteboard-group-delete',
     ok: groupDeleteOk,
-    detail: groupDeleteOk ? 'marquee selects 2 → Delete removes both; undo restores both in one step' : JSON.stringify(w2)
+    detail: groupDeleteOk
+      ? 'marquee selects 2 → Delete removes both; undo restores both in one step'
+      : JSON.stringify(w2)
   })
   const multidragOk = w2.multiMovedBoth && w2.afterMoveUndo
   parts.push({
     name: 'whiteboard-multidrag',
     ok: multidragOk,
-    detail: multidragOk ? 'marquee 2 → drag one moves both; undo restores both in one step' : JSON.stringify(w2)
+    detail: multidragOk
+      ? 'marquee 2 → drag one moves both; undo restores both in one step'
+      : JSON.stringify(w2)
   })
   const shiftAddOk = w2.shiftAddMoved
   parts.push({
     name: 'whiteboard-shift-add',
     ok: shiftAddOk,
-    detail: shiftAddOk ? 'click A + Shift-click B selects both; dragging A moves both' : JSON.stringify(w2)
+    detail: shiftAddOk
+      ? 'click A + Shift-click B selects both; dragging A moves both'
+      : JSON.stringify(w2)
   })
   const snapOk = Math.abs(w2.snapX - 40) <= 1
   parts.push({
     name: 'whiteboard-snap',
     ok: snapOk,
     detail: snapOk ? "drag aligns B's left edge to neighbor (x=40)" : JSON.stringify(w2)
+  })
+
+  // ── W3 selection follow-ons: dup / align / lock / group / context-menu ──────────
+  const w3 = await evalIn<{
+    stage: string
+    altDupCount: number
+    altDupUndo: number
+    alignLeftX: string
+    lockBlockedMove: boolean
+    lockBlockedDel: boolean
+    groupMovedBoth: boolean
+    menuShown: boolean
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const id = ${JSON.stringify(planId)};
+       const board = () => window.__canvasE2E.getBoards().find((x) => x.id === id);
+       const els = () => { const b = board(); return b && b.type === 'planning' ? b.elements : []; };
+       const note = (nid) => els().find((e) => e.id === nid);
+       const count = () => els().length;
+       const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+       const well = node && node.querySelector('.pl-well');
+       const fail = { stage:'no-well', altDupCount:-1, altDupUndo:-1, alignLeftX:'', lockBlockedMove:false, lockBlockedDel:false, groupMovedBoth:false, menuShown:false };
+       if (!well) return fail;
+       const r = well.getBoundingClientRect();
+       const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1;
+       const at = (bx, by) => ({ x: r.left + bx * scale, y: r.top + by * scale });
+       const grip = (i) => node.querySelectorAll('.pl-note-grip')[i];
+       const ev = (target, type, p, o) => { o = o || {};
+         try { target.dispatchEvent(new PointerEvent(type, { bubbles:true, cancelable:true, pointerId:1, isPrimary:true, clientX:p.x, clientY:p.y, shiftKey:!!o.shift, altKey:!!o.alt })); } catch (e) {} };
+       const drag = async (from, to, o) => { o = o || {}; const downT = o.downTarget || well;
+         ev(downT,'pointerdown',from,o); await sleep(20);
+         for (let i=1;i<=4;i++){ ev(well,'pointermove',{x:from.x+(to.x-from.x)*i/4,y:from.y+(to.y-from.y)*i/4},o); await sleep(15);}
+         ev(well,'pointerup',to,o); await sleep(40); };
+       const press = (k, o) => { o = o || {}; well.focus(); well.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,ctrlKey:!!o.ctrl,metaKey:!!o.ctrl,shiftKey:!!o.shift})); };
+       const seed2 = () => window.__canvasE2E.patchBoard(id, { elements: [
+         { id:'w3-a', kind:'note', x:40, y:40, w:156, h:96, tint:'yellow', text:'A', rotation:0 },
+         { id:'w3-b', kind:'note', x:260, y:200, w:156, h:96, tint:'blue', text:'B', rotation:0 }
+       ] });
+       const clearSel = () => { ev(well,'pointerdown',at(560,330)); ev(well,'pointerup',at(560,330)); };
+       const fresh = async () => { seed2(); await sleep(140); clearSel(); await sleep(40); well.focus(); await sleep(20); };
+       const nx = (nid) => { const n = note(nid); return n ? n.x : -999999; };
+       let stage = 'start';
+       try {
+         stage = 'alt-dup'; await fresh();
+         ev(grip(0),'pointerdown',at(60,60)); ev(well,'pointerup',at(60,60)); await sleep(40);
+         await drag(at(60,60), at(140,140), { downTarget: grip(0), alt: true });
+         const altDupCount = count();
+         window.__canvasE2E.undo(); await sleep(60);
+         const altDupUndo = count();
+
+         stage = 'align'; await fresh();
+         await drag(at(10,10), at(440,310)); await sleep(20);
+         grip(0).dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:at(60,60).x,clientY:at(60,60).y}));
+         await sleep(60);
+         const menuShown = !!document.querySelector('.pl-ctx-menu');
+         const leftBtn = document.querySelector('.pl-ctx-menu button[title="Left"]');
+         if (leftBtn) leftBtn.click();
+         await sleep(60);
+         const alignLeftX = nx('w3-a') + '|' + nx('w3-b');
+
+         stage = 'lock'; await fresh();
+         ev(grip(0),'pointerdown',at(60,60)); ev(well,'pointerup',at(60,60)); await sleep(40);
+         press('l', { ctrl: true }); await sleep(60);
+         const lx0 = nx('w3-a');
+         await drag(at(60,60), at(160,160), { downTarget: grip(0) });
+         const lockBlockedMove = nx('w3-a') === lx0;
+         ev(grip(0),'pointerdown',at(60,60)); ev(well,'pointerup',at(60,60)); await sleep(40);
+         press('Delete'); await sleep(60);
+         const lockBlockedDel = !!note('w3-a');
+
+         stage = 'group'; await fresh();
+         await drag(at(10,10), at(440,310)); await sleep(20);
+         press('g', { ctrl: true }); await sleep(60);
+         clearSel(); await sleep(40);
+         const ga0 = nx('w3-a'), gb0 = nx('w3-b');
+         ev(grip(0),'pointerdown',at(60,60)); ev(well,'pointerup',at(60,60)); await sleep(40);
+         await drag(at(60,60), at(120,60), { downTarget: grip(0) });
+         const groupMovedBoth = nx('w3-a') - ga0 >= 30 && nx('w3-b') - gb0 >= 30;
+
+         return { stage:'done', altDupCount, altDupUndo, alignLeftX, lockBlockedMove, lockBlockedDel, groupMovedBoth, menuShown };
+       } catch (err) {
+         return { stage:'ERR@'+stage+':'+String((err&&err.message)||err), altDupCount:-9, altDupUndo:-9, alignLeftX:'', lockBlockedMove:false, lockBlockedDel:false, groupMovedBoth:false, menuShown:false };
+       }
+     })()`
+  )
+  const altDupOk = w3.altDupCount === 3 && w3.altDupUndo === 2
+  parts.push({
+    name: 'whiteboard-alt-dup',
+    ok: altDupOk,
+    detail: altDupOk ? 'alt-drag duplicates selection (one undo step)' : JSON.stringify(w3)
+  })
+  const alignOk =
+    w3.menuShown &&
+    (() => {
+      const p = w3.alignLeftX.split('|').map(Number)
+      return p[0] === p[1] && p[0] > -999999
+    })()
+  parts.push({
+    name: 'whiteboard-align',
+    ok: alignOk,
+    detail: alignOk ? 'context menu Align Left shares left x' : JSON.stringify(w3)
+  })
+  const lockOk = w3.lockBlockedMove && w3.lockBlockedDel
+  parts.push({
+    name: 'whiteboard-lock',
+    ok: lockOk,
+    detail: lockOk ? 'locked element resists move + delete' : JSON.stringify(w3)
+  })
+  const groupOk = w3.groupMovedBoth
+  parts.push({
+    name: 'whiteboard-group',
+    ok: groupOk,
+    detail: groupOk ? 'group then click one selects+moves all' : JSON.stringify(w3)
   })
 
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')

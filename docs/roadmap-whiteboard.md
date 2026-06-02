@@ -124,6 +124,8 @@ Edge/center snap while dragging, guides render in the draft slot.
 
 ## Phase W3 — Selection follow-ons (M) ⛓ W2.1
 
+Shipped 2026-06-02: alt-drag duplicate · align/distribute · locked? · groupId grouping, via a right-click element context menu. Schema v3. (feat/whiteboard-w3 → feat/whiteboard.)
+
 All unlocked by the selection set; each independently shippable.
 
 - **Alt-drag duplicate** — cheap follow-on once the selection set exists: alt-held drag clones the
@@ -204,7 +206,7 @@ Also out: calligraphic pressure-taper pen (deliberately tuned OFF — `thinning:
 |---|---|
 | W1 — Quick wins | ✅ done (2026-06-02) — eraser (W1.1) · letter shortcuts (W1.2) · scene/session guardrail (W1.3). Integrated on top of #15 (WB-1); 502 unit green, lint+typecheck clean, e2e PLANNING ok (browser-trio = known env flake). Branch `feat/whiteboard-w1-integ`. |
 | W2 — Selection core | ✅ done (2026-06-02) — multi-select (marquee intersect + Shift-add + multi-drag + group-delete) · in-board snapping (edge/center guides, snap pill). Pure helpers elementBBox/anchors/translateMany + marquee.ts + snapping.ts unit-tested; e2e whiteboard-group-delete/multidrag/snap green. Branch feat/whiteboard-w2. |
-| W3 — Selection follow-ons | not started |
+| W3 — Selection follow-ons | ✅ done |
 | W4 — Image + assets | not started |
 | W5 — Export | not started |
 

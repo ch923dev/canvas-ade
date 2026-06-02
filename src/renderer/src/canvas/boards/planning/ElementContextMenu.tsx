@@ -78,12 +78,10 @@ export function ElementContextMenu(props: ElementContextMenuProps): ReactElement
 
   useOnViewportChange({ onChange: onClose })
 
-  const run =
-    (fn: () => void) =>
-    (): void => {
-      fn()
-      onClose()
-    }
+  const run = (fn: () => void) => (): void => {
+    fn()
+    onClose()
+  }
 
   return createPortal(
     <div
@@ -113,7 +111,9 @@ export function ElementContextMenu(props: ElementContextMenuProps): ReactElement
         onClick={run(props.onToggleLock)}
       />
       {sel.canGroup && <MenuRow label="Group" hint="Ctrl+G" onClick={run(props.onGroup)} />}
-      {sel.grouped && <MenuRow label="Ungroup" hint="Ctrl+Shift+G" onClick={run(props.onUngroup)} />}
+      {sel.grouped && (
+        <MenuRow label="Ungroup" hint="Ctrl+Shift+G" onClick={run(props.onUngroup)} />
+      )}
       {sel.count >= 2 && (
         <>
           <Sep />

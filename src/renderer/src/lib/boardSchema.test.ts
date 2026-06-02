@@ -523,21 +523,49 @@ describe('W3 schema: locked?/groupId? + v3', () => {
       schemaVersion: 2,
       viewport: null,
       boards: [
-        { id: 'p', type: 'planning', x: 0, y: 0, w: 300, h: 300, title: 'P',
-          elements: [{ id: 'n', kind: 'note', x: 1, y: 1, w: 156, h: 96, tint: 'yellow', text: '' }] }
+        {
+          id: 'p',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 300,
+          h: 300,
+          title: 'P',
+          elements: [{ id: 'n', kind: 'note', x: 1, y: 1, w: 156, h: 96, tint: 'yellow', text: '' }]
+        }
       ]
     }
     const out = fromObject(doc)
     expect(out.schemaVersion).toBe(3)
-    const el = (out.boards[0] as unknown as { elements: Array<Record<string, unknown>> }).elements[0]
+    const el = (out.boards[0] as unknown as { elements: Array<Record<string, unknown>> })
+      .elements[0]
     expect(el.locked).toBeUndefined()
     expect(el.groupId).toBeUndefined()
   })
 
   it('round-trips locked + groupId through toObject', () => {
     const board = {
-      id: 'p', type: 'planning' as const, x: 0, y: 0, w: 300, h: 300, title: 'P',
-      elements: [{ id: 'n', kind: 'note' as const, x: 1, y: 1, w: 156, h: 96, tint: 'yellow' as const, text: '', locked: true, groupId: 'g1' }]
+      id: 'p',
+      type: 'planning' as const,
+      x: 0,
+      y: 0,
+      w: 300,
+      h: 300,
+      title: 'P',
+      elements: [
+        {
+          id: 'n',
+          kind: 'note' as const,
+          x: 1,
+          y: 1,
+          w: 156,
+          h: 96,
+          tint: 'yellow' as const,
+          text: '',
+          locked: true,
+          groupId: 'g1'
+        }
+      ]
     }
     const doc = toObject([board], null)
     const back = fromObject(doc)
@@ -547,18 +575,66 @@ describe('W3 schema: locked?/groupId? + v3', () => {
   })
 
   it('rejects a non-boolean locked', () => {
-    const doc = { schemaVersion: 3, viewport: null, boards: [
-      { id: 'p', type: 'planning', x: 0, y: 0, w: 300, h: 300, title: 'P',
-        elements: [{ id: 'n', kind: 'note', x: 1, y: 1, w: 156, h: 96, tint: 'yellow', text: '', locked: 'yes' }] }
-    ] }
+    const doc = {
+      schemaVersion: 3,
+      viewport: null,
+      boards: [
+        {
+          id: 'p',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 300,
+          h: 300,
+          title: 'P',
+          elements: [
+            {
+              id: 'n',
+              kind: 'note',
+              x: 1,
+              y: 1,
+              w: 156,
+              h: 96,
+              tint: 'yellow',
+              text: '',
+              locked: 'yes'
+            }
+          ]
+        }
+      ]
+    }
     expect(() => fromObject(doc)).toThrow(/locked/)
   })
 
   it('rejects a non-string groupId', () => {
-    const doc = { schemaVersion: 3, viewport: null, boards: [
-      { id: 'p', type: 'planning', x: 0, y: 0, w: 300, h: 300, title: 'P',
-        elements: [{ id: 'n', kind: 'note', x: 1, y: 1, w: 156, h: 96, tint: 'yellow', text: '', groupId: 7 }] }
-    ] }
+    const doc = {
+      schemaVersion: 3,
+      viewport: null,
+      boards: [
+        {
+          id: 'p',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 300,
+          h: 300,
+          title: 'P',
+          elements: [
+            {
+              id: 'n',
+              kind: 'note',
+              x: 1,
+              y: 1,
+              w: 156,
+              h: 96,
+              tint: 'yellow',
+              text: '',
+              groupId: 7
+            }
+          ]
+        }
+      ]
+    }
     expect(() => fromObject(doc)).toThrow(/groupId/)
   })
 })

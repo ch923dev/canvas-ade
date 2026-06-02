@@ -122,21 +122,21 @@ export function WhiteboardSvg({
         const sel = selectedIds?.has(a.id) ?? false
         const selActive = sel && !a.locked
         return (
-        <path
-          key={a.id}
-          d={arrowPath(a)}
-          stroke={selActive ? 'var(--accent)' : 'var(--border-strong)'}
-          strokeWidth={selActive ? 2.5 : 1.5}
-          fill="none"
-          markerEnd={selActive ? `url(#${markerId}-sel)` : `url(#${markerId})`}
-          style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
-          onPointerDown={(e) => {
-            e.stopPropagation()
-            onSelect?.(a.id, e.shiftKey)
-            onDragStart?.(e, a.id)
-          }}
-          onContextMenu={(e) => onContextMenu?.(e, a.id)}
-        />
+          <path
+            key={a.id}
+            d={arrowPath(a)}
+            stroke={selActive ? 'var(--accent)' : 'var(--border-strong)'}
+            strokeWidth={selActive ? 2.5 : 1.5}
+            fill="none"
+            markerEnd={selActive ? `url(#${markerId}-sel)` : `url(#${markerId})`}
+            style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
+            onPointerDown={(e) => {
+              e.stopPropagation()
+              onSelect?.(a.id, e.shiftKey)
+              onDragStart?.(e, a.id)
+            }}
+            onContextMenu={(e) => onContextMenu?.(e, a.id)}
+          />
         )
       })}
       {draftArrow && (
@@ -187,9 +187,25 @@ export function WhiteboardSvg({
 
       {guides?.map((g) =>
         g.axis === 'x' ? (
-          <line key={`x${g.at}`} x1={g.at} y1={g.from} x2={g.at} y2={g.to} stroke="var(--accent)" strokeWidth={1} />
+          <line
+            key={`x${g.at}`}
+            x1={g.at}
+            y1={g.from}
+            x2={g.at}
+            y2={g.to}
+            stroke="var(--accent)"
+            strokeWidth={1}
+          />
         ) : (
-          <line key={`y${g.at}`} x1={g.from} y1={g.at} x2={g.to} y2={g.at} stroke="var(--accent)" strokeWidth={1} />
+          <line
+            key={`y${g.at}`}
+            x1={g.from}
+            y1={g.at}
+            x2={g.to}
+            y2={g.at}
+            stroke="var(--accent)"
+            strokeWidth={1}
+          />
         )
       )}
     </svg>

@@ -223,7 +223,10 @@ export function ChecklistCard({
           }}
         />
         {locked && (
-          <span title="Locked" style={{ color: 'var(--text-3)', flex: 'none', display: 'grid', placeItems: 'center' }}>
+          <span
+            title="Locked"
+            style={{ color: 'var(--text-3)', flex: 'none', display: 'grid', placeItems: 'center' }}
+          >
             <Icon name="lock" size={11} />
           </span>
         )}

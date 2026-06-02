@@ -31,7 +31,8 @@ export function alignElements(
 
   let target: number
   if (edge === 'left' || edge === 'top') target = Math.min(...boxes.map(({ b }) => anchor(b)))
-  else if (edge === 'right' || edge === 'bottom') target = Math.max(...boxes.map(({ b }) => anchor(b)))
+  else if (edge === 'right' || edge === 'bottom')
+    target = Math.max(...boxes.map(({ b }) => anchor(b)))
   else {
     const u = unionBBox(boxes.map(({ b }) => b))
     target = edge === 'centerX' ? u.x + u.w / 2 : u.y + u.h / 2
@@ -40,7 +41,11 @@ export function alignElements(
   const delta = new Map<string, number>()
   for (const { id, b } of boxes) delta.set(id, Math.round(target - anchor(b)))
   let moved = false
-  for (const d of delta.values()) if (d !== 0) { moved = true; break }
+  for (const d of delta.values())
+    if (d !== 0) {
+      moved = true
+      break
+    }
   if (!moved) return els
   return els.map((el) => {
     const d = delta.get(el.id)
@@ -79,7 +84,11 @@ export function distributeElements(
     delta.set(it.id, Math.round(first + gap * i - it.center))
   })
   let moved = false
-  for (const d of delta.values()) if (d !== 0) { moved = true; break }
+  for (const d of delta.values())
+    if (d !== 0) {
+      moved = true
+      break
+    }
   if (!moved) return els
   return els.map((el) => {
     const d = delta.get(el.id)

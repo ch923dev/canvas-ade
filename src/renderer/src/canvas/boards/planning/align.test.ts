@@ -3,7 +3,15 @@ import { alignElements, distributeElements } from './align'
 import type { NoteElement } from '../../../lib/boardSchema'
 
 const note = (id: string, x: number, y: number, locked = false): NoteElement => ({
-  id, kind: 'note', x, y, w: 100, h: 50, tint: 'yellow', text: '', ...(locked ? { locked } : {})
+  id,
+  kind: 'note',
+  x,
+  y,
+  w: 100,
+  h: 50,
+  tint: 'yellow',
+  text: '',
+  ...(locked ? { locked } : {})
 })
 
 describe('alignElements', () => {

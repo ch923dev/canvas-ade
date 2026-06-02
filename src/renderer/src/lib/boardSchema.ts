@@ -303,8 +303,10 @@ function assertPlanningElement(el: unknown): void {
   if (!isRecord(el)) fail('planning element is not an object')
   if (typeof el.id !== 'string') fail('planning element has a non-string id')
   if (!isFiniteNum(el.x) || !isFiniteNum(el.y)) fail('planning element has non-finite x/y')
-  if (el.locked !== undefined && typeof el.locked !== 'boolean') fail('planning element locked is not a boolean')
-  if (el.groupId !== undefined && typeof el.groupId !== 'string') fail('planning element groupId is not a string')
+  if (el.locked !== undefined && typeof el.locked !== 'boolean')
+    fail('planning element locked is not a boolean')
+  if (el.groupId !== undefined && typeof el.groupId !== 'string')
+    fail('planning element groupId is not a string')
 
   switch (el.kind) {
     case 'note':
