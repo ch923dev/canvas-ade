@@ -639,7 +639,13 @@ describe('W4 image element', () => {
     viewport: null,
     boards: [
       {
-        id: 'p1', type: 'planning', x: 0, y: 0, w: 400, h: 300, title: 'P',
+        id: 'p1',
+        type: 'planning',
+        x: 0,
+        y: 0,
+        w: 400,
+        h: 300,
+        title: 'P',
         elements: [{ id: 'i1', kind: 'image', x: 10, y: 20, w: 120, h: 90, assetId, ...extra }]
       }
     ]
@@ -670,11 +676,20 @@ describe('W4 image element', () => {
 
   it('migrates a v3 doc (with an image element) to v4', () => {
     const v3 = {
-      schemaVersion: 3, viewport: null,
-      boards: [{
-        id: 'p1', type: 'planning', x: 0, y: 0, w: 400, h: 300, title: 'P',
-        elements: [{ id: 'i1', kind: 'image', x: 1, y: 2, w: 50, h: 50, assetId: 'assets/y.png' }]
-      }]
+      schemaVersion: 3,
+      viewport: null,
+      boards: [
+        {
+          id: 'p1',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 400,
+          h: 300,
+          title: 'P',
+          elements: [{ id: 'i1', kind: 'image', x: 1, y: 2, w: 50, h: 50, assetId: 'assets/y.png' }]
+        }
+      ]
     }
     const doc = fromObject(v3)
     expect(doc.schemaVersion).toBe(4)

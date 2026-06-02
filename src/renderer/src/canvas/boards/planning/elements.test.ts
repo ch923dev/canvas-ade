@@ -427,14 +427,38 @@ describe('W4 image helpers', () => {
   })
   it('makeImage centers the box on the point', () => {
     const el = makeImage('i1', { x: 200, y: 100 }, 'assets/a.png', 120, 80)
-    expect(el).toMatchObject({ id: 'i1', kind: 'image', x: 140, y: 60, w: 120, h: 80, assetId: 'assets/a.png' })
+    expect(el).toMatchObject({
+      id: 'i1',
+      kind: 'image',
+      x: 140,
+      y: 60,
+      w: 120,
+      h: 80,
+      assetId: 'assets/a.png'
+    })
   })
   it('elementBBox returns the image box', () => {
-    const el: ImageElement = { id: 'i1', kind: 'image', x: 5, y: 6, w: 30, h: 40, assetId: 'assets/a.png' }
+    const el: ImageElement = {
+      id: 'i1',
+      kind: 'image',
+      x: 5,
+      y: 6,
+      w: 30,
+      h: 40,
+      assetId: 'assets/a.png'
+    }
     expect(elementBBox(el)).toEqual({ x: 5, y: 6, w: 30, h: 40 })
   })
   it('shiftElement translates an image by the top-left (default branch)', () => {
-    const el: ImageElement = { id: 'i1', kind: 'image', x: 5, y: 6, w: 30, h: 40, assetId: 'assets/a.png' }
+    const el: ImageElement = {
+      id: 'i1',
+      kind: 'image',
+      x: 5,
+      y: 6,
+      w: 30,
+      h: 40,
+      assetId: 'assets/a.png'
+    }
     expect(shiftElement(el, 10, -3)).toMatchObject({ x: 15, y: 3, w: 30, h: 40 })
   })
 })

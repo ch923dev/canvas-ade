@@ -99,7 +99,11 @@ export function makeStroke(id: string, points: number[]): StrokeElement {
 export const IMAGE_MAX = 360
 
 /** Scale natural dimensions to fit `max` on the longest side (never upscale); floor 16. */
-export function fitImageSize(natW: number, natH: number, max = IMAGE_MAX): { w: number; h: number } {
+export function fitImageSize(
+  natW: number,
+  natH: number,
+  max = IMAGE_MAX
+): { w: number; h: number } {
   if (!(natW > 0) || !(natH > 0)) return { w: max, h: max }
   const scale = Math.min(1, max / Math.max(natW, natH))
   return { w: Math.max(16, Math.round(natW * scale)), h: Math.max(16, Math.round(natH * scale)) }
@@ -113,7 +117,15 @@ export function makeImage(
   w: number,
   h: number
 ): ImageElement {
-  return { id, kind: 'image', x: Math.round(at.x - w / 2), y: Math.round(at.y - h / 2), w, h, assetId }
+  return {
+    id,
+    kind: 'image',
+    x: Math.round(at.x - w / 2),
+    y: Math.round(at.y - h / 2),
+    w,
+    h,
+    assetId
+  }
 }
 
 // ── Immutable array transforms ────────────────────────────────────────────────
