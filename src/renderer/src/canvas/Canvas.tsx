@@ -31,7 +31,8 @@ import {
   useStore,
   type EdgeTypes,
   type NodeChange,
-  type NodeTypes
+  type NodeTypes,
+  type Viewport
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore, selectLiveCount } from '../store/previewStore'
@@ -72,6 +73,11 @@ const edgeTypes: EdgeTypes = { preview: PreviewEdge }
 // fit-on-load & initial mount; user-triggered fit/reset wrap them in `cameraAnim`.
 /** Single-board focus framing (DESIGN.md §5/§9: ~70px pad). Animated via `cameraAnim`. */
 const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX } as const
+/** Planning "full view" fits TIGHTER than focus (fills more of the viewport). It's a
+ *  CAMERA fit (Option A), not the portal modal — see
+ *  docs/research/2026-06-02-infinite-canvas-coordinate-model.md. Vector content
+ *  (notes/pen) re-rasterises crisp at any zoom, so Z_MAX is fine. */
+const FULLVIEW_OPTIONS = { padding: 0.1, maxZoom: Z_MAX } as const
 /** Default preset for the `t` key / direct Tidy click — the semantic "smart" auto-tidy. */
 const SMART_PRESET = LAYOUT_PRESETS[0]
 /** Base width (world px) of the pane-aspect block a tile preset fills before the camera fits
@@ -160,6 +166,18 @@ function CanvasInner(): ReactElement {
     fullViewIdRef.current = fullViewId
   }, [fullViewId])
 
+  // Planning "full view" is a CAMERA fit (Option A), NOT the portal modal — it keeps the
+  // board in the canvas under the single parent camera so toBoard/add/drag stay correct
+  // (research: nesting a second transform was the add-note bug). Separate id so it never
+  // collides with the portal `fullViewId` (browser/terminal). The prior viewport is saved
+  // on enter and restored on exit so leaving full view returns the user where they were.
+  const [cameraFullViewId, setCameraFullViewId] = useState<string | null>(null)
+  const cameraFullViewIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    cameraFullViewIdRef.current = cameraFullViewId
+  }, [cameraFullViewId])
+  const priorViewportRef = useRef<Viewport | null>(null)
+
   // Open full view on a board: start the enter tween, mark it as the relocated board.
   const openFullView = useCallback((id: string) => {
     setFullViewClosing(false)
@@ -180,6 +198,28 @@ function CanvasInner(): ReactElement {
   }, [])
   const handleFullViewEntered = useCallback(() => setFullViewEntering(false), [])
   const handleFullViewExited = useCallback(() => hardCloseFullView(), [hardCloseFullView])
+
+  // Enter camera full view on a (Planning) board: save the viewport, fit the camera to
+  // the board, select it. Portal + camera full views are mutually exclusive.
+  const enterCameraFullView = useCallback(
+    (id: string) => {
+      hardCloseFullView()
+      priorViewportRef.current = rf.getViewport()
+      setCameraFullViewId(id)
+      selectBoard(id)
+      void rf.fitView(cameraAnim({ ...FULLVIEW_OPTIONS, nodes: [{ id }] }))
+    },
+    [rf, selectBoard, hardCloseFullView]
+  )
+  // Exit camera full view: restore the saved viewport. Idempotent.
+  const exitCameraFullView = useCallback(() => {
+    if (!cameraFullViewIdRef.current) return
+    setCameraFullViewId(null)
+    const vp = priorViewportRef.current
+    priorViewportRef.current = null
+    if (vp) void rf.setViewport(vp, cameraAnim({}))
+  }, [rf])
+
   const [diag, setDiag] = useState(import.meta.env.DEV)
 
   // Controlled nodes: one React Flow node per board, selection + dim mirrored from
@@ -193,13 +233,15 @@ function CanvasInner(): ReactElement {
         style: { width: b.w, height: b.h },
         data: {
           board: b,
-          dimmed: focusedId !== null && focusedId !== b.id,
-          fullView: fullViewId === b.id
+          dimmed:
+            (focusedId !== null && focusedId !== b.id) ||
+            (cameraFullViewId !== null && cameraFullViewId !== b.id),
+          fullView: fullViewId === b.id || cameraFullViewId === b.id
         },
         selected: b.id === selectedId,
         dragHandle: '.board-titlebar'
       })),
-    [boards, selectedId, focusedId, fullViewId]
+    [boards, selectedId, focusedId, fullViewId, cameraFullViewId]
   )
 
   // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
@@ -527,10 +569,23 @@ function CanvasInner(): ReactElement {
     }
 
     return {
-      // Maximize (⤢) toggles: open full view, or animate it closed if already full-view.
-      requestFullView: (id) => (fullViewIdRef.current === id ? closeFullView() : openFullView(id)),
+      // Maximize (⤢) toggles full view. Planning uses a CAMERA fit (Option A — keeps the
+      // board in the canvas under one transform so add/drag stay correct); Browser/Terminal
+      // use the portal modal (they need it to keep live native content alive).
+      requestFullView: (id) => {
+        const type = useCanvasStore.getState().boards.find((b) => b.id === id)?.type
+        if (type === 'planning') {
+          if (cameraFullViewIdRef.current === id) exitCameraFullView()
+          else enterCameraFullView(id)
+        } else if (fullViewIdRef.current === id) {
+          closeFullView()
+        } else {
+          openFullView(id)
+        }
+      },
       duplicate: (id) => {
         hardCloseFullView()
+        if (cameraFullViewIdRef.current === id) exitCameraFullView()
         // Exit focus so the clone isn't born dimmed (mirrors addCentered, #14 / STATE-1).
         setFocusedId(null)
         duplicateBoard(id)
@@ -539,6 +594,7 @@ function CanvasInner(): ReactElement {
         const removed = useCanvasStore.getState().boards.find((x) => x.id === id)
         if (removed?.type === 'terminal') void window.api.parkTerminal(id)
         if (fullViewIdRef.current === id) hardCloseFullView()
+        if (cameraFullViewIdRef.current === id) exitCameraFullView()
         removeBoard(id)
         setFocusedId((f) => (f === id ? null : f))
       },
@@ -549,7 +605,15 @@ function CanvasInner(): ReactElement {
         applyPush(st, from, url, target)
       }
     }
-  }, [duplicateBoard, removeBoard, openFullView, closeFullView, hardCloseFullView])
+  }, [
+    duplicateBoard,
+    removeBoard,
+    openFullView,
+    closeFullView,
+    hardCloseFullView,
+    enterCameraFullView,
+    exitCameraFullView
+  ])
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
   // state — clearing it here keeps focus following selection so undo/redo can't
@@ -583,6 +647,7 @@ function CanvasInner(): ReactElement {
     /* eslint-disable react-hooks/set-state-in-effect */
     setFocusedId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
     setFullViewId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
+    setCameraFullViewId((c) => (c !== null && !boards.some((b) => b.id === c) ? null : c))
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [boards])
 
@@ -649,15 +714,16 @@ function CanvasInner(): ReactElement {
   // `escape` preview event handled in BrowserPreviewLayer. No-op when not in full view.
   useEffect(() => {
     const onEscapeCapture = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && fullViewId) {
+      if (e.key === 'Escape' && (fullViewId || cameraFullViewId)) {
         e.preventDefault()
         e.stopPropagation()
-        closeFullView()
+        if (cameraFullViewId) exitCameraFullView()
+        else closeFullView()
       }
     }
     window.addEventListener('keydown', onEscapeCapture, true)
     return () => window.removeEventListener('keydown', onEscapeCapture, true)
-  }, [fullViewId, closeFullView])
+  }, [fullViewId, closeFullView, cameraFullViewId, exitCameraFullView])
 
   // Track Ctrl/⌘ for the snap-suppress escape hatch. keydown AND keyup both read the live
   // modifier state so holding/releasing mid-drag toggles snapping without a stale latch.
@@ -719,7 +785,10 @@ function CanvasInner(): ReactElement {
             onNodesChange={onNodesChange}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            onPaneClick={clearSelection}
+            onPaneClick={() => {
+              clearSelection()
+              exitCameraFullView()
+            }}
             onNodeDoubleClick={focusBoard}
             onNodeDragStart={onNodeDragStart}
             onNodeDragStop={onNodeDragStop}
