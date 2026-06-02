@@ -24,10 +24,23 @@ export interface NoteCardProps {
   onEditStart?: () => void
   /** True when this element is in the board selection set (draws the accent ring). */
   selected?: boolean
+  /** True when the element is locked (W3): shows a lock glyph + muted selection ring. */
+  locked?: boolean
   /** Select this element on grip press; `additive` = Shift held. */
   onSelect?: (id: string, additive: boolean) => void
   /** Right-click on the card → open the W3 element context menu (W3). */
   onContextMenu?: (e: React.MouseEvent) => void
+}
+
+/** Small lock badge pinned to a card corner when the element is locked (W3). */
+const lockBadge: CSSProperties = {
+  position: 'absolute',
+  bottom: 3,
+  right: 4,
+  color: 'var(--text-3)',
+  pointerEvents: 'none',
+  display: 'grid',
+  placeItems: 'center'
 }
 
 const delBtn: CSSProperties = {
@@ -55,6 +68,7 @@ export function NoteCard({
   onDelete,
   onEditStart,
   selected,
+  locked,
   onSelect,
   onContextMenu
 }: NoteCardProps): ReactElement {
@@ -93,7 +107,9 @@ export function NoteCard({
         border: `1px solid ${tint.edge}`,
         borderRadius: 'var(--r-inner)',
         boxShadow: 'var(--shadow-pop)',
-        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outline: selected
+          ? `1.5px solid ${locked ? 'var(--border-strong)' : 'var(--accent)'}`
+          : 'none',
         outlineOffset: 2,
         cursor: interactive ? 'grab' : 'default'
       }}
@@ -208,6 +224,11 @@ export function NoteCard({
           }}
         />
       </div>
+      {locked && (
+        <span style={lockBadge} title="Locked">
+          <Icon name="lock" size={11} />
+        </span>
+      )}
     </div>
   )
 }

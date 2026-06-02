@@ -116,14 +116,19 @@ export function WhiteboardSvg({
         </marker>
       </defs>
 
-      {arrows.map((a) => (
+      {arrows.map((a) => {
+        // A selected LOCKED vector draws with the muted (non-accent) stroke + the
+        // plain arrowhead so the lock reads as "selectable but pinned" (W3).
+        const sel = selectedIds?.has(a.id) ?? false
+        const selActive = sel && !a.locked
+        return (
         <path
           key={a.id}
           d={arrowPath(a)}
-          stroke={selectedIds?.has(a.id) ? 'var(--accent)' : 'var(--border-strong)'}
-          strokeWidth={selectedIds?.has(a.id) ? 2.5 : 1.5}
+          stroke={selActive ? 'var(--accent)' : 'var(--border-strong)'}
+          strokeWidth={selActive ? 2.5 : 1.5}
           fill="none"
-          markerEnd={selectedIds?.has(a.id) ? `url(#${markerId}-sel)` : `url(#${markerId})`}
+          markerEnd={selActive ? `url(#${markerId}-sel)` : `url(#${markerId})`}
           style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
           onPointerDown={(e) => {
             e.stopPropagation()
@@ -132,7 +137,8 @@ export function WhiteboardSvg({
           }}
           onContextMenu={(e) => onContextMenu?.(e, a.id)}
         />
-      ))}
+        )
+      })}
       {draftArrow && (
         <path
           d={arrowPath(draftArrow)}
@@ -148,7 +154,11 @@ export function WhiteboardSvg({
           <path
             key={strokes[i].id}
             d={d}
-            fill={selectedIds?.has(strokes[i].id) ? 'var(--accent)' : 'var(--text-2)'}
+            fill={
+              selectedIds?.has(strokes[i].id) && !strokes[i].locked
+                ? 'var(--accent)'
+                : 'var(--text-2)'
+            }
             style={{ pointerEvents: drawing ? 'none' : 'auto', cursor: 'grab' }}
             onPointerDown={(e) => {
               e.stopPropagation()

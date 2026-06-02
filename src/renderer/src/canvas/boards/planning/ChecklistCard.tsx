@@ -37,6 +37,8 @@ export interface ChecklistCardProps {
   onMeasureBottom?: (id: string, bottom: number) => void
   /** True when this element is in the board selection set (draws the accent ring). */
   selected?: boolean
+  /** True when the element is locked (W3): shows a lock glyph + muted selection ring. */
+  locked?: boolean
   /** Select this element on grip press; `additive` = Shift held. */
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
@@ -97,6 +99,7 @@ export function ChecklistCard({
   onEditStart,
   onMeasureBottom,
   selected,
+  locked,
   onSelect,
   onMeasure,
   onContextMenu
@@ -141,7 +144,9 @@ export function ChecklistCard({
         width: element.w,
         background: 'var(--surface-raised)',
         border: '1px solid var(--border)',
-        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outline: selected
+          ? `1.5px solid ${locked ? 'var(--border-strong)' : 'var(--accent)'}`
+          : 'none',
         outlineOffset: 2,
         borderRadius: 'var(--r-board)',
         padding: '11px 12px 12px',
@@ -217,6 +222,11 @@ export function ChecklistCard({
             cursor: interactive ? 'text' : 'default'
           }}
         />
+        {locked && (
+          <span title="Locked" style={{ color: 'var(--text-3)', flex: 'none', display: 'grid', placeItems: 'center' }}>
+            <Icon name="lock" size={11} />
+          </span>
+        )}
         <span
           style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)', flex: 'none' }}
         >

@@ -64,7 +64,8 @@ import {
   unionBBox,
   duplicateElements,
   expandGroups,
-  notLocked
+  notLocked,
+  setLocked
 } from './planning/elements'
 
 const TOOLS: ReadonlyArray<{
@@ -233,6 +234,16 @@ export function PlanningBoard({
     clearSel()
   }, [elements, selectedIds, beginChange, commit, clearSel])
 
+  /** Lock/unlock the selection (group-expanded): any unlocked → lock all; all locked → unlock all. */
+  const toggleLockSelection = useCallback(() => {
+    if (selectedIds.size === 0) return
+    const ids = expandGroups(elements, selectedIds)
+    const chosen = elements.filter((e) => ids.has(e.id))
+    const lock = !chosen.every((e) => e.locked)
+    beginChange()
+    commit(setLocked(elements, ids, lock))
+  }, [elements, selectedIds, beginChange, commit])
+
   /** Map a pointer event to a board-local point using the well's screen origin. */
   const toBoard = useCallback(
     (e: { clientX: number; clientY: number }): { x: number; y: number } => {
@@ -332,8 +343,16 @@ export function PlanningBoard({
       // selectOnPress with the Shift flag, so read the resulting intent here off the
       // live set — React state is async, so this is the PRE-press set, which is
       // correct: already-selected keeps the set, unselected → [id].)
-      const sel = selectedIds
-      const movingIds = sel.has(id) ? [...sel] : [id]
+      // Group-expand the moving set (selecting one group member drags the whole
+      // group) AND filter out locked elements — a locked element never moves (W3).
+      // If the press resolves to an empty movable set (e.g. pressing a locked
+      // element with nothing unlocked alongside it), no drag starts.
+      const wanted = selectedIds.has(id) ? expandGroups(elements, selectedIds) : new Set([id])
+      const movingIds = [...wanted].filter((mid) => {
+        const m = elements.find((x) => x.id === mid)
+        return m ? notLocked(m) : false
+      })
+      if (movingIds.length === 0) return
       const p = toBoard(e)
       // Record the grab point; the live delta is pointer − grab. Works for every
       // kind (cards + arrows + strokes) since we translate by delta (#28, #37).
@@ -400,7 +419,8 @@ export function PlanningBoard({
         // snapshot (the move/draw paths defer for the same reason; WB-1 class). The
         // checkpoint is taken in onWellPointerUp only if something was erased.
         const removed = new Set<string>()
-        for (const el of elements) if (eraseHitTest(el, p)) removed.add(el.id)
+        // Skip locked elements — the eraser passes over them (W3).
+        for (const el of elements) if (notLocked(el) && eraseHitTest(el, p)) removed.add(el.id)
         drag.current = { mode: 'erase', removed }
         setPendingErase(new Set(removed))
         e.currentTarget.setPointerCapture(e.pointerId)
@@ -456,7 +476,7 @@ export function PlanningBoard({
       } else if (d.mode === 'erase') {
         let grew = false
         for (const el of elements) {
-          if (!d.removed.has(el.id) && eraseHitTest(el, p)) {
+          if (!d.removed.has(el.id) && notLocked(el) && eraseHitTest(el, p)) {
             d.removed.add(el.id)
             grew = true
           }
@@ -653,9 +673,15 @@ export function PlanningBoard({
           if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
             e.stopPropagation()
             e.preventDefault()
-            beginChange()
-            commit(elements.filter((el) => !selectedIds.has(el.id)))
-            clearSel()
+            deleteSelection()
+            return
+          }
+          // ⌘L / Ctrl+L → toggle lock on the selection. Verified non-colliding with
+          // the global Canvas chords (Ctrl+Z/Y/Shift+Z, Ctrl+Shift+D, bare 1/0/t, Esc).
+          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') {
+            e.stopPropagation()
+            e.preventDefault()
+            toggleLockSelection()
             return
           }
           const next = shortcutTool(e.key, {
@@ -732,6 +758,7 @@ export function PlanningBoard({
                 onDelete={deleteEl}
                 onEditStart={beginChange}
                 selected={selectedIds.has(el.id)}
+                locked={el.locked}
                 onSelect={selectOnPress}
                 onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
               />
@@ -748,6 +775,7 @@ export function PlanningBoard({
                 onDelete={deleteEl}
                 onEditStart={beginChange}
                 selected={selectedIds.has(el.id)}
+                locked={el.locked}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
                 onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
@@ -770,6 +798,7 @@ export function PlanningBoard({
                 onEditStart={beginChange}
                 onMeasureBottom={growForChecklist}
                 selected={selectedIds.has(el.id)}
+                locked={el.locked}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
                 onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
@@ -800,7 +829,7 @@ export function PlanningBoard({
             y={menu.y}
             sel={menuSelectionState(elements, selectedIds)}
             onDuplicate={() => duplicateSelection({ inPlace: true })}
-            onToggleLock={() => {}}
+            onToggleLock={() => toggleLockSelection()}
             onGroup={() => {}}
             onUngroup={() => {}}
             onAlign={() => {}}

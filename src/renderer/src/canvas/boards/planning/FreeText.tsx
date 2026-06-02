@@ -18,6 +18,8 @@ export interface FreeTextProps {
   onEditStart?: () => void
   /** True when this element is in the board selection set (draws the accent ring). */
   selected?: boolean
+  /** True when the element is locked (W3): shows a lock glyph + muted selection ring. */
+  locked?: boolean
   /** Select this element on grip press; `additive` = Shift held. */
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
@@ -51,6 +53,7 @@ export function FreeText({
   onDelete,
   onEditStart,
   selected,
+  locked,
   onSelect,
   onMeasure,
   onContextMenu
@@ -89,7 +92,9 @@ export function FreeText({
         left: element.x,
         top: element.y,
         display: 'flex',
-        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outline: selected
+          ? `1.5px solid ${locked ? 'var(--border-strong)' : 'var(--accent)'}`
+          : 'none',
         outlineOffset: 2
       }}
       // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
@@ -206,6 +211,22 @@ export function FreeText({
           cursor: interactive ? 'text' : 'default'
         }}
       />
+      {locked && (
+        <span
+          title="Locked"
+          style={{
+            position: 'absolute',
+            top: -4,
+            right: -14,
+            color: 'var(--text-3)',
+            pointerEvents: 'none',
+            display: 'grid',
+            placeItems: 'center'
+          }}
+        >
+          <Icon name="lock" size={11} />
+        </span>
+      )}
     </div>
   )
 }
