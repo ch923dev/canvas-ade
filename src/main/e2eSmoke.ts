@@ -1292,6 +1292,139 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     detail: groupOk ? 'group then click one selects+moves all' : JSON.stringify(w3)
   })
 
+  // ── Bugfix: full-view add-note lands IN BOUNDS + survives exit; full-view delete works;
+  // checklist is draggable by its body (not just a header sliver). Drives REAL pointer/key
+  // gestures so the toBoard coordinate path (the bug) is exercised. ──
+  const fvbug = await evalIn<{
+    stage: string
+    wellOffsetW: number
+    wellRectW: number
+    boardW: number
+    boardH: number
+    addedInFv: number
+    noteX: number
+    noteY: number
+    afterExit: number
+    deletedInFv: number
+    checklistMovedX: number
+  }>(
+    win,
+    `(async () => {
+       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+       const id = ${JSON.stringify(planId)};
+       const board = () => window.__canvasE2E.getBoards().find((x) => x.id === id);
+       const els = () => { const b = board(); return b && b.type === 'planning' ? b.elements : []; };
+       const notes = () => els().filter((e) => e.kind === 'note');
+       const fail = { stage:'start', wellOffsetW:-1, wellRectW:-1, boardW:-1, boardH:-1, addedInFv:-1, noteX:-999999, noteY:-999999, afterExit:-1, deletedInFv:-1, checklistMovedX:-999999 };
+       let stage = 'start';
+       let checklistMovedX = -999999;
+       try {
+         // ── C) checklist drag by body (FIRST, on a clean canvas — no full-view relocation
+         // timing to race) ────────────────────────────────────────────────────────
+         stage = 'cl-seed';
+         window.__canvasE2E.patchBoard(id, { elements: [
+           { id:'cl-1', kind:'checklist', x:60, y:60, w:240, h:0, title:'T', items:[{id:'i1',label:'a',done:false}] }
+         ] });
+         await sleep(140);
+         window.__canvasE2E.fitView(id);
+         await sleep(200);
+         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const well2 = node && node.querySelector('.pl-well');
+         const check = node && node.querySelector('.pl-check');
+         if (well2 && check) {
+           const cr = check.getBoundingClientRect();
+           const cl0 = els().find((e) => e.id === 'cl-1');
+           const clX0 = cl0 ? cl0.x : -999999;
+           // Press the .pl-check ROOT directly (e.target = root, not an input) → whole-card drag.
+           const from = { x: cr.left + 8, y: cr.top + 6 };
+           try { check.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:2,isPrimary:true,clientX:from.x,clientY:from.y})); } catch(e){}
+           await sleep(20);
+           for (let i=1;i<=4;i++){ try { well2.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:2,isPrimary:true,clientX:from.x+50*i/4,clientY:from.y+50*i/4})); } catch(e){} await sleep(12);}
+           try { well2.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:2,isPrimary:true,clientX:from.x+50,clientY:from.y+50})); } catch(e){}
+           await sleep(60);
+           const cl1 = els().find((e) => e.id === 'cl-1');
+           checklistMovedX = cl1 ? cl1.x - clX0 : -999999;
+         }
+
+         // ── A) full-view add note ───────────────────────────────────────────────
+         stage = 'fv-seed';
+         window.__canvasE2E.patchBoard(id, { elements: [] });
+         await sleep(120);
+         window.__canvasE2E.setFullView(id);
+         await sleep(350); // enter tween settle so the well is scaled (fvFit measured)
+         const well = document.querySelector('.fullview-host .pl-well');
+         if (!well) return { ...fail, stage:'no-fv-well', checklistMovedX };
+         const r = well.getBoundingClientRect();
+         const b0 = board();
+         const boardW = b0 ? b0.w : -1, boardH = b0 ? b0.h : -1;
+         const wellOffsetW = well.offsetWidth, wellRectW = Math.round(r.width);
+         // Activate the note tool via the board-scoped 'n' shortcut (focus the well first),
+         // then click the well centre to place a note — exercises toBoard in full view.
+         well.focus();
+         well.dispatchEvent(new KeyboardEvent('keydown', { key:'n', bubbles:true }));
+         await sleep(40);
+         const cx = r.left + r.width/2, cy = r.top + r.height/2;
+         const pev = (t,x,y) => { try { well.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,pointerId:1,isPrimary:true,clientX:x,clientY:y})); } catch(e){} };
+         pev('pointerdown', cx, cy); await sleep(20); pev('pointerup', cx, cy);
+         await sleep(80);
+         const addedInFv = notes().length;
+         const n = notes()[0];
+         const noteX = n ? n.x : -999999, noteY = n ? n.y : -999999;
+         // ── B) full-view delete (select-all via marquee drag, then Delete) ────────
+         stage = 'fv-delete';
+         well.focus();
+         well.dispatchEvent(new KeyboardEvent('keydown', { key:'s', bubbles:true })); // select tool
+         await sleep(40);
+         // marquee across the whole well to select the note, then Delete
+         pev('pointerdown', r.left+8, r.top+8); await sleep(15);
+         for (let i=1;i<=4;i++){ pev('pointermove', r.left+8+(r.width-16)*i/4, r.top+8+(r.height-16)*i/4); await sleep(12);}
+         pev('pointerup', r.right-8, r.bottom-8); await sleep(40);
+         well.dispatchEvent(new KeyboardEvent('keydown', { key:'Delete', bubbles:true }));
+         await sleep(60);
+         const deletedInFv = notes().length;
+         window.__canvasE2E.setFullView(null);
+         await sleep(250);
+         const afterExit = notes().length;
+
+         return { stage:'done', wellOffsetW, wellRectW, boardW, boardH, addedInFv, noteX, noteY, afterExit, deletedInFv, checklistMovedX };
+       } catch (err) {
+         return { ...fail, stage:'ERR@'+stage+':'+String((err&&err.message)||err) };
+       }
+     })()`
+  )
+  // Full-view note added (count 1) AND lands within the board's bounds (so it survives the
+  // overflow-clip on exit). Pre-fix the full-view well stretched to the modal size, so the
+  // note got coords ≫ board.w and was clipped away on exit.
+  const fvAddOk =
+    fvbug.addedInFv === 1 &&
+    fvbug.noteX >= 0 &&
+    fvbug.noteX <= fvbug.boardW &&
+    fvbug.noteY >= 0 &&
+    fvbug.noteY <= fvbug.boardH
+  parts.push({
+    name: 'fullview-add-note',
+    ok: fvAddOk,
+    detail: fvAddOk
+      ? `note placed in full view at (${fvbug.noteX},${fvbug.noteY}) is within board ${fvbug.boardW}×${fvbug.boardH}`
+      : JSON.stringify(fvbug)
+  })
+  const fvDelOk = fvbug.deletedInFv === 0 && fvbug.afterExit === 0
+  parts.push({
+    name: 'fullview-delete',
+    ok: fvDelOk,
+    detail: fvDelOk
+      ? 'note created then deleted in full view; stays gone after exit'
+      : JSON.stringify(fvbug)
+  })
+  const clDragOk = fvbug.checklistMovedX >= 30
+  parts.push({
+    name: 'checklist-drag',
+    ok: clDragOk,
+    detail: clDragOk
+      ? `checklist dragged by its body (Δx=${fvbug.checklistMovedX})`
+      : JSON.stringify(fvbug)
+  })
+
   const count = await evalIn<number>(win, 'window.__canvasE2E.getBoards().length')
   parts.push({ name: 'seed', ok: count === 4, detail: `${count} boards` })
 

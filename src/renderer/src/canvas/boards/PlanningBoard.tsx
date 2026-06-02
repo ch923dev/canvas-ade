@@ -17,13 +17,17 @@
  */
 import {
   useCallback,
+  useContext,
+  useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
   type PointerEvent,
   type ReactElement
 } from 'react'
 import { useStore } from '@xyflow/react'
+import { BoardFullViewContext } from '../fullViewContext'
 import type {
   ArrowElement,
   ChecklistElement,
@@ -91,6 +95,10 @@ const TOOLS: ReadonlyArray<{
 
 const newId = (): string => crypto.randomUUID()
 
+/** Title-bar height (px) subtracted from board.h to get the content well's height when
+ *  scaling the board to fit the full-view modal (mirrors BoardFrame `--titlebar-h`). */
+const FV_TITLEBAR = 34
+
 /** Derive the context-menu's selection-shape flags from the live selection (W3). */
 function menuSelectionState(els: PlanningElement[], sel: ReadonlySet<string>): MenuSelectionState {
   const chosen = els.filter((e) => sel.has(e.id))
@@ -152,6 +160,35 @@ export function PlanningBoard({
     [toggleSel, elements]
   )
   const wellRef = useRef<HTMLDivElement>(null)
+
+  // Full view (ambient flag from BoardNode's context): the board's subtree is portaled
+  // into the UNTRANSFORMED modal host, where the well would otherwise stretch to the modal
+  // size — making board-local coords inconsistent with canvas, so notes placed in full view
+  // land outside the board's w×h and get clipped on exit. Instead render the well at the
+  // board's INTRINSIC content size (w × h−titlebar) and CSS-scale it to fit the modal,
+  // centered. screenScale (rendered ÷ layout = the fit) keeps `toBoard` correct in both
+  // modes, so coords stay in the same 0..w/0..h space whether on canvas or full view.
+  const fullView = useContext(BoardFullViewContext)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [fvFit, setFvFit] = useState(1)
+  const fvContentW = board.w
+  const fvContentH = Math.max(80, board.h - FV_TITLEBAR)
+  useLayoutEffect(() => {
+    if (!fullView) return
+    const el = stageRef.current
+    if (!el) return
+    const compute = (): void => {
+      const aw = el.clientWidth
+      const ah = el.clientHeight
+      if (aw <= 0 || ah <= 0) return
+      const s = Math.min(aw / fvContentW, ah / fvContentH)
+      setFvFit(Number.isFinite(s) && s > 0 ? s : 1)
+    }
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [fullView, fvContentW, fvContentH])
 
   // Right-click an element → ensure it's in the selection (additive = Shift), then
   // open the context menu at the cursor. A right-click on an already-selected element
@@ -761,6 +798,60 @@ export function PlanningBoard({
   // crosshair cursor so the active mode is legible.
   const drawing = tool === 'arrow' || tool === 'pen'
 
+  const cursorVal =
+    tool === 'erase'
+      ? 'cell'
+      : drawing
+        ? 'crosshair'
+        : tool === 'note' || tool === 'check'
+          ? 'copy'
+          : 'default'
+  // 12px dot grid — finer than the canvas lattice, to read as a sketch surface (DESIGN §7.3).
+  const gridBg: CSSProperties = {
+    backgroundImage: 'radial-gradient(var(--grid-dot) 1px, transparent 1px)',
+    backgroundSize: '12px 12px',
+    backgroundPosition: '6px 6px'
+  }
+  // The well is ALWAYS wrapped in a stage. On canvas the stage is a transparent inset:0
+  // passthrough and the well fills it (identical to the pre-fix single-div layout). In full
+  // view the stage centers the intrinsic-size well and the well is CSS-scaled to fit — so
+  // board-local coords stay in the same 0..w/0..h space as canvas (full-view add-note fix).
+  const stageStyle: CSSProperties = fullView
+    ? {
+        position: 'absolute',
+        inset: 0,
+        overflow: 'hidden',
+        display: 'grid',
+        placeItems: 'center',
+        background: 'var(--surface)'
+      }
+    : { position: 'absolute', inset: 0 }
+  const wellStyle: CSSProperties = fullView
+    ? {
+        position: 'relative',
+        width: fvContentW,
+        height: fvContentH,
+        flex: 'none',
+        overflow: 'hidden',
+        cursor: cursorVal,
+        ...gridBg,
+        transform: `scale(${fvFit})`,
+        transformOrigin: 'center',
+        background: 'var(--surface)',
+        borderRadius: 'var(--r-board)',
+        // Tool gestures own this layer; React Flow node-drag stays on the title.
+        touchAction: 'none'
+      }
+    : {
+        position: 'absolute',
+        inset: 0,
+        overflow: 'hidden',
+        cursor: cursorVal,
+        ...gridBg,
+        // Tool gestures own this layer; React Flow node-drag stays on the title.
+        touchAction: 'none'
+      }
+
   return (
     <BoardFrame
       type="planning"
@@ -775,200 +866,193 @@ export function PlanningBoard({
       onDuplicate={onDuplicate}
       onDelete={onDelete}
     >
-      <div
-        ref={wellRef}
-        className="pl-well"
-        tabIndex={0}
-        onPointerDown={onWellPointerDown}
-        onPointerMove={onWellPointerMove}
-        onPointerUp={onWellPointerUp}
-        onPointerCancel={onWellPointerCancel}
-        onDoubleClick={onWellDoubleClick}
-        onKeyDown={(e) => {
-          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
-            e.stopPropagation()
-            e.preventDefault()
-            deleteSelection()
-            return
-          }
-          // ⌘L / Ctrl+L → toggle lock on the selection. Verified non-colliding with
-          // the global Canvas chords (Ctrl+Z/Y/Shift+Z, Ctrl+Shift+D, bare 1/0/t, Esc).
-          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') {
-            e.stopPropagation()
-            e.preventDefault()
-            toggleLockSelection()
-            return
-          }
-          // ⌘D / Ctrl+D → duplicate-in-place (+12,+12). Verified free: globals use
-          // Ctrl+SHIFT+D for diagnostics; plain Ctrl+D is unused.
-          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
-            e.stopPropagation()
-            e.preventDefault()
-            duplicateSelection({ inPlace: true })
-            return
-          }
-          // ⌘G / ⌘⇧G → group / ungroup the selection. Verified free: globals don't use ⌘G.
-          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
-            e.stopPropagation()
-            e.preventDefault()
-            if (e.shiftKey) ungroupSelection()
-            else groupSelection()
-            return
-          }
-          const next = shortcutTool(e.key, {
-            ctrl: e.ctrlKey,
-            meta: e.metaKey,
-            alt: e.altKey
-          })
-          if (next) {
-            // Keep a handled tool key from also reaching the global Canvas
-            // window-keydown handler. Our letters (s/n/c/a/p/e) don't collide with
-            // today's bare-key globals (1/0/t), but the global typing-guard only
-            // suppresses INPUT/TEXTAREA/contentEditable — NOT this focusable div — so
-            // this native stop (React dispatches at the root container) future-proofs
-            // against a new bare-letter global silently double-firing here.
-            e.stopPropagation()
-            e.preventDefault()
-            setTool(next)
-            clearSel()
-          }
-        }}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          overflow: 'hidden',
-          cursor:
-            tool === 'erase'
-              ? 'cell'
-              : drawing
-                ? 'crosshair'
-                : tool === 'note' || tool === 'check'
-                  ? 'copy'
-                  : 'default',
-          // 12px dot grid — finer than the canvas lattice, to read as a sketch
-          // surface (DESIGN.md §7.3).
-          backgroundImage: 'radial-gradient(var(--grid-dot) 1px, transparent 1px)',
-          backgroundSize: '12px 12px',
-          backgroundPosition: '6px 6px',
-          // Tool gestures own this layer; React Flow node-drag stays on the title.
-          touchAction: 'none'
-        }}
-      >
-        {/* Vector layer (under the cards so cards stay clickable). */}
-        <WhiteboardSvg
-          boardId={board.id}
-          arrows={arrows}
-          strokes={strokes}
-          draftArrow={draftArrow}
-          draftStroke={draftStroke}
-          selectedIds={selectedIds}
-          marquee={marqueeRect}
-          guides={snapGuides}
-          // Disable committed-vector hit-testing for ANY non-select tool (not just
-          // pen/arrow) so a note/check placement over committed ink falls through
-          // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
-          drawing={tool !== 'select'}
-          onSelect={(id, additive) => {
-            selectOnPress(id, additive)
-            wellRef.current?.focus()
+      <div ref={stageRef} style={stageStyle}>
+        <div
+          ref={wellRef}
+          className="pl-well"
+          tabIndex={0}
+          onPointerDown={onWellPointerDown}
+          onPointerMove={onWellPointerMove}
+          onPointerUp={onWellPointerUp}
+          onPointerCancel={onWellPointerCancel}
+          onDoubleClick={onWellDoubleClick}
+          onKeyDown={(e) => {
+            if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
+              e.stopPropagation()
+              e.preventDefault()
+              deleteSelection()
+              return
+            }
+            // ⌘L / Ctrl+L → toggle lock on the selection. Verified non-colliding with
+            // the global Canvas chords (Ctrl+Z/Y/Shift+Z, Ctrl+Shift+D, bare 1/0/t, Esc).
+            if (
+              (e.ctrlKey || e.metaKey) &&
+              !e.shiftKey &&
+              !e.altKey &&
+              e.key.toLowerCase() === 'l'
+            ) {
+              e.stopPropagation()
+              e.preventDefault()
+              toggleLockSelection()
+              return
+            }
+            // ⌘D / Ctrl+D → duplicate-in-place (+12,+12). Verified free: globals use
+            // Ctrl+SHIFT+D for diagnostics; plain Ctrl+D is unused.
+            if (
+              (e.ctrlKey || e.metaKey) &&
+              !e.shiftKey &&
+              !e.altKey &&
+              e.key.toLowerCase() === 'd'
+            ) {
+              e.stopPropagation()
+              e.preventDefault()
+              duplicateSelection({ inPlace: true })
+              return
+            }
+            // ⌘G / ⌘⇧G → group / ungroup the selection. Verified free: globals don't use ⌘G.
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+              e.stopPropagation()
+              e.preventDefault()
+              if (e.shiftKey) ungroupSelection()
+              else groupSelection()
+              return
+            }
+            const next = shortcutTool(e.key, {
+              ctrl: e.ctrlKey,
+              meta: e.metaKey,
+              alt: e.altKey
+            })
+            if (next) {
+              // Keep a handled tool key from also reaching the global Canvas
+              // window-keydown handler. Our letters (s/n/c/a/p/e) don't collide with
+              // today's bare-key globals (1/0/t), but the global typing-guard only
+              // suppresses INPUT/TEXTAREA/contentEditable — NOT this focusable div — so
+              // this native stop (React dispatches at the root container) future-proofs
+              // against a new bare-letter global silently double-firing here.
+              e.stopPropagation()
+              e.preventDefault()
+              setTool(next)
+              clearSel()
+            }
           }}
-          onDragStart={startElementDrag}
-          onContextMenu={(ev, id) => openMenuAt(ev, id, ev.shiftKey)}
-        />
-
-        {/* DOM elements: notes, free text, checklists. */}
-        {viewElements.map((el) => {
-          if (el.kind === 'note') {
-            return (
-              <NoteCard
-                key={el.id}
-                note={el}
-                interactive={interactive}
-                onDragStart={startElementDrag}
-                onChangeText={setNoteText}
-                onDelete={deleteEl}
-                onEditStart={beginChange}
-                selected={selectedIds.has(el.id)}
-                locked={el.locked}
-                onSelect={selectOnPress}
-                onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
-              />
-            )
-          }
-          if (el.kind === 'text') {
-            return (
-              <FreeText
-                key={el.id}
-                element={el}
-                interactive={interactive}
-                onDragStart={startElementDrag}
-                onChangeText={setTextText}
-                onDelete={deleteEl}
-                onEditStart={beginChange}
-                selected={selectedIds.has(el.id)}
-                locked={el.locked}
-                onSelect={selectOnPress}
-                onMeasure={reportMeasure}
-                onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
-              />
-            )
-          }
-          if (el.kind === 'checklist') {
-            return (
-              <ChecklistCard
-                key={el.id}
-                element={el}
-                interactive={interactive}
-                onDragStart={startElementDrag}
-                onToggle={toggle}
-                onChangeTitle={setTitle}
-                onChangeItem={setItem}
-                onAddItem={appendItem}
-                onRemoveItem={dropItem}
-                onDelete={deleteEl}
-                onEditStart={beginChange}
-                onMeasureBottom={growForChecklist}
-                selected={selectedIds.has(el.id)}
-                locked={el.locked}
-                onSelect={selectOnPress}
-                onMeasure={reportMeasure}
-                onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
-              />
-            )
-          }
-          return null
-        })}
-
-        {elements.length === 0 && (
-          <div
-            className="t-meta"
-            style={{
-              position: 'absolute',
-              left: 14,
-              top: 12,
-              color: 'var(--text-faint)',
-              pointerEvents: 'none'
+          style={wellStyle}
+        >
+          {/* Vector layer (under the cards so cards stay clickable). */}
+          <WhiteboardSvg
+            boardId={board.id}
+            arrows={arrows}
+            strokes={strokes}
+            draftArrow={draftArrow}
+            draftStroke={draftStroke}
+            selectedIds={selectedIds}
+            marquee={marqueeRect}
+            guides={snapGuides}
+            // Disable committed-vector hit-testing for ANY non-select tool (not just
+            // pen/arrow) so a note/check placement over committed ink falls through
+            // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
+            drawing={tool !== 'select'}
+            onSelect={(id, additive) => {
+              selectOnPress(id, additive)
+              wellRef.current?.focus()
             }}
-          >
-            {selected ? 'pick a tool above · note · check · arrow · pen · erase' : 'empty plan'}
-          </div>
-        )}
-
-        {menu && (
-          <ElementContextMenu
-            x={menu.x}
-            y={menu.y}
-            sel={menuSelectionState(elements, selectedIds)}
-            onDuplicate={() => duplicateSelection({ inPlace: true })}
-            onToggleLock={() => toggleLockSelection()}
-            onGroup={() => groupSelection()}
-            onUngroup={() => ungroupSelection()}
-            onAlign={(edge) => applyAlign(edge)}
-            onDistribute={(axis) => applyDistribute(axis)}
-            onDelete={() => deleteSelection()}
-            onClose={() => setMenu(null)}
+            onDragStart={startElementDrag}
+            onContextMenu={(ev, id) => openMenuAt(ev, id, ev.shiftKey)}
           />
-        )}
+
+          {/* DOM elements: notes, free text, checklists. */}
+          {viewElements.map((el) => {
+            if (el.kind === 'note') {
+              return (
+                <NoteCard
+                  key={el.id}
+                  note={el}
+                  interactive={interactive}
+                  onDragStart={startElementDrag}
+                  onChangeText={setNoteText}
+                  onDelete={deleteEl}
+                  onEditStart={beginChange}
+                  selected={selectedIds.has(el.id)}
+                  locked={el.locked}
+                  onSelect={selectOnPress}
+                  onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
+                />
+              )
+            }
+            if (el.kind === 'text') {
+              return (
+                <FreeText
+                  key={el.id}
+                  element={el}
+                  interactive={interactive}
+                  onDragStart={startElementDrag}
+                  onChangeText={setTextText}
+                  onDelete={deleteEl}
+                  onEditStart={beginChange}
+                  selected={selectedIds.has(el.id)}
+                  locked={el.locked}
+                  onSelect={selectOnPress}
+                  onMeasure={reportMeasure}
+                  onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
+                />
+              )
+            }
+            if (el.kind === 'checklist') {
+              return (
+                <ChecklistCard
+                  key={el.id}
+                  element={el}
+                  interactive={interactive}
+                  onDragStart={startElementDrag}
+                  onToggle={toggle}
+                  onChangeTitle={setTitle}
+                  onChangeItem={setItem}
+                  onAddItem={appendItem}
+                  onRemoveItem={dropItem}
+                  onDelete={deleteEl}
+                  onEditStart={beginChange}
+                  onMeasureBottom={growForChecklist}
+                  selected={selectedIds.has(el.id)}
+                  locked={el.locked}
+                  onSelect={selectOnPress}
+                  onMeasure={reportMeasure}
+                  onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
+                />
+              )
+            }
+            return null
+          })}
+
+          {elements.length === 0 && (
+            <div
+              className="t-meta"
+              style={{
+                position: 'absolute',
+                left: 14,
+                top: 12,
+                color: 'var(--text-faint)',
+                pointerEvents: 'none'
+              }}
+            >
+              {selected ? 'pick a tool above · note · check · arrow · pen · erase' : 'empty plan'}
+            </div>
+          )}
+
+          {menu && (
+            <ElementContextMenu
+              x={menu.x}
+              y={menu.y}
+              sel={menuSelectionState(elements, selectedIds)}
+              onDuplicate={() => duplicateSelection({ inPlace: true })}
+              onToggleLock={() => toggleLockSelection()}
+              onGroup={() => groupSelection()}
+              onUngroup={() => ungroupSelection()}
+              onAlign={(edge) => applyAlign(edge)}
+              onDistribute={(axis) => applyDistribute(axis)}
+              onDelete={() => deleteSelection()}
+              onClose={() => setMenu(null)}
+            />
+          )}
+        </div>
       </div>
     </BoardFrame>
   )

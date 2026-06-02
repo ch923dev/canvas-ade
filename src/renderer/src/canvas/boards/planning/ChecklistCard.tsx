@@ -153,12 +153,21 @@ export function ChecklistCard({
         boxShadow: 'var(--shadow-pop)',
         display: 'flex',
         flexDirection: 'column',
-        gap: 9
+        gap: 9,
+        cursor: interactive ? 'grab' : 'default'
       }}
-      // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
-      // fall through to the well so it can START over the card (#6).
+      // Whole-card drag surface (fixes the "hard to drag" sliver-only header grip): in
+      // select mode a press anywhere that ISN'T an interactive control (the title/item
+      // inputs, checkboxes, and add/delete buttons keep their own press handling + stop
+      // propagation) grabs the card. A draw gesture (pen/arrow/place) still falls through
+      // to the well so it can START over the card (#6) — hence the interactive guard.
       onPointerDown={(e) => {
-        if (interactive) e.stopPropagation()
+        if (!interactive) return
+        e.stopPropagation()
+        const t = e.target as HTMLElement
+        if (t.closest('input, button, textarea')) return
+        onSelect?.(element.id, e.shiftKey)
+        onDragStart(e, element.id)
       }}
       // A dblclick on the card must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
