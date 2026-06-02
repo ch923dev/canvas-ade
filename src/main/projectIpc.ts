@@ -44,7 +44,11 @@ export function isForeignSender(
  */
 export function isUnsafeProjectDir(dir: string): boolean {
   if (typeof dir !== 'string' || dir.length === 0) return true
-  if (!path.isAbsolute(dir)) return true
+  // Accept an absolute path in EITHER flavor: `path.isAbsolute` is host-specific
+  // (POSIX rejects `C:\...`, Win32 accepts `/...`), so the bare check made the M-6
+  // unit test pass on Windows but fail on the Linux CI runner. The `..`-traversal
+  // guard below is separator-agnostic, so honoring both forms loses no safety.
+  if (!path.win32.isAbsolute(dir) && !path.posix.isAbsolute(dir)) return true
   // `path.normalize` collapses `..`, so a traversal that fully resolves
   // (e.g. `C:\Users\x\..\..\evil` → `C:\evil`) would slip past a check on the
   // normalized form. Reject any `..` segment in the ORIGINAL input instead —
