@@ -39,6 +39,9 @@ export function alignElements(
 
   const delta = new Map<string, number>()
   for (const { id, b } of boxes) delta.set(id, Math.round(target - anchor(b)))
+  let moved = false
+  for (const d of delta.values()) if (d !== 0) { moved = true; break }
+  if (!moved) return els
   return els.map((el) => {
     const d = delta.get(el.id)
     if (d === undefined || d === 0) return el
@@ -75,6 +78,9 @@ export function distributeElements(
     if (i === 0 || i === items.length - 1) return
     delta.set(it.id, Math.round(first + gap * i - it.center))
   })
+  let moved = false
+  for (const d of delta.values()) if (d !== 0) { moved = true; break }
+  if (!moved) return els
   return els.map((el) => {
     const d = delta.get(el.id)
     if (d === undefined || d === 0) return el
