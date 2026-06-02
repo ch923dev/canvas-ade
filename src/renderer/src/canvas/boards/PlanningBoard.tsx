@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent,
   type ReactElement
 } from 'react'
@@ -60,8 +61,16 @@ import {
   removeItem,
   setItemLabel,
   elementBBox,
-  unionBBox
+  unionBBox,
+  isLocked,
+  expandGroups,
+  duplicateElements,
+  groupElements,
+  ungroupElements,
+  setLocked
 } from './planning/elements'
+import { alignElements, distributeElements, type AlignEdge } from './planning/align'
+import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 
 const TOOLS: ReadonlyArray<{
   tool: PlanTool
@@ -130,11 +139,18 @@ export function PlanningBoard({
   // single undo checkpoint, not one mutation per frame (#9). A delta (not an
   // absolute top-left) so it translates EVERY kind uniformly, including arrows +
   // strokes which have no single top-left (#28, #37).
-  const [dragPos, setDragPos] = useState<{ ids: string[]; dx: number; dy: number } | null>(null)
+  const [dragPos, setDragPos] = useState<{
+    ids: string[]
+    dx: number
+    dy: number
+    alt: boolean
+  } | null>(null)
   // Active drag (an element move, an arrow, or a pen stroke) → captured pointer.
   // A move records the grab point in board space so the delta = pointer − grab.
+  // A move also records whether Alt was held at grab → an alt-drag DUPLICATES the
+  // moving set on pointer-up (originals stay put; a ghost preview tracks the copies).
   const drag = useRef<
-    | { mode: 'move'; ids: string[]; grabX: number; grabY: number }
+    | { mode: 'move'; ids: string[]; grabX: number; grabY: number; alt: boolean }
     | { mode: 'arrow'; id: string }
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
@@ -148,6 +164,14 @@ export function PlanningBoard({
     y: number
     w: number
     h: number
+  } | null>(null)
+  // Right-click element context menu (W3): raw screen coords + the entries built at
+  // open time (so the ref-reading builder runs in the event handler, not render —
+  // react-hooks/refs); null when closed.
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    entries: MenuEntry[]
   } | null>(null)
 
   // Live DOM sizes (board-local px) for the auto-sized kinds (text, checklist), fed by
@@ -198,6 +222,8 @@ export function PlanningBoard({
   )
   const deleteEl = useCallback(
     (id: string) => {
+      const el = elements.find((x) => x.id === id)
+      if (el && isLocked(el)) return // locked resists the per-element X (closes the prior bypass)
       beginChange()
       commit(removeElement(elements, id))
     },
@@ -258,7 +284,7 @@ export function PlanningBoard({
   const startElementDrag = useCallback(
     (e: PointerEvent, id: string) => {
       const el = elements.find((x) => x.id === id)
-      if (!el) return
+      if (!el || isLocked(el)) return // a locked element can't initiate a drag
       // Do NOT checkpoint here: a zero-movement grab (plain click) would push a
       // no-op undo snapshot and wipe an armed redo branch (#11). The checkpoint is
       // taken lazily in onWellPointerUp, only if the move actually committed.
@@ -269,11 +295,20 @@ export function PlanningBoard({
       // live set — React state is async, so this is the PRE-press set, which is
       // correct: already-selected keeps the set, unselected → [id].)
       const sel = selectedIds
-      const movingIds = sel.has(id) ? [...sel] : [id]
+      const base = sel.has(id) ? [...sel] : [id]
+      // Group precedence: pull in whole groups, THEN drop any locked member so lock
+      // wins over group membership (a locked element never moves with its group).
+      const expanded = expandGroups(elements, base)
+      const movingIds = [...expanded].filter((mid) => {
+        const m = elements.find((x) => x.id === mid)
+        return m !== undefined && !isLocked(m)
+      })
+      if (movingIds.length === 0) return
       const p = toBoard(e)
       // Record the grab point; the live delta is pointer − grab. Works for every
       // kind (cards + arrows + strokes) since we translate by delta (#28, #37).
-      drag.current = { mode: 'move', ids: movingIds, grabX: p.x, grabY: p.y }
+      // Capture Alt at grab → an alt-drag duplicates rather than moves on pointer-up.
+      drag.current = { mode: 'move', ids: movingIds, grabX: p.x, grabY: p.y, alt: e.altKey }
       // Capture on the WELL (not the card) so move/up route to the well handlers
       // even when the cursor leaves the card during a fast drag.
       wellRef.current?.setPointerCapture(e.pointerId)
@@ -336,7 +371,7 @@ export function PlanningBoard({
         // snapshot (the move/draw paths defer for the same reason; WB-1 class). The
         // checkpoint is taken in onWellPointerUp only if something was erased.
         const removed = new Set<string>()
-        for (const el of elements) if (eraseHitTest(el, p)) removed.add(el.id)
+        for (const el of elements) if (!isLocked(el) && eraseHitTest(el, p)) removed.add(el.id)
         drag.current = { mode: 'erase', removed }
         setPendingErase(new Set(removed))
         e.currentTarget.setPointerCapture(e.pointerId)
@@ -383,7 +418,7 @@ export function PlanningBoard({
           // (don't wait for pointer-up to stop showing stale guides).
           setSnapGuides(null)
         }
-        setDragPos({ ids: d.ids, dx, dy })
+        setDragPos({ ids: d.ids, dx, dy, alt: d.alt })
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
       } else if (d.mode === 'pen') {
@@ -392,7 +427,7 @@ export function PlanningBoard({
       } else if (d.mode === 'erase') {
         let grew = false
         for (const el of elements) {
-          if (!d.removed.has(el.id) && eraseHitTest(el, p)) {
+          if (!d.removed.has(el.id) && !isLocked(el) && eraseHitTest(el, p)) {
             d.removed.add(el.id)
             grew = true
           }
@@ -421,6 +456,150 @@ export function PlanningBoard({
     [tool, elements, commit, toBoard, beginChange]
   )
 
+  // Build the right-click menu entries off an explicit selection set (the
+  // post-select-then-act set; React state is async, so the handler can't read it back
+  // — it passes the set in). Every action is exactly ONE undo checkpoint via `run`
+  // (beginChange + commit); the no-op-no-checkpoint discipline is delegated to the pure
+  // transforms (align/distribute/group/etc. return the input by reference when there's
+  // nothing to do) backed by disabling the entries below when they would be no-ops.
+  // Called from the event handler (NOT render), so `measuredRef` access is allowed
+  // (react-hooks/refs).
+  const buildMenuEntries = useCallback(
+    (sel: ReadonlySet<string>): MenuEntry[] => {
+      const selEls = elements.filter((e) => sel.has(e.id))
+      const allLocked = selEls.length > 0 && selEls.every(isLocked)
+      const anyGrouped = selEls.some((e) => !!e.groupId)
+      const groupIds = new Set(selEls.map((e) => e.groupId).filter(Boolean))
+      const isOneGroup = sel.size >= 2 && groupIds.size === 1 && selEls.every((e) => !!e.groupId)
+      const run = (next: PlanningElement[]): void => {
+        beginChange()
+        commit(next)
+      }
+      const alignBtns = (
+        ['left', 'centerX', 'right', 'top', 'centerY', 'bottom'] as AlignEdge[]
+      ).map((edge) => ({
+        id: edge,
+        title: `Align ${edge}`,
+        icon: `align-${edge === 'centerX' ? 'center-h' : edge === 'centerY' ? 'middle' : edge}`,
+        onSelect: () => run(alignElements(elements, sel, edge, measuredRef.current))
+      }))
+      const entries: MenuEntry[] = [
+        {
+          kind: 'action',
+          id: 'lock',
+          label: allLocked ? 'Unlock' : 'Lock',
+          onSelect: () => run(setLocked(elements, sel, !allLocked))
+        },
+        {
+          kind: 'action',
+          id: 'group',
+          label: 'Group',
+          disabled: sel.size < 2 || isOneGroup,
+          onSelect: () => run(groupElements(elements, sel, newId()))
+        },
+        {
+          kind: 'action',
+          id: 'ungroup',
+          label: 'Ungroup',
+          disabled: !anyGrouped,
+          onSelect: () => run(ungroupElements(elements, sel))
+        },
+        {
+          kind: 'action',
+          id: 'duplicate',
+          label: 'Duplicate',
+          onSelect: () => {
+            beginChange()
+            const { elements: wc, newIds } = duplicateElements(
+              elements,
+              expandGroups(elements, sel),
+              12,
+              12,
+              newId
+            )
+            commit(wc)
+            setSelectedIds(new Set(newIds))
+          }
+        },
+        {
+          kind: 'iconRow',
+          id: 'align',
+          label: 'Align',
+          disabled: sel.size < 2,
+          buttons: alignBtns
+        },
+        {
+          kind: 'iconRow',
+          id: 'distribute',
+          label: 'Distribute',
+          disabled: sel.size < 3,
+          buttons: [
+            {
+              id: 'h',
+              title: 'Distribute horizontally',
+              icon: 'distribute-h',
+              onSelect: () => run(distributeElements(elements, sel, 'h', measuredRef.current))
+            },
+            {
+              id: 'v',
+              title: 'Distribute vertically',
+              icon: 'distribute-v',
+              onSelect: () => run(distributeElements(elements, sel, 'v', measuredRef.current))
+            }
+          ]
+        },
+        {
+          kind: 'action',
+          id: 'delete',
+          label: 'Delete',
+          danger: true,
+          onSelect: () => {
+            // Group then lock precedence (mirrors the keyboard Delete handler).
+            const expanded = expandGroups(elements, sel)
+            const removable = new Set(
+              [...expanded].filter((rid) => {
+                const el = elements.find((x) => x.id === rid)
+                return el !== undefined && !isLocked(el)
+              })
+            )
+            if (removable.size > 0) {
+              beginChange()
+              commit(elements.filter((el) => !removable.has(el.id)))
+            }
+            clearSel()
+          }
+        }
+      ]
+      return entries
+    },
+    [elements, beginChange, commit, clearSel]
+  )
+
+  // Right-click a whiteboard element (W3) → open the element context menu at the raw
+  // pointer screen coords. Select-then-act: a right-click on an UNSELECTED element
+  // selects just it; a right-click on one already in a multi-selection keeps the set.
+  const onWellContextMenu = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const p = toBoard(e)
+      // Topmost hit under the cursor (later elements render above; reuse the erase
+      // hit-test, which already covers every kind incl. arrows/strokes).
+      const hits = elements.filter((el) => eraseHitTest(el, p))
+      const targetId = hits.length > 0 ? hits[hits.length - 1].id : null
+      // Compute the EFFECTIVE selection synchronously (React state is async, so we can't
+      // read it back after setSelectedIds): a right-click on an element already in the
+      // set keeps the set; otherwise it becomes just that element.
+      const effective = targetId && !selectedIds.has(targetId) ? new Set([targetId]) : selectedIds
+      if (targetId && !selectedIds.has(targetId)) setSelectedIds(effective)
+      // Open only if there will be something to act on.
+      if (effective.size > 0) {
+        setContextMenu({ x: e.clientX, y: e.clientY, entries: buildMenuEntries(effective) })
+      }
+    },
+    [elements, toBoard, selectedIds, buildMenuEntries]
+  )
+
   const onWellPointerUp = useCallback(() => {
     const d = drag.current
     drag.current = null
@@ -435,7 +614,21 @@ export function PlanningBoard({
       setSnapGuides(null)
       if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
         beginChange()
-        commit(translateMany(elements, pos.ids, pos.dx, pos.dy))
+        if (pos.alt) {
+          // Alt-drag → clone the moving set at the drop offset; originals stay put.
+          // Reselect the copies so a follow-on gesture acts on the new elements.
+          const { elements: withCopies, newIds } = duplicateElements(
+            elements,
+            pos.ids,
+            pos.dx,
+            pos.dy,
+            newId
+          )
+          commit(withCopies)
+          setSelectedIds(new Set(newIds))
+        } else {
+          commit(translateMany(elements, pos.ids, pos.dx, pos.dy))
+        }
       }
     } else if (d.mode === 'arrow') {
       const a = draftArrow
@@ -554,11 +747,24 @@ export function PlanningBoard({
   // delta (the store still holds the pre-drag position until pointer-up — #9).
   // Any kind is movable now (cards + arrows + strokes), so derive the SVG vectors
   // from viewElements too so a dragged arrow/stroke tracks the cursor live (#28, #37).
-  const viewElements = dragPos
-    ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy)
-    : pendingErase && pendingErase.size > 0
-      ? elements.filter((el) => !pendingErase.has(el.id))
-      : elements
+  const movedView = dragPos ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy) : null
+  // During a normal move the originals shift; during an ALT drag the originals stay
+  // put and translated GHOST copies (temporary `__ghost__` ids, NEVER committed)
+  // preview the duplicate. The captured pointer means onSelect/onDragStart never fire
+  // on a ghost, and its id is dropped the instant the alt-drag ends.
+  const ghostCopies =
+    dragPos && dragPos.alt && movedView
+      ? movedView
+          .filter((e) => dragPos.ids.includes(e.id))
+          .map((e) => ({ ...e, id: `__ghost__${e.id}` }) as PlanningElement)
+      : []
+  const baseView =
+    dragPos && !dragPos.alt && movedView
+      ? movedView
+      : pendingErase && pendingErase.size > 0
+        ? elements.filter((el) => !pendingErase.has(el.id))
+        : elements
+  const viewElements = [...baseView, ...ghostCopies]
 
   const arrows = viewElements.filter((e): e is ArrowElement => e.kind === 'arrow')
   const strokes = viewElements.filter((e): e is StrokeElement => e.kind === 'stroke')
@@ -590,12 +796,25 @@ export function PlanningBoard({
         onPointerUp={onWellPointerUp}
         onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
+        onContextMenu={onWellContextMenu}
         onKeyDown={(e) => {
           if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
             e.stopPropagation()
             e.preventDefault()
-            beginChange()
-            commit(elements.filter((el) => !selectedIds.has(el.id)))
+            // Group precedence then lock precedence: expand to whole groups, then keep
+            // only the unlocked members (lock wins over group). One checkpoint, and
+            // none if nothing was removable.
+            const expanded = expandGroups(elements, selectedIds)
+            const removable = new Set(
+              [...expanded].filter((rid) => {
+                const el = elements.find((x) => x.id === rid)
+                return el !== undefined && !isLocked(el)
+              })
+            )
+            if (removable.size > 0) {
+              beginChange()
+              commit(elements.filter((el) => !removable.has(el.id)))
+            }
             clearSel()
             return
           }
@@ -731,6 +950,14 @@ export function PlanningBoard({
           </div>
         )}
       </div>
+      {contextMenu && (
+        <ElementContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          entries={contextMenu.entries}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </BoardFrame>
   )
 }
