@@ -336,6 +336,54 @@ export function translateMany(
   return els.map((el) => (set.has(el.id) ? shiftElement(el, dx, dy) : el))
 }
 
+// ── W3: group + lock helpers ──────────────────────────────────────────────────
+
+/** True when an element is not pinned (W3 lock). */
+export function notLocked(el: PlanningElement): boolean {
+  return !el.locked
+}
+
+/**
+ * Expand a base id set to include every element co-grouped with a selected one
+ * (W3 grouping: selecting one member selects the whole group). Ungrouped ids pass
+ * through unchanged. Idempotent.
+ */
+export function expandGroups(els: PlanningElement[], ids: Iterable<string>): Set<string> {
+  const set = new Set(ids)
+  const groups = new Set<string>()
+  for (const el of els) if (set.has(el.id) && el.groupId !== undefined) groups.add(el.groupId)
+  if (groups.size === 0) return set
+  const out = new Set(set)
+  for (const el of els) if (el.groupId !== undefined && groups.has(el.groupId)) out.add(el.id)
+  return out
+}
+
+/** Assign a shared groupId to the selected elements (W3 group). */
+export function groupElements(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  groupId: string
+): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  return els.map((el) => (set.has(el.id) ? { ...el, groupId } : el))
+}
+
+/** Clear the groupId on the selected elements (W3 ungroup). JSON drops the undefined key on save. */
+export function ungroupElements(els: PlanningElement[], ids: Iterable<string>): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  return els.map((el) => (set.has(el.id) && el.groupId !== undefined ? { ...el, groupId: undefined } : el))
+}
+
+/** Set or clear the locked flag on the selected elements (W3 lock/unlock). */
+export function setLocked(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  locked: boolean
+): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  return els.map((el) => (set.has(el.id) ? { ...el, locked } : el))
+}
+
 /**
  * Duplicate the selected elements (W3): deep-clone each with a fresh caller-supplied
  * id (deterministic/testable), appended AFTER the originals. A shared groupId is

@@ -368,3 +368,48 @@ describe('duplicateElements', () => {
     expect((next[0] as StrokeElement).points).toEqual([0, 0, 5, 5]) // source untouched
   })
 })
+
+import { expandGroups, groupElements, ungroupElements, setLocked, notLocked } from './elements'
+
+describe('group + lock helpers', () => {
+  const gNote = (id: string, groupId?: string, locked?: boolean): NoteElement => ({
+    id, kind: 'note', x: 0, y: 0, w: 100, h: 50, tint: 'yellow', text: '',
+    ...(groupId ? { groupId } : {}), ...(locked ? { locked } : {})
+  })
+
+  it('expandGroups pulls in every co-grouped element', () => {
+    const els = [gNote('a', 'g1'), gNote('b', 'g1'), gNote('c')]
+    expect([...expandGroups(els, ['a'])].sort()).toEqual(['a', 'b'])
+  })
+
+  it('expandGroups passes ungrouped ids through unchanged', () => {
+    const els = [gNote('a'), gNote('b')]
+    expect([...expandGroups(els, ['a'])]).toEqual(['a'])
+  })
+
+  it('groupElements assigns the shared groupId to the selected', () => {
+    const els = [gNote('a'), gNote('b'), gNote('c')]
+    const out = groupElements(els, ['a', 'b'], 'gX')
+    expect(out.find((e) => e.id === 'a')!.groupId).toBe('gX')
+    expect(out.find((e) => e.id === 'b')!.groupId).toBe('gX')
+    expect(out.find((e) => e.id === 'c')!.groupId).toBeUndefined()
+  })
+
+  it('ungroupElements clears the groupId on the selected', () => {
+    const els = [gNote('a', 'g1'), gNote('b', 'g1')]
+    const out = ungroupElements(els, ['a'])
+    expect(out.find((e) => e.id === 'a')!.groupId).toBeUndefined()
+    expect(out.find((e) => e.id === 'b')!.groupId).toBe('g1')
+  })
+
+  it('setLocked sets/clears the locked flag on the selected', () => {
+    const els = [gNote('a')]
+    expect(setLocked(els, ['a'], true)[0].locked).toBe(true)
+    expect(setLocked(setLocked(els, ['a'], true), ['a'], false)[0].locked).toBe(false)
+  })
+
+  it('notLocked is true for an unlocked element', () => {
+    expect(notLocked(gNote('a'))).toBe(true)
+    expect(notLocked(gNote('a', undefined, true))).toBe(false)
+  })
+})
