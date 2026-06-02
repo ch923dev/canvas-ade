@@ -327,7 +327,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // A duplicated terminal starts IDLE — cloning must not silently spin up a second
     // agent (M-1). The user starts it explicitly via the Start affordance.
     if (clone.type === 'terminal') idleOnMountIds.add(cloneId)
-    set((s) => trackedChange(s, [...s.boards, clone], { selectedId: cloneId, reflectPresent: false }))
+    set((s) =>
+      trackedChange(s, [...s.boards, clone], { selectedId: cloneId, reflectPresent: false })
+    )
     return cloneId
   },
 

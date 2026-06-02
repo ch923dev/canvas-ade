@@ -222,7 +222,9 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   parts.push({
     name: 'config-nowheel',
     ok: cfgOk,
-    detail: cfgOk ? 'config popover has nowheel (no pan on scroll)' : 'config popover missing nowheel'
+    detail: cfgOk
+      ? 'config popover has nowheel (no pan on scroll)'
+      : 'config popover missing nowheel'
   })
 
   // ── Planning: seed, add a checklist element, assert it persisted on the board AND
@@ -324,8 +326,7 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     const wcAfter = debugViewWebContentsId(browserId)
     // Same webContents id throughout = the view was detached/reattached, never closed, so
     // the page (and its navigated state) survived. Any change/null = it was destroyed+reopened.
-    const survivedSelf =
-      wcBefore !== null && wcDuring === wcBefore && wcAfter === wcBefore
+    const survivedSelf = wcBefore !== null && wcDuring === wcBefore && wcAfter === wcBefore
     selfOk = survivedSelf
     selfDetail = survivedSelf
       ? `full-viewing the browser kept the same webContents #${wcBefore} (no restart)`
@@ -339,7 +340,10 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   // device frame keeps the preset's portrait aspect (~390/844) AND is clearly narrower than
   // its stage (letterbox). Pre-fix (inset:0) the frame fills the stage → landscape aspect,
   // ~full width → both checks fail. ──
-  await evalIn(win, `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`)
+  await evalIn(
+    win,
+    `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`
+  )
   await evalIn(win, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
   await delay(450) // modal mounts + portal relocates the device frame + layout settles
   const emu = await evalIn<{
@@ -911,7 +915,12 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   // area's zones. Tile into a fixed 1600×1000 area with cols-2 and assert the union of the
   // boards fills that area edge-to-edge (each axis within tolerance) AND no overlaps — i.e.
   // boards were genuinely resized to their zones, not just moved. Deterministic store path. ──
-  const tileProbe = await evalIn<{ fills: boolean; overlap: boolean; resized: boolean; count: number }>(
+  const tileProbe = await evalIn<{
+    fills: boolean
+    overlap: boolean
+    resized: boolean
+    count: number
+  }>(
     win,
     `(() => {
        const area = { x: 0, y: 0, w: 1600, h: 1000 };

@@ -10,8 +10,11 @@ const element = { id: 'x1', kind: 'text', x: 0, y: 0, text: '' } as unknown as T
 function renderText(interactive: boolean, onDelete = vi.fn()): ReturnType<typeof vi.fn> {
   render(
     <FreeText
-      element={element} interactive={interactive}
-      onDragStart={() => {}} onChangeText={() => {}} onDelete={onDelete}
+      element={element}
+      interactive={interactive}
+      onDragStart={() => {}}
+      onChangeText={() => {}}
+      onDelete={onDelete}
     />
   )
   return onDelete

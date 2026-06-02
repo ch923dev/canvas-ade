@@ -15,12 +15,7 @@ export const CAMERA_MS = 200
  * (x1,y1),(x2,y2). Returns ease(t∈[0,1])→[0,1]. Newton-Raphson on x (8 iters) then
  * sample y — ample precision for a 200ms camera tween.
  */
-export function cubicBezier(
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number
-): (t: number) => number {
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number): (t: number) => number {
   const cx = 3 * x1
   const bx = 3 * (x2 - x1) - cx
   const ax = 1 - cx - bx

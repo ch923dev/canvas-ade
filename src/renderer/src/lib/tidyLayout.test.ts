@@ -178,7 +178,9 @@ describe('tidyLayout — grid (shelf-pack)', () => {
 
   test('a tall board sets its row height so the next row clears it', () => {
     const boards = [b('a', 0, 0, 100, 300), b('b', 0, 0, 100, 100), b('c', 0, 0, 100, 100)]
-    const byIdP = Object.fromEntries(tidyLayout(boards, { mode: 'grid', aspect: 1.25 }).map((p) => [p.id, p]))
+    const byIdP = Object.fromEntries(
+      tidyLayout(boards, { mode: 'grid', aspect: 1.25 }).map((p) => [p.id, p])
+    )
     expect(byIdP.a).toMatchObject({ x: 0, y: 0 })
     expect(byIdP.b).toMatchObject({ x: 128, y: 0 })
     expect(byIdP.c).toMatchObject({ x: 0, y: 328 }) // 300 (tall a) + 28 gap
