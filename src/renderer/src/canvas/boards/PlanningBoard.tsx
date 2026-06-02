@@ -67,8 +67,10 @@ import {
   groupElements,
   ungroupElements,
   notLocked,
-  setLocked
+  setLocked,
+  shiftElement
 } from './planning/elements'
+import { alignElements, distributeElements, type AlignEdge, type DistributeAxis } from './planning/align'
 
 const TOOLS: ReadonlyArray<{
   tool: PlanTool
@@ -176,10 +178,15 @@ export function PlanningBoard({
   // absolute top-left) so it translates EVERY kind uniformly, including arrows +
   // strokes which have no single top-left (#28, #37).
   const [dragPos, setDragPos] = useState<{ ids: string[]; dx: number; dy: number } | null>(null)
+  // Clones being alt-dragged (not yet in `elements` — committed on pointer-up). Held
+  // in STATE (not just the drag ref) so the live render can fold them in without
+  // reading a ref during render. Null when not alt-dragging.
+  const [dupClones, setDupClones] = useState<PlanningElement[] | null>(null)
   // Active drag (an element move, an arrow, or a pen stroke) → captured pointer.
   // A move records the grab point in board space so the delta = pointer − grab.
   const drag = useRef<
     | { mode: 'move'; ids: string[]; grabX: number; grabY: number }
+    | { mode: 'dup'; clones: PlanningElement[]; ids: string[]; grabX: number; grabY: number }
     | { mode: 'arrow'; id: string }
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
@@ -263,6 +270,30 @@ export function PlanningBoard({
     beginChange()
     commit(ungroupElements(elements, ids))
   }, [elements, selectedIds, beginChange, commit])
+
+  /** Align the selection (group-expanded) to a shared edge/center; no-op-guarded. */
+  const applyAlign = useCallback(
+    (edge: AlignEdge) => {
+      const ids = expandGroups(elements, selectedIds)
+      const next = alignElements(elements, ids, edge, measuredRef.current)
+      if (next === elements) return // pure helper returns same ref on no-op → no phantom undo step
+      beginChange()
+      commit(next)
+    },
+    [elements, selectedIds, beginChange, commit]
+  )
+
+  /** Distribute the selection (group-expanded) to equal center spacing; no-op-guarded. */
+  const applyDistribute = useCallback(
+    (axis: DistributeAxis) => {
+      const ids = expandGroups(elements, selectedIds)
+      const next = distributeElements(elements, ids, axis, measuredRef.current)
+      if (next === elements) return
+      beginChange()
+      commit(next)
+    },
+    [elements, selectedIds, beginChange, commit]
+  )
 
   /** Map a pointer event to a board-local point using the well's screen origin. */
   const toBoard = useCallback(
@@ -354,6 +385,21 @@ export function PlanningBoard({
     (e: PointerEvent, id: string) => {
       const el = elements.find((x) => x.id === id)
       if (!el) return
+      // Alt-drag = duplicate-and-drag (Figma grammar). Clone the group-expanded
+      // selection and switch the drag to move the CLONES; originals stay put. The
+      // pressed element must be unlocked to initiate (matches the move gate).
+      if (e.altKey) {
+        if (el.locked) return
+        const ids = expandGroups(elements, selectedIds.has(id) ? selectedIds : new Set([id]))
+        const { next, cloneIds } = duplicateElements(elements, ids, newId)
+        const clones = next.slice(elements.length) // the appended clones
+        const p = toBoard(e)
+        drag.current = { mode: 'dup', clones, ids: cloneIds, grabX: p.x, grabY: p.y }
+        setDupClones(clones)
+        setDragPos({ ids: cloneIds, dx: 0, dy: 0 })
+        wellRef.current?.setPointerCapture(e.pointerId)
+        return
+      }
       // Do NOT checkpoint here: a zero-movement grab (plain click) would push a
       // no-op undo snapshot and wipe an armed redo branch (#11). The checkpoint is
       // taken lazily in onWellPointerUp, only if the move actually committed.
@@ -457,12 +503,14 @@ export function PlanningBoard({
       const d = drag.current
       if (!d) return
       const p = toBoard(e)
-      if (d.mode === 'move') {
+      if (d.mode === 'move' || d.mode === 'dup') {
         // Transient: render the dragged set shifted by the live delta; the store is
-        // written once on pointer-up so undo stays one checkpoint (#9).
+        // written once on pointer-up so undo stays one checkpoint (#9). `dup` shares
+        // the delta math but skips snap (v1) — its clone ids aren't in `elements`, so
+        // the snap block (which reads `elements`) only runs for `move`.
         let dx = Math.round(p.x - d.grabX)
         let dy = Math.round(p.y - d.grabY)
-        if (snapEnabled) {
+        if (d.mode === 'move' && snapEnabled) {
           // Snap the moving set's union box to static neighbors' edges/centers, in
           // board-local px (zoom-stable). Bias the raw delta + surface the guide lines.
           const moving = new Set(d.ids)
@@ -529,6 +577,21 @@ export function PlanningBoard({
     const d = drag.current
     drag.current = null
     if (!d) return
+    if (d.mode === 'dup') {
+      // Commit the clones at the final delta as ONE checkpoint and select them. A
+      // zero-move alt-click still duplicates in place (dx=dy=0) — clones land on the
+      // originals and are selected (acceptable; matches "alt-drag duplicates").
+      const pos = dragPos
+      setDragPos(null)
+      setDupClones(null)
+      setSnapGuides(null)
+      const dx = pos?.dx ?? 0
+      const dy = pos?.dy ?? 0
+      beginChange()
+      commit([...elements, ...d.clones.map((c) => shiftElement(c, dx, dy))])
+      setSelectedIds(new Set(d.ids))
+      return
+    }
     if (d.mode === 'move') {
       // Checkpoint + commit the final position ONCE, and only if the set actually
       // moved (dragPos set on the first move frame). A zero-movement grab leaves
@@ -604,6 +667,15 @@ export function PlanningBoard({
       setMarqueeRect(null)
       return
     }
+    // A cancelled alt-drag must not commit a duplicate the user never finished —
+    // discard the in-flight clones (mirrors the erase discard).
+    if (drag.current?.mode === 'dup') {
+      drag.current = null
+      setDragPos(null)
+      setDupClones(null)
+      setSnapGuides(null)
+      return
+    }
     onWellPointerUp()
   }, [onWellPointerUp])
 
@@ -653,8 +725,13 @@ export function PlanningBoard({
   // delta (the store still holds the pre-drag position until pointer-up — #9).
   // Any kind is movable now (cards + arrows + strokes), so derive the SVG vectors
   // from viewElements too so a dragged arrow/stroke tracks the cursor live (#28, #37).
+  // During an alt-drag the clones aren't in `elements` yet (committed on pointer-up),
+  // so fold them in for the live render. Held in state (`dupClones`) so this doesn't
+  // read the drag ref during render.
   const viewElements = dragPos
-    ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy)
+    ? dupClones
+      ? translateMany([...elements, ...dupClones], dragPos.ids, dragPos.dx, dragPos.dy)
+      : translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy)
     : pendingErase && pendingErase.size > 0
       ? elements.filter((el) => !pendingErase.has(el.id))
       : elements
@@ -702,6 +779,14 @@ export function PlanningBoard({
             e.stopPropagation()
             e.preventDefault()
             toggleLockSelection()
+            return
+          }
+          // ⌘D / Ctrl+D → duplicate-in-place (+12,+12). Verified free: globals use
+          // Ctrl+SHIFT+D for diagnostics; plain Ctrl+D is unused.
+          if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+            e.stopPropagation()
+            e.preventDefault()
+            duplicateSelection({ inPlace: true })
             return
           }
           // ⌘G / ⌘⇧G → group / ungroup the selection. Verified free: globals don't use ⌘G.
@@ -860,8 +945,8 @@ export function PlanningBoard({
             onToggleLock={() => toggleLockSelection()}
             onGroup={() => groupSelection()}
             onUngroup={() => ungroupSelection()}
-            onAlign={() => {}}
-            onDistribute={() => {}}
+            onAlign={(edge) => applyAlign(edge)}
+            onDistribute={(axis) => applyDistribute(axis)}
             onDelete={() => deleteSelection()}
             onClose={() => setMenu(null)}
           />

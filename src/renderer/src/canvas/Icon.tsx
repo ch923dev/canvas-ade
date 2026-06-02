@@ -44,9 +44,10 @@ export type IconName =
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
 
 /**
- * Align/distribute glyphs for the W3 element context-menu align grid. Placeholder
- * bodies for now (a centered tick) — Task 9 fills the real align bars/arrows. Kept a
- * distinct union so the menu's `Icon name={a.icon}` references type-check today.
+ * Align/distribute glyphs for the W3 element context-menu align grid. A reference
+ * line on the align edge + two bars aligned to it (outline rects, matching the
+ * line-icon idiom: SVG sets fill="none" + stroke="currentColor"). Kept a distinct
+ * union so the menu's `Icon name={a.icon}` references type-check.
  */
 export type AlignIconName =
   | 'align-left'
@@ -104,6 +105,56 @@ const PATHS: Record<IconName, string> = {
   lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3'
 }
 
+/**
+ * Real align glyphs (24-unit viewBox). Each = a reference bar on the align edge +
+ * two outline bars aligned to it. Outline (not filled) rects to match the
+ * line-icon idiom (the parent Svg sets fill="none" + stroke="currentColor").
+ */
+const ALIGN_GLYPHS: Record<AlignIconName, ReactElement> = {
+  'align-left': (
+    <>
+      <line x1={4} y1={4} x2={4} y2={20} />
+      <rect x={6} y={6} width={13} height={4} rx={1} />
+      <rect x={6} y={14} width={8} height={4} rx={1} />
+    </>
+  ),
+  'align-center-x': (
+    <>
+      <line x1={12} y1={4} x2={12} y2={20} />
+      <rect x={4.5} y={6} width={15} height={4} rx={1} />
+      <rect x={7.5} y={14} width={9} height={4} rx={1} />
+    </>
+  ),
+  'align-right': (
+    <>
+      <line x1={20} y1={4} x2={20} y2={20} />
+      <rect x={5} y={6} width={13} height={4} rx={1} />
+      <rect x={10} y={14} width={8} height={4} rx={1} />
+    </>
+  ),
+  'align-top': (
+    <>
+      <line x1={4} y1={4} x2={20} y2={4} />
+      <rect x={6} y={6} width={4} height={13} rx={1} />
+      <rect x={14} y={6} width={4} height={8} rx={1} />
+    </>
+  ),
+  'align-center-y': (
+    <>
+      <line x1={4} y1={12} x2={20} y2={12} />
+      <rect x={6} y={4.5} width={4} height={15} rx={1} />
+      <rect x={14} y={7.5} width={4} height={9} rx={1} />
+    </>
+  ),
+  'align-bottom': (
+    <>
+      <line x1={4} y1={20} x2={20} y2={20} />
+      <rect x={6} y={5} width={4} height={13} rx={1} />
+      <rect x={14} y={10} width={4} height={8} rx={1} />
+    </>
+  )
+}
+
 interface SvgProps {
   size: number
   sw: number
@@ -137,12 +188,11 @@ export interface IconProps {
 }
 
 export function Icon({ name, size = 16, sw = 1.5, style }: IconProps): ReactElement {
-  // W3 align glyphs — placeholder bodies (Task 9 fills the real paths). A small
-  // centered mark keeps the align grid laid out + type-checking until then.
+  // W3 align glyphs — reference line on the align edge + two aligned bars.
   if (ALIGN_NAMES.has(name))
     return (
       <Svg size={size} sw={sw} style={style}>
-        <path d="M12 6v12M6 12h12" />
+        {ALIGN_GLYPHS[name as AlignIconName]}
       </Svg>
     )
   if (name === 'mobile')
