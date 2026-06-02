@@ -324,3 +324,86 @@ describe('shiftElement / translateMany — W2', () => {
     expect(translateMany(els, ['a'], 3, 0)[0].x).toBe(baseX + 3)
   })
 })
+
+import {
+  isLocked,
+  expandGroups,
+  duplicateElements,
+  groupElements,
+  ungroupElements,
+  setLocked
+} from './elements'
+
+const note = (id: string, x = 0, y = 0, extra: Partial<PlanningElement> = {}): PlanningElement => ({
+  id,
+  kind: 'note',
+  x,
+  y,
+  w: 100,
+  h: 60,
+  tint: 'yellow',
+  text: '',
+  ...extra
+}) as PlanningElement
+
+let counter = 0
+const seqId = (): string => `new-${counter++}`
+
+describe('W3 mutators', () => {
+  it('isLocked reads the optional flag', () => {
+    expect(isLocked(note('a'))).toBe(false)
+    expect(isLocked(note('b', 0, 0, { locked: true }))).toBe(true)
+  })
+
+  it('expandGroups pulls in siblings sharing a groupId', () => {
+    const els = [note('a', 0, 0, { groupId: 'g' }), note('b', 0, 0, { groupId: 'g' }), note('c')]
+    expect([...expandGroups(els, ['a'])].sort()).toEqual(['a', 'b'])
+    expect([...expandGroups(els, ['c'])]).toEqual(['c']) // ungrouped passes through
+  })
+
+  it('groupElements / ungroupElements set and clear groupId', () => {
+    const els = [note('a'), note('b')]
+    const grouped = groupElements(els, ['a', 'b'], 'g1')
+    expect(grouped.every((e) => e.groupId === 'g1')).toBe(true)
+    const ungrouped = ungroupElements(grouped, ['a', 'b'])
+    expect(ungrouped.every((e) => e.groupId === undefined)).toBe(true)
+  })
+
+  it('setLocked sets and removes the flag', () => {
+    const els = [note('a'), note('b')]
+    const locked = setLocked(els, ['a'], true)
+    expect(isLocked(locked.find((e) => e.id === 'a')!)).toBe(true)
+    expect(isLocked(locked.find((e) => e.id === 'b')!)).toBe(false)
+    const unlocked = setLocked(locked, ['a'], false)
+    expect(unlocked.find((e) => e.id === 'a')).not.toHaveProperty('locked')
+  })
+
+  it('duplicateElements clones, shifts, fresh ids, fresh per-group groupId, originals untouched', () => {
+    counter = 0
+    const els = [note('a', 0, 0, { groupId: 'g' }), note('b', 10, 10, { groupId: 'g' }), note('c', 50, 50)]
+    const { elements, newIds } = duplicateElements(els, ['a', 'b', 'c'], 12, 12, seqId)
+    expect(elements).toHaveLength(6)
+    expect(newIds).toHaveLength(3)
+    // originals untouched
+    expect(elements.slice(0, 3)).toEqual(els)
+    const copies = elements.slice(3)
+    // shifted
+    expect(copies[0].x).toBe(12)
+    expect(copies[0].y).toBe(12)
+    // a and b shared a group → their copies share ONE fresh group, distinct from 'g'
+    const ga = copies[0].groupId
+    const gb = copies[1].groupId
+    expect(ga).toBe(gb)
+    expect(ga).not.toBe('g')
+    expect(ga).toBeTruthy()
+    // c had no group → its copy has none
+    expect(copies[2].groupId).toBeUndefined()
+  })
+
+  it('duplicateElements shifts arrows by both endpoints', () => {
+    counter = 0
+    const arrow: PlanningElement = { id: 'ar', kind: 'arrow', x: 0, y: 0, x2: 30, y2: 40 }
+    const { elements } = duplicateElements([arrow], ['ar'], 5, 7, seqId)
+    expect(elements[1]).toMatchObject({ kind: 'arrow', x: 5, y: 7, x2: 35, y2: 47 })
+  })
+})
