@@ -116,7 +116,8 @@ function sampleBoards(): Board[] {
           { id: 'i1', label: 'spawn shell', done: true },
           { id: 'i2', label: 'wire pty', done: false }
         ]
-      }
+      },
+      { id: 'img1', kind: 'image', x: 30, y: 30, w: 120, h: 90, assetId: 'assets/sample.png' }
     ]
   }
   return [
@@ -677,5 +678,12 @@ describe('W4 image element', () => {
     }
     const doc = fromObject(v3)
     expect(doc.schemaVersion).toBe(4)
+    const el = (doc.boards[0] as { elements: Array<{ assetId: string; w: number }> }).elements[0]
+    expect(el.assetId).toBe('assets/y.png')
+    expect(el.w).toBe(50)
+  })
+
+  it('rejects a negative h', () => {
+    expect(() => fromObject(imageBoard('assets/x.png', { h: -1 }))).toThrow(/non-positive/)
   })
 })
