@@ -394,3 +394,331 @@ export const whiteboardFullviewAdd: E2EProbe = {
     }
   }
 }
+
+// ── W3 selection follow-ons. alt-dup uses REAL OS input (transform-dependent);
+// align/lock/group drive the real HTML context menu (transform-free) after a synthetic
+// selection. All effects read off getBoards() (selection is ephemeral). Order-bound:
+// read ctx.ids.planId, run before `seed`, mutate only the planning board's elements.
+
+export const whiteboardAltDup: E2EProbe = {
+  name: 'whiteboard-alt-dup',
+  async run(ctx): Promise<E2EPart> {
+    const planId = ctx.ids.planId
+    if (!planId) return { name: 'whiteboard-alt-dup', ok: false, detail: 'planId not seeded' }
+    await ctx.evalIn(
+      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 520, h: 460, elements: [
+         { id: 'ad-a', kind: 'note', x: 60, y: 60, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 }
+       ] })`
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await ctx.delay(240)
+    // Synthetic alt-drag of the note's GRIP RING (.pl-note-grip — a drag only starts there;
+    // the note body just stops propagation). Electron's sendInputEvent mouse `modifiers:['alt']`
+    // does NOT surface as e.altKey on this stack, so — exactly like the passing W2 multidrag /
+    // shift-add probes — we dispatch synthetic PointerEvents carrying altKey:true (React reads
+    // the flag straight off the event) with coords mapped board-local→screen via the well
+    // rect×scale so toBoard maps correctly. The duplicate EFFECT is read off getBoards():
+    // count+1, the copy offset matches the screen→board delta, the ORIGINAL is unmoved, and
+    // undo removes the copy — a broken dup/alt path fails (a plain move would leave count=1),
+    // so this is not a false green.
+    const res = await ctx.evalIn<{
+      stage: string
+      start: number
+      scale: number
+      afterDup: number
+      origMoved: number
+      copyDx: number
+      copyDy: number
+      afterUndo: number
+    }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const id = ${JSON.stringify(planId)};
+         const els = () => window.__canvasE2E.getBoards().find((x) => x.id === id).elements;
+         const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const w = n.querySelector('.pl-well');
+         const g = n.querySelector('.pl-note-grip');
+         const wr = w.getBoundingClientRect();
+         const s = wr.width / w.offsetWidth;
+         const gr = g.getBoundingClientRect();
+         const fx = gr.left + gr.width / 2, fy = gr.top + gr.height / 2;
+         const dScreen = 60;
+         const ev = (t, type, x, y) => { try { t.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, altKey: true, clientX: x, clientY: y })); } catch (e) {} };
+         const orig = () => els().find((e) => e.id === 'ad-a');
+         const start = els().length;
+         const ox = orig().x, oy = orig().y;
+         ev(g, 'pointerdown', fx, fy); await sleep(20);
+         for (let i = 1; i <= 4; i++) { ev(w, 'pointermove', fx + (dScreen * i) / 4, fy + (dScreen * i) / 4); await sleep(15); }
+         ev(w, 'pointerup', fx + dScreen, fy + dScreen); await sleep(70);
+         const after = els();
+         const afterDup = after.length;
+         const o = after.find((e) => e.id === 'ad-a');
+         const origMoved = o ? Math.abs(o.x - ox) + Math.abs(o.y - oy) : -1;
+         const copy = after.find((e) => e.id !== 'ad-a' && e.kind === 'note');
+         const copyDx = copy ? copy.x - ox : -999;
+         const copyDy = copy ? copy.y - oy : -999;
+         window.__canvasE2E.undo(); await sleep(70);
+         const afterUndo = els().length;
+         return { stage: 'done', start, scale: s, afterDup, origMoved, copyDx, copyDy, afterUndo };
+       })()`
+    )
+    // Expected copy offset = 60 screen px ÷ scale (board-local), with snapping inert (one note,
+    // no static neighbours). Assert the copy lands down-right at ~that delta, original unmoved.
+    const expected = res.scale > 0 ? 60 / res.scale : 60
+    const offsetOk = Math.abs(res.copyDx - expected) <= 8 && Math.abs(res.copyDy - expected) <= 8
+    const ok =
+      res.afterDup === res.start + 1 &&
+      res.origMoved === 0 &&
+      offsetOk &&
+      res.afterUndo === res.start
+    return {
+      name: 'whiteboard-alt-dup',
+      ok,
+      detail: ok
+        ? `alt-drag duplicates the note at board-local +(${Math.round(res.copyDx)},${Math.round(res.copyDy)}); original unmoved; one undo removes the copy`
+        : JSON.stringify(res)
+    }
+  }
+}
+
+export const whiteboardLock: E2EProbe = {
+  name: 'whiteboard-lock',
+  async run(ctx): Promise<E2EPart> {
+    const planId = ctx.ids.planId
+    if (!planId) return { name: 'whiteboard-lock', ok: false, detail: 'planId not seeded' }
+    await ctx.evalIn(
+      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 520, h: 460, elements: [
+         { id: 'lk-a', kind: 'note', x: 60, y: 60, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0, locked: true }
+       ] })`
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await ctx.delay(220)
+    const res = await ctx.evalIn<{
+      stage: string
+      movedX: number
+      afterErase: number
+      afterMenuDelete: number
+      noDelBtn: boolean
+    }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const id = ${JSON.stringify(planId)};
+         const board = () => window.__canvasE2E.getBoards().find((x) => x.id === id);
+         const els = () => board().elements;
+         const note = () => els().find((e) => e.id === 'lk-a');
+         const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const w = n.querySelector('.pl-well');
+         const r = w.getBoundingClientRect();
+         const s = r.width / w.offsetWidth;
+         const at = (bx, by) => ({ clientX: r.left + bx * s, clientY: r.top + by * s, bubbles: true, cancelable: true, pointerId: 1, isPrimary: true });
+         const grip = n.querySelector('.pl-note-grip');
+         const x0 = note().x;
+         // (1) drag the locked note via its grip → must NOT move.
+         try { grip.dispatchEvent(new PointerEvent('pointerdown', at(138, 108))); for (let i=1;i<=4;i++){ w.dispatchEvent(new PointerEvent('pointermove', at(138+20*i,108+20*i))); await sleep(12);} w.dispatchEvent(new PointerEvent('pointerup', at(218,188))); } catch(e){}
+         await sleep(60);
+         const movedX = note() ? note().x - x0 : -999;
+         // (2) erase swipe over the locked note → count unchanged.
+         w.focus(); w.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true })); await sleep(30);
+         try { w.dispatchEvent(new PointerEvent('pointerdown', at(138,108))); w.dispatchEvent(new PointerEvent('pointermove', at(140,110))); w.dispatchEvent(new PointerEvent('pointerup', at(140,110))); } catch(e){}
+         await sleep(60);
+         const afterErase = els().length;
+         // (3) right-click → menu Delete on the locked note → must NOT remove it (lock
+         // gate on the menu Delete path; the inline X affordance was removed in W3 so
+         // deletion is menu/eraser-only, and lock resists the menu Delete too).
+         w.dispatchEvent(new KeyboardEvent('keydown', { key: 's', bubbles: true })); await sleep(20);
+         const noDelBtn = !n.querySelector('.pl-del'); // the inline X must be gone
+         const cm = at(138, 108);
+         w.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cm.clientX, clientY: cm.clientY })); await sleep(90);
+         const delItem = document.querySelector('[data-testid="w3-menu-delete"]');
+         if (delItem) { try { delItem.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch(e){} }
+         await sleep(60);
+         const afterMenuDelete = els().length;
+         return { stage: 'done', movedX, afterErase, afterMenuDelete, noDelBtn };
+       })()`
+    )
+    const ok =
+      Math.abs(res.movedX) < 1 && res.afterErase === 1 && res.afterMenuDelete === 1 && res.noDelBtn
+    return {
+      name: 'whiteboard-lock',
+      ok,
+      detail: ok
+        ? 'locked note resists drag, erase, and menu Delete; inline X removed'
+        : JSON.stringify(res)
+    }
+  }
+}
+
+export const whiteboardGroup: E2EProbe = {
+  name: 'whiteboard-group',
+  async run(ctx): Promise<E2EPart> {
+    const planId = ctx.ids.planId
+    if (!planId) return { name: 'whiteboard-group', ok: false, detail: 'planId not seeded' }
+    await ctx.evalIn(
+      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 560, h: 460, elements: [
+         { id: 'gp-a', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 },
+         { id: 'gp-b', kind: 'note', x: 300, y: 40, w: 156, h: 96, tint: 'blue', text: 'B', rotation: 0 }
+       ] })`
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await ctx.delay(220)
+    const res = await ctx.evalIn<{
+      stage: string
+      grouped: boolean
+      bMovedWithA: boolean
+      deletedBoth: number
+    }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const id = ${JSON.stringify(planId)};
+         const els = () => window.__canvasE2E.getBoards().find((x) => x.id === id).elements;
+         const note = (nid) => els().find((e) => e.id === nid);
+         const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const w = n.querySelector('.pl-well');
+         const r = w.getBoundingClientRect();
+         const s = r.width / w.offsetWidth;
+         const at = (bx, by) => ({ x: r.left + bx * s, y: r.top + by * s });
+         const ev = (t, type, p, extra) => { try { t.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: p.x, clientY: p.y }, extra || {}))); } catch(e){} };
+         const drag = async (from, to, downT) => { ev(downT || w, 'pointerdown', from); for (let i=1;i<=4;i++){ ev(w,'pointermove',{x:from.x+(to.x-from.x)*i/4,y:from.y+(to.y-from.y)*i/4}); await sleep(12);} ev(w,'pointerup',to); await sleep(40); };
+         const grip = (i) => n.querySelectorAll('.pl-note-grip')[i];
+         const clickMenu = (testid) => { const el = document.querySelector('[data-testid=' + JSON.stringify(testid) + ']'); if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true })); };
+         // select both via marquee, then right-click → Group.
+         await drag(at(8, 8), at(470, 150));
+         await sleep(30);
+         w.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: at(118,88).x, clientY: at(118,88).y }));
+         await sleep(60);
+         clickMenu('w3-menu-group'); await sleep(60);
+         const grouped = !!note('gp-a').groupId && note('gp-a').groupId === note('gp-b').groupId;
+         // drag A's grip → B moves too (group move).
+         const ax0 = note('gp-a').x, bx0 = note('gp-b').x;
+         // press A first to select the group member, then drag.
+         ev(grip(0), 'pointerdown', at(118, 88)); ev(w, 'pointerup', at(118, 88)); await sleep(30);
+         await drag(at(118, 88), at(168, 88), grip(0));
+         const bMovedWithA = (note('gp-b').x - bx0) >= 30 && (note('gp-a').x - ax0) >= 30;
+         // delete one (selected) → both gone (group delete).
+         ev(grip(0), 'pointerdown', at(168, 88)); ev(w, 'pointerup', at(168, 88)); await sleep(20);
+         w.focus(); w.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true })); await sleep(60);
+         const deletedBoth = els().length;
+         return { stage: 'done', grouped, bMovedWithA, deletedBoth };
+       })()`
+    )
+    const ok = res.grouped && res.bMovedWithA && res.deletedBoth === 0
+    return {
+      name: 'whiteboard-group',
+      ok,
+      detail: ok
+        ? 'group via menu; dragging one moves both; deleting one deletes both'
+        : JSON.stringify(res)
+    }
+  }
+}
+
+export const whiteboardAlign: E2EProbe = {
+  name: 'whiteboard-align',
+  async run(ctx): Promise<E2EPart> {
+    const planId = ctx.ids.planId
+    if (!planId) return { name: 'whiteboard-align', ok: false, detail: 'planId not seeded' }
+    await ctx.evalIn(
+      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 560, h: 460, elements: [
+         { id: 'al-a', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 },
+         { id: 'al-b', kind: 'note', x: 300, y: 220, w: 156, h: 96, tint: 'blue', text: 'B', rotation: 0 }
+       ] })`
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await ctx.delay(220)
+    const res = await ctx.evalIn<{ stage: string; ax: number; bx: number; undoBx: number }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const id = ${JSON.stringify(planId)};
+         const els = () => window.__canvasE2E.getBoards().find((x) => x.id === id).elements;
+         const note = (nid) => els().find((e) => e.id === nid);
+         const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const w = n.querySelector('.pl-well');
+         const r = w.getBoundingClientRect();
+         const s = r.width / w.offsetWidth;
+         const at = (bx, by) => ({ x: r.left + bx * s, y: r.top + by * s });
+         const ev = (t, type, p) => { try { t.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: p.x, clientY: p.y })); } catch(e){} };
+         const drag = async (from, to) => { ev(w, 'pointerdown', from); for (let i=1;i<=4;i++){ ev(w,'pointermove',{x:from.x+(to.x-from.x)*i/4,y:from.y+(to.y-from.y)*i/4}); await sleep(12);} ev(w,'pointerup',to); await sleep(40); };
+         await drag(at(8, 8), at(470, 330)); // marquee both
+         await sleep(30);
+         w.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: at(118,88).x, clientY: at(118,88).y }));
+         await sleep(60);
+         const btn = document.querySelector('[data-testid="w3-menu-align-left"]');
+         if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+         await sleep(60);
+         const ax = note('al-a').x, bx = note('al-b').x;
+         window.__canvasE2E.undo(); await sleep(60);
+         const undoBx = note('al-b').x;
+         return { stage: 'done', ax, bx, undoBx };
+       })()`
+    )
+    // New align model: align-left flushes both left edges to the board pad (12), not the
+    // selection's min-left. One undo restores al-b's original x.
+    const ok = res.ax === res.bx && res.ax === 12 && res.undoBx === 300
+    return {
+      name: 'whiteboard-align',
+      ok,
+      detail: ok
+        ? 'align-left via menu flushes both to the board left edge (x=12); one undo restores'
+        : JSON.stringify(res)
+    }
+  }
+}
+
+// ── W3 regression: align/distribute must work on a GROUP. The bug: right-clicking a
+// single GROUPED element selected only that one, so Align/Distribute greyed out (sel<2)
+// even though it belongs to a multi-element group. Fix: right-click expands through the
+// group. This groups two notes, clears the selection, right-clicks ONE, and aligns —
+// BOTH must move (proving the group was selected + aligned), not just the clicked one.
+export const whiteboardGroupAlign: E2EProbe = {
+  name: 'whiteboard-group-align',
+  async run(ctx): Promise<E2EPart> {
+    const planId = ctx.ids.planId
+    if (!planId) return { name: 'whiteboard-group-align', ok: false, detail: 'planId not seeded' }
+    await ctx.evalIn(
+      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 560, h: 460, elements: [
+         { id: 'ga-a', kind: 'note', x: 40,  y: 40,  w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 },
+         { id: 'ga-b', kind: 'note', x: 300, y: 220, w: 156, h: 96, tint: 'blue',   text: 'B', rotation: 0 }
+       ] })`
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await ctx.delay(220)
+    const res = await ctx.evalIn<{ stage: string; grouped: boolean; ax: number; bx: number }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const id = ${JSON.stringify(planId)};
+         const els = () => window.__canvasE2E.getBoards().find((x) => x.id === id).elements;
+         const note = (nid) => els().find((e) => e.id === nid);
+         const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const w = n.querySelector('.pl-well');
+         const r = w.getBoundingClientRect();
+         const s = w.offsetWidth > 0 ? r.width / w.offsetWidth : 1;
+         const at = (bx, by) => ({ x: r.left + bx * s, y: r.top + by * s });
+         const ev = (t, type, p) => { try { t.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: p.x, clientY: p.y })); } catch (e) {} };
+         const drag = async (from, to) => { ev(w, 'pointerdown', from); for (let i=1;i<=4;i++){ ev(w,'pointermove',{x:from.x+(to.x-from.x)*i/4,y:from.y+(to.y-from.y)*i/4}); await sleep(12);} ev(w,'pointerup',to); await sleep(40); };
+         const ctxAt = (p) => w.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: p.x, clientY: p.y }));
+         const click = (testid) => { const el = document.querySelector('[data-testid=' + JSON.stringify(testid) + ']'); if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true })); };
+         // 1) marquee both → Group via menu.
+         await drag(at(8, 8), at(500, 360)); await sleep(30);
+         ctxAt(at(118, 88)); await sleep(80);
+         click('w3-menu-group'); await sleep(80);
+         const grouped = !!note('ga-a').groupId && note('ga-a').groupId === note('ga-b').groupId;
+         // 2) clear selection (click empty far corner), then right-click ONLY ga-b.
+         ev(w, 'pointerdown', at(540, 440)); ev(w, 'pointerup', at(540, 440)); await sleep(40);
+         ctxAt(at(378, 268)); await sleep(80); // ga-b centre (300+78, 220+48)
+         // Align should be ENABLED (group expands to 2) → align-left moves BOTH to x=40.
+         click('w3-menu-align-left'); await sleep(80);
+         return { stage: 'done', grouped, ax: note('ga-a').x, bx: note('ga-b').x };
+       })()`
+    )
+    // The fix: right-clicking grouped ga-b selects the whole group, so align-left flushes
+    // BOTH to the board left edge (x=12). Pre-fix, only ga-b was selected → Align greyed.
+    const ok = res.grouped && res.ax === 12 && res.bx === 12
+    return {
+      name: 'whiteboard-group-align',
+      ok,
+      detail: ok
+        ? 'right-click a grouped element → align-left flushes the whole group to x=12'
+        : JSON.stringify(res)
+    }
+  }
+}

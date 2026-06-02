@@ -38,6 +38,14 @@ export type IconName =
   | 'settings'
   | 'globe'
   | 'magnet'
+  | 'align-left'
+  | 'align-center-h'
+  | 'align-right'
+  | 'align-top'
+  | 'align-middle'
+  | 'align-bottom'
+  | 'distribute-h'
+  | 'distribute-v'
 
 /** Icons drawn from multiple primitives (rect + path) rather than one path. */
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
@@ -76,7 +84,17 @@ const PATHS: Record<IconName, string> = {
   settings: 'M4 8h7M15 8h5M4 16h5M13 16h7M13 6v4M9 14v4',
   globe:
     'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18',
-  magnet: 'M7 4v7a5 5 0 0 0 10 0V4M7 4h3.5M13.5 4H17M7 9h3.5M13.5 9H17'
+  magnet: 'M7 4v7a5 5 0 0 0 10 0V4M7 4h3.5M13.5 4H17M7 9h3.5M13.5 9H17',
+  // Align: a reference edge line + two bars snapped to that edge.
+  'align-left': 'M4 4v16M8 8h11M8 16h7',
+  'align-center-h': 'M12 4v16M6 8h12M8 16h8',
+  'align-right': 'M20 4v16M5 8h11M9 16h7',
+  'align-top': 'M4 4h16M8 8v11M16 8v7',
+  'align-middle': 'M4 12h16M8 6v12M16 8v8',
+  'align-bottom': 'M4 20h16M8 5v11M16 9v7',
+  // Distribute: three bars with equal gaps along the axis.
+  'distribute-h': 'M5 4v16M19 4v16M11 7h2v10h-2z',
+  'distribute-v': 'M4 5h16M4 19h16M7 11v2h10v-2z'
 }
 
 interface SvgProps {

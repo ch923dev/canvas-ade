@@ -340,3 +340,102 @@ export function translateMany(
   const set = ids instanceof Set ? ids : new Set(ids)
   return els.map((el) => (set.has(el.id) ? shiftElement(el, dx, dy) : el))
 }
+
+// ── W3: lock + group + duplicate ───────────────────────────────────────────────
+
+/** The single lock predicate. Absent flag ⇒ unlocked. */
+export function isLocked(el: PlanningElement): boolean {
+  return el.locked === true
+}
+
+/** Drop the `groupId` key from a copy (immutable, key removed not set-undefined). */
+function withoutGroup<E extends PlanningElement>(el: E): E {
+  if (el.groupId === undefined) return el
+  const next = { ...el }
+  delete next.groupId
+  return next
+}
+
+/**
+ * Expand a selection to whole groups: for every selected element that has a
+ * `groupId`, add all elements sharing that id. Ungrouped ids pass through.
+ * Idempotent. Returns a superset of `ids`.
+ */
+export function expandGroups(els: PlanningElement[], ids: Iterable<string>): Set<string> {
+  const set = new Set(ids)
+  const groups = new Set<string>()
+  for (const el of els) if (set.has(el.id) && el.groupId) groups.add(el.groupId)
+  if (groups.size === 0) return set
+  for (const el of els) if (el.groupId && groups.has(el.groupId)) set.add(el.id)
+  return set
+}
+
+/** Assign one fresh `groupId` to every element in `ids`. */
+export function groupElements(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  groupId: string
+): PlanningElement[] {
+  const set = new Set(ids)
+  return els.map((el) => (set.has(el.id) ? { ...el, groupId } : el))
+}
+
+/** Clear `groupId` on every element belonging to a group represented in `ids`. */
+export function ungroupElements(els: PlanningElement[], ids: Iterable<string>): PlanningElement[] {
+  const set = new Set(ids)
+  const groups = new Set<string>()
+  for (const el of els) if (set.has(el.id) && el.groupId) groups.add(el.groupId)
+  return els.map((el) => (el.groupId && groups.has(el.groupId) ? withoutGroup(el) : el))
+}
+
+/** Set (or remove) the `locked` flag across `ids`. */
+export function setLocked(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  locked: boolean
+): PlanningElement[] {
+  const set = new Set(ids)
+  return els.map((el) => {
+    if (!set.has(el.id)) return el
+    if (locked) return { ...el, locked: true }
+    if (el.locked === undefined) return el
+    const next = { ...el }
+    delete next.locked
+    return next
+  })
+}
+
+/**
+ * Clone every element in `ids` (caller expands groups first), assigning a fresh id
+ * per copy and shifting by (dx,dy). Each ORIGINAL group becomes ONE fresh group
+ * among the copies. Originals are left untouched. Returns the full new array
+ * (originals + copies) plus the copy ids (for reselection).
+ */
+export function duplicateElements(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  dx: number,
+  dy: number,
+  newId: () => string
+): { elements: PlanningElement[]; newIds: string[] } {
+  const set = new Set(ids)
+  const groupRemap = new Map<string, string>()
+  const newIds: string[] = []
+  const copies: PlanningElement[] = []
+  for (const el of els) {
+    if (!set.has(el.id)) continue
+    const id = newId()
+    newIds.push(id)
+    let copy = shiftElement({ ...el, id }, dx, dy)
+    if (el.groupId) {
+      let g = groupRemap.get(el.groupId)
+      if (!g) {
+        g = newId()
+        groupRemap.set(el.groupId, g)
+      }
+      copy = { ...copy, groupId: g }
+    }
+    copies.push(copy)
+  }
+  return { elements: [...els, ...copies], newIds }
+}

@@ -465,23 +465,23 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 2', () => {
-    expect(SCHEMA_VERSION).toBe(2)
+  it('SCHEMA_VERSION is 3', () => {
+    expect(SCHEMA_VERSION).toBe(3)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 2, viewport: vp, boards: [] })
+    expect(doc).toEqual({ schemaVersion: 3, viewport: vp, boards: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
     expect(toObject([], null).viewport).toBeNull()
   })
 
-  it('migrates a v1 doc (no viewport) to v2 with viewport=null', () => {
+  it('migrates a v1 doc (no viewport) to v3 (via v2) with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(2)
+    expect(out.schemaVersion).toBe(3)
     expect(out.viewport).toBeNull()
   })
 
@@ -536,5 +536,98 @@ describe('BrowserBoard.previewSourceId (preview link)', () => {
       boards: [{ ...createBoard('browser', { id: 'b1', x: 0, y: 0 }), previewSourceId: 7 }]
     }
     expect(() => fromObject(bad)).toThrow(/previewSourceId/)
+  })
+})
+
+describe('W3 schema v3', () => {
+  it('SCHEMA_VERSION is 3', () => {
+    expect(SCHEMA_VERSION).toBe(3)
+  })
+
+  it('migrates a v2 doc to v3 without mutating elements', () => {
+    const v2: CanvasDoc = {
+      schemaVersion: 2,
+      viewport: null,
+      boards: [
+        {
+          id: 'p1',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 400,
+          h: 300,
+          title: 'P',
+          elements: [
+            { id: 'n1', kind: 'note', x: 10, y: 10, w: 156, h: 96, tint: 'yellow', text: '' }
+          ]
+        }
+      ]
+    }
+    const out = migrate(structuredClone(v2))
+    expect(out.schemaVersion).toBe(3)
+    expect(out.boards[0]).toMatchObject({ type: 'planning' })
+    const planning = out.boards[0]
+    if (planning.type !== 'planning') throw new Error('expected planning')
+    expect(planning.elements[0]).not.toHaveProperty('locked')
+    expect(planning.elements[0]).not.toHaveProperty('groupId')
+  })
+
+  it('round-trips an element carrying locked + groupId', () => {
+    const doc = {
+      schemaVersion: 3,
+      viewport: null,
+      boards: [
+        {
+          id: 'p1',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 400,
+          h: 300,
+          title: 'P',
+          elements: [
+            {
+              id: 'n1',
+              kind: 'note',
+              x: 0,
+              y: 0,
+              w: 156,
+              h: 96,
+              tint: 'blue',
+              text: '',
+              locked: true,
+              groupId: 'g1'
+            }
+          ]
+        }
+      ]
+    }
+    const out = fromObject(doc)
+    const b = out.boards[0]
+    if (b.type !== 'planning') throw new Error('expected planning')
+    expect(b.elements[0]).toMatchObject({ locked: true, groupId: 'g1' })
+  })
+
+  it('rejects a non-boolean locked and a non-string groupId', () => {
+    const bad = (extra: Record<string, unknown>): unknown => ({
+      schemaVersion: 3,
+      viewport: null,
+      boards: [
+        {
+          id: 'p1',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 400,
+          h: 300,
+          title: 'P',
+          elements: [
+            { id: 'n1', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'plain', text: '', ...extra }
+          ]
+        }
+      ]
+    })
+    expect(() => fromObject(bad({ locked: 'yes' }))).toThrow(/locked/)
+    expect(() => fromObject(bad({ groupId: 42 }))).toThrow(/groupId/)
   })
 })

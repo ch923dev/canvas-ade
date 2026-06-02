@@ -12,7 +12,7 @@
  */
 
 /** Bump on any breaking change to the persisted shape and add a migration below. */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -58,6 +58,10 @@ interface ElementCommon {
   id: string
   x: number
   y: number
+  /** W3: resist move/erase/delete. Absent ⇒ unlocked (read as `el.locked ?? false`). */
+  locked?: boolean
+  /** W3: lightweight grouping (move/delete-together). Absent ⇒ ungrouped. */
+  groupId?: string
 }
 
 export interface NoteElement extends ElementCommon {
@@ -215,7 +219,10 @@ type Migration = (doc: CanvasDoc) => CanvasDoc
 /** Keyed by the FROM version. Each step returns a doc one version higher. */
 const MIGRATIONS: Record<number, Migration> = {
   // v1 had no camera. v2 adds `viewport` (null = fit on load).
-  1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null })
+  1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null }),
+  // v3 adds OPTIONAL element `locked?`/`groupId?` (W3). No backfill: absent reads as
+  // unlocked/ungrouped, so the migration only bumps the version.
+  2: (doc) => ({ ...doc, schemaVersion: 3 })
 }
 
 /**
@@ -294,6 +301,12 @@ function assertPlanningElement(el: unknown): void {
   if (!isRecord(el)) fail('planning element is not an object')
   if (typeof el.id !== 'string') fail('planning element has a non-string id')
   if (!isFiniteNum(el.x) || !isFiniteNum(el.y)) fail('planning element has non-finite x/y')
+  if (el.locked !== undefined && typeof el.locked !== 'boolean') {
+    fail('planning element has a non-boolean locked')
+  }
+  if (el.groupId !== undefined && typeof el.groupId !== 'string') {
+    fail('planning element has a non-string groupId')
+  }
 
   switch (el.kind) {
     case 'note':
