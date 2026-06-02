@@ -19,6 +19,8 @@ import {
   useCallback,
   useRef,
   useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
   type MouseEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent,
@@ -28,6 +30,7 @@ import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
   ChecklistElement,
+  ImageElement,
   NoteElement,
   PlanningElement,
   PlanningBoard as PlanningBoardData,
@@ -41,6 +44,7 @@ import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
 import { ChecklistCard } from './planning/ChecklistCard'
+import { ImageCard } from './planning/ImageCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { eraseHitTest } from './planning/erase'
 import { rectFromPoints, marqueeHits } from './planning/marquee'
@@ -49,6 +53,7 @@ import { shortcutTool, type PlanTool } from './planning/tools'
 import {
   makeArrow,
   makeChecklist,
+  makeImage,
   makeNote,
   makeStroke,
   makeText,
@@ -67,7 +72,9 @@ import {
   duplicateElements,
   groupElements,
   ungroupElements,
-  setLocked
+  setLocked,
+  fitImageSize,
+  IMAGE_MAX
 } from './planning/elements'
 import {
   alignElements,
@@ -90,6 +97,16 @@ const TOOLS: ReadonlyArray<{
 ]
 
 const newId = (): string => crypto.randomUUID()
+
+/** Clipboard/file MIME → the ext the assets pipeline stores (undefined = not an image we accept). */
+const imageExt = (type: string): string | undefined =>
+  ({
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg'
+  })[type]
 
 export function PlanningBoard({
   board,
@@ -210,6 +227,72 @@ export function PlanningBoard({
       )
     },
     [zoom]
+  )
+
+  /** Persist an image blob and drop an image element at `at` (one undo step). */
+  const addImageFromBlob = useCallback(
+    async (blob: Blob, at: { x: number; y: number }): Promise<void> => {
+      const ext = imageExt(blob.type)
+      if (!ext) return
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      const res = await window.api.asset.write(bytes, ext)
+      if ('error' in res) return
+      let w = IMAGE_MAX
+      let h = IMAGE_MAX
+      try {
+        const bmp = await createImageBitmap(blob)
+        const fit = fitImageSize(bmp.width, bmp.height)
+        w = fit.w
+        h = fit.h
+        bmp.close()
+      } catch {
+        /* undecodable → keep the square fallback size */
+      }
+      beginChange()
+      commit([...elements, makeImage(newId(), at, res.assetId, w, h)])
+    },
+    [beginChange, commit, elements]
+  )
+
+  /** Paste an image from the clipboard → board centre. */
+  const onWellPaste = useCallback(
+    (e: ReactClipboardEvent): void => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (const it of items) {
+        if (it.kind === 'file' && it.type.startsWith('image/')) {
+          const file = it.getAsFile()
+          if (file) {
+            e.preventDefault()
+            const r = wellRef.current?.getBoundingClientRect()
+            const at = r
+              ? toBoard({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })
+              : { x: board.w / 2, y: board.h / 2 }
+            void addImageFromBlob(file, at)
+            return
+          }
+        }
+      }
+    },
+    [addImageFromBlob, toBoard, board.w, board.h]
+  )
+
+  /** Allow a file drag over the well (required for onDrop to fire). */
+  const onWellDragOver = useCallback((e: ReactDragEvent): void => {
+    if (e.dataTransfer?.types?.includes('Files')) e.preventDefault()
+  }, [])
+
+  /** Drop an image file → at the cursor (board-local). */
+  const onWellDrop = useCallback(
+    (e: ReactDragEvent): void => {
+      const files = e.dataTransfer?.files
+      if (!files || files.length === 0) return
+      const file = Array.from(files).find((f) => f.type.startsWith('image/'))
+      if (!file) return
+      e.preventDefault()
+      void addImageFromBlob(file, toBoard(e))
+    },
+    [addImageFromBlob, toBoard]
   )
 
   // ── Element-level handlers (passed to the element components) ────────────────
@@ -814,6 +897,9 @@ export function PlanningBoard({
         onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
         onContextMenu={onWellContextMenu}
+        onPaste={onWellPaste}
+        onDrop={onWellDrop}
+        onDragOver={onWellDragOver}
         onKeyDown={(e) => {
           if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
             e.stopPropagation()
@@ -945,6 +1031,19 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
+              />
+            )
+          }
+          if (el.kind === 'image') {
+            const img = el as ImageElement
+            return (
+              <ImageCard
+                key={img.id}
+                image={img}
+                interactive={interactive}
+                onDragStart={startElementDrag}
+                selected={selectedIds.has(img.id)}
+                onSelect={selectOnPress}
               />
             )
           }
