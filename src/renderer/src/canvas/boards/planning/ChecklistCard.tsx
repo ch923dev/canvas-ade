@@ -145,12 +145,19 @@ export function ChecklistCard({
         boxShadow: 'var(--shadow-pop)',
         display: 'flex',
         flexDirection: 'column',
-        gap: 9
+        gap: 9,
+        cursor: interactive ? 'grab' : 'default'
       }}
-      // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
-      // fall through to the well so it can START over the card (#6).
+      // The whole card body is the drag surface (mirrors the note's grip ring). In
+      // select mode a press that isn't on an interactive control — the title/item
+      // inputs, checkboxes, and buttons all stopPropagation themselves — selects this
+      // element and starts the move. In a draw mode (pen/arrow/place) the press falls
+      // through to the well so a stroke can START over the card (#6).
       onPointerDown={(e) => {
-        if (interactive) e.stopPropagation()
+        if (!interactive) return
+        e.stopPropagation()
+        onSelect?.(element.id, e.shiftKey)
+        onDragStart(e, element.id)
       }}
       // A dblclick on the card must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
@@ -170,7 +177,8 @@ export function ChecklistCard({
           <Icon name="x" size={11} />
         </button>
       )}
-      {/* Header = title + done/total count; an empty-area press is the drag grip. */}
+      {/* Header = title + done/total count. The drag is owned by the card body above
+          (a press here on anything but the title input bubbles up to it). */}
       <div
         className="pl-check-head"
         style={{
@@ -179,12 +187,6 @@ export function ChecklistCard({
           justifyContent: 'space-between',
           gap: 8,
           cursor: interactive ? 'grab' : 'default'
-        }}
-        onPointerDown={(e) => {
-          if (!interactive) return
-          e.stopPropagation()
-          onSelect?.(element.id, e.shiftKey)
-          onDragStart(e, element.id)
         }}
       >
         <input
