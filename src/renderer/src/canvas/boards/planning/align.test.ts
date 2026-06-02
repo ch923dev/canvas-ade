@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { alignElements } from './align'
+import { alignElements, distributeElements } from './align'
 import type { NoteElement } from '../../../lib/boardSchema'
 
 const note = (id: string, x: number, y: number, locked = false): NoteElement => ({
@@ -37,5 +37,26 @@ describe('alignElements', () => {
   it('is a no-op for fewer than 2 movable elements', () => {
     const els = [note('a', 40, 0)]
     expect(alignElements(els, ['a'], 'left')).toBe(els)
+  })
+})
+
+describe('distributeElements', () => {
+  it('spaces 3 elements at equal horizontal center gaps (ends pinned)', () => {
+    const els = [note('a', 0, 0), note('b', 100, 0), note('c', 300, 0)]
+    const out = distributeElements(els, ['a', 'b', 'c'], 'h')
+    const x = (id: string): number => out.find((e) => e.id === id)!.x
+    expect(x('a')).toBe(0)
+    expect(x('c')).toBe(300)
+    expect(x('b')).toBe(150)
+  })
+
+  it('is a no-op for fewer than 3 movable elements', () => {
+    const els = [note('a', 0, 0), note('b', 100, 0)]
+    expect(distributeElements(els, ['a', 'b'], 'h')).toBe(els)
+  })
+
+  it('ignores locked elements when counting movable', () => {
+    const els = [note('a', 0, 0), note('b', 100, 0), note('c', 300, 0, true)]
+    expect(distributeElements(els, ['a', 'b', 'c'], 'h')).toBe(els)
   })
 })
