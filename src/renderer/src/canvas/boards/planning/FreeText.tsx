@@ -4,9 +4,8 @@
  * note it stops pointer propagation so editing never disturbs the canvas, and the
  * `select` tool enables drag (from the gutter) + inline edit.
  */
-import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, type ReactElement } from 'react'
 import type { TextElement } from '../../../lib/boardSchema'
-import { Icon } from '../../Icon'
 
 export interface FreeTextProps {
   element: TextElement
@@ -22,23 +21,6 @@ export interface FreeTextProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
   onMeasure?: (id: string, w: number, h: number) => void
-}
-
-const delBtn: CSSProperties = {
-  position: 'absolute',
-  top: 2,
-  right: 2,
-  width: 18,
-  height: 18,
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--border)',
-  background: 'var(--surface-raised)',
-  color: 'var(--text-3)',
-  cursor: 'pointer',
-  opacity: 0,
-  transition: 'opacity .1s'
 }
 
 export function FreeText({
@@ -97,21 +79,8 @@ export function FreeText({
       // A dblclick on the text must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      {interactive && (
-        <button
-          type="button"
-          className="pl-del"
-          title="Delete"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(element.id)
-          }}
-          style={delBtn}
-        >
-          <Icon name="x" size={11} />
-        </button>
-      )}
+      {/* No inline delete button — removal is via the right-click menu or eraser (W3).
+          `onDelete` remains wired for the empty-text auto-prune (blur/Backspace) below. */}
       {/* Slim drag gutter on the left edge so the text stays selectable. */}
       <span
         className="pl-text-grip"

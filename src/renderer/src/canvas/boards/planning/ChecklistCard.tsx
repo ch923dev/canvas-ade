@@ -9,7 +9,7 @@
  * coordinates; stops pointer propagation so toggling/editing never starts a node
  * drag or clears the canvas selection.
  */
-import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, type ReactElement } from 'react'
 import type { ChecklistElement } from '../../../lib/boardSchema'
 import { Icon } from '../../Icon'
 
@@ -25,8 +25,6 @@ export interface ChecklistCardProps {
   /** Enter pressed on an item → append a fresh empty item. */
   onAddItem: (elementId: string) => void
   onRemoveItem: (elementId: string, itemId: string) => void
-  /** Delete the whole checklist card. */
-  onDelete: (id: string) => void
   /** Called when any input gains focus — used to checkpoint undo. */
   onEditStart?: () => void
   /**
@@ -41,23 +39,6 @@ export interface ChecklistCardProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
   onMeasure?: (id: string, w: number, h: number) => void
-}
-
-const delBtn: CSSProperties = {
-  position: 'absolute',
-  top: 2,
-  right: 2,
-  width: 18,
-  height: 18,
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--border)',
-  background: 'var(--surface-raised)',
-  color: 'var(--text-3)',
-  cursor: 'pointer',
-  opacity: 0,
-  transition: 'opacity .1s'
 }
 
 /** 16px checkbox; filled `--accent` + a `--void` check glyph when done. */
@@ -91,7 +72,6 @@ export function ChecklistCard({
   onChangeItem,
   onAddItem,
   onRemoveItem,
-  onDelete,
   onEditStart,
   onMeasureBottom,
   selected,
@@ -162,21 +142,8 @@ export function ChecklistCard({
       // A dblclick on the card must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      {interactive && (
-        <button
-          type="button"
-          className="pl-del"
-          title="Delete"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(element.id)
-          }}
-          style={delBtn}
-        >
-          <Icon name="x" size={11} />
-        </button>
-      )}
+      {/* No inline delete button — a checklist is removed via the right-click menu or
+          the eraser tool (W3). */}
       {/* Header = title + done/total count. The drag is owned by the card body above
           (a press here on anything but the title input bubbles up to it). */}
       <div

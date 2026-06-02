@@ -7,9 +7,8 @@
  * The card stops pointer propagation so interacting with it never starts a React
  * Flow node-drag or clears the canvas selection mid-edit.
  */
-import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, type ReactElement } from 'react'
 import type { NoteElement } from '../../../lib/boardSchema'
-import { Icon } from '../../Icon'
 import { NOTE_TINTS } from './tints'
 
 export interface NoteCardProps {
@@ -26,23 +25,6 @@ export interface NoteCardProps {
   selected?: boolean
   /** Select this element on grip press; `additive` = Shift held. */
   onSelect?: (id: string, additive: boolean) => void
-}
-
-const delBtn: CSSProperties = {
-  position: 'absolute',
-  top: 2,
-  right: 2,
-  width: 18,
-  height: 18,
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--border)',
-  background: 'var(--surface-raised)',
-  color: 'var(--text-3)',
-  cursor: 'pointer',
-  opacity: 0,
-  transition: 'opacity .1s'
 }
 
 export function NoteCard({
@@ -106,21 +88,9 @@ export function NoteCard({
         ref.current?.focus()
       }}
     >
-      {interactive && (
-        <button
-          type="button"
-          className="pl-del"
-          title="Delete"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(note.id)
-          }}
-          style={delBtn}
-        >
-          <Icon name="x" size={11} />
-        </button>
-      )}
+      {/* Deletion is intentionally NOT an inline button — elements are removed only via
+          the right-click menu (Delete) or the eraser tool (W3 decision). `onDelete` is
+          still wired for the empty-note auto-prune below, not a user delete affordance. */}
       {/* The padding ring is the drag handle: pressing anywhere on the grip (but
           not in the textarea, which stops propagation) starts the move (#13). */}
       <div

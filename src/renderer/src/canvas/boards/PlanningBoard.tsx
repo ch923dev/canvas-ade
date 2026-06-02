@@ -590,8 +590,14 @@ export function PlanningBoard({
       // Compute the EFFECTIVE selection synchronously (React state is async, so we can't
       // read it back after setSelectedIds): a right-click on an element already in the
       // set keeps the set; otherwise it becomes just that element.
-      const effective = targetId && !selectedIds.has(targetId) ? new Set([targetId]) : selectedIds
-      if (targetId && !selectedIds.has(targetId)) setSelectedIds(effective)
+      const base = targetId && !selectedIds.has(targetId) ? new Set([targetId]) : selectedIds
+      // Expand through groups so right-clicking a GROUPED element acts on (and selects)
+      // the whole group — otherwise a one-element selection greys out Align/Distribute/
+      // Group even though the element belongs to a multi-element group (the W3 bug).
+      const effective = expandGroups(elements, base)
+      if (effective.size !== selectedIds.size || (targetId && !selectedIds.has(targetId))) {
+        setSelectedIds(effective)
+      }
       // Open only if there will be something to act on.
       if (effective.size > 0) {
         setContextMenu({ x: e.clientX, y: e.clientY, entries: buildMenuEntries(effective) })
@@ -923,7 +929,6 @@ export function PlanningBoard({
                 onChangeItem={setItem}
                 onAddItem={appendItem}
                 onRemoveItem={dropItem}
-                onDelete={deleteEl}
                 onEditStart={beginChange}
                 onMeasureBottom={growForChecklist}
                 selected={selectedIds.has(el.id)}

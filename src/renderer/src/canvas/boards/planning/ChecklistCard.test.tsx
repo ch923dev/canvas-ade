@@ -25,7 +25,6 @@ it('starts a drag when the header (e.g. the count badge) is pressed', () => {
       onChangeItem={() => {}}
       onAddItem={() => {}}
       onRemoveItem={() => {}}
-      onDelete={() => {}}
     />
   )
   // The done/total count span is part of the header but is NOT currentTarget —

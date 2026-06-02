@@ -493,13 +493,12 @@ export const whiteboardLock: E2EProbe = {
     )
     await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
     await ctx.delay(220)
-    // NoteCard's per-element delete button is class `.pl-del` (NOT the plan's assumed
-    // `.pl-note-del`/`[data-el-del]`) — adapted here to match the real source.
     const res = await ctx.evalIn<{
       stage: string
       movedX: number
       afterErase: number
-      afterX: number
+      afterMenuDelete: number
+      noDelBtn: boolean
     }>(
       `(async () => {
          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -523,20 +522,28 @@ export const whiteboardLock: E2EProbe = {
          try { w.dispatchEvent(new PointerEvent('pointerdown', at(138,108))); w.dispatchEvent(new PointerEvent('pointermove', at(140,110))); w.dispatchEvent(new PointerEvent('pointerup', at(140,110))); } catch(e){}
          await sleep(60);
          const afterErase = els().length;
-         // (3) per-element X on the locked note → must NOT delete (the prior bypass).
+         // (3) right-click → menu Delete on the locked note → must NOT remove it (lock
+         // gate on the menu Delete path; the inline X affordance was removed in W3 so
+         // deletion is menu/eraser-only, and lock resists the menu Delete too).
          w.dispatchEvent(new KeyboardEvent('keydown', { key: 's', bubbles: true })); await sleep(20);
-         const del = n.querySelector('.pl-del') || n.querySelector('[data-el-del]');
-         if (del) { try { del.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch(e){} }
+         const noDelBtn = !n.querySelector('.pl-del'); // the inline X must be gone
+         const cm = at(138, 108);
+         w.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cm.clientX, clientY: cm.clientY })); await sleep(90);
+         const delItem = document.querySelector('[data-testid="w3-menu-delete"]');
+         if (delItem) { try { delItem.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch(e){} }
          await sleep(60);
-         const afterX = els().length;
-         return { stage: 'done', movedX, afterErase, afterX };
+         const afterMenuDelete = els().length;
+         return { stage: 'done', movedX, afterErase, afterMenuDelete, noDelBtn };
        })()`
     )
-    const ok = Math.abs(res.movedX) < 1 && res.afterErase === 1 && res.afterX === 1
+    const ok =
+      Math.abs(res.movedX) < 1 && res.afterErase === 1 && res.afterMenuDelete === 1 && res.noDelBtn
     return {
       name: 'whiteboard-lock',
       ok,
-      detail: ok ? 'locked note resists drag, erase, and the per-element X' : JSON.stringify(res)
+      detail: ok
+        ? 'locked note resists drag, erase, and menu Delete; inline X removed'
+        : JSON.stringify(res)
     }
   }
 }
@@ -649,6 +656,65 @@ export const whiteboardAlign: E2EProbe = {
       name: 'whiteboard-align',
       ok,
       detail: ok ? 'align-left via menu shares min-left x; one undo restores' : JSON.stringify(res)
+    }
+  }
+}
+
+// ── W3 regression: align/distribute must work on a GROUP. The bug: right-clicking a
+// single GROUPED element selected only that one, so Align/Distribute greyed out (sel<2)
+// even though it belongs to a multi-element group. Fix: right-click expands through the
+// group. This groups two notes, clears the selection, right-clicks ONE, and aligns —
+// BOTH must move (proving the group was selected + aligned), not just the clicked one.
+export const whiteboardGroupAlign: E2EProbe = {
+  name: 'whiteboard-group-align',
+  async run(ctx): Promise<E2EPart> {
+    const planId = ctx.ids.planId
+    if (!planId) return { name: 'whiteboard-group-align', ok: false, detail: 'planId not seeded' }
+    await ctx.evalIn(
+      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 560, h: 460, elements: [
+         { id: 'ga-a', kind: 'note', x: 40,  y: 40,  w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 },
+         { id: 'ga-b', kind: 'note', x: 300, y: 220, w: 156, h: 96, tint: 'blue',   text: 'B', rotation: 0 }
+       ] })`
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await ctx.delay(220)
+    const res = await ctx.evalIn<{ stage: string; grouped: boolean; ax: number; bx: number }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const id = ${JSON.stringify(planId)};
+         const els = () => window.__canvasE2E.getBoards().find((x) => x.id === id).elements;
+         const note = (nid) => els().find((e) => e.id === nid);
+         const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const w = n.querySelector('.pl-well');
+         const r = w.getBoundingClientRect();
+         const s = w.offsetWidth > 0 ? r.width / w.offsetWidth : 1;
+         const at = (bx, by) => ({ x: r.left + bx * s, y: r.top + by * s });
+         const ev = (t, type, p) => { try { t.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, clientX: p.x, clientY: p.y })); } catch (e) {} };
+         const drag = async (from, to) => { ev(w, 'pointerdown', from); for (let i=1;i<=4;i++){ ev(w,'pointermove',{x:from.x+(to.x-from.x)*i/4,y:from.y+(to.y-from.y)*i/4}); await sleep(12);} ev(w,'pointerup',to); await sleep(40); };
+         const ctxAt = (p) => w.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: p.x, clientY: p.y }));
+         const click = (testid) => { const el = document.querySelector('[data-testid=' + JSON.stringify(testid) + ']'); if (el) el.dispatchEvent(new MouseEvent('click', { bubbles: true })); };
+         // 1) marquee both → Group via menu.
+         await drag(at(8, 8), at(500, 360)); await sleep(30);
+         ctxAt(at(118, 88)); await sleep(80);
+         click('w3-menu-group'); await sleep(80);
+         const grouped = !!note('ga-a').groupId && note('ga-a').groupId === note('ga-b').groupId;
+         // 2) clear selection (click empty far corner), then right-click ONLY ga-b.
+         ev(w, 'pointerdown', at(540, 440)); ev(w, 'pointerup', at(540, 440)); await sleep(40);
+         ctxAt(at(378, 268)); await sleep(80); // ga-b centre (300+78, 220+48)
+         // Align should be ENABLED (group expands to 2) → align-left moves BOTH to x=40.
+         click('w3-menu-align-left'); await sleep(80);
+         return { stage: 'done', grouped, ax: note('ga-a').x, bx: note('ga-b').x };
+       })()`
+    )
+    // The fix: right-clicking grouped ga-b selects the whole group, so align-left moves
+    // BOTH to the min-left (40). Pre-fix, only ga-b was selected → Align greyed → no move.
+    const ok = res.grouped && res.ax === 40 && res.bx === 40
+    return {
+      name: 'whiteboard-group-align',
+      ok,
+      detail: ok
+        ? 'right-click a grouped element → align-left moves the whole group to x=40'
+        : JSON.stringify(res)
     }
   }
 }

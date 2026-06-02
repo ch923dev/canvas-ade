@@ -46,7 +46,8 @@ import {
   whiteboardAltDup,
   whiteboardLock,
   whiteboardGroup,
-  whiteboardAlign
+  whiteboardAlign,
+  whiteboardGroupAlign
 } from './probes/whiteboard'
 import { seed } from './probes/seed'
 
@@ -82,6 +83,7 @@ const PLAYLIST: E2EProbe[] = [
   whiteboardLock, // W3: locked resists drag/erase/X
   whiteboardGroup, // W3: group move + group delete via the menu
   whiteboardAlign, // W3: align-left via the menu
+  whiteboardGroupAlign, // W3: align works on a GROUP (right-click expands the group)
   whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view
   seed
 ]

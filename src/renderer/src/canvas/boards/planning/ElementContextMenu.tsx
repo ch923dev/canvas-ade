@@ -90,74 +90,48 @@ export function ElementContextMenu({ x, y, entries, onClose }: Props): ReactElem
         width: MENU_W,
         zIndex: 9999,
         padding: 4,
-        background: 'var(--surface-raised, var(--surface))',
-        border: '1px solid var(--border-subtle)',
+        background: 'var(--surface-overlay)',
+        border: '1px solid var(--border-strong)',
         borderRadius: 'var(--r-inner)',
-        boxShadow: 'var(--shadow-pop, 0 6px 24px rgba(0,0,0,0.35))',
+        boxShadow: 'var(--shadow-pop)',
         font: 'inherit'
       }}
     >
+      <style>{MENU_CSS}</style>
       {entries.map((entry) =>
         entry.kind === 'action' ? (
           <button
             key={entry.id}
             data-testid={`w3-menu-${entry.id}`}
             role="menuitem"
+            className={`w3-mi${entry.danger ? ' danger' : ''}`}
             disabled={entry.disabled}
             onClick={() => !entry.disabled && pick(entry.onSelect)}
-            style={{
-              display: 'block',
-              width: '100%',
-              textAlign: 'left',
-              padding: '6px 8px',
-              border: 'none',
-              borderRadius: 'var(--r-inner)',
-              background: 'transparent',
-              color: entry.disabled
-                ? 'var(--text-faint)'
-                : entry.danger
-                  ? 'var(--danger, #e5484d)'
-                  : 'var(--text)',
-              cursor: entry.disabled ? 'default' : 'pointer',
-              font: 'inherit'
-            }}
           >
             {entry.label}
           </button>
         ) : (
           <div
             key={entry.id}
+            className="w3-row"
             data-w3-menu-row={entry.id}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '4px 8px',
-              opacity: entry.disabled ? 0.4 : 1
-            }}
+            data-disabled={entry.disabled ? '' : undefined}
           >
-            <span style={{ color: 'var(--text-faint)', fontSize: 11, minWidth: 56 }}>
-              {entry.label}
+            <span className="w3-row-label">{entry.label}</span>
+            <span className="w3-row-btns">
+              {entry.buttons.map((b) => (
+                <button
+                  key={b.id}
+                  data-testid={`w3-menu-${entry.id}-${b.id}`}
+                  className="w3-ib"
+                  title={b.title}
+                  disabled={entry.disabled}
+                  onClick={() => !entry.disabled && pick(b.onSelect)}
+                >
+                  <Icon name={b.icon as IconName} size={14} />
+                </button>
+              ))}
             </span>
-            {entry.buttons.map((b) => (
-              <button
-                key={b.id}
-                data-testid={`w3-menu-${entry.id}-${b.id}`}
-                title={b.title}
-                disabled={entry.disabled}
-                onClick={() => !entry.disabled && pick(b.onSelect)}
-                style={{
-                  display: 'inline-flex',
-                  padding: 3,
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--r-inner)',
-                  background: 'var(--inset)',
-                  cursor: entry.disabled ? 'default' : 'pointer'
-                }}
-              >
-                <Icon name={b.icon as IconName} size={13} />
-              </button>
-            ))}
           </div>
         )
       )}
@@ -165,3 +139,32 @@ export function ElementContextMenu({ x, y, entries, onClose }: Props): ReactElem
     document.body
   )
 }
+
+// Scoped to [data-w3-menu] so it can't leak. Higher-contrast than the first cut: a
+// visible border, hover feedback on every control, and — critically — an explicit
+// `color` on the icon buttons so the stroke="currentColor" glyphs actually render
+// (they were near-invisible dark-on-dark before).
+const MENU_CSS = `
+[data-w3-menu] .w3-mi {
+  display: block; width: 100%; text-align: left;
+  padding: 6px 8px; border: none; border-radius: var(--r-ctl);
+  background: transparent; color: var(--text); font: inherit; cursor: pointer;
+}
+[data-w3-menu] .w3-mi:hover:not(:disabled) { background: var(--surface-raised); }
+[data-w3-menu] .w3-mi.danger { color: var(--err); }
+[data-w3-menu] .w3-mi.danger:hover:not(:disabled) { background: rgba(242, 84, 91, 0.12); }
+[data-w3-menu] .w3-mi:disabled { color: var(--text-faint); cursor: default; }
+[data-w3-menu] .w3-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; }
+[data-w3-menu] .w3-row-label { color: var(--text-2); font-size: 12px; min-width: 60px; }
+[data-w3-menu] .w3-row[data-disabled] .w3-row-label { color: var(--text-faint); }
+[data-w3-menu] .w3-row-btns { display: inline-flex; gap: 4px; }
+[data-w3-menu] .w3-ib {
+  display: inline-flex; padding: 4px; border: 1px solid var(--border);
+  border-radius: var(--r-ctl); background: var(--surface-raised);
+  color: var(--text-2); cursor: pointer;
+}
+[data-w3-menu] .w3-ib:hover:not(:disabled) {
+  background: var(--accent-wash); color: var(--text); border-color: var(--accent);
+}
+[data-w3-menu] .w3-ib:disabled { color: var(--text-faint); opacity: 0.5; cursor: default; }
+`
