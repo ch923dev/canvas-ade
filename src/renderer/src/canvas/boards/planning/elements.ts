@@ -335,3 +335,37 @@ export function translateMany(
   const set = ids instanceof Set ? ids : new Set(ids)
   return els.map((el) => (set.has(el.id) ? shiftElement(el, dx, dy) : el))
 }
+
+/**
+ * Duplicate the selected elements (W3): deep-clone each with a fresh caller-supplied
+ * id (deterministic/testable), appended AFTER the originals. A shared groupId is
+ * remapped to ONE new shared group per source group, so a duplicated group stays a
+ * group but is distinct from the original. `locked` is preserved on the clone.
+ */
+export function duplicateElements(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  newId: () => string
+): { next: PlanningElement[]; idMap: Map<string, string>; cloneIds: string[] } {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  const idMap = new Map<string, string>()
+  const groupMap = new Map<string, string>()
+  const clones: PlanningElement[] = []
+  for (const el of els) {
+    if (!set.has(el.id)) continue
+    const clone = structuredClone(el)
+    const nid = newId()
+    idMap.set(el.id, nid)
+    clone.id = nid
+    if (clone.groupId !== undefined) {
+      let ng = groupMap.get(clone.groupId)
+      if (ng === undefined) {
+        ng = newId()
+        groupMap.set(clone.groupId, ng)
+      }
+      clone.groupId = ng
+    }
+    clones.push(clone)
+  }
+  return { next: [...els, ...clones], idMap, cloneIds: clones.map((c) => c.id) }
+}

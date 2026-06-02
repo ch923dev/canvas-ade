@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { ChecklistElement, PlanningElement } from '../../../lib/boardSchema'
+import type { ChecklistElement, NoteElement, PlanningElement, StrokeElement } from '../../../lib/boardSchema'
 import {
   makeNote,
   makeText,
@@ -23,7 +23,8 @@ import {
   translateMany,
   shiftElement,
   nominalChecklistHeight,
-  TEXT_NOMINAL
+  TEXT_NOMINAL,
+  duplicateElements
 } from './elements'
 import { TINT_CYCLE } from './tints'
 
@@ -311,5 +312,59 @@ describe('shiftElement / translateMany — W2', () => {
     const baseX = els[0].x
     expect(translateMany(els, [], 9, 9)[0].x).toBe(baseX)
     expect(translateMany(els, ['a'], 3, 0)[0].x).toBe(baseX + 3)
+  })
+})
+
+describe('duplicateElements', () => {
+  const newIdSeq = (): (() => string) => {
+    let n = 0
+    return () => `clone-${++n}`
+  }
+  const dupNote = (id: string, x = 0, groupId?: string): NoteElement => ({
+    id, kind: 'note', x, y: 0, w: 100, h: 50, tint: 'yellow', text: '', ...(groupId ? { groupId } : {})
+  })
+
+  it('clones selected elements with fresh ids, appended after originals', () => {
+    const els = [dupNote('a'), dupNote('b')]
+    const { next, cloneIds } = duplicateElements(els, ['a'], newIdSeq())
+    expect(next).toHaveLength(3)
+    expect(next.map((e) => e.id)).toEqual(['a', 'b', 'clone-1'])
+    expect(cloneIds).toEqual(['clone-1'])
+  })
+
+  it('remaps a shared groupId to ONE new shared group across the clones', () => {
+    const els = [dupNote('a', 0, 'g1'), dupNote('b', 0, 'g1'), dupNote('c', 0, 'g2')]
+    const { next } = duplicateElements(els, ['a', 'b', 'c'], newIdSeq())
+    const clones = next.slice(3)
+    expect(clones[0].groupId).toBe(clones[1].groupId)
+    expect(clones[2].groupId).not.toBe(clones[0].groupId)
+    expect(clones.every((c) => c.groupId !== 'g1' && c.groupId !== 'g2')).toBe(true)
+  })
+
+  it('deep-clones (no aliasing of the source array references)', () => {
+    const els = [dupNote('a')]
+    const { next } = duplicateElements(els, ['a'], newIdSeq())
+    expect(next[1]).not.toBe(next[0])
+  })
+
+  it('preserves the locked flag on a cloned element', () => {
+    const els = [{ ...dupNote('a'), locked: true }]
+    const { next } = duplicateElements(els, ['a'], newIdSeq())
+    expect(next[1].locked).toBe(true)
+  })
+
+  it('populates idMap from each source id to its clone id', () => {
+    const els = [dupNote('a'), dupNote('b')]
+    const { idMap } = duplicateElements(els, ['a', 'b'], newIdSeq())
+    expect(idMap.get('a')).toBe('clone-1')
+    expect(idMap.get('b')).toBe('clone-2')
+  })
+
+  it('deep-clones nested arrays (mutating a clone never touches the source)', () => {
+    const stroke: StrokeElement = { id: 's', kind: 'stroke', x: 0, y: 0, points: [0, 0, 5, 5] }
+    const { next } = duplicateElements([stroke], ['s'], newIdSeq())
+    const clone = next[1] as StrokeElement
+    clone.points.push(9, 9)
+    expect((next[0] as StrokeElement).points).toEqual([0, 0, 5, 5]) // source untouched
   })
 })
