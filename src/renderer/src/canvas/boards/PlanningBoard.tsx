@@ -42,6 +42,8 @@ import { FreeText } from './planning/FreeText'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { eraseHitTest } from './planning/erase'
+import { rectFromPoints, marqueeHits } from './planning/marquee'
+import { computeSnap, SNAP_TOL, type Guide } from './planning/snapping'
 import { shortcutTool, type PlanTool } from './planning/tools'
 import {
   makeArrow,
@@ -51,12 +53,14 @@ import {
   makeText,
   nextNoteIndex,
   patchElement,
-  translateElement,
+  translateMany,
   removeElement,
   toggleItem,
   addItem,
   removeItem,
-  setItemLabel
+  setItemLabel,
+  elementBBox,
+  unionBBox
 } from './planning/elements'
 
 const TOOLS: ReadonlyArray<{
@@ -88,7 +92,33 @@ export function PlanningBoard({
   const zoom = useStore((s) => s.transform[2])
 
   const [tool, setTool] = useState<PlanTool>('select')
-  const [selectedElId, setSelectedElId] = useState<string | null>(null)
+  // In-board snapping (W2.2): edge/center alignment to neighbors while dragging.
+  // Default ON, toggled by the snap pill; guides are transient (session-only).
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [snapGuides, setSnapGuides] = useState<Guide[] | null>(null)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
+  // Selection mutators (board-local, ephemeral — never serialized).
+  const toggleSel = useCallback(
+    (id: string) =>
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      }),
+    []
+  )
+  const clearSel = useCallback(() => setSelectedIds(new Set()), [])
+  // Select on element press: additive (Shift) toggles; plain press replaces the
+  // set with just this element unless it is already in the selection (a press on
+  // an already-selected element keeps the multi-selection — Figma drag grammar).
+  const selectOnPress = useCallback(
+    (id: string, additive: boolean) => {
+      if (additive) toggleSel(id)
+      else setSelectedIds((prev) => (prev.has(id) ? prev : new Set([id])))
+    },
+    [toggleSel]
+  )
   const wellRef = useRef<HTMLDivElement>(null)
   const elements = board.elements
 
@@ -100,16 +130,30 @@ export function PlanningBoard({
   // single undo checkpoint, not one mutation per frame (#9). A delta (not an
   // absolute top-left) so it translates EVERY kind uniformly, including arrows +
   // strokes which have no single top-left (#28, #37).
-  const [dragPos, setDragPos] = useState<{ id: string; dx: number; dy: number } | null>(null)
+  const [dragPos, setDragPos] = useState<{ ids: string[]; dx: number; dy: number } | null>(null)
   // Active drag (an element move, an arrow, or a pen stroke) → captured pointer.
   // A move records the grab point in board space so the delta = pointer − grab.
   const drag = useRef<
-    | { mode: 'move'; id: string; grabX: number; grabY: number }
+    | { mode: 'move'; ids: string[]; grabX: number; grabY: number }
     | { mode: 'arrow'; id: string }
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
+    | { mode: 'marquee'; startX: number; startY: number; additive: boolean }
     | null
   >(null)
+  // Live marquee box (board-local) while box-selecting; null when idle. Transient,
+  // session-only (never serialized); resolved to a selection set on pointer-up.
+  const [marqueeRect, setMarqueeRect] = useState<{ x: number; y: number; w: number; h: number } | null>(
+    null
+  )
+
+  // Live DOM sizes (board-local px) for the auto-sized kinds (text, checklist), fed by
+  // the cards. Refines elementBBox for marquee/snap; a plain ref (no re-render needed —
+  // reads happen at gesture time). Stale-on-first-frame is bounded by elementBBox's nominal fallback.
+  const measuredRef = useRef<Map<string, { w: number; h: number }>>(new Map())
+  const reportMeasure = useCallback((id: string, w: number, h: number) => {
+    measuredRef.current.set(id, { w, h })
+  }, [])
 
   // Ids the in-flight erase swipe has marked for deletion. While set, those
   // elements are hidden from the render (immediate feedback) and committed as ONE
@@ -215,15 +259,23 @@ export function PlanningBoard({
       // Do NOT checkpoint here: a zero-movement grab (plain click) would push a
       // no-op undo snapshot and wipe an armed redo branch (#11). The checkpoint is
       // taken lazily in onWellPointerUp, only if the move actually committed.
+      // Selection-aware moving set (Figma grammar). Pressing an already-selected
+      // element drags the whole set; pressing an unselected one (no Shift) replaces
+      // the selection with just it. (The card/vector onSelect already ran
+      // selectOnPress with the Shift flag, so read the resulting intent here off the
+      // live set — React state is async, so this is the PRE-press set, which is
+      // correct: already-selected keeps the set, unselected → [id].)
+      const sel = selectedIds
+      const movingIds = sel.has(id) ? [...sel] : [id]
       const p = toBoard(e)
       // Record the grab point; the live delta is pointer − grab. Works for every
       // kind (cards + arrows + strokes) since we translate by delta (#28, #37).
-      drag.current = { mode: 'move', id, grabX: p.x, grabY: p.y }
+      drag.current = { mode: 'move', ids: movingIds, grabX: p.x, grabY: p.y }
       // Capture on the WELL (not the card) so move/up route to the well handlers
       // even when the cursor leaves the card during a fast drag.
       wellRef.current?.setPointerCapture(e.pointerId)
     },
-    [elements, toBoard]
+    [elements, toBoard, selectedIds]
   )
 
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
@@ -237,8 +289,15 @@ export function PlanningBoard({
       // An empty-well press focuses the well so the board-scoped letter shortcuts
       // (onKeyDown below) have a focus target. A press on a card focuses that card.
       if (e.target === e.currentTarget) e.currentTarget.focus()
-      setSelectedElId(null)
       const p = toBoard(e)
+      if (tool === 'select') {
+        // Empty-well press → begin a marquee (Shift = additive). Selection is resolved
+        // on pointer-up (a no-move click clears unless Shift) — see onWellPointerUp.
+        drag.current = { mode: 'marquee', startX: p.x, startY: p.y, additive: e.shiftKey }
+        setMarqueeRect({ x: p.x, y: p.y, w: 0, h: 0 })
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
 
       if (tool === 'note') {
         beginChange()
@@ -292,9 +351,36 @@ export function PlanningBoard({
       if (!d) return
       const p = toBoard(e)
       if (d.mode === 'move') {
-        // Transient: render the dragged element shifted by the live delta; the
-        // store is written once on pointer-up so undo stays one checkpoint (#9).
-        setDragPos({ id: d.id, dx: Math.round(p.x - d.grabX), dy: Math.round(p.y - d.grabY) })
+        // Transient: render the dragged set shifted by the live delta; the store is
+        // written once on pointer-up so undo stays one checkpoint (#9).
+        let dx = Math.round(p.x - d.grabX)
+        let dy = Math.round(p.y - d.grabY)
+        if (snapEnabled) {
+          // Snap the moving set's union box to static neighbors' edges/centers, in
+          // board-local px (zoom-stable). Bias the raw delta + surface the guide lines.
+          const moving = new Set(d.ids)
+          const movingUnion = unionBBox(
+            d.ids
+              .map((mid) => elements.find((el) => el.id === mid))
+              .filter((el): el is PlanningElement => !!el)
+              .map((el) => {
+                const b = elementBBox(el, measuredRef.current.get(el.id))
+                return { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }
+              })
+          )
+          const statics = elements
+            .filter((el) => !moving.has(el.id))
+            .map((el) => elementBBox(el, measuredRef.current.get(el.id)))
+          const snap = computeSnap(movingUnion, statics, SNAP_TOL)
+          dx += snap.dx
+          dy += snap.dy
+          setSnapGuides(snap.guides.length > 0 ? snap.guides : null)
+        } else {
+          // Snap toggled OFF mid-drag → clear any guides on the very next move frame
+          // (don't wait for pointer-up to stop showing stale guides).
+          setSnapGuides(null)
+        }
+        setDragPos({ ids: d.ids, dx, dy })
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
       } else if (d.mode === 'pen') {
@@ -309,9 +395,11 @@ export function PlanningBoard({
           }
         }
         if (grew) setPendingErase(new Set(d.removed))
+      } else if (d.mode === 'marquee') {
+        setMarqueeRect(rectFromPoints(d.startX, d.startY, p.x, p.y))
       }
     },
-    [toBoard, elements]
+    [toBoard, elements, snapEnabled]
   )
 
   // Double-click empty whiteboard in select mode → drop a free-text element.
@@ -335,15 +423,16 @@ export function PlanningBoard({
     drag.current = null
     if (!d) return
     if (d.mode === 'move') {
-      // Checkpoint + commit the final position ONCE, and only if the element
-      // actually moved (dragPos set on the first move frame). A zero-movement grab
-      // leaves dragPos null → no snapshot, no future-wipe (#11). The whole drag is
-      // a single undo checkpoint (#9).
+      // Checkpoint + commit the final position ONCE, and only if the set actually
+      // moved (dragPos set on the first move frame). A zero-movement grab leaves
+      // dragPos null → no snapshot, no future-wipe (#11). The whole drag is a single
+      // undo checkpoint (#9), even when the set has many elements.
       const pos = dragPos
       setDragPos(null)
+      setSnapGuides(null)
       if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
         beginChange()
-        commit(translateElement(elements, pos.id, pos.dx, pos.dy))
+        commit(translateMany(elements, pos.ids, pos.dx, pos.dy))
       }
     } else if (d.mode === 'arrow') {
       const a = draftArrow
@@ -371,16 +460,41 @@ export function PlanningBoard({
         beginChange()
         commit(elements.filter((el) => !removed.has(el.id)))
       }
+    } else if (d.mode === 'marquee') {
+      // No pointer event in scope here — read the box from marqueeRect (updated on
+      // every move). Selection is ephemeral (never serialized) → ZERO checkpoints.
+      const rect = marqueeRect ?? { x: d.startX, y: d.startY, w: 0, h: 0 }
+      setMarqueeRect(null)
+      const moved = rect.w > 2 || rect.h > 2
+      if (moved) {
+        const hits = marqueeHits(elements, rect, measuredRef.current)
+        setSelectedIds((prev) => {
+          if (!d.additive) return new Set(hits)
+          const next = new Set(prev)
+          for (const id of hits) next.add(id)
+          return next
+        })
+      } else if (!d.additive) {
+        // A bare click on the empty well (no drag, no Shift) clears the selection.
+        clearSel()
+      }
     }
-  }, [draftArrow, dragPos, commit, elements, beginChange])
+  }, [draftArrow, dragPos, commit, elements, beginChange, marqueeRect, clearSel])
 
   const onWellPointerCancel = useCallback(() => {
     // An OS pointer-cancel (palm/stylus/system gesture) mid-erase must NOT commit a
     // destructive delete the user never finished — discard the in-flight swipe. Other
     // gestures (move/arrow/pen) keep their existing pointer-up behavior on cancel.
+    // Always drop any live snap guides so they never linger past a cancelled move.
+    setSnapGuides(null)
     if (drag.current?.mode === 'erase') {
       drag.current = null
       setPendingErase(null)
+      return
+    }
+    if (drag.current?.mode === 'marquee') {
+      drag.current = null
+      setMarqueeRect(null)
       return
     }
     onWellPointerUp()
@@ -411,10 +525,20 @@ export function PlanningBoard({
           active={tool === t}
           onClick={() => {
             setTool(t)
-            setSelectedElId(null)
+            clearSel()
           }}
         />
       ))}
+      <div
+        style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-subtle)', margin: '0 2px' }}
+      />
+      <IconBtn
+        name="magnet"
+        title={snapEnabled ? 'Snapping on' : 'Snapping off'}
+        size={15}
+        active={snapEnabled}
+        onClick={() => setSnapEnabled((v) => !v)}
+      />
     </div>
   ) : undefined
 
@@ -423,7 +547,7 @@ export function PlanningBoard({
   // Any kind is movable now (cards + arrows + strokes), so derive the SVG vectors
   // from viewElements too so a dragged arrow/stroke tracks the cursor live (#28, #37).
   const viewElements = dragPos
-    ? translateElement(elements, dragPos.id, dragPos.dx, dragPos.dy)
+    ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy)
     : pendingErase && pendingErase.size > 0
       ? elements.filter((el) => !pendingErase.has(el.id))
       : elements
@@ -459,12 +583,12 @@ export function PlanningBoard({
         onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
         onKeyDown={(e) => {
-          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElId) {
+          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
             e.stopPropagation()
             e.preventDefault()
             beginChange()
-            commit(removeElement(elements, selectedElId))
-            setSelectedElId(null)
+            commit(elements.filter((el) => !selectedIds.has(el.id)))
+            clearSel()
             return
           }
           const next = shortcutTool(e.key, {
@@ -482,7 +606,7 @@ export function PlanningBoard({
             e.stopPropagation()
             e.preventDefault()
             setTool(next)
-            setSelectedElId(null)
+            clearSel()
           }
         }}
         style={{
@@ -513,13 +637,15 @@ export function PlanningBoard({
           strokes={strokes}
           draftArrow={draftArrow}
           draftStroke={draftStroke}
-          selectedId={selectedElId}
+          selectedIds={selectedIds}
+          marquee={marqueeRect}
+          guides={snapGuides}
           // Disable committed-vector hit-testing for ANY non-select tool (not just
           // pen/arrow) so a note/check placement over committed ink falls through
           // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
           drawing={tool !== 'select'}
-          onSelect={(id) => {
-            setSelectedElId(id)
+          onSelect={(id, additive) => {
+            selectOnPress(id, additive)
             wellRef.current?.focus()
           }}
           onDragStart={startElementDrag}
@@ -537,6 +663,8 @@ export function PlanningBoard({
                 onChangeText={setNoteText}
                 onDelete={deleteEl}
                 onEditStart={beginChange}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
               />
             )
           }
@@ -550,6 +678,9 @@ export function PlanningBoard({
                 onChangeText={setTextText}
                 onDelete={deleteEl}
                 onEditStart={beginChange}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
+                onMeasure={reportMeasure}
               />
             )
           }
@@ -568,6 +699,9 @@ export function PlanningBoard({
                 onDelete={deleteEl}
                 onEditStart={beginChange}
                 onMeasureBottom={growForChecklist}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
+                onMeasure={reportMeasure}
               />
             )
           }

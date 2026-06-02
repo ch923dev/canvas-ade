@@ -10,6 +10,7 @@
  * (Excalidraw #4904) is out of scope.
  */
 import type { ArrowElement, PlanningElement, StrokeElement } from '../../../lib/boardSchema'
+import { nominalChecklistHeight } from './elements'
 
 /** A board-local point (same coordinate space as element x/y). */
 export interface HitPoint {
@@ -29,15 +30,6 @@ export const ERASE_TOL = 8
  * top-left. Approximate; W2 refines this with a DOM-measured bbox.
  */
 export const TEXT_HIT = { w: 160, h: 24 } as const
-
-/**
- * Approximate `ChecklistCard.tsx` row metrics — the checklist element persists h:0
- * (it grows with content), so the eraser reconstructs a nominal height. Approximate;
- * keep roughly in sync with ChecklistCard if its layout changes (W2 may measure live).
- */
-const CHECKLIST_HEADER_H = 30
-const CHECKLIST_ROW_H = 24
-const CHECKLIST_FOOTER_H = 24
 
 /** Point-in-rectangle with a tolerance band (board-local). */
 function inRect(p: HitPoint, x: number, y: number, w: number, h: number, tol: number): boolean {
@@ -102,7 +94,7 @@ export function eraseHitTest(el: PlanningElement, p: HitPoint, tol = ERASE_TOL):
     case 'note':
       return inRect(p, el.x, el.y, el.w, el.h, tol)
     case 'checklist': {
-      const h = CHECKLIST_HEADER_H + el.items.length * CHECKLIST_ROW_H + CHECKLIST_FOOTER_H
+      const h = nominalChecklistHeight(el.items.length)
       return inRect(p, el.x, el.y, el.w, h, tol)
     }
     case 'text':

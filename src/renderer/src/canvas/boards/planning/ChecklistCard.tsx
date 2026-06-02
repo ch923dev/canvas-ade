@@ -35,6 +35,12 @@ export interface ChecklistCardProps {
    * a tall checklist + its "Add item" button under overflow:hidden (#12).
    */
   onMeasureBottom?: (id: string, bottom: number) => void
+  /** True when this element is in the board selection set (draws the accent ring). */
+  selected?: boolean
+  /** Select this element on grip press; `additive` = Shift held. */
+  onSelect?: (id: string, additive: boolean) => void
+  /** Report the rendered board-local size for selection/snap bbox (W2). */
+  onMeasure?: (id: string, w: number, h: number) => void
 }
 
 const delBtn: CSSProperties = {
@@ -87,7 +93,10 @@ export function ChecklistCard({
   onRemoveItem,
   onDelete,
   onEditStart,
-  onMeasureBottom
+  onMeasureBottom,
+  selected,
+  onSelect,
+  onMeasure
 }: ChecklistCardProps): ReactElement {
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
@@ -107,13 +116,16 @@ export function ChecklistCard({
   // offsetHeight is in board-local px (the card lives inside the unzoomed well).
   useEffect(() => {
     const el = cardRef.current
-    if (!el || !onMeasureBottom) return
-    const report = (): void => onMeasureBottom(element.id, element.y + el.offsetHeight)
+    if (!el || (!onMeasureBottom && !onMeasure)) return
+    const report = (): void => {
+      onMeasureBottom?.(element.id, element.y + el.offsetHeight)
+      onMeasure?.(element.id, el.offsetWidth, el.offsetHeight)
+    }
     report()
     const ro = new ResizeObserver(report)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [element.id, element.y, onMeasureBottom])
+  }, [element.id, element.y, onMeasureBottom, onMeasure])
 
   return (
     <div
@@ -126,6 +138,8 @@ export function ChecklistCard({
         width: element.w,
         background: 'var(--surface-raised)',
         border: '1px solid var(--border)',
+        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outlineOffset: 2,
         borderRadius: 'var(--r-board)',
         padding: '11px 12px 12px',
         boxShadow: 'var(--shadow-pop)',
@@ -169,6 +183,7 @@ export function ChecklistCard({
         onPointerDown={(e) => {
           if (!interactive) return
           e.stopPropagation()
+          onSelect?.(element.id, e.shiftKey)
           onDragStart(e, element.id)
         }}
       >

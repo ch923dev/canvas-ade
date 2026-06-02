@@ -16,6 +16,12 @@ export interface FreeTextProps {
   onDelete: (id: string) => void
   /** Called when the textarea gains focus — used to checkpoint undo. */
   onEditStart?: () => void
+  /** True when this element is in the board selection set (draws the accent ring). */
+  selected?: boolean
+  /** Select this element on grip press; `additive` = Shift held. */
+  onSelect?: (id: string, additive: boolean) => void
+  /** Report the rendered board-local size for selection/snap bbox (W2). */
+  onMeasure?: (id: string, w: number, h: number) => void
 }
 
 const delBtn: CSSProperties = {
@@ -41,7 +47,10 @@ export function FreeText({
   onDragStart,
   onChangeText,
   onDelete,
-  onEditStart
+  onEditStart,
+  selected,
+  onSelect,
+  onMeasure
 }: FreeTextProps): ReactElement {
   const ref = useRef<HTMLTextAreaElement>(null)
   // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
@@ -55,7 +64,11 @@ export function FreeText({
     el.style.height = `${el.scrollHeight}px`
     el.style.width = 'auto'
     el.style.width = `${Math.max(40, el.scrollWidth)}px`
-  }, [element.text])
+    if (onMeasure) {
+      const host = el.parentElement // the .pl-text flex row
+      if (host) onMeasure(element.id, host.offsetWidth, host.offsetHeight)
+    }
+  }, [element.text, onMeasure, element.id])
 
   // Focus a freshly-dropped empty text element so the user can type immediately,
   // AND so leaving it untouched blurs → prunes it instead of leaving an orphan
@@ -72,7 +85,9 @@ export function FreeText({
         position: 'absolute',
         left: element.x,
         top: element.y,
-        display: 'flex'
+        display: 'flex',
+        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outlineOffset: 2
       }}
       // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
       // fall through to the well so it can START over the text (#6).
@@ -106,6 +121,7 @@ export function FreeText({
           // can START over the grip (#6); only swallow + drag in select mode.
           if (!interactive) return
           e.stopPropagation()
+          onSelect?.(element.id, e.shiftKey)
           // Suppress the empty-text blur-prune this gesture is about to trigger.
           dragging.current = true
           onDragStart(e, element.id)

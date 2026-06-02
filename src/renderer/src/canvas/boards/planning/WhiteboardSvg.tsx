@@ -36,10 +36,14 @@ export interface WhiteboardSvgProps {
   draftArrow?: ArrowElement | null
   /** In-progress freehand points while dragging the `pen` tool (board-local). */
   draftStroke?: number[] | null
-  /** Id of the currently selected vector element (arrow or stroke). */
-  selectedId?: string | null
-  /** Called when a committed arrow or stroke is clicked. */
-  onSelect?: (id: string) => void
+  /** Ids of the currently selected vector elements (arrows/strokes). */
+  selectedIds?: ReadonlySet<string>
+  /** Live marquee box (board-local) while box-selecting; null when idle. */
+  marquee?: { x: number; y: number; w: number; h: number } | null
+  /** Live alignment guides (board-local) while dragging; null when idle. */
+  guides?: { axis: 'x' | 'y'; at: number; from: number; to: number }[] | null
+  /** Called when a committed arrow/stroke is pressed; `additive` = Shift was held. */
+  onSelect?: (id: string, additive: boolean) => void
   /**
    * Begin a board-local drag of a committed vector (arrow/stroke) — wired to the
    * same `startElementDrag` the cards use so vectors are repositionable, not just
@@ -62,7 +66,9 @@ export function WhiteboardSvg({
   strokes,
   draftArrow,
   draftStroke,
-  selectedId,
+  selectedIds,
+  marquee,
+  guides,
   onSelect,
   onDragStart,
   drawing = false
@@ -111,14 +117,14 @@ export function WhiteboardSvg({
         <path
           key={a.id}
           d={arrowPath(a)}
-          stroke={a.id === selectedId ? 'var(--accent)' : 'var(--border-strong)'}
-          strokeWidth={a.id === selectedId ? 2.5 : 1.5}
+          stroke={selectedIds?.has(a.id) ? 'var(--accent)' : 'var(--border-strong)'}
+          strokeWidth={selectedIds?.has(a.id) ? 2.5 : 1.5}
           fill="none"
-          markerEnd={a.id === selectedId ? `url(#${markerId}-sel)` : `url(#${markerId})`}
+          markerEnd={selectedIds?.has(a.id) ? `url(#${markerId}-sel)` : `url(#${markerId})`}
           style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
           onPointerDown={(e) => {
             e.stopPropagation()
-            onSelect?.(a.id)
+            onSelect?.(a.id, e.shiftKey)
             onDragStart?.(e, a.id)
           }}
         />
@@ -138,17 +144,39 @@ export function WhiteboardSvg({
           <path
             key={strokes[i].id}
             d={d}
-            fill={strokes[i].id === selectedId ? 'var(--accent)' : 'var(--text-2)'}
+            fill={selectedIds?.has(strokes[i].id) ? 'var(--accent)' : 'var(--text-2)'}
             style={{ pointerEvents: drawing ? 'none' : 'auto', cursor: 'grab' }}
             onPointerDown={(e) => {
               e.stopPropagation()
-              onSelect?.(strokes[i].id)
+              onSelect?.(strokes[i].id, e.shiftKey)
               onDragStart?.(e, strokes[i].id)
             }}
           />
         ) : null
       )}
       {draftPath && <path d={draftPath} fill="var(--text-2)" />}
+
+      {marquee && (marquee.w > 0 || marquee.h > 0) && (
+        <rect
+          x={marquee.x}
+          y={marquee.y}
+          width={marquee.w}
+          height={marquee.h}
+          fill="var(--accent)"
+          fillOpacity={0.08}
+          stroke="var(--accent)"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+        />
+      )}
+
+      {guides?.map((g) =>
+        g.axis === 'x' ? (
+          <line key={`x${g.at}`} x1={g.at} y1={g.from} x2={g.at} y2={g.to} stroke="var(--accent)" strokeWidth={1} />
+        ) : (
+          <line key={`y${g.at}`} x1={g.from} y1={g.at} x2={g.to} y2={g.at} stroke="var(--accent)" strokeWidth={1} />
+        )
+      )}
     </svg>
   )
 }
