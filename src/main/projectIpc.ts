@@ -87,10 +87,14 @@ export function registerProjectHandlers(
 
   ipcMain.handle(
     'project:create',
-    (e, args: { dir: string; name: string; opts: { gitInit?: boolean } }): ProjectResult => {
+    async (e, args: {
+      dir: string
+      name: string
+      opts: { gitInit?: boolean }
+    }): Promise<ProjectResult> => {
       if (guard(e)) return { ok: false, error: 'forbidden' }
       if (isUnsafeProjectDir(args.dir)) return { ok: false, error: 'invalid path' }
-      const r = createProject(args.dir, args.name, args.opts ?? {})
+      const r = await createProject(args.dir, args.name, args.opts ?? {})
       remember(r)
       return r
     }

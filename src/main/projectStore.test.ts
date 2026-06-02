@@ -15,20 +15,29 @@ afterEach(() => {
 const doc = { schemaVersion: 2, viewport: null, boards: [] }
 
 describe('projectStore', () => {
-  it('createProject writes a fresh empty doc', () => {
-    const r = createProject(dir, 'My Proj', {})
+  it('createProject writes a fresh empty doc', async () => {
+    const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
     expect(existsSync(join(dir, 'canvas.json'))).toBe(true)
   })
 
-  it('createProject reuses an existing canvas.json (no overwrite)', () => {
+  it('createProject reuses an existing canvas.json (no overwrite)', async () => {
     writeFileSync(
       join(dir, 'canvas.json'),
       JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ keep: true }] })
     )
-    const r = createProject(dir, 'My Proj', {})
+    const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
     if (r.ok) expect((r.doc as { boards: unknown[] }).boards).toHaveLength(1)
+  })
+
+  it('createProject writes the fresh doc through the envelope-guarded path (PERSIST-C)', async () => {
+    await createProject(dir, 'My Proj', {})
+    // The created file must be re-readable through the same guard project:save writes
+    // by — locking the fresh-doc shape to the single validated write path.
+    const r = readProject(dir)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.doc).toEqual({ schemaVersion: 2, viewport: null, boards: [] })
   })
 
   it('write then read round-trips', async () => {
