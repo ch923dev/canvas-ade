@@ -334,17 +334,18 @@ import {
   setLocked
 } from './elements'
 
-const note = (id: string, x = 0, y = 0, extra: Partial<PlanningElement> = {}): PlanningElement => ({
-  id,
-  kind: 'note',
-  x,
-  y,
-  w: 100,
-  h: 60,
-  tint: 'yellow',
-  text: '',
-  ...extra
-}) as PlanningElement
+const note = (id: string, x = 0, y = 0, extra: Partial<PlanningElement> = {}): PlanningElement =>
+  ({
+    id,
+    kind: 'note',
+    x,
+    y,
+    w: 100,
+    h: 60,
+    tint: 'yellow',
+    text: '',
+    ...extra
+  }) as PlanningElement
 
 let counter = 0
 const seqId = (): string => `new-${counter++}`
@@ -380,7 +381,11 @@ describe('W3 mutators', () => {
 
   it('duplicateElements clones, shifts, fresh ids, fresh per-group groupId, originals untouched', () => {
     counter = 0
-    const els = [note('a', 0, 0, { groupId: 'g' }), note('b', 10, 10, { groupId: 'g' }), note('c', 50, 50)]
+    const els = [
+      note('a', 0, 0, { groupId: 'g' }),
+      note('b', 10, 10, { groupId: 'g' }),
+      note('c', 50, 50)
+    ]
     const { elements, newIds } = duplicateElements(els, ['a', 'b', 'c'], 12, 12, seqId)
     expect(elements).toHaveLength(6)
     expect(newIds).toHaveLength(3)

@@ -27,7 +27,9 @@ export function alignElements(
   const set = new Set(ids)
   const selected = els.filter((e) => set.has(e.id))
   if (selected.length < 2) return els
-  const boxById = new Map<string, BBox>(selected.map((e) => [e.id, elementBBox(e, measured?.get(e.id))]))
+  const boxById = new Map<string, BBox>(
+    selected.map((e) => [e.id, elementBBox(e, measured?.get(e.id))])
+  )
   const target = anchors(unionBBox([...boxById.values()]))[edge]
   const horizontal = HORIZONTAL_EDGES.includes(edge)
   return els.map((el) => {

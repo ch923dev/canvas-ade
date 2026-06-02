@@ -557,7 +557,9 @@ describe('W3 schema v3', () => {
           w: 400,
           h: 300,
           title: 'P',
-          elements: [{ id: 'n1', kind: 'note', x: 10, y: 10, w: 156, h: 96, tint: 'yellow', text: '' }]
+          elements: [
+            { id: 'n1', kind: 'note', x: 10, y: 10, w: 156, h: 96, tint: 'yellow', text: '' }
+          ]
         }
       ]
     }
@@ -584,7 +586,18 @@ describe('W3 schema v3', () => {
           h: 300,
           title: 'P',
           elements: [
-            { id: 'n1', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'blue', text: '', locked: true, groupId: 'g1' }
+            {
+              id: 'n1',
+              kind: 'note',
+              x: 0,
+              y: 0,
+              w: 156,
+              h: 96,
+              tint: 'blue',
+              text: '',
+              locked: true,
+              groupId: 'g1'
+            }
           ]
         }
       ]
@@ -608,7 +621,9 @@ describe('W3 schema v3', () => {
           w: 400,
           h: 300,
           title: 'P',
-          elements: [{ id: 'n1', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'plain', text: '', ...extra }]
+          elements: [
+            { id: 'n1', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'plain', text: '', ...extra }
+          ]
         }
       ]
     })
