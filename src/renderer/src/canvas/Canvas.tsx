@@ -38,7 +38,13 @@ import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import { DEFAULT_BOARD_SIZE, MIN_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
 import { FIT_FRAME, GRID_GAP, RESET_FRAME, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
-import { computeAlignment, computeResizeSnap, SNAP_THRESHOLD_PX, type Guide, type Rect } from '../lib/alignmentGuides'
+import {
+  computeAlignment,
+  computeResizeSnap,
+  SNAP_THRESHOLD_PX,
+  type Guide,
+  type Rect
+} from '../lib/alignmentGuides'
 import { AlignmentGuides } from './AlignmentGuides'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
@@ -248,12 +254,15 @@ function CanvasInner(): ReactElement {
       // Resize-snap pass: snap the MOVING edge(s) of a NodeResizer resize to other boards' edges/
       // centers (align line) or a 16px gutter (gap pill). Mutate the dimensions (+ N/W position)
       // change before nodeChangesToIntents, like the drag pass. Skipped while Ctrl/⌘ is held.
-      const resizing = changes.find(
-        (c) => c.type === 'dimensions' && c.dimensions && c.resizing
-      )
+      const resizing = changes.find((c) => c.type === 'dimensions' && c.dimensions && c.resizing)
       // Manually resizing a board releases live tiled mode (no-op if already free).
       if (resizing) setActiveTile(null)
-      if (resizing && resizing.type === 'dimensions' && resizing.dimensions && !snapSuppressRef.current) {
+      if (
+        resizing &&
+        resizing.type === 'dimensions' &&
+        resizing.dimensions &&
+        !snapSuppressRef.current
+      ) {
         const prevBoard = boards.find((b) => b.id === resizing.id)
         if (prevBoard) {
           const posChange = changes.find(
@@ -265,7 +274,12 @@ function CanvasInner(): ReactElement {
           const others = boards
             .filter((b) => b.id !== prevBoard.id)
             .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
-          const prop: Rect = { x: px, y: py, w: resizing.dimensions.width, h: resizing.dimensions.height }
+          const prop: Rect = {
+            x: px,
+            y: py,
+            w: resizing.dimensions.width,
+            h: resizing.dimensions.height
+          }
           const snap = computeResizeSnap(
             { x: prevBoard.x, y: prevBoard.y, w: prevBoard.w, h: prevBoard.h },
             prop,
@@ -384,7 +398,11 @@ function CanvasInner(): ReactElement {
       if (cur.length > 0) {
         const ox = Math.min(...cur.map((b) => b.x))
         const oy = Math.min(...cur.map((b) => b.y))
-        tileBoards(template, { x: ox, y: oy, w: TILE_AREA_BASE_W, h: TILE_AREA_BASE_W / aspect }, record)
+        tileBoards(
+          template,
+          { x: ox, y: oy, w: TILE_AREA_BASE_W, h: TILE_AREA_BASE_W / aspect },
+          record
+        )
       }
       fitToBoards(animate)
     },
@@ -510,8 +528,7 @@ function CanvasInner(): ReactElement {
 
     return {
       // Maximize (⤢) toggles: open full view, or animate it closed if already full-view.
-      requestFullView: (id) =>
-        fullViewIdRef.current === id ? closeFullView() : openFullView(id),
+      requestFullView: (id) => (fullViewIdRef.current === id ? closeFullView() : openFullView(id)),
       duplicate: (id) => {
         hardCloseFullView()
         // Exit focus so the clone isn't born dimmed (mirrors addCentered, #14 / STATE-1).

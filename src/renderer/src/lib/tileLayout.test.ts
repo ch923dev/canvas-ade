@@ -12,8 +12,14 @@ const mk = (n: number): TileBoard[] =>
 // make `x + w < x` and silently dodge the comparison — exactly the blind spot a degenerate-zone
 // regression would hide behind. Normalizing means this helper actually catches it.
 const overlaps = (a: TiledRect, c: TiledRect): boolean => {
-  const ax = Math.min(a.x, a.x + a.w), aw = Math.abs(a.w), ay = Math.min(a.y, a.y + a.h), ah = Math.abs(a.h)
-  const cx = Math.min(c.x, c.x + c.w), cw = Math.abs(c.w), cy = Math.min(c.y, c.y + c.h), ch = Math.abs(c.h)
+  const ax = Math.min(a.x, a.x + a.w),
+    aw = Math.abs(a.w),
+    ay = Math.min(a.y, a.y + a.h),
+    ah = Math.abs(a.h)
+  const cx = Math.min(c.x, c.x + c.w),
+    cw = Math.abs(c.w),
+    cy = Math.min(c.y, c.y + c.h),
+    ch = Math.abs(c.h)
   return ax < cx + cw - 0.01 && cx < ax + aw - 0.01 && ay < cy + ch - 0.01 && cy < ay + ah - 0.01
 }
 
@@ -44,7 +50,9 @@ describe('tileLayout — edge cases', () => {
 
   test('single board fills the whole area (every template)', () => {
     for (const t of ['cols-2', 'cols-3', 'cols-4', 'main-sidebar', 'grid'] as const) {
-      expect(tileLayout([board('only')], t, AREA)).toEqual([{ id: 'only', x: 0, y: 0, w: 1200, h: 800 }])
+      expect(tileLayout([board('only')], t, AREA)).toEqual([
+        { id: 'only', x: 0, y: 0, w: 1200, h: 800 }
+      ])
     }
   })
 })
@@ -79,7 +87,11 @@ describe('tileLayout — columns', () => {
 
 describe('tileLayout — main + sidebar', () => {
   test('the LARGEST board becomes the full-height 62% main zone', () => {
-    const boards = [board('s1', 0, 0, 300, 200), board('big', 50, 50, 900, 700), board('s2', 0, 0, 300, 200)]
+    const boards = [
+      board('s1', 0, 0, 300, 200),
+      board('big', 50, 50, 900, 700),
+      board('s2', 0, 0, 300, 200)
+    ]
     const r = tileLayout(boards, 'main-sidebar', AREA, GAP)
     const main = r.find((x) => x.id === 'big')!
     expect(main.x).toBe(0)
@@ -122,7 +134,8 @@ describe('tileLayout — grid', () => {
 describe('tileLayout — degenerate zones clamp to the board minimum (no overlap)', () => {
   const MIN_W = 240
   const MIN_H = 160
-  const minOk = (rects: TiledRect[]): boolean => rects.every((r) => r.w >= MIN_W - 0.01 && r.h >= MIN_H - 0.01)
+  const minOk = (rects: TiledRect[]): boolean =>
+    rects.every((r) => r.w >= MIN_W - 0.01 && r.h >= MIN_H - 0.01)
 
   test('many boards in a normal area → zones clamp to min, boards overflow but never overlap', () => {
     // 24 boards, cols-2 → 12 per column; raw cellH (~100px) < MIN so it clamps. Pre-fix the

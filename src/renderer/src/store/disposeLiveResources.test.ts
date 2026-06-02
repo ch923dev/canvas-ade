@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock the canvas store so disposeLiveResources runs against a fixed board list.
-const { storeState } = vi.hoisted(() => ({ storeState: { boards: [] as Array<{ id: string; type: string }> } }))
+const { storeState } = vi.hoisted(() => ({
+  storeState: { boards: [] as Array<{ id: string; type: string }> }
+}))
 vi.mock('./canvasStore', () => ({
   useCanvasStore: { getState: () => storeState }
 }))

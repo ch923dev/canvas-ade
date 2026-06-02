@@ -23,8 +23,22 @@ export interface PresetZone {
 }
 
 export type LayoutPreset =
-  | { id: string; kind: 'tidy'; tidyMode: TidyMode; label: string; hint: string; zones: PresetZone[] }
-  | { id: string; kind: 'tile'; template: TileTemplate; label: string; hint: string; zones: PresetZone[] }
+  | {
+      id: string
+      kind: 'tidy'
+      tidyMode: TidyMode
+      label: string
+      hint: string
+      zones: PresetZone[]
+    }
+  | {
+      id: string
+      kind: 'tile'
+      template: TileTemplate
+      label: string
+      hint: string
+      zones: PresetZone[]
+    }
 
 /** Ordered presets shown in the picker (Smart first as the semantic "auto"). */
 export const LAYOUT_PRESETS: LayoutPreset[] = [

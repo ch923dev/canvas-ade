@@ -62,7 +62,9 @@ const byId = (a: TidyBoard, b: TidyBoard): number => (a.id < b.id ? -1 : a.id > 
 const VIEWPORT_ORDER: Record<string, number> = { desktop: 0, tablet: 1, mobile: 2 }
 const sortBrowsers = (bs: TidyBoard[]): TidyBoard[] =>
   [...bs].sort(
-    (a, b) => (VIEWPORT_ORDER[a.viewport ?? ''] ?? 3) - (VIEWPORT_ORDER[b.viewport ?? ''] ?? 3) || byId(a, b)
+    (a, b) =>
+      (VIEWPORT_ORDER[a.viewport ?? ''] ?? 3) - (VIEWPORT_ORDER[b.viewport ?? ''] ?? 3) ||
+      byId(a, b)
   )
 
 /** Lay a row of boards left→right from (startX, y); returns placements + the row's width/height. */
@@ -86,7 +88,12 @@ function packRow(
 
 /** Stack `rows` top→bottom from (originX, originY), each row horizontally CENTERED on the
  *  widest row. The shape behind smart + the centering the bake-off judges asked for. */
-function stackCenteredRows(rows: TidyBoard[][], gap: number, originX: number, originY: number): TidyPlacement[] {
+function stackCenteredRows(
+  rows: TidyBoard[][],
+  gap: number,
+  originX: number,
+  originY: number
+): TidyPlacement[] {
   const widths = rows.map((r) => r.reduce((s, b) => s + b.w, 0) + gap * Math.max(0, r.length - 1))
   const maxW = Math.max(0, ...widths)
   const out: TidyPlacement[] = []
@@ -106,7 +113,12 @@ function stackCenteredRows(rows: TidyBoard[][], gap: number, originX: number, or
  * standalone ones, then loose browsers, then planning. Rows are centered → a single-cluster
  * canvas lands its source terminal exactly under the midpoint of its previews.
  */
-function smartLayout(boards: TidyBoard[], gap: number, originX: number, originY: number): TidyPlacement[] {
+function smartLayout(
+  boards: TidyBoard[],
+  gap: number,
+  originX: number,
+  originY: number
+): TidyPlacement[] {
   const terminals = boards.filter((b) => b.type === 'terminal')
   const browsers = boards.filter((b) => b.type === 'browser')
   const planning = boards.filter((b) => b.type !== 'terminal' && b.type !== 'browser')
@@ -145,10 +157,19 @@ function smartLayout(boards: TidyBoard[], gap: number, originX: number, originY:
 }
 
 /** By-type: terminals | browsers | planning, each a vertical column, tops aligned. */
-function byTypeLayout(boards: TidyBoard[], gap: number, originX: number, originY: number): TidyPlacement[] {
+function byTypeLayout(
+  boards: TidyBoard[],
+  gap: number,
+  originX: number,
+  originY: number
+): TidyPlacement[] {
   const columns = (['terminal', 'browser', 'planning'] as const)
     .map((t) =>
-      boards.filter((b) => (t === 'planning' ? b.type !== 'terminal' && b.type !== 'browser' : b.type === t)).sort(byId)
+      boards
+        .filter((b) =>
+          t === 'planning' ? b.type !== 'terminal' && b.type !== 'browser' : b.type === t
+        )
+        .sort(byId)
     )
     .filter((col) => col.length)
 

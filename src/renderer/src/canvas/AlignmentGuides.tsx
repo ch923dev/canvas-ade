@@ -32,7 +32,9 @@ export function AlignmentGuides({
     <svg className="align-guides" aria-hidden="true">
       {overlaps.map((o, i) => {
         const r = projectRect(o, transform)
-        return <rect key={`o${i}`} className="align-overlap" x={r.x} y={r.y} width={r.w} height={r.h} />
+        return (
+          <rect key={`o${i}`} className="align-overlap" x={r.x} y={r.y} width={r.w} height={r.h} />
+        )
       })}
       {guides.map((g, i) => {
         if (g.kind === 'align') {
@@ -69,7 +71,14 @@ export function AlignmentGuides({
                   <line className="align-connector" x1={v.ax} y1={v.ay} x2={v.bx} y2={v.by} />
                   <g>{tick(v.ax, v.ay)}</g>
                   <g>{tick(v.bx, v.by)}</g>
-                  <rect className="align-pill" x={v.lx - 14} y={v.ly - 8} width={28} height={16} rx={3} />
+                  <rect
+                    className="align-pill"
+                    x={v.lx - 14}
+                    y={v.ly - 8}
+                    width={28}
+                    height={16}
+                    rx={3}
+                  />
                   <text
                     className="align-pill-text"
                     x={v.lx}

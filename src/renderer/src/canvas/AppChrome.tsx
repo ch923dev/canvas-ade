@@ -151,15 +151,27 @@ function CameraCluster({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): 
   return (
     <div style={styles.tr}>
       <div style={styles.pill}>
-        <ToolBtn name="fit" title="Zoom to fit (1)" onClick={() => void rf.fitView(cameraAnim(FIT_FRAME))} />
+        <ToolBtn
+          name="fit"
+          title="Zoom to fit (1)"
+          onClick={() => void rf.fitView(cameraAnim(FIT_FRAME))}
+        />
         <span style={styles.divider} />
         <ToolBtn name="minus" title="Zoom out" onClick={() => void rf.zoomOut(cameraAnim({}))} />
-        <button style={styles.pct} title="Reset zoom (0)" onClick={() => void rf.fitView(cameraAnim(RESET_FRAME))}>
+        <button
+          style={styles.pct}
+          title="Reset zoom (0)"
+          onClick={() => void rf.fitView(cameraAnim(RESET_FRAME))}
+        >
           {Math.round(zoom * 100)}%
         </button>
         <ToolBtn name="plus" title="Zoom in" onClick={() => void rf.zoomIn(cameraAnim({}))} />
         <span style={styles.divider} />
-        <ToolBtn name="overview" title="Overview" onClick={() => void rf.fitView(cameraAnim(OVERVIEW_FRAME))} />
+        <ToolBtn
+          name="overview"
+          title="Overview"
+          onClick={() => void rf.fitView(cameraAnim(OVERVIEW_FRAME))}
+        />
         {/* Auto-tidy: a FancyZones-style picker of layout presets (Smart link-aware + tiling
             templates) that arranges the boards then fits. Keyboard `t` = Smart. See
             Canvas.tidyAndFit. */}
@@ -257,7 +269,12 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
 
   return (
     <div ref={triggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
-      <ToolBtn name="grid" title="Tidy layout (T)" active={open} onClick={() => setOpen((v) => !v)} />
+      <ToolBtn
+        name="grid"
+        title="Tidy layout (T)"
+        active={open}
+        onClick={() => setOpen((v) => !v)}
+      />
       {open &&
         createPortal(
           <div

@@ -21,7 +21,13 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
-import { agentIdentity, brailleFrame, isRunning, statusFor, type TerminalState } from './terminalState'
+import {
+  agentIdentity,
+  brailleFrame,
+  isRunning,
+  statusFor,
+  type TerminalState
+} from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
 import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
@@ -516,11 +522,16 @@ export function TerminalBoard({
   /** Gesture that opened the flow: a tap refreshes the linked browser(s); a long-press
    *  always opens the connect picker (so does a tap when nothing is linked yet). */
   type Gesture = 'tap' | 'hold'
-  const [portChoices, setPortChoices] = useState<{ urls: DetectedUrl[]; gesture: Gesture } | null>(null)
+  const [portChoices, setPortChoices] = useState<{ urls: DetectedUrl[]; gesture: Gesture } | null>(
+    null
+  )
   const [previewNote, setPreviewNote] = useState<string | null>(null)
   // Multi-select connect picker (long-press, or tap with nothing linked): pick one or more
   // browsers (B + C) and/or a fresh spawn to wire to this terminal and push the url to each.
-  const [browserPick, setBrowserPick] = useState<{ url: string; candidates: PreviewCandidate[] } | null>(null)
+  const [browserPick, setBrowserPick] = useState<{
+    url: string
+    candidates: PreviewCandidate[]
+  } | null>(null)
   const NEW_BROWSER = ' new' // sentinel checkbox key for "+ New browser"
   const [checked, setChecked] = useState<Set<string>>(new Set())
 
@@ -529,7 +540,10 @@ export function TerminalBoard({
   // candidates (B + C); with zero candidates just spawn a fresh browser.
   const routeUrl = useCallback(
     (url: string, gesture: Gesture) => {
-      const { linkedIds, candidates } = classifyPushTargets(useCanvasStore.getState().boards, board.id)
+      const { linkedIds, candidates } = classifyPushTargets(
+        useCanvasStore.getState().boards,
+        board.id
+      )
       if (gesture === 'tap' && linkedIds.length > 0) {
         linkedIds.forEach((id) => onPushPreviewTo?.(url, { kind: 'existing', id }))
         return
@@ -677,7 +691,10 @@ export function TerminalBoard({
                   />
                   <span className="ca-browser-choice-label">{c.title}</span>
                   {c.connectedTo && (
-                    <span className="ca-browser-choice-warn" title={`Connected to ${c.connectedTo.title}`}>
+                    <span
+                      className="ca-browser-choice-warn"
+                      title={`Connected to ${c.connectedTo.title}`}
+                    >
                       ⚠ on {c.connectedTo.title}
                     </span>
                   )}

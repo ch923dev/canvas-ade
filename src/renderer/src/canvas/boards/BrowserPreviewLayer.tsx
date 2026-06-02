@@ -778,7 +778,12 @@ export function BrowserPreviewLayer({
           // already live this pass and stop attaching once the cap is reached; a freed
           // slot (LOD / move-end → applyLiveness, which honours the cap) brings the
           // held boards live later.
-          if (!blockedByFullView && liveNow < MAX_LIVE && liveEligible(g) && !occludesProtected(g)) {
+          if (
+            !blockedByFullView &&
+            liveNow < MAX_LIVE &&
+            liveEligible(g) &&
+            !occludesProtected(g)
+          ) {
             void attachBoard(g)
             liveNow++
           }
