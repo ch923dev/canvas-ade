@@ -10,7 +10,7 @@ import {
 } from './preview'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
-import { runE2ESmoke } from './e2eSmoke'
+import { runE2ESmoke } from './e2e'
 import { registerProjectHandlers } from './projectIpc'
 
 let mainWindow: BrowserWindow | null = null
