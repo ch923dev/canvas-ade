@@ -276,9 +276,37 @@ export const whiteboardFullviewAdd: E2EProbe = {
          { id: 'fv-b', kind: 'note', x: 300, y: 320, w: 156, h: 96, tint: 'blue', text: 'B', rotation: 0 }
        ] })`
     )
-    // Enter camera full view (Option A) and let the fit animation settle.
+    // Let React Flow apply the new 520x500 node size before fitting the camera to it.
+    await ctx.delay(180)
+    // Enter camera full view (Option A) — the real path under test.
     await ctx.evalIn(`window.__canvasE2E.enterCameraFullView(${JSON.stringify(planId)})`)
-    await ctx.delay(400)
+    // Poll until the camera has actually fitted onto the board (rendered scale > 1.3) so
+    // the board is in the viewport and the click hits it — robust to the animated-fit
+    // timing on a sluggish/contended host (a fixed delay flaked: camera still at zoom 1 →
+    // board off-screen → click missed → no note).
+    const fitted = await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `(() => {
+             const id = ${JSON.stringify(planId)};
+             const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+             const well = node && node.querySelector('.pl-well');
+             if (!well || !(well.offsetWidth > 0)) return false;
+             const r = well.getBoundingClientRect();
+             return r.width / well.offsetWidth > 1.3;
+           })()`
+        ),
+      4000
+    )
+    if (!fitted) {
+      await ctx.evalIn(`window.__canvasE2E.exitCameraFullView()`)
+      return {
+        name: 'whiteboard-fullview-add',
+        ok: false,
+        detail: 'camera did not fit the board in full view (zoom stayed ~1)'
+      }
+    }
+    await ctx.delay(60) // settle the final fitted frame before reading the rect
 
     // Compute the well's on-screen rect → the screen point for board-local (260, 250).
     const t = await ctx.evalIn<{
