@@ -4,7 +4,8 @@
  * validation + migration happen in the renderer (`boardSchema.fromObject`). Holds the
  * single "current open dir" so `project:save` knows where to write.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'fs'
+import { createHash } from 'crypto'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
 
@@ -97,4 +98,87 @@ export async function createProject(
   const fresh = { schemaVersion: 2, viewport: null, boards: [] }
   await writeProject(dir, fresh)
   return { ok: true, dir, name: projectName(dir), doc: fresh }
+}
+
+// ── W4 assets pipeline ──────────────────────────────────────────────────────────
+const ASSETS = 'assets'
+/** A safe stored assetId: exactly `assets/<40-hex sha1>.<ext>`; blocks any traversal. */
+const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
+const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+
+/**
+ * Content-address `bytes` (sha1) into `<dir>/assets/<sha1>.<ext>` and return the
+ * RELATIVE POSIX path (the stored `assetId`). Dedups: identical bytes → identical
+ * path; the write is skipped when the file already exists.
+ */
+export async function writeAsset(
+  dir: string,
+  bytes: Uint8Array,
+  ext: string
+): Promise<{ assetId: string }> {
+  const e = String(ext).toLowerCase()
+  if (!ASSET_EXTS.has(e)) throw new Error(`writeAsset: unsupported ext ${ext}`)
+  const sha1 = createHash('sha1').update(bytes).digest('hex')
+  const assetId = `${ASSETS}/${sha1}.${e}`
+  const abs = join(dir, ASSETS, `${sha1}.${e}`)
+  if (!existsSync(abs)) {
+    mkdirSync(join(dir, ASSETS), { recursive: true })
+    await writeFileAtomic(abs, Buffer.from(bytes))
+  }
+  return { assetId }
+}
+
+/** Read a stored asset's bytes; null on a malformed assetId, missing file, or read error. */
+export function readAsset(dir: string, assetId: string): Uint8Array | null {
+  if (typeof assetId !== 'string' || !ASSET_RE.test(assetId)) return null
+  const abs = join(dir, assetId)
+  if (!existsSync(abs)) return null
+  try {
+    return new Uint8Array(readFileSync(abs))
+  } catch {
+    return null
+  }
+}
+
+/** Every assetId referenced by a doc's planning image elements (version-independent). */
+export function collectAssetIds(doc: unknown): Set<string> {
+  const ids = new Set<string>()
+  const boards = (doc as { boards?: unknown })?.boards
+  if (!Array.isArray(boards)) return ids
+  for (const b of boards) {
+    const els = (b as { elements?: unknown })?.elements
+    if (!Array.isArray(els)) continue
+    for (const el of els) {
+      if (el && (el as { kind?: unknown }).kind === 'image') {
+        const a = (el as { assetId?: unknown }).assetId
+        if (typeof a === 'string' && a.length > 0) ids.add(a)
+      }
+    }
+  }
+  return ids
+}
+
+/**
+ * Mark-and-sweep: delete every file in `<dir>/assets/` whose `assets/<file>` path is
+ * NOT in `referenced`. No-op when `assets/` is absent. Called ONLY at project open —
+ * the undo stack is empty across sessions, so a swept blob is truly unreferenced.
+ */
+export function gcAssets(dir: string, referenced: Set<string>): void {
+  const assetsDir = join(dir, ASSETS)
+  if (!existsSync(assetsDir)) return
+  let files: string[]
+  try {
+    files = readdirSync(assetsDir)
+  } catch {
+    return
+  }
+  for (const f of files) {
+    if (!referenced.has(`${ASSETS}/${f}`)) {
+      try {
+        unlinkSync(join(assetsDir, f))
+      } catch {
+        /* a locked / already-removed file must not abort the sweep */
+      }
+    }
+  }
 }
