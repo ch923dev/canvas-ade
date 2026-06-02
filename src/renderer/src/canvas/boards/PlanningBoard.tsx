@@ -64,6 +64,8 @@ import {
   unionBBox,
   duplicateElements,
   expandGroups,
+  groupElements,
+  ungroupElements,
   notLocked,
   setLocked
 } from './planning/elements'
@@ -131,18 +133,18 @@ export function PlanningBoard({
     []
   )
   const clearSel = useCallback(() => setSelectedIds(new Set()), [])
+  const elements = board.elements
   // Select on element press: additive (Shift) toggles; plain press replaces the
   // set with just this element unless it is already in the selection (a press on
   // an already-selected element keeps the multi-selection — Figma drag grammar).
   const selectOnPress = useCallback(
     (id: string, additive: boolean) => {
       if (additive) toggleSel(id)
-      else setSelectedIds((prev) => (prev.has(id) ? prev : new Set([id])))
+      else setSelectedIds((prev) => (prev.has(id) ? prev : expandGroups(elements, new Set([id]))))
     },
-    [toggleSel]
+    [toggleSel, elements]
   )
   const wellRef = useRef<HTMLDivElement>(null)
-  const elements = board.elements
 
   // Right-click an element → ensure it's in the selection (additive = Shift), then
   // open the context menu at the cursor. A right-click on an already-selected element
@@ -242,6 +244,24 @@ export function PlanningBoard({
     const lock = !chosen.every((e) => e.locked)
     beginChange()
     commit(setLocked(elements, ids, lock))
+  }, [elements, selectedIds, beginChange, commit])
+
+  /** Group the selection (≥2) under a fresh shared gid; one undo step. */
+  const groupSelection = useCallback(() => {
+    if (selectedIds.size < 2) return
+    const gid = newId()
+    beginChange()
+    commit(groupElements(elements, expandGroups(elements, selectedIds), gid))
+  }, [elements, selectedIds, beginChange, commit])
+
+  /** Ungroup the selection (group-expanded); one undo step, no-op guard prevents a phantom step. */
+  const ungroupSelection = useCallback(() => {
+    if (selectedIds.size === 0) return
+    const ids = expandGroups(elements, selectedIds)
+    // no-op guard: nothing in the (expanded) selection is actually grouped → don't commit a phantom step
+    if (!elements.some((el) => ids.has(el.id) && el.groupId !== undefined)) return
+    beginChange()
+    commit(ungroupElements(elements, ids))
   }, [elements, selectedIds, beginChange, commit])
 
   /** Map a pointer event to a board-local point using the well's screen origin. */
@@ -554,7 +574,7 @@ export function PlanningBoard({
       setMarqueeRect(null)
       const moved = rect.w > 2 || rect.h > 2
       if (moved) {
-        const hits = marqueeHits(elements, rect, measuredRef.current)
+        const hits = expandGroups(elements, marqueeHits(elements, rect, measuredRef.current))
         setSelectedIds((prev) => {
           if (!d.additive) return new Set(hits)
           const next = new Set(prev)
@@ -682,6 +702,14 @@ export function PlanningBoard({
             e.stopPropagation()
             e.preventDefault()
             toggleLockSelection()
+            return
+          }
+          // ⌘G / ⌘⇧G → group / ungroup the selection. Verified free: globals don't use ⌘G.
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+            e.stopPropagation()
+            e.preventDefault()
+            if (e.shiftKey) ungroupSelection()
+            else groupSelection()
             return
           }
           const next = shortcutTool(e.key, {
@@ -830,8 +858,8 @@ export function PlanningBoard({
             sel={menuSelectionState(elements, selectedIds)}
             onDuplicate={() => duplicateSelection({ inPlace: true })}
             onToggleLock={() => toggleLockSelection()}
-            onGroup={() => {}}
-            onUngroup={() => {}}
+            onGroup={() => groupSelection()}
+            onUngroup={() => ungroupSelection()}
             onAlign={() => {}}
             onDistribute={() => {}}
             onDelete={() => deleteSelection()}
