@@ -41,6 +41,7 @@ import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
+import { ElementContextMenu, type MenuSelectionState } from './planning/ElementContextMenu'
 import { eraseHitTest } from './planning/erase'
 import { rectFromPoints, marqueeHits } from './planning/marquee'
 import { computeSnap, SNAP_TOL, type Guide } from './planning/snapping'
@@ -60,7 +61,10 @@ import {
   removeItem,
   setItemLabel,
   elementBBox,
-  unionBBox
+  unionBBox,
+  duplicateElements,
+  expandGroups,
+  notLocked
 } from './planning/elements'
 
 const TOOLS: ReadonlyArray<{
@@ -76,6 +80,21 @@ const TOOLS: ReadonlyArray<{
 ]
 
 const newId = (): string => crypto.randomUUID()
+
+/** Derive the context-menu's selection-shape flags from the live selection (W3). */
+function menuSelectionState(els: PlanningElement[], sel: ReadonlySet<string>): MenuSelectionState {
+  const chosen = els.filter((e) => sel.has(e.id))
+  const groupIds = chosen.map((e) => e.groupId)
+  const groups = new Set(groupIds.filter((g): g is string => g !== undefined))
+  const allOneGroup =
+    chosen.length >= 2 && groups.size === 1 && chosen.every((e) => e.groupId !== undefined)
+  return {
+    count: chosen.length,
+    allLocked: chosen.length > 0 && chosen.every((e) => e.locked),
+    grouped: groups.size > 0,
+    canGroup: chosen.length >= 2 && !allOneGroup
+  }
+}
 
 export function PlanningBoard({
   board,
@@ -97,6 +116,8 @@ export function PlanningBoard({
   const [snapEnabled, setSnapEnabled] = useState(true)
   const [snapGuides, setSnapGuides] = useState<Guide[] | null>(null)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
+  // Right-click context-menu anchor (screen px); null when closed. Ephemeral.
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   // Selection mutators (board-local, ephemeral — never serialized).
   const toggleSel = useCallback(
     (id: string) =>
@@ -121,6 +142,27 @@ export function PlanningBoard({
   )
   const wellRef = useRef<HTMLDivElement>(null)
   const elements = board.elements
+
+  // Right-click an element → ensure it's in the selection (additive = Shift), then
+  // open the context menu at the cursor. A right-click on an already-selected element
+  // keeps the whole (multi-)selection; on an unselected one it selects just that
+  // element (+ its group). Mirrors the left-press selectOnPress grammar.
+  const openMenuAt = useCallback(
+    (
+      e: { clientX: number; clientY: number; preventDefault: () => void },
+      id: string,
+      additive: boolean
+    ) => {
+      e.preventDefault()
+      setSelectedIds((prev) => {
+        if (prev.has(id)) return prev
+        const base = additive ? new Set(prev).add(id) : new Set([id])
+        return expandGroups(elements, base)
+      })
+      setMenu({ x: e.clientX, y: e.clientY })
+    },
+    [elements]
+  )
 
   // In-progress (uncommitted) gesture state — drawn as a draft until pointer-up.
   const [draftArrow, setDraftArrow] = useState<ArrowElement | null>(null)
@@ -165,6 +207,31 @@ export function PlanningBoard({
     (next: PlanningElement[]) => updateBoard(board.id, { elements: next }),
     [board.id, updateBoard]
   )
+
+  // ── W3 context-menu actions (Duplicate + Delete live; rest stubbed Tasks 7-9) ──
+  /** Clone the selection (group-expanded), offsetting +12,+12 in-place; one undo step. */
+  const duplicateSelection = useCallback(
+    (opts: { inPlace: boolean }) => {
+      if (selectedIds.size === 0) return
+      const ids = expandGroups(elements, selectedIds)
+      const { next, cloneIds } = duplicateElements(elements, ids, newId)
+      const placed = opts.inPlace ? translateMany(next, cloneIds, 12, 12) : next
+      beginChange()
+      commit(placed)
+      setSelectedIds(new Set(cloneIds))
+    },
+    [elements, selectedIds, beginChange, commit]
+  )
+
+  /** Delete the selection (group-expanded), skipping locked elements; one undo step. */
+  const deleteSelection = useCallback(() => {
+    const ids = expandGroups(elements, selectedIds)
+    const rm = new Set(elements.filter((e) => ids.has(e.id) && notLocked(e)).map((e) => e.id))
+    if (rm.size === 0) return
+    beginChange()
+    commit(elements.filter((e) => !rm.has(e.id)))
+    clearSel()
+  }, [elements, selectedIds, beginChange, commit, clearSel])
 
   /** Map a pointer event to a board-local point using the well's screen origin. */
   const toBoard = useCallback(
@@ -649,6 +716,7 @@ export function PlanningBoard({
             wellRef.current?.focus()
           }}
           onDragStart={startElementDrag}
+          onContextMenu={(ev, id) => openMenuAt(ev, id, ev.shiftKey)}
         />
 
         {/* DOM elements: notes, free text, checklists. */}
@@ -665,6 +733,7 @@ export function PlanningBoard({
                 onEditStart={beginChange}
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
+                onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
               />
             )
           }
@@ -681,6 +750,7 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
+                onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
               />
             )
           }
@@ -702,6 +772,7 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
+                onContextMenu={(ev) => openMenuAt(ev, el.id, ev.shiftKey)}
               />
             )
           }
@@ -721,6 +792,22 @@ export function PlanningBoard({
           >
             {selected ? 'pick a tool above · note · check · arrow · pen · erase' : 'empty plan'}
           </div>
+        )}
+
+        {menu && (
+          <ElementContextMenu
+            x={menu.x}
+            y={menu.y}
+            sel={menuSelectionState(elements, selectedIds)}
+            onDuplicate={() => duplicateSelection({ inPlace: true })}
+            onToggleLock={() => {}}
+            onGroup={() => {}}
+            onUngroup={() => {}}
+            onAlign={() => {}}
+            onDistribute={() => {}}
+            onDelete={() => deleteSelection()}
+            onClose={() => setMenu(null)}
+          />
         )}
       </div>
     </BoardFrame>

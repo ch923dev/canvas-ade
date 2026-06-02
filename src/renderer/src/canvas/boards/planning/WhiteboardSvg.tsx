@@ -7,7 +7,7 @@
  * Includes a live "draft" overlay so an in-progress arrow/stroke renders while
  * the pointer is still down, before it is committed to the store.
  */
-import { useMemo, type PointerEvent, type ReactElement } from 'react'
+import { useMemo, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 
@@ -50,6 +50,8 @@ export interface WhiteboardSvgProps {
    * select+delete (#28, #37).
    */
   onDragStart?: (e: PointerEvent, id: string) => void
+  /** Right-click on a committed vector (arrow/stroke) → open the W3 context menu (W3). */
+  onContextMenu?: (e: MouseEvent, id: string) => void
   /**
    * True while ANY non-select tool (pen/arrow/note/check) is active. Disables
    * hit-testing on the committed vectors so a new stroke/arrow can START — or a
@@ -71,6 +73,7 @@ export function WhiteboardSvg({
   guides,
   onSelect,
   onDragStart,
+  onContextMenu,
   drawing = false
 }: WhiteboardSvgProps): ReactElement {
   const markerId = arrowheadMarkerId(boardId)
@@ -127,6 +130,7 @@ export function WhiteboardSvg({
             onSelect?.(a.id, e.shiftKey)
             onDragStart?.(e, a.id)
           }}
+          onContextMenu={(e) => onContextMenu?.(e, a.id)}
         />
       ))}
       {draftArrow && (
@@ -151,6 +155,7 @@ export function WhiteboardSvg({
               onSelect?.(strokes[i].id, e.shiftKey)
               onDragStart?.(e, strokes[i].id)
             }}
+            onContextMenu={(e) => onContextMenu?.(e, strokes[i].id)}
           />
         ) : null
       )}

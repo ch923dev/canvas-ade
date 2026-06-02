@@ -42,6 +42,28 @@ export type IconName =
 /** Icons drawn from multiple primitives (rect + path) rather than one path. */
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
 
+/**
+ * Align/distribute glyphs for the W3 element context-menu align grid. Placeholder
+ * bodies for now (a centered tick) — Task 9 fills the real align bars/arrows. Kept a
+ * distinct union so the menu's `Icon name={a.icon}` references type-check today.
+ */
+export type AlignIconName =
+  | 'align-left'
+  | 'align-center-x'
+  | 'align-right'
+  | 'align-top'
+  | 'align-center-y'
+  | 'align-bottom'
+
+const ALIGN_NAMES: ReadonlySet<string> = new Set<AlignIconName>([
+  'align-left',
+  'align-center-x',
+  'align-right',
+  'align-top',
+  'align-center-y',
+  'align-bottom'
+])
+
 const PATHS: Record<IconName, string> = {
   play: 'M8 5l11 7-11 7z',
   pause: 'M9 5v14M15 5v14',
@@ -105,13 +127,21 @@ function Svg({ size, sw, style, children }: SvgProps): ReactElement {
 }
 
 export interface IconProps {
-  name: IconName | DeviceIconName
+  name: IconName | DeviceIconName | AlignIconName
   size?: number
   sw?: number
   style?: CSSProperties
 }
 
 export function Icon({ name, size = 16, sw = 1.5, style }: IconProps): ReactElement {
+  // W3 align glyphs — placeholder bodies (Task 9 fills the real paths). A small
+  // centered mark keeps the align grid laid out + type-checking until then.
+  if (ALIGN_NAMES.has(name))
+    return (
+      <Svg size={size} sw={sw} style={style}>
+        <path d="M12 6v12M6 12h12" />
+      </Svg>
+    )
   if (name === 'mobile')
     return (
       <Svg size={size} sw={sw} style={style}>
@@ -133,9 +163,10 @@ export function Icon({ name, size = 16, sw = 1.5, style }: IconProps): ReactElem
         <path d="M9 20h6M12 16v4" />
       </Svg>
     )
+  // align-* + device names are handled above; the rest are single-path IconNames.
   return (
     <Svg size={size} sw={sw} style={style}>
-      <path d={PATHS[name] ?? PATHS.diamond} />
+      <path d={PATHS[name as IconName] ?? PATHS.diamond} />
     </Svg>
   )
 }

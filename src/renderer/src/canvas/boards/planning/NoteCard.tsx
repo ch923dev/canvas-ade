@@ -26,6 +26,8 @@ export interface NoteCardProps {
   selected?: boolean
   /** Select this element on grip press; `additive` = Shift held. */
   onSelect?: (id: string, additive: boolean) => void
+  /** Right-click on the card → open the W3 element context menu (W3). */
+  onContextMenu?: (e: React.MouseEvent) => void
 }
 
 const delBtn: CSSProperties = {
@@ -53,7 +55,8 @@ export function NoteCard({
   onDelete,
   onEditStart,
   selected,
-  onSelect
+  onSelect,
+  onContextMenu
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -105,6 +108,7 @@ export function NoteCard({
         e.stopPropagation()
         ref.current?.focus()
       }}
+      onContextMenu={onContextMenu}
     >
       {interactive && (
         <button

@@ -41,6 +41,8 @@ export interface ChecklistCardProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
   onMeasure?: (id: string, w: number, h: number) => void
+  /** Right-click on the card → open the W3 element context menu (W3). */
+  onContextMenu?: (e: React.MouseEvent) => void
 }
 
 const delBtn: CSSProperties = {
@@ -96,7 +98,8 @@ export function ChecklistCard({
   onMeasureBottom,
   selected,
   onSelect,
-  onMeasure
+  onMeasure,
+  onContextMenu
 }: ChecklistCardProps): ReactElement {
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
@@ -154,6 +157,7 @@ export function ChecklistCard({
       }}
       // A dblclick on the card must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
+      onContextMenu={onContextMenu}
     >
       {interactive && (
         <button

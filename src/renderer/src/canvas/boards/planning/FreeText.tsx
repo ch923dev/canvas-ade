@@ -22,6 +22,8 @@ export interface FreeTextProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
   onMeasure?: (id: string, w: number, h: number) => void
+  /** Right-click on the text → open the W3 element context menu (W3). */
+  onContextMenu?: (e: React.MouseEvent) => void
 }
 
 const delBtn: CSSProperties = {
@@ -50,7 +52,8 @@ export function FreeText({
   onEditStart,
   selected,
   onSelect,
-  onMeasure
+  onMeasure,
+  onContextMenu
 }: FreeTextProps): ReactElement {
   const ref = useRef<HTMLTextAreaElement>(null)
   // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
@@ -96,6 +99,7 @@ export function FreeText({
       }}
       // A dblclick on the text must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
+      onContextMenu={onContextMenu}
     >
       {interactive && (
         <button
