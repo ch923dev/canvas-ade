@@ -410,71 +410,73 @@ export const whiteboardAltDup: E2EProbe = {
          { id: 'ad-a', kind: 'note', x: 60, y: 60, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 }
        ] })`
     )
-    await ctx.delay(160)
     await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
-    const fitted = await ctx.poll(
-      () =>
-        ctx.evalIn<boolean>(
-          `(() => { const n = document.querySelector('.react-flow__node[data-id=' + ${JSON.stringify(JSON.stringify(planId))} + ']'); const w = n && n.querySelector('.pl-well'); return !!(w && w.offsetWidth > 0 && w.getBoundingClientRect().width / w.offsetWidth > 1.0); })()`
-        ),
-      4000
-    )
-    if (!fitted) return { name: 'whiteboard-alt-dup', ok: false, detail: 'fitView did not settle' }
-    await ctx.delay(60)
-    // Compute screen points for the note grip (board-local ~138,108) and a drag target +60,+60.
-    const pts = await ctx.evalIn<{ fx: number; fy: number; tx: number; ty: number; start: number }>(
-      `(() => {
+    await ctx.delay(240)
+    // Synthetic alt-drag of the note's GRIP RING (.pl-note-grip — a drag only starts there;
+    // the note body just stops propagation). Electron's sendInputEvent mouse `modifiers:['alt']`
+    // does NOT surface as e.altKey on this stack, so — exactly like the passing W2 multidrag /
+    // shift-add probes — we dispatch synthetic PointerEvents carrying altKey:true (React reads
+    // the flag straight off the event) with coords mapped board-local→screen via the well
+    // rect×scale so toBoard maps correctly. The duplicate EFFECT is read off getBoards():
+    // count+1, the copy offset matches the screen→board delta, the ORIGINAL is unmoved, and
+    // undo removes the copy — a broken dup/alt path fails (a plain move would leave count=1),
+    // so this is not a false green.
+    const res = await ctx.evalIn<{
+      stage: string
+      start: number
+      scale: number
+      afterDup: number
+      origMoved: number
+      copyDx: number
+      copyDy: number
+      afterUndo: number
+    }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
          const id = ${JSON.stringify(planId)};
+         const els = () => window.__canvasE2E.getBoards().find((x) => x.id === id).elements;
          const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
          const w = n.querySelector('.pl-well');
-         const r = w.getBoundingClientRect();
-         const s = r.width / w.offsetWidth;
-         const b = window.__canvasE2E.getBoards().find((x) => x.id === id);
-         return { fx: r.left + 138 * s, fy: r.top + 108 * s, tx: r.left + 198 * s, ty: r.top + 168 * s, start: b.elements.length };
+         const g = n.querySelector('.pl-note-grip');
+         const wr = w.getBoundingClientRect();
+         const s = wr.width / w.offsetWidth;
+         const gr = g.getBoundingClientRect();
+         const fx = gr.left + gr.width / 2, fy = gr.top + gr.height / 2;
+         const dScreen = 60;
+         const ev = (t, type, x, y) => { try { t.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, isPrimary: true, altKey: true, clientX: x, clientY: y })); } catch (e) {} };
+         const orig = () => els().find((e) => e.id === 'ad-a');
+         const start = els().length;
+         const ox = orig().x, oy = orig().y;
+         ev(g, 'pointerdown', fx, fy); await sleep(20);
+         for (let i = 1; i <= 4; i++) { ev(w, 'pointermove', fx + (dScreen * i) / 4, fy + (dScreen * i) / 4); await sleep(15); }
+         ev(w, 'pointerup', fx + dScreen, fy + dScreen); await sleep(70);
+         const after = els();
+         const afterDup = after.length;
+         const o = after.find((e) => e.id === 'ad-a');
+         const origMoved = o ? Math.abs(o.x - ox) + Math.abs(o.y - oy) : -1;
+         const copy = after.find((e) => e.id !== 'ad-a' && e.kind === 'note');
+         const copyDx = copy ? copy.x - ox : -999;
+         const copyDy = copy ? copy.y - oy : -999;
+         window.__canvasE2E.undo(); await sleep(70);
+         const afterUndo = els().length;
+         return { stage: 'done', start, scale: s, afterDup, origMoved, copyDx, copyDy, afterUndo };
        })()`
     )
-    // First select the note (synthetic click on its grip is fine — selection effect read later).
-    await ctx.evalIn(
-      `(() => { const id = ${JSON.stringify(planId)}; const n = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']'); const g = n.querySelector('.pl-note-grip'); const w = n.querySelector('.pl-well'); const r = w.getBoundingClientRect(); const s = r.width / w.offsetWidth; const p = { clientX: r.left + 138 * s, clientY: r.top + 108 * s, bubbles: true, cancelable: true, pointerId: 1, isPrimary: true }; try { g.dispatchEvent(new PointerEvent('pointerdown', p)); w.dispatchEvent(new PointerEvent('pointerup', p)); } catch (e) {} })()`
-    )
-    await ctx.delay(40)
-    // REAL alt-drag: mouseDown(alt) on the grip point → moves → mouseUp(alt) at the target.
-    const send = (type: 'mouseDown' | 'mouseMove' | 'mouseUp', x: number, y: number): void =>
-      ctx.win.webContents.sendInputEvent({
-        type,
-        x: Math.round(x),
-        y: Math.round(y),
-        button: 'left',
-        modifiers: ['alt']
-      })
-    send('mouseDown', pts.fx, pts.fy)
-    for (let i = 1; i <= 4; i++)
-      send('mouseMove', pts.fx + ((pts.tx - pts.fx) * i) / 4, pts.fy + ((pts.ty - pts.fy) * i) / 4)
-    send('mouseUp', pts.tx, pts.ty)
-    const dupCount = await ctx.poll(
-      () =>
-        ctx
-          .evalIn<number>(
-            `(() => { const b = window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(planId)}); return b && b.type === 'planning' ? b.elements.length : -1; })()`
-          )
-          .then((c) => c === pts.start + 1),
-      3000
-    )
-    const afterCount = await ctx.evalIn<number>(
-      `(() => { const b = window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(planId)}); return b.elements.length; })()`
-    )
-    await ctx.evalIn(`window.__canvasE2E.undo()`)
-    await ctx.delay(80)
-    const afterUndo = await ctx.evalIn<number>(
-      `(() => { const b = window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(planId)}); return b.elements.length; })()`
-    )
-    const ok = !!dupCount && afterCount === pts.start + 1 && afterUndo === pts.start
+    // Expected copy offset = 60 screen px ÷ scale (board-local), with snapping inert (one note,
+    // no static neighbours). Assert the copy lands down-right at ~that delta, original unmoved.
+    const expected = res.scale > 0 ? 60 / res.scale : 60
+    const offsetOk = Math.abs(res.copyDx - expected) <= 8 && Math.abs(res.copyDy - expected) <= 8
+    const ok =
+      res.afterDup === res.start + 1 &&
+      res.origMoved === 0 &&
+      offsetOk &&
+      res.afterUndo === res.start
     return {
       name: 'whiteboard-alt-dup',
       ok,
       detail: ok
-        ? 'real alt-drag duplicates the note; one undo removes the copy'
-        : JSON.stringify({ start: pts.start, afterCount, afterUndo })
+        ? `alt-drag duplicates the note at board-local +(${Math.round(res.copyDx)},${Math.round(res.copyDy)}); original unmoved; one undo removes the copy`
+        : JSON.stringify(res)
     }
   }
 }
