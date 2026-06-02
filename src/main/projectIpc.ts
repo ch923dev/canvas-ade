@@ -13,6 +13,10 @@ import {
   getCurrentDir,
   setCurrentDir,
   projectName,
+  writeAsset,
+  readAsset,
+  collectAssetIds,
+  gcAssets,
   type ProjectResult
 } from './projectStore'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
@@ -86,6 +90,7 @@ export function registerProjectHandlers(
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     const r = readProject(dir)
     remember(r)
+    if (r.ok) gcAssets(r.dir, collectAssetIds(r.doc))
     return r
   })
 
@@ -137,7 +142,32 @@ export function registerProjectHandlers(
     if (r.ok) {
       setCurrentDir(r.dir)
       touchRecent(userDataDir, r.dir, projectName(r.dir), now())
+      gcAssets(r.dir, collectAssetIds(r.doc))
     }
     return r.ok ? r : null
+  })
+
+  ipcMain.handle(
+    'asset:write',
+    async (
+      e,
+      args: { bytes: Uint8Array; ext: string }
+    ): Promise<{ assetId: string } | { error: string }> => {
+      if (guard(e)) return { error: 'forbidden' }
+      const dir = getCurrentDir()
+      if (!dir) return { error: 'no project open' }
+      try {
+        return await writeAsset(dir, args.bytes, args.ext)
+      } catch (err) {
+        return { error: String((err as Error)?.message ?? err) }
+      }
+    }
+  )
+
+  ipcMain.handle('asset:read', (e, assetId: string): Uint8Array | null => {
+    if (guard(e)) return null
+    const dir = getCurrentDir()
+    if (!dir) return null
+    return readAsset(dir, assetId)
   })
 }
