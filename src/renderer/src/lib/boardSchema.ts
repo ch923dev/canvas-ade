@@ -12,7 +12,7 @@
  */
 
 /** Bump on any breaking change to the persisted shape and add a migration below. */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -58,6 +58,10 @@ interface ElementCommon {
   id: string
   x: number
   y: number
+  /** W3: pinned — selectable but not movable/deletable/erasable. Absent = unlocked. */
+  locked?: boolean
+  /** W3: lightweight grouping — elements sharing a groupId move/delete together. Absent = ungrouped. */
+  groupId?: string
 }
 
 export interface NoteElement extends ElementCommon {
@@ -201,6 +205,8 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
  * into `board.elements[]` or a board patch key, or it bloats every autosave and
  * resurrects stale tool/selection state on reload. (Excalidraw's
  * cleanAppStateForExport discipline, enforced here by omission.)
+ * W3 adds two PERSISTED element fields: `locked` and `groupId` (durable element
+ * data, not ephemeral). Selection/menu-open/drag drafts remain session-only.
  */
 export function toObject(boards: Board[], viewport: CanvasViewport | null): CanvasDoc {
   return {
@@ -215,7 +221,10 @@ type Migration = (doc: CanvasDoc) => CanvasDoc
 /** Keyed by the FROM version. Each step returns a doc one version higher. */
 const MIGRATIONS: Record<number, Migration> = {
   // v1 had no camera. v2 adds `viewport` (null = fit on load).
-  1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null })
+  1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null }),
+  // v2 → v3: W3 adds OPTIONAL element fields locked?/groupId? — absent is valid, so this is a
+  // pure version marker (no field injection needed).
+  2: (doc) => ({ ...doc, schemaVersion: 3 })
 }
 
 /**
@@ -294,6 +303,8 @@ function assertPlanningElement(el: unknown): void {
   if (!isRecord(el)) fail('planning element is not an object')
   if (typeof el.id !== 'string') fail('planning element has a non-string id')
   if (!isFiniteNum(el.x) || !isFiniteNum(el.y)) fail('planning element has non-finite x/y')
+  if (el.locked !== undefined && typeof el.locked !== 'boolean') fail('planning element locked is not a boolean')
+  if (el.groupId !== undefined && typeof el.groupId !== 'string') fail('planning element groupId is not a string')
 
   switch (el.kind) {
     case 'note':

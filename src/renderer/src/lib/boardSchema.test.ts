@@ -465,23 +465,23 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 2', () => {
-    expect(SCHEMA_VERSION).toBe(2)
+  it('SCHEMA_VERSION is 3', () => {
+    expect(SCHEMA_VERSION).toBe(3)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 2, viewport: vp, boards: [] })
+    expect(doc).toEqual({ schemaVersion: 3, viewport: vp, boards: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
     expect(toObject([], null).viewport).toBeNull()
   })
 
-  it('migrates a v1 doc (no viewport) to v2 with viewport=null', () => {
+  it('migrates a v1 doc (no viewport) to v3 with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(2)
+    expect(out.schemaVersion).toBe(3)
     expect(out.viewport).toBeNull()
   })
 
@@ -509,6 +509,57 @@ describe('schema v2 — viewport', () => {
     const input = { schemaVersion: 1, boards: [] } as unknown as CanvasDoc
     const out = fromObject(input)
     expect(out).not.toBe(input)
+  })
+})
+
+describe('W3 schema: locked?/groupId? + v3', () => {
+  it('migrates a v2 doc to v3 unchanged except version', () => {
+    const v2 = { schemaVersion: 2, viewport: null, boards: [] }
+    expect(migrate(v2 as CanvasDoc).schemaVersion).toBe(3)
+  })
+
+  it('loads a v2 planning board (no locked/groupId) → fields absent', () => {
+    const doc = {
+      schemaVersion: 2,
+      viewport: null,
+      boards: [
+        { id: 'p', type: 'planning', x: 0, y: 0, w: 300, h: 300, title: 'P',
+          elements: [{ id: 'n', kind: 'note', x: 1, y: 1, w: 156, h: 96, tint: 'yellow', text: '' }] }
+      ]
+    }
+    const out = fromObject(doc)
+    expect(out.schemaVersion).toBe(3)
+    const el = (out.boards[0] as unknown as { elements: Array<Record<string, unknown>> }).elements[0]
+    expect(el.locked).toBeUndefined()
+    expect(el.groupId).toBeUndefined()
+  })
+
+  it('round-trips locked + groupId through toObject', () => {
+    const board = {
+      id: 'p', type: 'planning' as const, x: 0, y: 0, w: 300, h: 300, title: 'P',
+      elements: [{ id: 'n', kind: 'note' as const, x: 1, y: 1, w: 156, h: 96, tint: 'yellow' as const, text: '', locked: true, groupId: 'g1' }]
+    }
+    const doc = toObject([board], null)
+    const back = fromObject(doc)
+    const el = (back.boards[0] as typeof board).elements[0]
+    expect(el.locked).toBe(true)
+    expect(el.groupId).toBe('g1')
+  })
+
+  it('rejects a non-boolean locked', () => {
+    const doc = { schemaVersion: 3, viewport: null, boards: [
+      { id: 'p', type: 'planning', x: 0, y: 0, w: 300, h: 300, title: 'P',
+        elements: [{ id: 'n', kind: 'note', x: 1, y: 1, w: 156, h: 96, tint: 'yellow', text: '', locked: 'yes' }] }
+    ] }
+    expect(() => fromObject(doc)).toThrow(/locked/)
+  })
+
+  it('rejects a non-string groupId', () => {
+    const doc = { schemaVersion: 3, viewport: null, boards: [
+      { id: 'p', type: 'planning', x: 0, y: 0, w: 300, h: 300, title: 'P',
+        elements: [{ id: 'n', kind: 'note', x: 1, y: 1, w: 156, h: 96, tint: 'yellow', text: '', groupId: 7 }] }
+    ] }
+    expect(() => fromObject(doc)).toThrow(/groupId/)
   })
 })
 
