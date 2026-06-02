@@ -39,4 +39,29 @@ describe('parsePortsFromOutput', () => {
   it('rejects out-of-range ports', () => {
     expect(parsePortsFromOutput('http://localhost:99999')).toEqual([])
   })
+
+  it('drops a terminal soft-wrap fragment (truncated port) leaving the real URL', () => {
+    // ConPTY wrapped the echoed command line mid-URL: `...localhost:300` ⏎ `0/`,
+    // then the real URL printed intact. The :300 fragment must not survive.
+    const raw = 'PS C:\\repo> echo http://localhost:300\n0/\nhttp://localhost:3000/\n'
+    expect(parsePortsFromOutput(raw)).toEqual([
+      { url: 'http://localhost:3000', host: 'localhost', port: 3000 }
+    ])
+  })
+
+  it('drops a soft-wrap fragment that truncated before the port (bare host → :80)', () => {
+    // Wrap landed after the host: `http://localhost` ⏎ `:3000/`. The bare-host
+    // match defaults to :80 and must be dropped as a prefix of the real :3000.
+    const raw = 'echo http://localhost\n:3000/\nhttp://localhost:3000/\n'
+    expect(parsePortsFromOutput(raw).map((u) => u.port)).toEqual([3000])
+  })
+
+  it('keeps two genuinely distinct ports (neither a prefix of the other)', () => {
+    const raw = 'http://localhost:3000\nhttp://localhost:8080'
+    expect(
+      parsePortsFromOutput(raw)
+        .map((u) => u.port)
+        .sort()
+    ).toEqual([3000, 8080])
+  })
 })
