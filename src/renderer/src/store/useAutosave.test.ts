@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createAutosaver } from './useAutosave'
+import { createAutosaver, setActiveAutosaver, cancelActiveAutosave } from './useAutosave'
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
@@ -85,5 +85,41 @@ describe('createAutosaver', () => {
     a.schedule()
     await a.flush()
     expect(onError).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('active-autosaver registry (PERSIST-B)', () => {
+  afterEach(() => setActiveAutosaver(null))
+
+  it('cancelActiveAutosave cancels the registered saver pending timer', () => {
+    const save = vi.fn().mockResolvedValue(true)
+    const a = createAutosaver({ save, getStatus: () => 'open', delayMs: 1000 })
+    setActiveAutosaver(a)
+    a.schedule()
+    // A project switch fires before the debounce elapses: cancel must kill the armed
+    // timer so it can't fire post-load and write the new project's state redundantly.
+    cancelActiveAutosave()
+    vi.advanceTimersByTime(1000)
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('cancelActiveAutosave is a safe no-op when no saver is registered', () => {
+    setActiveAutosaver(null)
+    expect(() => cancelActiveAutosave()).not.toThrow()
+  })
+
+  it('only the currently-registered saver is cancelled (re-register supersedes)', () => {
+    const saveA = vi.fn().mockResolvedValue(true)
+    const saveB = vi.fn().mockResolvedValue(true)
+    const a = createAutosaver({ save: saveA, getStatus: () => 'open', delayMs: 1000 })
+    const b = createAutosaver({ save: saveB, getStatus: () => 'open', delayMs: 1000 })
+    setActiveAutosaver(a)
+    setActiveAutosaver(b) // hook re-mount registers a new instance
+    a.schedule()
+    b.schedule()
+    cancelActiveAutosave()
+    vi.advanceTimersByTime(1000)
+    expect(saveB).not.toHaveBeenCalled() // current one cancelled
+    expect(saveA).toHaveBeenCalledTimes(1) // the stale instance is no longer tracked
   })
 })

@@ -60,6 +60,21 @@ export function createAutosaver(opts: AutosaverOpts): Autosaver {
   }
 }
 
+// PERSIST-B: the live autosaver instance, published so out-of-tree code (a project
+// switch, which can't reach into the hook's closure) can cancel a pending debounced
+// save before tearing down the canvas. A leftover timer armed editing project A would
+// otherwise fire AFTER the switch flips status back to 'open' with `currentDir` now B,
+// writing B's state to B's dir — data-correct but a redundant post-load write.
+let activeAutosaver: Autosaver | null = null
+/** Register (or clear, with null) the hook's live autosaver instance. */
+export function setActiveAutosaver(a: Autosaver | null): void {
+  activeAutosaver = a
+}
+/** Cancel any pending debounced autosave. Safe no-op when none is registered. */
+export function cancelActiveAutosave(): void {
+  activeAutosaver?.cancel()
+}
+
 /** React hook: arms autosave against the canvas store + window lifecycle. */
 export function useAutosave(): void {
   useEffect(() => {
@@ -99,9 +114,13 @@ export function useAutosave(): void {
     // so the on-disk canvas.json is current before the process dies.
     const offFlush = window.api.project.onFlush(() => saver.flush())
 
+    // PERSIST-B: publish this instance so a project switch can cancel its pending timer.
+    setActiveAutosaver(saver)
+
     return () => {
       void saver.flush()
       saver.cancel()
+      setActiveAutosaver(null)
       unsub()
       offFlush()
       window.removeEventListener('blur', onBlur)

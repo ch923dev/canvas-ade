@@ -81,16 +81,20 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
 }
 
 /** Ensure the folder; reuse an existing canvas.json, else write a fresh empty doc. */
-export function createProject(
+export async function createProject(
   dir: string,
   _name: string,
   _opts: { gitInit?: boolean }
-): ProjectResult {
+): Promise<ProjectResult> {
   // `gitInit` is accepted for forward-compat with Slice C (worktrees) but is inert here.
   mkdirSync(dir, { recursive: true })
   const existing = readProject(dir)
   if (existing.ok) return existing
+  // PERSIST-C: route the fresh write through writeProject so a canvas.json is only ever
+  // created via the one envelope-guarded + atomic path (the same guard project:save uses)
+  // — a future change to the fresh-doc shape can't silently bypass it. There is no prior
+  // file here (reuse-if-exists returned above), so the .bak rotation is a no-op.
   const fresh = { schemaVersion: 2, viewport: null, boards: [] }
-  writeFileAtomic.sync(join(dir, CANVAS), JSON.stringify(fresh, null, 2), 'utf8')
+  await writeProject(dir, fresh)
   return { ok: true, dir, name: projectName(dir), doc: fresh }
 }

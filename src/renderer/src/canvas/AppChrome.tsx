@@ -18,6 +18,7 @@ import { useReactFlow, useStore } from '@xyflow/react'
 import { useCanvasStore, type RecentProject } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
+import { cancelActiveAutosave } from '../store/useAutosave'
 import type { BoardType } from '../lib/boardSchema'
 import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
 import { FIT_FRAME, OVERVIEW_FRAME, RESET_FRAME } from '../lib/canvasView'
@@ -63,6 +64,11 @@ function ProjectSwitcher(): ReactElement {
 
   const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
     setOpen(false)
+    // PERSIST-B: kill any pending debounced autosave armed editing the outgoing project.
+    // The explicit flush below is the authoritative final write; a leftover timer would
+    // otherwise fire after load flips status back to 'open' (currentDir now the NEW dir)
+    // and write the new project's state redundantly.
+    cancelActiveAutosave()
     // 1. Flush the current project to disk before tearing it down. project:save returns
     //    false on a write failure; the debounced autosaver is gated off once we flip to
     //    'loading', so a swallowed false here loses the outgoing project's tail edits with
