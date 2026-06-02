@@ -156,8 +156,9 @@ HTML/SVG → **no WebContentsView occlusion concern** (advantage over Browser bo
 - **Persistence (the real cost):** build the `assets/` pipeline CLAUDE.md describes but that does NOT
   yet exist (`projectStore.ts` writes ONLY `canvas.json`). MAIN-side IPC writes pasted bytes to
   `<projectDir>/assets/<sha1>.<ext>` via `write-file-atomic`; store the **relative path** (NEVER a
-  base64 data URL); dedup on hash; orphan-GC / ref-count on element/board delete. Load via custom
-  protocol or preload `readFile→blob:` URL, never `file://`. Bump `SCHEMA_VERSION 2→3` + `MIGRATIONS[3]`.
+  base64 data URL); dedup on hash. Load via preload `asset:read`→bytes→`blob:` URL (chosen over a
+  custom protocol; CSP already allows `blob:`), never `file://`. GC = mark-and-sweep at project open
+  (undo-safe — bytes never deleted mid-session). Bump `SCHEMA_VERSION 3→4` + `MIGRATIONS[3]` (W3 took v3).
 - **Risks:** the `assets/` infra is the bulk — easy to under-estimate because the element half looks
   trivial. **The base64-inline shortcut VIOLATES the locked "heavy blobs in `assets/` by path, not
   inlined" rule** — bloats every autosave, defeats dedup; do NOT take it. Asset orphan/leak if delete
@@ -165,7 +166,7 @@ HTML/SVG → **no WebContentsView occlusion concern** (advantage over Browser bo
   resurrecting GC'd bytes → prefer ref-count + lazy GC, or never-delete-bytes. `.bak` rotation covers
   `canvas.json` ONLY, not `assets/` → `ImageCard` needs a missing-asset fallback. Pasted image is
   untrusted — renderer DOM only, never near the PTY. Defer flip/resize/element-clipboard.
-- **📏** schema migrate 2→3 round-trip; dedup + GC unit tests; e2e: paste image persists + reloads.
+- **📏** schema migrate 3→4 round-trip; dedup + GC unit tests; e2e: paste image persists + reloads.
 
 ---
 
@@ -205,7 +206,7 @@ Also out: calligraphic pressure-taper pen (deliberately tuned OFF — `thinning:
 | W1 — Quick wins | ✅ done (2026-06-02) — eraser (W1.1) · letter shortcuts (W1.2) · scene/session guardrail (W1.3). Integrated on top of #15 (WB-1); 502 unit green, lint+typecheck clean, e2e PLANNING ok (browser-trio = known env flake). Branch `feat/whiteboard-w1-integ`. |
 | W2 — Selection core | ✅ done (2026-06-02) — multi-select (marquee intersect + Shift-add + multi-drag + group-delete) · in-board snapping (edge/center guides, snap pill). Pure helpers elementBBox/anchors/translateMany + marquee.ts + snapping.ts unit-tested; e2e whiteboard-group-delete/multidrag/snap green. Branch feat/whiteboard-w2. |
 | W3 — Selection follow-ons | ✅ done (2026-06-03) — alt-drag duplicate · align/distribute (L/C/R/T/M/B + H/V) · `locked?` (resists drag/erase/delete incl. the per-element X) · lightweight `groupId` grouping (move/delete-together), all via a right-click `ElementContextMenu` (select-then-act). Schema **v2→v3** (optional `locked?`/`groupId?` on `ElementCommon`, additive no-op migration, no default-inject). Pure `align.ts` + `elements.ts` mutators (isLocked/expandGroups/duplicateElements/group/ungroup/setLocked) unit-tested; lock wins over group; one undo checkpoint per gesture. Subagent-driven TDD workflow; gate green (556 unit, lint+typecheck+format:check), e2e `E2E_DONE ok:true` incl. 4 new W3 probes (alt-dup synthetic-altKey real-coords, lock, group, align). Branch `feat/whiteboard-w3` → targets `feat/whiteboard`. |
-| W4 — Image + assets | not started |
+| W4 — Image + assets | ✅ done (2026-06-03) — paste/drop a screenshot → `image` element backed by an `assets/<sha1>.<ext>` blob pipeline (relative path, dedup on hash, mark-and-sweep GC at open). blob-via-preload load (CSP unchanged); ImageCard with missing-asset fallback. Schema **v3→v4** (additive no-op `MIGRATIONS[3]`). Subagent-driven TDD; per-task two-stage review. e2e: real `webContents.paste()` persists + reloads + dedups + GCs. Branch `feat/whiteboard-w4` → `feat/whiteboard`. |
 | W5 — Export | not started |
 
 Promote a slice's detailed spec/plan into `docs/superpowers/specs/` when it's scheduled; update this
