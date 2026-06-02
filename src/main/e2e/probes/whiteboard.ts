@@ -651,11 +651,15 @@ export const whiteboardAlign: E2EProbe = {
          return { stage: 'done', ax, bx, undoBx };
        })()`
     )
-    const ok = res.ax === res.bx && res.ax === 40 && res.undoBx === 300
+    // New align model: align-left flushes both left edges to the board pad (12), not the
+    // selection's min-left. One undo restores al-b's original x.
+    const ok = res.ax === res.bx && res.ax === 12 && res.undoBx === 300
     return {
       name: 'whiteboard-align',
       ok,
-      detail: ok ? 'align-left via menu shares min-left x; one undo restores' : JSON.stringify(res)
+      detail: ok
+        ? 'align-left via menu flushes both to the board left edge (x=12); one undo restores'
+        : JSON.stringify(res)
     }
   }
 }
@@ -706,14 +710,14 @@ export const whiteboardGroupAlign: E2EProbe = {
          return { stage: 'done', grouped, ax: note('ga-a').x, bx: note('ga-b').x };
        })()`
     )
-    // The fix: right-clicking grouped ga-b selects the whole group, so align-left moves
-    // BOTH to the min-left (40). Pre-fix, only ga-b was selected → Align greyed → no move.
-    const ok = res.grouped && res.ax === 40 && res.bx === 40
+    // The fix: right-clicking grouped ga-b selects the whole group, so align-left flushes
+    // BOTH to the board left edge (x=12). Pre-fix, only ga-b was selected → Align greyed.
+    const ok = res.grouped && res.ax === 12 && res.bx === 12
     return {
       name: 'whiteboard-group-align',
       ok,
       detail: ok
-        ? 'right-click a grouped element → align-left moves the whole group to x=40'
+        ? 'right-click a grouped element → align-left flushes the whole group to x=12'
         : JSON.stringify(res)
     }
   }

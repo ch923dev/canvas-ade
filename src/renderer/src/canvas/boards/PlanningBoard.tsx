@@ -69,7 +69,12 @@ import {
   ungroupElements,
   setLocked
 } from './planning/elements'
-import { alignElements, distributeElements, type AlignEdge } from './planning/align'
+import {
+  alignElements,
+  distributeElements,
+  type AlignEdge,
+  type AlignBoard
+} from './planning/align'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 
 const TOOLS: ReadonlyArray<{
@@ -475,13 +480,19 @@ export function PlanningBoard({
         beginChange()
         commit(next)
       }
+      // Align/distribute reference the well's content box (board-local px) so edges
+      // flush to the BOARD and results clamp inside it.
+      const wb: AlignBoard = {
+        w: wellRef.current?.offsetWidth || board.w,
+        h: wellRef.current?.offsetHeight || board.h
+      }
       const alignBtns = (
         ['left', 'centerX', 'right', 'top', 'centerY', 'bottom'] as AlignEdge[]
       ).map((edge) => ({
         id: edge,
         title: `Align ${edge}`,
         icon: `align-${edge === 'centerX' ? 'center-h' : edge === 'centerY' ? 'middle' : edge}`,
-        onSelect: () => run(alignElements(elements, sel, edge, measuredRef.current))
+        onSelect: () => run(alignElements(elements, sel, edge, wb, measuredRef.current))
       }))
       const entries: MenuEntry[] = [
         {
@@ -538,13 +549,13 @@ export function PlanningBoard({
               id: 'h',
               title: 'Distribute horizontally',
               icon: 'distribute-h',
-              onSelect: () => run(distributeElements(elements, sel, 'h', measuredRef.current))
+              onSelect: () => run(distributeElements(elements, sel, 'h', wb, measuredRef.current))
             },
             {
               id: 'v',
               title: 'Distribute vertically',
               icon: 'distribute-v',
-              onSelect: () => run(distributeElements(elements, sel, 'v', measuredRef.current))
+              onSelect: () => run(distributeElements(elements, sel, 'v', wb, measuredRef.current))
             }
           ]
         },
@@ -572,7 +583,7 @@ export function PlanningBoard({
       ]
       return entries
     },
-    [elements, beginChange, commit, clearSel]
+    [elements, beginChange, commit, clearSel, board.w, board.h]
   )
 
   // Right-click a whiteboard element (W3) → open the element context menu at the raw
