@@ -74,6 +74,10 @@ export interface CanvasE2E {
   setTerminalDown: (id: string) => void
   /** Focus a board (dim others) or clear focus (null) — the double-click focus path. Bug 2. */
   setFocus: (id: string | null) => void
+  /** Enter Planning camera-full-view (Option A: fitView the board, no portal/2nd transform). */
+  enterCameraFullView: (id: string) => void
+  /** Exit Planning camera-full-view (restore the prior viewport). */
+  exitCameraFullView: () => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -82,6 +86,8 @@ export interface E2EHostHooks {
   openFullViewAnimated: (id: string) => void
   closeFullViewAnimated: () => void
   setFocus: (id: string | null) => void
+  enterCameraFullView: (id: string) => void
+  exitCameraFullView: () => void
 }
 
 declare global {
@@ -185,6 +191,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setFocus(id) {
       host.setFocus(id)
+    },
+    enterCameraFullView(id) {
+      host.enterCameraFullView(id)
+    },
+    exitCameraFullView() {
+      host.exitCameraFullView()
     }
   }
   window.__canvasE2E = api

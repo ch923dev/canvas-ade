@@ -747,9 +747,11 @@ function CanvasInner(): ReactElement {
         setFullView: setFullViewId,
         openFullViewAnimated: openFullView,
         closeFullViewAnimated: closeFullView,
-        setFocus: setFocusedId
+        setFocus: setFocusedId,
+        enterCameraFullView,
+        exitCameraFullView
       })
-  }, [rf, openFullView, closeFullView])
+  }, [rf, openFullView, closeFullView, enterCameraFullView, exitCameraFullView])
 
   // Capture the live camera into the (untracked) store so autosave persists it.
   // onChange fires on the rAF-coalesced camera updates React Flow emits — no new

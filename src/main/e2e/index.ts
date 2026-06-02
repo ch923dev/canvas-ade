@@ -39,7 +39,7 @@ import { planning } from './probes/planning'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
-import { whiteboardErase, whiteboardSelection } from './probes/whiteboard'
+import { whiteboardErase, whiteboardSelection, whiteboardFullviewAdd } from './probes/whiteboard'
 import { seed } from './probes/seed'
 
 // EXACT current execution order — interleaves themes by design (a probe's theme file is
@@ -70,6 +70,7 @@ const PLAYLIST: E2EProbe[] = [
   tile,
   whiteboardErase, // W1: emits whiteboard-erase + whiteboard-shortcut
   whiteboardSelection, // W2: emits whiteboard-group-delete/multidrag/shift-add/snap
+  whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view
   seed
 ]
 

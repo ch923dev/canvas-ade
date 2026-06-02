@@ -250,3 +250,119 @@ export const whiteboardSelection: E2EProbe = {
     ]
   }
 }
+
+// ── Planning camera-full-view add-note (Option A regression guard). The bug this locks:
+// full-view used to portal the board + apply a 2nd CSS transform, so a click mapped to a
+// board-local point FAR outside board bounds (e.g. x=1469 on a 520-wide board) → the note
+// was clipped/lost. Now full view is a CAMERA fit (one transform), so a click lands in
+// bounds under the cursor. MUST use REAL OS input (win.webContents.sendInputEvent) — a
+// synthetic dispatchEvent bypasses the transform hit-testing and false-greens this exact
+// bug (memory e2e-sendinputevent-vs-dispatchevent).
+export const whiteboardFullviewAdd: E2EProbe = {
+  name: 'whiteboard-fullview-add',
+  async run(ctx): Promise<E2EPart> {
+    const planId = ctx.ids.planId
+    if (!planId)
+      return {
+        name: 'whiteboard-fullview-add',
+        ok: false,
+        detail: 'planId not seeded (planning probe)'
+      }
+
+    // Deterministic board: known size + two notes (non-empty → not the empty-board path).
+    await ctx.evalIn(
+      `window.__canvasE2E.patchBoard(${JSON.stringify(planId)}, { w: 520, h: 500, elements: [
+         { id: 'fv-a', kind: 'note', x: 40, y: 40, w: 156, h: 96, tint: 'yellow', text: 'A', rotation: 0 },
+         { id: 'fv-b', kind: 'note', x: 300, y: 320, w: 156, h: 96, tint: 'blue', text: 'B', rotation: 0 }
+       ] })`
+    )
+    // Enter camera full view (Option A) and let the fit animation settle.
+    await ctx.evalIn(`window.__canvasE2E.enterCameraFullView(${JSON.stringify(planId)})`)
+    await ctx.delay(400)
+
+    // Compute the well's on-screen rect → the screen point for board-local (260, 250).
+    const t = await ctx.evalIn<{
+      found: boolean
+      sx: number
+      sy: number
+      scale: number
+      bx: number
+      by: number
+    }>(
+      `(() => {
+         const id = ${JSON.stringify(planId)};
+         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const well = node && node.querySelector('.pl-well');
+         if (!well) return { found: false, sx: 0, sy: 0, scale: 0, bx: 0, by: 0 };
+         const r = well.getBoundingClientRect();
+         const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1;
+         const bx = 260, by = 250;                    // board-local target (~center of 520x500)
+         return { found: true, sx: r.left + bx * scale, sy: r.top + by * scale, scale, bx, by };
+       })()`
+    )
+    if (!t.found) {
+      await ctx.evalIn(`window.__canvasE2E.exitCameraFullView()`)
+      return { name: 'whiteboard-fullview-add', ok: false, detail: 'no .pl-well in full view' }
+    }
+
+    // Select the note tool — synthetic key is fine (no coordinate mapping involved).
+    await ctx.evalIn(
+      `(() => {
+         const id = ${JSON.stringify(planId)};
+         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const well = node && node.querySelector('.pl-well');
+         if (well) { well.focus(); well.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true })); }
+       })()`
+    )
+    await ctx.delay(60)
+
+    // REAL OS click — exercises toBoard under the live camera transform.
+    const x = Math.round(t.sx)
+    const y = Math.round(t.sy)
+    ctx.win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+    ctx.win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    await ctx.delay(140)
+
+    // Read the freshly added note (the non-seed note) + board size.
+    const res = await ctx.evalIn<{
+      count: number
+      nx: number
+      ny: number
+      nw: number
+      bw: number
+      bh: number
+    }>(
+      `(() => {
+         const id = ${JSON.stringify(planId)};
+         const b = window.__canvasE2E.getBoards().find((x) => x.id === id);
+         const els = b && b.type === 'planning' ? b.elements : [];
+         const added = els.filter((e) => e.kind === 'note' && e.id !== 'fv-a' && e.id !== 'fv-b').pop();
+         return {
+           count: els.length,
+           nx: added ? added.x : -999999,
+           ny: added ? added.y : -999999,
+           nw: added ? added.w : 0,
+           bw: b ? b.w : 0,
+           bh: b ? b.h : 0
+         };
+       })()`
+    )
+    // Restore the viewport so later probes aren't disturbed.
+    await ctx.evalIn(`window.__canvasE2E.exitCameraFullView()`)
+    await ctx.delay(60)
+
+    // makeNote centers x on the click and offsets y by 20 → reconstruct the click point.
+    const clickX = res.nx + res.nw / 2
+    const clickY = res.ny + 20
+    const inBounds = res.nx >= 0 && res.nx <= res.bw && res.ny >= 0 && res.ny <= res.bh
+    const nearClick = Math.abs(clickX - t.bx) <= 10 && Math.abs(clickY - t.by) <= 10
+    const ok = res.count === 3 && inBounds && nearClick
+    return {
+      name: 'whiteboard-fullview-add',
+      ok,
+      detail: ok
+        ? `real click lands in-bounds at board-local ~(${Math.round(clickX)},${Math.round(clickY)}) on ${res.bw}x${res.bh}`
+        : JSON.stringify({ ...res, target: { bx: t.bx, by: t.by, scale: t.scale } })
+    }
+  }
+}
