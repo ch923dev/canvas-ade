@@ -30,7 +30,6 @@ import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
   ChecklistElement,
-  ImageElement,
   NoteElement,
   PlanningElement,
   PlanningBoard as PlanningBoardData,
@@ -1035,14 +1034,13 @@ export function PlanningBoard({
             )
           }
           if (el.kind === 'image') {
-            const img = el as ImageElement
             return (
               <ImageCard
-                key={img.id}
-                image={img}
+                key={el.id}
+                image={el}
                 interactive={interactive}
                 onDragStart={startElementDrag}
-                selected={selectedIds.has(img.id)}
+                selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
               />
             )
