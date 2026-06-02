@@ -332,6 +332,11 @@ export function PlanningBoard({
   )
   const deleteEl = useCallback(
     (id: string) => {
+      // Locked elements are never deletable through the per-element affordance (the
+      // hover X button or the empty-note/text auto-prune both route here). This is
+      // the chokepoint that enforces the lock contract for that path (W3 §D).
+      const el = elements.find((x) => x.id === id)
+      if (el && el.locked) return
       beginChange()
       commit(removeElement(elements, id))
     },

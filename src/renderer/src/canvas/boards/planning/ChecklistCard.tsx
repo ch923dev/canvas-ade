@@ -164,11 +164,12 @@ export function ChecklistCard({
       onDoubleClick={(e) => e.stopPropagation()}
       onContextMenu={onContextMenu}
     >
-      {interactive && (
+      {interactive && !locked && (
         <button
           type="button"
           className="pl-del"
           title="Delete"
+          aria-label="delete"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation()

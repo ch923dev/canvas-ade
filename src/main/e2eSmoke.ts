@@ -1174,6 +1174,7 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     alignLeftX: string
     lockBlockedMove: boolean
     lockBlockedDel: boolean
+    lockedHasNoDeleteBtn: boolean
     groupMovedBoth: boolean
     menuShown: boolean
   }>(
@@ -1187,7 +1188,7 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
        const count = () => els().length;
        const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
        const well = node && node.querySelector('.pl-well');
-       const fail = { stage:'no-well', altDupCount:-1, altDupUndo:-1, alignLeftX:'', lockBlockedMove:false, lockBlockedDel:false, groupMovedBoth:false, menuShown:false };
+       const fail = { stage:'no-well', altDupCount:-1, altDupUndo:-1, alignLeftX:'', lockBlockedMove:false, lockBlockedDel:false, lockedHasNoDeleteBtn:false, groupMovedBoth:false, menuShown:false };
        if (!well) return fail;
        const r = well.getBoundingClientRect();
        const scale = well.offsetWidth > 0 ? r.width / well.offsetWidth : 1;
@@ -1235,6 +1236,14 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
          ev(grip(0),'pointerdown',at(60,60)); ev(well,'pointerup',at(60,60)); await sleep(40);
          press('Delete'); await sleep(60);
          const lockBlockedDel = !!note('w3-a');
+         // X-button affordance is hidden on a locked card → its delete button is gone.
+         // w3-a is the first seeded note, rendered as the first .pl-note.
+         let lockedHasNoDeleteBtn = false;
+         try {
+           const lockedNote = node.querySelectorAll('.pl-note')[0];
+           lockedHasNoDeleteBtn = !!lockedNote &&
+             !lockedNote.querySelector('[aria-label="delete"], .pl-del');
+         } catch (e) {}
 
          stage = 'group'; await fresh();
          await drag(at(10,10), at(440,310)); await sleep(20);
@@ -1245,9 +1254,9 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
          await drag(at(60,60), at(120,60), { downTarget: grip(0) });
          const groupMovedBoth = nx('w3-a') - ga0 >= 30 && nx('w3-b') - gb0 >= 30;
 
-         return { stage:'done', altDupCount, altDupUndo, alignLeftX, lockBlockedMove, lockBlockedDel, groupMovedBoth, menuShown };
+         return { stage:'done', altDupCount, altDupUndo, alignLeftX, lockBlockedMove, lockBlockedDel, lockedHasNoDeleteBtn, groupMovedBoth, menuShown };
        } catch (err) {
-         return { stage:'ERR@'+stage+':'+String((err&&err.message)||err), altDupCount:-9, altDupUndo:-9, alignLeftX:'', lockBlockedMove:false, lockBlockedDel:false, groupMovedBoth:false, menuShown:false };
+         return { stage:'ERR@'+stage+':'+String((err&&err.message)||err), altDupCount:-9, altDupUndo:-9, alignLeftX:'', lockBlockedMove:false, lockBlockedDel:false, lockedHasNoDeleteBtn:false, groupMovedBoth:false, menuShown:false };
        }
      })()`
   )
@@ -1268,11 +1277,13 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
     ok: alignOk,
     detail: alignOk ? 'context menu Align Left shares left x' : JSON.stringify(w3)
   })
-  const lockOk = w3.lockBlockedMove && w3.lockBlockedDel
+  const lockOk = w3.lockBlockedMove && w3.lockBlockedDel && w3.lockedHasNoDeleteBtn
   parts.push({
     name: 'whiteboard-lock',
     ok: lockOk,
-    detail: lockOk ? 'locked element resists move + delete' : JSON.stringify(w3)
+    detail: lockOk
+      ? 'locked element resists move + delete + hides per-element delete X'
+      : JSON.stringify(w3)
   })
   const groupOk = w3.groupMovedBoth
   parts.push({
