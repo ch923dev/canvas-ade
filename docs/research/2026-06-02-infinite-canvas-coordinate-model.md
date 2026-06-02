@@ -1,5 +1,15 @@
 # Research — infinite-canvas coordinate model & the Planning full-view bug (2026-06-02)
 
+> ✅ **RESOLVED (2026-06-02, Option A shipped on `feat/whiteboard`).** Planning full view is now
+> a **camera fit** (`rf.fitView` on the board — one transform), not a portal + CSS transform.
+> `toBoard`/add-note/drag now behave exactly as on canvas. Locked by a **real-input** e2e probe
+> (`whiteboard-fullview-add`, `win.webContents.sendInputEvent`): a click in full view lands
+> in-bounds under the cursor (board-local ~260,250 on a 520×500 board) — the precise mapping the
+> old approach broke (note flew to x=1469, off-board). Plan:
+> `docs/superpowers/plans/2026-06-02-planning-fullview-camera-fit.md`. The checklist whole-body
+> drag bug was fixed alongside. Option C (unbounded world coords) remains the long-term direction
+> if Planning should become a truly infinite sketch surface.
+
 **Why:** the Planning board's full-view "add a note" + "fit to content" kept breaking despite three
 attempts. The user's repeated instinct — "it might be the schema / something fundamental" — turned out
 to be correct. This note captures the web research (tldraw, Steve Ruiz, React Flow, D3) and the
