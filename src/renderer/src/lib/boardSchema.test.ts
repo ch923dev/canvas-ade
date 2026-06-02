@@ -465,23 +465,23 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 3', () => {
-    expect(SCHEMA_VERSION).toBe(3)
+  it('SCHEMA_VERSION is 4', () => {
+    expect(SCHEMA_VERSION).toBe(4)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 3, viewport: vp, boards: [] })
+    expect(doc).toEqual({ schemaVersion: 4, viewport: vp, boards: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
     expect(toObject([], null).viewport).toBeNull()
   })
 
-  it('migrates a v1 doc (no viewport) to v3 (via v2) with viewport=null', () => {
+  it('migrates a v1 doc (no viewport) to v4 (via v2, v3) with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(3)
+    expect(out.schemaVersion).toBe(4)
     expect(out.viewport).toBeNull()
   })
 
@@ -540,11 +540,11 @@ describe('BrowserBoard.previewSourceId (preview link)', () => {
 })
 
 describe('W3 schema v3', () => {
-  it('SCHEMA_VERSION is 3', () => {
-    expect(SCHEMA_VERSION).toBe(3)
+  it('SCHEMA_VERSION is >= 3 (v3 was the W3 bump)', () => {
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(3)
   })
 
-  it('migrates a v2 doc to v3 without mutating elements', () => {
+  it('migrates a v2 doc to current version without mutating elements', () => {
     const v2: CanvasDoc = {
       schemaVersion: 2,
       viewport: null,
@@ -564,7 +564,7 @@ describe('W3 schema v3', () => {
       ]
     }
     const out = migrate(structuredClone(v2))
-    expect(out.schemaVersion).toBe(3)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect(out.boards[0]).toMatchObject({ type: 'planning' })
     const planning = out.boards[0]
     if (planning.type !== 'planning') throw new Error('expected planning')
@@ -629,5 +629,53 @@ describe('W3 schema v3', () => {
     })
     expect(() => fromObject(bad({ locked: 'yes' }))).toThrow(/locked/)
     expect(() => fromObject(bad({ groupId: 42 }))).toThrow(/groupId/)
+  })
+})
+
+describe('W4 image element', () => {
+  const imageBoard = (assetId: unknown, extra: Record<string, unknown> = {}) => ({
+    schemaVersion: SCHEMA_VERSION,
+    viewport: null,
+    boards: [
+      {
+        id: 'p1', type: 'planning', x: 0, y: 0, w: 400, h: 300, title: 'P',
+        elements: [{ id: 'i1', kind: 'image', x: 10, y: 20, w: 120, h: 90, assetId, ...extra }]
+      }
+    ]
+  })
+
+  it('SCHEMA_VERSION is 4', () => {
+    expect(SCHEMA_VERSION).toBe(4)
+  })
+
+  it('round-trips a valid image element', () => {
+    const doc = fromObject(imageBoard('assets/' + 'a'.repeat(40) + '.png'))
+    const el = (doc.boards[0] as { elements: Array<{ kind: string; assetId: string }> }).elements[0]
+    expect(el.kind).toBe('image')
+    expect(el.assetId).toBe('assets/' + 'a'.repeat(40) + '.png')
+  })
+
+  it('rejects an empty assetId', () => {
+    expect(() => fromObject(imageBoard(''))).toThrow(/assetId/)
+  })
+
+  it('rejects a non-string assetId', () => {
+    expect(() => fromObject(imageBoard(123))).toThrow(/assetId/)
+  })
+
+  it('rejects non-positive w/h', () => {
+    expect(() => fromObject(imageBoard('assets/x.png', { w: 0 }))).toThrow(/non-positive/)
+  })
+
+  it('migrates a v3 doc (with an image element) to v4', () => {
+    const v3 = {
+      schemaVersion: 3, viewport: null,
+      boards: [{
+        id: 'p1', type: 'planning', x: 0, y: 0, w: 400, h: 300, title: 'P',
+        elements: [{ id: 'i1', kind: 'image', x: 1, y: 2, w: 50, h: 50, assetId: 'assets/y.png' }]
+      }]
+    }
+    const doc = fromObject(v3)
+    expect(doc.schemaVersion).toBe(4)
   })
 })

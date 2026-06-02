@@ -279,6 +279,9 @@ export function elementBBox(el: PlanningElement, measured?: Measured): BBox {
       }
       return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
     }
+    // W4: image element — bbox is its explicit w/h (renderer task handles display).
+    case 'image':
+      return { x: el.x, y: el.y, w: el.w, h: el.h }
   }
 }
 
