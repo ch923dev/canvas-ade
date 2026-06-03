@@ -18,6 +18,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
@@ -26,6 +27,7 @@ import {
   type PointerEvent,
   type ReactElement
 } from 'react'
+import { createPortal } from 'react-dom'
 import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
@@ -310,7 +312,14 @@ export function PlanningBoard({
   )
 
   // ── Export popover (W5) ──────────────────────────────────────────────────────
+  // The popover is PORTALED to <body> (like BoardMenu): the title bar + board root
+  // are `overflow:hidden`, so an in-place absolute popover is clipped invisible.
   const [exportOpen, setExportOpen] = useState(false)
+  const exportTriggerRef = useRef<HTMLDivElement>(null)
+  const [exportPos, setExportPos] = useState<{ top: number; left: number }>({
+    top: -9999,
+    left: -9999
+  })
   const runExport = useCallback(
     async (format: 'png' | 'svg') => {
       setExportOpen(false)
@@ -332,10 +341,23 @@ export function PlanningBoard({
     }
     document.addEventListener('pointerdown', close)
     document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', close)
     return () => {
       document.removeEventListener('pointerdown', close)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', close)
     }
+  }, [exportOpen])
+  // Measure the trigger and right-align the portaled popover under it (clamped into
+  // the viewport), before paint so it never flashes at a stale corner.
+  useLayoutEffect(() => {
+    if (!exportOpen) return
+    const t = exportTriggerRef.current?.getBoundingClientRect()
+    if (!t) return
+    const W = 148
+    const PAD = 8
+    const left = Math.max(PAD, Math.min(t.right - W, window.innerWidth - W - PAD))
+    setExportPos({ top: t.bottom + 4, left })
   }, [exportOpen])
 
   // ── Element-level handlers (passed to the element components) ────────────────
@@ -891,7 +913,7 @@ export function PlanningBoard({
           margin: '0 2px'
         }}
       />
-      <div style={{ position: 'relative', display: 'inline-flex' }}>
+      <div ref={exportTriggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
         <IconBtn
           name="download"
           title="Export"
@@ -899,33 +921,35 @@ export function PlanningBoard({
           active={exportOpen}
           onClick={() => setExportOpen((v) => !v)}
         />
-        {exportOpen && (
-          <div
-            role="menu"
-            onPointerDown={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: 28,
-              right: 0,
-              zIndex: 5,
-              display: 'flex',
-              flexDirection: 'column',
-              minWidth: 130,
-              padding: 4,
-              background: 'var(--surface-overlay)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--r-inner)',
-              boxShadow: 'var(--shadow-pop)'
-            }}
-          >
-            <button className="board-menu-item" onClick={() => void runExport('png')}>
-              Export PNG
-            </button>
-            <button className="board-menu-item" onClick={() => void runExport('svg')}>
-              Export SVG
-            </button>
-          </div>
-        )}
+        {exportOpen &&
+          createPortal(
+            <div
+              role="menu"
+              onPointerDown={(e) => e.stopPropagation()}
+              style={{
+                position: 'fixed',
+                top: exportPos.top,
+                left: exportPos.left,
+                zIndex: 50,
+                width: 148,
+                display: 'flex',
+                flexDirection: 'column',
+                padding: 4,
+                background: 'var(--surface-overlay)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--r-inner)',
+                boxShadow: 'var(--shadow-pop)'
+              }}
+            >
+              <button className="board-menu-item" onClick={() => void runExport('png')}>
+                Export PNG
+              </button>
+              <button className="board-menu-item" onClick={() => void runExport('svg')}>
+                Export SVG
+              </button>
+            </div>,
+            document.body
+          )}
       </div>
     </div>
   ) : undefined
