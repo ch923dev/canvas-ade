@@ -40,3 +40,8 @@ skills-lock.json
 
 # local config/file backups (e.g. CLAUDE.md.bak-YYYYMMDD)
 *.bak-*
+
+# stray project-persistence artifacts written when the app runs against the repo root
+# (a real project's canvas.json lives in the user-chosen folder, never in this repo)
+canvas.json
+canvas.json.bak
