@@ -222,6 +222,27 @@ function CanvasInner(): ReactElement {
     [boards, viewport]
   )
 
+  // T-M4: cached Tier-2 prose by board id, fetched once per project open (pure disk read,
+  // NO LLM call). DigestPanel renders the prose body when present, else the Tier-1 lines.
+  const [prose, setProse] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (openedProjectKey === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setProse({})
+      return
+    }
+    let cancelled = false
+    const ids = useCanvasStore.getState().boards.map((b) => b.id)
+    void window.api.memory.readBoards(ids).then((map) => {
+      if (!cancelled) setProse(map)
+    })
+    return () => {
+      cancelled = true
+    }
+    // Fire once per open/switch: openedProjectKey changes on each project-open transition.
+    // boards read live (getState) so this does not re-fetch on every board edit.
+  }, [openedProjectKey])
+
   // Enter camera full view on a (Planning) board: save the viewport, fit the camera to
   // the board, select it. Portal + camera full views are mutually exclusive.
   const enterCameraFullView = useCallback(
@@ -851,6 +872,7 @@ function CanvasInner(): ReactElement {
           <AppChrome onAdd={addCentered} onTidy={tidyAndFit} />
           <DigestPanel
             digest={digest}
+            prose={prose}
             open={digestOpen}
             onOpen={() => setDigestOpen(true)}
             onClose={() => setDigestOpen(false)}
