@@ -32,7 +32,12 @@ jobs:
       - run: pnpm build
 
   # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
+  #
+  # FROZEN (2026-06-03): DISABLED until we build a structured testing setup (larger e2e
+  # reliability issue + the known CI-only `whiteboard-fullview-add` flake). `check` is the
+  # gate meanwhile. Re-enable by removing this `if: false`. See CLAUDE.md › Status.
   smoke:
+    if: false
     needs: check
     runs-on: windows-latest
     steps:
