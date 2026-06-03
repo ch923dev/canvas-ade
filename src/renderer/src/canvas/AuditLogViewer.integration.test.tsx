@@ -84,9 +84,7 @@ describe('AuditLogViewer (integration)', () => {
     ])
     const { container } = render(<AuditLogViewer />)
     fireEvent.click(screen.getByText('Audit'))
-    await waitFor(() =>
-      expect(container.querySelectorAll('[data-audit-seq]')).toHaveLength(3)
-    )
+    await waitFor(() => expect(container.querySelectorAll('[data-audit-seq]')).toHaveLength(3))
     const seqs = Array.from(container.querySelectorAll('[data-audit-seq]')).map((el) =>
       el.getAttribute('data-audit-seq')
     )
