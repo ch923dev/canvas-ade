@@ -153,3 +153,28 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
     }
   }
 }
+
+/** The "typed NoProvider" travels over IPC as a discriminated union (Errors don't serialize). */
+export type SummarizeResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: 'no-provider' }
+  | { ok: false; reason: 'provider-error'; message: string }
+
+/**
+ * Orchestrate one summarize: pick a provider (null → no-provider), call it, and map any
+ * failure to a typed result. NEVER throws — callers fall back to Tier 1; the app never
+ * blocks on the brain.
+ */
+export async function runSummarize(
+  config: LlmConfig,
+  input: SummarizeInput,
+  deps: ProviderDeps
+): Promise<SummarizeResult> {
+  const provider = getProvider(config, deps)
+  if (!provider) return { ok: false, reason: 'no-provider' }
+  try {
+    return { ok: true, text: await provider.summarize(input) }
+  } catch (err) {
+    return { ok: false, reason: 'provider-error', message: (err as Error).message }
+  }
+}

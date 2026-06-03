@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRequest, parseResponse, getProvider, isMockEnabled, keyForProvider, type SummarizeInput, type ProviderDeps } from './llmService'
+import { buildRequest, parseResponse, getProvider, isMockEnabled, keyForProvider, runSummarize, type SummarizeInput, type SummarizeResult, type ProviderDeps, type FetchLike } from './llmService'
 
 const input: SummarizeInput = { system: 'be terse', text: 'hello world' }
 
@@ -125,5 +125,62 @@ describe('getProvider', () => {
     )
     expect(p).not.toBeNull()
     await expect(p!.summarize({ text: 'ping' })).resolves.toBe('[mock] ping')
+  })
+})
+
+const okFetch =
+  (payload: unknown): FetchLike =>
+  () =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(payload),
+      text: () => Promise.resolve('')
+    })
+
+const errFetch: FetchLike = () =>
+  Promise.resolve({
+    ok: false,
+    status: 500,
+    json: () => Promise.resolve({}),
+    text: () => Promise.resolve('boom')
+  })
+
+describe('runSummarize', () => {
+  it('returns ok + text on a successful call', async () => {
+    const r = await runSummarize(
+      { provider: 'openrouter', model: 'm' },
+      { text: 'hi' },
+      { fetch: okFetch({ choices: [{ message: { content: 'done' } }] }), env: { OPENROUTER_API_KEY: 'k' } }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: true, text: 'done' })
+  })
+
+  it('returns no-provider when there is no key', async () => {
+    const r = await runSummarize(
+      { provider: 'openrouter', model: 'm' },
+      { text: 'hi' },
+      { fetch: errFetch, env: {} }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: false, reason: 'no-provider' })
+  })
+
+  it('returns provider-error when the call fails', async () => {
+    const r = await runSummarize(
+      { provider: 'openrouter', model: 'm' },
+      { text: 'hi' },
+      { fetch: errFetch, env: { OPENROUTER_API_KEY: 'k' } }
+    )
+    expect(r.ok).toBe(false)
+    expect(r).toMatchObject({ reason: 'provider-error' })
+  })
+
+  it('returns the mock stub under e2e with no network', async () => {
+    const r = await runSummarize(
+      { provider: 'openrouter', model: 'm' },
+      { text: 'ping' },
+      { fetch: errFetch, env: { CANVAS_SMOKE: 'e2e' } }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: true, text: '[mock] ping' })
   })
 })
