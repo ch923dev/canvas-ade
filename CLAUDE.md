@@ -165,9 +165,14 @@ file = open findings).
 **Current state (2026-06-02):** **Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
 Phase 4 design pass = `abd7fa2` (PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified
 bugs) · `94baab9` (4 open-medium) · `1a0c615` (7 round-2 review findings + a doc/repo cleanup). Latest
-baseline: **482 unit** green, lint + typecheck clean; e2e **25/25** (clean runs; the
-`browser`/`browser-gesture`/`focus-detach` trio is a known live-`WebContentsView` env flake on a
-contended host, memory `e2e-browser-trio-flake` — rerun for clean, not a regression).
+baseline: **506 unit** green, lint + typecheck + format clean; the `CANVAS_SMOKE=e2e` harness is
+restructured into **6 per-group fixtures** (terminal · browser · crossBoard · planning · menu ·
+layout) on `feat/e2e-hardening` — each group seeds a typed fixture, runs its probes, and tears down
+to an empty canvas (a board-count invariant guard runs between probes), replacing the old flat
+load-bearing playlist + shared `ids` bag. The `browser`/`browser-gesture`/`focus-detach` capturePage
+trio is now **flaky-soft-failed** (reported with `flaky:true`, exit 0 — no rerun needed to green CI);
+the prior edge/`fullview-close` load-flake is fixed by condition-based polling (`waitForEdge` re-fits
+to defeat React Flow's node-measurement race). Spec: `docs/superpowers/specs/2026-06-03-e2e-restructure-design.md`.
 
 **In flight (`fix/fullview-preview-reset`):** full-view no longer **restarts** Browser boards. Both
 the full-viewed board (motion sub-branch) and every OTHER board now **detach** (snapshot + keep the
