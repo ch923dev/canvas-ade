@@ -36,7 +36,7 @@ import {
   fullviewClose
 } from './probes/fullview'
 import { planning } from './probes/planning'
-import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
+import { menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
 import {
@@ -66,7 +66,6 @@ const PLAYLIST: E2EProbe[] = [
   browserDeadUrl,
   previewEdgeStale,
   duplicateKeepsLink,
-  boardMenu,
   menuChrome,
   menuPreviewDetach,
   previewConnectGesture,

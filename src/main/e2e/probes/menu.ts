@@ -7,61 +7,6 @@
  */
 import type { E2EProbe } from '../types'
 
-// ── Bugs 8/9 + 11/12 (board ⋯ menu): drive the REAL menu through the DOM. Open the
-// planning board's menu, Duplicate (count +1) then Delete the clone (count back). ──
-export const boardMenu: E2EProbe = {
-  name: 'board-menu',
-  async run(ctx) {
-    const planId = ctx.ids.planId!
-    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
-    await ctx.evalIn('window.__canvasE2E.setZoom(1)')
-    await ctx.delay(150)
-    const menuProbe = await ctx.evalIn<{
-      portaled: boolean
-      base: number
-      afterDup: number
-      afterDel: number
-    }>(
-      `(async () => {
-         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-         const sel = (s, root) => (root || document).querySelector(s);
-         const base = window.__canvasE2E.getBoards().length;
-         const node = sel('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(planId)}) + ']');
-         const more = node && sel('button[title="More"]', node);
-         if (!more) return { portaled: false, base, afterDup: -1, afterDel: -1 };
-         more.click(); await sleep(80);
-         const menu = sel('.board-menu');
-         const portaled = !!menu && menu.parentElement === document.body && !sel('.bb-frame .board-menu');
-         const dup = menu && [...menu.querySelectorAll('.board-menu-item')].find((b) => b.textContent.trim() === 'Duplicate');
-         if (dup) { dup.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); dup.click(); }
-         await sleep(150);
-         const afterDup = window.__canvasE2E.getBoards().length;
-         const dupId = window.__canvasE2E.getBoards().slice(-1)[0] && window.__canvasE2E.getBoards().slice(-1)[0].id;
-         const dupNode = dupId && sel('.react-flow__node[data-id=' + JSON.stringify(dupId) + ']');
-         const more2 = dupNode && sel('button[title="More"]', dupNode);
-         if (more2) {
-           more2.click(); await sleep(80);
-           const menu2 = sel('.board-menu');
-           const del = menu2 && [...menu2.querySelectorAll('.board-menu-item')].find((b) => b.textContent.trim() === 'Delete');
-           if (del) { del.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); del.click(); }
-         }
-         await sleep(150);
-         const afterDel = window.__canvasE2E.getBoards().length;
-         return { portaled, base, afterDup, afterDel };
-       })()`
-    )
-    const menuOk =
-      menuProbe.portaled &&
-      menuProbe.afterDup === menuProbe.base + 1 &&
-      menuProbe.afterDel === menuProbe.base
-    return {
-      name: 'board-menu',
-      ok: menuOk,
-      detail: menuOk ? 'portaled to body + Duplicate/Delete fire' : JSON.stringify(menuProbe)
-    }
-  }
-}
-
 // ── Bugs 13/14 (board ⋯ menu chrome). Narrow the terminal so its title-bar action
 // cluster would overflow the frame, then assert the ⋯ trigger stays WITHIN the title
 // bar's right edge (13). Then pan the trigger PAST the window's right edge and open the
@@ -74,13 +19,15 @@ export const menuChrome: E2EProbe = {
     await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(termId)})`)
     await ctx.evalIn('window.__canvasE2E.setZoom(1)')
     await ctx.delay(150)
+    // SLIVER (T3): only the REAL-LAYOUT assertions remain. The item list and the ⋯
+    // stroke-width migrated to BoardMenu.integration.test.tsx; what's left needs a real
+    // instance — title-bar containment + viewport clamp (jsdom rects are 0) and the rest
+    // colour (a CSS-var computed style jsdom does not resolve).
     const chrome = await ctx.evalIn<{
       found: boolean
       triggerInBar: boolean
       restColor: string
-      strokeWidth: string
       inViewport: boolean
-      items: string[]
     }>(
       `(async () => {
          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -88,13 +35,12 @@ export const menuChrome: E2EProbe = {
          const node = sel('.react-flow__node[data-id=' + JSON.stringify(${JSON.stringify(termId)}) + ']');
          const bar = node && sel('.board-titlebar', node);
          const more = node && sel('button[title="More"]', node);
-         if (!bar || !more) return { found: false, triggerInBar: false, restColor: '', strokeWidth: '', inViewport: false, items: [] };
+         if (!bar || !more) return { found: false, triggerInBar: false, restColor: '', inViewport: false };
          const b = bar.getBoundingClientRect();
          const t = more.getBoundingClientRect();
          const triggerInBar = t.width > 0 && t.left >= b.left - 0.5 && t.right <= b.right + 0.5;
          const svg = more.querySelector('svg');
          const restColor = svg ? getComputedStyle(svg).color : '';
-         const strokeWidth = svg ? (svg.getAttribute('stroke-width') || '') : '';
          const overshoot = (window.innerWidth - t.right) + 40;
          window.__canvasE2E.panBy(overshoot, 0);
          await sleep(80);
@@ -102,27 +48,19 @@ export const menuChrome: E2EProbe = {
          more2.click(); await sleep(80);
          const menu = sel('.board-menu');
          const m = menu && menu.getBoundingClientRect();
-         const items = menu ? [...menu.querySelectorAll('.board-menu-item')].map((x) => x.textContent.trim()) : [];
          const inViewport = !!m && m.left >= 0 && m.top >= 0 && m.right <= window.innerWidth && m.bottom <= window.innerHeight;
          more2.click(); await sleep(40);            // close the menu
          window.__canvasE2E.panBy(-overshoot, 0);   // restore the camera
-         return { found: true, triggerInBar, restColor, strokeWidth, inViewport, items };
+         return { found: true, triggerInBar, restColor, inViewport };
        })()`
     )
-    const wantItems = ['Full view', 'Duplicate', 'Delete']
-    const restVisible =
-      chrome.restColor === 'rgb(155, 155, 161)' && parseFloat(chrome.strokeWidth) >= 2
-    const chromeOk =
-      chrome.found &&
-      chrome.triggerInBar &&
-      chrome.inViewport &&
-      restVisible &&
-      wantItems.every((l) => chrome.items.includes(l))
+    const restVisible = chrome.restColor === 'rgb(155, 155, 161)'
+    const chromeOk = chrome.found && chrome.triggerInBar && chrome.inViewport && restVisible
     return {
       name: 'menu-chrome',
       ok: chromeOk,
       detail: chromeOk
-        ? '⋯ within bar (13) + on-screen near edge (14) + visible at rest (text-2, sw≥2)'
+        ? '⋯ within bar (13) + on-screen near edge (14) + visible at rest (text-2)'
         : JSON.stringify(chrome)
     }
   }
