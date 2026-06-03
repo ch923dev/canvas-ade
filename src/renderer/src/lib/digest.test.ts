@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDigest } from './digest'
+import { buildDigest, stripHeading } from './digest'
 import type {
   CanvasDoc,
   TerminalBoard,
@@ -148,5 +148,39 @@ describe('buildDigest — planning', () => {
     const d = buildDigest(doc([planning({ id: 'p1', elements: [] })]))
     expect(d.boards[0].lines).toEqual(['Empty board'])
     expect(d.boards[0].status).toBe('notes')
+  })
+})
+
+describe('stripHeading', () => {
+  it('strips a leading "# title" line and the blank line after it', () => {
+    expect(stripHeading('# Dev server\n\nRuns the Vite dev server on port 5173.\n')).toBe(
+      'Runs the Vite dev server on port 5173.'
+    )
+  })
+
+  it('keeps multi-paragraph prose intact below the heading', () => {
+    expect(stripHeading('# Plan\n\nFirst line.\n\nSecond line.\n')).toBe(
+      'First line.\n\nSecond line.'
+    )
+  })
+
+  it('returns trimmed input unchanged when there is no heading', () => {
+    expect(stripHeading('Just prose, no heading.\n')).toBe('Just prose, no heading.')
+  })
+
+  it('returns empty string when the file is only a heading', () => {
+    expect(stripHeading('# Title only\n')).toBe('')
+  })
+
+  it('does not treat a non-heading hash (no trailing space) as a heading', () => {
+    expect(stripHeading('#notaheading\nbody')).toBe('#notaheading\nbody')
+  })
+
+  it('handles CRLF line endings', () => {
+    expect(stripHeading('# Title\r\n\r\nBody line.\r\n')).toBe('Body line.')
+  })
+
+  it('drains multiple blank lines after a heading-only file', () => {
+    expect(stripHeading('# Title only\n\n')).toBe('')
   })
 })

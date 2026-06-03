@@ -97,3 +97,17 @@ function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
 export function buildDigest(d: CanvasDoc): CanvasDigest {
   return { header: buildHeader(d.boards), boards: d.boards.map((b) => digestBoard(b, d)) }
 }
+
+/**
+ * T-M4: strip a leading Markdown `# heading` line (+ the blank lines after it) from cached
+ * Tier-2 prose so the panel renders only the body — the card already shows the title. Pure:
+ * a non-heading body (no leading `# `) is returned trimmed, unchanged.
+ */
+export function stripHeading(md: string): string {
+  const lines = md.split(/\r?\n/)
+  if (lines[0]?.startsWith('# ')) {
+    lines.shift()
+    while (lines.length > 0 && lines[0].trim() === '') lines.shift()
+  }
+  return lines.join('\n').trim()
+}
