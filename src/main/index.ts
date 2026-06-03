@@ -4,6 +4,7 @@ import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerPtyHandlers, disposeAllPtys, listPtySessions, readPtyOutput } from './pty'
 import { readBoardResult } from './boardResults'
+import { readProjectMemory, readBoardSummary } from './boardMemory'
 import {
   registerPreviewHandlers,
   disposeAll as disposeAllPreviews,
@@ -168,7 +169,9 @@ app.whenReady().then(async () => {
     listBoards: listBoardMirror,
     listSessions: listPtySessions,
     readOutput: readPtyOutput,
-    readResult: readBoardResult
+    readResult: readBoardResult,
+    readMemory: readProjectMemory,
+    readSummary: readBoardSummary
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))

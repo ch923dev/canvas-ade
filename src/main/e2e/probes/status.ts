@@ -21,7 +21,11 @@ export const boardStatusPill: E2EProbe = {
     await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
     await ctx.evalIn('window.__canvasE2E.setZoom(1)')
     await ctx.delay(220)
-    const r = await ctx.evalIn<{ domColor: string | null; bucket: string | null; expected: string | null }>(
+    const r = await ctx.evalIn<{
+      domColor: string | null
+      bucket: string | null
+      expected: string | null
+    }>(
       `(async () => {
          const sel = (s, root) => (root || document).querySelector(s);
          const E = window.__canvasE2E;
@@ -38,9 +42,7 @@ export const boardStatusPill: E2EProbe = {
     return {
       name: 'board-status-pill',
       ok,
-      detail: ok
-        ? `browser pill matches bucket (${r.bucket} → ${r.domColor})`
-        : JSON.stringify(r)
+      detail: ok ? `browser pill matches bucket (${r.bucket} → ${r.domColor})` : JSON.stringify(r)
     }
   }
 }

@@ -1,8 +1,12 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import type { RunningMcp } from './mcp'
 import { sendMcpCommand } from './mcpCommand'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { debugSeedOutput } from './pty'
 import { recordBoardResult } from './boardResults'
+import { __setMemoryDirForTest } from './boardMemory'
 
 /** One capped page of board output as the resource serializes it (T1.4). */
 interface OutputPage {
@@ -20,6 +24,12 @@ interface ResultShell {
   summary?: string
   refs?: string[]
   at?: string
+}
+
+/** A memory doc as the resource serializes it (T1.7). */
+interface MemoryShell {
+  present: boolean
+  text: string
 }
 
 /** stdout marker (EPIPE-safe like index.ts's smokeLog). */
@@ -81,6 +91,10 @@ interface SmokeClient {
    * transport errors.
    */
   readBoardResult(id: string): Promise<ResultShell | null>
+  /** Read canvas://memory (project index). Null when not registered (older pkg) → SKIP. */
+  readMemory(): Promise<MemoryShell | null>
+  /** Read canvas://board/{id}/summary. Null when not registered → SKIP. */
+  readSummaryDoc(id: string): Promise<MemoryShell | null>
   close(): Promise<void>
 }
 
@@ -234,6 +248,32 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
           .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
           .join('')
         return JSON.parse(text) as ResultShell
+      } catch (e: unknown) {
+        const code = (e as { code?: number })?.code
+        if (code === -32602 || /resource .*not found/i.test(String(e))) return null
+        throw e
+      }
+    },
+    readMemory: async (): Promise<MemoryShell | null> => {
+      try {
+        const res = await client.readResource({ uri: 'canvas://memory' })
+        const text = res.contents
+          .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+          .join('')
+        return JSON.parse(text) as MemoryShell
+      } catch (e: unknown) {
+        const code = (e as { code?: number })?.code
+        if (code === -32602 || /resource .*not found/i.test(String(e))) return null
+        throw e
+      }
+    },
+    readSummaryDoc: async (id: string): Promise<MemoryShell | null> => {
+      try {
+        const res = await client.readResource({ uri: `canvas://board/${id}/summary` })
+        const text = res.contents
+          .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+          .join('')
+        return JSON.parse(text) as MemoryShell
       } catch (e: unknown) {
         const code = (e as { code?: number })?.code
         if (code === -32602 || /resource .*not found/i.test(String(e))) return null
@@ -489,6 +529,48 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
         if (emptyOk && filledOk) log('MCP_RESULT_OK')
         else {
           log(`MCP_FAIL result empty=${emptyOk} filled=${JSON.stringify(filled)}`)
+          code = 1
+        }
+      }
+    }
+
+    // ── memory (T1.7 🔒): canvas://memory + canvas://board/{id}/summary expose the
+    // sibling Brain/Memory engine's .canvas/memory/ READ-ONLY (passive context). The
+    // engine ships on a separate track, so the realistic state is ABSENT → the resource
+    // must GRACEFULLY EMPTY ({present:false}), never error. Then, with a fixture written
+    // under the MAIN dir seam, it serves the doc. Self-activating: SKIP without the pkg
+    // resource. ──
+    {
+      const root = mkdtempSync(join(tmpdir(), 'canvas-mem-smoke-'))
+      __setMemoryDirForTest(root) // empty dir → no .canvas/memory yet
+      const emptyMem = await orch.readMemory()
+      if (emptyMem === null) {
+        __setMemoryDirForTest(null)
+        rmSync(root, { recursive: true, force: true })
+        log('MCP_MEMORY_SKIP pkg<0.3.2-unpublished')
+      } else {
+        const gracefulOk = emptyMem.present === false
+        const memDir = join(root, '.canvas', 'memory')
+        mkdirSync(memDir, { recursive: true })
+        writeFileSync(join(memDir, 'MEMORY.md'), '# smoke memory', 'utf8')
+        writeFileSync(join(memDir, 'board-memprobe.md'), 'memprobe summary', 'utf8')
+        const served = await orch.readMemory()
+        const sum = await orch.readSummaryDoc('memprobe')
+        // 🔒 a traversal id must NOT escape the memory dir even with a fixture present.
+        const traversal = await orch.readSummaryDoc('..%2f..%2fMEMORY')
+        __setMemoryDirForTest(null)
+        rmSync(root, { recursive: true, force: true })
+        const servedOk =
+          served?.present === true &&
+          served.text.includes('smoke memory') &&
+          sum?.present === true &&
+          sum.text.includes('memprobe summary')
+        const guardOk = traversal?.present === false
+        if (gracefulOk && servedOk && guardOk) log('MCP_MEMORY_OK')
+        else {
+          log(
+            `MCP_FAIL memory graceful=${gracefulOk} served=${JSON.stringify(served)} sum=${JSON.stringify(sum)} guard=${guardOk}`
+          )
           code = 1
         }
       }

@@ -1,21 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import type { BoardOutput, BoardResult } from '@ch923dev/canvas-ade-mcp'
+import type { BoardOutput, BoardResult, MemoryDoc } from '@ch923dev/canvas-ade-mcp'
 import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
 const EMPTY_RESULT: BoardResult = { present: false }
+const EMPTY_MEMORY: MemoryDoc = { present: false, text: '' }
 
 function reg(
   boards: Array<{ id: string; type: string; title: string; status?: string }>,
   sessions: Array<{ id: string; status: string }> = [],
   outputs: Record<string, BoardOutput> = {},
-  resultsById: Record<string, BoardResult> = {}
+  resultsById: Record<string, BoardResult> = {},
+  memory: { project?: MemoryDoc; summaries?: Record<string, MemoryDoc> } = {}
 ): BoardRegistry {
   return {
     listBoards: () => boards,
     listSessions: () => sessions,
     readOutput: (id) => outputs[id] ?? EMPTY_OUTPUT,
-    readResult: (id) => resultsById[id] ?? EMPTY_RESULT
+    readResult: (id) => resultsById[id] ?? EMPTY_RESULT,
+    readMemory: () => memory.project ?? EMPTY_MEMORY,
+    readSummary: (id) => memory.summaries?.[id] ?? EMPTY_MEMORY
   }
 }
 
@@ -93,7 +97,9 @@ describe('buildOrchestrator', () => {
         seenCursor = opts?.cursor
         return page
       },
-      readResult: () => EMPTY_RESULT
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY
     })
     expect(await orch.boardOutput('t1', { cursor: 12345 })).toEqual(page)
     expect(seenCursor).toBe(12345)
@@ -113,6 +119,15 @@ describe('buildOrchestrator', () => {
   it('boardResult on a board with no result reads the empty shell', async () => {
     const orch = buildOrchestrator(reg([]))
     expect(await orch.boardResult('ghost')).toEqual(EMPTY_RESULT)
+  })
+
+  it('projectMemory + boardSummary delegate to the registry (T1.7)', async () => {
+    const project: MemoryDoc = { present: true, text: '# memory' }
+    const sum: MemoryDoc = { present: true, text: 'board t1' }
+    const orch = buildOrchestrator(reg([], [], {}, {}, { project, summaries: { t1: sum } }))
+    expect(await orch.projectMemory()).toEqual(project)
+    expect(await orch.boardSummary('t1')).toEqual(sum)
+    expect(await orch.boardSummary('ghost')).toEqual(EMPTY_MEMORY)
   })
 
   it('spawnBoard / dispatchPrompt / gitDiff are phase-gated', async () => {

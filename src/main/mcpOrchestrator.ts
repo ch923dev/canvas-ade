@@ -3,6 +3,7 @@ import type {
   BoardOutput,
   BoardResult,
   BoardSummary,
+  MemoryDoc,
   Orchestrator
 } from '@ch923dev/canvas-ade-mcp'
 
@@ -20,6 +21,16 @@ export interface BoardRegistry {
    * `readBoardResult`; a board with no recorded result reads the empty shell.
    */
   readResult(id: string): BoardResult
+  /**
+   * Read the project memory index (T1.7 🔒). MAIN injects `boardMemory.ts`'s
+   * `readProjectMemory`; empty shell when the memory engine is absent.
+   */
+  readMemory(): MemoryDoc
+  /**
+   * Read a board's memory summary (T1.7 🔒). MAIN injects `readBoardSummary` (which
+   * path-guards the agent-supplied id); empty shell when absent/invalid.
+   */
+  readSummary(id: string): MemoryDoc
 }
 
 /**
@@ -71,6 +82,14 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
     async boardResult(boardId: BoardId): Promise<BoardResult> {
       // Read-only structured last result (T1.5). No result recorded → empty shell.
       return registry.readResult(boardId)
+    },
+    async projectMemory(): Promise<MemoryDoc> {
+      // 🔒 read-only passive context (T1.7). Absent memory engine → empty shell.
+      return registry.readMemory()
+    },
+    async boardSummary(boardId: BoardId): Promise<MemoryDoc> {
+      // 🔒 read-only passive context (T1.7). Path-guarded id; absent → empty shell.
+      return registry.readSummary(boardId)
     },
     async spawnBoard(): Promise<{ id: BoardId }> {
       throw new Error('spawnBoard not available until Phase 3')
