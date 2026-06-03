@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { boardStatusBucket, buildBoardSnapshot } from './boardStatus'
+import { boardStatusBucket, bucketToPill, buildBoardSnapshot } from './boardStatus'
 
 describe('boardStatusBucket', () => {
   it('a running terminal is running, an idle/unstarted terminal is idle', () => {
@@ -14,6 +14,34 @@ describe('boardStatusBucket', () => {
     expect(boardStatusBucket('browser', { preview: 'connected' })).toBe('idle')
     expect(boardStatusBucket('browser', { preview: 'idle' })).toBe('idle')
     expect(boardStatusBucket('browser', {})).toBe('idle')
+  })
+
+  it('the pill mapping is derived from the same bucket the MCP sees (T1.6)', () => {
+    // running pulses (--ok); idle is neutral; attention buckets warn/err; static = no pill.
+    expect(bucketToPill('running')).toEqual({ dot: 'var(--ok)', label: 'running' })
+    expect(bucketToPill('idle')).toEqual({ dot: 'var(--text-3)', label: 'idle' })
+    expect(bucketToPill('awaiting-review')).toEqual({
+      dot: 'var(--warn)',
+      label: 'awaiting review'
+    })
+    expect(bucketToPill('blocked')).toEqual({ dot: 'var(--warn)', label: 'blocked' })
+    expect(bucketToPill('failed')).toEqual({ dot: 'var(--err)', label: 'failed' })
+    expect(bucketToPill('static')).toBeNull()
+  })
+
+  it('the live browser pill agrees with the browser bucket end-to-end', () => {
+    // The exact divergence T1.6 closes: a loaded browser reads idle (not a green
+    // "connected"), a loading one running, a failed one failed — same as canvas://boards.
+    expect(bucketToPill(boardStatusBucket('browser', { preview: 'connected' }))).toEqual({
+      dot: 'var(--text-3)',
+      label: 'idle'
+    })
+    expect(bucketToPill(boardStatusBucket('browser', { preview: 'connecting' }))?.dot).toBe(
+      'var(--ok)'
+    )
+    expect(bucketToPill(boardStatusBucket('browser', { preview: 'load-failed' }))?.dot).toBe(
+      'var(--err)'
+    )
   })
 
   it('a planning board is static; an unknown/forward type is static', () => {

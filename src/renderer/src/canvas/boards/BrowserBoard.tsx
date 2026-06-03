@@ -27,6 +27,7 @@ import { BoardFrame } from '../BoardFrame'
 import { Icon } from '../Icon'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
+import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
@@ -158,7 +159,9 @@ export function BrowserBoard({
   // URLBAR_H px). Re-base the frame's top into .bb-stage's coordinate space.
   const frameTopInStage = frame.y - TITLEBAR_H - URLBAR_H
 
-  const status = statusPill(runtime.status)
+  // T1.6: the title-bar pill is derived from the SAME bucket the MCP sees
+  // (canvas://boards), so the on-canvas dot and the agent's view never disagree.
+  const status = bucketToPill(boardStatusBucket('browser', { preview: runtime.status }))
 
   return (
     <BoardFrame
@@ -325,23 +328,6 @@ function DeviceContent({
       <div className="bb-state-sub">{url}</div>
     </div>
   )
-}
-
-/** Status pill for the title bar (DESIGN.md §7.2: live --ok "connected" dot). */
-function statusPill(status: ReturnType<ReturnType<typeof selectRuntime>>['status']): {
-  dot: string
-  label: string
-} {
-  switch (status) {
-    case 'connected':
-      return { dot: 'var(--ok)', label: 'connected' }
-    case 'load-failed':
-      return { dot: 'var(--err)', label: 'failed' }
-    case 'connecting':
-      return { dot: 'var(--warn)', label: 'connecting' }
-    default:
-      return { dot: 'var(--text-3)', label: 'idle' }
-  }
 }
 
 /** Connection dot colour for the URL field. */

@@ -12,6 +12,7 @@ import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
+import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
 import { fromObject, type Board, type BoardType } from '../lib/boardSchema'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
@@ -43,6 +44,14 @@ export interface CanvasE2E {
   tidy: (mode?: TidyMode, aspect?: number) => void
   /** Tile: resize + move every board to fill zones of `area` with `template`. */
   tile: (template: TileTemplate, area: { x: number; y: number; w: number; h: number }) => void
+  /**
+   * T1.6 — the LIVE coarse status bucket for a board (the SAME value `buildBoardSnapshot`
+   * pushes to MCP `canvas://boards`), or null if the board is gone. Lets the board-chrome
+   * probe assert the on-canvas pill agrees with the agent-facing bucket.
+   */
+  boardBucket: (id: string) => string | null
+  /** T1.6 — the pill dot colour token for a bucket (the `bucketToPill` dot, or null). */
+  bucketPillDot: (bucket: string) => string | null
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
   /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
@@ -163,6 +172,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     tile(template, area) {
       useCanvasStore.getState().tileBoards(template, area)
+    },
+    boardBucket(id) {
+      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      if (!board) return null
+      return boardStatusBucket(board.type, {
+        terminalRunning: useTerminalRuntimeStore.getState().running[id],
+        preview: usePreviewStore.getState().byId[id]?.status
+      })
+    },
+    bucketPillDot(bucket) {
+      // Cast: the harness passes a string; bucketToPill only reads known keys (others → null).
+      return bucketToPill(bucket as Parameters<typeof bucketToPill>[0])?.dot ?? null
     },
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })

@@ -13,6 +13,7 @@
  * M8 (permission detection), when MAIN gains the signals to detect them.
  */
 import type { PreviewStatus } from './previewStore'
+import type { BoardStatus } from '../canvas/BoardFrame'
 
 /** The coarse status buckets an agent (and the canvas chrome) sees per board. */
 export type BoardStatusBucket =
@@ -55,6 +56,28 @@ export function boardStatusBucket(type: string, signals: BoardStatusSignals): Bo
     default:
       return 'static'
   }
+}
+
+/**
+ * Map a coarse bucket to the on-canvas status pill (T1.6 — colour-token dot + a short
+ * mono label). The SAME `boardStatusBucket` value drives both this pill AND the MCP
+ * `canvas://boards` / `board-states` resources, so the human-visible dot and the
+ * agent's view can never disagree (the one-source-of-truth rule). `static` boards
+ * (planning / forward types) have no liveness → no pill. `running` uses `--ok` so the
+ * BoardFrame pulse lights; attention buckets use `--warn`/`--err`.
+ */
+const BUCKET_PILL: Record<BoardStatusBucket, BoardStatus | null> = {
+  running: { dot: 'var(--ok)', label: 'running' },
+  idle: { dot: 'var(--text-3)', label: 'idle' },
+  'awaiting-review': { dot: 'var(--warn)', label: 'awaiting review' },
+  blocked: { dot: 'var(--warn)', label: 'blocked' },
+  failed: { dot: 'var(--err)', label: 'failed' },
+  static: null
+}
+
+/** The on-canvas status pill for a bucket (null = no pill, e.g. static boards). */
+export function bucketToPill(bucket: BoardStatusBucket): BoardStatus | null {
+  return BUCKET_PILL[bucket]
 }
 
 /** Per-board runtime the snapshot builder reads (the slices the mirror needs). */

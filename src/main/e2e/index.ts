@@ -51,6 +51,7 @@ import {
   whiteboardPasteImage,
   whiteboardExport // W5: SVG/PNG export pipeline
 } from './probes/whiteboard'
+import { boardStatusPill } from './probes/status'
 import { seed } from './probes/seed'
 
 // EXACT current execution order — interleaves themes by design (a probe's theme file is
@@ -75,6 +76,7 @@ const PLAYLIST: E2EProbe[] = [
   duplicateKeepsLink,
   boardMenu,
   menuChrome,
+  boardStatusPill, // T1.6: on-canvas pill dot matches the agent-facing bucket
   menuPreviewDetach,
   previewConnectGesture,
   tidy,
