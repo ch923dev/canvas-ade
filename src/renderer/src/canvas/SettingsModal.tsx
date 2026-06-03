@@ -1,0 +1,252 @@
+/**
+ * T-B2: the LLM Settings modal. Choose a provider, override its model, optionally enter an
+ * API key (masked, write-only into MAIN via llm.setKey — never read back). Portaled to <body>
+ * over a scrim, design-token styled (calm/dense, one accent). Provider/model persist via
+ * llm.setConfig; the key via llm.setKey; Clear key via llm.clearKey. No multi-key/profiles.
+ */
+import { useEffect, useId, useState, type CSSProperties, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
+import { DEFAULT_MODELS } from '../lib/llmModels'
+import { usePreviewStore } from '../store/previewStore'
+
+const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
+  { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'anthropic', label: 'Anthropic' },
+  { id: 'local', label: 'Local' }
+]
+
+export function SettingsModal({ onClose }: { onClose: () => void }): ReactElement {
+  const [provider, setProvider] = useState<keyof typeof DEFAULT_MODELS>('openrouter')
+  const [model, setModel] = useState<string>(DEFAULT_MODELS.openrouter)
+  const [baseUrl, setBaseUrl] = useState('')
+  const [key, setKey] = useState('')
+  const [hasKey, setHasKey] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const menuToken = useId()
+  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
+  useEffect(() => {
+    setMenuOpen(menuToken, true)
+    return () => setMenuOpen(menuToken, false)
+  }, [menuToken, setMenuOpen])
+
+  useEffect(() => {
+    void window.api.llm.status().then((s) => {
+      setProvider(s.provider)
+      setModel(s.model)
+      setHasKey(s.hasKey)
+      if (s.baseUrl) setBaseUrl(s.baseUrl)
+    })
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !busy) onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose, busy])
+
+  const onProvider = (p: keyof typeof DEFAULT_MODELS): void => {
+    setProvider(p)
+    setModel(DEFAULT_MODELS[p]) // prefill the cheap/fast default; still editable
+  }
+
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      await window.api.llm.setConfig({
+        provider,
+        model,
+        baseUrl: provider === 'local' && baseUrl ? baseUrl : undefined
+      })
+      if (key.trim()) {
+        const r = await window.api.llm.setKey({ provider, key: key.trim() })
+        if (!r.ok) {
+          setError(
+            r.reason === 'encryption-unavailable'
+              ? 'Key not saved: no system keyring available to encrypt it. Provider/model were saved.'
+              : 'Key could not be saved.'
+          )
+          return
+        }
+      }
+      onClose()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clear = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      await window.api.llm.clearKey({ provider })
+      setHasKey(false)
+      setKey('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return createPortal(
+    <div
+      style={styles.scrim}
+      onPointerDown={() => {
+        if (!busy) onClose()
+      }}
+      data-test="settings-scrim"
+    >
+      <div
+        style={styles.card}
+        role="dialog"
+        aria-label="LLM settings"
+        data-test="settings-modal"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <div style={styles.head}>Context brain · LLM</div>
+
+        <label style={styles.field}>
+          <span style={styles.label}>Provider</span>
+          <select
+            aria-label="Provider"
+            value={provider}
+            onChange={(e) => onProvider(e.target.value as keyof typeof DEFAULT_MODELS)}
+            style={styles.input}
+          >
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={styles.field}>
+          <span style={styles.label}>Model</span>
+          <input
+            aria-label="Model"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            style={styles.input}
+          />
+        </label>
+
+        {provider === 'local' && (
+          <label style={styles.field}>
+            <span style={styles.label}>Base URL</span>
+            <input
+              aria-label="Base URL"
+              value={baseUrl}
+              placeholder="http://127.0.0.1:1234/v1"
+              onChange={(e) => setBaseUrl(e.target.value)}
+              style={styles.input}
+            />
+          </label>
+        )}
+
+        <label style={styles.field}>
+          <span style={styles.label}>
+            API key {hasKey && <span style={{ color: 'var(--accent)' }}>· set</span>}
+          </span>
+          <input
+            aria-label="API key"
+            type="password"
+            value={key}
+            placeholder={hasKey ? '•••••••• (leave blank to keep)' : 'Paste your key'}
+            onChange={(e) => setKey(e.target.value)}
+            style={styles.input}
+          />
+        </label>
+
+        {error && (
+          <div role="alert" data-test="settings-error" style={styles.error}>
+            {error}
+          </div>
+        )}
+
+        <div style={styles.row}>
+          <button style={styles.ghost} disabled={busy} onClick={() => void clear()}>
+            Clear key
+          </button>
+          <div style={{ flex: 1 }} />
+          <button style={styles.ghost} disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button style={styles.primary} disabled={busy} onClick={() => void save()}>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+const styles: Record<string, CSSProperties> = {
+  scrim: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 300,
+    background: 'rgba(0,0,0,0.4)',
+    display: 'grid',
+    placeItems: 'center'
+  },
+  card: {
+    width: 380,
+    background: 'var(--surface-raised)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--r-ctl)',
+    boxShadow: 'var(--shadow-pop)',
+    padding: 16,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12
+  },
+  head: { fontSize: 13, fontWeight: 600, color: 'var(--text)' },
+  field: { display: 'flex', flexDirection: 'column', gap: 5 },
+  label: { fontSize: 11, color: 'var(--text-3)', fontWeight: 600 },
+  input: {
+    height: 30,
+    padding: '0 9px',
+    borderRadius: 6,
+    border: '1px solid var(--border-subtle)',
+    background: 'var(--inset)',
+    color: 'var(--text)',
+    fontSize: 12.5,
+    fontFamily: 'var(--ui)'
+  },
+  error: {
+    fontSize: 11.5,
+    lineHeight: '15px',
+    color: 'var(--warn)',
+    background: 'var(--inset)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 6,
+    padding: '7px 9px'
+  },
+  row: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 },
+  ghost: {
+    height: 30,
+    padding: '0 12px',
+    borderRadius: 6,
+    border: '1px solid var(--border-subtle)',
+    background: 'transparent',
+    color: 'var(--text-2)',
+    fontSize: 12.5,
+    cursor: 'pointer'
+  },
+  primary: {
+    height: 30,
+    padding: '0 14px',
+    borderRadius: 6,
+    border: 'none',
+    background: 'var(--accent)',
+    color: '#fff',
+    fontSize: 12.5,
+    fontWeight: 500,
+    cursor: 'pointer'
+  }
+}

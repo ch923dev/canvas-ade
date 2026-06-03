@@ -9,7 +9,8 @@
  */
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { LlmConfig, ProviderName } from './llmConfig'
-import { readLlmConfig, DEFAULT_MODELS } from './llmConfig'
+import { readLlmConfig, writeLlmConfig, DEFAULT_MODELS } from './llmConfig'
+import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
 
 export type { ProviderName }
 
@@ -105,6 +106,8 @@ export type FetchLike = (
 export interface ProviderDeps {
   fetch: FetchLike
   env: Record<string, string | undefined>
+  /** Store-first key source (T-B2). getKey-only so unit tests inject a tiny fake. */
+  keyStore?: Pick<KeyStore, 'getKey'>
 }
 
 export interface Provider {
@@ -118,12 +121,13 @@ const KEY_ENV: Record<ProviderName, string> = {
   local: 'LLM_LOCAL_API_KEY'
 }
 
-/** The configured API key for a provider, from its env var (T-B1; safeStorage = T-B2). */
+/** The configured API key for a provider: safeStorage store first, env var as dev fallback. */
 export function keyForProvider(
   provider: ProviderName,
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  store?: Pick<KeyStore, 'getKey'>
 ): string | undefined {
-  return env[KEY_ENV[provider]]
+  return store?.getKey(provider) ?? env[KEY_ENV[provider]]
 }
 
 /** Mock is on for e2e/CI so no real network call is ever made. */
@@ -139,7 +143,7 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
   if (isMockEnabled(deps.env)) {
     return { summarize: (input) => Promise.resolve(`[mock] ${input.text}`) }
   }
-  const key = keyForProvider(config.provider, deps.env)
+  const key = keyForProvider(config.provider, deps.env, deps.keyStore)
   if (config.provider !== 'local' && !key) return null
   const resolvedKey = key ?? ''
   return {
@@ -209,7 +213,14 @@ export interface LlmStatus {
   hasProvider: boolean
   provider: ProviderName
   model: string
+  /** Base URL for the `local` provider, echoed so Settings can round-trip it. Undefined otherwise. */
+  baseUrl?: string
+  /** True when the active provider has a stored key (presence only — never the key). */
+  hasKey: boolean
 }
+
+/** Result of a write-only LLM IPC call (setKey/clearKey/setConfig). Never carries key material. */
+export type LlmWriteResult = { ok: boolean; reason?: string }
 
 /** Default transport: Electron/Node global fetch, adapted to FetchLike. */
 export const defaultDeps = (): ProviderDeps => ({
@@ -217,13 +228,29 @@ export const defaultDeps = (): ProviderDeps => ({
   env: process.env as Record<string, string | undefined>
 })
 
+const NOOP_KEY_STORE: KeyStore = {
+  getKey: () => undefined,
+  setKey: () => {
+    // No encryptor was wired into registerLlmHandlers — keys cannot be persisted. This is a
+    // mis-wire (index.ts must pass the safeStorage Encryptor), not a real no-keyring host.
+    console.warn('[llmService] setKey called with no encryptor — key not persisted (mis-wire)')
+    return false
+  },
+  clearKey: () => {},
+  hasKey: () => false
+}
+
 export function registerLlmHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
   userDataDir: string,
-  injectedDeps?: ProviderDeps
+  injectedDeps?: ProviderDeps,
+  encryptor?: Encryptor
 ): void {
-  const deps = injectedDeps ?? defaultDeps()
+  const keyStore: KeyStore = encryptor ? createKeyStore(userDataDir, encryptor) : NOOP_KEY_STORE
+  // Resolution uses the SAME store the IPC writes to (store-first), so a key set via
+  // llm:setKey is immediately visible to llm:summarize.
+  const deps: ProviderDeps = { ...(injectedDeps ?? defaultDeps()), keyStore }
   const guard = (e: IpcMainInvokeEvent): boolean =>
     isForeignSender(e, () => getWin()?.webContents.mainFrame)
 
@@ -235,12 +262,41 @@ export function registerLlmHandlers(
 
   ipcMain.handle('llm:status', (e): LlmStatus => {
     if (guard(e))
-      return { hasProvider: false, provider: 'openrouter', model: DEFAULT_MODELS.openrouter }
+      return {
+        hasProvider: false,
+        provider: 'openrouter',
+        model: DEFAULT_MODELS.openrouter,
+        hasKey: false
+      }
     const config = readLlmConfig(userDataDir)
     return {
       hasProvider: getProvider(config, deps) !== null,
       provider: config.provider,
-      model: config.model
+      model: config.model,
+      baseUrl: config.baseUrl,
+      hasKey: keyStore.hasKey(config.provider)
     }
   })
+
+  ipcMain.handle('llm:setKey', (e, a: { provider: ProviderName; key: string }): LlmWriteResult => {
+    if (guard(e)) return { ok: false, reason: 'forbidden' }
+    return keyStore.setKey(a.provider, a.key)
+      ? { ok: true }
+      : { ok: false, reason: 'encryption-unavailable' }
+  })
+
+  ipcMain.handle('llm:clearKey', (e, a: { provider: ProviderName }): LlmWriteResult => {
+    if (guard(e)) return { ok: false, reason: 'forbidden' }
+    keyStore.clearKey(a.provider)
+    return { ok: true }
+  })
+
+  ipcMain.handle(
+    'llm:setConfig',
+    (e, a: { provider: ProviderName; model: string; baseUrl?: string }): LlmWriteResult => {
+      if (guard(e)) return { ok: false, reason: 'forbidden' }
+      writeLlmConfig(userDataDir, { provider: a.provider, model: a.model, baseUrl: a.baseUrl })
+      return { ok: true }
+    }
+  )
 }

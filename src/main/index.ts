@@ -1,6 +1,7 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, safeStorage } from 'electron'
 import { join } from 'path'
-import { writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { writeFileSync, mkdtempSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerPtyHandlers, disposeAllPtys } from './pty'
 import {
@@ -13,6 +14,7 @@ import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2e'
 import { registerProjectHandlers } from './projectIpc'
 import { registerLlmHandlers, runSummarize, defaultDeps } from './llmService'
+import type { Encryptor } from './llmKeyStore'
 import { readLlmConfig } from './llmConfig'
 
 let mainWindow: BrowserWindow | null = null
@@ -160,7 +162,20 @@ app.whenReady().then(async () => {
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
-  registerLlmHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
+  // T-B2: encrypt the API key with Electron safeStorage. Built here (index already imports
+  // electron) and injected so llmKeyStore stays Electron-free + unit-testable. Under
+  // CANVAS_SMOKE=e2e the key store lives in a throwaway temp dir (exported for the probe) so
+  // a test key never lands in the real userData; otherwise it lives in userData (NEVER a
+  // project folder).
+  const llmEncryptor: Encryptor = {
+    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (s) => safeStorage.encryptString(s),
+    decryptString: (b) => safeStorage.decryptString(b)
+  }
+  const llmDataDir =
+    SMOKE === 'e2e' ? mkdtempSync(join(tmpdir(), 'canvas-e2e-llm-')) : app.getPath('userData')
+  if (SMOKE === 'e2e') process.env.CANVAS_E2E_LLM_DIR = llmDataDir
+  registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this

@@ -14,6 +14,11 @@ import {
   type FetchLike,
   type LlmStatus
 } from './llmService'
+import type { KeyStore } from './llmKeyStore'
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import type { Encryptor } from './llmKeyStore'
 
 const input: SummarizeInput = { system: 'be terse', text: 'hello world' }
 
@@ -213,6 +218,41 @@ describe('runSummarize', () => {
   })
 })
 
+// A getKey-only fake store for resolution tests.
+const fakeStore = (keys: Partial<Record<string, string>>): Pick<KeyStore, 'getKey'> => ({
+  getKey: (p) => keys[p]
+})
+
+describe('keyForProvider precedence (store-first, env fallback)', () => {
+  it('prefers the key store over the env var', () => {
+    expect(
+      keyForProvider(
+        'openrouter',
+        { OPENROUTER_API_KEY: 'from-env' },
+        fakeStore({ openrouter: 'from-store' })
+      )
+    ).toBe('from-store')
+  })
+  it('falls back to the env var when the store has no key', () => {
+    expect(keyForProvider('openrouter', { OPENROUTER_API_KEY: 'from-env' }, fakeStore({}))).toBe(
+      'from-env'
+    )
+  })
+  it('returns undefined when neither store nor env has a key', () => {
+    expect(keyForProvider('openrouter', {}, fakeStore({}))).toBeUndefined()
+  })
+  it('works with no store (env only) — T-B1 behaviour preserved', () => {
+    expect(keyForProvider('openrouter', { OPENROUTER_API_KEY: 'k' })).toBe('k')
+  })
+  it('getProvider resolves a provider from the store alone (no env)', () => {
+    const p = getProvider(
+      { provider: 'openrouter', model: 'm' },
+      { fetch: errFetch, env: {}, keyStore: fakeStore({ openrouter: 'sk' }) }
+    )
+    expect(p).not.toBeNull()
+  })
+})
+
 describe('isForeignSender', () => {
   const frame = {} as never
   it('allows a synthetic call (no senderFrame)', () => {
@@ -308,5 +348,97 @@ describe('registerLlmHandlers', () => {
     )) as LlmStatus
     expect(s.hasProvider).toBe(false)
     expect(JSON.stringify(s)).not.toContain('secret-key')
+  })
+})
+
+const fakeEncryptor = (available = true): Encryptor => ({
+  isEncryptionAvailable: () => available,
+  encryptString: (p) => Buffer.from('ENC:' + p, 'utf8'),
+  decryptString: (e) => e.toString('utf8').replace(/^ENC:/, '')
+})
+
+function setupKeyed(encryptor: Encryptor) {
+  const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
+  const dir = mkdtempSync(join(tmpdir(), 'llm-ipc-'))
+  registerLlmHandlers(
+    {
+      handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h)
+    } as never,
+    () => null,
+    dir,
+    undefined,
+    encryptor
+  )
+  return {
+    dir,
+    call: (c: string, a?: unknown) => Promise.resolve(handlers.get(c)!({ senderFrame: null }, a)),
+    callForeign: (c: string, a?: unknown) =>
+      Promise.resolve(handlers.get(c)!({ senderFrame: {} }, a))
+  }
+}
+
+describe('registerLlmHandlers — key channels', () => {
+  it('setKey persists and status reports hasKey:true (key never returned)', async () => {
+    const f = setupKeyed(fakeEncryptor())
+    const set = (await f.call('llm:setKey', { provider: 'openrouter', key: 'sk-xyz' })) as {
+      ok: boolean
+    }
+    expect(set.ok).toBe(true)
+    const s = (await f.call('llm:status')) as LlmStatus
+    expect(s.hasKey).toBe(true)
+    expect(Object.values(s)).not.toContain('sk-xyz')
+  })
+
+  it('clearKey removes the key (hasKey:false after)', async () => {
+    const f = setupKeyed(fakeEncryptor())
+    await f.call('llm:setKey', { provider: 'openrouter', key: 'sk-xyz' })
+    const cleared = (await f.call('llm:clearKey', { provider: 'openrouter' })) as { ok: boolean }
+    expect(cleared.ok).toBe(true)
+    expect(((await f.call('llm:status')) as LlmStatus).hasKey).toBe(false)
+  })
+
+  it('setKey refuses cleanly when encryption is unavailable', async () => {
+    const f = setupKeyed(fakeEncryptor(false))
+    const set = (await f.call('llm:setKey', { provider: 'openrouter', key: 'x' })) as {
+      ok: boolean
+      reason?: string
+    }
+    expect(set).toEqual({ ok: false, reason: 'encryption-unavailable' })
+    expect(((await f.call('llm:status')) as LlmStatus).hasKey).toBe(false)
+  })
+
+  it('setConfig persists provider/model and status reflects it', async () => {
+    const f = setupKeyed(fakeEncryptor())
+    await f.call('llm:setConfig', { provider: 'anthropic', model: 'claude-3-5-haiku-latest' })
+    const s = (await f.call('llm:status')) as LlmStatus
+    expect(s.provider).toBe('anthropic')
+    expect(s.model).toBe('claude-3-5-haiku-latest')
+  })
+
+  it('status echoes the configured baseUrl for the local provider', async () => {
+    const f = setupKeyed(fakeEncryptor())
+    await f.call('llm:setConfig', {
+      provider: 'local',
+      model: 'local-model',
+      baseUrl: 'http://127.0.0.1:1234/v1'
+    })
+    const s = (await f.call('llm:status')) as LlmStatus
+    expect(s.baseUrl).toBe('http://127.0.0.1:1234/v1')
+  })
+
+  it('all new channels reject a foreign sender', async () => {
+    const f = setupKeyed(fakeEncryptor())
+    expect(await f.callForeign('llm:setKey', { provider: 'openrouter', key: 'x' })).toEqual({
+      ok: false,
+      reason: 'forbidden'
+    })
+    expect(await f.callForeign('llm:clearKey', { provider: 'openrouter' })).toEqual({
+      ok: false,
+      reason: 'forbidden'
+    })
+    expect(await f.callForeign('llm:setConfig', { provider: 'openai', model: 'm' })).toEqual({
+      ok: false,
+      reason: 'forbidden'
+    })
   })
 })

@@ -25,6 +25,7 @@ import { FIT_FRAME, OVERVIEW_FRAME, RESET_FRAME } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
+import { SettingsModal } from './SettingsModal'
 
 export interface AppChromeProps {
   /** Add a board of `type` centered in the current view (shared with EmptyState). */
@@ -35,11 +36,13 @@ export interface AppChromeProps {
 }
 
 export function AppChrome({ onAdd, onTidy }: AppChromeProps): ReactElement {
+  const [showSettings, setShowSettings] = useState(false)
   return (
     <>
       <ProjectSwitcher />
-      <CameraCluster onTidy={onTidy} />
+      <CameraCluster onTidy={onTidy} onSettings={() => setShowSettings(true)} />
       <Dock onAdd={onAdd} />
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </>
   )
 }
@@ -145,7 +148,13 @@ function ProjectSwitcher(): ReactElement {
 }
 
 // ── Top-right: camera cluster ───────────────────────────────────────────────
-function CameraCluster({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): ReactElement {
+function CameraCluster({
+  onTidy,
+  onSettings
+}: {
+  onTidy: (preset: LayoutPreset) => void
+  onSettings: () => void
+}): ReactElement {
   const rf = useReactFlow()
   const zoom = useStore((s) => s.transform[2])
   return (
@@ -176,6 +185,8 @@ function CameraCluster({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): 
             templates) that arranges the boards then fits. Keyboard `t` = Smart. See
             Canvas.tidyAndFit. */}
         <TidyMenu onTidy={onTidy} />
+        <span style={styles.divider} />
+        <ToolBtn name="settings" title="Settings" onClick={onSettings} />
       </div>
     </div>
   )

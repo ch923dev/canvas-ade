@@ -62,7 +62,7 @@ export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
   | { ok: false; error: string }
 
-// ── M-brain T-B1 — mirrors main `SummarizeResult` / `LlmStatus` (preload stays decoupled) ──
+// ── M-brain T-B1/T-B2 — mirrors main `SummarizeResult` / `LlmStatus` (preload stays decoupled) ──
 export type LlmSummarizeResult =
   | { ok: true; text: string }
   | { ok: false; reason: 'no-provider' }
@@ -73,7 +73,11 @@ export interface LlmStatus {
   /** Mirrors main `ProviderName` — keep in sync if a provider is added. */
   provider: 'openrouter' | 'openai' | 'anthropic' | 'local'
   model: string
+  baseUrl?: string
+  hasKey: boolean
 }
+
+export type LlmWriteResult = { ok: boolean; reason?: string }
 
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
@@ -179,11 +183,20 @@ const api = {
     }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
       ipcRenderer.invoke('export:save', args)
   },
-  // ── M-brain T-B1: provider-agnostic LLM summarize (MAIN owns the key/egress) ──
+  // ── M-brain T-B1/T-B2: provider-agnostic LLM (MAIN owns the key/egress) ──
   llm: {
     summarize: (input: { system?: string; text: string }): Promise<LlmSummarizeResult> =>
       ipcRenderer.invoke('llm:summarize', input),
-    status: (): Promise<LlmStatus> => ipcRenderer.invoke('llm:status')
+    status: (): Promise<LlmStatus> => ipcRenderer.invoke('llm:status'),
+    setKey: (args: { provider: LlmStatus['provider']; key: string }): Promise<LlmWriteResult> =>
+      ipcRenderer.invoke('llm:setKey', args),
+    clearKey: (args: { provider: LlmStatus['provider'] }): Promise<LlmWriteResult> =>
+      ipcRenderer.invoke('llm:clearKey', args),
+    setConfig: (args: {
+      provider: LlmStatus['provider']
+      model: string
+      baseUrl?: string
+    }): Promise<LlmWriteResult> => ipcRenderer.invoke('llm:setConfig', args)
   }
 }
 

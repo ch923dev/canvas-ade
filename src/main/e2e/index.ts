@@ -37,6 +37,7 @@ import {
 } from './probes/fullview'
 import { planning } from './probes/planning'
 import { context, contextBrain } from './probes/context'
+import { settings } from './probes/settings'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
@@ -92,7 +93,8 @@ const PLAYLIST: E2EProbe[] = [
   whiteboardExport, // W5: SVG/PNG export pipeline (svg/png/image-embed/missing-asset)
   seed, // asserts the canvas returned to 4 boards
   context, // M-digest T-D2: seeds 3 more + asserts the reopen digest panel (run last)
-  contextBrain // M-brain T-B1: llm:summarize mock round-trip (no board dependency, safe last)
+  contextBrain, // M-brain T-B1: llm:summarize mock round-trip (no board dependency, safe last)
+  settings // M-brain T-B2: key store hasKey round-trip + no-plaintext-leak invariant
 ]
 
 export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise<number> {
