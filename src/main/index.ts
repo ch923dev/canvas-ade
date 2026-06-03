@@ -174,6 +174,10 @@ app.whenReady().then(async () => {
       if (SMOKE === 'mcp') {
         const code = await runMcpSmoke(mcp, mainWindow!)
         process.exitCode = code
+        // Drain the renderer's debounced autosave before teardown (the mcp smoke
+        // seeds boards under ?e2e=1, arming useAutosave) so a late `project:save`
+        // invoke can't race the window destruction. Mirrors the e2e branch.
+        await flushRenderer()
         await shutdown()
         app.exit(code)
       } else if (SMOKE === 'e2e') {

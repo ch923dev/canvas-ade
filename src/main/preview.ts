@@ -412,10 +412,14 @@ export function isForeignSender(
   e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
   getWin: () => BrowserWindow | null
 ): boolean {
-  const main = getWin()?.webContents.mainFrame
   if (!e.senderFrame) return false // synthetic/internal call — allow
-  if (!main) return true // real sender but window unresolved — treat as foreign, DENY
-  return e.senderFrame !== main
+  const win = getWin()
+  // During shutdown the window can still resolve while its webContents is already
+  // destroyed (a late in-flight invoke — e.g. a debounced autosave `project:save` —
+  // races teardown). Touching `.webContents.mainFrame` then throws "Object has been
+  // destroyed". An unresolved OR destroyed window has no main frame to match → DENY.
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return true
+  return e.senderFrame !== win.webContents.mainFrame
 }
 
 export function registerPreviewHandlers(
