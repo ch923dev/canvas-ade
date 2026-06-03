@@ -245,10 +245,63 @@ export const fullviewEmulator: GroupProbe<BrowserFixture> = {
   }
 }
 
+// ── Menu-over-preview occlusion: a native WebContentsView paints above ALL HTML, even
+// the body-portaled ⋯ popover, so a menu over a live Browser stage renders UNDER the
+// preview. Fix: while a board ⋯ menu is open the preview layer detaches live views →
+// HTML snapshot (z-ordered), then reattaches on close. Assert live→detached→reattached.
+// (Lives in the browser group — it needs the live browser view; gates on getRuntime().live,
+// not capturePage, so it is NOT subject to the capturePage env flake.) ──
+export const menuPreviewDetach: GroupProbe<BrowserFixture> = {
+  name: 'menu-preview-detach',
+  async run(ctx, fx) {
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(fx.browserId)})`)
+    await ctx.evalIn('window.__canvasE2E.setZoom(1)')
+    await ctx.delay(250) // let the browser view attach live at rest
+    const occl = await ctx.evalIn<{
+      found: boolean
+      liveBefore: boolean
+      liveDuringMenu: boolean
+      liveAfter: boolean
+    }>(
+      `(async () => {
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const sel = (s, root) => (root || document).querySelector(s);
+         const id = ${JSON.stringify(fx.browserId)};
+         const live = () => !!(window.__canvasE2E.getRuntime(id) || {}).live;
+         const node = sel('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
+         const more = node && sel('button[title="More"]', node);
+         if (!more) return { found: false, liveBefore: false, liveDuringMenu: false, liveAfter: false };
+         const liveBefore = live();
+         more.click(); await sleep(250);          // open ⋯ → layer detaches live views
+         const liveDuringMenu = live();
+         more.click(); await sleep(300);           // close ⋯ → reattach eligible views
+         const liveAfter = live();
+         return { found: true, liveBefore, liveDuringMenu, liveAfter };
+       })()`
+    )
+    const occlOk = occl.found && occl.liveBefore && !occl.liveDuringMenu && occl.liveAfter
+    return {
+      name: 'menu-preview-detach',
+      ok: occlOk,
+      detail: occlOk
+        ? 'live preview detaches while ⋯ menu open (un-occluded) → reattaches on close'
+        : JSON.stringify(occl)
+    }
+  }
+}
+
 export const browserGroup: E2EGroup<BrowserFixture> = {
   name: 'browser',
   setup: seedBrowser,
-  probes: [browser, browserGesture, browserDeadUrl, fullviewPreview, fullviewSelfPreserve, fullviewEmulator],
+  probes: [
+    browser,
+    browserGesture,
+    browserDeadUrl,
+    fullviewPreview,
+    fullviewSelfPreserve,
+    fullviewEmulator,
+    menuPreviewDetach
+  ],
   teardown: async (ctx) => {
     await ctx.evalIn('window.__canvasE2E.clearAllBoards()')
   }
