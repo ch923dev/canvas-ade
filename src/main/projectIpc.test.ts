@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import * as os from 'node:os'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -227,5 +227,63 @@ describe('export:save', () => {
     expect(result.ok).toBe(false)
     expect(result.canceled).toBe(true)
     expect(fs.existsSync(tmpFile)).toBe(false)
+  })
+})
+
+// Checklist #17: every project handler must reject a foreign sender before any fs
+// or dialog touch. The pure isForeignSender is covered above; this proves the
+// guard is wired into each handler with the documented rejection value.
+describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
+  const mainFrame = { id: 'main-frame' }
+  const foreign = { senderFrame: { id: 'preview-board-frame' } } as unknown as IpcMainInvokeEvent
+
+  function setup(): Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown> {
+    const handlers = new Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: (c: string, fn: (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown) =>
+        handlers.set(c, fn)
+    } as unknown as IpcMain
+    const getWin = (): BrowserWindow =>
+      ({ webContents: { mainFrame } }) as unknown as BrowserWindow
+    registerProjectHandlers(ipcMain, getWin, '/userData')
+    return handlers
+  }
+
+  it('project:open rejects a foreign sender and touches no store', async () => {
+    const handlers = setup()
+    const result = await handlers.get('project:open')!(foreign, 'C:\\proj')
+    expect(result).toEqual({ ok: false, error: 'forbidden' })
+    expect(store.readProject).not.toHaveBeenCalled()
+  })
+
+  it('project:save rejects a foreign sender and writes nothing', async () => {
+    const handlers = setup()
+    const result = await handlers.get('project:save')!(foreign, { schemaVersion: 2, boards: [] })
+    expect(result).toBe(false)
+    expect(store.writeProject).not.toHaveBeenCalled()
+  })
+
+  it('project:recents returns [] for a foreign sender', async () => {
+    const handlers = setup()
+    expect(await handlers.get('project:recents')!(foreign)).toEqual([])
+    expect(recents.listRecents).not.toHaveBeenCalled()
+  })
+
+  it('asset:write rejects a foreign sender', async () => {
+    const handlers = setup()
+    expect(
+      await handlers.get('asset:write')!(foreign, { bytes: new Uint8Array(), ext: 'png' })
+    ).toEqual({ error: 'forbidden' })
+  })
+
+  it('export:save rejects a foreign sender', async () => {
+    const handlers = setup()
+    expect(
+      await handlers.get('export:save')!(foreign, {
+        bytes: new Uint8Array(),
+        ext: 'svg',
+        defaultName: 'x'
+      })
+    ).toEqual({ ok: false, error: 'forbidden' })
   })
 })
