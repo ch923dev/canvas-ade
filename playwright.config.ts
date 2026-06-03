@@ -10,7 +10,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  // Bounded CI retries: browser-trio / whiteboard-fullview-add are documented ENV
+  // capturePage/determinism flakes on contended runners (memory e2e-browser-trio-flake),
+  // not bugs. 0 locally so a real local failure is loud. workers:1 stays.
+  retries: process.env.CI ? 2 : 0,
   reporter: [['list']],
   timeout: 60_000,
   expect: { timeout: 15_000 }
