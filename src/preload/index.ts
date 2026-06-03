@@ -62,6 +62,18 @@ export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
   | { ok: false; error: string }
 
+// ── M-brain T-B1 — mirrors main `SummarizeResult` / `LlmStatus` (preload stays decoupled) ──
+export type LlmSummarizeResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: 'no-provider' }
+  | { ok: false; reason: 'provider-error'; message: string }
+
+export interface LlmStatus {
+  hasProvider: boolean
+  provider: 'openrouter' | 'openai' | 'anthropic' | 'local'
+  model: string
+}
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -165,6 +177,12 @@ const api = {
       defaultName: string
     }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
       ipcRenderer.invoke('export:save', args)
+  },
+  // ── M-brain T-B1: provider-agnostic LLM summarize (MAIN owns the key/egress) ──
+  llm: {
+    summarize: (input: { system?: string; text: string }): Promise<LlmSummarizeResult> =>
+      ipcRenderer.invoke('llm:summarize', input),
+    status: (): Promise<LlmStatus> => ipcRenderer.invoke('llm:status')
   }
 }
 
