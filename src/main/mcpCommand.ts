@@ -11,8 +11,8 @@ import { isForeignSender } from './preview'
  * a MINIMAL spec (id + type), NOT a full PersistedBoard: MAIN mints the id but does
  * not know canvas geometry, so the renderer builds the full board (free-slot
  * placement, per-type defaults) from this spec. `removeBoard` (T3.2) tears one down
- * by id. Future M3 cards add
- *   | { type: 'configureBoard'; id: string; patch: {...} }   (T3.3)
+ * by id. `configureBoard` (T3.3) changes a board's durable per-type config (the
+ * renderer applies it through `updateBoard`, which filters to PATCHABLE_KEYS).
  * Keep this the single source of truth; the renderer applier (`useMcpCommands`,
  * a separate bundle) mirrors it by hand.
  */
@@ -20,6 +20,11 @@ export type McpCommand =
   | { type: 'ping' }
   | { type: 'addBoard'; board: { id: string; type: string } }
   | { type: 'removeBoard'; id: string }
+  | {
+      type: 'configureBoard'
+      id: string
+      patch: { shell?: string; launchCommand?: string; cwd?: string }
+    }
 
 /** The renderer's reply to a command. `type` echoes the handled command. */
 export type McpCommandAck = { ok: true; type: string } | { ok: false; error: string }

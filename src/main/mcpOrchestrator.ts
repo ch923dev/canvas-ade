@@ -147,6 +147,15 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
       // Free the cap budget so a later spawn can reuse the slot (T3.1 cap).
       spawnedIds.delete(boardId)
     },
+    async configureBoard(
+      boardId: BoardId,
+      config: { shell?: string; launchCommand?: string; cwd?: string }
+    ): Promise<void> {
+      // Apply the durable per-type config via the command channel. The renderer's
+      // updateBoard filters to PATCHABLE_KEYS, so an off-type/ephemeral key is dropped.
+      const ack = await registry.sendCommand({ type: 'configureBoard', id: boardId, patch: config })
+      if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
+    },
     async dispatchPrompt(): Promise<void> {
       throw new Error('dispatchPrompt not available until Phase 4')
     },

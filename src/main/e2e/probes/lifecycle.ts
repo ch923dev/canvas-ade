@@ -6,6 +6,8 @@
  *
  * - T3.1 spawn: an `addBoard` command makes a terminal appear on the canvas AND in the
  *   MAIN-side mirror, and its shell (PTY) starts.
+ * - T3.3 configure: a `configureBoard` command changes a durable per-type key
+ *   (launchCommand) through `updateBoard` (PATCHABLE_KEYS-filtered).
  * - T3.2 close: the real close path (graceful `drainPty` THEN a `removeBoard` command,
  *   exactly what the `closeBoard` adapter does) removes the board from the canvas + the
  *   mirror and reaps the PTY.
@@ -45,6 +47,20 @@ export const lifecycleSpawnClose: E2EProbe = {
     const spawnedInMirror = await ctx.poll(async () => inMirror(), 4000)
     const shellUp = await ctx.poll(async () => ctx.dbg.terminalPid(id) !== null, 10000)
 
+    // ── T3.3 CONFIGURE — configureBoard command changes a durable per-type key. ──
+    const configAck = await sendMcpCommand(ipcMain, () => ctx.win, {
+      type: 'configureBoard',
+      id,
+      patch: { launchCommand: 'echo CANVAS_E2E_CONFIGURED' }
+    })
+    const configApplied = await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `(window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)}) || {}).launchCommand === 'echo CANVAS_E2E_CONFIGURED'`
+        ),
+      4000
+    )
+
     // ── T3.2 CLOSE — graceful drain, THEN a removeBoard command (the closeBoard path). ──
     await drainPty(id)
     const closeAck = await sendMcpCommand(ipcMain, () => ctx.win, { type: 'removeBoard', id })
@@ -61,6 +77,8 @@ export const lifecycleSpawnClose: E2EProbe = {
       spawnedOnCanvas &&
       spawnedInMirror &&
       shellUp &&
+      configAck.ok &&
+      configApplied &&
       closeAck.ok &&
       goneFromCanvas &&
       goneFromMirror &&
@@ -70,12 +88,14 @@ export const lifecycleSpawnClose: E2EProbe = {
       name: 'lifecycle-spawn-close',
       ok,
       detail: ok
-        ? 'spawn: addBoard → canvas + mirror + shell PTY up; close: drain → removeBoard → gone from canvas + mirror + PTY reaped; baseline 4'
+        ? 'spawn: addBoard → canvas + mirror + shell PTY up; configure: launchCommand changed; close: drain → removeBoard → gone + PTY reaped; baseline 4'
         : JSON.stringify({
             spawnAck,
             spawnedOnCanvas,
             spawnedInMirror,
             shellUp,
+            configAck,
+            configApplied,
             closeAck,
             goneFromCanvas,
             goneFromMirror,

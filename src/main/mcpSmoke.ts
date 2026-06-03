@@ -99,6 +99,8 @@ interface SmokeClient {
   callSpawn(type: string): Promise<CallOutcome>
   /** Call the close_board write tool (T3.2). Resolves with the outcome (isError on tier denial). */
   callClose(id: string): Promise<CallOutcome>
+  /** Call the configure_board write tool (T3.3). Resolves with the outcome (isError on tier denial). */
+  callConfigure(id: string, args: Record<string, string>): Promise<CallOutcome>
   close(): Promise<void>
 }
 
@@ -299,6 +301,16 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         return {
           ok: true,
           result: await client.callTool({ name: 'close_board', arguments: { id } })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    callConfigure: async (id: string, args: Record<string, string>): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({ name: 'configure_board', arguments: { id, ...args } })
         }
       } catch (e: unknown) {
         return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
@@ -649,6 +661,38 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
             `MCP_FAIL spawn split=${splitOk} id=${spawnedId} onCanvas=${onCanvas} workerDenied=${workerDenied}`
           )
           code = 1
+        }
+
+        // ── lifecycle configure (T3.3): the orchestrator changes the spawned board's
+        // durable config (launchCommand) via the REAL configure_board tool → the change
+        // lands on the board (asserted through the renderer, since the boards resource is
+        // metadata-only); a worker tier is DENIED configure_board. Self-skips on a pkg
+        // with spawn_board but not yet configure_board. ──
+        if (spawnedId && orch.list.includes('configure_board')) {
+          const cfgSplitOk = !worker.list.includes('configure_board')
+          const cfg = await orch.callConfigure(spawnedId, { launchCommand: 'echo MCP_CFG' })
+          const cfgAcked = cfg.ok && !isErrorResult(cfg.result)
+          const cfgApplied = await poll(
+            () =>
+              evalIn<boolean>(
+                `(window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(spawnedId)}) || {}).launchCommand === 'echo MCP_CFG'`
+              ),
+            6000
+          )
+          const workerCfg = await worker.callConfigure(spawnedId, { launchCommand: 'x' })
+          const workerCfgDenied =
+            workerCfg.ok &&
+            isErrorResult(workerCfg.result) &&
+            resultText(workerCfg.result).includes('Tool configure_board not found')
+          if (cfgSplitOk && cfgAcked && cfgApplied && workerCfgDenied) log('MCP_CONFIGURE_OK')
+          else {
+            log(
+              `MCP_FAIL configure split=${cfgSplitOk} acked=${cfgAcked} applied=${cfgApplied} workerDenied=${workerCfgDenied}`
+            )
+            code = 1
+          }
+        } else if (spawnedId) {
+          log('MCP_CONFIGURE_SKIP pkg<0.4.2-unpublished')
         }
 
         // ── lifecycle close (T3.2): the orchestrator closes the spawned board via the

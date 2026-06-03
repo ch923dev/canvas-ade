@@ -226,4 +226,22 @@ describe('buildOrchestrator', () => {
       await expect(orch.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
     })
   })
+
+  describe('configureBoard (T3.3, lifecycle write)', () => {
+    it('issues a configureBoard command with the id + patch', async () => {
+      const { sendCommand, seen } = okCommands()
+      const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand))
+      await orch.configureBoard('board-5', { launchCommand: 'claude', cwd: '/repo' })
+      expect(seen).toEqual([
+        { type: 'configureBoard', id: 'board-5', patch: { launchCommand: 'claude', cwd: '/repo' } }
+      ])
+    })
+
+    it('throws when the renderer rejects the command (no silent failure)', async () => {
+      const orch = buildOrchestrator(
+        reg([], [], {}, {}, {}, async () => ({ ok: false, error: 'no-window' }))
+      )
+      await expect(orch.configureBoard('b', { shell: 'pwsh' })).rejects.toThrow(/no-window/)
+    })
+  })
 })

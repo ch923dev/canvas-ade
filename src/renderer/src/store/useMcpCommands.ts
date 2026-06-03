@@ -11,6 +11,11 @@ export type McpCommandIn =
   | { type: 'ping' }
   | { type: 'addBoard'; board: { id: string; type: BoardType } }
   | { type: 'removeBoard'; id: string }
+  | {
+      type: 'configureBoard'
+      id: string
+      patch: { shell?: string; launchCommand?: string; cwd?: string }
+    }
 
 /** The ack shape MAIN's `sendMcpCommand` awaits (`McpCommandAck`). */
 export type McpAck = { ok: true; type: string } | { ok: false; error: string }
@@ -43,6 +48,13 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       // closed), so a double close still acks ok.
       useCanvasStore.getState().removeBoard(command.id)
       return { ok: true, type: 'removeBoard' }
+    }
+    case 'configureBoard': {
+      // updateBoard filters to PATCHABLE_KEYS per board type, so an off-type/identity/
+      // ephemeral key (e.g. id, a browser `url` on a terminal) is dropped — the patch
+      // can never forge a cross-type hybrid or change identity. No-ops on an unknown id.
+      useCanvasStore.getState().updateBoard(command.id, command.patch)
+      return { ok: true, type: 'configureBoard' }
     }
     default:
       return { ok: false, error: `unknown command: ${(command as { type: string }).type}` }

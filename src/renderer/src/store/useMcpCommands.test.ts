@@ -49,6 +49,35 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(ack.ok).toBe(true)
   })
 
+  it('configureBoard applies durable per-type keys to the board (T3.3)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    const ack = applyMcpCommand({
+      type: 'configureBoard',
+      id: 'srv-1',
+      patch: { launchCommand: 'claude', cwd: '/repo' }
+    })
+    expect(ack).toEqual({ ok: true, type: 'configureBoard' })
+    const board = useCanvasStore.getState().boards.find((b) => b.id === 'srv-1') as {
+      launchCommand?: string
+      cwd?: string
+    }
+    expect(board.launchCommand).toBe('claude')
+    expect(board.cwd).toBe('/repo')
+  })
+
+  it('configureBoard drops a non-patchable / ephemeral key (defense in depth)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    const ack = applyMcpCommand({
+      type: 'configureBoard',
+      id: 'srv-1',
+      // @ts-expect-error — id is identity, never patchable; must be ignored, not forge a new id
+      patch: { id: 'hacked', launchCommand: 'ok' }
+    })
+    expect(ack.ok).toBe(true)
+    expect(useCanvasStore.getState().boards.find((b) => b.id === 'hacked')).toBeUndefined()
+    expect(useCanvasStore.getState().boards.find((b) => b.id === 'srv-1')).toBeDefined()
+  })
+
   it('acks an unknown command type as a failure', () => {
     // @ts-expect-error — unknown command shape
     const ack = applyMcpCommand({ type: 'frobnicate' })
