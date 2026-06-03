@@ -104,6 +104,10 @@ interface SmokeClient {
   callConfigure(id: string, args: Record<string, string>): Promise<CallOutcome>
   /** Call the handoff_prompt dispatch tool (T4.3). Blocks until confirm+idle; isError on tier denial/rejection. */
   callHandoff(boardId: string, prompt: string): Promise<CallOutcome>
+  /** Call the assign_prompt dispatch tool (T4.4). Fire-and-forget; isError on tier denial/rejection. */
+  callAssign(boardId: string, prompt: string): Promise<CallOutcome>
+  /** Call the write_result worker-tier write tool (T4.4). Binds to the caller's token board (no id arg). */
+  callWriteResult(args: Record<string, unknown>): Promise<CallOutcome>
   close(): Promise<void>
 }
 
@@ -324,6 +328,26 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         return {
           ok: true,
           result: await client.callTool({ name: 'handoff_prompt', arguments: { boardId, prompt } })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    callAssign: async (boardId: string, prompt: string): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({ name: 'assign_prompt', arguments: { boardId, prompt } })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    callWriteResult: async (args: Record<string, unknown>): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({ name: 'write_result', arguments: args })
         }
       } catch (e: unknown) {
         return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
@@ -888,6 +912,113 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           else {
             log(
               `MCP_FAIL handoff split=${hSplitOk} workerDenied=${workerHandoffDenied} nonTerm=${nonTermRejected} label=${labelRejected} modal=${modalShown} ok=${handoffOk} landed=${landed} replay=${replayRejected}`
+            )
+            code = 1
+          }
+        }
+
+        // ── 🔒 dispatch assign_prompt (T4.4, FIRE-AND-FORGET): the orchestrator writes a
+        // prompt into a TARGET TERMINAL's PTY — gated by a single-use nonce + a mandatory
+        // human confirm + an audit entry, terminal-only — and RETURNS the moment the write
+        // lands (no await-idle, unlike handoff). A worker tier is DENIED the tool
+        // server-side. Self-activating: SKIP on a pkg without assign_prompt (until 0.6.0). ──
+        if (!orch.list.includes('assign_prompt')) {
+          log('MCP_ASSIGN_SKIP pkg<0.6.0-unpublished')
+        } else {
+          const AMODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
+          const AAPPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
+          // 1) tier split: a worker's tools/list must NOT contain assign_prompt.
+          const aSplitOk = !worker.list.includes('assign_prompt')
+          // 2) worker DENIED server-side (specific tool-not-found isError).
+          const workerAssign = await worker.callAssign('any-id', 'echo x')
+          const workerAssignDenied =
+            workerAssign.ok &&
+            isErrorResult(workerAssign.result) &&
+            resultText(workerAssign.result).includes('Tool assign_prompt not found')
+          // 3) 🔒 non-terminal target rejected BEFORE any write — Browser never reaches a PTY.
+          const baSpawn = await orch.callSpawn('browser')
+          const baId =
+            baSpawn.ok && !isErrorResult(baSpawn.result) ? resultText(baSpawn.result).trim() : ''
+          const aNonTerm = baId
+            ? await orch.callAssign(baId, 'echo x')
+            : { ok: false as const, threw: 'no-id' }
+          const aNonTermRejected = aNonTerm.ok && isErrorResult(aNonTerm.result)
+          // 4) happy path: spawn a terminal, assign an echo sentinel, DRIVE the confirm
+          //    modal — and the call RESOLVES without flipping the board idle (fire-and-forget).
+          const taSpawn = await orch.callSpawn('terminal')
+          const taId =
+            taSpawn.ok && !isErrorResult(taSpawn.result) ? resultText(taSpawn.result).trim() : ''
+          let aLanded = false
+          let assignOk = false
+          let aModalShown = false
+          if (taId) {
+            await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(taId)})`)
+            await poll(async () => (await orch.readBoardStatus(taId)) === 'running', 8000)
+            const sentinel = 'CANVAS_MCP_ASSIGN_OK'
+            const assignP = orch.callAssign(taId, `echo ${sentinel}`)
+            aModalShown = await poll(() => evalIn<boolean>(AMODAL), 8000)
+            if (aModalShown) await evalIn(AAPPROVE)
+            // NO setTerminalDown: fire-and-forget resolves on its own once the write lands.
+            const assign = await assignP
+            assignOk = assign.ok && !isErrorResult(assign.result)
+            aLanded = await poll(async () => {
+              const text = await evalIn<string | null>(
+                `window.__canvasE2E.readTerminal(${JSON.stringify(taId)})`
+              )
+              return typeof text === 'string' && text.includes(sentinel)
+            }, 10000)
+          }
+          if (taId) await orch.callClose(taId)
+          if (baId) await orch.callClose(baId)
+          if (
+            aSplitOk &&
+            workerAssignDenied &&
+            aNonTermRejected &&
+            aModalShown &&
+            assignOk &&
+            aLanded
+          )
+            log('MCP_ASSIGN_OK')
+          else {
+            log(
+              `MCP_FAIL assign split=${aSplitOk} workerDenied=${workerAssignDenied} nonTerm=${aNonTermRejected} modal=${aModalShown} ok=${assignOk} landed=${aLanded}`
+            )
+            code = 1
+          }
+        }
+
+        // ── 🔒 write_result (T4.4, the FIRST worker-tier WRITE): a WORKER records its OWN
+        // board's structured result (bound to its token board id, no client-supplied id)
+        // → canvas://board/{id}/result reflects it. The tier split now cuts BOTH ways:
+        // write_result is in BOTH tools/lists (orchestrator AND worker). The worker token
+        // is bound to 'smoke-worker', so reading that board's result resource shows the
+        // recorded fields. Self-activating: SKIP on a pkg without write_result (until 0.6.0). ──
+        if (!worker.list.includes('write_result')) {
+          log('MCP_WRITE_RESULT_SKIP pkg<0.6.0-unpublished')
+        } else {
+          const bothTiersHave =
+            worker.list.includes('write_result') && orch.list.includes('write_result')
+          const wr = await worker.callWriteResult({
+            status: 'success',
+            summary: 'smoke write_result',
+            refs: ['src/y.ts']
+          })
+          const wrOk = wr.ok && !isErrorResult(wr.result)
+          // The worker token is bound to boardId 'smoke-worker' → read its result resource.
+          const reflected = await poll(async () => {
+            const res = await orch.readBoardResult('smoke-worker')
+            return (
+              res?.present === true &&
+              res.status === 'success' &&
+              res.summary === 'smoke write_result' &&
+              Array.isArray(res.refs) &&
+              res.refs[0] === 'src/y.ts'
+            )
+          }, 4000)
+          if (bothTiersHave && wrOk && reflected) log('MCP_WRITE_RESULT_OK')
+          else {
+            log(
+              `MCP_FAIL write-result bothTiers=${bothTiersHave} ok=${wrOk} reflected=${reflected}`
             )
             code = 1
           }

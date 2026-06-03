@@ -14,12 +14,13 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { E2EProbe } from '../types'
+import type { E2ECtx } from '../context'
 import { getAuditLog } from '../../auditIpc'
 import { requestConfirm } from '../../mcpConfirm'
 import { buildOrchestrator, type BoardRegistry } from '../../mcpOrchestrator'
 import { listBoardMirror } from '../../boardRegistry'
 import { listPtySessions, readPtyOutput, writeToPty, drainPty } from '../../pty'
-import { readBoardResult } from '../../boardResults'
+import { readBoardResult, recordBoardResult } from '../../boardResults'
 import { readProjectMemory, readBoardSummary } from '../../boardMemory'
 import { sendMcpCommand } from '../../mcpCommand'
 
@@ -172,7 +173,8 @@ export const dispatchHandoff: E2EProbe = {
       drainPty,
       writeToPty,
       confirm: (req) => requestConfirm(ipcMain, () => ctx.win, req),
-      audit: (e) => audit.append(e).then(() => {})
+      audit: (e) => audit.append(e).then(() => {}),
+      recordResult: recordBoardResult
     }
     const orch = buildOrchestrator(registry, { handoffPollMs: 100, handoffTimeoutMs: 6000 })
 
@@ -300,6 +302,209 @@ export const dispatchHandoff: E2EProbe = {
             replayAbsent,
             restored
           })
+    }
+  }
+}
+
+/** Build the production-wired BoardRegistry (mirror of src/main/index.ts) for a probe. */
+function productionRegistry(ctx: E2ECtx): BoardRegistry {
+  const audit = getAuditLog()
+  return {
+    listBoards: listBoardMirror,
+    listSessions: listPtySessions,
+    readOutput: readPtyOutput,
+    readResult: readBoardResult,
+    readMemory: readProjectMemory,
+    readSummary: readBoardSummary,
+    sendCommand: (c) => sendMcpCommand(ipcMain, () => ctx.win, c),
+    drainPty,
+    writeToPty,
+    confirm: (req) => requestConfirm(ipcMain, () => ctx.win, req),
+    audit: (e) => (audit ? audit.append(e).then(() => {}) : Promise.resolve()),
+    recordResult: recordBoardResult
+  }
+}
+
+/**
+ * 🔒 assign_prompt dispatch probe (M4 T4.4) — the FIRE-AND-FORGET sibling of
+ * dispatch-handoff. Exercises the REAL MAIN dispatch path against a live terminal:
+ *  • label-targeting rejected (a title is not an opaque board id);
+ *  • happy path: confirm gate → write `echo SENTINEL\r` → the text LANDS in the PTY → the
+ *    call RESOLVES WITHOUT awaiting idle (no setTerminalDown needed) → a `dispatched`
+ *    audit entry is readable AND there is NO `completed` entry (fire-and-forget);
+ *  • a replayed/forged nonce (consume → false) is rejected and writes NOTHING.
+ * Restores the seed baseline (board count back to 4).
+ */
+export const dispatchAssign: E2EProbe = {
+  name: 'dispatch-assign',
+  async run(ctx) {
+    if (!getAuditLog()) return { name: 'dispatch-assign', ok: false, detail: 'getAuditLog() null' }
+    const registry = productionRegistry(ctx)
+    const orch = buildOrchestrator(registry)
+
+    const id = randomUUID()
+    await sendMcpCommand(ipcMain, () => ctx.win, {
+      type: 'addBoard',
+      board: { id, type: 'terminal' }
+    })
+    await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `window.__canvasE2E.getBoards().some((b) => b.id === ${JSON.stringify(id)})`
+        ),
+      4000
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    const shellUp = await ctx.poll(async () => ctx.dbg.terminalPid(id) !== null, 10000)
+    const inMirror = await ctx.poll(async () => listBoardMirror().some((b) => b.id === id), 6000)
+
+    // (a) 🔒 label-targeting rejected — a TITLE / unknown string is not an opaque id.
+    let labelRejected = false
+    try {
+      await orch.dispatchPrompt('Terminal', 'echo nope')
+    } catch {
+      labelRejected = true
+    }
+
+    // (b) happy path — confirm → write → land in the PTY → RESOLVES (no await-idle).
+    const SENT = 'CANVAS_E2E_ASSIGN'
+    let assignResolved = false
+    let assignErr = ''
+    const ap = orch
+      .dispatchPrompt(id, `echo ${SENT}`)
+      .then(() => {
+        assignResolved = true
+      })
+      .catch((e) => {
+        assignErr = (e as Error).message
+      })
+    const modalShown = await ctx.poll(() => ctx.evalIn<boolean>(MODAL), 8000)
+    if (modalShown) await ctx.evalIn(APPROVE_BTN)
+    // Fire-and-forget: NO setTerminalDown — the call must resolve on its own once the
+    // write lands (it does not poll the board to idle, unlike handoff).
+    await ap
+    const landed = await ctx.poll(async () => {
+      const t = await ctx.evalIn<string | null>(
+        `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
+      )
+      return typeof t === 'string' && t.includes(SENT)
+    }, 10000)
+    // a `dispatched` (assign_prompt) entry exists; NO `completed` entry (fire-and-forget).
+    const dispatchedAudited = await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `window.api.mcp.readAudit({ limit: 50 }).then((es) => es.some((e) =>` +
+            ` e.type === 'assign_prompt' && e.targetId === ${JSON.stringify(id)}` +
+            ` && e.status === 'dispatched' && e.prompt === ${JSON.stringify('echo ' + SENT)}))`
+        ),
+      4000
+    )
+    const noCompleted = await ctx.evalIn<boolean>(
+      `window.api.mcp.readAudit({ limit: 50 }).then((es) => !es.some((e) =>` +
+        ` e.type === 'assign_prompt' && e.targetId === ${JSON.stringify(id)} && e.status === 'completed'))`
+    )
+
+    // (c) 🔒 replayed/forged nonce rejected — same real path, consume → false, NO write.
+    const SENT2 = 'CANVAS_E2E_ASSIGN_REPLAY'
+    const replayOrch = buildOrchestrator(registry, {
+      guard: { issue: () => ({ nonce: 'forged', seq: 1 }), consume: () => false }
+    })
+    let replayRejected = false
+    const rp = replayOrch
+      .dispatchPrompt(id, `echo ${SENT2}`)
+      .then(() => {})
+      .catch(() => {
+        replayRejected = true
+      })
+    const replayModal = await ctx.poll(() => ctx.evalIn<boolean>(MODAL), 8000)
+    if (replayModal) await ctx.evalIn(APPROVE_BTN)
+    await rp
+    const replayWrote = await ctx.poll(async () => {
+      const t = await ctx.evalIn<string | null>(
+        `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
+      )
+      return typeof t === 'string' && t.includes(SENT2)
+    }, 1500)
+    const replayAbsent = !replayWrote
+
+    // Restore the baseline: drain + removeBoard (count back to 4).
+    await drainPty(id)
+    await sendMcpCommand(ipcMain, () => ctx.win, { type: 'removeBoard', id })
+    const restored = await ctx.poll(
+      () => ctx.evalIn<boolean>('window.__canvasE2E.getBoards().length === 4'),
+      4000
+    )
+
+    const ok =
+      shellUp &&
+      inMirror &&
+      labelRejected &&
+      modalShown &&
+      assignResolved &&
+      landed &&
+      dispatchedAudited &&
+      noCompleted &&
+      replayRejected &&
+      replayAbsent &&
+      restored
+    return {
+      name: 'dispatch-assign',
+      ok,
+      detail: ok
+        ? 'label rejected; confirm→write→PTY land→resolves (no await-idle); dispatched audit, no completed; replayed nonce wrote nothing; baseline 4'
+        : JSON.stringify({
+            shellUp,
+            inMirror,
+            assignErr,
+            labelRejected,
+            modalShown,
+            assignResolved,
+            landed,
+            dispatchedAudited,
+            noCompleted,
+            replayRejected,
+            replayAbsent,
+            restored
+          })
+    }
+  }
+}
+
+/**
+ * 🔒 write_result probe (M4 T4.4) — the FIRST worker-tier write. Drives the REAL adapter
+ * `writeResult(boardId, {...})` (the seam the worker-tier `write_result` tool calls with
+ * the caller's token-bound id) and asserts the structured result round-trips into
+ * `readBoardResult` (which backs `canvas://board/{id}/result`, T1.5): a fresh id reads the
+ * empty shell, and after writing it reads `present:true` + the recorded fields + a stamped
+ * `at`. The board-result store is a separate userData-less map (not the canvas), so there
+ * is no baseline to restore.
+ */
+export const dispatchWriteResult: E2EProbe = {
+  name: 'dispatch-write-result',
+  async run(ctx) {
+    const orch = buildOrchestrator(productionRegistry(ctx))
+    const id = randomUUID()
+    const before = readBoardResult(id)
+    await orch.writeResult(id, {
+      status: 'success',
+      summary: 'e2e write_result',
+      refs: ['src/x.ts']
+    })
+    const after = readBoardResult(id)
+    const ok =
+      before.present === false &&
+      after.present === true &&
+      after.status === 'success' &&
+      after.summary === 'e2e write_result' &&
+      Array.isArray(after.refs) &&
+      after.refs[0] === 'src/x.ts' &&
+      typeof after.at === 'string'
+    return {
+      name: 'dispatch-write-result',
+      ok,
+      detail: ok
+        ? 'empty shell → writeResult → canvas://board/{id}/result reflects present:true + fields + at'
+        : JSON.stringify({ before, after })
     }
   }
 }

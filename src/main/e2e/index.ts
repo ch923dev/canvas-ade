@@ -54,7 +54,13 @@ import {
 } from './probes/whiteboard'
 import { boardStatusPill } from './probes/status'
 import { lifecycleSpawnClose } from './probes/lifecycle'
-import { dispatchAudit, dispatchConfirm, dispatchHandoff } from './probes/dispatch'
+import {
+  dispatchAudit,
+  dispatchConfirm,
+  dispatchHandoff,
+  dispatchAssign,
+  dispatchWriteResult
+} from './probes/dispatch'
 import { seed } from './probes/seed'
 
 // EXACT current execution order — interleaves themes by design (a probe's theme file is
@@ -101,6 +107,8 @@ const PLAYLIST: E2EProbe[] = [
   dispatchAudit, // M4 T4.1: MAIN append → audit:read IPC readback + viewer renders the row
   dispatchConfirm, // M4 T4.2: confirm gate blocks until answered; approve/deny round-trip
   dispatchHandoff, // M4 T4.3: confirm→nonce→write into target PTY→audit; replay+label rejected
+  dispatchAssign, // M4 T4.4: assign_prompt fire-and-forget — confirm→write→resolves (no await-idle); dispatched audit, no completed
+  dispatchWriteResult, // M4 T4.4: write_result — worker records its own board result → canvas://board/{id}/result
   seed
 ]
 

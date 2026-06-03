@@ -3,6 +3,7 @@ import type {
   BoardId,
   BoardOutput,
   BoardResult,
+  BoardResultInput,
   BoardSummary,
   MemoryDoc,
   Orchestrator
@@ -106,6 +107,13 @@ export interface BoardRegistry {
    * the resolved target, full prompt, and nonce before/after the action runs.
    */
   audit(input: AuditInput): Promise<void>
+  /**
+   * 🔒 Record a board's structured last result (T4.4 `write_result`). MAIN injects
+   * `boardResults.ts`'s `recordBoardResult`, which feeds `canvas://board/{id}/result`
+   * (T1.5). The caller binds `id` to the worker's own token-bound board, so a worker can
+   * only write its own result. No PTY write, no confirm — the agent reports its outcome.
+   */
+  recordResult(id: string, result: BoardResult): void
 }
 
 /**
@@ -380,8 +388,109 @@ export function buildOrchestrator(
       })
       return result
     },
-    async dispatchPrompt(): Promise<void> {
-      throw new Error('dispatchPrompt not available until Phase 4')
+    async dispatchPrompt(boardId: BoardId, text: string): Promise<void> {
+      // 🔒 assign_prompt (T4.4): the FIRE-AND-FORGET sibling of handoffPrompt — the SAME
+      // gating (opaque id → terminal-only → nonce → human confirm → audit → PTY write)
+      // MINUS the blocking await-idle/result. Every non-write branch still audits. See
+      // CLAUDE.md › Process model & security.
+
+      // (1) Resolve by OPAQUE id (never a label). Not found → audit + throw, no nonce.
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) {
+        await registry.audit({
+          type: 'assign_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce: '',
+          status: 'rejected',
+          detail: 'board not found'
+        })
+        throw new Error(`assign_prompt: board not found: ${boardId}`)
+      }
+
+      // (2) Terminal-only. Browser/Planning content must NEVER reach a PTY.
+      if (board.type !== 'terminal') {
+        await registry.audit({
+          type: 'assign_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce: '',
+          status: 'rejected',
+          detail: `non-terminal target (${board.type})`
+        })
+        throw new Error(`assign_prompt: target is not a terminal (${board.type})`)
+      }
+
+      // (3) Mint the single-use nonce + monotonic sequence for this dispatch.
+      const { nonce, seq } = guard.issue()
+
+      // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
+      // carries the RESOLVED target + the EXACT prompt the human is authorizing.
+      const { approved } = await registry.confirm({
+        title: `Assign to "${board.title}"`,
+        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${text}`
+      })
+      if (!approved) {
+        await registry.audit({
+          type: 'assign_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce,
+          status: 'denied',
+          detail: `seq=${seq}`
+        })
+        throw new Error('assign_prompt: dispatch denied by the human gate')
+      }
+
+      // (5) Redeem the nonce (defensive — a replayed/forged nonce can never reach a write).
+      if (!guard.consume(nonce)) {
+        await registry.audit({
+          type: 'assign_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce,
+          status: 'rejected',
+          detail: `replayed/forged nonce; seq=${seq}`
+        })
+        throw new Error('assign_prompt: nonce already consumed (replay rejected)')
+      }
+
+      // (6) Write into the PTY (append CR so the shell runs the line). A false means no
+      // live terminal session held the id — audit failed + throw.
+      if (!registry.writeToPty(boardId, text + '\r')) {
+        await registry.audit({
+          type: 'assign_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce,
+          status: 'failed',
+          detail: `pty write failed; seq=${seq}`
+        })
+        throw new Error('assign_prompt: PTY write failed (no live terminal session)')
+      }
+
+      // 🔒 Fire-and-forget: record the write the moment it lands and RETURN. Unlike
+      // handoffPrompt there is no await-idle wait and no `completed` follow-up — the
+      // caller does not block on the target finishing.
+      await registry.audit({
+        type: 'assign_prompt',
+        targetId: boardId,
+        prompt: text,
+        nonce,
+        status: 'dispatched',
+        detail: `seq=${seq}`
+      })
+    },
+    async writeResult(boardId: BoardId, result: BoardResultInput): Promise<void> {
+      // 🔒 write_result (T4.4, worker-tier write): record the worker's OWN board result.
+      // `boardId` is the caller's token-bound board (the tool passes ctx.boardId), so a
+      // worker can only write its own. No PTY write, no confirm — it's a self-report. The
+      // host stamps `present: true` + `at`; only supplied fields are carried.
+      const recorded: BoardResult = { present: true, at: new Date(now()).toISOString() }
+      if (result.status !== undefined) recorded.status = result.status
+      if (result.summary !== undefined) recorded.summary = result.summary
+      if (result.refs !== undefined) recorded.refs = result.refs
+      registry.recordResult(boardId, recorded)
     },
     async gitDiff(): Promise<string> {
       throw new Error('gitDiff not available until Phase 6')

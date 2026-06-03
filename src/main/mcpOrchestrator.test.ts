@@ -8,7 +8,8 @@ import type { AuditInput } from './auditLog'
 const DISPATCH_DEFAULTS = {
   writeToPty: (): boolean => true,
   confirm: async (): Promise<{ approved: boolean }> => ({ approved: true }),
-  audit: async (): Promise<void> => {}
+  audit: async (): Promise<void> => {},
+  recordResult: (): void => {}
 }
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
@@ -172,9 +173,8 @@ describe('buildOrchestrator', () => {
     expect(await orch.boardSummary('ghost')).toEqual(EMPTY_MEMORY)
   })
 
-  it('dispatchPrompt / gitDiff stay phase-gated (M3 unblocks ONLY spawn)', async () => {
+  it('gitDiff stays phase-gated (M6)', async () => {
     const orch = buildOrchestrator(reg([]))
-    await expect(orch.dispatchPrompt('b', 'x')).rejects.toThrow(/Phase 4/)
     await expect(orch.gitDiff('b')).rejects.toThrow(/Phase 6/)
   })
 
@@ -291,7 +291,8 @@ describe('buildOrchestrator', () => {
         },
         audit: async (input) => {
           audits.push(input)
-        }
+        },
+        recordResult: () => {}
       }
       return { registry, audits, writes, confirms }
     }
@@ -422,6 +423,190 @@ describe('buildOrchestrator', () => {
       expect(confirms).toHaveLength(1) // confirm runs first…
       expect(writes).toEqual([]) // …but a failed consume still blocks the write
       expect(audits.some((a) => a.status === 'rejected' || a.status === 'failed')).toBe(true)
+    })
+  })
+
+  describe('🔒 dispatchPrompt / assign_prompt (T4.4, fire-and-forget dispatch)', () => {
+    type Board = { id: string; type: string; title: string; status?: string }
+    function assignReg(opts: {
+      boards: Board[]
+      confirm?: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+      writeToPty?: (id: string, text: string) => boolean
+    }): {
+      registry: BoardRegistry
+      audits: AuditInput[]
+      writes: Array<{ id: string; text: string }>
+      confirms: Array<{ title: string; body: string }>
+      results: Array<{ id: string; result: BoardResult }>
+    } {
+      const audits: AuditInput[] = []
+      const writes: Array<{ id: string; text: string }> = []
+      const confirms: Array<{ title: string; body: string }> = []
+      const results: Array<{ id: string; result: BoardResult }> = []
+      const registry: BoardRegistry = {
+        listBoards: () => opts.boards,
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: (id, text) => {
+          writes.push({ id, text })
+          return opts.writeToPty ? opts.writeToPty(id, text) : true
+        },
+        confirm: async (req) => {
+          confirms.push(req)
+          return opts.confirm ? opts.confirm(req) : { approved: true }
+        },
+        audit: async (input) => {
+          audits.push(input)
+        },
+        recordResult: (id, result) => {
+          results.push({ id, result })
+        }
+      }
+      return { registry, audits, writes, confirms, results }
+    }
+
+    it('🔒 rejects an unknown target id — audits rejected, NO confirm, NO write', async () => {
+      const { registry, audits, writes, confirms } = assignReg({ boards: [] })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('ghost', 'do x')).rejects.toThrow(/not found/i)
+      expect(writes).toEqual([])
+      expect(confirms).toEqual([])
+      expect(audits).toHaveLength(1)
+      expect(audits[0]).toMatchObject({
+        type: 'assign_prompt',
+        targetId: 'ghost',
+        prompt: 'do x',
+        nonce: '',
+        status: 'rejected'
+      })
+    })
+
+    it('🔒 rejects a NON-terminal target (browser) before any write', async () => {
+      const { registry, audits, writes, confirms } = assignReg({
+        boards: [{ id: 'b1', type: 'browser', title: 'Web' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('b1', 'do x')).rejects.toThrow(/terminal/i)
+      expect(writes).toEqual([])
+      expect(confirms).toEqual([])
+      expect(audits[0]).toMatchObject({
+        type: 'assign_prompt',
+        targetId: 'b1',
+        status: 'rejected',
+        nonce: ''
+      })
+    })
+
+    it('🔒 a denied confirm blocks the write — audits denied, nonce minted, NO write', async () => {
+      const { registry, audits, writes, confirms } = assignReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term' }],
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('t1', 'rm -rf /')).rejects.toThrow(/deni|declin/i)
+      expect(writes).toEqual([])
+      expect(confirms).toHaveLength(1)
+      expect(confirms[0].body).toContain('rm -rf /')
+      expect(confirms[0].body).toContain('Term')
+      const denied = audits.find((a) => a.status === 'denied')
+      expect(denied).toBeTruthy()
+      expect(denied!.type).toBe('assign_prompt')
+      expect(denied!.nonce.length).toBeGreaterThan(0)
+    })
+
+    it('happy path: confirm → write text+CR → resolves (fire-and-forget), audits dispatched', async () => {
+      const { registry, audits, writes, confirms } = assignReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toBeUndefined()
+      expect(confirms).toHaveLength(1)
+      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }])
+      const dispatched = audits.find((a) => a.status === 'dispatched')
+      expect(dispatched).toMatchObject({
+        type: 'assign_prompt',
+        targetId: 't1',
+        prompt: 'pnpm build'
+      })
+      expect(dispatched!.nonce.length).toBeGreaterThan(0)
+      // 🔒 fire-and-forget: NO await-idle, so NO `completed` entry and the running board
+      // never had to go idle for the call to resolve.
+      expect(audits.some((a) => a.status === 'completed')).toBe(false)
+    })
+
+    it('🔒 does NOT await idle — resolves even with no sleep seam and a running board', async () => {
+      const { registry } = assignReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
+      })
+      // No `sleep` injected: a fire-and-forget dispatch must not enter an await-idle poll
+      // (which would need the sleep seam), so this resolves without hanging.
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('t1', 'x')).resolves.toBeUndefined()
+    })
+
+    it('🔒 a failed PTY write (no live session) audits failed and throws', async () => {
+      const { registry, audits } = assignReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }],
+        writeToPty: () => false
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('t1', 'x')).rejects.toThrow(/write|failed/i)
+      expect(audits.some((a) => a.status === 'failed')).toBe(true)
+    })
+
+    it('🔒 defensive: a forged/replayed nonce (consume=false) blocks the write', async () => {
+      const { registry, audits, writes, confirms } = assignReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }]
+      })
+      const orch = buildOrchestrator(registry, {
+        guard: { issue: () => ({ nonce: 'n1', seq: 1 }), consume: () => false }
+      })
+      await expect(orch.dispatchPrompt('t1', 'x')).rejects.toThrow(/nonce|replay|consume/i)
+      expect(confirms).toHaveLength(1)
+      expect(writes).toEqual([])
+      expect(audits.some((a) => a.status === 'rejected' || a.status === 'failed')).toBe(true)
+    })
+  })
+
+  describe('🔒 writeResult (T4.4, first worker-tier write)', () => {
+    it('records the result for the bound board via the registry (present + at stamped)', async () => {
+      const recorded: Array<{ id: string; result: BoardResult }> = []
+      const registry = reg([{ id: 'w1', type: 'terminal', title: 'Worker' }])
+      registry.recordResult = (id, result) => {
+        recorded.push({ id, result })
+      }
+      const orch = buildOrchestrator(registry, { now: () => 1717459200000 })
+      await orch.writeResult('w1', { status: 'success', summary: 'done', refs: ['a.ts'] })
+      expect(recorded).toEqual([
+        {
+          id: 'w1',
+          result: {
+            present: true,
+            status: 'success',
+            summary: 'done',
+            refs: ['a.ts'],
+            at: new Date(1717459200000).toISOString()
+          }
+        }
+      ])
+    })
+
+    it('a minimal (all-optional-empty) result still records present:true + at', async () => {
+      const recorded: Array<{ id: string; result: BoardResult }> = []
+      const registry = reg([])
+      registry.recordResult = (id, result) => {
+        recorded.push({ id, result })
+      }
+      const orch = buildOrchestrator(registry, { now: () => 1000 })
+      await orch.writeResult('b9', {})
+      expect(recorded).toEqual([
+        { id: 'b9', result: { present: true, at: new Date(1000).toISOString() } }
+      ])
     })
   })
 

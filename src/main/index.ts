@@ -10,7 +10,7 @@ import {
   drainPty,
   writeToPty
 } from './pty'
-import { readBoardResult } from './boardResults'
+import { readBoardResult, recordBoardResult } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
 import {
   registerPreviewHandlers,
@@ -197,7 +197,10 @@ app.whenReady().then(async () => {
     audit: (e) =>
       getAuditLog()
         ?.append(e)
-        .then(() => {}) ?? Promise.resolve()
+        .then(() => {}) ?? Promise.resolve(),
+    // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
+    // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
+    recordResult: (id, result) => recordBoardResult(id, result)
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
