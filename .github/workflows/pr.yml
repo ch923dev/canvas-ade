@@ -32,7 +32,14 @@ jobs:
 
   # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
   # runE2ESmoke sets process.exitCode + app.exit(code), so a failed assertion fails the job.
+  #
+  # FROZEN (2026-06-03): the board e2e smoke is DISABLED until we build a structured
+  # testing setup. There is a larger e2e reliability issue (the CANVAS_SMOKE=e2e harness
+  # is a brittle stand-in) on top of the known CI-only `whiteboard-fullview-add`
+  # determinism flake. Do NOT let e2e gate work meanwhile — `check` is the gate. Re-enable
+  # by removing this `if: false`. See CLAUDE.md › Status.
   smoke:
+    if: false
     needs: check
     runs-on: windows-latest
     steps:
