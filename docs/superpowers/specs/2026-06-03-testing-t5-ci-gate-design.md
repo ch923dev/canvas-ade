@@ -3,7 +3,7 @@
 **Date:** 2026-06-03 · **Branch:** `testing-strategy` (single branch for the whole initiative; PR #37) · **Status:** design, pre-plan
 **Parent:** `docs/superpowers/specs/2026-06-03-testing-strategy-design.md` §T5
 **Sibling:** `docs/superpowers/specs/2026-06-03-testing-t4-playwright-design.md` (the harness this gates)
-**Research backing:** `docs/research/2026-06-03-testing-strategy.md` (§7 hard surfaces) · `docs/research/self-smoke-testing.md`
+**Research backing:** `docs/research/2026-06-03-testing-strategy.md` (§7 hard surfaces) · `docs/research/self-smoke-testing.md` · **`docs/research/2026-06-03-electron-playwright-linux-ci.md`** (the Linux-CI deep-research — xvfb / sandbox / node-pty ABI / flake, verified)
 
 ---
 
@@ -43,12 +43,15 @@ is exactly why e2e was frozen (CLAUDE.md › Status, 2026-06-03).
 The app's `webPreferences` — `contextIsolation:true` / `sandbox:true` / `nodeIntegration:false` — is
 **never** weakened to make a test pass. The Playwright harness is **MAIN-process-helpers only**.
 
-Linux-CI nuance (resolved in T5a, below): the *Chromium-process* sandbox on a headless runner is a
-**launch-time** concern, distinct from the app's `webPreferences.sandbox`. The preferred path keeps
-the SUID `chrome-sandbox` helper. **Only if** the T5a spike proves Electron cannot launch under it on
-`ubuntu-latest` do we pass `--no-sandbox` to the **test launch** — CI-gated (`process.env.CI`),
-test-only, and it does **not** touch `webPreferences`. This is documented as a tradeoff, not a silent
-flip, and is a last resort after xvfb is in place.
+Linux-CI nuance (**resolved by research**, `docs/research/2026-06-03-electron-playwright-linux-ci.md`):
+the *Chromium-process* sandbox on a headless runner is a **launch-time** concern, distinct from the
+app's `webPreferences.sandbox`. Verified (3-0): a sandboxed Electron **aborts / times out at launch**
+on unprivileged headless Linux CI (the SUID `chrome-sandbox` helper is not correctly configured;
+Ubuntu 24.04 also restricts unprivileged user namespaces via AppArmor). The constraint-compatible fix
+— **confirmed, not a last resort** — is to pass `--no-sandbox` to the **test launch**
+(`_electron.launch({ args: ['--no-sandbox'] })`), CI- + Linux-gated, test-only; it does **not** touch
+`webPreferences`. The opposite workaround (disabling `app.enableSandbox()` in app code) was **refuted
+0-3** — never change app code; pass the launch flag. The app's `sandbox:true` stays exactly as is.
 
 ---
 
@@ -72,24 +75,30 @@ throughout; the `smoke` gate is only flipped on in T5c after the spike proves it
 
 ### T5a — CI spike (de-risk `capturePage` + Linux launch FIRST)
 
-A **throwaway** minimal `smoke` job (matrix Win + Linux) that runs the existing T4 suite, pushed to
-PR #37 and **watched on the runner**. It answers the make-or-break empirical questions *before* the
-real gate is committed:
+Research (`docs/research/2026-06-03-electron-playwright-linux-ci.md`) already resolved most of the
+Linux launch recipe — **xvfb required** (`xvfb-run -a`, install explicitly, don't assume
+pre-installed), **`--no-sandbox` + `--disable-dev-shm-usage`** confirmed-needed on CI Linux, node-pty
+ABI handled by `postinstall`. So those go in **from the start**, not via the spike. The **one
+genuinely-open unknown** the research could not verify is **capturePage/GL** — so the spike narrows to
+exactly that.
 
-- **Windows:** does `mainWindow`-external per-view `capturePage` return a **non-blank** frame for the
-  `browser` / `fullview` / `menu` probes on `windows-latest`'s interactive desktop session?
-- **Linux:** does Electron **launch at all** under `xvfb-run` on headless `ubuntu-latest`? Does the
-  Chromium sandbox need handling? Does `capturePage` come back non-blank? Is a GL flag required?
+A **throwaway** minimal `smoke` job (matrix Win + Linux), with the known Linux launch args already
+applied, pushed to PR #37 and **watched on the runner**. It answers only:
 
-Outcomes feed the launch-arg + workflow decisions:
+- **Windows:** does the per-view `capturePage` (the preview manager's own, not `mainWindow.capturePage`)
+  return a **non-blank** frame for the `browser` / `fullview` / `menu` probes on `windows-latest`'s
+  interactive desktop session?
+- **Linux:** with `xvfb-run -a` + `--no-sandbox` + `--disable-dev-shm-usage` already in place, does
+  `capturePage` come back **non-blank**, or is a software-GL flag required — and **which** one?
+
+Outcome feeds the GL launch-arg decision:
 - Non-blank without a flag → no GL flag on that leg.
-- Blank → add `--use-gl=swiftshader` / `--use-angle=swiftshader` to the e2e Electron launch args,
-  **CI-gated** (`process.env.CI`), in `e2e/fixtures.ts`; re-spike to confirm.
-- Linux launch failure under the SUID sandbox → add `--no-sandbox` to the **test launch only**
-  (CI-gated), document the tradeoff; otherwise keep the SUID helper.
+- Blank → add `--use-gl=swiftshader` (try first) / `--use-angle=swiftshader` to the e2e Electron
+  launch args, **CI- + Linux-gated**, in `e2e/fixtures.ts`; re-spike to confirm. (Also try
+  `--disable-gpu` if still blank — see research open questions.)
 
-The spike job is **deleted** once its questions are answered (it is not the final gate — T5c is). T5a
-produces no production code beyond possibly the CI-gated launch args, which carry forward.
+The spike job is **deleted** once its question is answered (it is not the final gate — T5c is). T5a's
+only carried-forward production code is the CI-gated launch args in `fixtures.ts`.
 
 ### T5b — process-tree-kill (unit + e2e)
 
@@ -132,7 +141,9 @@ Both `smoke` jobs (`pr.yml`, `staging.yml`) today still run `pnpm build` then
   `electron-builder install-app-deps` rebuilds node-pty against the Electron ABI** — no extra rebuild
   step) → **run e2e**. No separate `pnpm build` (the `pretest:e2e` hook = `electron-vite build`). No
   `playwright install` (`_electron` uses the `node_modules` Electron, not a downloaded browser).
-- **Per-OS run step:** Linux uses `xvfb-run -a pnpm test:e2e`; Windows uses `pnpm test:e2e`. Gated on
+- **Linux display:** a `runner.os == 'Linux'`-gated step installs Xvfb explicitly
+  (`sudo apt-get update && sudo apt-get install -y xvfb` — research: don't assume it's pre-installed).
+- **Per-OS run step:** Linux runs `xvfb-run -a pnpm test:e2e`; Windows runs `pnpm test:e2e`. Gated on
   `runner.os` (two steps with `if:`, or a matrix `run_cmd` var).
 - **Artifact on failure:** `upload-artifact` the `playwright-report/` (and traces) `if: failure()` for
   triage of a runner-only flake.
@@ -174,7 +185,7 @@ prove it is not a one-off. Triage any failure from the uploaded report.
 | `.github/workflows/pr.yml` | Rewrite `smoke` job → matrix `pnpm test:e2e`; remove `if: false`; failure artifact. |
 | `.github/workflows/staging.yml` | Same rewrite (keep the `package` matrix job as-is). |
 | `playwright.config.ts` | `retries: process.env.CI ? 2 : 0`. |
-| `e2e/fixtures.ts` | CI-gated launch args (GL / `--no-sandbox`) **iff** the T5a spike requires them. |
+| `e2e/fixtures.ts` | CI+Linux-gated launch args: `--no-sandbox` + `--disable-dev-shm-usage` (research-confirmed needed) from the start; a GL flag (`--use-gl=swiftshader`) **iff** the T5a spike shows blank capturePage. |
 | `src/main/pty.ts` | Extract pure `killTreeCommand`; `killTree` consumes it (no behavior change). |
 | `src/main/pty.test.ts` | Unit-test `killTreeCommand` both platforms. |
 | `src/main/e2eMain.ts` | Add `childPidsOf(pid)` registry helper. |
