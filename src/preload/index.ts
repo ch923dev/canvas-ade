@@ -170,7 +170,23 @@ const api = {
   // ── MCP board mirror (control plane; metadata only — id/type/title, never content) ──
   mcp: {
     publishBoards: (boards: Array<{ id: string; type: string; title: string }>): void =>
-      ipcRenderer.send('mcp:boards', boards)
+      ipcRenderer.send('mcp:boards', boards),
+
+    // MAIN → renderer command channel (the inverse of publishBoards). The handler
+    // gets the command + a reply fn that acks on MAIN's unique reply channel.
+    // Returns an unsubscribe fn. Control-plane only.
+    onCommand: (
+      handler: (command: { type: string }, reply: (ack: unknown) => void) => void
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        msg: { command: { type: string }; replyChannel: string }
+      ): void => {
+        handler(msg.command, (ack) => ipcRenderer.send(msg.replyChannel, ack))
+      }
+      ipcRenderer.on('mcp:command', listener)
+      return () => ipcRenderer.removeListener('mcp:command', listener)
+    }
   }
 }
 

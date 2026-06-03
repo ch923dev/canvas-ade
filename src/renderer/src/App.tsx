@@ -3,6 +3,7 @@ import Canvas from './canvas/Canvas'
 import WelcomeScreen from './canvas/WelcomeScreen'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
+import { useMcpCommands } from './store/useMcpCommands'
 import { useCanvasStore } from './store/canvasStore'
 import { useAutosave } from './store/useAutosave'
 import { isE2E } from './smoke/e2eRegistry'
@@ -16,6 +17,7 @@ function App(): React.ReactElement {
   useRendererSmoke()
   useAutosave()
   useMcpPublish()
+  useMcpCommands()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)

@@ -1,5 +1,6 @@
-import type { BrowserWindow } from 'electron'
+import { ipcMain, type BrowserWindow } from 'electron'
 import type { RunningMcp } from './mcp'
+import { sendMcpCommand } from './mcpCommand'
 
 /** stdout marker (EPIPE-safe like index.ts's smokeLog). */
 function log(line: string): void {
@@ -170,6 +171,15 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
         log(`MCP_FAIL boards types=${types.join(',')}`)
         code = 1
       }
+    }
+
+    // ── MAIN→renderer command channel (T0.3): a `ping` must round-trip through the
+    // renderer applier (useMcpCommands) and ack. Proves the inverse of the mirror. ──
+    const ack = await sendMcpCommand(ipcMain, () => win, { type: 'ping' })
+    if (ack.ok && ack.type === 'ping') log('MCP_COMMAND_OK')
+    else {
+      log(`MCP_FAIL command ${JSON.stringify(ack)}`)
+      code = 1
     }
 
     await orch.close()
