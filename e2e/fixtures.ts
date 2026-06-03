@@ -17,8 +17,19 @@ type WorkerFixtures = { electronApp: ElectronApplication }
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   electronApp: [
     async ({}, use) => {
+      // Headless Linux CI: Electron's SUID chrome-sandbox helper is misconfigured on
+      // unprivileged runners (Electron #42510) + Ubuntu 24.04 AppArmor restricts user
+      // namespaces → a sandboxed launch aborts/times out. --no-sandbox is a flag on the
+      // TEST launch ONLY; it does NOT change the app's webPreferences.sandbox:true.
+      // --disable-dev-shm-usage avoids the small /dev/shm on runners. Both are
+      // research-confirmed (docs/research/2026-06-03-electron-playwright-linux-ci.md).
+      // A software-GL flag may be appended after the T5a spike if capturePage is blank.
+      const launchArgs = ['out/main/index.js']
+      if (process.env.CI && process.platform === 'linux') {
+        launchArgs.push('--no-sandbox', '--disable-dev-shm-usage')
+      }
       const app = await _electron.launch({
-        args: ['out/main/index.js'],
+        args: launchArgs,
         env: { ...process.env, CANVAS_E2E: '1' }
       })
       const pg = await app.firstWindow()
