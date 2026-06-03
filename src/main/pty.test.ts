@@ -16,7 +16,7 @@ import {
   registerPtyHandlers
 } from './pty'
 import type { ShellInfo } from './pty'
-import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 
 describe('safeCwd (SEC-1)', () => {
   it('returns an existing directory unchanged', () => {
@@ -412,7 +412,7 @@ describe('registerPtyHandlers — foreign-sender rejection (#17/#20 Browser↛PT
       handle: (c: string, fn: (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown) =>
         handlers.set(c, fn)
     } as unknown as IpcMain
-    const getWin = (): never => ({ webContents: { mainFrame } }) as never
+    const getWin = (): BrowserWindow => ({ webContents: { mainFrame } }) as unknown as BrowserWindow
     registerPtyHandlers(ipcMain, getWin)
     return handlers
   }
@@ -430,5 +430,25 @@ describe('registerPtyHandlers — foreign-sender rejection (#17/#20 Browser↛PT
   it('pty:shells returns [] for a foreign sender (no shell enumeration leaked)', () => {
     const handlers = setup()
     expect(handlers.get('pty:shells')!(foreign)).toEqual([])
+  })
+
+  it('terminal:detectPorts returns [] for a foreign sender', () => {
+    const handlers = setup()
+    expect(handlers.get('terminal:detectPorts')!(foreign, 'b1')).toEqual([])
+  })
+
+  it('pty:disposeAll returns false for a foreign sender', () => {
+    const handlers = setup()
+    expect(handlers.get('pty:disposeAll')!(foreign)).toBe(false)
+  })
+
+  it('pty:park returns false for a foreign sender', () => {
+    const handlers = setup()
+    expect(handlers.get('pty:park')!(foreign, 'b1')).toBe(false)
+  })
+
+  it('pty:adopt returns { adopted: false } for a foreign sender', () => {
+    const handlers = setup()
+    expect(handlers.get('pty:adopt')!(foreign, 'b1')).toEqual({ adopted: false })
   })
 })

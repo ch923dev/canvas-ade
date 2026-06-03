@@ -286,4 +286,33 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
       })
     ).toEqual({ ok: false, error: 'forbidden' })
   })
+
+  it('dialog:openFolder returns null for a foreign sender and does not open dialog', async () => {
+    const handlers = setup()
+    const result = await handlers.get('dialog:openFolder')!(foreign)
+    expect(result).toBeNull()
+    expect(electronDialog.showOpenDialog).not.toHaveBeenCalled()
+  })
+
+  it('project:create returns { ok: false, error: "forbidden" } for a foreign sender and does not call createProject', async () => {
+    const handlers = setup()
+    const result = await handlers.get('project:create')!(foreign, {
+      dir: 'C:\\proj',
+      name: 'p',
+      opts: {}
+    })
+    expect(result).toEqual({ ok: false, error: 'forbidden' })
+    expect(store.createProject).not.toHaveBeenCalled()
+  })
+
+  it('project:current returns null for a foreign sender', async () => {
+    const handlers = setup()
+    const result = await handlers.get('project:current')!(foreign)
+    expect(result).toBeNull()
+  })
+
+  it('asset:read returns null for a foreign sender', () => {
+    const handlers = setup()
+    expect(handlers.get('asset:read')!(foreign, 'someId')).toBeNull()
+  })
 })

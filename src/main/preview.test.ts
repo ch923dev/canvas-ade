@@ -324,4 +324,29 @@ describe('registerPreviewHandlers — foreign-sender rejection (#17)', () => {
     const handlers = setup()
     expect(handlers.get('preview:goBack')!(foreign, 'b1')).toBe(false)
   })
+
+  it.each([
+    ['preview:goForward', ['b1']],
+    ['preview:reload', ['b1']]
+  ] as const)('%s returns false for a foreign sender', (channel, args) => {
+    const handlers = setup()
+    expect(handlers.get(channel)!(foreign, ...args)).toBe(false)
+  })
+
+  it.each([
+    ['preview:setBoundsBatch', [[]]],
+    ['preview:detach', ['b1']],
+    ['preview:detachAll', []],
+    ['preview:attach', [{ id: 'b1', bounds: {} }]],
+    ['preview:close', ['b1']],
+    ['preview:closeAll', []]
+  ] as const)('%s returns true for a foreign sender', (channel, args) => {
+    const handlers = setup()
+    expect(handlers.get(channel)!(foreign, ...args)).toBe(true)
+  })
+
+  it('preview:capture returns null for a foreign sender (async)', async () => {
+    const handlers = setup()
+    expect(await handlers.get('preview:capture')!(foreign, 'b1')).toBeNull()
+  })
 })
