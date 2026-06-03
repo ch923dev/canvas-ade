@@ -97,6 +97,3 @@ function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
 export function buildDigest(d: CanvasDoc): CanvasDigest {
   return { header: buildHeader(d.boards), boards: d.boards.map((b) => digestBoard(b, d)) }
 }
-
-// `ChecklistElement` is imported here so later tasks (planning) need no import churn.
-export type { ChecklistElement }

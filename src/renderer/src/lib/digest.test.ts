@@ -5,7 +5,9 @@ import type {
   TerminalBoard,
   BrowserBoard,
   PlanningBoard,
-  PlanningElement
+  PlanningElement,
+  ChecklistElement,
+  NoteElement
 } from './boardSchema'
 
 // ── test builders (minimal valid boards) ─────────────────────────────────────
@@ -50,6 +52,12 @@ describe('buildDigest — header', () => {
     expect(d.boards.map((x) => x.type)).toEqual(['terminal', 'browser', 'planning'])
     expect(d.boards.every((x) => typeof x.title === 'string')).toBe(true)
   })
+
+  it('uses singular "board" for a single board', () => {
+    expect(buildDigest(doc([terminal({ id: 't1' })])).header).toBe(
+      '1 board — 1 terminal, 0 browser, 0 planning'
+    )
+  })
 })
 
 describe('buildDigest — terminal', () => {
@@ -88,7 +96,11 @@ describe('buildDigest — browser', () => {
     )
     const b = d.boards[1]
     expect(b.status).toBe('linked')
-    expect(b.lines).toContain('Preview of "Dev server"')
+    expect(b.lines).toEqual([
+      'URL http://localhost:5173',
+      'Viewport desktop',
+      'Preview of "Dev server"'
+    ])
     // and the terminal side reports the reverse link
     expect(d.boards[0].lines).toContain('Feeds preview "Browser"')
   })
@@ -98,8 +110,6 @@ describe('buildDigest — browser', () => {
     expect(d.boards[0].lines).toContain('Preview of "missing"')
   })
 })
-
-import type { ChecklistElement, NoteElement } from './boardSchema'
 
 function checklist(title: string, done: number, total: number): ChecklistElement {
   const items = Array.from({ length: total }, (_, i) => ({
