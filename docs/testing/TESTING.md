@@ -1,8 +1,9 @@
 # Testing — Canvas ADE
 
 How we test. This is the source of truth for **which tier a test belongs to** and **where it lives**.
-Backed by `docs/research/2026-06-03-testing-strategy.md` and the roadmap in
-`docs/superpowers/specs/2026-06-03-testing-strategy-design.md`.
+The why/history of how the suite got here (T0–T5) is compiled in
+`docs/archive/2026-06-03-testing-strategy-initiative.md` (per-phase specs/plans/research were collapsed
+there; originals in git history).
 
 ## Model — the Testing Trophy
 
@@ -77,6 +78,32 @@ Electron's security checklist is asserted at the **unit/integration** tier, not 
 2. Name the file for its tier (`*.test.ts` vs `*.integration.test.ts`) and colocate it with the code.
 3. `.ts` runs in node, `.tsx` in jsdom (handled by `environmentMatchGlobs`) — pick the extension to
    match what the test needs.
+
+## Testing requirements by feature area
+
+Apply the decision rule per change, but each area has a **default tier** for its logic and a small set
+of **mandatory e2e slivers** (real-instance surfaces that only reproduce in the booted app). When you
+build in an area, cover the logic at the stated tier and keep its e2e sliver green; only add a NEW e2e
+test when you introduce a genuinely new native/real-instance surface (see "E2E keep-set").
+
+| Area | Logic tier (most coverage) | Mandatory e2e slivers (real instance) |
+|---|---|---|
+| **Terminal board** (node-pty/ConPTY) | unit — state machine, output parse, `killTreeCommand`, ring buffer, shell resolve | spawn→echo · full-view relocate (same pid) · LOD survives · config respawn · park+adopt on undo · **process-tree kill (no orphan)** |
+| **Browser board / preview** (`WebContentsView`) | unit — `cameraBounds`/`canvasView` bounds+scale math, `portDetect`, `previewEdges` | native attach + non-blank capturePage · gesture detach/reattach · focus detach · dead-URL load-failed · port-detect→connect gesture |
+| **Full view** (native rebind) | unit — fit math; jsdom — Planning camera-fit | webContents survives (no restart) · self-preserve · letterboxed emulator · chrome-less Esc-close |
+| **Planning / whiteboard** (notes/arrows/pen/checklist/shapes·mermaid) | **integration (jsdom)** — render the real `PlanningBoard`; unit for pure geometry (snapping/tools/layout) | only the transform/real-OS-input slivers: full-view add-note (real click through live camera) · real Ctrl+V paste · PNG export raster. New shapes/mermaid → cover in jsdom; add an e2e ONLY if it needs real OS input or the native raster pipeline. |
+| **Persistence / migrations** (`canvas.json`, schema) | unit — `boardSchema` (de)serialize, migration pipeline, atomic-write contract, scene/session split | none (no native surface) — never e2e what a schema round-trip proves |
+| **MAIN / IPC & security** (`index.ts`, pty/preview/projectIpc, `localServer.ts`) | **integration** via `ipcTestHarness` (no app boot) + unit `windowSecurity` | none — assert the Electron security checklist at unit/integration (see Security map). Foreign-sender rejection is REQUIRED for every new guarded handler. |
+| **MCP swarm layer** (`canvas-ade-mcp`, when built) | unit — tool/resource handlers, request shapes; integration — registration + **foreign-sender rejection** (Host-header CVE = browser-board attack vector) | none unless a tool drives a real board surface; prefer integration. |
+| **Feature Workspaces / git worktrees** (deferred; `simple-git` in MAIN) | integration — worktree create/remove, dirty-on-delete prompt logic, `git init` opt-in/reuse/never-nest rules (mock `simple-git`) | one real-instance test of an actual worktree create→remove only if logic can't prove it. |
+| **Context subsystem** (`.canvas/` memory, digest) | unit — digest build, memory read/write, serialization | none. |
+| **Packaging / auto-update** (Phase 5) | — | **the one outstanding e2e-only surface**: an auto-update flow e2e once electron-updater/packaging/signing exist. Deferred until then. |
+
+**Rules of thumb:** if a behavior is provable by calling a function (collaborators mocked) it is **unit**;
+if it needs a rendered component tree, a registered IPC handler, or mocked `electron`, it is
+**integration**; reserve **e2e** for the native layer (`WebContentsView`, node-pty roundtrip, OS
+process-tree kill, real OS input through the live camera transform, auto-update). Duplicating a
+lower-tier-provable behavior as e2e is not allowed.
 
 ## MAIN IPC integration — the harness
 
