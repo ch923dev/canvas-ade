@@ -33,6 +33,13 @@ describe('llmConfig', () => {
     expect(cfg.model).toBe(DEFAULT_MODELS.openrouter)
   })
 
+  it('round-trips the local provider baseUrl', () => {
+    writeLlmConfig(dir, { provider: 'local', model: 'm', baseUrl: 'http://127.0.0.1:1234/v1' })
+    const cfg = readLlmConfig(dir)
+    expect(cfg.provider).toBe('local')
+    expect(cfg.baseUrl).toBe('http://127.0.0.1:1234/v1')
+  })
+
   it('writes the config file (llm-config.json) into the given userData dir, never elsewhere', () => {
     writeLlmConfig(dir, { provider: 'openai', model: 'gpt-4o-mini' })
     expect(existsSync(join(dir, 'llm-config.json'))).toBe(true)

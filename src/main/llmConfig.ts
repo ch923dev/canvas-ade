@@ -18,7 +18,9 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
   local: 'local-model'
 }
 
-const PROVIDERS: ProviderName[] = ['openrouter', 'openai', 'anthropic', 'local']
+// Derived from DEFAULT_MODELS (typed Record<ProviderName,...>) so the provider list
+// can't drift from the ProviderName union.
+const PROVIDERS = Object.keys(DEFAULT_MODELS) as ProviderName[]
 
 export interface LlmConfig {
   provider: ProviderName
