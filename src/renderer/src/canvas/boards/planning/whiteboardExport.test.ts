@@ -58,3 +58,49 @@ describe('boardToSvg — vectors', () => {
     expect(svg).toContain('marker-end="url(#wb-export-arrow)"')
   })
 })
+
+describe('boardToSvg — cards', () => {
+  it('renders a note as a tinted rounded rect with its text', () => {
+    const { svg } = boardToSvg(
+      board([{ id: 'n', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'yellow', text: 'hello', rotation: 0 }]),
+      {}
+    )
+    expect(svg).toContain('<rect')
+    expect(svg).toContain('#2a2818') // yellow tint fill
+    expect(svg).toContain('hello')
+  })
+
+  it('escapes text content (no raw markup injection)', () => {
+    const { svg } = boardToSvg(
+      board([{ id: 't', kind: 'text', x: 0, y: 0, text: '<b>x</b> & y' }]),
+      {}
+    )
+    expect(svg).toContain('&lt;b&gt;x&lt;/b&gt; &amp; y')
+    expect(svg).not.toContain('<b>x</b>')
+  })
+
+  it('renders a checklist with title, count, progress bar and item labels', () => {
+    const { svg } = boardToSvg(
+      board([
+        {
+          id: 'c',
+          kind: 'checklist',
+          x: 0,
+          y: 0,
+          w: 240,
+          h: 0,
+          title: 'Tasks',
+          items: [
+            { id: 'i1', label: 'done one', done: true },
+            { id: 'i2', label: 'todo two', done: false }
+          ]
+        }
+      ]),
+      {}
+    )
+    expect(svg).toContain('Tasks')
+    expect(svg).toContain('1/2') // done/total
+    expect(svg).toContain('done one')
+    expect(svg).toContain('todo two')
+  })
+})
