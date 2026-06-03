@@ -57,7 +57,11 @@ function liveOsPids(): Set<number> {
     if (process.platform === 'win32') {
       out = execFileSync(
         'powershell.exe',
-        ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId }'],
+        [
+          '-NoProfile',
+          '-Command',
+          'Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId }'
+        ],
         { encoding: 'utf8' }
       )
     } else {
