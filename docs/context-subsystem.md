@@ -266,7 +266,7 @@ untrusted passive context (written + read, never triggers an action); `contextIs
 | T-B1 | `e7f7fcf` | 640 | `context-brain` ok |
 | T-B2 | `5678257` | 664 | `context-keystore` ok |
 | T-B3 | `cec15ba` | **682** | `context-budget` ok |
-| T-M1 | `feat/context-m1-canvas-engine` (squash pending) | **702** | `context-memory` ok |
+| T-M1 | `2e0b1e7` | **702** | `context-memory` ok |
 
 typecheck/lint/format:check clean throughout (1 pre-existing unrelated `PlanningBoard.tsx` no-console
 warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browser`/`browser-gesture`/
