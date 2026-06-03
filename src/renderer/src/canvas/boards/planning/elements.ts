@@ -11,6 +11,7 @@ import type {
   ArrowElement,
   ChecklistElement,
   ChecklistItem,
+  ImageElement,
   NoteElement,
   NoteTint,
   PlanningElement,
@@ -94,6 +95,39 @@ export function makeStroke(id: string, points: number[]): StrokeElement {
   return { id, kind: 'stroke', x: 0, y: 0, points }
 }
 
+/** Max longest-side (board-local px) a pasted/dropped image is fit to. */
+export const IMAGE_MAX = 360
+
+/** Scale natural dimensions to fit `max` on the longest side (never upscale); floor 16. */
+export function fitImageSize(
+  natW: number,
+  natH: number,
+  max = IMAGE_MAX
+): { w: number; h: number } {
+  if (!(natW > 0) || !(natH > 0)) return { w: max, h: max }
+  const scale = Math.min(1, max / Math.max(natW, natH))
+  return { w: Math.max(16, Math.round(natW * scale)), h: Math.max(16, Math.round(natH * scale)) }
+}
+
+/** A new image element centred on the drop/paste point (top-left like a note). */
+export function makeImage(
+  id: string,
+  at: { x: number; y: number },
+  assetId: string,
+  w: number,
+  h: number
+): ImageElement {
+  return {
+    id,
+    kind: 'image',
+    x: Math.round(at.x - w / 2),
+    y: Math.round(at.y - h / 2),
+    w,
+    h,
+    assetId
+  }
+}
+
 // ── Immutable array transforms ────────────────────────────────────────────────
 
 /** Replace one element by id with the result of `fn` (no-op if absent). */
@@ -136,17 +170,7 @@ export function translateElement(
   dx: number,
   dy: number
 ): PlanningElement[] {
-  return els.map((el) => {
-    if (el.id !== id) return el
-    if (el.kind === 'arrow') {
-      return { ...el, x: el.x + dx, y: el.y + dy, x2: el.x2 + dx, y2: el.y2 + dy }
-    }
-    if (el.kind === 'stroke') {
-      const points = el.points.map((v, i) => (i % 2 === 0 ? v + dx : v + dy))
-      return { ...el, x: el.x + dx, y: el.y + dy, points }
-    }
-    return { ...el, x: el.x + dx, y: el.y + dy }
-  })
+  return els.map((el) => (el.id === id ? shiftElement(el, dx, dy) : el))
 }
 
 /** Toggle one checklist item's `done` flag (live progress). */
@@ -208,4 +232,247 @@ export function checklistProgress(cl: ChecklistElement): {
   const total = cl.items.length
   const done = cl.items.filter((i) => i.done).length
   return { done, total, pct: total === 0 ? 0 : Math.round((done / total) * 100) }
+}
+
+// ── Bounding boxes + anchors (W2: marquee selection + snapping) ───────────────
+
+export interface BBox {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+export interface Measured {
+  w: number
+  h: number
+}
+export interface Anchors {
+  left: number
+  centerX: number
+  right: number
+  top: number
+  centerY: number
+  bottom: number
+}
+
+/** Nominal box for an auto-sized free-text element when no live DOM measurement exists. */
+export const TEXT_NOMINAL: Measured = { w: 120, h: 22 }
+
+// Approx ChecklistCard row metrics — single source of truth (erase.ts imports
+// nominalChecklistHeight rather than duplicating these). Keep roughly in step with
+// ChecklistCard.tsx if its layout changes.
+const CHECKLIST_HEADER_H = 30
+const CHECKLIST_ROW_H = 24
+const CHECKLIST_FOOTER_H = 24
+
+/** Approximate rendered checklist height from its item count (board-local px). */
+export function nominalChecklistHeight(itemCount: number): number {
+  return CHECKLIST_HEADER_H + itemCount * CHECKLIST_ROW_H + CHECKLIST_FOOTER_H
+}
+
+/**
+ * Board-local bounding box for any element kind. `measured` (a live DOM size) refines
+ * the auto-sized kinds — text has no persisted w/h; checklist persists h:0 and grows.
+ * Pure: tests pass `measured` explicitly; the board supplies it from a ref map at runtime.
+ * Arrows/strokes have NO single top-left → use the point/endpoint extent (never w/h).
+ */
+export function elementBBox(el: PlanningElement, measured?: Measured): BBox {
+  switch (el.kind) {
+    case 'note':
+      return { x: el.x, y: el.y, w: el.w, h: el.h }
+    case 'checklist':
+      return {
+        x: el.x,
+        y: el.y,
+        w: el.w,
+        h: measured?.h ?? nominalChecklistHeight(el.items.length)
+      }
+    case 'text': {
+      const m = measured ?? TEXT_NOMINAL
+      return { x: el.x, y: el.y, w: m.w, h: m.h }
+    }
+    case 'arrow':
+      return {
+        x: Math.min(el.x, el.x2),
+        y: Math.min(el.y, el.y2),
+        w: Math.abs(el.x2 - el.x),
+        h: Math.abs(el.y2 - el.y)
+      }
+    case 'stroke': {
+      const pts = el.points
+      if (pts.length < 2) return { x: el.x, y: el.y, w: 0, h: 0 }
+      let minX = pts[0]
+      let minY = pts[1]
+      let maxX = pts[0]
+      let maxY = pts[1]
+      for (let i = 0; i + 1 < pts.length; i += 2) {
+        if (pts[i] < minX) minX = pts[i]
+        if (pts[i] > maxX) maxX = pts[i]
+        if (pts[i + 1] < minY) minY = pts[i + 1]
+        if (pts[i + 1] > maxY) maxY = pts[i + 1]
+      }
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+    }
+    // W4: image element — bbox is its explicit w/h (renderer task handles display).
+    case 'image':
+      return { x: el.x, y: el.y, w: el.w, h: el.h }
+  }
+}
+
+/** Six alignment anchors (edges + centers) of a box. */
+export function anchors(b: BBox): Anchors {
+  return {
+    left: b.x,
+    centerX: b.x + b.w / 2,
+    right: b.x + b.w,
+    top: b.y,
+    centerY: b.y + b.h / 2,
+    bottom: b.y + b.h
+  }
+}
+
+/** Smallest box covering every input box. Empty input → a zero box at the origin. */
+export function unionBBox(boxes: BBox[]): BBox {
+  if (boxes.length === 0) return { x: 0, y: 0, w: 0, h: 0 }
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const b of boxes) {
+    if (b.x < minX) minX = b.x
+    if (b.y < minY) minY = b.y
+    if (b.x + b.w > maxX) maxX = b.x + b.w
+    if (b.y + b.h > maxY) maxY = b.y + b.h
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+}
+
+/**
+ * Shift one element by a board-local delta, correctly per kind (the shared core of
+ * translateElement + translateMany): note/text/checklist move their top-left; arrow
+ * moves both endpoints; stroke moves every point pair (and keeps x/y in lockstep).
+ */
+export function shiftElement<E extends PlanningElement>(el: E, dx: number, dy: number): E {
+  if (el.kind === 'arrow') {
+    return { ...el, x: el.x + dx, y: el.y + dy, x2: el.x2 + dx, y2: el.y2 + dy }
+  }
+  if (el.kind === 'stroke') {
+    return {
+      ...el,
+      x: el.x + dx,
+      y: el.y + dy,
+      points: el.points.map((v, i) => (i % 2 === 0 ? v + dx : v + dy))
+    }
+  }
+  return { ...el, x: el.x + dx, y: el.y + dy }
+}
+
+/** Translate EVERY element whose id is in `ids` by (dx,dy); others untouched. Immutable. */
+export function translateMany(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  dx: number,
+  dy: number
+): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  return els.map((el) => (set.has(el.id) ? shiftElement(el, dx, dy) : el))
+}
+
+// ── W3: lock + group + duplicate ───────────────────────────────────────────────
+
+/** The single lock predicate. Absent flag ⇒ unlocked. */
+export function isLocked(el: PlanningElement): boolean {
+  return el.locked === true
+}
+
+/** Drop the `groupId` key from a copy (immutable, key removed not set-undefined). */
+function withoutGroup<E extends PlanningElement>(el: E): E {
+  if (el.groupId === undefined) return el
+  const next = { ...el }
+  delete next.groupId
+  return next
+}
+
+/**
+ * Expand a selection to whole groups: for every selected element that has a
+ * `groupId`, add all elements sharing that id. Ungrouped ids pass through.
+ * Idempotent. Returns a superset of `ids`.
+ */
+export function expandGroups(els: PlanningElement[], ids: Iterable<string>): Set<string> {
+  const set = new Set(ids)
+  const groups = new Set<string>()
+  for (const el of els) if (set.has(el.id) && el.groupId) groups.add(el.groupId)
+  if (groups.size === 0) return set
+  for (const el of els) if (el.groupId && groups.has(el.groupId)) set.add(el.id)
+  return set
+}
+
+/** Assign one fresh `groupId` to every element in `ids`. */
+export function groupElements(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  groupId: string
+): PlanningElement[] {
+  const set = new Set(ids)
+  return els.map((el) => (set.has(el.id) ? { ...el, groupId } : el))
+}
+
+/** Clear `groupId` on every element belonging to a group represented in `ids`. */
+export function ungroupElements(els: PlanningElement[], ids: Iterable<string>): PlanningElement[] {
+  const set = new Set(ids)
+  const groups = new Set<string>()
+  for (const el of els) if (set.has(el.id) && el.groupId) groups.add(el.groupId)
+  return els.map((el) => (el.groupId && groups.has(el.groupId) ? withoutGroup(el) : el))
+}
+
+/** Set (or remove) the `locked` flag across `ids`. */
+export function setLocked(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  locked: boolean
+): PlanningElement[] {
+  const set = new Set(ids)
+  return els.map((el) => {
+    if (!set.has(el.id)) return el
+    if (locked) return { ...el, locked: true }
+    if (el.locked === undefined) return el
+    const next = { ...el }
+    delete next.locked
+    return next
+  })
+}
+
+/**
+ * Clone every element in `ids` (caller expands groups first), assigning a fresh id
+ * per copy and shifting by (dx,dy). Each ORIGINAL group becomes ONE fresh group
+ * among the copies. Originals are left untouched. Returns the full new array
+ * (originals + copies) plus the copy ids (for reselection).
+ */
+export function duplicateElements(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  dx: number,
+  dy: number,
+  newId: () => string
+): { elements: PlanningElement[]; newIds: string[] } {
+  const set = new Set(ids)
+  const groupRemap = new Map<string, string>()
+  const newIds: string[] = []
+  const copies: PlanningElement[] = []
+  for (const el of els) {
+    if (!set.has(el.id)) continue
+    const id = newId()
+    newIds.push(id)
+    let copy = shiftElement({ ...el, id }, dx, dy)
+    if (el.groupId) {
+      let g = groupRemap.get(el.groupId)
+      if (!g) {
+        g = newId()
+        groupRemap.set(el.groupId, g)
+      }
+      copy = { ...copy, groupId: g }
+    }
+    copies.push(copy)
+  }
+  return { elements: [...els, ...copies], newIds }
 }

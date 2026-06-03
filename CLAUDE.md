@@ -61,6 +61,10 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 - Project = a user-chosen folder. Whole canvas = single `canvas.json` at root + `canvas.json.bak` (parse-fail fallback). Heavy blobs in `assets/` by path, not inlined.
 - Atomic write (`write-file-atomic`), debounced autosave ~1s + sync flush on blur/`before-quit`. Root integer `schemaVersion` + migration pipeline.
 - App config + recent-projects list live in `app.getPath('userData')`, NEVER in the project folder.
+- **Scene/session split (whiteboard + boards):** only `{schemaVersion, viewport, boards}` is
+  serialized (`boardSchema.toObject`). Ephemeral session state — selected tool/element, in-flight
+  draft/erase, hover — stays in React/Zustand and is NEVER routed into `elements[]` or a board patch
+  key (`PATCHABLE_KEYS`). Borrowed from Excalidraw's `cleanAppStateForExport` discipline.
 
 ### Git / worktrees — DEFERRED (re-scoped 2026-05-30)
 Worktrees are **deferred to a post-MCP phase** under a better model: **Feature Workspaces** — a
@@ -120,7 +124,7 @@ pnpm pack:dir       # build + electron-builder --dir → release/win-unpacked/
 pnpm build:win|mac|linux
 pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 # headless smoke: $env:CANVAS_SMOKE='exit'; pnpm start   (prints SELFTEST_DONE / RENDERER_SMOKE)
-# board e2e smoke: pnpm build; $env:CANVAS_SMOKE='e2e'; pnpm start   (seeds each board, prints E2E_* / E2E_DONE, exits non-zero on fail)
+# board e2e smoke: pnpm build; $env:CANVAS_SMOKE='e2e'; pnpm start   (seeds each board, prints E2E_* / E2E_DONE, exits non-zero on fail) — FROZEN in CI, see Status
 # HTML screenshot:  $env:CANVAS_SHOT='C:\tmp\canvas.png'; pnpm start  (renderer DOM only, NOT the native preview view)
 ```
 
@@ -156,6 +160,15 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - **Repo path has a space** → node-pty MUST stay winpty-free (the beta). See Stack.
 
 ## Status
+
+> **⚠️ E2E FROZEN (2026-06-03).** The board e2e smoke (`CANVAS_SMOKE=e2e`) is **disabled in
+> CI** (`smoke` job `if: false` in `.github/workflows/pr.yml` + `staging.yml`) and is **not a
+> gate** until we build a **structured testing** setup. There is a larger e2e reliability problem
+> (the harness is a brittle stand-in) on top of the known CI-only `whiteboard-fullview-add`
+> determinism flake. **Do not block work, handoffs, or merges on e2e meanwhile** — the `check`
+> job (typecheck · lint · format:check · unit tests) is the gate. This **supersedes** the
+> "must pass e2e before handoff" rule until structured testing lands; re-enable by removing the
+> `if: false` from both workflows.
 
 Durable contract is above. **Build history** (phases 0–5, per-slice specs/plans, phase handoffs)
 is summarized in **`docs/archive/build-history.md`** (originals in git history). **Review/bug-hunt

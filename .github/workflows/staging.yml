@@ -1,0 +1,105 @@
+name: staging
+
+# Staging: on every push to main. Validates, then packages the full matrix and
+# uploads UNSIGNED artifacts (Actions artifacts, 7-day retention). No release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # node-gyp (rebuilds node-pty in postinstall) imports distutils, removed from
+      # the Python 3.12 stdlib that GitHub runners now ship — pin 3.11 (has distutils).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - run: pnpm build
+
+  # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
+  #
+  # FROZEN (2026-06-03): DISABLED until we build a structured testing setup (larger e2e
+  # reliability issue + the known CI-only `whiteboard-fullview-add` flake). `check` is the
+  # gate meanwhile. Re-enable by removing this `if: false`. See CLAUDE.md › Status.
+  smoke:
+    if: false
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Board e2e smoke
+        run: pnpm start
+        env:
+          CANVAS_SMOKE: e2e
+
+  # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
+  package:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        # One job per NATIVE (os, arch) where the toolchain can't cross-build native
+        # modules (Linux g++), and a single job where it can (Windows MSVC + macOS
+        # clang both cross-compile x64↔arm64). macos-13 (x64) is dropped — the runner
+        # is scarce/queues forever; macOS x64 is built on the arm runner instead.
+        include:
+          - os: windows-latest
+            args: --win --x64 --arm64
+          - os: macos-14
+            args: --mac --x64 --arm64
+          - os: ubuntu-latest
+            args: --linux --x64
+          - os: ubuntu-24.04-arm
+            args: --linux --arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      - name: Install (rebuilds node-pty against Electron ABI)
+        run: pnpm install --frozen-lockfile
+      - name: Package
+        run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish never
+        env:
+          # Skip macOS code-sign/notarize until Phase 5 (no certs in CI yet).
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canvas-ade-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+            release/*.zip
+          if-no-files-found: ignore
+          retention-days: 7

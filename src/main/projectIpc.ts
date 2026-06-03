@@ -6,6 +6,7 @@
 import path from 'node:path'
 import { dialog } from 'electron'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
+import writeFileAtomic from 'write-file-atomic'
 import {
   readProject,
   writeProject,
@@ -13,6 +14,10 @@ import {
   getCurrentDir,
   setCurrentDir,
   projectName,
+  writeAsset,
+  readAsset,
+  collectAssetIds,
+  gcAssets,
   type ProjectResult
 } from './projectStore'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
@@ -86,6 +91,7 @@ export function registerProjectHandlers(
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     const r = readProject(dir)
     remember(r)
+    if (r.ok) gcAssets(r.dir, collectAssetIds(r.doc))
     return r
   })
 
@@ -137,7 +143,57 @@ export function registerProjectHandlers(
     if (r.ok) {
       setCurrentDir(r.dir)
       touchRecent(userDataDir, r.dir, projectName(r.dir), now())
+      gcAssets(r.dir, collectAssetIds(r.doc))
     }
     return r.ok ? r : null
   })
+
+  ipcMain.handle(
+    'asset:write',
+    async (
+      e,
+      args: { bytes: Uint8Array; ext: string }
+    ): Promise<{ assetId: string } | { error: string }> => {
+      if (guard(e)) return { error: 'forbidden' }
+      const dir = getCurrentDir()
+      if (!dir) return { error: 'no project open' }
+      try {
+        return await writeAsset(dir, args.bytes, args.ext)
+      } catch (err) {
+        return { error: String((err as Error)?.message ?? err) }
+      }
+    }
+  )
+
+  ipcMain.handle('asset:read', (e, assetId: string): Uint8Array | null => {
+    if (guard(e)) return null
+    const dir = getCurrentDir()
+    if (!dir) return null
+    return readAsset(dir, assetId)
+  })
+
+  ipcMain.handle(
+    'export:save',
+    async (
+      e,
+      args: { bytes: Uint8Array; ext: 'png' | 'svg'; defaultName: string }
+    ): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> => {
+      if (guard(e)) return { ok: false, error: 'forbidden' }
+      const win = getWin()
+      const ext = args.ext === 'png' ? 'png' : 'svg'
+      const safeName = (args.defaultName || 'whiteboard').replace(/[^\w.-]+/g, '_')
+      const opts = {
+        defaultPath: `${safeName}.${ext}`,
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
+      }
+      const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      if (res.canceled || !res.filePath) return { ok: false, canceled: true }
+      try {
+        await writeFileAtomic(res.filePath, Buffer.from(args.bytes))
+        return { ok: true, path: res.filePath }
+      } catch (err) {
+        return { ok: false, error: String((err as Error)?.message ?? err) }
+      }
+    }
+  )
 }

@@ -1,8 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { readProject, writeProject, createProject } from './projectStore'
+import {
+  readProject,
+  writeProject,
+  createProject,
+  writeAsset,
+  readAsset,
+  collectAssetIds,
+  gcAssets
+} from './projectStore'
 
 let dir: string
 beforeEach(() => {
@@ -84,5 +92,89 @@ describe('projectStore', () => {
     const r = readProject(dir)
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.doc).toEqual(doc)
+  })
+})
+
+const tmp = (): string => mkdtempSync(join(tmpdir(), 'w4-store-'))
+const bytes = (s: string): Uint8Array => new Uint8Array(Buffer.from(s))
+
+describe('W4 assets pipeline', () => {
+  it('writeAsset content-addresses + dedups identical bytes', async () => {
+    const dir = tmp()
+    try {
+      const a = await writeAsset(dir, bytes('hello'), 'png')
+      const b = await writeAsset(dir, bytes('hello'), 'png')
+      expect(a.assetId).toBe(b.assetId)
+      expect(a.assetId).toMatch(/^assets\/[a-f0-9]{40}\.png$/)
+      expect(readdirSync(join(dir, 'assets'))).toHaveLength(1)
+      expect(existsSync(join(dir, a.assetId))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('writeAsset rejects an unsupported ext', async () => {
+    const dir = tmp()
+    try {
+      await expect(writeAsset(dir, bytes('x'), 'exe')).rejects.toThrow(/ext/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('readAsset returns bytes, null on missing, null on traversal', async () => {
+    const dir = tmp()
+    try {
+      const { assetId } = await writeAsset(dir, bytes('data'), 'png')
+      expect(readAsset(dir, assetId)).toEqual(bytes('data'))
+      expect(readAsset(dir, 'assets/' + 'f'.repeat(40) + '.png')).toBeNull()
+      expect(readAsset(dir, '../secret')).toBeNull()
+      expect(readAsset(dir, 'assets/../../etc/passwd')).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('collectAssetIds walks planning image elements across boards', () => {
+    const doc = {
+      schemaVersion: 4,
+      viewport: null,
+      boards: [
+        {
+          id: 'p1',
+          type: 'planning',
+          elements: [
+            { id: 'i1', kind: 'image', assetId: 'assets/a.png' },
+            { id: 'n1', kind: 'note', text: '' }
+          ]
+        },
+        { id: 't1', type: 'terminal' },
+        {
+          id: 'p2',
+          type: 'planning',
+          elements: [{ id: 'i2', kind: 'image', assetId: 'assets/b.png' }]
+        }
+      ]
+    }
+    expect(collectAssetIds(doc)).toEqual(new Set(['assets/a.png', 'assets/b.png']))
+  })
+
+  it('gcAssets deletes orphans, keeps referenced, no-ops on absent assets/', async () => {
+    const dir = tmp()
+    try {
+      const keep = await writeAsset(dir, bytes('keep'), 'png')
+      const drop = await writeAsset(dir, bytes('drop'), 'png')
+      gcAssets(dir, new Set([keep.assetId]))
+      expect(existsSync(join(dir, keep.assetId))).toBe(true)
+      expect(existsSync(join(dir, drop.assetId))).toBe(false)
+      const empty = tmp()
+      try {
+        expect(() => gcAssets(empty, new Set())).not.toThrow()
+      } finally {
+        rmSync(empty, { recursive: true, force: true })
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

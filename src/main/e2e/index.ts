@@ -40,6 +40,18 @@ import { context } from './probes/context'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
+import {
+  whiteboardErase,
+  whiteboardSelection,
+  whiteboardFullviewAdd,
+  whiteboardAltDup,
+  whiteboardLock,
+  whiteboardGroup,
+  whiteboardAlign,
+  whiteboardGroupAlign,
+  whiteboardPasteImage,
+  whiteboardExport // W5: SVG/PNG export pipeline
+} from './probes/whiteboard'
 import { seed } from './probes/seed'
 
 // EXACT current execution order — interleaves themes by design (a probe's theme file is
@@ -68,8 +80,18 @@ const PLAYLIST: E2EProbe[] = [
   previewConnectGesture,
   tidy,
   tile,
-  seed,
-  context
+  whiteboardErase, // W1: emits whiteboard-erase + whiteboard-shortcut
+  whiteboardSelection, // W2: emits whiteboard-group-delete/multidrag/shift-add/snap
+  whiteboardAltDup, // W3: real-input alt-drag duplicate
+  whiteboardLock, // W3: locked resists drag/erase/X
+  whiteboardGroup, // W3: group move + group delete via the menu
+  whiteboardAlign, // W3: align-left via the menu
+  whiteboardGroupAlign, // W3: align works on a GROUP (right-click expands the group)
+  whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view
+  whiteboardPasteImage, // W4: real-paste image persists + reloads + dedups + GCs
+  whiteboardExport, // W5: SVG/PNG export pipeline (svg/png/image-embed/missing-asset)
+  seed, // asserts the canvas returned to 4 boards
+  context // M-digest T-D2: seeds 3 more + asserts the reopen digest panel (run last)
 ]
 
 export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise<number> {

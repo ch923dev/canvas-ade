@@ -1,25 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import * as os from 'node:os'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 
 // ── Mock the store + recent-projects modules so handlers are exercised in isolation ──
 // `vi.hoisted` so the mock factories (also hoisted) can reference these stubs.
-const { store, recents } = vi.hoisted(() => ({
+const { store, recents, electronDialog } = vi.hoisted(() => ({
   store: {
     readProject: vi.fn(),
     writeProject: vi.fn(),
     createProject: vi.fn(),
     getCurrentDir: vi.fn(),
     setCurrentDir: vi.fn(),
-    projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir)
+    projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir),
+    // Open-time asset GC (T4): project:current sweeps orphan blobs after a successful
+    // read. Stub both so the handler runs in isolation — collectAssetIds yields the live
+    // id set, gcAssets is a no-op here (its own unit suite covers the sweep).
+    collectAssetIds: vi.fn(() => new Set<string>()),
+    gcAssets: vi.fn()
   },
   recents: {
     listRecents: vi.fn(),
     touchRecent: vi.fn()
+  },
+  electronDialog: {
+    showOpenDialog: vi.fn(),
+    showSaveDialog: vi.fn()
   }
 }))
 
 vi.mock('./projectStore', () => store)
 vi.mock('./recentProjects', () => recents)
+vi.mock('electron', () => ({
+  dialog: electronDialog,
+  BrowserWindow: class {}
+}))
 
 import { registerProjectHandlers, isForeignSender, isUnsafeProjectDir } from './projectIpc'
 
@@ -165,5 +181,51 @@ describe('registerProjectHandlers (T4)', () => {
     const result = await invoke('project:current')
     expect(result).toBeNull()
     expect(store.readProject).not.toHaveBeenCalled()
+  })
+})
+
+describe('export:save', () => {
+  const getWin = (): null => null // no window — guard uses synthetic senderFrame path
+
+  it('shows save dialog, writes bytes atomically, returns { ok: true, path }', async () => {
+    const tmpFile = path.join(os.tmpdir(), `export-save-test-${Date.now()}.svg`)
+    electronDialog.showSaveDialog.mockResolvedValue({ canceled: false, filePath: tmpFile })
+
+    const { ipcMain, invoke } = makeIpcMain()
+    registerProjectHandlers(ipcMain, getWin, '/userData')
+
+    const bytes = new TextEncoder().encode('<svg/>')
+    const result = (await invoke('export:save', {
+      bytes,
+      ext: 'svg',
+      defaultName: 'board'
+    })) as { ok: boolean; path?: string }
+
+    expect(result.ok).toBe(true)
+    expect(result.path).toBe(tmpFile)
+    expect(fs.existsSync(tmpFile)).toBe(true)
+    expect(fs.readFileSync(tmpFile, 'utf8')).toBe('<svg/>')
+
+    // cleanup
+    fs.rmSync(tmpFile, { force: true })
+  })
+
+  it('returns { ok: false, canceled: true } when dialog is canceled, writes nothing', async () => {
+    const tmpFile = path.join(os.tmpdir(), `export-save-canceled-${Date.now()}.svg`)
+    electronDialog.showSaveDialog.mockResolvedValue({ canceled: true, filePath: undefined })
+
+    const { ipcMain, invoke } = makeIpcMain()
+    registerProjectHandlers(ipcMain, getWin, '/userData')
+
+    const bytes = new TextEncoder().encode('<svg/>')
+    const result = (await invoke('export:save', {
+      bytes,
+      ext: 'svg',
+      defaultName: 'board'
+    })) as { ok: boolean; canceled?: boolean }
+
+    expect(result.ok).toBe(false)
+    expect(result.canceled).toBe(true)
+    expect(fs.existsSync(tmpFile)).toBe(false)
   })
 })

@@ -9,7 +9,7 @@
  * coordinates; stops pointer propagation so toggling/editing never starts a node
  * drag or clears the canvas selection.
  */
-import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, type ReactElement } from 'react'
 import type { ChecklistElement } from '../../../lib/boardSchema'
 import { Icon } from '../../Icon'
 
@@ -25,8 +25,6 @@ export interface ChecklistCardProps {
   /** Enter pressed on an item → append a fresh empty item. */
   onAddItem: (elementId: string) => void
   onRemoveItem: (elementId: string, itemId: string) => void
-  /** Delete the whole checklist card. */
-  onDelete: (id: string) => void
   /** Called when any input gains focus — used to checkpoint undo. */
   onEditStart?: () => void
   /**
@@ -35,23 +33,12 @@ export interface ChecklistCardProps {
    * a tall checklist + its "Add item" button under overflow:hidden (#12).
    */
   onMeasureBottom?: (id: string, bottom: number) => void
-}
-
-const delBtn: CSSProperties = {
-  position: 'absolute',
-  top: 2,
-  right: 2,
-  width: 18,
-  height: 18,
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--border)',
-  background: 'var(--surface-raised)',
-  color: 'var(--text-3)',
-  cursor: 'pointer',
-  opacity: 0,
-  transition: 'opacity .1s'
+  /** True when this element is in the board selection set (draws the accent ring). */
+  selected?: boolean
+  /** Select this element on grip press; `additive` = Shift held. */
+  onSelect?: (id: string, additive: boolean) => void
+  /** Report the rendered board-local size for selection/snap bbox (W2). */
+  onMeasure?: (id: string, w: number, h: number) => void
 }
 
 /** 16px checkbox; filled `--accent` + a `--void` check glyph when done. */
@@ -85,9 +72,11 @@ export function ChecklistCard({
   onChangeItem,
   onAddItem,
   onRemoveItem,
-  onDelete,
   onEditStart,
-  onMeasureBottom
+  onMeasureBottom,
+  selected,
+  onSelect,
+  onMeasure
 }: ChecklistCardProps): ReactElement {
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
@@ -107,13 +96,16 @@ export function ChecklistCard({
   // offsetHeight is in board-local px (the card lives inside the unzoomed well).
   useEffect(() => {
     const el = cardRef.current
-    if (!el || !onMeasureBottom) return
-    const report = (): void => onMeasureBottom(element.id, element.y + el.offsetHeight)
+    if (!el || (!onMeasureBottom && !onMeasure)) return
+    const report = (): void => {
+      onMeasureBottom?.(element.id, element.y + el.offsetHeight)
+      onMeasure?.(element.id, el.offsetWidth, el.offsetHeight)
+    }
     report()
     const ro = new ResizeObserver(report)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [element.id, element.y, onMeasureBottom])
+  }, [element.id, element.y, onMeasureBottom, onMeasure])
 
   return (
     <div
@@ -126,37 +118,34 @@ export function ChecklistCard({
         width: element.w,
         background: 'var(--surface-raised)',
         border: '1px solid var(--border)',
+        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outlineOffset: 2,
         borderRadius: 'var(--r-board)',
         padding: '11px 12px 12px',
         boxShadow: 'var(--shadow-pop)',
         display: 'flex',
         flexDirection: 'column',
-        gap: 9
+        gap: 9,
+        cursor: interactive ? 'grab' : 'default'
       }}
-      // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
-      // fall through to the well so it can START over the card (#6).
+      // The whole card body is the drag surface (mirrors the note's grip ring). In
+      // select mode a press that isn't on an interactive control — the title/item
+      // inputs, checkboxes, and buttons all stopPropagation themselves — selects this
+      // element and starts the move. In a draw mode (pen/arrow/place) the press falls
+      // through to the well so a stroke can START over the card (#6).
       onPointerDown={(e) => {
-        if (interactive) e.stopPropagation()
+        if (!interactive) return
+        e.stopPropagation()
+        onSelect?.(element.id, e.shiftKey)
+        onDragStart(e, element.id)
       }}
       // A dblclick on the card must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      {interactive && (
-        <button
-          type="button"
-          className="pl-del"
-          title="Delete"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(element.id)
-          }}
-          style={delBtn}
-        >
-          <Icon name="x" size={11} />
-        </button>
-      )}
-      {/* Header = title + done/total count; an empty-area press is the drag grip. */}
+      {/* No inline delete button — a checklist is removed via the right-click menu or
+          the eraser tool (W3). */}
+      {/* Header = title + done/total count. The drag is owned by the card body above
+          (a press here on anything but the title input bubbles up to it). */}
       <div
         className="pl-check-head"
         style={{
@@ -165,11 +154,6 @@ export function ChecklistCard({
           justifyContent: 'space-between',
           gap: 8,
           cursor: interactive ? 'grab' : 'default'
-        }}
-        onPointerDown={(e) => {
-          if (!interactive) return
-          e.stopPropagation()
-          onDragStart(e, element.id)
         }}
       >
         <input
