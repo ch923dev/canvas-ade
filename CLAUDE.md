@@ -161,14 +161,17 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 
 ## Status
 
-> **⚠️ E2E FROZEN (2026-06-03).** The board e2e smoke (`CANVAS_SMOKE=e2e`) is **disabled in
-> CI** (`smoke` job `if: false` in `.github/workflows/pr.yml` + `staging.yml`) and is **not a
-> gate** until we build a **structured testing** setup. There is a larger e2e reliability problem
-> (the harness is a brittle stand-in) on top of the known CI-only `whiteboard-fullview-add`
-> determinism flake. **Do not block work, handoffs, or merges on e2e meanwhile** — the `check`
-> job (typecheck · lint · format:check · unit tests) is the gate. This **supersedes** the
-> "must pass e2e before handoff" rule until structured testing lands; re-enable by removing the
-> `if: false` from both workflows.
+> **✅ E2E GATE RE-ENABLED (2026-06-03, T5).** The brittle `CANVAS_SMOKE=e2e` harness is gone
+> (replaced by Playwright `_electron`, T4). The `smoke` job now runs `pnpm test:e2e` on a
+> **windows-latest + ubuntu-latest** matrix in `pr.yml` + `staging.yml` (`needs: check`, separate
+> from the Vitest `check` gate); `if: false` is removed. Flake policy: `retries: 2` on CI,
+> `workers: 1`. This **supersedes** the 2026-06-03 freeze and restores "e2e is a gate". The `check`
+> job (typecheck · lint · format:check · unit + integration) and `smoke` are BOTH gates — don't
+> merge red. The one e2e-only surface still uncovered is **auto-update** (deferred to Phase 5 —
+> needs packaging/electron-updater). *Verification note: the Linux leg is proven green on the
+> runner and the Windows-only `RangeError`/pid-reuse bug the matrix caught is fixed; the final
+> 2-consecutive-green stability confirm is **pending GitHub Actions billing** (paused 2026-06-03).
+> Until that lands, treat the gate as wired-but-unverified-stable — see `docs/testing/TESTING.md`.*
 
 Durable contract is above. **Build history** (phases 0–5, per-slice specs/plans, phase handoffs)
 is summarized in **`docs/archive/build-history.md`** (originals in git history). **Review/bug-hunt

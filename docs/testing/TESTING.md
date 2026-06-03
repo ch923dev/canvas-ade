@@ -144,5 +144,16 @@ self-running or auto-quitting — Playwright drives and closes the app.
 `nodeIntegration:true`, which violates the locked sandbox. We use `electronApp.evaluate` + the MAIN
 registry exclusively. Never flip the sandbox to make a test pass.
 
-**Still owed (T5):** re-enable the e2e CI gate, a cross-platform process-tree-kill check, and an
-auto-update e2e (gated on Phase 5 packaging).
+**CI gate (T5):** the Playwright suite is wired back as a CI gate — the `smoke` job runs
+`pnpm test:e2e` on a **windows-latest + ubuntu-latest** matrix in `pr.yml` + `staging.yml`
+(`needs: check`, separate from the Vitest gate). Linux runs under `xvfb-run -a` with CI-gated
+`--no-sandbox` + `--disable-dev-shm-usage` on the test launch only (the spike proved capturePage is
+non-blank on both runners — **no GL flag needed**; the app sandbox is untouched). Flake policy:
+`retries: 2` on CI, `workers: 1`. Process-tree-kill is covered by `killTreeCommand` (unit, both
+platforms — Windows `taskkill /T /F`, POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned
+child prints its pid; the probe asserts that exact pid is reaped after `deleteBoard` + `disposeAllPtys`,
+robust against OS pid reuse). *Verification status: the Linux leg is proven green on the runner; the
+final 2-consecutive-green stability confirm is pending (CI Actions billing paused 2026-06-03).*
+
+**Still owed (deferred to Phase 5):** an **auto-update** e2e — electron-updater / packaging / signing
+don't exist yet, so the update flow can't be e2e-tested. It is the one remaining e2e-only surface.
