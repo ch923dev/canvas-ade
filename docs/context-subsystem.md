@@ -350,7 +350,7 @@ the fetch timeout bounds a hung provider); the key never leaves MAIN / never lan
 | T-B3 | `cec15ba` | **682** | `context-budget` ok |
 | T-M1 | `2e0b1e7` | **702** | `context-memory` ok |
 | T-M2 | `221ddf8` | **724** | `context-change` ok |
-| T-M3 | `<squash-sha>` | **740** | `context-summary` ok |
+| T-M3 | `1b6f1e1` | **740** | `context-summary` ok |
 
 typecheck/lint/format:check clean throughout (1 pre-existing unrelated `PlanningBoard.tsx` no-console
 warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browser`/`browser-gesture`/
