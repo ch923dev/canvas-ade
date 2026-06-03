@@ -28,6 +28,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "pretest:e2e": "electron-vite build",
+    "test:e2e:linux": "docker build -f Dockerfile.e2e -t canvas-e2e-linux . && docker run --rm canvas-e2e-linux",
+    "test:e2e:matrix": "pnpm test:e2e && pnpm test:e2e:linux",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-builder install-app-deps",
     "pack:dir": "electron-vite build && electron-builder --dir",

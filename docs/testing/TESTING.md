@@ -158,19 +158,21 @@ the dev machine (21/21) and the ubuntu-latest leg green ×2 consecutive locally 
 Actions billing is restored (paused 2026-06-03); the matrix itself already caught + verified-fixed a
 Windows-only `RangeError`/pid-reuse bug.*
 
-### Local Linux e2e without GitHub Actions (`Dockerfile.e2e`)
+### Local e2e matrix without GitHub Actions (`Dockerfile.e2e`)
 
-The ubuntu-latest leg can be reproduced locally — no Actions minutes — with the repo's `Dockerfile.e2e`
-(a `node:22-bookworm` image: Xvfb + `xauth` + the Electron shared libs; `pnpm install` rebuilds node-pty
-for the Electron ABI). Run:
+The full CI matrix runs on one Windows dev box — no Actions minutes:
 
-```bash
-docker build -f Dockerfile.e2e -t canvas-e2e-linux .
-docker run --rm -t canvas-e2e-linux        # CMD = xvfb-run -a pnpm test:e2e (CI=1 → --no-sandbox)
-```
+| Command | Leg | How |
+|---|---|---|
+| `pnpm test:e2e` | **Windows** | native (real ConPTY + WebContentsView on this OS) |
+| `pnpm test:e2e:linux` | **Linux** | Docker (`Dockerfile.e2e`: `node:22-bookworm` + Xvfb + `xauth` + Electron libs; `pnpm install` rebuilds node-pty for the Electron ABI; `CI=1` → `--no-sandbox`) |
+| `pnpm test:e2e:matrix` | **both** | runs the Windows leg then the Linux leg; both must pass |
 
-**Gotcha:** use `docker run -t` (allocate a TTY). Without it the Playwright reporter block-buffers on a
-non-TTY pipe and the run *looks* hung with zero output. `-t` line-buffers and the per-test output streams.
+The Docker image's CMD builds then runs `xvfb-run -a … --reporter=line` — the `line` reporter streams
+without a TTY, so `docker run` works from a pnpm/CI pipe. (The default `list` reporter does tty
+cursor-control that blocks on a non-TTY stdout → the run looks hung with zero output; that's why the
+container forces `line`.) Local runs use `retries:0`, so the documented browser-trio env flake may
+need a rerun-for-clean — CI uses `retries:2`.
 
 **Still owed (deferred to Phase 5):** an **auto-update** e2e — electron-updater / packaging / signing
 don't exist yet, so the update flow can't be e2e-tested. It is the one remaining e2e-only surface.

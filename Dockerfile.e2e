@@ -19,4 +19,7 @@ COPY . /work
 RUN pnpm install --frozen-lockfile
 
 ENV CI=1
-CMD ["xvfb-run", "-a", "pnpm", "test:e2e"]
+# Build then run under Xvfb with the `line` reporter — it streams line-by-line and
+# needs no TTY, so `docker run` works non-interactively (a pnpm/CI pipe) without the
+# `list` reporter's tty cursor-control that otherwise blocks on a non-TTY stdout.
+CMD ["sh", "-c", "pnpm exec electron-vite build && xvfb-run -a pnpm exec playwright test --reporter=line"]
