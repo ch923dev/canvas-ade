@@ -33,6 +33,14 @@ interface SmokeClient {
   readBoardTypes(): Promise<string[]>
   /** Read canvas://boards and return the status bucket of board `id` (null if absent). */
   readBoardStatus(id: string): Promise<string | null>
+  /** Read canvas://boards and return each board's id + status bucket. */
+  readBoards(): Promise<Array<{ id: string; status: string }>>
+  /**
+   * Read the canvas://board-states roll-up. Returns the grouped map, or `null` when
+   * the resource is not registered (an older installed pkg) — so the probe can SKIP
+   * gracefully instead of failing. Rethrows any other (real transport) error.
+   */
+  readBoardStates(): Promise<Record<string, string[]> | null>
   close(): Promise<void>
 }
 
@@ -91,6 +99,43 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
       } catch {
         log(`MCP_FAIL board-status-unparseable len=${text.length}`)
         return null
+      }
+    },
+    readBoards: async (): Promise<Array<{ id: string; status: string }>> => {
+      const res = await client.readResource({ uri: 'canvas://boards' })
+      const text = res.contents
+        .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+        .join('')
+      try {
+        const boards = JSON.parse(text) as Array<{ id?: unknown; status?: unknown }>
+        return Array.isArray(boards)
+          ? boards
+              .filter(
+                (b): b is { id: string; status: string } =>
+                  typeof b?.id === 'string' && typeof b?.status === 'string'
+              )
+              .map((b) => ({ id: b.id, status: b.status }))
+          : []
+      } catch {
+        log(`MCP_FAIL boards-unparseable len=${text.length}`)
+        return []
+      }
+    },
+    readBoardStates: async (): Promise<Record<string, string[]> | null> => {
+      try {
+        const res = await client.readResource({ uri: 'canvas://board-states' })
+        const text = res.contents
+          .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+          .join('')
+        return JSON.parse(text) as Record<string, string[]>
+      } catch (e: unknown) {
+        // A not-registered resource (older installed pkg) yields McpError -32602
+        // "Resource ... not found" → treat as ABSENT (skip), not a smoke failure.
+        // Match the RESOURCE-not-found shape specifically so a "Session not found"
+        // (-32001) transport failure can't masquerade as a skip. Anything else rethrows.
+        const code = (e as { code?: number })?.code
+        if (code === -32602 || /resource .*not found/i.test(String(e))) return null
+        throw e
       }
     },
     close: () => client.close()
@@ -209,6 +254,28 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
       if (ranRunning && ranIdle) log('MCP_STATUS_OK')
       else {
         log(`MCP_FAIL status running=${ranRunning} idle=${ranIdle}`)
+        code = 1
+      }
+    }
+
+    // ── board-states roll-up (T1.2): the grouped view must stay consistent with
+    // canvas://boards — every board appears under its own bucket, no extras, no
+    // dupes. Self-activating: canvas://board-states only exists in pkg >=0.2.3, so on
+    // the currently-installed pkg it 404s → SKIP (not a failure); the assertion turns
+    // on automatically once 0.2.3 is published + consumed. ──
+    const states = await orch.readBoardStates()
+    if (states === null) {
+      log('MCP_STATES_SKIP pkg<0.2.3-unpublished')
+    } else {
+      const boards = await orch.readBoards()
+      const groupedIds = Object.values(states).flat()
+      const consistent =
+        boards.length === groupedIds.length && boards.every((b) => states[b.status]?.includes(b.id))
+      if (consistent) log('MCP_STATES_OK')
+      else {
+        log(
+          `MCP_FAIL board-states inconsistent boards=${boards.length} grouped=${groupedIds.length}`
+        )
         code = 1
       }
     }
