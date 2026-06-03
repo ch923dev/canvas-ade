@@ -22,6 +22,10 @@ let warnedMissingBridge = false
  */
 export function useMcpPublish(): void {
   const boards = useCanvasStore((s) => s.boards)
+  // Orchestration connectors authorize agent-to-agent relay (T4.6); mirror them to MAIN
+  // alongside boards so the dispatch adapter can resolve a relay edge. Subscribing
+  // re-publishes when a cable is drawn/removed.
+  const connectors = useCanvasStore((s) => s.connectors)
   // Subscribe to the runtime slices so a liveness change (terminal start/exit, a
   // browser load/fail) re-publishes even when the durable `boards` array is unchanged.
   const running = useTerminalRuntimeStore((s) => s.running)
@@ -39,8 +43,11 @@ export function useMcpPublish(): void {
       return
     }
     const t = setTimeout(() => {
-      publish(buildBoardSnapshot(boards, { running, preview: previewById }))
+      publish({
+        boards: buildBoardSnapshot(boards, { running, preview: previewById }),
+        connectors
+      })
     }, 150)
     return () => clearTimeout(t)
-  }, [boards, running, previewById])
+  }, [boards, connectors, running, previewById])
 }

@@ -18,7 +18,7 @@ import type { E2ECtx } from '../context'
 import { getAuditLog } from '../../auditIpc'
 import { requestConfirm } from '../../mcpConfirm'
 import { buildOrchestrator, type BoardRegistry } from '../../mcpOrchestrator'
-import { listBoardMirror } from '../../boardRegistry'
+import { listBoardMirror, listConnectors } from '../../boardRegistry'
 import { listPtySessions, readPtyOutput, writeToPty, drainPty } from '../../pty'
 import { readBoardResult, recordBoardResult } from '../../boardResults'
 import { readProjectMemory, readBoardSummary } from '../../boardMemory'
@@ -164,6 +164,7 @@ export const dispatchHandoff: E2EProbe = {
     // the true dispatch path rather than a stand-in.
     const registry: BoardRegistry = {
       listBoards: listBoardMirror,
+      listConnectors,
       listSessions: listPtySessions,
       readOutput: readPtyOutput,
       readResult: readBoardResult,
@@ -311,6 +312,7 @@ function productionRegistry(ctx: E2ECtx): BoardRegistry {
   const audit = getAuditLog()
   return {
     listBoards: listBoardMirror,
+    listConnectors,
     listSessions: listPtySessions,
     readOutput: readPtyOutput,
     readResult: readBoardResult,
@@ -617,6 +619,141 @@ export const dispatchInterrupt: E2EProbe = {
             interruptResolved,
             dispatchedAudited,
             replayRejected,
+            restored
+          })
+    }
+  }
+}
+
+/**
+ * 🔒 relay_prompt probe (M4 T4.6, the M4 gate) — agent-to-agent dispatch over an
+ * orchestration connector. Spawns two real terminals A + B, draws an orchestration cable
+ * A→B (the e2e hook's `addConnector`, the same path the real gesture uses), waits for the
+ * cable to mirror to MAIN, then:
+ *  • 🔒 a relay with NO cable in that direction (B→A) is rejected (the cable is the auth);
+ *  • happy path: confirm gate → write `echo SENT\r` into B's PTY → resolves → the text
+ *    LANDS in B (not A) → a `relay_prompt`/`dispatched` audit (targetId=B) is readable.
+ * Restores the seed baseline (count back to 4; closing the boards drops the incident cable).
+ */
+export const dispatchRelay: E2EProbe = {
+  name: 'dispatch-relay',
+  async run(ctx) {
+    if (!getAuditLog()) return { name: 'dispatch-relay', ok: false, detail: 'getAuditLog() null' }
+    const registry = productionRegistry(ctx)
+    const orch = buildOrchestrator(registry)
+
+    // Spawn two real terminal boards A + B.
+    const a = randomUUID()
+    const b = randomUUID()
+    for (const id of [a, b]) {
+      await sendMcpCommand(ipcMain, () => ctx.win, {
+        type: 'addBoard',
+        board: { id, type: 'terminal' }
+      })
+    }
+    const present = await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `window.__canvasE2E.getBoards().filter((x) => x.id === ${JSON.stringify(a)} || x.id === ${JSON.stringify(b)}).length === 2`
+        ),
+      4000
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(b)})`)
+    const shellUp = await ctx.poll(async () => ctx.dbg.terminalPid(b) !== null, 10000)
+    const inMirror = await ctx.poll(
+      async () =>
+        listBoardMirror().some((x) => x.id === a) && listBoardMirror().some((x) => x.id === b),
+      6000
+    )
+
+    // Draw the orchestration cable A→B (same store path as the real connect gesture), then
+    // wait for the renderer to mirror it to MAIN (150ms publish debounce).
+    await ctx.evalIn(
+      `window.__canvasE2E.addConnector(${JSON.stringify(a)}, ${JSON.stringify(b)}, 'orchestration')`
+    )
+    const cableMirrored = await ctx.poll(
+      async () =>
+        listConnectors().some(
+          (c) => c.kind === 'orchestration' && c.sourceId === a && c.targetId === b
+        ),
+      6000
+    )
+
+    // (a) 🔒 no cable B→A → relay rejected (direction matters; the cable is the auth).
+    let noCableRejected = false
+    try {
+      await orch.relayPrompt(b, a, 'echo nope')
+    } catch {
+      noCableRejected = true
+    }
+
+    // (b) happy path — relay A→B along the cable; the text must land in B (the target).
+    const SENT = 'CANVAS_E2E_RELAY'
+    let relayResolved = false
+    let relayErr = ''
+    const rp = orch
+      .relayPrompt(a, b, `echo ${SENT}`)
+      .then(() => {
+        relayResolved = true
+      })
+      .catch((e) => {
+        relayErr = (e as Error).message
+      })
+    const modalShown = await ctx.poll(() => ctx.evalIn<boolean>(MODAL), 8000)
+    if (modalShown) await ctx.evalIn(APPROVE_BTN)
+    await rp
+    const landedInB = await ctx.poll(async () => {
+      const t = await ctx.evalIn<string | null>(
+        `window.__canvasE2E.readTerminal(${JSON.stringify(b)})`
+      )
+      return typeof t === 'string' && t.includes(SENT)
+    }, 10000)
+    const dispatchedAudited = await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `window.api.mcp.readAudit({ limit: 50 }).then((es) => es.some((e) =>` +
+            ` e.type === 'relay_prompt' && e.targetId === ${JSON.stringify(b)} && e.status === 'dispatched'))`
+        ),
+      4000
+    )
+
+    // Restore the baseline: drain + removeBoard both (the incident cable is dropped on remove).
+    for (const id of [a, b]) {
+      await drainPty(id)
+      await sendMcpCommand(ipcMain, () => ctx.win, { type: 'removeBoard', id })
+    }
+    const restored = await ctx.poll(
+      () => ctx.evalIn<boolean>('window.__canvasE2E.getBoards().length === 4'),
+      4000
+    )
+
+    const ok =
+      present &&
+      shellUp &&
+      inMirror &&
+      cableMirrored &&
+      noCableRejected &&
+      modalShown &&
+      relayResolved &&
+      landedInB &&
+      dispatchedAudited &&
+      restored
+    return {
+      name: 'dispatch-relay',
+      ok,
+      detail: ok
+        ? 'cable A→B mirrored; B→A rejected; confirm→relay→lands in B→relay_prompt/dispatched audit; baseline 4'
+        : JSON.stringify({
+            present,
+            shellUp,
+            inMirror,
+            cableMirrored,
+            relayErr,
+            noCableRejected,
+            modalShown,
+            relayResolved,
+            landedInB,
+            dispatchedAudited,
             restored
           })
     }

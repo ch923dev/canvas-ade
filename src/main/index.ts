@@ -23,7 +23,7 @@ import { runE2ESmoke } from './e2e'
 import { registerProjectHandlers } from './projectIpc'
 import { startMcpServer, type RunningMcp } from './mcp'
 import { runMcpSmoke } from './mcpSmoke'
-import { listBoardMirror, registerBoardRegistryHandler } from './boardRegistry'
+import { listBoardMirror, listConnectors, registerBoardRegistryHandler } from './boardRegistry'
 import { sendMcpCommand } from './mcpCommand'
 import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
@@ -178,6 +178,8 @@ app.whenReady().then(async () => {
   registerBoardRegistryHandler(ipcMain, () => mainWindow)
   mcp = await startMcpServer({
     listBoards: listBoardMirror,
+    // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
+    listConnectors,
     listSessions: listPtySessions,
     readOutput: readPtyOutput,
     readResult: readBoardResult,

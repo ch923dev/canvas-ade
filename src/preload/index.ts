@@ -191,9 +191,10 @@ const api = {
   // ── MCP board mirror (control plane; metadata only — id/type/title + coarse status
   //    bucket, never content) ──
   mcp: {
-    publishBoards: (
+    publishBoards: (payload: {
       boards: Array<{ id: string; type: string; title: string; status: string }>
-    ): void => ipcRenderer.send('mcp:boards', boards),
+      connectors: Array<{ id: string; sourceId: string; targetId: string; kind: string }>
+    }): void => ipcRenderer.send('mcp:boards', payload),
 
     // MAIN → renderer command channel (the inverse of publishBoards). The handler
     // gets the command + a reply fn that acks on MAIN's unique reply channel.

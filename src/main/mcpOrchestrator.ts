@@ -51,9 +51,23 @@ export type LifecycleOrchestrator = Orchestrator & {
   reapIdle(): Promise<string[]>
 }
 
+/** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
+export interface ConnectorMirrorEntry {
+  id: string
+  sourceId: string
+  targetId: string
+  kind: string
+}
+
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
   listBoards(): Array<{ id: string; type: string; title: string; status?: string }>
+  /**
+   * The connector graph the renderer mirrors (T4.6). Only `orchestration` edges authorize
+   * an agent-to-agent relay; directional (source → target). MAIN injects `listConnectors`
+   * from `boardRegistry.ts`.
+   */
+  listConnectors(): ConnectorMirrorEntry[]
   listSessions(): Array<{ id: string; status: string }>
   /**
    * Drive the canvas via the MAIN → renderer control-plane command channel (T3.1+).
@@ -491,6 +505,102 @@ export function buildOrchestrator(
       if (result.summary !== undefined) recorded.summary = result.summary
       if (result.refs !== undefined) recorded.refs = result.refs
       registry.recordResult(boardId, recorded)
+    },
+    async relayPrompt(sourceId: BoardId, targetId: BoardId, text: string): Promise<void> {
+      // 🔒 agent-to-agent relay (T4.6, the M4 gate): a dispatch A→B is authorized by an
+      // ORCHESTRATION connector A→B (the spatial cable is the route). Same write gating as
+      // assign_prompt, with edge-resolution as the target lookup. terminal→terminal only.
+
+      // (1) The cable IS the authorization: require a directed orchestration edge A→B.
+      // Resolved BEFORE a nonce/confirm so an unauthorized relay has no side effect.
+      const cable = registry
+        .listConnectors()
+        .find(
+          (c) => c.kind === 'orchestration' && c.sourceId === sourceId && c.targetId === targetId
+        )
+      if (!cable) {
+        await registry.audit({
+          type: 'relay_prompt',
+          targetId,
+          prompt: text,
+          nonce: '',
+          status: 'rejected',
+          detail: `no orchestration connector ${sourceId}->${targetId}`
+        })
+        throw new Error(`relay_prompt: no orchestration connector ${sourceId} -> ${targetId}`)
+      }
+
+      // (2) Both ends must be terminals (never Browser→PTY). Resolve by opaque id.
+      const boards = registry.listBoards()
+      const source = boards.find((b) => b.id === sourceId)
+      const target = boards.find((b) => b.id === targetId)
+      if (!source || source.type !== 'terminal' || !target || target.type !== 'terminal') {
+        await registry.audit({
+          type: 'relay_prompt',
+          targetId,
+          prompt: text,
+          nonce: '',
+          status: 'rejected',
+          detail: `relay requires terminal→terminal (source=${source?.type ?? 'missing'} target=${target?.type ?? 'missing'})`
+        })
+        throw new Error('relay_prompt: relay requires a terminal source and a terminal target')
+      }
+
+      // (3) Mint the single-use nonce + sequence.
+      const { nonce, seq } = guard.issue()
+
+      // (4) Mandatory human confirm — the body names both endpoints + the exact prompt.
+      const { approved } = await registry.confirm({
+        title: `Relay "${source.title}" → "${target.title}"`,
+        body: `Relay this prompt from terminal "${source.title}" to terminal "${target.title}" (${targetId})?\n\n${text}`
+      })
+      if (!approved) {
+        await registry.audit({
+          type: 'relay_prompt',
+          targetId,
+          prompt: text,
+          nonce,
+          status: 'denied',
+          detail: `${sourceId}->${targetId}; seq=${seq}`
+        })
+        throw new Error('relay_prompt: dispatch denied by the human gate')
+      }
+
+      // (5) Redeem the nonce (defensive replay guard).
+      if (!guard.consume(nonce)) {
+        await registry.audit({
+          type: 'relay_prompt',
+          targetId,
+          prompt: text,
+          nonce,
+          status: 'rejected',
+          detail: `replayed/forged nonce; ${sourceId}->${targetId}; seq=${seq}`
+        })
+        throw new Error('relay_prompt: nonce already consumed (replay rejected)')
+      }
+
+      // (6) Write into the TARGET's PTY (append CR so the shell runs it).
+      if (!registry.writeToPty(targetId, text + '\r')) {
+        await registry.audit({
+          type: 'relay_prompt',
+          targetId,
+          prompt: text,
+          nonce,
+          status: 'failed',
+          detail: `pty write failed; ${sourceId}->${targetId}; seq=${seq}`
+        })
+        throw new Error('relay_prompt: PTY write failed (no live terminal session)')
+      }
+
+      // 🔒 Fire-and-forget: audit the dispatch the moment it lands and RETURN.
+      await registry.audit({
+        type: 'relay_prompt',
+        targetId,
+        prompt: text,
+        nonce,
+        status: 'dispatched',
+        detail: `${sourceId}->${targetId}; seq=${seq}`
+      })
     },
     async interrupt(boardId: BoardId): Promise<void> {
       // 🔒 interrupt (T4.5): the content-less sibling of dispatchPrompt — the SAME gating

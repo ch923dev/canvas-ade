@@ -8,6 +8,7 @@ import { debugSeedOutput } from './pty'
 import { recordBoardResult } from './boardResults'
 import { createDispatchGuard } from './dispatchGuard'
 import { __setMemoryDirForTest } from './boardMemory'
+import { listConnectors } from './boardRegistry'
 
 /** One capped page of board output as the resource serializes it (T1.4). */
 interface OutputPage {
@@ -110,6 +111,8 @@ interface SmokeClient {
   callWriteResult(args: Record<string, unknown>): Promise<CallOutcome>
   /** Call the interrupt dispatch tool (T4.5). Sends Ctrl-C; isError on tier denial/rejection. */
   callInterrupt(boardId: string): Promise<CallOutcome>
+  /** Call the relay_prompt agent-to-agent tool (T4.6). Relays along an orchestration cable. */
+  callRelay(sourceId: string, targetId: string, prompt: string): Promise<CallOutcome>
   close(): Promise<void>
 }
 
@@ -360,6 +363,19 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         return {
           ok: true,
           result: await client.callTool({ name: 'interrupt', arguments: { boardId } })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    callRelay: async (sourceId: string, targetId: string, prompt: string): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({
+            name: 'relay_prompt',
+            arguments: { sourceId, targetId, prompt }
+          })
         }
       } catch (e: unknown) {
         return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
@@ -1099,6 +1115,86 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           else {
             log(
               `MCP_FAIL interrupt split=${iSplitOk} workerDenied=${workerIntDenied} nonTerm=${iNonTermRejected} modal=${iModalShown} ok=${interruptOk} audited=${iAudited}`
+            )
+            code = 1
+          }
+        }
+
+        // ── 🔒 agent-to-agent relay_prompt (T4.6, the M4 GATE): a dispatch A→B is
+        // authorized by an ORCHESTRATION connector A→B — the spatial cable IS the route.
+        // Spawn two terminals, draw the cable (the e2e hook, same store path as the real
+        // gesture), wait for it to mirror to MAIN, then relay A→B and assert it lands in B;
+        // a relay with no cable in that direction (B→A) is rejected. Worker DENIED.
+        // Self-activating: SKIP on a pkg without relay_prompt (until 0.8.0). ──
+        if (!orch.list.includes('relay_prompt')) {
+          log('MCP_RELAY_SKIP pkg<0.8.0-unpublished')
+        } else {
+          const RMODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
+          const RAPPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
+          const rSplitOk = !worker.list.includes('relay_prompt')
+          const workerRelay = await worker.callRelay('a', 'b', 'echo x')
+          const workerRelayDenied =
+            workerRelay.ok &&
+            isErrorResult(workerRelay.result) &&
+            resultText(workerRelay.result).includes('Tool relay_prompt not found')
+          // spawn A + B terminals.
+          const raSpawn = await orch.callSpawn('terminal')
+          const raId =
+            raSpawn.ok && !isErrorResult(raSpawn.result) ? resultText(raSpawn.result).trim() : ''
+          const rbSpawn = await orch.callSpawn('terminal')
+          const rbId =
+            rbSpawn.ok && !isErrorResult(rbSpawn.result) ? resultText(rbSpawn.result).trim() : ''
+          let relayOk = false
+          let rLanded = false
+          let rModalShown = false
+          let noCableRejected = false
+          let cableMirrored = false
+          if (raId && rbId) {
+            await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(rbId)})`)
+            await poll(async () => (await orch.readBoardStatus(rbId)) === 'running', 8000)
+            // Draw the orchestration cable A→B and wait for the MAIN mirror to carry it.
+            await evalIn(
+              `window.__canvasE2E.addConnector(${JSON.stringify(raId)}, ${JSON.stringify(rbId)}, 'orchestration')`
+            )
+            cableMirrored = await poll(
+              async () =>
+                listConnectors().some(
+                  (c) => c.kind === 'orchestration' && c.sourceId === raId && c.targetId === rbId
+                ),
+              6000
+            )
+            // 🔒 no cable B→A → relay rejected (direction is the authorization).
+            const noCable = await orch.callRelay(rbId, raId, 'echo nope')
+            noCableRejected = noCable.ok && isErrorResult(noCable.result)
+            // happy path: relay A→B → drive the confirm modal → text lands in B.
+            const sentinel = 'CANVAS_MCP_RELAY_OK'
+            const relayP = orch.callRelay(raId, rbId, `echo ${sentinel}`)
+            rModalShown = await poll(() => evalIn<boolean>(RMODAL), 8000)
+            if (rModalShown) await evalIn(RAPPROVE)
+            const relay = await relayP
+            relayOk = relay.ok && !isErrorResult(relay.result)
+            rLanded = await poll(async () => {
+              const text = await evalIn<string | null>(
+                `window.__canvasE2E.readTerminal(${JSON.stringify(rbId)})`
+              )
+              return typeof text === 'string' && text.includes(sentinel)
+            }, 10000)
+          }
+          if (raId) await orch.callClose(raId)
+          if (rbId) await orch.callClose(rbId)
+          if (
+            rSplitOk &&
+            workerRelayDenied &&
+            cableMirrored &&
+            noCableRejected &&
+            rModalShown &&
+            relayOk &&
+            rLanded
+          )
+            log('MCP_RELAY_OK')
+          else {
+            log(
+              `MCP_FAIL relay split=${rSplitOk} workerDenied=${workerRelayDenied} cable=${cableMirrored} noCableRej=${noCableRejected} modal=${rModalShown} ok=${relayOk} landed=${rLanded}`
             )
             code = 1
           }

@@ -60,7 +60,8 @@ import {
   dispatchHandoff,
   dispatchAssign,
   dispatchWriteResult,
-  dispatchInterrupt
+  dispatchInterrupt,
+  dispatchRelay
 } from './probes/dispatch'
 import { seed } from './probes/seed'
 
@@ -111,6 +112,7 @@ const PLAYLIST: E2EProbe[] = [
   dispatchAssign, // M4 T4.4: assign_prompt fire-and-forget — confirm→write→resolves (no await-idle); dispatched audit, no completed
   dispatchWriteResult, // M4 T4.4: write_result — worker records its own board result → canvas://board/{id}/result
   dispatchInterrupt, // M4 T4.5: interrupt — confirm→\x03→resolves→interrupt/dispatched audit; replay rejected
+  dispatchRelay, // M4 T4.6 (gate): agent-to-agent over orchestration cable A→B; B→A rejected; lands in B
   seed
 ]
 

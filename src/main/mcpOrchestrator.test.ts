@@ -9,7 +9,8 @@ const DISPATCH_DEFAULTS = {
   writeToPty: (): boolean => true,
   confirm: async (): Promise<{ approved: boolean }> => ({ approved: true }),
   audit: async (): Promise<void> => {},
-  recordResult: (): void => {}
+  recordResult: (): void => {},
+  listConnectors: () => []
 }
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
@@ -274,6 +275,7 @@ describe('buildOrchestrator', () => {
       const confirms: Array<{ title: string; body: string }> = []
       const registry: BoardRegistry = {
         listBoards: () => opts.boards,
+        listConnectors: () => [],
         listSessions: () => opts.sessions ?? [],
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => opts.result ?? EMPTY_RESULT,
@@ -445,6 +447,7 @@ describe('buildOrchestrator', () => {
       const results: Array<{ id: string; result: BoardResult }> = []
       const registry: BoardRegistry = {
         listBoards: () => opts.boards,
+        listConnectors: () => [],
         listSessions: () => [],
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
@@ -627,6 +630,7 @@ describe('buildOrchestrator', () => {
       const confirms: Array<{ title: string; body: string }> = []
       const registry: BoardRegistry = {
         listBoards: () => opts.boards,
+        listConnectors: () => [],
         listSessions: () => [],
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
@@ -728,6 +732,167 @@ describe('buildOrchestrator', () => {
         guard: { issue: () => ({ nonce: 'n1', seq: 1 }), consume: () => false }
       })
       await expect(orch.interrupt('t1')).rejects.toThrow(/nonce|replay|consume/i)
+      expect(confirms).toHaveLength(1)
+      expect(writes).toEqual([])
+      expect(audits.some((a) => a.status === 'rejected' || a.status === 'failed')).toBe(true)
+    })
+  })
+
+  describe('🔒 relayPrompt (T4.6, agent-to-agent over a connector — the M4 gate)', () => {
+    type Board = { id: string; type: string; title: string; status?: string }
+    type Conn = { id: string; sourceId: string; targetId: string; kind: string }
+    function relayReg(opts: {
+      boards: Board[]
+      connectors?: Conn[]
+      confirm?: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+      writeToPty?: (id: string, text: string) => boolean
+    }): {
+      registry: BoardRegistry
+      audits: AuditInput[]
+      writes: Array<{ id: string; text: string }>
+      confirms: Array<{ title: string; body: string }>
+    } {
+      const audits: AuditInput[] = []
+      const writes: Array<{ id: string; text: string }> = []
+      const confirms: Array<{ title: string; body: string }> = []
+      const registry: BoardRegistry = {
+        listBoards: () => opts.boards,
+        listConnectors: () => opts.connectors ?? [],
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: (id, text) => {
+          writes.push({ id, text })
+          return opts.writeToPty ? opts.writeToPty(id, text) : true
+        },
+        confirm: async (req) => {
+          confirms.push(req)
+          return opts.confirm ? opts.confirm(req) : { approved: true }
+        },
+        audit: async (input) => {
+          audits.push(input)
+        },
+        recordResult: () => {}
+      }
+      return { registry, audits, writes, confirms }
+    }
+
+    const twoTerminals: Board[] = [
+      { id: 'A', type: 'terminal', title: 'Alpha', status: 'running' },
+      { id: 'B', type: 'terminal', title: 'Beta', status: 'running' }
+    ]
+    const cableAB: Conn[] = [{ id: 'c1', sourceId: 'A', targetId: 'B', kind: 'orchestration' }]
+
+    it('🔒 rejects when NO orchestration connector A→B exists — audits rejected, NO confirm/write', async () => {
+      const { registry, audits, writes, confirms } = relayReg({
+        boards: twoTerminals,
+        connectors: []
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'do x')).rejects.toThrow(/connector|cable|edge/i)
+      expect(writes).toEqual([])
+      expect(confirms).toEqual([])
+      expect(audits[0]).toMatchObject({
+        type: 'relay_prompt',
+        targetId: 'B',
+        nonce: '',
+        status: 'rejected'
+      })
+    })
+
+    it('🔒 a PREVIEW edge does NOT authorize relay (orchestration only)', async () => {
+      const { registry, writes } = relayReg({
+        boards: twoTerminals,
+        connectors: [{ id: 'c1', sourceId: 'A', targetId: 'B', kind: 'preview' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/connector|cable|edge/i)
+      expect(writes).toEqual([])
+    })
+
+    it('🔒 direction matters — a B→A cable does NOT authorize an A→B relay', async () => {
+      const { registry, writes } = relayReg({
+        boards: twoTerminals,
+        connectors: [{ id: 'c1', sourceId: 'B', targetId: 'A', kind: 'orchestration' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/connector|cable|edge/i)
+      expect(writes).toEqual([])
+    })
+
+    it('🔒 rejects a non-terminal target even with a cable (never Browser→PTY)', async () => {
+      const { registry, writes, audits } = relayReg({
+        boards: [
+          { id: 'A', type: 'terminal', title: 'Alpha' },
+          { id: 'B', type: 'browser', title: 'Web' }
+        ],
+        connectors: [{ id: 'c1', sourceId: 'A', targetId: 'B', kind: 'orchestration' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/terminal/i)
+      expect(writes).toEqual([])
+      expect(audits.some((a) => a.status === 'rejected')).toBe(true)
+    })
+
+    it('🔒 a denied confirm blocks the relay — nonce minted, NO write', async () => {
+      const { registry, writes, confirms, audits } = relayReg({
+        boards: twoTerminals,
+        connectors: cableAB,
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'rm -rf /')).rejects.toThrow(/deni|declin/i)
+      expect(writes).toEqual([])
+      expect(confirms).toHaveLength(1)
+      expect(confirms[0].body).toContain('rm -rf /')
+      const denied = audits.find((a) => a.status === 'denied')
+      expect(denied).toMatchObject({ type: 'relay_prompt', targetId: 'B' })
+      expect(denied!.nonce.length).toBeGreaterThan(0)
+    })
+
+    it('happy path: cable + both terminals → confirm → write text+CR to TARGET → audits dispatched', async () => {
+      const { registry, writes, confirms, audits } = relayReg({
+        boards: twoTerminals,
+        connectors: cableAB
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'pnpm build')).resolves.toBeUndefined()
+      expect(confirms).toHaveLength(1)
+      expect(writes).toEqual([{ id: 'B', text: 'pnpm build\r' }]) // written to the TARGET
+      const dispatched = audits.find((a) => a.status === 'dispatched')
+      expect(dispatched).toMatchObject({
+        type: 'relay_prompt',
+        targetId: 'B',
+        prompt: 'pnpm build'
+      })
+      expect(dispatched!.nonce.length).toBeGreaterThan(0)
+      expect(audits.some((a) => a.status === 'completed')).toBe(false) // fire-and-forget
+    })
+
+    it('🔒 a failed PTY write audits failed and throws', async () => {
+      const { registry, audits } = relayReg({
+        boards: twoTerminals,
+        connectors: cableAB,
+        writeToPty: () => false
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/write|failed/i)
+      expect(audits.some((a) => a.status === 'failed')).toBe(true)
+    })
+
+    it('🔒 defensive: a forged/replayed nonce (consume=false) blocks the relay', async () => {
+      const { registry, writes, confirms, audits } = relayReg({
+        boards: twoTerminals,
+        connectors: cableAB
+      })
+      const orch = buildOrchestrator(registry, {
+        guard: { issue: () => ({ nonce: 'n1', seq: 1 }), consume: () => false }
+      })
+      await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/nonce|replay|consume/i)
       expect(confirms).toHaveLength(1)
       expect(writes).toEqual([])
       expect(audits.some((a) => a.status === 'rejected' || a.status === 'failed')).toBe(true)
