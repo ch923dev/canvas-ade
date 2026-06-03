@@ -12,7 +12,7 @@ import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2e'
 import { registerProjectHandlers } from './projectIpc'
-import { registerLlmHandlers, runSummarize } from './llmService'
+import { registerLlmHandlers, runSummarize, defaultDeps } from './llmService'
 import { readLlmConfig } from './llmConfig'
 
 let mainWindow: BrowserWindow | null = null
@@ -169,10 +169,7 @@ app.whenReady().then(async () => {
     runSummarize(
       readLlmConfig(app.getPath('userData')),
       { system: 'Reply in one short sentence.', text: process.env.CANVAS_LLM_PING },
-      {
-        fetch: fetch as never,
-        env: process.env as Record<string, string | undefined>
-      }
+      defaultDeps()
     ).then((r) => console.log('LLM_PING', JSON.stringify(r)))
   }
 

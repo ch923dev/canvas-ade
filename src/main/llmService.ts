@@ -208,7 +208,7 @@ export interface LlmStatus {
 }
 
 /** Default transport: Electron/Node global fetch, adapted to FetchLike. */
-const defaultDeps = (): ProviderDeps => ({
+export const defaultDeps = (): ProviderDeps => ({
   fetch: ((url, init) => fetch(url, init)) as FetchLike,
   env: process.env as Record<string, string | undefined>
 })
