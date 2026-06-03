@@ -104,3 +104,24 @@ describe('boardToSvg — cards', () => {
     expect(svg).toContain('todo two')
   })
 })
+
+describe('boardToSvg — images', () => {
+  const img = { id: 'im', kind: 'image' as const, x: 0, y: 0, w: 120, h: 80, assetId: 'abc.png' }
+
+  it('embeds the bitmap as an <image> with the supplied data URI', () => {
+    const dataUri = 'data:image/png;base64,AAAA'
+    const res = boardToSvg(board([img]), { 'abc.png': dataUri })
+    expect(res.svg).toContain('<image')
+    expect(res.svg).toContain(dataUri)
+    expect(res.imageCount).toBe(1)
+    expect(res.embeddedCount).toBe(1)
+  })
+
+  it('draws a dashed fallback tile (no throw) when the asset is missing', () => {
+    const res = boardToSvg(board([img]), {}) // asset absent
+    expect(res.svg).not.toContain('<image')
+    expect(res.svg).toContain('stroke-dasharray')
+    expect(res.imageCount).toBe(1)
+    expect(res.embeddedCount).toBe(0)
+  })
+})

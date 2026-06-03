@@ -95,7 +95,7 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
 
 /** Render one element to SVG markup. `embedded` is true ONLY for an image whose
  *  bitmap data-URI was successfully inlined (drives ExportResult.embeddedCount). */
-function renderElement(el: PlanningElement, _assets: ExportAssets): { markup: string; embedded: boolean } {
+function renderElement(el: PlanningElement, assets: ExportAssets): { markup: string; embedded: boolean } {
   switch (el.kind) {
     case 'arrow':
       return {
@@ -171,6 +171,23 @@ function renderElement(el: PlanningElement, _assets: ExportAssets): { markup: st
         )
       })
       return { markup: parts.join(''), embedded: false }
+    }
+    case 'image': {
+      const uri = assets[el.assetId]
+      if (uri) {
+        return {
+          markup:
+            `<image x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" ` +
+            `preserveAspectRatio="xMidYMid meet" href="${esc(uri)}"/>`,
+          embedded: true
+        }
+      }
+      return {
+        markup:
+          `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" rx="${R_INNER}" ` +
+          `fill="none" stroke="${EXPORT_COLORS.border}" stroke-width="1" stroke-dasharray="4 3"/>`,
+        embedded: false
+      }
     }
     default:
       return { markup: '', embedded: false }
