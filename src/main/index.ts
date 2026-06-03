@@ -13,6 +13,7 @@ import {
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2e'
+import { installE2EMain } from './e2eMain'
 import { registerProjectHandlers } from './projectIpc'
 
 let mainWindow: BrowserWindow | null = null
@@ -105,7 +106,7 @@ function createWindow(): void {
     })
   }
 
-  const e2e = SMOKE === 'e2e'
+  const e2e = SMOKE === 'e2e' || !!process.env.CANVAS_E2E
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
     mainWindow.loadURL(e2e ? `${base}?e2e=1` : base)
@@ -142,6 +143,7 @@ app.whenReady().then(async () => {
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
 
   createWindow()
+  if (mainWindow) installE2EMain(mainWindow)
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
