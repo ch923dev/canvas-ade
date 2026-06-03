@@ -180,7 +180,10 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
 
   it('project:save rejects a foreign sender and writes nothing', async () => {
     const cap = setup()
-    const result = await cap.invokeAs(foreignEvent, 'project:save', { schemaVersion: 2, boards: [] })
+    const result = await cap.invokeAs(foreignEvent, 'project:save', {
+      schemaVersion: 2,
+      boards: []
+    })
     expect(result).toBe(false)
     expect(store.writeProject).not.toHaveBeenCalled()
   })

@@ -56,15 +56,31 @@ describe('preload api → terminal channels', () => {
 describe('preload api → preview channels', () => {
   const bounds = { x: 0, y: 0, width: 100, height: 100 }
   it.each([
-    ['openPreview', (a: CanvasApi) => a.openPreview({ id: 'b1', bounds }), ['preview:open', { id: 'b1', bounds }]],
-    ['setPreviewBoundsBatch', (a: CanvasApi) => a.setPreviewBoundsBatch([]), ['preview:setBoundsBatch', []]],
+    [
+      'openPreview',
+      (a: CanvasApi) => a.openPreview({ id: 'b1', bounds }),
+      ['preview:open', { id: 'b1', bounds }]
+    ],
+    [
+      'setPreviewBoundsBatch',
+      (a: CanvasApi) => a.setPreviewBoundsBatch([]),
+      ['preview:setBoundsBatch', []]
+    ],
     ['capturePreview', (a: CanvasApi) => a.capturePreview('b1'), ['preview:capture', 'b1']],
     ['detachPreview', (a: CanvasApi) => a.detachPreview('b1'), ['preview:detach', 'b1']],
     ['detachAllPreviews', (a: CanvasApi) => a.detachAllPreviews(), ['preview:detachAll']],
-    ['attachPreview', (a: CanvasApi) => a.attachPreview({ id: 'b1', bounds }), ['preview:attach', { id: 'b1', bounds }]],
+    [
+      'attachPreview',
+      (a: CanvasApi) => a.attachPreview({ id: 'b1', bounds }),
+      ['preview:attach', { id: 'b1', bounds }]
+    ],
     ['closePreview', (a: CanvasApi) => a.closePreview('b1'), ['preview:close', 'b1']],
     ['closeAllPreviews', (a: CanvasApi) => a.closeAllPreviews(), ['preview:closeAll']],
-    ['navigatePreview', (a: CanvasApi) => a.navigatePreview('b1', 'http://x/'), ['preview:navigate', { id: 'b1', url: 'http://x/' }]],
+    [
+      'navigatePreview',
+      (a: CanvasApi) => a.navigatePreview('b1', 'http://x/'),
+      ['preview:navigate', { id: 'b1', url: 'http://x/' }]
+    ],
     ['goBackPreview', (a: CanvasApi) => a.goBackPreview('b1'), ['preview:goBack', 'b1']],
     ['goForwardPreview', (a: CanvasApi) => a.goForwardPreview('b1'), ['preview:goForward', 'b1']],
     ['reloadPreview', (a: CanvasApi) => a.reloadPreview('b1'), ['preview:reload', 'b1']]
@@ -76,15 +92,31 @@ describe('preload api → preview channels', () => {
 
 describe('preload api → project / asset / dialog / export channels', () => {
   it.each([
-    ['project.create', (a: CanvasApi) => a.project.create('C:\\p', 'n', { gitInit: true }), ['project:create', { dir: 'C:\\p', name: 'n', opts: { gitInit: true } }]],
+    [
+      'project.create',
+      (a: CanvasApi) => a.project.create('C:\\p', 'n', { gitInit: true }),
+      ['project:create', { dir: 'C:\\p', name: 'n', opts: { gitInit: true } }]
+    ],
     ['project.open', (a: CanvasApi) => a.project.open('C:\\p'), ['project:open', 'C:\\p']],
-    ['project.save', (a: CanvasApi) => a.project.save({ schemaVersion: 2 }), ['project:save', { schemaVersion: 2 }]],
+    [
+      'project.save',
+      (a: CanvasApi) => a.project.save({ schemaVersion: 2 }),
+      ['project:save', { schemaVersion: 2 }]
+    ],
     ['project.recents', (a: CanvasApi) => a.project.recents(), ['project:recents']],
     ['project.current', (a: CanvasApi) => a.project.current(), ['project:current']],
-    ['asset.write', (a: CanvasApi) => a.asset.write(BYTES, 'png'), ['asset:write', { bytes: BYTES, ext: 'png' }]],
+    [
+      'asset.write',
+      (a: CanvasApi) => a.asset.write(BYTES, 'png'),
+      ['asset:write', { bytes: BYTES, ext: 'png' }]
+    ],
     ['asset.read', (a: CanvasApi) => a.asset.read('id1'), ['asset:read', 'id1']],
     ['dialog.openFolder', (a: CanvasApi) => a.dialog.openFolder(), ['dialog:openFolder']],
-    ['export.save', (a: CanvasApi) => a.export.save({ bytes: BYTES, ext: 'svg', defaultName: 'board' }), ['export:save', { bytes: BYTES, ext: 'svg', defaultName: 'board' }]]
+    [
+      'export.save',
+      (a: CanvasApi) => a.export.save({ bytes: BYTES, ext: 'svg', defaultName: 'board' }),
+      ['export:save', { bytes: BYTES, ext: 'svg', defaultName: 'board' }]
+    ]
   ] as const)('%s', (_label, call, expected) => {
     call(api)
     expect(h.invoke).toHaveBeenCalledWith(...expected)

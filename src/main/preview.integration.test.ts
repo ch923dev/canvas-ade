@@ -21,7 +21,9 @@ describe('registerPreviewHandlers — foreign-sender rejection (#17)', () => {
 
   it('preview:navigate returns false for a foreign sender', () => {
     const cap = setup()
-    expect(cap.invokeAs(foreignEvent, 'preview:navigate', { id: 'b1', url: 'http://x/' })).toBe(false)
+    expect(cap.invokeAs(foreignEvent, 'preview:navigate', { id: 'b1', url: 'http://x/' })).toBe(
+      false
+    )
   })
 
   it('preview:goBack returns false for a foreign sender', () => {
