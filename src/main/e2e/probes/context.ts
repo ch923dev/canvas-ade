@@ -52,7 +52,7 @@ export const contextBrain: E2EProbe = {
       'window.api.llm.status().then((s) => JSON.stringify(s))'
     )
     let ok = false
-    let detail = raw
+    let detail: string | undefined = raw
     try {
       const r = JSON.parse(raw) as { ok: boolean; text?: string }
       const s = JSON.parse(status) as { hasProvider: boolean }
