@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest'
+import type { BoardOutput } from '@ch923dev/canvas-ade-mcp'
 import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
+
+const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
 
 function reg(
   boards: Array<{ id: string; type: string; title: string; status?: string }>,
-  sessions: Array<{ id: string; status: string }> = []
+  sessions: Array<{ id: string; status: string }> = [],
+  outputs: Record<string, BoardOutput> = {}
 ): BoardRegistry {
-  return { listBoards: () => boards, listSessions: () => sessions }
+  return {
+    listBoards: () => boards,
+    listSessions: () => sessions,
+    readOutput: (id) => outputs[id] ?? EMPTY_OUTPUT
+  }
 }
 
 describe('buildOrchestrator', () => {
@@ -64,6 +72,32 @@ describe('buildOrchestrator', () => {
   it('boardStatus throws for an unknown board', async () => {
     const orch = buildOrchestrator(reg([]))
     await expect(orch.boardStatus('nope')).rejects.toThrow(/not found/)
+  })
+
+  it('boardOutput delegates the cursor to the registry and returns its page', async () => {
+    let seenCursor: number | undefined = -1
+    const page: BoardOutput = {
+      text: 'hello',
+      total: 5,
+      returned: 5,
+      nextCursor: 25_000,
+      droppedOlder: true
+    }
+    const orch = buildOrchestrator({
+      listBoards: () => [{ id: 't1', type: 'terminal', title: 'T' }],
+      listSessions: () => [],
+      readOutput: (_id, opts) => {
+        seenCursor = opts?.cursor
+        return page
+      }
+    })
+    expect(await orch.boardOutput('t1', { cursor: 12345 })).toEqual(page)
+    expect(seenCursor).toBe(12345)
+  })
+
+  it('boardOutput on an absent board reads an empty page (output is observational)', async () => {
+    const orch = buildOrchestrator(reg([]))
+    expect(await orch.boardOutput('ghost')).toEqual(EMPTY_OUTPUT)
   })
 
   it('spawnBoard / dispatchPrompt / gitDiff are phase-gated', async () => {

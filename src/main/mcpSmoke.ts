@@ -1,6 +1,16 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import type { RunningMcp } from './mcp'
 import { sendMcpCommand } from './mcpCommand'
+import { debugSeedOutput } from './pty'
+
+/** One capped page of board output as the resource serializes it (T1.4). */
+interface OutputPage {
+  text: string
+  total: number
+  returned: number
+  nextCursor?: number
+  droppedOlder: boolean
+}
 
 /** stdout marker (EPIPE-safe like index.ts's smokeLog). */
 function log(line: string): void {
@@ -49,6 +59,12 @@ interface SmokeClient {
    * other (real transport) error.
    */
   readAttention(): Promise<Array<{ id: string; status: string }> | null>
+  /**
+   * Read one capped page of canvas://board/{id}/output (tail when `cursor` omitted;
+   * older via the ?cursor query template). Returns the page, or `null` when the
+   * resource is not registered (older installed pkg) → SKIP. Rethrows transport errors.
+   */
+  readBoardOutput(id: string, cursor?: number): Promise<OutputPage | null>
   close(): Promise<void>
 }
 
@@ -172,6 +188,23 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
               )
               .map((b) => ({ id: b.id, status: b.status }))
           : []
+      } catch (e: unknown) {
+        const code = (e as { code?: number })?.code
+        if (code === -32602 || /resource .*not found/i.test(String(e))) return null
+        throw e
+      }
+    },
+    readBoardOutput: async (id: string, cursor?: number): Promise<OutputPage | null> => {
+      const uri =
+        cursor === undefined
+          ? `canvas://board/${id}/output`
+          : `canvas://board/${id}/output?cursor=${cursor}`
+      try {
+        const res = await client.readResource({ uri })
+        const text = res.contents
+          .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+          .join('')
+        return JSON.parse(text) as OutputPage
       } catch (e: unknown) {
         const code = (e as { code?: number })?.code
         if (code === -32602 || /resource .*not found/i.test(String(e))) return null
@@ -348,6 +381,52 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           log('MCP_ATTENTION_OK')
         } else {
           log(`MCP_FAIL attention missing failed board ids=${attention.map((b) => b.id).join(',')}`)
+          code = 1
+        }
+      }
+    }
+
+    // ── output (T1.4 🔒): a board's scrollback is exposed capped + paginated +
+    // ANSI-stripped. Seed the live ring PAST the 256 KB cap with known ANSI-wrapped
+    // content via the MAIN-side debug seam (shell-agnostic + deterministic), then page
+    // the resource tail→front: every page ≤ 25k (capped, never the raw buffer), no ESC
+    // bytes survive (stripped), and the OLDEST page reports droppedOlder (the cap
+    // discarded older output — honest truncation). Self-activating: SKIP on pkg without
+    // the resource. ──
+    if (hookReady) {
+      const oid = await evalIn<string>("window.__canvasE2E.seedBoard('terminal')")
+      await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(oid)})`)
+      const live = await poll(async () => (await orch.readBoardStatus(oid)) === 'running', 8000)
+      // ~71 chars/line, 9 of them ANSI; 5000 lines ≈ 355 KB raw > the 256 KB ring cap.
+      const chunk = '\x1b[31m' + 'L'.repeat(60) + '\x1b[0m\n'
+      const seeded = live && debugSeedOutput(oid, chunk.repeat(5000))
+      const first = seeded ? await orch.readBoardOutput(oid) : null
+      if (first === null) {
+        log('MCP_OUTPUT_SKIP pkg<0.3.0-unpublished')
+      } else {
+        let cursor: number | undefined
+        let pages = 0
+        let capped = true
+        let sawAnsi = false
+        let droppedOlder = false
+        let total = 0
+        for (;;) {
+          const pg = await orch.readBoardOutput(oid, cursor)
+          if (pg === null) break
+          pages++
+          total = pg.total
+          if (pg.returned > 25_000 || pg.text.length > 25_000) capped = false
+          if (pg.text.includes('\x1b')) sawAnsi = true
+          if (pg.droppedOlder) droppedOlder = true
+          if (pg.nextCursor === undefined || pages > 50) break
+          cursor = pg.nextCursor
+        }
+        const ok = pages >= 2 && capped && !sawAnsi && droppedOlder && total <= 262_144
+        if (ok) log('MCP_OUTPUT_OK')
+        else {
+          log(
+            `MCP_FAIL output seeded=${seeded} pages=${pages} capped=${capped} ansi=${sawAnsi} dropped=${droppedOlder} total=${total}`
+          )
           code = 1
         }
       }

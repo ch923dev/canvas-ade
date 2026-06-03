@@ -1,9 +1,14 @@
-import type { BoardId, BoardSummary, Orchestrator } from '@ch923dev/canvas-ade-mcp'
+import type { BoardId, BoardOutput, BoardSummary, Orchestrator } from '@ch923dev/canvas-ade-mcp'
 
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
   listBoards(): Array<{ id: string; type: string; title: string; status?: string }>
   listSessions(): Array<{ id: string; status: string }>
+  /**
+   * Read one capped, ANSI-stripped page of a board's PTY scrollback (T1.4 🔒).
+   * MAIN injects `pty.ts`'s `readPtyOutput`; non-terminal/unknown ids read empty.
+   */
+  readOutput(id: string, opts?: { cursor?: number }): BoardOutput
 }
 
 /**
@@ -46,6 +51,11 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
       const board = registry.listBoards().find((b) => b.id === boardId)
       if (!board) throw new Error(`board not found: ${boardId}`)
       return deriveStatus(board, sessionMap())
+    },
+    async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
+      // Read-only scrollback page (T1.4). An absent board reads as empty (the
+      // accessor returns an empty page), not an error — output is observational.
+      return registry.readOutput(boardId, opts)
     },
     async spawnBoard(): Promise<{ id: BoardId }> {
       throw new Error('spawnBoard not available until Phase 3')

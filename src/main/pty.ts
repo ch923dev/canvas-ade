@@ -6,6 +6,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
+import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi, type OutputPage } from './ptyOutput'
 
 /**
  * Terminal data plane lives on a MessagePort (binary-ish, high-volume PTY
@@ -690,6 +691,39 @@ export function disposeAllPtys(): Promise<void> {
  */
 export function listPtySessions(): Array<{ id: string; status: PtyState }> {
   return [...sessions.entries()].map(([id, s]) => ({ id, status: s.state }))
+}
+
+/**
+ * Read one capped, ANSI-stripped, tail-anchored page of a board's PTY scrollback
+ * for the MCP layer (T1.4 🔒). READ-ONLY, control-plane only — it reads the SAME
+ * 256 KB ring (`buf.data`) that adopt-replay uses (live OR parked, so exited boards
+ * stay readable for post-mortem), strips escape codes, and slices ONE page; it never
+ * returns the raw unbounded buffer and never writes to the PTY. `truncatedHead` is
+ * derived from ring saturation (`raw.length >= RING_CAP_BYTES`) so the page can
+ * honestly report `droppedOlder` when the cap has discarded older output.
+ */
+export function readPtyOutput(id: string, opts?: { cursor?: number; limit?: number }): OutputPage {
+  const raw = sessions.get(id)?.buf.data ?? parked.get(id)?.buf.data ?? ''
+  const truncatedHead = raw.length >= RING_CAP_BYTES
+  return pageOutput(stripAnsi(raw), {
+    cursor: opts?.cursor,
+    limit: Math.min(opts?.limit ?? MAX_OUTPUT_PAGE, MAX_OUTPUT_PAGE),
+    truncatedHead
+  })
+}
+
+/**
+ * E2E ONLY — append `text` straight into the live session's output ring (through the
+ * real `appendRing` cap), simulating PTY output so the harness can deterministically
+ * fill the buffer past the cap with known/ANSI content and assert the paged read.
+ * Shell-agnostic (no dependence on what a command happens to print). Read path only;
+ * exposes nothing to the renderer. Returns false if no live session holds `id`.
+ */
+export function debugSeedOutput(id: string, text: string): boolean {
+  const s = sessions.get(id)
+  if (!s) return false
+  s.buf.data = appendRing(s.buf.data, text, RING_CAP_BYTES)
+  return true
 }
 
 /**
