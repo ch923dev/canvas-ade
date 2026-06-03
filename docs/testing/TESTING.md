@@ -17,7 +17,7 @@ directional (~integration-heavy), never a quota.
 | **Static** | `tsc --noEmit` + ESLint | CI `check` | — |
 | **Unit** | One pure function / module in isolation; collaborators mocked. No DOM render, no app, no real IPC. | Vitest `unit` project | `*.test.ts` / `*.test.tsx` |
 | **Integration** | Multiple real units together: a rendered component tree (jsdom), a registered IPC handler, or logic that mocks `electron`. No real app boot. | Vitest `integration` project | `*.integration.test.ts` / `*.integration.test.tsx` |
-| **E2E** | The real, booted app. The ONLY tier allowed to touch the native layer. | The e2e harness (today `CANVAS_SMOKE`; Playwright `_electron` after roadmap T4) | separate harness |
+| **E2E** | The real, booted app. The ONLY tier allowed to touch the native layer. | Playwright `_electron` (`pnpm test:e2e`) | separate harness |
 
 ## The decision rule — which tier do I write?
 
@@ -68,6 +68,7 @@ Electron's security checklist is asserted at the **unit/integration** tier, not 
 - `pnpm test` — both projects (the CI `check` gate).
 - `pnpm test:unit` — fast unit project only (use while iterating).
 - `pnpm test:integration` — integration project only.
+- `pnpm test:e2e` — Playwright `_electron` e2e (built app; separate from the Vitest `check` gate).
 - `pnpm typecheck` · `pnpm lint` — the static tier.
 
 ## Adding a test
@@ -98,8 +99,9 @@ every `api.*` method is asserted to invoke the right `ipcRenderer.invoke` channe
 ## E2E push-down (T3) — what migrated, what stayed
 
 T3 moved redundant `CANVAS_SMOKE=e2e` probe coverage down to Vitest and deleted the migrated
-probes. The homegrown harness now holds only the irreducible native/real-instance **slivers**
-(deferred to the T4 Playwright keep-set):
+probes. The homegrown harness was trimmed to only the irreducible native/real-instance **slivers**,
+which T4 ported to the Playwright `_electron` keep-set (the `CANVAS_SMOKE` harness has since been
+deleted):
 
 - **Migrated to Vitest:** whiteboard interactions (erase/shortcut/marquee/multidrag/shift-add/snap/
   alt-dup/lock/group/align/group-align → `PlanningBoard.interaction.test.tsx`); board-menu contracts
@@ -107,10 +109,40 @@ probes. The homegrown harness now holds only the irreducible native/real-instanc
   round-trip (→ `canvasStore.test.ts`); preview-edge stale styling (→ `PreviewEdge.test.tsx`). The
   paste reload/dedup/gc + SVG/image-embed parts were already covered by `projectStore.test.ts` +
   `whiteboardExport.test.ts`, and `duplicate-keeps-link` by `canvasStore.test.ts`.
-- **Kept as slivers (T4):** `whiteboardFullviewAdd` (real OS click through the live camera
-  transform), `whiteboardPasteImage` (real Ctrl+V clipboard), `whiteboardExport` (PNG raster),
+- **Ported to Playwright keep-set (T4):** `whiteboardFullviewAdd` (real OS click through the live
+  camera transform), `whiteboardPasteImage` (real Ctrl+V clipboard), `whiteboardExport` (PNG raster),
   `menuChrome` (real title-bar layout + viewport clamp + CSS-var rest colour), `menuPreviewDetach`
   (native `WebContentsView` detach), `previewConnectGesture` (live port-detect IPC + long-press).
   These need real OS input, a native view, or the renderer's raster pipeline — jsdom can't reproduce
   them. The `planning`/`layout` probes were deleted outright; `whiteboardFullviewAdd` now seeds the
   shared `ctx.ids.planId` the slivers read (the deleted `planning` probe used to).
+
+## E2E — Playwright `_electron` (T4)
+
+The e2e tier is `@playwright/test` `_electron`, driving the BUILT app (`out/main/index.js`).
+Run with `pnpm test:e2e` (the `pretest:e2e` hook builds first). It is **separate** from the
+Vitest `check` gate (`pnpm test` stays unit + integration only). Re-enabling it as a CI gate is
+**T5**.
+
+**Boot mode:** launched with `CANVAS_E2E=1`, which loads the renderer with `?e2e=1` (installs the
+`window.__canvasE2E` hook) and installs the MAIN-side `globalThis.__canvasE2EMain` registry, WITHOUT
+self-running or auto-quitting — Playwright drives and closes the app.
+
+**Two seams (both env-gated, test-only — the sandbox is NEVER weakened):**
+- `window.__canvasE2E` (renderer) — driven via `page.evaluate`. Seeds boards through the real store,
+  reads board/runtime/terminal state, and `reset()`s the canvas between tests.
+- `globalThis.__canvasE2EMain` (MAIN, `src/main/e2eMain.ts`) — driven via `electronApp.evaluate`.
+  Exposes the preview/pty internals the renderer can't see (`captureView`, `terminalPid`, view ids),
+  real OS input (`sendInput`), and the project/clipboard helpers the whiteboard slivers need.
+
+**Layout:** `e2e/fixtures.ts` (per-spec Electron launch + `reset()` `beforeEach`), `e2e/helpers.ts`
+(`evalIn`/`mainCall`/`pollEval`/`seed`), and one spec per subsystem: `terminal` · `browser` ·
+`fullview` · `menu` · `previewLink` · `whiteboard` (20 tests total). Each test seeds its own boards
+— no shared ordered state.
+
+**MAIN-helpers only:** Playwright's renderer-side IPC helpers require `contextIsolation:false` +
+`nodeIntegration:true`, which violates the locked sandbox. We use `electronApp.evaluate` + the MAIN
+registry exclusively. Never flip the sandbox to make a test pass.
+
+**Still owed (T5):** re-enable the e2e CI gate, a cross-platform process-tree-kill check, and an
+auto-update e2e (gated on Phase 5 packaging).
