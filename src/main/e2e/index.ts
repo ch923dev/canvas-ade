@@ -38,6 +38,7 @@ import {
 import { planning } from './probes/planning'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
+import { connectorRoundtrip } from './probes/connectors'
 import { tidy, tile } from './probes/layout'
 import {
   whiteboardErase,
@@ -79,6 +80,7 @@ const PLAYLIST: E2EProbe[] = [
   boardStatusPill, // T1.6: on-canvas pill dot matches the agent-facing bucket
   menuPreviewDetach,
   previewConnectGesture,
+  connectorRoundtrip, // M2 T2.1: connector add/round-trip/remove through the store
   tidy,
   tile,
   whiteboardErase, // W1: emits whiteboard-erase + whiteboard-shortcut

@@ -13,7 +13,13 @@ import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
-import { fromObject, type Board, type BoardType } from '../lib/boardSchema'
+import {
+  fromObject,
+  type Board,
+  type BoardType,
+  type Connector,
+  type ConnectorKind
+} from '../lib/boardSchema'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
@@ -60,6 +66,14 @@ export interface CanvasE2E {
   terminalMounted: (id: string) => boolean
   /** True if the live store round-trips through toObject→fromObject without throwing. */
   roundTripOk: () => boolean
+  /** M2: add a connector between two boards; returns its id (null if rejected). */
+  addConnector: (sourceId: string, targetId: string, kind?: ConnectorKind) => string | null
+  /** M2: the live in-memory connectors (plain data — serializable). */
+  getConnectors: () => Connector[]
+  /** M2: remove a connector by id (probe cleanup). */
+  removeConnector: (id: string) => void
+  /** M2: connector count that survives a toObject→fromObject round-trip. */
+  serializedConnectorCount: () => number
   /** Flag a node drag/resize gesture (drives the preview layer detach/reattach). */
   setGesture: (active: boolean) => void
   /** Delete a board the way the canvas does (parks a terminal's session first). */
@@ -202,6 +216,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       } catch {
         return false
       }
+    },
+    addConnector(sourceId, targetId, kind = 'orchestration') {
+      return useCanvasStore.getState().addConnector(sourceId, targetId, kind)
+    },
+    getConnectors() {
+      return useCanvasStore.getState().connectors
+    },
+    removeConnector(id) {
+      useCanvasStore.getState().removeConnector(id)
+    },
+    serializedConnectorCount() {
+      return fromObject(useCanvasStore.getState().toObject()).connectors.length
     },
     setGesture(active) {
       usePreviewStore.getState().setNodeGesture(active)

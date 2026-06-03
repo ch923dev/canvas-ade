@@ -14,9 +14,12 @@ import {
   type BoardType,
   type CanvasDoc,
   type CanvasViewport,
+  type Connector,
+  type ConnectorKind,
   createBoard,
   fromObject,
   toObject,
+  previewConnectorsFor,
   MIN_BOARD_SIZE,
   DEFAULT_BOARD_SIZE
 } from '../lib/boardSchema'
@@ -50,13 +53,29 @@ export interface RecentProject {
   lastOpenedAt: number
 }
 
+/**
+ * One undo/redo checkpoint: boards + connectors captured together so a single step
+ * covers a change to either (or both, e.g. removeBoard + its incident connectors). The
+ * undo rail was widened from `Board[]` to this when M2 added connectors (Decision C).
+ */
+export interface CanvasSnapshot {
+  boards: Board[]
+  connectors: Connector[]
+}
+
 export interface CanvasState {
   boards: Board[]
+  /**
+   * Typed board↔board connectors (M2). Holds ORCHESTRATION connectors in memory; preview
+   * connectors are derived from `previewSourceId` on save and folded back on load
+   * (Decision B), so they never live here. Rides the undo rail with `boards`.
+   */
+  connectors: Connector[]
   selectedId: string | null
   tool: Tool
   /** Undo/redo rails (internal — drive via beginChange/undo/redo, don't read directly). */
-  past: Board[][]
-  future: Board[][]
+  past: CanvasSnapshot[]
+  future: CanvasSnapshot[]
   /** Persisted camera transform (null = not yet captured / fit on load). */
   viewport: CanvasViewport | null
   /** Current project lifecycle (welcome/loading/open/error). */
@@ -72,6 +91,14 @@ export interface CanvasState {
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
   duplicateBoard: (id: string) => string | null
+  /**
+   * Add a connector between two boards (M2). Rejects a self-link, a missing endpoint,
+   * or an exact duplicate (same source+target+kind) — returns the new id, or null when
+   * rejected. One tracked undo step; leaves `boards` untouched.
+   */
+  addConnector: (sourceId: string, targetId: string, kind: ConnectorKind) => string | null
+  /** Remove a connector by id (one tracked step). A no-op for an unknown id. */
+  removeConnector: (id: string) => void
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
@@ -118,15 +145,27 @@ export interface CanvasState {
 const newId = (): string => crypto.randomUUID()
 
 /**
- * The boards snapshot that the undo stack already reflects — either the value last
- * pushed onto `past`, or the present `boards` after an undo/redo. `beginChange` skips
- * recording when the current `boards` is this same reference, so a no-op gesture never
- * pushes a duplicate snapshot. This is what the in-store `past[last] === boards` guard
- * MISSES after an undo: undo pops the tail and sets `boards` to it, so the new past tail
- * is the entry *before* it (≠ boards) even though boards is unchanged — without this ref
- * a post-undo no-op beginChange would push a phantom snapshot (#BUG M3).
+ * The snapshot the undo stack already reflects — either the value last pushed onto
+ * `past`, or the present {boards,connectors} after an undo/redo. `beginChange` skips
+ * recording when the current present matches this (by boards AND connectors ref), so a
+ * no-op gesture never pushes a duplicate snapshot. This is what the in-store
+ * `past[last] === present` guard MISSES after an undo: undo pops the tail and sets the
+ * present to it, so the new past tail is the entry *before* it (≠ present) even though
+ * the present is unchanged — without this ref a post-undo no-op beginChange would push a
+ * phantom snapshot (#BUG M3). Widened from `Board[]` to a snapshot when M2 added
+ * connectors (memory `undo-lastrecorded-phantom`).
  */
-let lastRecorded: Board[] | null = null
+let lastRecorded: CanvasSnapshot | null = null
+
+/**
+ * True when `snap` is the snapshot the present state still reflects — both the boards
+ * AND connectors refs match. Used by `beginChange` to skip phantom checkpoints. A
+ * connector-only change mints a new connectors ref (boards unchanged), so comparing
+ * boards alone would wrongly treat it as "unchanged" — both refs must match.
+ */
+function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): boolean {
+  return !!snap && snap.boards === s.boards && snap.connectors === s.connectors
+}
 
 /**
  * Apply a self-contained board mutation as ONE tracked undo step. `next` is the
@@ -159,15 +198,22 @@ let lastRecorded: Board[] | null = null
  */
 function trackedChange(
   s: CanvasState,
-  next: Board[] | null,
+  next: { boards?: Board[]; connectors?: Connector[] } | null,
   opts: { selectedId?: string | null; reflectPresent: boolean }
 ): Partial<CanvasState> | CanvasState {
-  if (next == null || next === s.boards) return s
-  if (opts.reflectPresent) lastRecorded = next
+  if (next == null) return s
+  const nextBoards = next.boards ?? s.boards
+  const nextConnectors = next.connectors ?? s.connectors
+  // No-op when neither array actually changed (same refs) — push nothing, leave undo
+  // untouched (the `next === s.boards` guard, generalized to the snapshot).
+  if (nextBoards === s.boards && nextConnectors === s.connectors) return s
+  if (opts.reflectPresent) lastRecorded = { boards: nextBoards, connectors: nextConnectors }
   const base: Partial<CanvasState> = {
-    past: recordPast(s.past, s.boards),
+    // Push the PRE-change present (boards + connectors) as one checkpoint.
+    past: recordPast(s.past, { boards: s.boards, connectors: s.connectors }),
     future: [],
-    boards: next
+    boards: nextBoards,
+    connectors: nextConnectors
   }
   return opts.selectedId === undefined ? base : { ...base, selectedId: opts.selectedId }
 }
@@ -271,6 +317,7 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   boards: [],
+  connectors: [],
   selectedId: null,
   tool: 'select',
   past: [],
@@ -284,7 +331,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const board = createBoard(type, { id, x: pos.x, y: pos.y })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
-    set((s) => trackedChange(s, [...s.boards, board], { selectedId: id, reflectPresent: false }))
+    set((s) =>
+      trackedChange(s, { boards: [...s.boards, board] }, { selectedId: id, reflectPresent: false })
+    )
     return id
   },
 
@@ -302,10 +351,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             ? { ...b, previewSourceId: undefined }
             : b
         )
-      return trackedChange(s, next, {
-        selectedId: s.selectedId === id ? null : s.selectedId,
-        reflectPresent: false
-      })
+      // Drop connectors incident to the removed board IN THE SAME tracked step (M2), so
+      // one undo restores both the board and its cables. Only mint a new connectors array
+      // when something is actually dropped (else keep the ref so trackedChange can no-op).
+      const incident = s.connectors.some((c) => c.sourceId === id || c.targetId === id)
+      const nextConnectors = incident
+        ? s.connectors.filter((c) => c.sourceId !== id && c.targetId !== id)
+        : s.connectors
+      return trackedChange(
+        s,
+        { boards: next, connectors: nextConnectors },
+        { selectedId: s.selectedId === id ? null : s.selectedId, reflectPresent: false }
+      )
     }),
 
   duplicateBoard: (id) => {
@@ -331,11 +388,54 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // A duplicated terminal starts IDLE — cloning must not silently spin up a second
     // agent (M-1). The user starts it explicitly via the Start affordance.
     if (clone.type === 'terminal') idleOnMountIds.add(cloneId)
+    // Decision E: a duplicate inherits NO orchestration connectors (an orchestration
+    // cable is a relationship between two specific boards). previewSourceId is still
+    // copied by structuredClone above, so a duplicated linked Browser keeps its preview.
     set((s) =>
-      trackedChange(s, [...s.boards, clone], { selectedId: cloneId, reflectPresent: false })
+      trackedChange(
+        s,
+        { boards: [...s.boards, clone] },
+        { selectedId: cloneId, reflectPresent: false }
+      )
     )
     return cloneId
   },
+
+  addConnector: (sourceId, targetId, kind) => {
+    const s = get()
+    // Reject a self-link, a missing endpoint, or an exact duplicate (same s+t+kind).
+    if (sourceId === targetId) return null
+    const ids = new Set(s.boards.map((b) => b.id))
+    if (!ids.has(sourceId) || !ids.has(targetId)) return null
+    if (
+      s.connectors.some(
+        (c) => c.sourceId === sourceId && c.targetId === targetId && c.kind === kind
+      )
+    ) {
+      return null
+    }
+    const id = newId()
+    const connector: Connector = { id, sourceId, targetId, kind }
+    // One tracked step; leaves `boards` untouched (omit selectedId → keep selection).
+    // reflectPresent:false matches add/remove/duplicate — keeps the cable granularly
+    // undoable; its post-no-op phantom is the same tolerated edge (#BUG M3).
+    set((st) =>
+      trackedChange(st, { connectors: [...st.connectors, connector] }, { reflectPresent: false })
+    )
+    return id
+  },
+
+  removeConnector: (id) =>
+    set((s) => {
+      if (!s.connectors.some((c) => c.id === id)) return s // unknown id → no dead step
+      return trackedChange(
+        s,
+        { connectors: s.connectors.filter((c) => c.id !== id) },
+        {
+          reflectPresent: false
+        }
+      )
+    }),
 
   updateBoard: (id, patch) =>
     set((s) => {
@@ -403,7 +503,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // (already tidy → no phantom step, redo branch kept). reflectPresent syncs lastRecorded
       // so a following zero-movement gesture doesn't push a phantom snapshot (#BUG M3) — at
       // the accepted cost that an immediate nudge coalesces into this tidy step.
-      return trackedChange(s, changed ? boards : null, { reflectPresent: true })
+      return trackedChange(s, changed ? { boards } : null, { reflectPresent: true })
     }),
 
   tileBoards: (template, area, record = true) =>
@@ -436,7 +536,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // drag stays correctly undoable. Do not "fix" by syncing lastRecorded.
       if (!record) return { boards }
       // Tracked apply: one undo step + lastRecorded sync via trackedChange (reflectPresent).
-      return trackedChange(s, boards, { reflectPresent: true })
+      return trackedChange(s, { boards }, { reflectPresent: true })
     }),
 
   growBoardHeight: (id, h) =>
@@ -466,48 +566,75 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   beginChange: () =>
     set((s) => {
       // No change since the last checkpoint → skip, so a no-op gesture doesn't push a
-      // duplicate snapshot. Two cases of "unchanged": the boards array ref matches the
-      // past tail (normal post-edit), OR it matches `lastRecorded` — the present left by
-      // an undo/redo. The past-tail check alone MISSES the post-undo case (#BUG M3):
-      // undo pops the tail, so `boards` (the popped value) ≠ the new past tail even
-      // though boards is unchanged → a no-op beginChange would push a phantom snapshot.
-      if (s.past[s.past.length - 1] === s.boards || lastRecorded === s.boards) return s
+      // duplicate snapshot. Two cases of "unchanged": the present matches the past tail
+      // (normal post-edit), OR it matches `lastRecorded` — the present left by an
+      // undo/redo. The past-tail check alone MISSES the post-undo case (#BUG M3): undo
+      // pops the tail, so the present (the popped value) ≠ the new past tail even though
+      // it's unchanged → a no-op beginChange would push a phantom snapshot. Compared by
+      // BOTH boards and connectors refs (a connector-only edit changes connectors only).
+      if (sameSnapshot(s.past[s.past.length - 1], s) || sameSnapshot(lastRecorded, s)) return s
       // Take the pre-edit snapshot but do NOT clear the redo branch here (Bug #7).
       // beginChange fires at GESTURE START, before we know whether the gesture will
       // commit anything — a zero-movement titlebar/resize-handle click or a degenerate
       // arrow/pen tap calls it but mutates nothing. The redo branch is correctly
       // invalidated by the actual mutation: updateBoard/resizeBoard clear `future` only
       // when boards truly change.
-      lastRecorded = s.boards
-      return { past: recordPast(s.past, s.boards) }
+      const snap: CanvasSnapshot = { boards: s.boards, connectors: s.connectors }
+      lastRecorded = snap
+      return { past: recordPast(s.past, snap) }
     }),
   undo: () =>
     set((s) => {
-      const r = applyUndo(s.past, s.boards, s.future)
+      const r = applyUndo(s.past, { boards: s.boards, connectors: s.connectors }, s.future)
       if (!r) return s
       // The present after undo IS the history-reflected state — record it so a following
       // no-op beginChange recognizes it and doesn't push a phantom snapshot (#BUG M3).
       lastRecorded = r.present
-      return { boards: r.present, past: r.past, future: r.future, selectedId: null }
+      return {
+        boards: r.present.boards,
+        connectors: r.present.connectors,
+        past: r.past,
+        future: r.future,
+        selectedId: null
+      }
     }),
   redo: () =>
     set((s) => {
-      const r = applyRedo(s.past, s.boards, s.future)
+      const r = applyRedo(s.past, { boards: s.boards, connectors: s.connectors }, s.future)
       if (!r) return s
       lastRecorded = r.present
-      return { boards: r.present, past: r.past, future: r.future, selectedId: null }
+      return {
+        boards: r.present.boards,
+        connectors: r.present.connectors,
+        past: r.past,
+        future: r.future,
+        selectedId: null
+      }
     }),
 
-  toObject: () => toObject(get().boards, get().viewport),
+  // Re-derive preview connectors from board state (previewSourceId = runtime SoT) and
+  // concat the in-memory orchestration connectors → the full persisted set (Decision B).
+  toObject: () =>
+    toObject(get().boards, get().viewport, [
+      ...previewConnectorsFor(get().boards),
+      ...get().connectors
+    ]),
   loadObject: (doc) => {
     const d = fromObject(doc)
-    // Clear the dedup ref: it points at the pre-load boards array; a fresh project's
-    // history starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
+    // Clear the dedup ref: it points at the pre-load snapshot; a fresh project's history
+    // starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
     lastRecorded = null
     // Disk-restored terminals must start IDLE (no auto-spawn / no launchCommand on
     // reopen) — flag every loaded terminal idle-on-mount (M-1).
     markRestoredIdle(d.boards)
-    set({ boards: d.boards, viewport: d.viewport, selectedId: null, past: [], future: [] })
+    set({
+      boards: d.boards,
+      connectors: d.connectors,
+      viewport: d.viewport,
+      selectedId: null,
+      past: [],
+      future: []
+    })
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
   applyOpenResult: (r) => {
@@ -522,6 +649,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     markRestoredIdle(d.boards)
     set({
       boards: d.boards,
+      connectors: d.connectors,
       viewport: d.viewport,
       selectedId: null,
       past: [],

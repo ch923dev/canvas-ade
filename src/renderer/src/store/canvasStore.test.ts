@@ -7,7 +7,14 @@ const get = () => useCanvasStore.getState()
 beforeEach(() => {
   // Reset the singleton's data between tests; merge keeps the action functions.
   // past/future are cleared too so history state doesn't bleed between tests.
-  useCanvasStore.setState({ boards: [], selectedId: null, tool: 'select', past: [], future: [] })
+  useCanvasStore.setState({
+    boards: [],
+    connectors: [],
+    selectedId: null,
+    tool: 'select',
+    past: [],
+    future: []
+  })
 })
 
 describe('initial state', () => {
@@ -799,5 +806,148 @@ describe('tileBoards (resize-to-fill)', () => {
       w: before.w,
       h: before.h
     })
+  })
+})
+
+describe('canvasStore — connectors (M2)', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({
+      boards: [],
+      connectors: [],
+      selectedId: null,
+      past: [],
+      future: []
+    })
+  })
+
+  // Seed two real boards and return their ids.
+  const twoBoards = (): { a: string; b: string } => ({
+    a: get().addBoard('terminal', { x: 0, y: 0 }),
+    b: get().addBoard('browser', { x: 900, y: 0 })
+  })
+
+  it('addConnector links two boards, returns an id, and records exactly one undo step', () => {
+    const { a, b } = twoBoards()
+    const pastLen = get().past.length
+    const id = get().addConnector(a, b, 'orchestration')
+    expect(id).toBeTypeOf('string')
+    expect(get().connectors).toEqual([{ id, sourceId: a, targetId: b, kind: 'orchestration' }])
+    expect(get().past.length).toBe(pastLen + 1)
+  })
+
+  it('addConnector does not mint a new boards ref (a connector-only change leaves boards alone)', () => {
+    const { a, b } = twoBoards()
+    const boardsRef = get().boards
+    get().addConnector(a, b, 'orchestration')
+    expect(get().boards).toBe(boardsRef)
+  })
+
+  it('rejects a self-link (returns null, no undo step, no connector)', () => {
+    const { a } = twoBoards()
+    const pastLen = get().past.length
+    expect(get().addConnector(a, a, 'orchestration')).toBeNull()
+    expect(get().connectors).toEqual([])
+    expect(get().past.length).toBe(pastLen)
+  })
+
+  it('rejects a connector to a missing board', () => {
+    const { a } = twoBoards()
+    expect(get().addConnector(a, 'ghost', 'orchestration')).toBeNull()
+    expect(get().addConnector('ghost', a, 'orchestration')).toBeNull()
+    expect(get().connectors).toEqual([])
+  })
+
+  it('dedupes an identical source+target+kind connector', () => {
+    const { a, b } = twoBoards()
+    const id = get().addConnector(a, b, 'orchestration')
+    const pastLen = get().past.length
+    expect(get().addConnector(a, b, 'orchestration')).toBeNull() // duplicate
+    expect(get().connectors).toHaveLength(1)
+    expect(get().connectors[0].id).toBe(id)
+    expect(get().past.length).toBe(pastLen) // no step for the rejected dup
+  })
+
+  it('undo removes an added connector; redo re-adds it', () => {
+    const { a, b } = twoBoards()
+    get().addConnector(a, b, 'orchestration')
+    expect(get().connectors).toHaveLength(1)
+    get().undo()
+    expect(get().connectors).toHaveLength(0)
+    get().redo()
+    expect(get().connectors).toHaveLength(1)
+  })
+
+  it('removeConnector deletes by id (one step); a no-op for an unknown id', () => {
+    const { a, b } = twoBoards()
+    const id = get().addConnector(a, b, 'orchestration')!
+    const pastLen = get().past.length
+    get().removeConnector('nope')
+    expect(get().connectors).toHaveLength(1)
+    expect(get().past.length).toBe(pastLen) // unknown id → no dead step
+    get().removeConnector(id)
+    expect(get().connectors).toEqual([])
+    expect(get().past.length).toBe(pastLen + 1)
+  })
+
+  it('removeBoard drops incident connectors in the SAME step; undo restores board AND connectors', () => {
+    const { a, b } = twoBoards()
+    get().addConnector(a, b, 'orchestration')
+    expect(get().connectors).toHaveLength(1)
+    const pastLen = get().past.length
+    get().removeBoard(b)
+    // one tracked step removed the board AND its incident connector
+    expect(get().boards.some((x) => x.id === b)).toBe(false)
+    expect(get().connectors).toEqual([])
+    expect(get().past.length).toBe(pastLen + 1)
+    get().undo()
+    expect(get().boards.some((x) => x.id === b)).toBe(true) // board back…
+    expect(get().connectors).toHaveLength(1) // …and its cable, in one undo
+  })
+
+  it('duplicateBoard inherits NO orchestration connectors (Decision E)', () => {
+    const { a, b } = twoBoards()
+    get().addConnector(a, b, 'orchestration')
+    const copy = get().duplicateBoard(b)!
+    expect(copy).toBeTypeOf('string')
+    // exactly the original cable survives; the clone is uncabled
+    expect(get().connectors).toHaveLength(1)
+    expect(get().connectors.some((c) => c.sourceId === copy || c.targetId === copy)).toBe(false)
+  })
+
+  it('toObject persists orchestration connectors AND re-derives preview connectors', () => {
+    const { a, b } = twoBoards()
+    get().addConnector(a, b, 'orchestration')
+    // give the browser a preview link so toObject re-derives a preview connector too
+    get().updateBoard(b, { previewSourceId: a } as never)
+    const doc = get().toObject()
+    expect(doc.connectors).toContainEqual({
+      id: expect.any(String),
+      sourceId: a,
+      targetId: b,
+      kind: 'orchestration'
+    })
+    expect(doc.connectors).toContainEqual({
+      id: `preview-${b}`,
+      sourceId: a,
+      targetId: b,
+      kind: 'preview'
+    })
+  })
+
+  it('loadObject sets connectors (orchestration kept, preview folded into previewSourceId) and resets history', () => {
+    const doc = toObject(
+      [
+        createBoard('terminal', { id: 't1', x: 0, y: 0 }),
+        createBoard('browser', { id: 'b1', x: 900, y: 0 })
+      ],
+      null,
+      [{ id: 'o1', sourceId: 't1', targetId: 'b1', kind: 'orchestration' }]
+    )
+    get().loadObject(doc)
+    expect(get().connectors).toEqual([
+      { id: 'o1', sourceId: 't1', targetId: 'b1', kind: 'orchestration' }
+    ])
+    expect(get().past).toEqual([])
+    expect(get().future).toEqual([])
   })
 })
