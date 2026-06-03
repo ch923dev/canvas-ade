@@ -12,6 +12,8 @@ import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2e'
 import { registerProjectHandlers } from './projectIpc'
+import { registerLlmHandlers, runSummarize } from './llmService'
+import { readLlmConfig } from './llmConfig'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -158,6 +160,21 @@ app.whenReady().then(async () => {
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
+  registerLlmHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
+
+  // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
+  // summarize once and logs the provider's reply to MAIN stdout. With no key set this
+  // logs the typed no-provider result (graceful degrade), proving the path end-to-end.
+  if (process.env.CANVAS_LLM_PING) {
+    runSummarize(
+      readLlmConfig(app.getPath('userData')),
+      { system: 'Reply in one short sentence.', text: process.env.CANVAS_LLM_PING },
+      {
+        fetch: fetch as never,
+        env: process.env as Record<string, string | undefined>
+      }
+    ).then((r) => console.log('LLM_PING', JSON.stringify(r)))
+  }
 
   createWindow()
 
