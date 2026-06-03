@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createCanvasMemory, scaffoldProjectMemory } from './canvasMemory'
+import { createCanvasMemory, safeBoardId, scaffoldProjectMemory } from './canvasMemory'
 
 describe('canvasMemory', () => {
   let dir: string
@@ -170,5 +170,30 @@ describe('canvasMemory', () => {
       expect(() => scaffoldProjectMemory(f)).not.toThrow()
       expect(existsSync(join(f, '.canvas'))).toBe(false)
     })
+  })
+})
+
+describe('safeBoardId — length cap (T-M3)', () => {
+  it('rejects an over-long id (> 64 chars) even if every char is in the alphabet', () => {
+    expect(safeBoardId('a'.repeat(64))).toBe(true)
+    expect(safeBoardId('a'.repeat(65))).toBe(false)
+  })
+})
+
+describe('canvasMemory writers — non-fatal on a disk error (T-M3)', () => {
+  it('writeBoard returns false (does not throw) when the project path is unwritable', () => {
+    // projectDir points at a FILE, so mkdirSync(<file>/.canvas/memory) throws ENOTDIR/EEXIST.
+    const dir = mkdtempSync(join(tmpdir(), 'cm-bad-'))
+    const asFile = join(dir, 'not-a-dir')
+    writeFileSync(asFile, 'x')
+    try {
+      const mem = createCanvasMemory(asFile)
+      expect(() => mem.writeBoard('b1', '# hi')).not.toThrow()
+      expect(mem.writeBoard('b1', '# hi')).toBe(false)
+      expect(() => mem.writeIndex('# idx')).not.toThrow()
+      expect(() => mem.writeProject('# proj')).not.toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -316,6 +316,27 @@ describe('runSummarize', () => {
   })
 })
 
+describe('llmService — fetch timeout (T-M3)', () => {
+  it('aborts a hung provider and degrades to provider-error', async () => {
+    // A fetch that never resolves on its own — it only settles when the injected
+    // AbortController fires signal.abort, rejecting like the real fetch does.
+    const hung: FetchLike = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () =>
+          reject(new DOMException('aborted', 'AbortError'))
+        )
+      })
+    const config = { provider: 'openrouter' as const, model: 'm' }
+    const res = await runSummarize(
+      config,
+      { text: 'hello' },
+      { fetch: hung, env: { OPENROUTER_API_KEY: 'k' }, timeoutMs: 10 }
+    )
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.reason).toBe('provider-error')
+  })
+})
+
 // A getKey-only fake store for resolution tests.
 const fakeStore = (keys: Partial<Record<string, string>>): Pick<KeyStore, 'getKey'> => ({
   getKey: (p) => keys[p]

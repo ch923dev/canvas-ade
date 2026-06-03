@@ -22,6 +22,9 @@ export interface SummarizeInput {
 /** Anthropic requires max_tokens; summaries are short. */
 const SUMMARY_MAX_TOKENS = 1024
 
+/** T-M3: default per-call fetch timeout — a hung endpoint aborts → provider-error → Tier-1. */
+const DEFAULT_TIMEOUT_MS = 30_000
+
 const OPENAI_SHAPE_BASE: Record<Exclude<ProviderName, 'anthropic' | 'local'>, string> = {
   openrouter: 'https://openrouter.ai/api/v1',
   openai: 'https://api.openai.com/v1'
@@ -99,7 +102,7 @@ export function parseResponse(provider: ProviderName, json: unknown): string {
 /** Minimal fetch-like transport so the engine is testable without the network. */
 export type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string }
+  init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }
 ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }>
 
 export interface ProviderDeps {
@@ -109,6 +112,8 @@ export interface ProviderDeps {
   keyStore?: Pick<KeyStore, 'getKey'>
   /** Per-day call budget (T-B3). Wired by registerLlmHandlers; the engine reserves against it. */
   budget?: BudgetStore
+  /** T-M3: abort a hung provider after this many ms (default 30s) so the loop can't wedge. */
+  timeoutMs?: number
 }
 
 export interface Provider {
@@ -162,13 +167,20 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
   return {
     async summarize(input: SummarizeInput): Promise<string> {
       const req = buildRequest(config.provider, config, resolvedKey, input)
-      const res = await deps.fetch(req.url, {
-        method: 'POST',
-        headers: req.headers,
-        body: req.body
-      })
-      if (!res.ok) throw new Error(`${config.provider} HTTP ${res.status}: ${await res.text()}`)
-      return parseResponse(config.provider, await res.json())
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+      try {
+        const res = await deps.fetch(req.url, {
+          method: 'POST',
+          headers: req.headers,
+          body: req.body,
+          signal: controller.signal
+        })
+        if (!res.ok) throw new Error(`${config.provider} HTTP ${res.status}: ${await res.text()}`)
+        return parseResponse(config.provider, await res.json())
+      } finally {
+        clearTimeout(timer)
+      }
     }
   }
 }

@@ -17,6 +17,9 @@ import { runSummarize, defaultDeps } from './llmService'
 import { registerLlmHandlers } from './llmIpc'
 import type { Encryptor } from './llmKeyStore'
 import { readLlmConfig } from './llmConfig'
+import { createSummaryLoop } from './summaryLoop'
+import { createMemoryEngine } from './memoryEngine'
+import { getCurrentDir, readProject } from './projectStore'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -162,7 +165,7 @@ app.whenReady().then(async () => {
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
-  registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
+
   // T-B2: encrypt the API key with Electron safeStorage. Built here (index already imports
   // electron) and injected so llmKeyStore stays Electron-free + unit-testable. Under
   // CANVAS_SMOKE=e2e the key store lives in a throwaway temp dir (exported for the probe) so
@@ -176,6 +179,28 @@ app.whenReady().then(async () => {
   const llmDataDir =
     SMOKE === 'e2e' ? mkdtempSync(join(tmpdir(), 'canvas-e2e-llm-')) : app.getPath('userData')
   if (SMOKE === 'e2e') process.env.CANVAS_E2E_LLM_DIR = llmDataDir
+
+  // T-M3: the Tier-2 autonomous summary loop. The detector (T-M2) emits a {boardId} intent;
+  // the loop re-reads the board, summarizes via the budgeted runSummarize (own file-backed
+  // key/budget on the same llmDataDir → shared cap/key), and caches the prose into .canvas/.
+  // Constructing the engine with the loop's onIntent and passing it as the 5th arg means the
+  // SAME engine project:save feeds (+ open/current reset) is the one that drives the loop.
+  const summaryLoop = createSummaryLoop({
+    llmDataDir,
+    encryptor: llmEncryptor,
+    getCurrentDir,
+    readProject
+  })
+  const memoryEngine = createMemoryEngine({
+    onIntent: (intent) => void summaryLoop.onIntent(intent)
+  })
+  registerProjectHandlers(
+    ipcMain,
+    () => mainWindow,
+    app.getPath('userData'),
+    undefined,
+    memoryEngine
+  )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls

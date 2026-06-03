@@ -21,10 +21,11 @@ const IGNORE_PRIVATE = '*\n'
 /** Opt-in commit: keep the prose, ignore only the volatile audit log. */
 const IGNORE_COMMITTED = 'audit/\n'
 
-/** Board ids are nanoid-style; reject anything else to keep writes inside memory/. */
+/** Board ids are nanoid-style; reject anything else (and over-long) to keep writes inside memory/. */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
+const MAX_ID_LEN = 64
 export function safeBoardId(id: string): boolean {
-  return typeof id === 'string' && id.length > 0 && SAFE_ID.test(id)
+  return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LEN && SAFE_ID.test(id)
 }
 
 export interface CanvasMemoryPaths {
@@ -86,17 +87,30 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     },
     writeBoard(id, md) {
       if (!safeBoardId(id)) return false
-      mkdirSync(memoryDir, { recursive: true })
-      writeFileAtomic.sync(paths.board(id), md, 'utf8')
-      return true
+      try {
+        mkdirSync(memoryDir, { recursive: true })
+        writeFileAtomic.sync(paths.board(id), md, 'utf8')
+        return true
+      } catch (err) {
+        console.warn('[canvasMemory] writeBoard failed (non-fatal)', err)
+        return false
+      }
     },
     writeIndex(md) {
-      mkdirSync(memoryDir, { recursive: true })
-      writeFileAtomic.sync(paths.index, md, 'utf8')
+      try {
+        mkdirSync(memoryDir, { recursive: true })
+        writeFileAtomic.sync(paths.index, md, 'utf8')
+      } catch (err) {
+        console.warn('[canvasMemory] writeIndex failed (non-fatal)', err)
+      }
     },
     writeProject(md) {
-      mkdirSync(memoryDir, { recursive: true })
-      writeFileAtomic.sync(paths.project, md, 'utf8')
+      try {
+        mkdirSync(memoryDir, { recursive: true })
+        writeFileAtomic.sync(paths.project, md, 'utf8')
+      } catch (err) {
+        console.warn('[canvasMemory] writeProject failed (non-fatal)', err)
+      }
     },
     readBoard(id) {
       if (!safeBoardId(id)) return undefined

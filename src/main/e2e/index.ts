@@ -39,6 +39,7 @@ import { planning } from './probes/planning'
 import { context, contextBrain } from './probes/context'
 import { contextChange } from './probes/change'
 import { contextMemory } from './probes/memory'
+import { contextSummary } from './probes/summary'
 import { contextBudget } from './probes/budget'
 import { settings } from './probes/settings'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
@@ -100,7 +101,8 @@ const PLAYLIST: E2EProbe[] = [
   contextBudget, // M-brain T-B3: opt-in cap → budget-exceeded; runs AFTER contextBrain (restores uncapped config)
   settings, // M-brain T-B2: key store hasKey round-trip + no-plaintext-leak invariant
   contextChange, // M-memory T-M2: meaningful-change detector (content → 1 intent; move → 0)
-  contextMemory // M-memory T-M1: .canvas/ scaffold + board summary round-trip (project-rooted; runs last)
+  contextMemory, // M-memory T-M1: .canvas/ scaffold + board summary round-trip (project-rooted; runs last)
+  contextSummary // M-memory T-M3: Tier-2 loop — mock summary cached + MEMORY.md lists the board (runs last)
 ]
 
 export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise<number> {

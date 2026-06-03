@@ -7,7 +7,7 @@
 > below). **Forward/undone work stays in `docs/roadmap-context.md`** (task cards for M-memory / M-expose);
 > the egress decision is in `docs/decisions/0003-llm-egress.md`. Add a milestone here only when it is DONE.
 
-**Status (2026-06-04):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅ · T-M2 ✅** on `feat/context`. **Next: M-memory T-M3** (Tier-2 autonomous summarize loop — the first autonomous-spend path the T-B3 budget protects; wire only with the guard in place).
+**Status (2026-06-04):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅ · T-M2 ✅ · T-M3 ✅** on `feat/context`. The Tier-2 autonomous summarize loop (the first autonomous-spend path, gated by the T-B3 budget) is in. **Next: M-memory T-M4** (panel upgrade — render cached Tier-2 prose on reopen via a renderer read bridge).
 
 ---
 
@@ -298,6 +298,45 @@ an id** — it never triggers an action beyond the emit (T-M3 must keep the inte
 a PTY write or board mutation); no new egress; no `llmService`/`canvasMemory` import; the `project:save`
 feed is best-effort and can never fail a save.
 
+### T-M3 — Tier-2 autonomous summary loop ✅
+
+The loop that turns a T-M2 `{ boardId }` intent into a cached summary — **the first
+autonomous-spend path** the T-B3 budget protects. Opt-in (no key → no spend / no write),
+capped (the same file-backed per-day budget), passive output (never triggers an action).
+
+- `src/main/summaryLoop.ts` — pure `buildSummarizeInput(board)` (defensive content pick;
+  mirrors digest.ts; capped at `MAX_INPUT_CHARS = 4000`), `buildMemoryIndex(doc, hasSummary)`,
+  `buildProjectRollup(name, doc)`, and stateful `createSummaryLoop(deps) → { onIntent }`.
+  `onIntent({ boardId })`: `getCurrentDir` → `readProject` → find the board (bail if gone) →
+  budgeted `runSummarize` (its OWN `createKeyStore`+`createBudgetStore` on the same
+  `llmDataDir` → shared cap/key) → on `ok` write `board-<id>.md` + refresh `MEMORY.md`/
+  `project.md`; on `no-provider`/`budget-exceeded`/`provider-error` → no-op (Tier-1 stays).
+  A per-board in-flight `Set` drops a concurrent re-fire. Best-effort; never throws.
+- **Riders (required before an autonomous loop):** `llmService.ts` got an `AbortController`
+  fetch timeout (default 30s, injectable via `ProviderDeps.timeoutMs`) so a hung provider
+  can't wedge the loop; `canvasMemory.ts` writers are now try/catch (non-fatal on EACCES/
+  ENOSPC) + `safeBoardId` caps the id at 64 chars (the T-M1 follow-up).
+- **Wiring (`index.ts`):** the `llmDataDir`/`llmEncryptor` construction moved above
+  `registerProjectHandlers`; the engine is built with the loop's `onIntent` and passed as the
+  5th arg, so the SAME engine `project:save` feeds (+ `open`/`current` reset) drives the loop.
+  Prod path (verified): renderer `project:save` → `projectIpc` writes the doc + `observe(doc)`
+  → 45s per-board debounce → `onIntent` → `summaryLoop.onIntent` reads the same `projectStore`
+  dir the save wrote.
+- **Out of scope (follow-ons):** terminal runtime last-command/live-status (PTY-state, not in
+  canvas.json); the panel cached-prose upgrade + read bridge (T-M4); the MCP read resource
+  (M-expose). **Known nit:** the in-flight-guard e2e under the mock seam observes the file
+  effect but not strictly the "second call dropped" (guard correct by inspection); a
+  deferred-provider regression test is the load-bearing follow-on. The browser `previewSourceId`
+  is in the detector fingerprint but omitted from the summary prose (acknowledged scope call).
+- e2e `src/main/e2e/probes/summary.ts` `context-summary` (mock provider): a planning board's
+  note text → `board-<id>.md` cached with the `[mock]` summary + `MEMORY.md` lists the board.
+
+🔒 **T-M3 security model (adversarial review — all 5 ADR-0003 invariants hold):** opt-in (no
+key → no spend/write); capped (only egress is the budgeted `runSummarize`, shared file-backed
+cap); passive output (untrusted context, never acts — the only effects are the LLM call + the
+`.canvas/` writes); never throws / can't wedge (full try/catch + `finally` clears in-flight +
+the fetch timeout bounds a hung provider); the key never leaves MAIN / never lands in `.canvas/`.
+
 ---
 
 ## Gate evidence (cumulative, on `feat/context`)
@@ -311,6 +350,7 @@ feed is best-effort and can never fail a save.
 | T-B3 | `cec15ba` | **682** | `context-budget` ok |
 | T-M1 | `2e0b1e7` | **702** | `context-memory` ok |
 | T-M2 | `221ddf8` | **724** | `context-change` ok |
+| T-M3 | `<squash-sha>` | **740** | `context-summary` ok |
 
 typecheck/lint/format:check clean throughout (1 pre-existing unrelated `PlanningBoard.tsx` no-console
 warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browser`/`browser-gesture`/
@@ -324,8 +364,8 @@ cached prose:
 - **T-M1** `src/main/canvasMemory.ts` — `.canvas/` paths + atomic writers + default `.gitignore` + opt-in
   commit + create/open scaffolding. ✅ **DONE** (see the M-memory section above).
 - **T-M2** ✅ meaningful-change detector + debounce (`src/main/memoryEngine.ts`, wired into
-  `projectIpc.ts`). **T-M3** Tier-2 autonomous summary loop (**next**). **T-M4** panel upgrade to
-  cached prose on reopen.
+  `projectIpc.ts`). **T-M3** ✅ Tier-2 autonomous summary loop (`src/main/summaryLoop.ts`, wired
+  via `index.ts`). **T-M4** panel upgrade to cached prose on reopen (**next**).
 
 **M-expose (DEFERRED)** — `canvas://memory` MCP read resource; gated on the MCP package (Phases 0–1) landing
 on `main`. ⚠️ Owes 2 reverse cross-links into `docs/roadmap-mcp.md` (M9 judge-board pivot becomes optional;
