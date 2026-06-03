@@ -177,7 +177,11 @@ export async function runSummarize(
   try {
     return { ok: true, text: await provider.summarize(input) }
   } catch (err) {
-    return { ok: false, reason: 'provider-error', message: err instanceof Error ? err.message : String(err) }
+    return {
+      ok: false,
+      reason: 'provider-error',
+      message: err instanceof Error ? err.message : String(err)
+    }
   }
 }
 

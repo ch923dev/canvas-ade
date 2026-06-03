@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { buildRequest, parseResponse, getProvider, isMockEnabled, keyForProvider, runSummarize, isForeignSender, registerLlmHandlers, type SummarizeInput, type SummarizeResult, type ProviderDeps, type FetchLike, type LlmStatus } from './llmService'
+import {
+  buildRequest,
+  parseResponse,
+  getProvider,
+  isMockEnabled,
+  keyForProvider,
+  runSummarize,
+  isForeignSender,
+  registerLlmHandlers,
+  type SummarizeInput,
+  type SummarizeResult,
+  type ProviderDeps,
+  type FetchLike,
+  type LlmStatus
+} from './llmService'
 
 const input: SummarizeInput = { system: 'be terse', text: 'hello world' }
 
@@ -8,7 +22,10 @@ describe('buildRequest', () => {
     const r = buildRequest('openrouter', { provider: 'openrouter', model: 'm1' }, 'KEY', input)
     expect(r.url).toBe('https://openrouter.ai/api/v1/chat/completions')
     expect(r.headers.Authorization).toBe('Bearer KEY')
-    const body = JSON.parse(r.body) as { model: string; messages: { role: string; content: string }[] }
+    const body = JSON.parse(r.body) as {
+      model: string
+      messages: { role: string; content: string }[]
+    }
     expect(body.model).toBe('m1')
     expect(body.messages).toEqual([
       { role: 'system', content: 'be terse' },
@@ -27,7 +44,12 @@ describe('buildRequest', () => {
     expect(r.url).toBe('https://api.anthropic.com/v1/messages')
     expect(r.headers['x-api-key']).toBe('AK')
     expect(r.headers['anthropic-version']).toBe('2023-06-01')
-    const body = JSON.parse(r.body) as { model: string; system?: string; max_tokens: number; messages: unknown[] }
+    const body = JSON.parse(r.body) as {
+      model: string
+      system?: string
+      max_tokens: number
+      messages: unknown[]
+    }
     expect(body.model).toBe('claude')
     expect(body.system).toBe('be terse')
     expect(body.max_tokens).toBeGreaterThan(0)
@@ -77,7 +99,10 @@ describe('parseResponse', () => {
 const fakeFetch = (): never => {
   throw new Error('network must not be called in this test')
 }
-const deps = (env: Record<string, string | undefined>): ProviderDeps => ({ fetch: fakeFetch as never, env })
+const deps = (env: Record<string, string | undefined>): ProviderDeps => ({
+  fetch: fakeFetch as never,
+  env
+})
 
 describe('keyForProvider', () => {
   it('reads the per-provider env var', () => {
@@ -151,7 +176,10 @@ describe('runSummarize', () => {
     const r = await runSummarize(
       { provider: 'openrouter', model: 'm' },
       { text: 'hi' },
-      { fetch: okFetch({ choices: [{ message: { content: 'done' } }] }), env: { OPENROUTER_API_KEY: 'k' } }
+      {
+        fetch: okFetch({ choices: [{ message: { content: 'done' } }] }),
+        env: { OPENROUTER_API_KEY: 'k' }
+      }
     )
     expect(r).toEqual<SummarizeResult>({ ok: true, text: 'done' })
   })
@@ -241,7 +269,9 @@ describe('registerLlmHandlers', () => {
     const mainFrame = {}
     const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
     registerLlmHandlers(
-      { handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h) } as never,
+      {
+        handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h)
+      } as never,
       () => ({ webContents: { mainFrame } }) as never,
       '/no/such/dir',
       {
@@ -251,7 +281,9 @@ describe('registerLlmHandlers', () => {
         env: { CANVAS_LLM_MOCK: '1' }
       }
     )
-    const r = await Promise.resolve(handlers.get('llm:summarize')!({ senderFrame: {} }, { text: 'x' }))
+    const r = await Promise.resolve(
+      handlers.get('llm:summarize')!({ senderFrame: {} }, { text: 'x' })
+    )
     expect(r).toEqual({ ok: false, reason: 'provider-error', message: 'forbidden sender' })
   })
 
@@ -259,7 +291,9 @@ describe('registerLlmHandlers', () => {
     const mainFrame = {}
     const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
     registerLlmHandlers(
-      { handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h) } as never,
+      {
+        handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h)
+      } as never,
       () => ({ webContents: { mainFrame } }) as never,
       '/no/such/dir',
       {
@@ -269,7 +303,9 @@ describe('registerLlmHandlers', () => {
         env: { OPENROUTER_API_KEY: 'secret-key' }
       }
     )
-    const s = (await Promise.resolve(handlers.get('llm:status')!({ senderFrame: {} }, undefined))) as LlmStatus
+    const s = (await Promise.resolve(
+      handlers.get('llm:status')!({ senderFrame: {} }, undefined)
+    )) as LlmStatus
     expect(s.hasProvider).toBe(false)
     expect(JSON.stringify(s)).not.toContain('secret-key')
   })
