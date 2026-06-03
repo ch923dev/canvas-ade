@@ -290,17 +290,21 @@ export const whiteboardFullviewAdd: E2EProbe = {
     )
     // Let React Flow apply the new 520x500 node size before fitting the camera to it.
     await ctx.delay(180)
-    // Enter camera full view (Option A) — the real path under test.
+    // Enter camera full view (Option A) — the real path under test (sets the camera-
+    // full-view MODE + does the animated fit).
     await ctx.evalIn(`window.__canvasE2E.enterCameraFullView(${JSON.stringify(planId)})`)
     // Poll until the camera has actually fitted onto the board (rendered scale > 1.3) so
-    // the board is in the viewport and the click hits it — robust to the animated-fit
-    // timing on a sluggish/contended host (a fixed delay flaked: camera still at zoom 1 →
-    // board off-screen → click missed → no note).
+    // the board is in the viewport and the click hits it. RE-FIT INSTANTLY EACH TICK:
+    // React Flow measures a freshly-resized node lazily (ResizeObserver), so the single
+    // animated fit above can no-op on a sluggish/contended CI host — zoom stays ~1, board
+    // off-screen, click misses, no note (the deterministic GitHub-runner flake). An instant
+    // re-fit per tick lands the moment RF has measured the node. Memory e2e-rf-measurement-race.
     const fitted = await ctx.poll(
       () =>
         ctx.evalIn<boolean>(
           `(() => {
              const id = ${JSON.stringify(planId)};
+             window.__canvasE2E.fitCameraInstant(id);
              const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
              const well = node && node.querySelector('.pl-well');
              if (!well || !(well.offsetWidth > 0)) return false;

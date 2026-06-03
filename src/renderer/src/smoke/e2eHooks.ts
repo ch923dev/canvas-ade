@@ -89,6 +89,14 @@ export interface CanvasE2E {
     imageCount: number
     embeddedCount: number
   } | null>
+  /**
+   * Instant (duration 0) camera fit onto a board, matching Canvas FULLVIEW_OPTIONS. Lets
+   * the fullview-add probe re-fit each poll tick: RF measures freshly-resized nodes lazily,
+   * so the single animated fit from `enterCameraFullView` can no-op on a slow/contended CI
+   * host (zoom stays ~1). An instant re-fit per tick lands deterministically once RF has
+   * measured the node. Memory `e2e-rf-measurement-race`.
+   */
+  fitCameraInstant: (id: string) => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -220,6 +228,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         imageCount: result.imageCount,
         embeddedCount: result.embeddedCount
       }
+    },
+    fitCameraInstant(id) {
+      // padding/maxZoom mirror Canvas.tsx FULLVIEW_OPTIONS (0.1 / Z_MAX 2.5); duration 0 so
+      // a re-fit-each-tick poll converges without animation. Memory e2e-rf-measurement-race.
+      void rf.fitView({ padding: 0.1, maxZoom: 2.5, duration: 0, nodes: [{ id }] })
     }
   }
   window.__canvasE2E = api
