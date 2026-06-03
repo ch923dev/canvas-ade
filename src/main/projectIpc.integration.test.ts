@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import * as os from 'node:os'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -38,27 +37,7 @@ vi.mock('electron', () => ({
 }))
 
 import { registerProjectHandlers } from './projectIpc'
-
-/** A minimal ipcMain stub that records handlers so a test can invoke them directly. */
-function makeIpcMain(): {
-  ipcMain: IpcMain
-  invoke: (channel: string, ...args: unknown[]) => unknown
-} {
-  const handlers = new Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown>()
-  const ipcMain = {
-    handle: (channel: string, fn: (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown) => {
-      handlers.set(channel, fn)
-    }
-  } as unknown as IpcMain
-  // Synthetic event (no senderFrame) → guard treats it as an internal call → allowed.
-  const e = { senderFrame: undefined } as unknown as IpcMainInvokeEvent
-  const invoke = (channel: string, ...args: unknown[]): unknown => {
-    const fn = handlers.get(channel)
-    if (!fn) throw new Error(`no handler for ${channel}`)
-    return fn(e, ...args)
-  }
-  return { ipcMain, invoke }
-}
+import { createIpcCapture, foreignEvent, mainWin } from './ipcTestHarness'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -70,10 +49,10 @@ describe('registerProjectHandlers (T4)', () => {
 
   it('project:save no-ops (returns false) when getCurrentDir() is null', async () => {
     store.getCurrentDir.mockReturnValue(null)
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
-    const result = await invoke('project:save', { schemaVersion: 2, boards: [] })
+    const result = await cap.invoke('project:save', { schemaVersion: 2, boards: [] })
     expect(result).toBe(false)
     expect(store.writeProject).not.toHaveBeenCalled()
   })
@@ -81,11 +60,11 @@ describe('registerProjectHandlers (T4)', () => {
   it('project:save writes when a current dir is set', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
     store.writeProject.mockResolvedValue(undefined)
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
     const doc = { schemaVersion: 2, boards: [] }
-    const result = await invoke('project:save', doc)
+    const result = await cap.invoke('project:save', doc)
     expect(result).toBe(true)
     expect(store.writeProject).toHaveBeenCalledWith('/proj', doc)
   })
@@ -93,21 +72,21 @@ describe('registerProjectHandlers (T4)', () => {
   it('project:save returns false (no crash) when writeProject throws (SAVE-1)', async () => {
     store.getCurrentDir.mockReturnValue('/proj')
     store.writeProject.mockRejectedValue(new Error('ENOSPC: disk full'))
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
     // The handler must catch the I/O error and report failure to the renderer,
     // not let the rejection escape (which the renderer floats silently).
-    await expect(invoke('project:save', { schemaVersion: 2, boards: [] })).resolves.toBe(false)
+    await expect(cap.invoke('project:save', { schemaVersion: 2, boards: [] })).resolves.toBe(false)
   })
 
   it('project:current sets currentDir only on ok', async () => {
     recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
     store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
-    const result = await invoke('project:current')
+    const result = await cap.invoke('project:current')
     expect((result as { ok: boolean }).ok).toBe(true)
     expect(store.setCurrentDir).toHaveBeenCalledWith('/proj')
     expect(recents.touchRecent).toHaveBeenCalled()
@@ -116,10 +95,10 @@ describe('registerProjectHandlers (T4)', () => {
   it('project:current leaves currentDir unchanged when the recent folder is gone', async () => {
     recents.listRecents.mockReturnValue([{ path: '/gone', name: 'gone', lastOpenedAt: 1 }])
     store.readProject.mockReturnValue({ ok: false, error: 'No readable canvas.json in /gone' })
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
-    const result = await invoke('project:current')
+    const result = await cap.invoke('project:current')
     expect(result).toBeNull()
     expect(store.setCurrentDir).not.toHaveBeenCalled()
     expect(recents.touchRecent).not.toHaveBeenCalled()
@@ -127,10 +106,10 @@ describe('registerProjectHandlers (T4)', () => {
 
   it('project:current returns null when there are no recents', async () => {
     recents.listRecents.mockReturnValue([])
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
-    const result = await invoke('project:current')
+    const result = await cap.invoke('project:current')
     expect(result).toBeNull()
     expect(store.readProject).not.toHaveBeenCalled()
   })
@@ -143,11 +122,11 @@ describe('export:save', () => {
     const tmpFile = path.join(os.tmpdir(), `export-save-test-${Date.now()}.svg`)
     electronDialog.showSaveDialog.mockResolvedValue({ canceled: false, filePath: tmpFile })
 
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
     const bytes = new TextEncoder().encode('<svg/>')
-    const result = (await invoke('export:save', {
+    const result = (await cap.invoke('export:save', {
       bytes,
       ext: 'svg',
       defaultName: 'board'
@@ -166,11 +145,11 @@ describe('export:save', () => {
     const tmpFile = path.join(os.tmpdir(), `export-save-canceled-${Date.now()}.svg`)
     electronDialog.showSaveDialog.mockResolvedValue({ canceled: true, filePath: undefined })
 
-    const { ipcMain, invoke } = makeIpcMain()
-    registerProjectHandlers(ipcMain, getWin, '/userData')
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
     const bytes = new TextEncoder().encode('<svg/>')
-    const result = (await invoke('export:save', {
+    const result = (await cap.invoke('export:save', {
       bytes,
       ext: 'svg',
       defaultName: 'board'
@@ -186,52 +165,43 @@ describe('export:save', () => {
 // or dialog touch. The pure isForeignSender is covered above; this proves the
 // guard is wired into each handler with the documented rejection value.
 describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
-  const mainFrame = { id: 'main-frame' }
-  const foreign = { senderFrame: { id: 'preview-board-frame' } } as unknown as IpcMainInvokeEvent
-
-  function setup(): Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown> {
-    const handlers = new Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown>()
-    const ipcMain = {
-      handle: (c: string, fn: (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown) =>
-        handlers.set(c, fn)
-    } as unknown as IpcMain
-    const getWin = (): BrowserWindow =>
-      ({ webContents: { mainFrame } }) as unknown as BrowserWindow
-    registerProjectHandlers(ipcMain, getWin, '/userData')
-    return handlers
+  function setup(): ReturnType<typeof createIpcCapture> {
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, mainWin, '/userData')
+    return cap
   }
 
   it('project:open rejects a foreign sender and touches no store', async () => {
-    const handlers = setup()
-    const result = await handlers.get('project:open')!(foreign, 'C:\\proj')
+    const cap = setup()
+    const result = await cap.invokeAs(foreignEvent, 'project:open', 'C:\\proj')
     expect(result).toEqual({ ok: false, error: 'forbidden' })
     expect(store.readProject).not.toHaveBeenCalled()
   })
 
   it('project:save rejects a foreign sender and writes nothing', async () => {
-    const handlers = setup()
-    const result = await handlers.get('project:save')!(foreign, { schemaVersion: 2, boards: [] })
+    const cap = setup()
+    const result = await cap.invokeAs(foreignEvent, 'project:save', { schemaVersion: 2, boards: [] })
     expect(result).toBe(false)
     expect(store.writeProject).not.toHaveBeenCalled()
   })
 
   it('project:recents returns [] for a foreign sender', async () => {
-    const handlers = setup()
-    expect(await handlers.get('project:recents')!(foreign)).toEqual([])
+    const cap = setup()
+    expect(await cap.invokeAs(foreignEvent, 'project:recents')).toEqual([])
     expect(recents.listRecents).not.toHaveBeenCalled()
   })
 
   it('asset:write rejects a foreign sender', async () => {
-    const handlers = setup()
+    const cap = setup()
     expect(
-      await handlers.get('asset:write')!(foreign, { bytes: new Uint8Array(), ext: 'png' })
+      await cap.invokeAs(foreignEvent, 'asset:write', { bytes: new Uint8Array(), ext: 'png' })
     ).toEqual({ error: 'forbidden' })
   })
 
   it('export:save rejects a foreign sender', async () => {
-    const handlers = setup()
+    const cap = setup()
     expect(
-      await handlers.get('export:save')!(foreign, {
+      await cap.invokeAs(foreignEvent, 'export:save', {
         bytes: new Uint8Array(),
         ext: 'svg',
         defaultName: 'x'
@@ -240,15 +210,15 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
   })
 
   it('dialog:openFolder returns null for a foreign sender and does not open dialog', async () => {
-    const handlers = setup()
-    const result = await handlers.get('dialog:openFolder')!(foreign)
+    const cap = setup()
+    const result = await cap.invokeAs(foreignEvent, 'dialog:openFolder')
     expect(result).toBeNull()
     expect(electronDialog.showOpenDialog).not.toHaveBeenCalled()
   })
 
   it('project:create returns { ok: false, error: "forbidden" } for a foreign sender and does not call createProject', async () => {
-    const handlers = setup()
-    const result = await handlers.get('project:create')!(foreign, {
+    const cap = setup()
+    const result = await cap.invokeAs(foreignEvent, 'project:create', {
       dir: 'C:\\proj',
       name: 'p',
       opts: {}
@@ -258,13 +228,12 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
   })
 
   it('project:current returns null for a foreign sender', async () => {
-    const handlers = setup()
-    const result = await handlers.get('project:current')!(foreign)
-    expect(result).toBeNull()
+    const cap = setup()
+    expect(await cap.invokeAs(foreignEvent, 'project:current')).toBeNull()
   })
 
   it('asset:read returns null for a foreign sender', () => {
-    const handlers = setup()
-    expect(handlers.get('asset:read')!(foreign, 'someId')).toBeNull()
+    const cap = setup()
+    expect(cap.invokeAs(foreignEvent, 'asset:read', 'someId')).toBeNull()
   })
 })
