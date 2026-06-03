@@ -41,6 +41,12 @@ interface SmokeClient {
    * gracefully instead of failing. Rethrows any other (real transport) error.
    */
   readBoardStates(): Promise<Record<string, string[]> | null>
+  /**
+   * Read canvas://attention (boards needing a human). Returns the list, or `null`
+   * when the resource is not registered (older installed pkg) → SKIP. Rethrows any
+   * other (real transport) error.
+   */
+  readAttention(): Promise<Array<{ id: string; status: string }> | null>
   close(): Promise<void>
 }
 
@@ -133,6 +139,27 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         // "Resource ... not found" → treat as ABSENT (skip), not a smoke failure.
         // Match the RESOURCE-not-found shape specifically so a "Session not found"
         // (-32001) transport failure can't masquerade as a skip. Anything else rethrows.
+        const code = (e as { code?: number })?.code
+        if (code === -32602 || /resource .*not found/i.test(String(e))) return null
+        throw e
+      }
+    },
+    readAttention: async (): Promise<Array<{ id: string; status: string }> | null> => {
+      try {
+        const res = await client.readResource({ uri: 'canvas://attention' })
+        const text = res.contents
+          .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+          .join('')
+        const boards = JSON.parse(text) as Array<{ id?: unknown; status?: unknown }>
+        return Array.isArray(boards)
+          ? boards
+              .filter(
+                (b): b is { id: string; status: string } =>
+                  typeof b?.id === 'string' && typeof b?.status === 'string'
+              )
+              .map((b) => ({ id: b.id, status: b.status }))
+          : []
+      } catch (e: unknown) {
         const code = (e as { code?: number })?.code
         if (code === -32602 || /resource .*not found/i.test(String(e))) return null
         throw e
@@ -277,6 +304,35 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           `MCP_FAIL board-states inconsistent boards=${boards.length} grouped=${groupedIds.length}`
         )
         code = 1
+      }
+    }
+
+    // ── attention (T1.3): a board in an attention bucket (blocked/awaiting-review/
+    // failed) must surface in canvas://attention. The reachable case TODAY is a
+    // browser that fails to load → `failed` (blocked/awaiting-review get their emit
+    // sites in M8). The bucket is observable now via canvas://boards (assert it
+    // end-to-end through the real native preview); the canvas://attention resource is
+    // self-activating (skip on pkg <0.2.4). ──
+    if (hookReady) {
+      const deadUrl = 'http://127.0.0.1:59999/' // nothing listens → connection refused
+      const did = await evalIn<string>(
+        `window.__canvasE2E.seedBoard('browser', { url: ${JSON.stringify(deadUrl)} })`
+      )
+      await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(did)})`)
+      const failedOk = await poll(async () => (await orch.readBoardStatus(did)) === 'failed', 14000)
+      if (!failedOk) {
+        log('MCP_FAIL attention browser did not reach failed bucket')
+        code = 1
+      } else {
+        const attention = await orch.readAttention()
+        if (attention === null) {
+          log('MCP_ATTENTION_SKIP pkg<0.2.4-unpublished')
+        } else if (attention.some((b) => b.id === did && b.status === 'failed')) {
+          log('MCP_ATTENTION_OK')
+        } else {
+          log(`MCP_FAIL attention missing failed board ids=${attention.map((b) => b.id).join(',')}`)
+          code = 1
+        }
       }
     }
 
