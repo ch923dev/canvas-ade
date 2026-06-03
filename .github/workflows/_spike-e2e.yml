@@ -1,0 +1,54 @@
+name: _spike-e2e
+
+# THROWAWAY (T5a) — observe whether capturePage returns a non-blank frame on the
+# Win + Linux runners. The browser/fullview/menu probes already assert non-blank,
+# so a green run = capture works; a blank-frame failure = a software-GL flag is
+# needed (decided from the artifact). Deleted once the GL question is answered.
+on:
+  workflow_dispatch:
+  push:
+    branches: [testing-strategy]
+    paths:
+      - '.github/workflows/_spike-e2e.yml'
+      - 'e2e/fixtures.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      # postinstall (electron-builder install-app-deps) rebuilds node-pty for the
+      # Electron ABI on every OS.
+      - run: pnpm install --frozen-lockfile
+      # We call `playwright test` directly (not `pnpm test:e2e`), so the pretest:e2e
+      # build hook doesn't fire — build the app explicitly.
+      - run: pnpm exec electron-vite build
+      - name: Install Xvfb (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Spike capture probes (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm exec playwright test browser fullview menu
+      - name: Spike capture probes (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm exec playwright test browser fullview menu
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: spike-report-${{ matrix.os }}
+          path: playwright-report/
+          if-no-files-found: ignore
