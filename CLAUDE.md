@@ -180,29 +180,36 @@ is summarized in **`docs/archive/build-history.md`** (originals in git history).
 history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
 file = open findings).
 
-**Current state (2026-06-02):** **Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
+**Current state (2026-06-04):** **Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
 Phase 4 design pass = `abd7fa2` (PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified
-bugs) · `94baab9` (4 open-medium) · `1a0c615` (7 round-2 review findings + a doc/repo cleanup). Latest
-baseline: **482 unit** green, lint + typecheck clean; e2e **25/25** (clean runs; the
-`browser`/`browser-gesture`/`focus-detach` trio is a known live-`WebContentsView` env flake on a
-contended host, memory `e2e-browser-trio-flake` — rerun for clean, not a regression).
+bugs) · `94baab9` (4 open-medium) · `1a0c615` (7 round-2 review findings). The full-view preview-reset
+fix landed (PR #14 / fullview-reset refactor — full-view DETACHes every board, never `close()`, so a
+navigated page survives full-view exit; `evictLiveBoard` was deleted, closing the PREV-A resurrection
+class). Testing T0–T5 landed (Playwright `_electron` + local Win-native/Linux-Docker pre-commit matrix;
+see `docs/testing/TESTING.md`). Latest baseline: **679 unit + integration** green (48 files), lint
+(0 errors) + typecheck clean; e2e local-matrix green (the `browser`/`browser-gesture`/`focus-detach`
+trio is a known live-`WebContentsView` env flake, memory `e2e-browser-trio-flake` — rerun for clean,
+not a regression).
 
-**In flight (`fix/fullview-preview-reset`):** full-view no longer **restarts** Browser boards. Both
-the full-viewed board (motion sub-branch) and every OTHER board now **detach** (snapshot + keep the
-live `WebContentsView`) instead of `webContents.close()` — a close discarded the page, so on full-view
-exit the board re-opened at `board.url` and snapped back from the user's navigated page to the root.
-New e2e probes `fullview-preserve` + `fullview-self-preserve` (webContents-id survival) lock it.
+**In flight (parallel worktree streams + open PRs — `main` is integration-only):**
+- **PR #32 `feat/mcp-integration`** — re-port of the MCP integration onto current `main` (rescues the
+  closed #7/#8; large, ~101 files). Gates the swarm layer + Feature Workspaces.
+- **PR #39 `feat/context`** — Desktop Context subsystem (M-digest + M-brain: T-B1 LLM service, T-B2
+  safeStorage key store + Settings UX). Ships before MCP per plan.
+- **PR #17 `chore/rebrand-expanse`** — Canvas ADE → **Expanse** rename (code + build IDs + docs).
+  **Merges LAST** (2 cross-zone one-liners), memory `rebrand-expanse`.
+- Research-only PRs: #29 (Maestri teardown) · #27 (demo-video playbook) · #25 (SaaS strategy).
 
 **Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:
-**healthy, no Critical/High** (the prior-round High MBC-1 did not reproduce). 12 residual Low/Nit/Info
-findings (preview resurrection/ghost, duplicate-while-focused dim, redo-wipe, terminal idle-flag,
-degenerate-draw phantom undo, `cwd`/`'*'` hardening). Full backlog + fix lanes:
-**`docs/reviews/2026-06-01-round3.md`**. None gate a release.
+**healthy, no Critical/High** (the prior-round High MBC-1 did not reproduce). All 12 residual
+Low/Nit/Info findings **CLEARED** (`fix/round3-backlog` 9 + `fix/round3-lows-remainder` 3; PREV-A was
+already fixed by PR #14). See `docs/reviews/2026-06-01-round3.md` (two Resolution banners). No open
+findings; reviews are stale-clear — heavy new code (MCP/Context) has landed on branches since, so a
+fresh hunt against the post-merge tree is warranted before release.
 
-**Start here next:** Open candidates (see `docs/roadmap.md`): **Phase 5 — packaging/signing** (CI
-matrix unsigned until Phase 5) · the **`canvas-ade-mcp` swarm layer** (planned MCP package, memory
-`canvas-ade-mcp`) · the post-MCP **Feature Workspaces / worktrees** model (FW-1) · or burning down the
-**Round-3 Low backlog** (`docs/reviews/2026-06-01-round3.md`, 4 file-disjoint lanes). Deferred:
-**agentic session resume** (roadmap note) · Stage-2 Playwright `_electron` harness (the
-`CANVAS_SMOKE=e2e` harness is the stand-in).
+**Start here next:** Open candidates (see `docs/roadmap.md`): land the in-flight PRs sequentially
+(full gate + e2e after EACH merge; **Context #39 → MCP #32 → … → rebrand #17 last**) · **Phase 5 —
+packaging/signing** (CI matrix unsigned until Phase 5) · the **`canvas-ade-mcp` swarm layer** (memory
+`canvas-ade-mcp`) · the post-MCP **Feature Workspaces / worktrees** model (FW-1). Deferred: **agentic
+session resume** (roadmap note) · auto-update e2e coverage (Phase 5, needs packaging/electron-updater).
 

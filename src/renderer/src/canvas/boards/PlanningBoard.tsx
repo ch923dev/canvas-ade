@@ -328,6 +328,7 @@ export function PlanningBoard({
         const { bytes, ext } = await buildExport(board, format)
         await window.api.export.save({ bytes, ext, defaultName: board.title || 'whiteboard' })
       } catch (err) {
+        // eslint-disable-next-line no-console
         console.error('whiteboard export failed', err)
       }
     },
