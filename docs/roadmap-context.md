@@ -8,7 +8,7 @@
 > **Decided 2026-06-03** (brainstorming): two tiers (Tier-1 no-key heuristic · Tier-2 LLM) · cheap/fast
 > default model · meaningful-change = content-diff + cmd-done debounced · auto slide-in digest panel ·
 > `canvas://memory` index+per-board · key in `safeStorage`/userData · **digest-first build order** ·
-> **M-expose deferred** to post-MCP. Full design: `docs/superpowers/specs/2026-06-03-desktop-context-memory-design.md`.
+> **M-expose deferred** to post-MCP. Architecture + completed-milestone build log: `docs/context-subsystem.md`.
 
 Legend: 🚦 hard gate · ✅ acceptance · 🔒 security-critical · ⛓ depends-on · ∥ parallelizable.
 
