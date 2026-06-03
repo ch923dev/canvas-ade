@@ -244,4 +244,93 @@ describe('buildOrchestrator', () => {
       await expect(orch.configureBoard('b', { shell: 'pwsh' })).rejects.toThrow(/no-window/)
     })
   })
+
+  describe('🔒 cap reconciliation + idle-reaping (T3.4, the M3 gate)', () => {
+    // A registry whose mirror is mutated by the commands the adapter issues (so the
+    // adapter's own spawns/closes show up in listBoards, like the real renderer).
+    function liveReg(opts: { drained?: string[] } = {}): {
+      registry: BoardRegistry
+      boards: Array<{ id: string; type: string; title: string; status?: string }>
+      setStatus: (id: string, status: string) => void
+    } {
+      const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
+      const registry: BoardRegistry = {
+        listBoards: () => boards,
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => {
+          if (cmd.type === 'addBoard')
+            boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T', status: 'running' })
+          if (cmd.type === 'removeBoard') {
+            const i = boards.findIndex((b) => b.id === cmd.id)
+            if (i >= 0) boards.splice(i, 1)
+          }
+          return { ok: true, type: cmd.type }
+        },
+        drainPty: async (id) => {
+          opts.drained?.push(id)
+        }
+      }
+      const setStatus = (id: string, status: string): void => {
+        const b = boards.find((x) => x.id === id)
+        if (b) b.status = status
+      }
+      return { registry, boards, setStatus }
+    }
+
+    it('reconciles the cap against the live mirror — a vanished board frees a slot', async () => {
+      let clock = 0
+      const { registry, boards } = liveReg()
+      const orch = buildOrchestrator(registry, { now: () => clock, cap: 2, spawnGraceMs: 1000 })
+      await orch.spawnBoard({ type: 'terminal' })
+      const b = await orch.spawnBoard({ type: 'terminal' })
+      // At cap 2 (both within the spawn grace → not reconciled away) → reject.
+      await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+      // The user manually closes board B (it leaves the mirror) and time passes the grace.
+      const i = boards.findIndex((x) => x.id === b.id)
+      boards.splice(i, 1)
+      clock = 5000
+      // Next spawn reconciles the vanished id out of the budget → a slot is free.
+      await expect(orch.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
+    })
+
+    it('reapIdle closes a spawned board idle past the TTL (and leaves running ones)', async () => {
+      let clock = 0
+      const drained: string[] = []
+      const { registry, boards, setStatus } = liveReg({ drained })
+      const orch = buildOrchestrator(registry, { now: () => clock, idleTtlMs: 1000 })
+      const { id: idle } = await orch.spawnBoard({ type: 'terminal' })
+      const { id: busy } = await orch.spawnBoard({ type: 'terminal' })
+      setStatus(idle, 'idle')
+      setStatus(busy, 'running')
+      // Sweep 1 marks idleSince; nothing reaped yet.
+      expect(await orch.reapIdle()).toEqual([])
+      clock = 500
+      expect(await orch.reapIdle()).toEqual([]) // still within the TTL
+      clock = 1500 // idle for 1500ms >= ttl 1000
+      const reaped = await orch.reapIdle()
+      expect(reaped).toEqual([idle])
+      expect(drained).toContain(idle) // it was gracefully closed (drained + removed)
+      expect(boards.some((b) => b.id === idle)).toBe(false) // gone from the mirror
+      expect(boards.some((b) => b.id === busy)).toBe(true) // the running board survives
+    })
+
+    it('a board that returns to running before the TTL is NOT reaped (idle clock resets)', async () => {
+      let clock = 0
+      const { registry, setStatus } = liveReg()
+      const orch = buildOrchestrator(registry, { now: () => clock, idleTtlMs: 1000 })
+      const { id } = await orch.spawnBoard({ type: 'terminal' })
+      setStatus(id, 'idle')
+      await orch.reapIdle() // marks idleSince=0
+      clock = 800
+      setStatus(id, 'running') // came back to life before the TTL
+      await orch.reapIdle() // running → idle clock cleared
+      clock = 1700
+      setStatus(id, 'idle')
+      expect(await orch.reapIdle()).toEqual([]) // idleSince re-armed at 1700, not yet past TTL
+    })
+  })
 })

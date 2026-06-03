@@ -1,5 +1,9 @@
-import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
+import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
 import type { TokenStore } from '@ch923dev/canvas-ade-mcp'
+
+/** Idle-reap TTL + sweep interval (T3.4). Env-overridable so the live smoke can drive a fast reap. */
+const IDLE_TTL_MS = Number(process.env.CANVAS_MCP_IDLE_TTL_MS) || MCP_IDLE_TTL_MS
+const REAP_INTERVAL_MS = Number(process.env.CANVAS_MCP_REAP_INTERVAL_MS) || 60_000
 
 export interface RunningMcp {
   port: number
@@ -7,6 +11,8 @@ export interface RunningMcp {
   orchestratorToken: string
   /** Mint a worker-tier token bound to a board id (consumer: a later .mcp.json slice / the smoke). */
   mintWorkerToken(boardId: string): string
+  /** Run an idle-reap sweep now; returns the reaped board ids (T3.4 — drives the live smoke). */
+  reapIdle(): Promise<string[]>
   close(): Promise<void>
 }
 
@@ -25,16 +31,25 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       boardId: 'app',
       tier: 'orchestrator'
     })
-    const server = await createMcpHttpServer({
-      orchestrator: buildOrchestrator(registry),
-      tokens
-    })
+    const orchestrator = buildOrchestrator(registry, { idleTtlMs: IDLE_TTL_MS })
+    const server = await createMcpHttpServer({ orchestrator, tokens })
+    // 🔒 Idle-reap sweep (T3.4): periodically close MCP-spawned boards that have gone
+    // idle past the TTL, so the swarm can't accrete dormant boards. unref() so the
+    // timer never keeps the process alive at shutdown.
+    const reapTimer = setInterval(() => {
+      void orchestrator.reapIdle().catch(() => {})
+    }, REAP_INTERVAL_MS)
+    reapTimer.unref?.()
     return {
       port: server.port,
       tokens,
       orchestratorToken,
       mintWorkerToken: (boardId) => mintBoardToken(tokens, { boardId, tier: 'worker' }).token,
-      close: () => server.close()
+      reapIdle: () => orchestrator.reapIdle(),
+      close: () => {
+        clearInterval(reapTimer)
+        return server.close()
+      }
     }
   } catch (err) {
     // Graceful-degrade either way (the server is a convenience layer), but make a

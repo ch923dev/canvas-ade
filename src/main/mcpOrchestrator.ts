@@ -11,10 +11,34 @@ import type { McpCommand, McpCommandAck } from './mcpCommand'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
- * (the runaway-swarm guard, T3.1). Counted in the adapter; T3.4 adds idle-reaping +
- * mirror reconciliation on top. Spawns past the cap are rejected with a clear error.
+ * (the runaway-swarm guard, T3.1). Reconciled against the live mirror + idle-reaped
+ * (T3.4). Spawns past the cap are rejected with a clear error.
  */
 export const MCP_SPAWN_CAP = 4
+
+/** Default idle TTL before an MCP-spawned board is reaped (T3.4). */
+export const MCP_IDLE_TTL_MS = 5 * 60 * 1000
+
+/**
+ * Grace after a spawn during which a tracked board is NOT reconciled away even if it
+ * is absent from the mirror — the renderer publishes the new board asynchronously
+ * (~150ms debounce), so a just-spawned id legitimately isn't in `listBoards()` yet.
+ */
+export const MCP_SPAWN_GRACE_MS = 5_000
+
+/** Tuning + clock seam for the lifecycle cap/reaper (all optional; injected by tests). */
+export interface OrchestratorOpts {
+  now?: () => number
+  cap?: number
+  idleTtlMs?: number
+  spawnGraceMs?: number
+}
+
+/** The adapter + the T3.4 idle-reap sweep (extra method beyond the package contract). */
+export type LifecycleOrchestrator = Orchestrator & {
+  /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
+  reapIdle(): Promise<string[]>
+}
 
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
@@ -80,14 +104,31 @@ function deriveStatus(
  * terminal boards. Pure (type-only package imports → contract test loads no
  * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated.
  */
-export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
+export function buildOrchestrator(
+  registry: BoardRegistry,
+  opts: OrchestratorOpts = {}
+): LifecycleOrchestrator {
+  const now = opts.now ?? Date.now
+  const cap = opts.cap ?? MCP_SPAWN_CAP
+  const idleTtlMs = opts.idleTtlMs ?? MCP_IDLE_TTL_MS
+  const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
   const sessionMap = (): Map<string, string> =>
     new Map(registry.listSessions().map((s) => [s.id, s.status]))
-  // Ids this orchestrator has spawned — the cap budget (T3.1). Per-instance closure
-  // state; T3.2 close_board removes from it, T3.4 reaps idle ids + reconciles vs the
-  // mirror. Overcounts (never undercounts) on a user-side manual close — the SAFE
-  // direction for a runaway guard until T3.4 reconciles.
-  const spawnedIds = new Set<string>()
+  // Boards this orchestrator has spawned — the cap budget (T3.1). `spawnedAt` gates
+  // reconciliation (T3.4): an id absent from the live mirror is dropped only after the
+  // spawn grace, so a just-spawned not-yet-published board isn't pruned. `idleSince`
+  // tracks how long the board has been idle for the reaper.
+  const tracked = new Map<string, { spawnedAt: number; idleSince: number | null }>()
+
+  /** Drop tracked boards the user has since closed (gone from the mirror past the grace). */
+  const reconcile = (): void => {
+    const live = new Set(registry.listBoards().map((b) => b.id))
+    const t = now()
+    for (const [id, rec] of tracked) {
+      if (!live.has(id) && t - rec.spawnedAt > spawnGraceMs) tracked.delete(id)
+    }
+  }
+
   return {
     async listBoards(): Promise<BoardSummary[]> {
       const sessions = sessionMap()
@@ -120,11 +161,13 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
     async spawnBoard(input: { type: string; prompt?: string; cwd?: string }): Promise<{
       id: BoardId
     }> {
-      // 🔒 Runaway-swarm guard: reject BEFORE minting/sending so a capped spawn has
-      // no side effects. (Cap-budget check; T3.4 reconciles + reaps idle ids.)
-      if (spawnedIds.size >= MCP_SPAWN_CAP) {
+      // 🔒 Runaway-swarm guard: reconcile away user-closed boards first (so a real
+      // slot can be reused), then reject BEFORE minting/sending so a capped spawn has
+      // no side effects.
+      reconcile()
+      if (tracked.size >= cap) {
         throw new Error(
-          `MCP spawn concurrency cap reached (${MCP_SPAWN_CAP} live spawned boards); close one first`
+          `MCP spawn concurrency cap reached (${cap} live spawned boards); close one first`
         )
       }
       // MAIN mints the id (server-issued) so the tool can return it to the agent and
@@ -134,7 +177,7 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
       const id = randomUUID()
       const ack = await registry.sendCommand({ type: 'addBoard', board: { id, type: input.type } })
       if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
-      spawnedIds.add(id)
+      tracked.set(id, { spawnedAt: now(), idleSince: null })
       return { id }
     },
     async closeBoard(boardId: BoardId): Promise<void> {
@@ -145,7 +188,32 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
       const ack = await registry.sendCommand({ type: 'removeBoard', id: boardId })
       if (!ack.ok) throw new Error(`close_board failed: ${ack.error}`)
       // Free the cap budget so a later spawn can reuse the slot (T3.1 cap).
-      spawnedIds.delete(boardId)
+      tracked.delete(boardId)
+    },
+    async reapIdle(): Promise<string[]> {
+      // 🔒 Idle-reaping (T3.4): close MCP-spawned boards that have stayed idle past the
+      // TTL — the swarm doesn't accrete dormant boards. `idleSince` is sweep-tracked:
+      // first idle sighting arms the clock; a return to running clears it; an idle span
+      // ≥ TTL reaps. Reconcile first so a user-closed board isn't reaped twice.
+      reconcile()
+      const statuses = new Map((await this.listBoards()).map((b) => [b.id, b.status] as const))
+      const t = now()
+      const reapable: string[] = []
+      for (const [id, rec] of tracked) {
+        const status = statuses.get(id)
+        const idle = status === undefined || status === 'idle'
+        if (!idle) {
+          rec.idleSince = null
+          continue
+        }
+        if (rec.idleSince === null) {
+          rec.idleSince = t
+          continue
+        }
+        if (t - rec.idleSince >= idleTtlMs) reapable.push(id)
+      }
+      for (const id of reapable) await this.closeBoard(id)
+      return reapable
     },
     async configureBoard(
       boardId: BoardId,

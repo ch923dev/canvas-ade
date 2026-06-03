@@ -732,6 +732,66 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
             code = 1
           }
         }
+
+        // ── 🔒 concurrency cap (T3.4, the M3 gate): the orchestrator may spawn up to the
+        // cap; the next spawn is REJECTED with a clear "cap" error (the tool surfaces the
+        // adapter throw as an isError result). Nothing auto-spawns unbounded. Closing the
+        // spawned boards restores the baseline. ──
+        const capIds: string[] = []
+        let capRejected = false
+        for (let i = 0; i < 8; i++) {
+          const r = await orch.callSpawn('terminal')
+          const rid = r.ok && !isErrorResult(r.result) ? resultText(r.result).trim() : ''
+          if (rid) capIds.push(rid)
+          else if (r.ok && isErrorResult(r.result) && /cap/i.test(resultText(r.result))) {
+            capRejected = true
+            break
+          } else break // unexpected — fall through to the failure log
+        }
+        for (const id of capIds) await orch.callClose(id)
+        if (capRejected && capIds.length >= 1) log('MCP_CAP_OK')
+        else {
+          log(`MCP_FAIL cap rejected=${capRejected} spawned=${capIds.length}`)
+          code = 1
+        }
+
+        // ── 🔒 idle-reaping (T3.4): a spawned board left idle past the TTL is reaped.
+        // Only runs when a short TTL is injected (CANVAS_MCP_IDLE_TTL_MS) so the normal
+        // gate stays fast; otherwise SKIP. Drives the sweep explicitly via mcp.reapIdle. ──
+        const ttl = Number(process.env.CANVAS_MCP_IDLE_TTL_MS)
+        if (mcp && ttl && ttl < 5_000) {
+          const r = await orch.callSpawn('terminal')
+          const rid = r.ok && !isErrorResult(r.result) ? resultText(r.result).trim() : ''
+          await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(rid)})`)
+          // Wait for the board to mount + its PTY to come up (status running) BEFORE
+          // forcing it down — setTerminalDown is a no-op until the runtime registers
+          // (same ordering the T1.1 status block relies on).
+          const ranRunning = await poll(
+            async () => (await orch.readBoardStatus(rid)) === 'running',
+            8000
+          )
+          await evalIn(`window.__canvasE2E.setTerminalDown(${JSON.stringify(rid)})`)
+          const wentIdle =
+            ranRunning &&
+            (await poll(async () => (await orch.readBoardStatus(rid)) === 'idle', 8000))
+          await mcp.reapIdle() // sweep 1: arm idleSince
+          await delay(ttl + 600)
+          const reaped = await mcp.reapIdle() // sweep 2: reap (idle span ≥ TTL)
+          const gone = await poll(
+            () =>
+              evalIn<boolean>(
+                `!window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(rid)})`
+              ),
+            4000
+          )
+          if (wentIdle && reaped.includes(rid) && gone) log('MCP_REAP_OK')
+          else {
+            log(`MCP_FAIL reap idle=${wentIdle} reaped=${JSON.stringify(reaped)} gone=${gone}`)
+            code = 1
+          }
+        } else {
+          log('MCP_REAP_SKIP set-CANVAS_MCP_IDLE_TTL_MS<5000-to-test')
+        }
       }
     }
 
