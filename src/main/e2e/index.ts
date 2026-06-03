@@ -35,10 +35,8 @@ import {
   fullviewEmulator,
   fullviewClose
 } from './probes/fullview'
-import { planning } from './probes/planning'
 import { menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
-import { tidy, tile } from './probes/layout'
 import {
   whiteboardFullviewAdd,
   whiteboardPasteImage,
@@ -55,7 +53,6 @@ const PLAYLIST: E2EProbe[] = [
   browserGesture,
   focusDetach,
   configNowheel,
-  planning,
   fullviewPreview, // emits fullview-preview + fullview-preserve
   fullviewSelfPreserve,
   fullviewEmulator,
@@ -69,8 +66,6 @@ const PLAYLIST: E2EProbe[] = [
   menuChrome,
   menuPreviewDetach,
   previewConnectGesture,
-  tidy,
-  tile,
   whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view (sliver)
   whiteboardPasteImage, // W4: real Ctrl+V clipboard paste persists a blob (sliver)
   whiteboardExport, // W5: PNG raster via the offscreen-canvas pipeline (sliver)

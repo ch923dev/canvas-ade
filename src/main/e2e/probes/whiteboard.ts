@@ -1,16 +1,15 @@
 /**
- * Whiteboard (Planning) interaction probes — W1 (eraser + letter shortcuts) and
- * W2 (selection core: multi-select + snapping). Both drive the REAL DOM on the
- * planning board's `.pl-well` and assert EFFECTS via getBoards() (selection/tool are
- * ephemeral component state, never serialized) so the checks are deterministic.
+ * Whiteboard (Planning) native/real-instance SLIVERS (post-T3 push-down). The W1/W2/W3
+ * interaction probes (erase/shortcut/marquee/multidrag/shift-add/snap/alt-dup/lock/group/
+ * align) and the paste-reload/dedup/gc + svg/image-embed parts all migrated DOWN to Vitest
+ * (PlanningBoard.interaction.test.tsx, projectStore.test.ts, whiteboardExport.test.ts) and
+ * were deleted. What stays here needs a REAL instance: full-view add-note through the live
+ * camera transform, a real Ctrl+V clipboard paste, and PNG raster.
  *
- * Order-bound: both read `ctx.ids.planId`, which the `planning` probe seeds earlier in
- * the playlist. They run late (after `tidy`/`tile`, before `seed`) — mutating only the
- * planning board's `elements`, never the board COUNT the final `seed` probe asserts.
- *
- * Lifted verbatim (W1 #16, W2 #19) out of the former monolithic e2eSmoke.ts when it was
- * split into this themed e2e/ folder (#24): `evalIn(win, …)` → `ctx.evalIn(…)`,
- * `delay(…)` → `ctx.delay(…)`, `parts.push(…)` → a returned E2EPart[].
+ * Order-bound: these read `ctx.ids.planId`. The `planning` probe that used to seed it was
+ * migrated + deleted in T3, so the first consumer (`fullviewPreview`, then this file's
+ * `whiteboardFullviewAdd`) seeds it via a `??` guard. They mutate only the planning board's
+ * `elements`, never the board COUNT the final `seed` probe asserts.
  */
 import { clipboard, nativeImage } from 'electron'
 import { mkdtempSync, rmSync, existsSync } from 'fs'
@@ -29,13 +28,13 @@ import type { E2EProbe, E2EPart } from '../types'
 export const whiteboardFullviewAdd: E2EProbe = {
   name: 'whiteboard-fullview-add',
   async run(ctx): Promise<E2EPart> {
-    const planId = ctx.ids.planId
-    if (!planId)
-      return {
-        name: 'whiteboard-fullview-add',
-        ok: false,
-        detail: 'planId not seeded (planning probe)'
-      }
+    // The planning board used to be seeded by the `planning` probe, which T3 migrated to
+    // Vitest (canvasStore.test.ts) and deleted. As the FIRST surviving whiteboard sliver,
+    // this probe now seeds it (if absent) and publishes ctx.ids.planId so the W4 paste and
+    // W5 export slivers that run after it in the PLAYLIST still find a planning board.
+    const planId =
+      ctx.ids.planId ??
+      (ctx.ids.planId = await ctx.evalIn<string>("window.__canvasE2E.seedBoard('planning')"))
 
     // Deterministic board: known size + two notes (non-empty → not the empty-board path).
     await ctx.evalIn(

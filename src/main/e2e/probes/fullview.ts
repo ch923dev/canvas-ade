@@ -56,7 +56,12 @@ export const fullviewPreview: E2EProbe = {
   name: 'fullview-preview',
   async run(ctx) {
     const browserId = ctx.ids.browserId!
-    const planId = ctx.ids.planId!
+    // planId used to be seeded by the `planning` probe (migrated to Vitest + deleted in T3).
+    // This is now the FIRST probe in the PLAYLIST that consumes it, so seed it here (idempotent
+    // — the later whiteboard slivers reuse ctx.ids.planId via the same `??` guard).
+    const planId =
+      ctx.ids.planId ??
+      (ctx.ids.planId = await ctx.evalIn<string>("window.__canvasE2E.seedBoard('planning')"))
     let fvPrevOk = false
     let fvPrevDetail = 'browser not live before full view'
     let fvSurviveOk = false
