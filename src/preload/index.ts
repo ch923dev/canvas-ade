@@ -157,6 +157,14 @@ const api = {
   },
   dialog: {
     openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
+  },
+  export: {
+    save: (args: {
+      bytes: Uint8Array
+      ext: 'png' | 'svg'
+      defaultName: string
+    }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
+      ipcRenderer.invoke('export:save', args)
   }
 }
 

@@ -6,6 +6,7 @@
 import path from 'node:path'
 import { dialog } from 'electron'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
+import writeFileAtomic from 'write-file-atomic'
 import {
   readProject,
   writeProject,
@@ -170,4 +171,29 @@ export function registerProjectHandlers(
     if (!dir) return null
     return readAsset(dir, assetId)
   })
+
+  ipcMain.handle(
+    'export:save',
+    async (
+      e,
+      args: { bytes: Uint8Array; ext: 'png' | 'svg'; defaultName: string }
+    ): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> => {
+      if (guard(e)) return { ok: false, error: 'forbidden' }
+      const win = getWin()
+      const ext = args.ext === 'png' ? 'png' : 'svg'
+      const safeName = (args.defaultName || 'whiteboard').replace(/[^\w.-]+/g, '_')
+      const opts = {
+        defaultPath: `${safeName}.${ext}`,
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
+      }
+      const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      if (res.canceled || !res.filePath) return { ok: false, canceled: true }
+      try {
+        await writeFileAtomic(res.filePath, Buffer.from(args.bytes))
+        return { ok: true, path: res.filePath }
+      } catch (err) {
+        return { ok: false, error: String((err as Error)?.message ?? err) }
+      }
+    }
+  )
 }
