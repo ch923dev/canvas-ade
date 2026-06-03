@@ -37,6 +37,16 @@ export interface E2ECtx {
   /** Poll `fn` until it resolves truthy or the timeout elapses. */
   poll(fn: () => Promise<boolean>, timeoutMs: number, stepMs?: number): Promise<boolean>
   delay(ms: number): Promise<void>
+  /** Focus the window, then poll document.hasFocus() — required before sendInputEvent. */
+  ensureFocus(): Promise<boolean>
+  /**
+   * Real OS click on the viewport-center of `selector` via webContents.sendInputEvent
+   * (respects CSS-transform hit-testing, unlike synthetic dispatchEvent). Returns
+   * false if the selector matches nothing. Focus-gated.
+   */
+  realClickSelector(selector: string): Promise<boolean>
+  /** Real OS key press (keyDown/char/keyUp) via sendInputEvent, e.g. 'Escape'. Focus-gated. */
+  realKey(key: string): Promise<void>
   /** MAIN-side internals the renderer eval can't reach (preview + pty). */
   readonly dbg: {
     terminalPid: typeof debugTerminalPid
@@ -70,12 +80,43 @@ export function makeContext(win: BrowserWindow, localUrl: string): E2ECtx {
     }
   }
 
+  const ensureFocus = async (): Promise<boolean> => {
+    win.focus()
+    return poll(() => evalIn<boolean>('document.hasFocus()'), 2000)
+  }
+
+  const realClickSelector = async (selector: string): Promise<boolean> => {
+    await ensureFocus()
+    const at = await evalIn<{ x: number; y: number } | null>(
+      `(() => { const el = document.querySelector(${JSON.stringify(selector)});
+         if (!el) return null;
+         const r = el.getBoundingClientRect();
+         return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`
+    )
+    if (!at) return false
+    const x = Math.round(at.x)
+    const y = Math.round(at.y)
+    win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+    win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+    return true
+  }
+
+  const realKey = async (key: string): Promise<void> => {
+    await ensureFocus()
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: key })
+    win.webContents.sendInputEvent({ type: 'char', keyCode: key })
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: key })
+  }
+
   return {
     win,
     localUrl,
     evalIn,
     poll,
     delay,
+    ensureFocus,
+    realClickSelector,
+    realKey,
     dbg: {
       terminalPid: debugTerminalPid,
       writeTerminal: debugWriteTerminal,
