@@ -118,3 +118,195 @@ describe('PlanningBoard interaction — erase + shortcut (migrated from e2e whit
     expect(els(id).length).toBe(2)
   })
 })
+
+const grip = (i: number): HTMLElement =>
+  document.querySelectorAll('.pl-note-grip')[i] as HTMLElement
+
+function ev(
+  target: EventTarget,
+  type: string,
+  x: number,
+  y: number,
+  mods?: { shift?: boolean; alt?: boolean }
+): void {
+  target.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      isPrimary: true,
+      clientX: x,
+      clientY: y,
+      shiftKey: !!mods?.shift,
+      altKey: !!mods?.alt
+    })
+  )
+}
+
+/** Drag from (fx,fy) to (tx,ty); down on `downTarget` (default well), moves+up on well.
+ *  Each event is flushed in its OWN act() so the move-frame setState (dragPos / marqueeRect)
+ *  commits before pointerup reads it — onWellPointerUp closes over that state, and batching
+ *  the whole gesture in one act would leave it stale (null), so no move/marquee would
+ *  register. The real e2e probe achieves the same via `await sleep()` between events. */
+function drag(
+  fx: number,
+  fy: number,
+  tx: number,
+  ty: number,
+  opts?: { downTarget?: EventTarget; shift?: boolean; alt?: boolean }
+): void {
+  const downT = opts?.downTarget ?? well()
+  act(() => ev(downT, 'pointerdown', fx, fy, opts))
+  for (let i = 1; i <= 4; i++) {
+    const t = i / 4
+    act(() => ev(well(), 'pointermove', fx + (tx - fx) * t, fy + (ty - fy) * t, opts))
+  }
+  act(() => ev(well(), 'pointerup', tx, ty, opts))
+}
+
+function noteX(id: string, nid: string): number {
+  const n = els(id).find((e) => e.id === nid)
+  return n ? n.x : -999999
+}
+
+/** The two-note W2 fixture (text so a no-move grip click never prunes an empty note). */
+function seedTwo(): string {
+  return seedPlanning([
+    note('w2-a', { x: 40, y: 40, w: 156, h: 96, text: 'A', tint: 'yellow' }),
+    note('w2-b', { x: 260, y: 40, w: 156, h: 96, text: 'B', tint: 'blue' })
+  ])
+}
+
+function openContextMenuAt(x: number, y: number, target: EventTarget = well()): void {
+  act(() => {
+    target.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y })
+    )
+  })
+}
+function clickMenuItem(testid: string): void {
+  const item = document.querySelector(`[data-testid="${testid}"]`) as HTMLElement
+  if (!item) throw new Error(`menu item ${testid} not found`)
+  act(() => item.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+}
+
+describe('PlanningBoard interaction — selection core (migrated from whiteboard-selection)', () => {
+  it('marquee selects both → Delete removes both; one undo restores both', () => {
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150) // marquee over w2-a + w2-b
+    act(() => press('Delete'))
+    expect(els(id).length).toBe(0)
+    useCanvasStore.getState().undo()
+    expect(els(id).length).toBe(2)
+  })
+
+  it('marquee 2 → drag one grip moves both; undo restores both', () => {
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150) // select both
+    const ax0 = noteX(id, 'w2-a')
+    const bx0 = noteX(id, 'w2-b')
+    drag(118, 88, 158, 128, { downTarget: grip(0) }) // drag w2-a's grip +40,+40
+    expect(noteX(id, 'w2-a') - ax0).toBeGreaterThanOrEqual(30)
+    expect(noteX(id, 'w2-b') - bx0).toBeGreaterThanOrEqual(30)
+    useCanvasStore.getState().undo()
+    expect(noteX(id, 'w2-a')).toBe(ax0)
+    expect(noteX(id, 'w2-b')).toBe(bx0)
+  })
+
+  it('click A + Shift-click B selects both; dragging A moves both (additive element select)', () => {
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    act(() => {
+      ev(grip(0), 'pointerdown', 60, 60)
+      ev(well(), 'pointerup', 60, 60)
+    })
+    act(() => {
+      ev(grip(1), 'pointerdown', 280, 60, { shift: true })
+      ev(well(), 'pointerup', 280, 60, { shift: true })
+    })
+    const a0 = noteX(id, 'w2-a')
+    const b0 = noteX(id, 'w2-b')
+    drag(60, 60, 100, 60, { downTarget: grip(0) })
+    expect(noteX(id, 'w2-a') - a0).toBeGreaterThanOrEqual(30)
+    expect(noteX(id, 'w2-b') - b0).toBeGreaterThanOrEqual(30)
+  })
+
+  it("drags B's left edge within tolerance of A's left → committed B.x snaps to 40", () => {
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    drag(338, 88, 122, 88, { downTarget: grip(1) }) // B toward A's left edge (x=40)
+    expect(Math.abs(noteX(id, 'w2-b') - 40)).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('PlanningBoard interaction — alt-dup + lock (migrated from W3 probes)', () => {
+  it('alt-drag of a note grip duplicates it; original stays; undo removes the copy', () => {
+    const id = seedPlanning([note('ad-a', { x: 60, y: 60, w: 156, h: 96, text: 'A' })])
+    render(<Harness id={id} />)
+    const x0 = noteX(id, 'ad-a')
+    drag(138, 108, 198, 168, { downTarget: grip(0), alt: true }) // alt-drag → duplicate
+    expect(els(id).length).toBe(2)
+    expect(noteX(id, 'ad-a')).toBe(x0) // original unmoved
+    useCanvasStore.getState().undo()
+    expect(els(id).length).toBe(1)
+  })
+
+  it('a locked note resists drag, erase, and inline delete', () => {
+    // Mirror whiteboardLock: a note with locked:true resists the grip drag, the eraser
+    // swipe, and exposes no inline delete (.pl-del) affordance.
+    const id = seedPlanning([note('lk', { x: 60, y: 60, w: 156, h: 96, text: 'L' })])
+    useCanvasStore.getState().updateBoard(id, {
+      elements: [{ ...els(id)[0], locked: true }]
+    } as never)
+    render(<Harness id={id} />)
+    const x0 = noteX(id, 'lk')
+    drag(138, 108, 220, 108, { downTarget: grip(0) }) // drag attempt
+    expect(noteX(id, 'lk')).toBe(x0) // locked → unmoved
+    press('e')
+    tap(138, 108)
+    expect(els(id).length).toBe(1) // locked → not erased
+    expect(document.querySelector('.pl-del')).toBeNull() // no inline delete affordance
+  })
+})
+
+describe('PlanningBoard interaction — group / align (migrated from W3 menu probes)', () => {
+  it('marquee + context-menu Group assigns both a shared groupId', () => {
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150) // select both
+    openContextMenuAt(120, 80, grip(0))
+    clickMenuItem('w3-menu-group')
+    const e = els(id) as readonly { groupId?: string }[]
+    expect(e[0].groupId && e[0].groupId === e[1].groupId).toBeTruthy()
+  })
+
+  it('marquee + context-menu Align-left flushes both to the board pad; one undo restores B', () => {
+    const id = seedPlanning([
+      note('al-a', { x: 12, y: 40, text: 'A' }),
+      note('al-b', { x: 300, y: 40, text: 'B' })
+    ])
+    render(<Harness id={id} />)
+    drag(0, 10, 470, 150) // marquee both
+    openContextMenuAt(40, 60, grip(0))
+    clickMenuItem('w3-menu-align-left')
+    expect(noteX(id, 'al-a')).toBe(noteX(id, 'al-b')) // both flushed left to the same x
+    expect(noteX(id, 'al-a')).toBe(12) // the board pad
+    useCanvasStore.getState().undo()
+    expect(noteX(id, 'al-b')).toBe(300)
+  })
+
+  it('right-clicking ONE grouped element aligns the WHOLE group (group-align regression)', () => {
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150)
+    openContextMenuAt(120, 80, grip(0))
+    clickMenuItem('w3-menu-group')
+    // clear selection, then right-click only one grouped element → align expands the group
+    tap(560, 300)
+    openContextMenuAt(120, 80, grip(0))
+    clickMenuItem('w3-menu-align-left')
+    expect(noteX(id, 'w2-a')).toBe(noteX(id, 'w2-b')) // both moved, not just the clicked one
+  })
+})

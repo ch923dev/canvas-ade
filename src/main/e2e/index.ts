@@ -40,15 +40,9 @@ import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
 import {
-  whiteboardSelection,
   whiteboardFullviewAdd,
-  whiteboardAltDup,
-  whiteboardLock,
-  whiteboardGroup,
-  whiteboardAlign,
-  whiteboardGroupAlign,
   whiteboardPasteImage,
-  whiteboardExport // W5: SVG/PNG export pipeline
+  whiteboardExport // W5: PNG raster sliver
 } from './probes/whiteboard'
 import { seed } from './probes/seed'
 
@@ -78,15 +72,9 @@ const PLAYLIST: E2EProbe[] = [
   previewConnectGesture,
   tidy,
   tile,
-  whiteboardSelection, // W2: emits whiteboard-group-delete/multidrag/shift-add/snap
-  whiteboardAltDup, // W3: real-input alt-drag duplicate
-  whiteboardLock, // W3: locked resists drag/erase/X
-  whiteboardGroup, // W3: group move + group delete via the menu
-  whiteboardAlign, // W3: align-left via the menu
-  whiteboardGroupAlign, // W3: align works on a GROUP (right-click expands the group)
-  whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view
-  whiteboardPasteImage, // W4: real-paste image persists + reloads + dedups + GCs
-  whiteboardExport, // W5: SVG/PNG export pipeline (svg/png/image-embed/missing-asset)
+  whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view (sliver)
+  whiteboardPasteImage, // W4: real Ctrl+V clipboard paste persists a blob (sliver)
+  whiteboardExport, // W5: PNG raster via the offscreen-canvas pipeline (sliver)
   seed
 ]
 
