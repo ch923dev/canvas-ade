@@ -309,6 +309,35 @@ export function PlanningBoard({
     [addImageFromBlob, toBoard]
   )
 
+  // ── Export popover (W5) ──────────────────────────────────────────────────────
+  const [exportOpen, setExportOpen] = useState(false)
+  const runExport = useCallback(
+    async (format: 'png' | 'svg') => {
+      setExportOpen(false)
+      try {
+        const { buildExport } = await import('./planning/exportBoard')
+        const { bytes, ext } = await buildExport(board, format)
+        await window.api.export.save({ bytes, ext, defaultName: board.title || 'whiteboard' })
+      } catch (err) {
+        console.error('whiteboard export failed', err)
+      }
+    },
+    [board]
+  )
+  useEffect(() => {
+    if (!exportOpen) return
+    const close = (): void => setExportOpen(false)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setExportOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [exportOpen])
+
   // ── Element-level handlers (passed to the element components) ────────────────
   const interactive = tool === 'select'
 
@@ -854,6 +883,50 @@ export function PlanningBoard({
         active={snapEnabled}
         onClick={() => setSnapEnabled((v) => !v)}
       />
+      <div
+        style={{
+          width: 1,
+          alignSelf: 'stretch',
+          background: 'var(--border-subtle)',
+          margin: '0 2px'
+        }}
+      />
+      <div style={{ position: 'relative', display: 'inline-flex' }}>
+        <IconBtn
+          name="download"
+          title="Export"
+          size={15}
+          active={exportOpen}
+          onClick={() => setExportOpen((v) => !v)}
+        />
+        {exportOpen && (
+          <div
+            role="menu"
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              top: 28,
+              right: 0,
+              zIndex: 5,
+              display: 'flex',
+              flexDirection: 'column',
+              minWidth: 130,
+              padding: 4,
+              background: 'var(--surface-overlay)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--r-inner)',
+              boxShadow: 'var(--shadow-pop)'
+            }}
+          >
+            <button className="board-menu-item" onClick={() => void runExport('png')}>
+              Export PNG
+            </button>
+            <button className="board-menu-item" onClick={() => void runExport('svg')}>
+              Export SVG
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   ) : undefined
 
