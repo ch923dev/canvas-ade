@@ -35,3 +35,32 @@ export const context: E2EProbe = {
     }
   }
 }
+
+/**
+ * M-brain T-B1: the LLM summarize IPC round-trip. Under CANVAS_SMOKE=e2e the MAIN
+ * llmService auto-enables its mock provider (no network, no key), so summarize resolves
+ * `[mock] <text>`. Drives the real preload bridge (window.api.llm) from the renderer and
+ * asserts the seeded text round-trips back — proving preload → IPC → handler → provider.
+ */
+export const contextBrain: E2EProbe = {
+  name: 'context-brain',
+  async run(ctx) {
+    const raw = await ctx.evalIn<string>(
+      "window.api.llm.summarize({ text: 'canvas-brain-ping' }).then((r) => JSON.stringify(r))"
+    )
+    const status = await ctx.evalIn<string>(
+      'window.api.llm.status().then((s) => JSON.stringify(s))'
+    )
+    let ok = false
+    let detail = raw
+    try {
+      const r = JSON.parse(raw) as { ok: boolean; text?: string }
+      const s = JSON.parse(status) as { hasProvider: boolean }
+      ok = r.ok === true && r.text === '[mock] canvas-brain-ping' && s.hasProvider === true
+      detail = `text=${r.text} hasProvider=${s.hasProvider}`
+    } catch {
+      /* keep raw as detail */
+    }
+    return { name: 'context-brain', ok, detail }
+  }
+}

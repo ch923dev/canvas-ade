@@ -36,7 +36,7 @@ import {
   fullviewClose
 } from './probes/fullview'
 import { planning } from './probes/planning'
-import { context } from './probes/context'
+import { context, contextBrain } from './probes/context'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
@@ -91,7 +91,8 @@ const PLAYLIST: E2EProbe[] = [
   whiteboardPasteImage, // W4: real-paste image persists + reloads + dedups + GCs
   whiteboardExport, // W5: SVG/PNG export pipeline (svg/png/image-embed/missing-asset)
   seed, // asserts the canvas returned to 4 boards
-  context // M-digest T-D2: seeds 3 more + asserts the reopen digest panel (run last)
+  context, // M-digest T-D2: seeds 3 more + asserts the reopen digest panel (run last)
+  contextBrain // M-brain T-B1: llm:summarize mock round-trip (no board dependency, safe last)
 ]
 
 export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise<number> {
