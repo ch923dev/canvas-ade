@@ -95,7 +95,10 @@ const fakeEncryptor = (available = true): Encryptor => ({
   decryptString: (e) => e.toString('utf8').replace(/^ENC:/, '')
 })
 
-function setupKeyed(encryptor: Encryptor): { dir: string; cap: ReturnType<typeof createIpcCapture> } {
+function setupKeyed(encryptor: Encryptor): {
+  dir: string
+  cap: ReturnType<typeof createIpcCapture>
+} {
   const dir = mkdtempSync(join(tmpdir(), 'llm-ipc-'))
   const cap = createIpcCapture()
   registerLlmHandlers(cap.ipcMain, mainWin, dir, undefined, encryptor)
@@ -117,7 +120,9 @@ describe('registerLlmHandlers — key channels', () => {
   it('clearKey removes the key (hasKey:false after)', async () => {
     const { cap } = setupKeyed(fakeEncryptor())
     await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'sk-xyz' })
-    const cleared = (await cap.invoke('llm:clearKey', { provider: 'openrouter' })) as { ok: boolean }
+    const cleared = (await cap.invoke('llm:clearKey', { provider: 'openrouter' })) as {
+      ok: boolean
+    }
     expect(cleared.ok).toBe(true)
     expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(false)
   })
@@ -153,15 +158,15 @@ describe('registerLlmHandlers — key channels', () => {
 
   it('all write channels reject a foreign sender', async () => {
     const { cap } = setupKeyed(fakeEncryptor())
-    expect(await cap.invokeAs(foreignEvent, 'llm:setKey', { provider: 'openrouter', key: 'x' })).toEqual(
-      { ok: false, reason: 'forbidden' }
-    )
+    expect(
+      await cap.invokeAs(foreignEvent, 'llm:setKey', { provider: 'openrouter', key: 'x' })
+    ).toEqual({ ok: false, reason: 'forbidden' })
     expect(await cap.invokeAs(foreignEvent, 'llm:clearKey', { provider: 'openrouter' })).toEqual({
       ok: false,
       reason: 'forbidden'
     })
-    expect(await cap.invokeAs(foreignEvent, 'llm:setConfig', { provider: 'openai', model: 'm' })).toEqual(
-      { ok: false, reason: 'forbidden' }
-    )
+    expect(
+      await cap.invokeAs(foreignEvent, 'llm:setConfig', { provider: 'openai', model: 'm' })
+    ).toEqual({ ok: false, reason: 'forbidden' })
   })
 })

@@ -24,7 +24,13 @@ export interface DigestPanelProps {
   onClose: () => void
 }
 
-export function DigestPanel({ digest, prose, open, onOpen, onClose }: DigestPanelProps): ReactElement {
+export function DigestPanel({
+  digest,
+  prose,
+  open,
+  onOpen,
+  onClose
+}: DigestPanelProps): ReactElement {
   return (
     <>
       {!open && (

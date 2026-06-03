@@ -7,7 +7,7 @@
 > below). **Forward/undone work stays in `docs/roadmap-context.md`** (task cards for M-memory / M-expose);
 > the egress decision is in `docs/decisions/0003-llm-egress.md`. Add a milestone here only when it is DONE.
 
-**Status (2026-06-04):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅ · T-M2 ✅ · T-M3 ✅** on `feat/context`. The Tier-2 autonomous summarize loop (the first autonomous-spend path, gated by the T-B3 budget) is in. **Next: M-memory T-M4** (panel upgrade — render cached Tier-2 prose on reopen via a renderer read bridge).
+**Status (2026-06-04):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅ · T-M2 ✅ · T-M3 ✅ · T-M4 ✅ — M-memory COMPLETE** on `feat/context`. The DigestPanel now renders cached Tier-2 prose on reopen (heading-stripped, via a guarded `memory:readBoards` bridge); the panel falls back to the Tier-1 `<ul>` per board when no prose is cached. No LLM call on open.
 
 ---
 
@@ -199,11 +199,9 @@ never throws; callers treat `budget-exceeded` like `no-provider` (Tier-1).
 
 ---
 
-## M-memory — `.canvas/` engine + Tier-2 loop ⛓ M-brain
+## M-memory — `.canvas/` engine + Tier-2 loop ✅ COMPLETE ⛓ M-brain
 
-The persistent project memory. **T-M1 (storage layer) ✅;** T-M2 (change detector) · T-M3 (Tier-2
-summarize loop — first autonomous-spend path the T-B3 budget protects) · T-M4 (panel cached-prose
-upgrade) are forward work in `docs/roadmap-context.md`.
+The persistent project memory. **T-M1 ✅ · T-M2 ✅ · T-M3 ✅ · T-M4 ✅ — all four tasks shipped.**
 
 ### T-M1 — `.canvas/` engine (paths + atomic writers) ✅
 
@@ -337,6 +335,35 @@ cap); passive output (untrusted context, never acts — the only effects are the
 `.canvas/` writes); never throws / can't wedge (full try/catch + `finally` clears in-flight +
 the fetch timeout bounds a hung provider); the key never leaves MAIN / never lands in `.canvas/`.
 
+### T-M4 — Panel cached-prose on reopen ✅ · **M-memory COMPLETE**
+
+The renderer-side read bridge and DigestPanel upgrade that closes the M-memory milestone. The panel
+now renders heading-stripped Tier-2 prose when cached, falling back to the Tier-1 `<ul>` per board
+when none is available. **No LLM call on open** — the read is a pure disk read.
+
+- `src/renderer/src/lib/digest.ts` gains `stripHeading(md: string): string` — pure, CRLF-safe,
+  strips the leading `# title` line from cached prose before display. 7 unit cases.
+- `src/main/projectIpc.ts` — `memory:readBoards(ids: string[]) → Record<id, rawMarkdown>` handler
+  folded INTO `registerProjectHandlers`, reusing the existing foreign-sender guard + current-dir
+  resolution. **`index.ts` is untouched** (no `feat/mcp-integration` collision). Foreign sender →
+  `{}`, no current dir → `{}`, non-array `ids` → `{}`, absent board ids omitted; returns raw
+  markdown (renderer strips the heading). 4 integration tests: present/missing · no-dir · non-array
+  · foreign-sender + a scaffold-wiring lock assertion.
+- `src/preload/index.ts` — `api.memory.readBoards(ids)` bridge (type auto-derived via
+  `typeof api`; `index.d.ts` untouched). Preload contract row added to `preloadApi.integration.test.ts`.
+- `src/renderer/src/canvas/DigestPanel.tsx` — renders the heading-stripped prose body
+  (`<p class="digest-prose">`, tokens `--text-2`/`--fs-label`) when `boardProse[board.boardId]`
+  is present, else falls back to the existing Tier-1 `<ul class="digest-lines">`. 3 jsdom tests:
+  prose-present heading-stripped · per-board Tier-1 fallback · no-prop.
+- `src/renderer/src/canvas/Canvas.tsx` — fetches the prose map once per `openedProjectKey` change
+  (pure disk read, no LLM call); boards read live via `getState()` so it does not re-fetch on edits;
+  cancellation-guarded.
+- `src/renderer/src/index.css` — `.digest-prose` token block.
+- **No e2e** — T-M4 touches no native surface; per `docs/testing/TESTING.md` unit+integration
+  tier is load-bearing here.
+
+🎉 **M-memory COMPLETE (T-M1 · T-M2 · T-M3 · T-M4 all ✅).**
+
 ---
 
 ## Gate evidence (cumulative, on `feat/context`)
@@ -351,6 +378,7 @@ the fetch timeout bounds a hung provider); the key never leaves MAIN / never lan
 | T-M1 | `2e0b1e7` | **702** | `context-memory` ok |
 | T-M2 | `221ddf8` | **724** | `context-change` ok |
 | T-M3 | `1b6f1e1` | **740** | `context-summary` ok |
+| T-M4 | `4e42459` | **735** | (no native surface — unit/integration only) |
 
 > **Post-merge retrofit (after catching up to main's T0–T5 overhaul).** The `context-*` e2e
 > column above refers to the old `CANVAS_SMOKE=e2e` probes, which main **deleted** (the homegrown
@@ -373,7 +401,7 @@ cached prose:
   commit + create/open scaffolding. ✅ **DONE** (see the M-memory section above).
 - **T-M2** ✅ meaningful-change detector + debounce (`src/main/memoryEngine.ts`, wired into
   `projectIpc.ts`). **T-M3** ✅ Tier-2 autonomous summary loop (`src/main/summaryLoop.ts`, wired
-  via `index.ts`). **T-M4** panel upgrade to cached prose on reopen (**next**).
+  via `index.ts`). **T-M4** ✅ panel upgrade to cached prose on reopen (see above). **M-memory COMPLETE.**
 
 **M-expose (DEFERRED)** — `canvas://memory` MCP read resource; gated on the MCP package (Phases 0–1) landing
 on `main`. ⚠️ Owes 2 reverse cross-links into `docs/roadmap-mcp.md` (M9 judge-board pivot becomes optional;
