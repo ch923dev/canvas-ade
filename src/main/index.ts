@@ -143,7 +143,7 @@ app.whenReady().then(async () => {
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
 
   createWindow()
-  if (mainWindow) installE2EMain(mainWindow)
+  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl)
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {

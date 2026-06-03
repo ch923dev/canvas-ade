@@ -33,6 +33,8 @@ export interface E2EMain {
   fileExists(absPath: string): boolean
   /** Join a temp-project path with a relative asset path (cross-platform). */
   joinPath(...parts: string[]): string
+  /** The in-process local preview server URL — a deterministic page the browser probe seeds. */
+  localUrl(): string
 }
 
 declare global {
@@ -41,7 +43,7 @@ declare global {
 }
 
 /** Install the registry. No-op unless CANVAS_E2E is set. Call once after the window exists. */
-export function installE2EMain(win: BrowserWindow): void {
+export function installE2EMain(win: BrowserWindow, localUrl: string): void {
   if (!process.env.CANVAS_E2E) return
   globalThis.__canvasE2EMain = {
     terminalPid: debugTerminalPid,
@@ -80,6 +82,9 @@ export function installE2EMain(win: BrowserWindow): void {
     },
     joinPath(...parts) {
       return join(...parts)
+    },
+    localUrl() {
+      return localUrl
     }
   }
 }
