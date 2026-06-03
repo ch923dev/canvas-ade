@@ -70,6 +70,7 @@ export type LlmSummarizeResult =
 
 export interface LlmStatus {
   hasProvider: boolean
+  /** Mirrors main `ProviderName` — keep in sync if a provider is added. */
   provider: 'openrouter' | 'openai' | 'anthropic' | 'local'
   model: string
 }
