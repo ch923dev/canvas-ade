@@ -492,6 +492,96 @@ export function buildOrchestrator(
       if (result.refs !== undefined) recorded.refs = result.refs
       registry.recordResult(boardId, recorded)
     },
+    async interrupt(boardId: BoardId): Promise<void> {
+      // 🔒 interrupt (T4.5): the content-less sibling of dispatchPrompt — the SAME gating
+      // (opaque id → terminal-only → nonce → human confirm → audit → write) but it writes
+      // a raw Ctrl-C (\x03, NO carriage return) and carries no prompt. See CLAUDE.md ›
+      // Process model & security.
+
+      // (1) Resolve by OPAQUE id (never a label). Not found → audit + throw, no nonce.
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) {
+        await registry.audit({
+          type: 'interrupt',
+          targetId: boardId,
+          prompt: '',
+          nonce: '',
+          status: 'rejected',
+          detail: 'board not found'
+        })
+        throw new Error(`interrupt: board not found: ${boardId}`)
+      }
+
+      // (2) Terminal-only. Browser/Planning never reach a PTY.
+      if (board.type !== 'terminal') {
+        await registry.audit({
+          type: 'interrupt',
+          targetId: boardId,
+          prompt: '',
+          nonce: '',
+          status: 'rejected',
+          detail: `non-terminal target (${board.type})`
+        })
+        throw new Error(`interrupt: target is not a terminal (${board.type})`)
+      }
+
+      // (3) Mint the single-use nonce + monotonic sequence.
+      const { nonce, seq } = guard.issue()
+
+      // (4) Mandatory human confirm — MAIN owns the decision, fail-closed.
+      const { approved } = await registry.confirm({
+        title: `Interrupt "${board.title}"`,
+        body: `Send Ctrl-C (interrupt) to terminal "${board.title}" (${boardId})?`
+      })
+      if (!approved) {
+        await registry.audit({
+          type: 'interrupt',
+          targetId: boardId,
+          prompt: '',
+          nonce,
+          status: 'denied',
+          detail: `seq=${seq}`
+        })
+        throw new Error('interrupt: dispatch denied by the human gate')
+      }
+
+      // (5) Redeem the nonce (defensive — a replayed/forged nonce can never reach a write).
+      if (!guard.consume(nonce)) {
+        await registry.audit({
+          type: 'interrupt',
+          targetId: boardId,
+          prompt: '',
+          nonce,
+          status: 'rejected',
+          detail: `replayed/forged nonce; seq=${seq}`
+        })
+        throw new Error('interrupt: nonce already consumed (replay rejected)')
+      }
+
+      // (6) Write a raw Ctrl-C into the PTY (NO carriage return — \x03 is the signal). A
+      // false means no live terminal session held the id — audit failed + throw.
+      if (!registry.writeToPty(boardId, '\x03')) {
+        await registry.audit({
+          type: 'interrupt',
+          targetId: boardId,
+          prompt: '',
+          nonce,
+          status: 'failed',
+          detail: `pty write failed; seq=${seq}`
+        })
+        throw new Error('interrupt: PTY write failed (no live terminal session)')
+      }
+
+      // 🔒 Record the interrupt the moment it lands and RETURN (content-less, fire-and-forget).
+      await registry.audit({
+        type: 'interrupt',
+        targetId: boardId,
+        prompt: '',
+        nonce,
+        status: 'dispatched',
+        detail: `seq=${seq}`
+      })
+    },
     async gitDiff(): Promise<string> {
       throw new Error('gitDiff not available until Phase 6')
     }

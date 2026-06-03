@@ -108,6 +108,8 @@ interface SmokeClient {
   callAssign(boardId: string, prompt: string): Promise<CallOutcome>
   /** Call the write_result worker-tier write tool (T4.4). Binds to the caller's token board (no id arg). */
   callWriteResult(args: Record<string, unknown>): Promise<CallOutcome>
+  /** Call the interrupt dispatch tool (T4.5). Sends Ctrl-C; isError on tier denial/rejection. */
+  callInterrupt(boardId: string): Promise<CallOutcome>
   close(): Promise<void>
 }
 
@@ -348,6 +350,16 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         return {
           ok: true,
           result: await client.callTool({ name: 'write_result', arguments: args })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    callInterrupt: async (boardId: string): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({ name: 'interrupt', arguments: { boardId } })
         }
       } catch (e: unknown) {
         return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
@@ -1019,6 +1031,74 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           else {
             log(
               `MCP_FAIL write-result bothTiers=${bothTiersHave} ok=${wrOk} reflected=${reflected}`
+            )
+            code = 1
+          }
+        }
+
+        // ── 🔒 dispatch interrupt (T4.5): the orchestrator sends Ctrl-C to a target
+        // terminal's PTY — gated by a single-use nonce + a mandatory human confirm + an
+        // audit entry, terminal-only. A worker tier is DENIED. A Ctrl-C has no echo to
+        // read, so the happy path is verified via the audit trail (an `interrupt`
+        // `dispatched` entry). Self-activating: SKIP on a pkg without interrupt (until 0.7.0). ──
+        if (!orch.list.includes('interrupt')) {
+          log('MCP_INTERRUPT_SKIP pkg<0.7.0-unpublished')
+        } else {
+          const IMODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
+          const IAPPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
+          const iSplitOk = !worker.list.includes('interrupt')
+          const workerInt = await worker.callInterrupt('any-id')
+          const workerIntDenied =
+            workerInt.ok &&
+            isErrorResult(workerInt.result) &&
+            resultText(workerInt.result).includes('Tool interrupt not found')
+          // 🔒 non-terminal rejected before any write.
+          const biSpawn = await orch.callSpawn('browser')
+          const biId =
+            biSpawn.ok && !isErrorResult(biSpawn.result) ? resultText(biSpawn.result).trim() : ''
+          const iNonTerm = biId
+            ? await orch.callInterrupt(biId)
+            : { ok: false as const, threw: 'no-id' }
+          const iNonTermRejected = iNonTerm.ok && isErrorResult(iNonTerm.result)
+          // happy path: spawn a terminal, interrupt it, drive the confirm modal, assert the
+          // call resolves AND an `interrupt`/`dispatched` audit entry is readable.
+          const tiSpawn = await orch.callSpawn('terminal')
+          const tiId =
+            tiSpawn.ok && !isErrorResult(tiSpawn.result) ? resultText(tiSpawn.result).trim() : ''
+          let iModalShown = false
+          let interruptOk = false
+          let iAudited = false
+          if (tiId) {
+            await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(tiId)})`)
+            await poll(async () => (await orch.readBoardStatus(tiId)) === 'running', 8000)
+            const intP = orch.callInterrupt(tiId)
+            iModalShown = await poll(() => evalIn<boolean>(IMODAL), 8000)
+            if (iModalShown) await evalIn(IAPPROVE)
+            const intr = await intP
+            interruptOk = intr.ok && !isErrorResult(intr.result)
+            iAudited = await poll(
+              () =>
+                evalIn<boolean>(
+                  `window.api.mcp.readAudit({ limit: 50 }).then((es) => es.some((e) =>` +
+                    ` e.type === 'interrupt' && e.targetId === ${JSON.stringify(tiId)} && e.status === 'dispatched'))`
+                ),
+              4000
+            )
+          }
+          if (tiId) await orch.callClose(tiId)
+          if (biId) await orch.callClose(biId)
+          if (
+            iSplitOk &&
+            workerIntDenied &&
+            iNonTermRejected &&
+            iModalShown &&
+            interruptOk &&
+            iAudited
+          )
+            log('MCP_INTERRUPT_OK')
+          else {
+            log(
+              `MCP_FAIL interrupt split=${iSplitOk} workerDenied=${workerIntDenied} nonTerm=${iNonTermRejected} modal=${iModalShown} ok=${interruptOk} audited=${iAudited}`
             )
             code = 1
           }

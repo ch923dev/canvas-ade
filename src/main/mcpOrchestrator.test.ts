@@ -610,6 +610,130 @@ describe('buildOrchestrator', () => {
     })
   })
 
+  describe('🔒 interrupt (T4.5, Ctrl-C dispatch)', () => {
+    type Board = { id: string; type: string; title: string; status?: string }
+    function interruptReg(opts: {
+      boards: Board[]
+      confirm?: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
+      writeToPty?: (id: string, text: string) => boolean
+    }): {
+      registry: BoardRegistry
+      audits: AuditInput[]
+      writes: Array<{ id: string; text: string }>
+      confirms: Array<{ title: string; body: string }>
+    } {
+      const audits: AuditInput[] = []
+      const writes: Array<{ id: string; text: string }> = []
+      const confirms: Array<{ title: string; body: string }> = []
+      const registry: BoardRegistry = {
+        listBoards: () => opts.boards,
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: (id, text) => {
+          writes.push({ id, text })
+          return opts.writeToPty ? opts.writeToPty(id, text) : true
+        },
+        confirm: async (req) => {
+          confirms.push(req)
+          return opts.confirm ? opts.confirm(req) : { approved: true }
+        },
+        audit: async (input) => {
+          audits.push(input)
+        },
+        recordResult: () => {}
+      }
+      return { registry, audits, writes, confirms }
+    }
+
+    it('🔒 rejects an unknown target id — audits rejected, NO confirm, NO write', async () => {
+      const { registry, audits, writes, confirms } = interruptReg({ boards: [] })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.interrupt('ghost')).rejects.toThrow(/not found/i)
+      expect(writes).toEqual([])
+      expect(confirms).toEqual([])
+      expect(audits[0]).toMatchObject({
+        type: 'interrupt',
+        targetId: 'ghost',
+        nonce: '',
+        status: 'rejected'
+      })
+    })
+
+    it('🔒 rejects a NON-terminal target (browser) before any write', async () => {
+      const { registry, audits, writes, confirms } = interruptReg({
+        boards: [{ id: 'b1', type: 'browser', title: 'Web' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.interrupt('b1')).rejects.toThrow(/terminal/i)
+      expect(writes).toEqual([])
+      expect(confirms).toEqual([])
+      expect(audits[0]).toMatchObject({
+        type: 'interrupt',
+        targetId: 'b1',
+        status: 'rejected',
+        nonce: ''
+      })
+    })
+
+    it('🔒 a denied confirm blocks the interrupt — audits denied, nonce minted, NO write', async () => {
+      const { registry, audits, writes, confirms } = interruptReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term' }],
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.interrupt('t1')).rejects.toThrow(/deni|declin/i)
+      expect(writes).toEqual([])
+      expect(confirms).toHaveLength(1)
+      expect(confirms[0].body).toContain('Term')
+      const denied = audits.find((a) => a.status === 'denied')
+      expect(denied).toBeTruthy()
+      expect(denied!.type).toBe('interrupt')
+      expect(denied!.nonce.length).toBeGreaterThan(0)
+    })
+
+    it('happy path: confirm → write \\x03 (no CR) → resolves, audits dispatched (empty prompt)', async () => {
+      const { registry, audits, writes, confirms } = interruptReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.interrupt('t1')).resolves.toBeUndefined()
+      expect(confirms).toHaveLength(1)
+      expect(writes).toEqual([{ id: 't1', text: '\x03' }]) // raw Ctrl-C, NO carriage return
+      const dispatched = audits.find((a) => a.status === 'dispatched')
+      expect(dispatched).toMatchObject({ type: 'interrupt', targetId: 't1', prompt: '' })
+      expect(dispatched!.nonce.length).toBeGreaterThan(0)
+      expect(audits.some((a) => a.status === 'completed')).toBe(false)
+    })
+
+    it('🔒 a failed PTY write (no live session) audits failed and throws', async () => {
+      const { registry, audits } = interruptReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }],
+        writeToPty: () => false
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.interrupt('t1')).rejects.toThrow(/write|failed/i)
+      expect(audits.some((a) => a.status === 'failed')).toBe(true)
+    })
+
+    it('🔒 defensive: a forged/replayed nonce (consume=false) blocks the interrupt', async () => {
+      const { registry, audits, writes, confirms } = interruptReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }]
+      })
+      const orch = buildOrchestrator(registry, {
+        guard: { issue: () => ({ nonce: 'n1', seq: 1 }), consume: () => false }
+      })
+      await expect(orch.interrupt('t1')).rejects.toThrow(/nonce|replay|consume/i)
+      expect(confirms).toHaveLength(1)
+      expect(writes).toEqual([])
+      expect(audits.some((a) => a.status === 'rejected' || a.status === 'failed')).toBe(true)
+    })
+  })
+
   describe('🔒 cap reconciliation + idle-reaping (T3.4, the M3 gate)', () => {
     // A registry whose mirror is mutated by the commands the adapter issues (so the
     // adapter's own spawns/closes show up in listBoards, like the real renderer).

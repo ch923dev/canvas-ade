@@ -508,3 +508,117 @@ export const dispatchWriteResult: E2EProbe = {
     }
   }
 }
+
+/**
+ * 🔒 interrupt dispatch probe (M4 T4.5) — Ctrl-C to a target terminal. Exercises the REAL
+ * MAIN dispatch path against a live terminal: label-targeting rejected; happy path =
+ * confirm gate → write `\x03` → the call RESOLVES → an `interrupt`/`dispatched` audit
+ * entry is readable (a Ctrl-C has no echo, so the audit trail is the proof); a
+ * replayed/forged nonce (consume → false) is rejected. Restores the baseline (count 4).
+ */
+export const dispatchInterrupt: E2EProbe = {
+  name: 'dispatch-interrupt',
+  async run(ctx) {
+    if (!getAuditLog())
+      return { name: 'dispatch-interrupt', ok: false, detail: 'getAuditLog() null' }
+    const registry = productionRegistry(ctx)
+    const orch = buildOrchestrator(registry)
+
+    const id = randomUUID()
+    await sendMcpCommand(ipcMain, () => ctx.win, {
+      type: 'addBoard',
+      board: { id, type: 'terminal' }
+    })
+    await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `window.__canvasE2E.getBoards().some((b) => b.id === ${JSON.stringify(id)})`
+        ),
+      4000
+    )
+    await ctx.evalIn(`window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    const shellUp = await ctx.poll(async () => ctx.dbg.terminalPid(id) !== null, 10000)
+    const inMirror = await ctx.poll(async () => listBoardMirror().some((b) => b.id === id), 6000)
+
+    // (a) 🔒 label-targeting rejected — a TITLE / unknown string is not an opaque id.
+    let labelRejected = false
+    try {
+      await orch.interrupt('Terminal')
+    } catch {
+      labelRejected = true
+    }
+
+    // (b) happy path — confirm → write \x03 → RESOLVES → `interrupt`/`dispatched` audited.
+    let interruptResolved = false
+    let interruptErr = ''
+    const ip = orch
+      .interrupt(id)
+      .then(() => {
+        interruptResolved = true
+      })
+      .catch((e) => {
+        interruptErr = (e as Error).message
+      })
+    const modalShown = await ctx.poll(() => ctx.evalIn<boolean>(MODAL), 8000)
+    if (modalShown) await ctx.evalIn(APPROVE_BTN)
+    await ip
+    const dispatchedAudited = await ctx.poll(
+      () =>
+        ctx.evalIn<boolean>(
+          `window.api.mcp.readAudit({ limit: 50 }).then((es) => es.some((e) =>` +
+            ` e.type === 'interrupt' && e.targetId === ${JSON.stringify(id)} && e.status === 'dispatched'))`
+        ),
+      4000
+    )
+
+    // (c) 🔒 replayed/forged nonce rejected — same real path, consume → false.
+    const replayOrch = buildOrchestrator(registry, {
+      guard: { issue: () => ({ nonce: 'forged', seq: 1 }), consume: () => false }
+    })
+    let replayRejected = false
+    const rp = replayOrch
+      .interrupt(id)
+      .then(() => {})
+      .catch(() => {
+        replayRejected = true
+      })
+    const replayModal = await ctx.poll(() => ctx.evalIn<boolean>(MODAL), 8000)
+    if (replayModal) await ctx.evalIn(APPROVE_BTN)
+    await rp
+
+    // Restore the baseline: drain + removeBoard (count back to 4).
+    await drainPty(id)
+    await sendMcpCommand(ipcMain, () => ctx.win, { type: 'removeBoard', id })
+    const restored = await ctx.poll(
+      () => ctx.evalIn<boolean>('window.__canvasE2E.getBoards().length === 4'),
+      4000
+    )
+
+    const ok =
+      shellUp &&
+      inMirror &&
+      labelRejected &&
+      modalShown &&
+      interruptResolved &&
+      dispatchedAudited &&
+      replayRejected &&
+      restored
+    return {
+      name: 'dispatch-interrupt',
+      ok,
+      detail: ok
+        ? 'label rejected; confirm→\\x03→resolves→interrupt/dispatched audit; replayed nonce rejected; baseline 4'
+        : JSON.stringify({
+            shellUp,
+            inMirror,
+            interruptErr,
+            labelRejected,
+            modalShown,
+            interruptResolved,
+            dispatchedAudited,
+            replayRejected,
+            restored
+          })
+    }
+  }
+}
