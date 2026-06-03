@@ -10,8 +10,8 @@ import { isForeignSender } from './preview'
  * proof); M3 (lifecycle) extends the union with board CRUD. `addBoard` carries only
  * a MINIMAL spec (id + type), NOT a full PersistedBoard: MAIN mints the id but does
  * not know canvas geometry, so the renderer builds the full board (free-slot
- * placement, per-type defaults) from this spec. Future M3 cards add
- *   | { type: 'removeBoard'; id: string }   (T3.2)
+ * placement, per-type defaults) from this spec. `removeBoard` (T3.2) tears one down
+ * by id. Future M3 cards add
  *   | { type: 'configureBoard'; id: string; patch: {...} }   (T3.3)
  * Keep this the single source of truth; the renderer applier (`useMcpCommands`,
  * a separate bundle) mirrors it by hand.
@@ -19,6 +19,7 @@ import { isForeignSender } from './preview'
 export type McpCommand =
   | { type: 'ping' }
   | { type: 'addBoard'; board: { id: string; type: string } }
+  | { type: 'removeBoard'; id: string }
 
 /** The renderer's reply to a command. `type` echoes the handled command. */
 export type McpCommandAck = { ok: true; type: string } | { ok: false; error: string }

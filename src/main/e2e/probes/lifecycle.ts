@@ -1,56 +1,87 @@
 /**
  * MCP lifecycle probes (M3). Drive the MAIN → renderer command channel the SAME way
- * the Orchestrator adapter does — by issuing a real frame-guarded `mcp:command`
- * through MAIN (NOT by calling the store directly) — so the probe exercises the true
+ * the Orchestrator adapter does — by issuing real frame-guarded `mcp:command`s through
+ * MAIN (NOT by calling the store directly) — so the probe exercises the true
  * round-trip: MAIN command → preload bridge → useMcpCommands applier → canvasStore.
  *
- * T3.1 (spawn): an `addBoard` command makes a terminal board appear on the canvas AND
- * in the MAIN-side mirror, and its shell (PTY) starts. Restores the seed baseline
- * (count back to 4) so later probes — and the final `seed` assertion — stay valid.
+ * - T3.1 spawn: an `addBoard` command makes a terminal appear on the canvas AND in the
+ *   MAIN-side mirror, and its shell (PTY) starts.
+ * - T3.2 close: the real close path (graceful `drainPty` THEN a `removeBoard` command,
+ *   exactly what the `closeBoard` adapter does) removes the board from the canvas + the
+ *   mirror and reaps the PTY.
+ *
+ * Restores the seed baseline (count back to 4) so later probes — and the final `seed`
+ * assertion — stay valid.
  */
 import { ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { E2EProbe } from '../types'
 import { sendMcpCommand } from '../../mcpCommand'
 import { listBoardMirror } from '../../boardRegistry'
+import { drainPty } from '../../pty'
 
-export const lifecycleSpawn: E2EProbe = {
-  name: 'lifecycle-spawn',
+export const lifecycleSpawnClose: E2EProbe = {
+  name: 'lifecycle-spawn-close',
   async run(ctx) {
     const id = randomUUID()
-    // The exact path the orchestrator's registry.sendCommand uses (frame-guarded).
-    const ack = await sendMcpCommand(ipcMain, () => ctx.win, {
+    const inMirror = (): boolean => listBoardMirror().some((b) => b.id === id)
+    const onCanvas = (): Promise<boolean> =>
+      ctx.evalIn<boolean>(
+        `window.__canvasE2E.getBoards().some((b) => b.id === ${JSON.stringify(id)})`
+      )
+
+    // ── T3.1 SPAWN — addBoard command (the exact path registry.sendCommand uses). ──
+    const spawnAck = await sendMcpCommand(ipcMain, () => ctx.win, {
       type: 'addBoard',
       board: { id, type: 'terminal' }
     })
-
-    const onCanvas = await ctx.poll(
+    const spawnedOnCanvas = await ctx.poll(
       () =>
         ctx.evalIn<boolean>(
           `window.__canvasE2E.getBoards().some((b) => b.id === ${JSON.stringify(id)} && b.type === 'terminal')`
         ),
       4000
     )
-    // The agent-facing mirror (debounced publish ~150ms) must reflect the new board.
-    const inMirror = await ctx.poll(async () => listBoardMirror().some((b) => b.id === id), 4000)
-    // A freshly spawned terminal auto-starts its shell — assert the PTY pid exists.
+    const spawnedInMirror = await ctx.poll(async () => inMirror(), 4000)
     const shellUp = await ctx.poll(async () => ctx.dbg.terminalPid(id) !== null, 10000)
 
-    // Restore baseline (close_board lands in T3.2; here use the store hook). Removing a
-    // terminal board unmounts it → its PTY is reaped.
-    await ctx.evalIn(`window.__canvasE2E.deleteBoard(${JSON.stringify(id)})`)
+    // ── T3.2 CLOSE — graceful drain, THEN a removeBoard command (the closeBoard path). ──
+    await drainPty(id)
+    const closeAck = await sendMcpCommand(ipcMain, () => ctx.win, { type: 'removeBoard', id })
+    const goneFromCanvas = await ctx.poll(async () => !(await onCanvas()), 4000)
+    const goneFromMirror = await ctx.poll(async () => !inMirror(), 4000)
+    const ptyReaped = await ctx.poll(async () => ctx.dbg.terminalPid(id) === null, 6000)
     const restored = await ctx.poll(
       () => ctx.evalIn<boolean>('window.__canvasE2E.getBoards().length === 4'),
       4000
     )
 
-    const ok = ack.ok && onCanvas && inMirror && shellUp && restored
+    const ok =
+      spawnAck.ok &&
+      spawnedOnCanvas &&
+      spawnedInMirror &&
+      shellUp &&
+      closeAck.ok &&
+      goneFromCanvas &&
+      goneFromMirror &&
+      ptyReaped &&
+      restored
     return {
-      name: 'lifecycle-spawn',
+      name: 'lifecycle-spawn-close',
       ok,
       detail: ok
-        ? 'mcp:command addBoard → terminal on canvas + in mirror + shell PTY up; baseline restored'
-        : JSON.stringify({ ack, onCanvas, inMirror, shellUp, restored })
+        ? 'spawn: addBoard → canvas + mirror + shell PTY up; close: drain → removeBoard → gone from canvas + mirror + PTY reaped; baseline 4'
+        : JSON.stringify({
+            spawnAck,
+            spawnedOnCanvas,
+            spawnedInMirror,
+            shellUp,
+            closeAck,
+            goneFromCanvas,
+            goneFromMirror,
+            ptyReaped,
+            restored
+          })
     }
   }
 }

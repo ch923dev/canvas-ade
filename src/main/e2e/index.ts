@@ -53,7 +53,7 @@ import {
   whiteboardExport // W5: SVG/PNG export pipeline
 } from './probes/whiteboard'
 import { boardStatusPill } from './probes/status'
-import { lifecycleSpawn } from './probes/lifecycle'
+import { lifecycleSpawnClose } from './probes/lifecycle'
 import { seed } from './probes/seed'
 
 // EXACT current execution order — interleaves themes by design (a probe's theme file is
@@ -96,7 +96,7 @@ const PLAYLIST: E2EProbe[] = [
   whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view
   whiteboardPasteImage, // W4: real-paste image persists + reloads + dedups + GCs
   whiteboardExport, // W5: SVG/PNG export pipeline (svg/png/image-embed/missing-asset)
-  lifecycleSpawn, // M3 T3.1: mcp:command addBoard → board on canvas + mirror + shell; baseline restored
+  lifecycleSpawnClose, // M3 T3.1+T3.2: addBoard → canvas+mirror+shell; drain+removeBoard → gone+reaped; baseline 4
   seed
 ]
 

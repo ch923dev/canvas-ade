@@ -36,6 +36,19 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(useCanvasStore.getState().boards).toHaveLength(0)
   })
 
+  it('removeBoard removes the board from the canvas (T3.2)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    expect(useCanvasStore.getState().boards).toHaveLength(1)
+    const ack = applyMcpCommand({ type: 'removeBoard', id: 'srv-1' })
+    expect(ack).toEqual({ ok: true, type: 'removeBoard' })
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+
+  it('removeBoard on an unknown id acks ok (idempotent close)', () => {
+    const ack = applyMcpCommand({ type: 'removeBoard', id: 'ghost' })
+    expect(ack.ok).toBe(true)
+  })
+
   it('acks an unknown command type as a failure', () => {
     // @ts-expect-error — unknown command shape
     const ack = applyMcpCommand({ type: 'frobnicate' })

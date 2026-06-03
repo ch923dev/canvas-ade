@@ -7,14 +7,24 @@ const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlde
 const EMPTY_RESULT: BoardResult = { present: false }
 const EMPTY_MEMORY: MemoryDoc = { present: false, text: '' }
 
-/** A sendCommand that always acks ok and records the commands it saw. */
-function okCommands(): { sendCommand: BoardRegistry['sendCommand']; seen: McpCommand[] } {
+/** A sendCommand that always acks ok and records the commands it saw, plus a drainPty spy. */
+function okCommands(): {
+  sendCommand: BoardRegistry['sendCommand']
+  drainPty: BoardRegistry['drainPty']
+  seen: McpCommand[]
+  drained: string[]
+} {
   const seen: McpCommand[] = []
+  const drained: string[] = []
   return {
     seen,
+    drained,
     sendCommand: async (cmd) => {
       seen.push(cmd)
       return { ok: true, type: cmd.type }
+    },
+    drainPty: async (id) => {
+      drained.push(id)
     }
   }
 }
@@ -28,7 +38,8 @@ function reg(
   sendCommand: BoardRegistry['sendCommand'] = async (cmd): Promise<McpCommandAck> => ({
     ok: true,
     type: cmd.type
-  })
+  }),
+  drainPty: BoardRegistry['drainPty'] = async () => {}
 ): BoardRegistry {
   return {
     listBoards: () => boards,
@@ -37,7 +48,8 @@ function reg(
     readResult: (id) => resultsById[id] ?? EMPTY_RESULT,
     readMemory: () => memory.project ?? EMPTY_MEMORY,
     readSummary: (id) => memory.summaries?.[id] ?? EMPTY_MEMORY,
-    sendCommand
+    sendCommand,
+    drainPty
   }
 }
 
@@ -118,7 +130,8 @@ describe('buildOrchestrator', () => {
       readResult: () => EMPTY_RESULT,
       readMemory: () => EMPTY_MEMORY,
       readSummary: () => EMPTY_MEMORY,
-      sendCommand: async (cmd) => ({ ok: true, type: cmd.type })
+      sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+      drainPty: async () => {}
     })
     expect(await orch.boardOutput('t1', { cursor: 12345 })).toEqual(page)
     expect(seenCursor).toBe(12345)
@@ -179,6 +192,38 @@ describe('buildOrchestrator', () => {
         await orch.spawnBoard({ type: 'terminal' })
       }
       await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+    })
+  })
+
+  describe('closeBoard (T3.2, lifecycle write)', () => {
+    it('drains the PTY THEN issues a removeBoard command for that id', async () => {
+      const { sendCommand, drainPty, seen, drained } = okCommands()
+      const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand, drainPty))
+      await orch.closeBoard('board-9')
+      expect(drained).toEqual(['board-9']) // graceful drain happened
+      expect(seen).toEqual([{ type: 'removeBoard', id: 'board-9' }]) // then the canvas removal
+    })
+
+    it('throws when the renderer rejects the removeBoard command (no silent failure)', async () => {
+      const { drainPty } = okCommands()
+      const orch = buildOrchestrator(
+        reg([], [], {}, {}, {}, async () => ({ ok: false, error: 'no-window' }), drainPty)
+      )
+      await expect(orch.closeBoard('b')).rejects.toThrow(/no-window/)
+    })
+
+    it('frees a cap slot so a new spawn succeeds after a close', async () => {
+      const { sendCommand, drainPty } = okCommands()
+      const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand, drainPty))
+      const ids: string[] = []
+      for (let i = 0; i < MCP_SPAWN_CAP; i++) {
+        ids.push((await orch.spawnBoard({ type: 'terminal' })).id)
+      }
+      // At the cap — the next spawn must reject…
+      await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+      // …until we close one, which frees a slot.
+      await orch.closeBoard(ids[0])
+      await expect(orch.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
     })
   })
 })

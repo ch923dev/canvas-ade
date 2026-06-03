@@ -46,6 +46,12 @@ export interface BoardRegistry {
    * path-guards the agent-supplied id); empty shell when absent/invalid.
    */
   readSummary(id: string): MemoryDoc
+  /**
+   * Gracefully drain (then tree-kill) a board's PTY before it is removed (T3.2).
+   * MAIN injects `pty.ts`'s `drainPty`; a non-terminal / absent id resolves to a
+   * no-op. Always resolves — close is best-effort graceful, never throws on the PTY.
+   */
+  drainPty(id: string): Promise<void>
 }
 
 /**
@@ -130,6 +136,16 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
       if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
       spawnedIds.add(id)
       return { id }
+    },
+    async closeBoard(boardId: BoardId): Promise<void> {
+      // Graceful FIRST: drain (then tree-kill) the PTY so the shell/agent gets a clean
+      // exit rather than an abrupt SIGKILL. Best-effort — a non-terminal id is a no-op.
+      await registry.drainPty(boardId)
+      // Then remove the board from the canvas via the command channel.
+      const ack = await registry.sendCommand({ type: 'removeBoard', id: boardId })
+      if (!ack.ok) throw new Error(`close_board failed: ${ack.error}`)
+      // Free the cap budget so a later spawn can reuse the slot (T3.1 cap).
+      spawnedIds.delete(boardId)
     },
     async dispatchPrompt(): Promise<void> {
       throw new Error('dispatchPrompt not available until Phase 4')

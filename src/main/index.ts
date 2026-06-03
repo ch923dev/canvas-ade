@@ -2,7 +2,13 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { registerPtyHandlers, disposeAllPtys, listPtySessions, readPtyOutput } from './pty'
+import {
+  registerPtyHandlers,
+  disposeAllPtys,
+  listPtySessions,
+  readPtyOutput,
+  drainPty
+} from './pty'
 import { readBoardResult } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
 import {
@@ -174,7 +180,9 @@ app.whenReady().then(async () => {
     readMemory: readProjectMemory,
     readSummary: readBoardSummary,
     // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
-    sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command)
+    sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
+    // Graceful PTY drain before an MCP close_board removes the board (T3.2).
+    drainPty: (id) => drainPty(id)
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))

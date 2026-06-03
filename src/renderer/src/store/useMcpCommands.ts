@@ -10,6 +10,7 @@ import type { BoardType } from '../lib/boardSchema'
 export type McpCommandIn =
   | { type: 'ping' }
   | { type: 'addBoard'; board: { id: string; type: BoardType } }
+  | { type: 'removeBoard'; id: string }
 
 /** The ack shape MAIN's `sendMcpCommand` awaits (`McpCommandAck`). */
 export type McpAck = { ok: true; type: string } | { ok: false; error: string }
@@ -36,6 +37,12 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       }
       useCanvasStore.getState().addBoard(type, SPAWN_ANCHOR, { id })
       return { ok: true, type: 'addBoard' }
+    }
+    case 'removeBoard': {
+      // Idempotent: removeBoard no-ops on an unknown id (a board the user already
+      // closed), so a double close still acks ok.
+      useCanvasStore.getState().removeBoard(command.id)
+      return { ok: true, type: 'removeBoard' }
     }
     default:
       return { ok: false, error: `unknown command: ${(command as { type: string }).type}` }

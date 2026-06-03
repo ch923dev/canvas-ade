@@ -97,6 +97,8 @@ interface SmokeClient {
   readSummaryDoc(id: string): Promise<MemoryShell | null>
   /** Call the spawn_board write tool (T3.1). Resolves with the outcome (isError on tier denial). */
   callSpawn(type: string): Promise<CallOutcome>
+  /** Call the close_board write tool (T3.2). Resolves with the outcome (isError on tier denial). */
+  callClose(id: string): Promise<CallOutcome>
   close(): Promise<void>
 }
 
@@ -287,6 +289,16 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         return {
           ok: true,
           result: await client.callTool({ name: 'spawn_board', arguments: { type } })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    callClose: async (id: string): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({ name: 'close_board', arguments: { id } })
         }
       } catch (e: unknown) {
         return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
@@ -631,14 +643,50 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           workerSpawn.ok &&
           isErrorResult(workerSpawn.result) &&
           resultText(workerSpawn.result).includes('Tool spawn_board not found')
-        // Restore baseline (close_board lands in T3.2; here remove via the store hook).
-        if (spawnedId) await evalIn(`window.__canvasE2E.deleteBoard(${JSON.stringify(spawnedId)})`)
         if (splitOk && spawnedId && onCanvas && workerDenied) log('MCP_SPAWN_OK')
         else {
           log(
             `MCP_FAIL spawn split=${splitOk} id=${spawnedId} onCanvas=${onCanvas} workerDenied=${workerDenied}`
           )
           code = 1
+        }
+
+        // ── lifecycle close (T3.2): the orchestrator closes the spawned board via the
+        // REAL close_board tool (graceful drain → removeBoard round-trip) → it leaves the
+        // canvas; a worker tier is DENIED close_board (same server-side capability split).
+        // This also restores the baseline (no store-hook cleanup needed). Self-activating:
+        // SKIP on a pkg with spawn_board but not yet close_board (and still clean up). ──
+        if (!orch.list.includes('close_board')) {
+          if (spawnedId)
+            await evalIn(`window.__canvasE2E.deleteBoard(${JSON.stringify(spawnedId)})`)
+          log('MCP_CLOSE_SKIP pkg<0.4.1-unpublished')
+        } else {
+          const closeSplitOk = !worker.list.includes('close_board')
+          const close = spawnedId
+            ? await orch.callClose(spawnedId)
+            : { ok: false as const, threw: 'no-id' }
+          const closeAcked = close.ok && !isErrorResult(close.result)
+          const goneFromCanvas = spawnedId
+            ? await poll(
+                () =>
+                  evalIn<boolean>(
+                    `!window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(spawnedId)})`
+                  ),
+                6000
+              )
+            : false
+          const workerClose = await worker.callClose(spawnedId || 'x')
+          const workerCloseDenied =
+            workerClose.ok &&
+            isErrorResult(workerClose.result) &&
+            resultText(workerClose.result).includes('Tool close_board not found')
+          if (closeSplitOk && closeAcked && goneFromCanvas && workerCloseDenied) log('MCP_CLOSE_OK')
+          else {
+            log(
+              `MCP_FAIL close split=${closeSplitOk} acked=${closeAcked} gone=${goneFromCanvas} workerDenied=${workerCloseDenied}`
+            )
+            code = 1
+          }
         }
       }
     }

@@ -694,6 +694,32 @@ export function listPtySessions(): Array<{ id: string; status: PtyState }> {
 }
 
 /**
+ * Gracefully close the live PTY for `id` before its board is removed (MCP close_board,
+ * T3.2). Best-effort GRACEFUL FIRST: interrupt any running foreground agent (Ctrl-C)
+ * and ask the shell to `exit`, then wait a short grace window for a natural exit
+ * (onExit → cleanup drops it from `sessions`). Anything still alive after the window is
+ * hard tree-killed via `cleanup` (taskkill /T /F — see "kill the tree"). A non-terminal
+ * or absent id is a no-op. Always resolves; never throws on the PTY (close is
+ * best-effort). The board-unmount `pty:kill` that follows the removal then no-ops.
+ */
+export async function drainPty(id: string, graceMs = 600): Promise<void> {
+  const s = sessions.get(id)
+  if (!s) return
+  try {
+    s.proc.write('\x03') // Ctrl-C — interrupt a running foreground agent/command
+    s.proc.write('exit\r') // then ask the shell itself to exit cleanly
+  } catch {
+    /* proc already gone — fall through to the hard kill */
+  }
+  const deadline = Date.now() + graceMs
+  while (Date.now() < deadline) {
+    if (!sessions.has(id)) return // exited cleanly within the grace window
+    await new Promise((r) => setTimeout(r, 60))
+  }
+  await cleanup(id) // still alive → hard tree-kill
+}
+
+/**
  * Read one capped, ANSI-stripped, tail-anchored page of a board's PTY scrollback
  * for the MCP layer (T1.4 🔒). READ-ONLY, control-plane only — it reads the SAME
  * 256 KB ring (`buf.data`) that adopt-replay uses (live OR parked, so exited boards
