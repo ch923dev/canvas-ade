@@ -32,36 +32,39 @@ const assetUrlCache = new Map<string, { url: string; refs: number }>()
 
 /** Resolve an assetId to a blob: URL (null while loading or when the blob is missing). */
 function useAssetUrl(assetId: string): string | null {
-  const [url, setUrl] = useState<string | null>(() => assetUrlCache.get(assetId)?.url ?? null)
+  // Holds only the ASYNC-loaded URL. A cache hit needs no setState — the render below
+  // derives the URL straight from the shared cache, so the effect just does refcount +
+  // (on a miss) the async read. This keeps the effect free of a synchronous setState,
+  // which would force a redundant cascading render on every cache hit.
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     const cached = assetUrlCache.get(assetId)
     if (cached) {
       cached.refs++
-      setUrl(cached.url)
     } else {
       void window.api.asset
         .read(assetId)
         .then((bytes) => {
           if (cancelled) return
           if (!bytes) {
-            setUrl(null)
+            setLoadedUrl(null)
             return
           }
           const again = assetUrlCache.get(assetId)
           if (again) {
             again.refs++
-            setUrl(again.url)
+            setLoadedUrl(again.url)
             return
           }
           const ext = assetId.split('.').pop() ?? ''
           const mime = MIME_BY_EXT[ext] ?? 'application/octet-stream'
           const objUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }))
           assetUrlCache.set(assetId, { url: objUrl, refs: 1 })
-          setUrl(objUrl)
+          setLoadedUrl(objUrl)
         })
         .catch(() => {
-          if (!cancelled) setUrl(null)
+          if (!cancelled) setLoadedUrl(null)
         })
     }
     return () => {
@@ -76,7 +79,9 @@ function useAssetUrl(assetId: string): string | null {
       }
     }
   }, [assetId])
-  return url
+  // Cache hit (incl. a dedup share) resolves synchronously here; otherwise fall back to
+  // the async-loaded URL once the read lands.
+  return assetUrlCache.get(assetId)?.url ?? loadedUrl
 }
 
 export interface ImageCardProps {

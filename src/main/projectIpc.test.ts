@@ -10,7 +10,12 @@ const { store, recents } = vi.hoisted(() => ({
     createProject: vi.fn(),
     getCurrentDir: vi.fn(),
     setCurrentDir: vi.fn(),
-    projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir)
+    projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir),
+    // Open-time asset GC (T4): project:current sweeps orphan blobs after a successful
+    // read. Stub both so the handler runs in isolation — collectAssetIds yields the live
+    // id set, gcAssets is a no-op here (its own unit suite covers the sweep).
+    collectAssetIds: vi.fn(() => new Set<string>()),
+    gcAssets: vi.fn()
   },
   recents: {
     listRecents: vi.fn(),
