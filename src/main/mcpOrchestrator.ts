@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type {
   BoardId,
   BoardOutput,
@@ -6,11 +7,25 @@ import type {
   MemoryDoc,
   Orchestrator
 } from '@ch923dev/canvas-ade-mcp'
+import type { McpCommand, McpCommandAck } from './mcpCommand'
+
+/**
+ * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
+ * (the runaway-swarm guard, T3.1). Counted in the adapter; T3.4 adds idle-reaping +
+ * mirror reconciliation on top. Spawns past the cap are rejected with a clear error.
+ */
+export const MCP_SPAWN_CAP = 4
 
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
   listBoards(): Array<{ id: string; type: string; title: string; status?: string }>
   listSessions(): Array<{ id: string; status: string }>
+  /**
+   * Drive the canvas via the MAIN → renderer control-plane command channel (T3.1+).
+   * MAIN injects a frame-guarded `sendMcpCommand`; the renderer applies the command
+   * to `canvasStore` and acks. The ONLY write path from the MCP layer to the canvas.
+   */
+  sendCommand(command: McpCommand): Promise<McpCommandAck>
   /**
    * Read one capped, ANSI-stripped page of a board's PTY scrollback (T1.4 🔒).
    * MAIN injects `pty.ts`'s `readPtyOutput`; non-terminal/unknown ids read empty.
@@ -62,6 +77,11 @@ function deriveStatus(
 export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
   const sessionMap = (): Map<string, string> =>
     new Map(registry.listSessions().map((s) => [s.id, s.status]))
+  // Ids this orchestrator has spawned — the cap budget (T3.1). Per-instance closure
+  // state; T3.2 close_board removes from it, T3.4 reaps idle ids + reconciles vs the
+  // mirror. Overcounts (never undercounts) on a user-side manual close — the SAFE
+  // direction for a runaway guard until T3.4 reconciles.
+  const spawnedIds = new Set<string>()
   return {
     async listBoards(): Promise<BoardSummary[]> {
       const sessions = sessionMap()
@@ -91,8 +111,25 @@ export function buildOrchestrator(registry: BoardRegistry): Orchestrator {
       // 🔒 read-only passive context (T1.7). Path-guarded id; absent → empty shell.
       return registry.readSummary(boardId)
     },
-    async spawnBoard(): Promise<{ id: BoardId }> {
-      throw new Error('spawnBoard not available until Phase 3')
+    async spawnBoard(input: { type: string; prompt?: string; cwd?: string }): Promise<{
+      id: BoardId
+    }> {
+      // 🔒 Runaway-swarm guard: reject BEFORE minting/sending so a capped spawn has
+      // no side effects. (Cap-budget check; T3.4 reconciles + reaps idle ids.)
+      if (spawnedIds.size >= MCP_SPAWN_CAP) {
+        throw new Error(
+          `MCP spawn concurrency cap reached (${MCP_SPAWN_CAP} live spawned boards); close one first`
+        )
+      }
+      // MAIN mints the id (server-issued) so the tool can return it to the agent and
+      // later lifecycle tools (close/configure) can address the exact board. The
+      // renderer builds the full board (free-slot placement, per-type defaults).
+      // `prompt`/`cwd` are accepted now but applied in T3.3 (configure_board).
+      const id = randomUUID()
+      const ack = await registry.sendCommand({ type: 'addBoard', board: { id, type: input.type } })
+      if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
+      spawnedIds.add(id)
+      return { id }
     },
     async dispatchPrompt(): Promise<void> {
       throw new Error('dispatchPrompt not available until Phase 4')

@@ -85,8 +85,12 @@ export interface CanvasState {
   /** Mark the project as loading (suppresses autosave mid-switch). */
   setProjectLoading: () => void
 
-  /** Add a board of `type` at a world position; selects it; returns its new id. */
-  addBoard: (type: BoardType, at: { x: number; y: number }) => string
+  /**
+   * Add a board of `type` at a world position; selects it; returns its id. `opts.id`
+   * injects a caller-minted id (the MCP `spawn_board` path mints the id in MAIN so
+   * the tool can return it to the agent); omitted → the store mints one.
+   */
+  addBoard: (type: BoardType, at: { x: number; y: number }, opts?: { id?: string }) => string
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
@@ -325,8 +329,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   viewport: null,
   project: { dir: null, name: null, status: 'welcome' },
 
-  addBoard: (type, at) => {
-    const id = newId()
+  addBoard: (type, at, opts) => {
+    const id = opts?.id ?? newId()
     const pos = freeSlot(get().boards, at, DEFAULT_BOARD_SIZE[type])
     const board = createBoard(type, { id, x: pos.x, y: pos.y })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns

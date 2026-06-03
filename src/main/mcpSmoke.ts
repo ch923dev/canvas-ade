@@ -95,6 +95,8 @@ interface SmokeClient {
   readMemory(): Promise<MemoryShell | null>
   /** Read canvas://board/{id}/summary. Null when not registered → SKIP. */
   readSummaryDoc(id: string): Promise<MemoryShell | null>
+  /** Call the spawn_board write tool (T3.1). Resolves with the outcome (isError on tier denial). */
+  callSpawn(type: string): Promise<CallOutcome>
   close(): Promise<void>
 }
 
@@ -278,6 +280,16 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         const code = (e as { code?: number })?.code
         if (code === -32602 || /resource .*not found/i.test(String(e))) return null
         throw e
+      }
+    },
+    callSpawn: async (type: string): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({ name: 'spawn_board', arguments: { type } })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
       }
     },
     close: () => client.close()
@@ -583,6 +595,52 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
     else {
       log(`MCP_FAIL command ${JSON.stringify(ack)}`)
       code = 1
+    }
+
+    // ── lifecycle spawn (T3.1, the first WRITE tool): the capability split is the
+    // load-bearing safety guarantee — the orchestrator tier can spawn_board (and the
+    // renderer actually creates the board, round-tripping the command channel), while a
+    // worker tier is DENIED the tool SERVER-SIDE (registration, not prompt). Verified
+    // against the real running app. Self-activating: SKIP on a pkg without spawn_board
+    // (the published ^0.2.4 floor) so the gate stays green until 0.4.0 is published. ──
+    if (hookReady) {
+      const orchHasSpawn = orch.list.includes('spawn_board')
+      if (!orchHasSpawn) {
+        log('MCP_SPAWN_SKIP pkg<0.4.0-unpublished')
+      } else {
+        // 1) tier split: a worker's tools/list must NOT contain the write tool.
+        const splitOk = !worker.list.includes('spawn_board')
+        // 2) orchestrator spawns a terminal → the tool returns the new board id, and
+        //    that board lands on the canvas (the command round-tripped to the renderer).
+        const spawn = await orch.callSpawn('terminal')
+        const spawnedId =
+          spawn.ok && !isErrorResult(spawn.result) ? resultText(spawn.result).trim() : ''
+        const onCanvas = spawnedId
+          ? await poll(
+              () =>
+                evalIn<boolean>(
+                  `!!window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(spawnedId)})`
+                ),
+              6000
+            )
+          : false
+        // 3) worker DENIED: calling the unregistered write tool yields the SPECIFIC
+        //    tool-not-found isError (not a transport error, not a generic miss).
+        const workerSpawn = await worker.callSpawn('terminal')
+        const workerDenied =
+          workerSpawn.ok &&
+          isErrorResult(workerSpawn.result) &&
+          resultText(workerSpawn.result).includes('Tool spawn_board not found')
+        // Restore baseline (close_board lands in T3.2; here remove via the store hook).
+        if (spawnedId) await evalIn(`window.__canvasE2E.deleteBoard(${JSON.stringify(spawnedId)})`)
+        if (splitOk && spawnedId && onCanvas && workerDenied) log('MCP_SPAWN_OK')
+        else {
+          log(
+            `MCP_FAIL spawn split=${splitOk} id=${spawnedId} onCanvas=${onCanvas} workerDenied=${workerDenied}`
+          )
+          code = 1
+        }
+      }
     }
 
     await orch.close()

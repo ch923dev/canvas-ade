@@ -50,6 +50,21 @@ describe('addBoard', () => {
     expect(a).not.toBe(b)
   })
 
+  it('uses an injected id when provided (the MCP spawn_board path)', () => {
+    // spawn_board mints the id in MAIN and passes it to the renderer so the tool
+    // can return that exact id to the agent; the store must honour it verbatim.
+    const id = get().addBoard('terminal', { x: 5, y: 5 }, { id: 'srv-issued-id' })
+    expect(id).toBe('srv-issued-id')
+    expect(get().boards.map((b) => b.id)).toContain('srv-issued-id')
+  })
+
+  it('an injected-id add is ONE undo step (rides the M2 tracked rail)', () => {
+    get().addBoard('terminal', { x: 0, y: 0 }, { id: 'srv-1' })
+    expect(get().past).toHaveLength(1)
+    get().undo()
+    expect(get().boards).toHaveLength(0)
+  })
+
   it('cascades a board added at an already-occupied position so they do not fully stack', () => {
     get().addBoard('terminal', { x: 100, y: 100 })
     get().addBoard('terminal', { x: 100, y: 100 })

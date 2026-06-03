@@ -17,6 +17,7 @@ import { registerProjectHandlers } from './projectIpc'
 import { startMcpServer, type RunningMcp } from './mcp'
 import { runMcpSmoke } from './mcpSmoke'
 import { listBoardMirror, registerBoardRegistryHandler } from './boardRegistry'
+import { sendMcpCommand } from './mcpCommand'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -171,7 +172,9 @@ app.whenReady().then(async () => {
     readOutput: readPtyOutput,
     readResult: readBoardResult,
     readMemory: readProjectMemory,
-    readSummary: readBoardSummary
+    readSummary: readBoardSummary,
+    // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
+    sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command)
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))

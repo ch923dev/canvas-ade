@@ -1,17 +1,34 @@
 import { describe, expect, it } from 'vitest'
 import type { BoardOutput, BoardResult, MemoryDoc } from '@ch923dev/canvas-ade-mcp'
-import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
+import { buildOrchestrator, MCP_SPAWN_CAP, type BoardRegistry } from './mcpOrchestrator'
+import type { McpCommand, McpCommandAck } from './mcpCommand'
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
 const EMPTY_RESULT: BoardResult = { present: false }
 const EMPTY_MEMORY: MemoryDoc = { present: false, text: '' }
+
+/** A sendCommand that always acks ok and records the commands it saw. */
+function okCommands(): { sendCommand: BoardRegistry['sendCommand']; seen: McpCommand[] } {
+  const seen: McpCommand[] = []
+  return {
+    seen,
+    sendCommand: async (cmd) => {
+      seen.push(cmd)
+      return { ok: true, type: cmd.type }
+    }
+  }
+}
 
 function reg(
   boards: Array<{ id: string; type: string; title: string; status?: string }>,
   sessions: Array<{ id: string; status: string }> = [],
   outputs: Record<string, BoardOutput> = {},
   resultsById: Record<string, BoardResult> = {},
-  memory: { project?: MemoryDoc; summaries?: Record<string, MemoryDoc> } = {}
+  memory: { project?: MemoryDoc; summaries?: Record<string, MemoryDoc> } = {},
+  sendCommand: BoardRegistry['sendCommand'] = async (cmd): Promise<McpCommandAck> => ({
+    ok: true,
+    type: cmd.type
+  })
 ): BoardRegistry {
   return {
     listBoards: () => boards,
@@ -19,7 +36,8 @@ function reg(
     readOutput: (id) => outputs[id] ?? EMPTY_OUTPUT,
     readResult: (id) => resultsById[id] ?? EMPTY_RESULT,
     readMemory: () => memory.project ?? EMPTY_MEMORY,
-    readSummary: (id) => memory.summaries?.[id] ?? EMPTY_MEMORY
+    readSummary: (id) => memory.summaries?.[id] ?? EMPTY_MEMORY,
+    sendCommand
   }
 }
 
@@ -99,7 +117,8 @@ describe('buildOrchestrator', () => {
       },
       readResult: () => EMPTY_RESULT,
       readMemory: () => EMPTY_MEMORY,
-      readSummary: () => EMPTY_MEMORY
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => ({ ok: true, type: cmd.type })
     })
     expect(await orch.boardOutput('t1', { cursor: 12345 })).toEqual(page)
     expect(seenCursor).toBe(12345)
@@ -130,10 +149,36 @@ describe('buildOrchestrator', () => {
     expect(await orch.boardSummary('ghost')).toEqual(EMPTY_MEMORY)
   })
 
-  it('spawnBoard / dispatchPrompt / gitDiff are phase-gated', async () => {
+  it('dispatchPrompt / gitDiff stay phase-gated (M3 unblocks ONLY spawn)', async () => {
     const orch = buildOrchestrator(reg([]))
-    await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/Phase 3/)
     await expect(orch.dispatchPrompt('b', 'x')).rejects.toThrow(/Phase 4/)
     await expect(orch.gitDiff('b')).rejects.toThrow(/Phase 6/)
+  })
+
+  describe('spawnBoard (T3.1, lifecycle write)', () => {
+    it('mints an id, issues an addBoard command with it, and returns it', async () => {
+      const { sendCommand, seen } = okCommands()
+      const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand))
+      const { id } = await orch.spawnBoard({ type: 'terminal' })
+      expect(typeof id).toBe('string')
+      expect(id.length).toBeGreaterThan(0)
+      expect(seen).toEqual([{ type: 'addBoard', board: { id, type: 'terminal' } }])
+    })
+
+    it('throws when the renderer rejects the command (no silent failure)', async () => {
+      const orch = buildOrchestrator(
+        reg([], [], {}, {}, {}, async () => ({ ok: false, error: 'no-window' }))
+      )
+      await expect(orch.spawnBoard({ type: 'browser' })).rejects.toThrow(/no-window/)
+    })
+
+    it('🔒 rejects a spawn once the concurrency cap is reached', async () => {
+      const { sendCommand } = okCommands()
+      const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand))
+      for (let i = 0; i < MCP_SPAWN_CAP; i++) {
+        await orch.spawnBoard({ type: 'terminal' })
+      }
+      await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+    })
   })
 })
