@@ -1,6 +1,6 @@
 /**
- * In-process E2E test surface (Stage 1). Everything here is INERT unless the page
- * was loaded with `?e2e=1` (set only by MAIN under `CANVAS_SMOKE=e2e`). This is a
+ * In-process E2E test surface. Everything here is INERT unless the page
+ * was loaded with `?e2e=1` (set only by MAIN under `CANVAS_E2E`). This is a
  * registry + a flag — NOT a security change: `sandbox`/`contextIsolation`/
  * `nodeIntegration` are untouched, and nothing here is reachable in normal runs.
  */

@@ -19,7 +19,7 @@ function App(): React.ReactElement {
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
 
   useEffect(() => {
-    // E2E (CANVAS_SMOKE=e2e) seeds boards directly and never opens a project. Flip to
+    // E2E (CANVAS_E2E) seeds boards directly and never opens a project. Flip to
     // `open` so the canvas mounts (and installs `window.__canvasE2E`); the disk path
     // (project.current) is irrelevant under the harness.
     if (isE2E()) {

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from './canvasStore'
-import { SCHEMA_VERSION, toObject, createBoard } from '../lib/boardSchema'
+import { SCHEMA_VERSION, toObject, createBoard, fromObject } from '../lib/boardSchema'
+import { makeChecklist } from '../canvas/boards/planning/elements'
 
 const get = () => useCanvasStore.getState()
 
@@ -727,6 +728,24 @@ describe('tidyBoards', () => {
     expect(at(b1).y).toBe(at(b2).y)
     expect(at(src).y).toBeGreaterThan(at(b1).y)
   })
+
+  // Migrated from the e2e `tidy` probe (the horizontal-span-reduction assertion). The
+  // probe's no-overlap / type-grouping checks are already covered above; this adds the
+  // "smart tidy packs a wide spread into a tighter span" contract at the store tier.
+  it('packs scattered boards into a tighter horizontal span (smart)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const st = get()
+    st.addBoard('terminal', { x: 0, y: 0 })
+    st.addBoard('browser', { x: 3000, y: 0 })
+    st.addBoard('browser', { x: 6000, y: 0 })
+    const span = (): number => {
+      const bs = get().boards
+      return Math.max(...bs.map((b) => b.x + b.w)) - Math.min(...bs.map((b) => b.x))
+    }
+    const before = span()
+    get().tidyBoards('smart')
+    expect(span()).toBeLessThan(before)
+  })
 })
 
 describe('tileBoards (resize-to-fill)', () => {
@@ -799,5 +818,21 @@ describe('tileBoards (resize-to-fill)', () => {
       w: before.w,
       h: before.h
     })
+  })
+})
+
+describe('planning board — addChecklist + schema round-trip (migrated from e2e planning)', () => {
+  it('appends a checklist element and the whole canvas still round-trips', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const id = get().addBoard('planning', { x: 0, y: 0 })
+    const b = get().boards.find((x) => x.id === id)!
+    if (b.type !== 'planning') throw new Error('expected planning board')
+    const cl = makeChecklist(crypto.randomUUID(), crypto.randomUUID(), { x: 60, y: 60 })
+    get().updateBoard(id, { elements: [...b.elements, cl] } as never)
+
+    const after = get().boards.find((x) => x.id === id)!
+    const kinds = after.type === 'planning' ? after.elements.map((e) => e.kind) : []
+    expect(kinds).toContain('checklist')
+    expect(() => fromObject(get().toObject())).not.toThrow()
   })
 })

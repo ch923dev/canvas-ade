@@ -12,6 +12,7 @@ import {
   reapParkedCore,
   cleanupCore,
   disposeAllPtysCore,
+  killTreeCommand,
   safeCwd
 } from './pty'
 import type { ShellInfo } from './pty'
@@ -167,6 +168,35 @@ describe('isForeignSender (M6 — frame guard)', () => {
 
   it('DENIES a real sender when the window/main-frame is unresolved (null)', () => {
     expect(isForeignSender({ senderFrame: otherFrame } as never, () => null)).toBe(true)
+  })
+})
+
+// T5: the OS process-tree kill command builder. Extracted pure so the actual
+// argv/signal (previously buried in the private killTree) is asserted directly —
+// agentic CLIs spawn child trees; a bare kill leaves orphans.
+describe('killTreeCommand (T5 — process-tree kill builder)', () => {
+  it('builds `taskkill /PID <pid> /T /F` on win32', () => {
+    expect(killTreeCommand('win32', 1234)).toEqual({
+      kind: 'taskkill',
+      file: 'taskkill',
+      args: ['/PID', '1234', '/T', '/F']
+    })
+  })
+
+  it('targets the negative pgid with SIGKILL on linux', () => {
+    expect(killTreeCommand('linux', 1234)).toEqual({
+      kind: 'pgid',
+      pgid: -1234,
+      signal: 'SIGKILL'
+    })
+  })
+
+  it('targets the negative pgid with SIGKILL on darwin', () => {
+    expect(killTreeCommand('darwin', 999)).toEqual({
+      kind: 'pgid',
+      pgid: -999,
+      signal: 'SIGKILL'
+    })
   })
 })
 

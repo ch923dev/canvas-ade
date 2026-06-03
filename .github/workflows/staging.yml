@@ -31,30 +31,10 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
-  #
-  # FROZEN (2026-06-03): DISABLED until we build a structured testing setup (larger e2e
-  # reliability issue + the known CI-only `whiteboard-fullview-add` flake). `check` is the
-  # gate meanwhile. Re-enable by removing this `if: false`. See CLAUDE.md › Status.
-  smoke:
-    if: false
-    needs: check
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Board e2e smoke
-        run: pnpm start
-        env:
-          CANVAS_SMOKE: e2e
+  # NOTE: e2e (Playwright _electron) is NOT a GitHub Actions job. It runs LOCALLY as a
+  # pre-commit gate (the full Windows + Linux matrix via `.githooks/pre-commit` →
+  # `pnpm test:e2e:matrix`). Decided 2026-06-03 — Actions e2e was billing-blocked, and
+  # the native/Docker e2e is cheaper + faster on the dev box. See docs/testing/TESTING.md.
 
   # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
   package:

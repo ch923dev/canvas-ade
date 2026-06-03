@@ -762,7 +762,7 @@ function CanvasInner(): ReactElement {
     }
   }, [])
 
-  // E2E (CANVAS_SMOKE=e2e): expose the imperative test hook once the canvas (and its
+  // E2E (CANVAS_E2E): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
   useEffect(() => {
     if (isE2E())
