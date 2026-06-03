@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { registerPtyHandlers, disposeAllPtys } from './pty'
+import { registerPtyHandlers, disposeAllPtys, listPtySessions } from './pty'
 import {
   registerPreviewHandlers,
   disposeAll as disposeAllPreviews,
@@ -12,11 +12,15 @@ import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2e'
 import { registerProjectHandlers } from './projectIpc'
+import { startMcpServer, type RunningMcp } from './mcp'
+import { runMcpSmoke } from './mcpSmoke'
+import { listBoardMirror, registerBoardRegistryHandler } from './boardRegistry'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
+let mcp: RunningMcp | null = null
 
-const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "e2e"=board harness+quit
+const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "e2e"=board harness+quit, "mcp"=MCP tier smoke+quit
 
 // Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
 // pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
@@ -123,14 +127,16 @@ function createWindow(): void {
     })
   }
 
-  const e2e = SMOKE === 'e2e'
+  // The mcp smoke also needs the renderer's seeding hook (window.__canvasE2E) to
+  // populate the board mirror, so load with ?e2e=1 for both the e2e and mcp smokes.
+  const seedHarness = SMOKE === 'e2e' || SMOKE === 'mcp'
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
-    mainWindow.loadURL(e2e ? `${base}?e2e=1` : base)
+    mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
   } else {
     mainWindow.loadFile(
       join(__dirname, '../renderer/index.html'),
-      e2e ? { query: { e2e: '1' } } : undefined
+      seedHarness ? { query: { e2e: '1' } } : undefined
     )
   }
 }
@@ -156,6 +162,8 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  registerBoardRegistryHandler(ipcMain, () => mainWindow)
+  mcp = await startMcpServer({ listBoards: listBoardMirror, listSessions: listPtySessions })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
 
@@ -163,7 +171,12 @@ app.whenReady().then(async () => {
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
-      if (SMOKE === 'e2e') {
+      if (SMOKE === 'mcp') {
+        const code = await runMcpSmoke(mcp, mainWindow!)
+        process.exitCode = code
+        await shutdown()
+        app.exit(code)
+      } else if (SMOKE === 'e2e') {
         const code = await runE2ESmoke(mainWindow!, localServer!.url)
         process.exitCode = code
         // app.exit() (not app.quit()): on Windows app.quit() ignores process.exitCode,
@@ -198,9 +211,11 @@ app.whenReady().then(async () => {
 function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
   disposeAllPreviews()
+  const mcpClosed = mcp?.close() ?? Promise.resolve()
+  mcp = null
   localServer?.close()
   localServer = null
-  return drained
+  return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 
 /**

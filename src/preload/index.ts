@@ -165,6 +165,12 @@ const api = {
       defaultName: string
     }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
       ipcRenderer.invoke('export:save', args)
+  },
+
+  // ── MCP board mirror (control plane; metadata only — id/type/title, never content) ──
+  mcp: {
+    publishBoards: (boards: Array<{ id: string; type: string; title: string }>): void =>
+      ipcRenderer.send('mcp:boards', boards)
   }
 }
 

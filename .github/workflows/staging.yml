@@ -9,6 +9,15 @@ on:
 
 permissions:
   contents: read
+  # Read @ch923dev/canvas-ade-mcp from GitHub Packages. The canvas-ade repo must be
+  # granted read access to that package for this token to resolve it (Package →
+  # Settings → Manage Actions access → add canvas-ade: Read).
+  packages: read
+
+# Auth for the GitHub Packages registry (@ch923dev scope in .npmrc). Applies to
+# every job's `pnpm install`.
+env:
+  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   check:
@@ -55,6 +64,12 @@ jobs:
         run: pnpm start
         env:
           CANVAS_SMOKE: e2e
+      # MCP live tier + all-board-listing smoke against the real running app.
+      # runMcpSmoke sets process.exitCode + app.exit(code), so a failed assertion fails the job.
+      - name: MCP smoke
+        run: pnpm start
+        env:
+          CANVAS_SMOKE: mcp
 
   # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
   package:
