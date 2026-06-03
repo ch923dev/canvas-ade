@@ -30,42 +30,7 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  # Playwright _electron e2e gate (T5). Runs the real built app on a Win + Linux
-  # matrix — the ONLY tier allowed to touch the native layer (WebContentsView /
-  # node-pty / OS process-tree kill). Separate from `check` (Vitest stays the unit/
-  # integration gate). Linux needs Xvfb + --no-sandbox (set in e2e/fixtures.ts).
-  smoke:
-    needs: check
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: corepack enable
-      # postinstall (electron-builder install-app-deps) rebuilds node-pty for the
-      # Electron ABI on every OS — no extra rebuild step needed.
-      - run: pnpm install --frozen-lockfile
-      - name: Install Xvfb (Linux only)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-      - name: Playwright e2e (Linux, under Xvfb)
-        if: runner.os == 'Linux'
-        run: xvfb-run -a pnpm test:e2e
-      - name: Playwright e2e (Windows)
-        if: runner.os == 'Windows'
-        run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: playwright-report-${{ matrix.os }}
-          path: playwright-report/
-          if-no-files-found: ignore
-          retention-days: 7
+  # NOTE: e2e (Playwright _electron) is NOT a GitHub Actions job. It runs LOCALLY as a
+  # pre-commit gate (the full Windows + Linux matrix via `.githooks/pre-commit` →
+  # `pnpm test:e2e:matrix`). Decided 2026-06-03 — Actions e2e was billing-blocked, and
+  # the native/Docker e2e is cheaper + faster on the dev box. See docs/testing/TESTING.md.

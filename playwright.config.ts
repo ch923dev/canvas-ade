@@ -10,10 +10,11 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  // Bounded CI retries: browser-trio / whiteboard-fullview-add are documented ENV
-  // capturePage/determinism flakes on contended runners (memory e2e-browser-trio-flake),
-  // not bugs. 0 locally so a real local failure is loud. workers:1 stays.
-  retries: process.env.CI ? 2 : 0,
+  // Bounded retries: browser-trio / whiteboard-fullview-add are documented ENV
+  // capturePage/determinism flakes (memory e2e-browser-trio-flake), not bugs. On in
+  // CI and in the pre-commit hook (E2E_PRECOMMIT) so the flake can't false-block a
+  // commit; 0 for a plain local run so a real failure is loud. workers:1 stays.
+  retries: process.env.CI || process.env.E2E_PRECOMMIT ? 2 : 0,
   reporter: [['list']],
   timeout: 60_000,
   expect: { timeout: 15_000 }

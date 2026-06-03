@@ -161,18 +161,19 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 
 ## Status
 
-> **✅ E2E GATE RE-ENABLED (2026-06-03, T5).** The brittle `CANVAS_SMOKE=e2e` harness is gone
-> (replaced by Playwright `_electron`, T4). The `smoke` job now runs `pnpm test:e2e` on a
-> **windows-latest + ubuntu-latest** matrix in `pr.yml` + `staging.yml` (`needs: check`, separate
-> from the Vitest `check` gate); `if: false` is removed. Flake policy: `retries: 2` on CI,
-> `workers: 1`. This **supersedes** the 2026-06-03 freeze and restores "e2e is a gate". The `check`
-> job (typecheck · lint · format:check · unit + integration) and `smoke` are BOTH gates — don't
-> merge red. The one e2e-only surface still uncovered is **auto-update** (deferred to Phase 5 —
-> needs packaging/electron-updater). *Verification: both legs proven green + stable post-fix —
-> Windows on the dev machine, the ubuntu-latest leg green ×2 consecutive locally via Docker
-> (`Dockerfile.e2e`; `docker run -t` to avoid a non-TTY buffering false-hang). The Actions `smoke`
-> job auto-runs once Actions billing is restored (paused 2026-06-03); the matrix already caught +
-> verified-fixed a Windows-only `RangeError`/pid-reuse bug. See `docs/testing/TESTING.md`.*
+> **✅ E2E IS A LOCAL PRE-COMMIT GATE (2026-06-03, T5).** The brittle `CANVAS_SMOKE=e2e` harness is
+> gone (replaced by Playwright `_electron`, T4). **e2e does NOT run in GitHub Actions** — it was
+> billing-blocked there, and the native/Docker e2e is cheaper + faster on the dev box. Instead the
+> full **Windows-native + Linux-Docker matrix** runs **locally as a `pre-commit` hook**
+> (`.githooks/pre-commit` → `pnpm test:e2e:matrix`; enabled by the `prepare` script via
+> `core.hooksPath`). Flake policy: `retries:2` in CI/pre-commit (`E2E_PRECOMMIT`), `workers:1`.
+> Bypass a WIP commit with `git commit --no-verify`. **CI gate = the Actions `check` job only**
+> (typecheck · lint · format:check · unit + integration); the `smoke` job was removed from `pr.yml`
+> + `staging.yml`. This **supersedes** the 2026-06-03 freeze. Both legs proven green: Windows on the
+> dev machine (21/21), the Linux leg ×2 via Docker (`Dockerfile.e2e`). The matrix already caught +
+> verified-fixed a Windows-only `RangeError`/pid-reuse bug. One e2e-only surface still uncovered:
+> **auto-update** (deferred to Phase 5 — needs packaging/electron-updater). See
+> `docs/testing/TESTING.md`.
 
 Durable contract is above. **Build history** (phases 0–5, per-slice specs/plans, phase handoffs)
 is summarized in **`docs/archive/build-history.md`** (originals in git history). **Review/bug-hunt

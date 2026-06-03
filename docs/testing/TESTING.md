@@ -144,35 +144,36 @@ self-running or auto-quitting — Playwright drives and closes the app.
 `nodeIntegration:true`, which violates the locked sandbox. We use `electronApp.evaluate` + the MAIN
 registry exclusively. Never flip the sandbox to make a test pass.
 
-**CI gate (T5):** the Playwright suite is wired back as a CI gate — the `smoke` job runs
-`pnpm test:e2e` on a **windows-latest + ubuntu-latest** matrix in `pr.yml` + `staging.yml`
-(`needs: check`, separate from the Vitest gate). Linux runs under `xvfb-run -a` with CI-gated
-`--no-sandbox` + `--disable-dev-shm-usage` on the test launch only (the spike proved capturePage is
-non-blank on both runners — **no GL flag needed**; the app sandbox is untouched). Flake policy:
-`retries: 2` on CI, `workers: 1`. Process-tree-kill is covered by `killTreeCommand` (unit, both
-platforms — Windows `taskkill /T /F`, POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned
-child prints its pid; the probe asserts that exact pid is reaped after `deleteBoard` + `disposeAllPtys`,
-robust against OS pid reuse). *Verification: both legs are proven green + stable post-fix — Windows on
-the dev machine (21/21) and the ubuntu-latest leg green ×2 consecutive locally via Docker
-(`Dockerfile.e2e`, see below). The GitHub Actions `smoke` job is wired and will run automatically once
-Actions billing is restored (paused 2026-06-03); the matrix itself already caught + verified-fixed a
-Windows-only `RangeError`/pid-reuse bug.*
+**The e2e gate (T5) — LOCAL pre-commit, not GitHub Actions.** e2e was billing-blocked in Actions and
+the native/Docker e2e is cheaper + faster on the dev box, so e2e runs as a **`pre-commit` hook** that
+executes the full **Windows-native + Linux-Docker matrix** (`.githooks/pre-commit` →
+`pnpm test:e2e:matrix`). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
+Actions CI gate is now the `check` job only (typecheck · lint · format · unit + integration).
+Process-tree-kill is covered by `killTreeCommand` (unit, both platforms — Windows `taskkill /T /F`,
+POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned child prints its pid; the probe asserts
+that exact pid is reaped after `deleteBoard` + `disposeAllPtys`, robust against OS pid reuse). Both legs
+proven green: Windows on the dev machine (21/21), the Linux leg ×2 via Docker. The spike confirmed
+capturePage is non-blank on both with `--no-sandbox` + `--disable-dev-shm-usage` (Linux) — **no GL flag
+needed**; the app sandbox is untouched.
 
-### Local e2e matrix without GitHub Actions (`Dockerfile.e2e`)
+### The pre-commit hook + the local e2e matrix
 
-The full CI matrix runs on one Windows dev box — no Actions minutes:
+The hook (`.githooks/pre-commit`) is enabled per-clone by the `package.json` `prepare` script
+(`git config core.hooksPath .githooks`, run on install). On commit it runs the full matrix; bypass a
+WIP commit with `git commit --no-verify`. It checks Docker is up first (the Linux leg needs it) and
+sets `E2E_PRECOMMIT=1` so Playwright uses `retries:2` (the documented browser-trio env flake can't
+false-block a commit). Run the legs directly:
 
 | Command | Leg | How |
 |---|---|---|
 | `pnpm test:e2e` | **Windows** | native (real ConPTY + WebContentsView on this OS) |
 | `pnpm test:e2e:linux` | **Linux** | Docker (`Dockerfile.e2e`: `node:22-bookworm` + Xvfb + `xauth` + Electron libs; `pnpm install` rebuilds node-pty for the Electron ABI; `CI=1` → `--no-sandbox`) |
-| `pnpm test:e2e:matrix` | **both** | runs the Windows leg then the Linux leg; both must pass |
+| `pnpm test:e2e:matrix` | **both** | the Windows leg then the Linux leg; both must pass (what the hook runs) |
 
 The Docker image's CMD builds then runs `xvfb-run -a … --reporter=line` — the `line` reporter streams
-without a TTY, so `docker run` works from a pnpm/CI pipe. (The default `list` reporter does tty
+without a TTY, so `docker run` works from a pnpm pipe. (The default `list` reporter does tty
 cursor-control that blocks on a non-TTY stdout → the run looks hung with zero output; that's why the
-container forces `line`.) Local runs use `retries:0`, so the documented browser-trio env flake may
-need a rerun-for-clean — CI uses `retries:2`.
+container forces `line`.)
 
 **Still owed (deferred to Phase 5):** an **auto-update** e2e — electron-updater / packaging / signing
 don't exist yet, so the update flow can't be e2e-tested. It is the one remaining e2e-only surface.

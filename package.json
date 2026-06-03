@@ -32,6 +32,7 @@
     "test:e2e:matrix": "pnpm test:e2e && pnpm test:e2e:linux",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-builder install-app-deps",
+    "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks')}catch(e){}\"",
     "pack:dir": "electron-vite build && electron-builder --dir",
     "build:win": "electron-vite build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
