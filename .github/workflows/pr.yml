@@ -1,0 +1,52 @@
+name: pr
+
+# Pull-request gate: validation only. No packaging, no artifact upload.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast feedback: typecheck + lint + tests + bundle on Linux.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # node-gyp (rebuilds node-pty in postinstall) imports distutils, removed from
+      # the Python 3.12 stdlib that GitHub runners now ship — pin 3.11 (has distutils).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm test
+      - run: pnpm build
+
+  # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
+  # runE2ESmoke sets process.exitCode + app.exit(code), so a failed assertion fails the job.
+  smoke:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Board e2e smoke
+        run: pnpm start
+        env:
+          CANVAS_SMOKE: e2e
