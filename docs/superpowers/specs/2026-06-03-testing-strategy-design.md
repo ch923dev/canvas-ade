@@ -190,6 +190,11 @@ confirms `setBounds`/`capturePage` fire and produce a non-blank frame). See
 **New dep:** `@playwright/test` (devDependency).
 
 ### T5 — Re-enable gate + auto-update e2e
+> **Superseded by the detailed design:** `docs/superpowers/specs/2026-06-03-testing-t5-ci-gate-design.md`
+> (this sketch predates T4 shipping — "remove `if: false`" alone is incomplete; the smoke job is
+> STALE, runs the deleted `CANVAS_SMOKE=e2e` mode, and must be REWRITTEN to `pnpm test:e2e` on a
+> Windows+Linux matrix). Auto-update is deferred to Phase 5 there.
+
 **Goal:** trustworthy e2e back as a CI gate; cover the genuinely-e2e-only surfaces.
 
 **Work:** remove `if: false` from the `smoke` job in `.github/workflows/pr.yml` and `staging.yml`;
