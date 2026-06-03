@@ -62,7 +62,13 @@ export function buildRequest(
     }
   }
   // OpenAI-compatible shape (openrouter / openai / local)
-  const base = provider === 'local' ? (config.baseUrl ?? '') : OPENAI_SHAPE_BASE[provider]
+  let base: string
+  if (provider === 'local') {
+    if (!config.baseUrl) throw new Error('local provider requires a baseUrl in config')
+    base = config.baseUrl
+  } else {
+    base = OPENAI_SHAPE_BASE[provider]
+  }
   return {
     url: `${base}/chat/completions`,
     headers: {
@@ -78,7 +84,7 @@ export function parseResponse(provider: ProviderName, json: unknown): string {
   const j = json as Record<string, unknown>
   if (provider === 'anthropic') {
     const content = j.content as { type?: string; text?: string }[] | undefined
-    const text = content?.find((c) => c.type === 'text')?.text ?? content?.[0]?.text
+    const text = content?.find((c) => c.type === 'text')?.text
     if (typeof text !== 'string') throw new Error('anthropic: no content text in response')
     return text
   }

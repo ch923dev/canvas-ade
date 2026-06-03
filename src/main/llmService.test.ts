@@ -49,6 +49,12 @@ describe('buildRequest', () => {
     const body = JSON.parse(r.body) as { messages: { role: string }[] }
     expect(body.messages).toEqual([{ role: 'user', content: 'hi' }])
   })
+
+  it('throws when the local provider has no baseUrl', () => {
+    expect(() =>
+      buildRequest('local', { provider: 'local', model: 'm' }, '', { text: 'hi' })
+    ).toThrow(/baseUrl/)
+  })
 })
 
 describe('parseResponse', () => {
