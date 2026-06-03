@@ -73,7 +73,19 @@ function digestBrowser(b: BrowserBoard, d: CanvasDoc): BoardDigest {
   }
 }
 function digestPlanning(b: PlanningBoard): BoardDigest {
-  return base(b)
+  const checklists = b.elements.filter((e): e is ChecklistElement => e.kind === 'checklist')
+  const noteCount = b.elements.filter((e) => e.kind === 'note').length
+  const lines: string[] = []
+  for (const c of checklists) {
+    const done = c.items.filter((i) => i.done).length
+    lines.push(`${c.title}: ${done}/${c.items.length} done`)
+  }
+  if (noteCount > 0) lines.push(`${noteCount} note${noteCount === 1 ? '' : 's'}`)
+  if (lines.length === 0) lines.push('Empty board')
+  const totalItems = checklists.reduce((s, c) => s + c.items.length, 0)
+  const totalDone = checklists.reduce((s, c) => s + c.items.filter((i) => i.done).length, 0)
+  const status = checklists.length > 0 ? `${totalDone}/${totalItems} done` : 'notes'
+  return { boardId: b.id, type: 'planning', title: b.title, status, lines }
 }
 
 function digestBoard(b: Board, d: CanvasDoc): BoardDigest {

@@ -98,3 +98,45 @@ describe('buildDigest — browser', () => {
     expect(d.boards[0].lines).toContain('Preview of "missing"')
   })
 })
+
+import type { ChecklistElement, NoteElement } from './boardSchema'
+
+function checklist(title: string, done: number, total: number): ChecklistElement {
+  const items = Array.from({ length: total }, (_, i) => ({
+    id: `i${i}`,
+    label: `item ${i}`,
+    done: i < done
+  }))
+  return { kind: 'checklist', id: `c-${title}`, x: 0, y: 0, w: 240, h: 0, title, items }
+}
+function note(id: string): NoteElement {
+  return { kind: 'note', id, x: 0, y: 0, w: 160, h: 120, tint: 'yellow', text: 'hi' }
+}
+
+describe('buildDigest — planning', () => {
+  it('reports checklist progress and note count', () => {
+    const d = buildDigest(
+      doc([
+        planning({
+          id: 'p1',
+          elements: [checklist('Auth', 1, 3), checklist('UI', 2, 2), note('n1'), note('n2')]
+        })
+      ])
+    )
+    const p = d.boards[0]
+    expect(p.lines).toEqual(['Auth: 1/3 done', 'UI: 2/2 done', '2 notes'])
+    expect(p.status).toBe('3/5 done')
+  })
+
+  it('uses singular "note" for one note and notes status with no checklist', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [note('n1')] })]))
+    expect(d.boards[0].lines).toEqual(['1 note'])
+    expect(d.boards[0].status).toBe('notes')
+  })
+
+  it('labels a truly empty planning board', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [] })]))
+    expect(d.boards[0].lines).toEqual(['Empty board'])
+    expect(d.boards[0].status).toBe('notes')
+  })
+})
