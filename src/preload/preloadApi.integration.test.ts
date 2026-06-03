@@ -116,6 +116,11 @@ describe('preload api → project / asset / dialog / export channels', () => {
       'export.save',
       (a: CanvasApi) => a.export.save({ bytes: BYTES, ext: 'svg', defaultName: 'board' }),
       ['export:save', { bytes: BYTES, ext: 'svg', defaultName: 'board' }]
+    ],
+    [
+      'memory.readBoards',
+      (a: CanvasApi) => a.memory.readBoards(['t1', 'b1']),
+      ['memory:readBoards', ['t1', 'b1']]
     ]
   ] as const)('%s', (_label, call, expected) => {
     call(api)

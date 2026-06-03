@@ -184,6 +184,11 @@ const api = {
     }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
       ipcRenderer.invoke('export:save', args)
   },
+  // ── M-memory T-M4: read cached Tier-2 prose for the panel (pure disk read; MAIN-guarded) ──
+  memory: {
+    readBoards: (ids: string[]): Promise<Record<string, string>> =>
+      ipcRenderer.invoke('memory:readBoards', ids)
+  },
   // ── M-brain T-B1/T-B2: provider-agnostic LLM (MAIN owns the key/egress) ──
   llm: {
     summarize: (input: { system?: string; text: string }): Promise<LlmSummarizeResult> =>
