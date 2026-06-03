@@ -2,7 +2,8 @@
  * Tier-1 reopen digest panel (presentational). Renders the CanvasDigest from
  * `buildDigest` (T-D1) as an auto slide-in side panel of per-board cards. Pure: all
  * state (open/closed) is owned by the container in Canvas.tsx. No LLM / no key — this
- * is the no-cost reopen context. The T-M4 milestone later swaps in cached Tier-2 prose.
+ * is the no-cost reopen context. T-M4: renders cached Tier-2 prose (the `prose` prop,
+ * heading-stripped) when present, else the Tier-1 lines.
  */
 import type { ReactElement } from 'react'
 import type { CanvasDigest } from '../lib/digest'
