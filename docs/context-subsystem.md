@@ -352,9 +352,17 @@ the fetch timeout bounds a hung provider); the key never leaves MAIN / never lan
 | T-M2 | `221ddf8` | **724** | `context-change` ok |
 | T-M3 | `1b6f1e1` | **740** | `context-summary` ok |
 
-typecheck/lint/format:check clean throughout (1 pre-existing unrelated `PlanningBoard.tsx` no-console
-warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browser`/`browser-gesture`/
-`focus-detach` `capturePage` env flake (memory `e2e-browser-trio-flake`) — not a regression.
+> **Post-merge retrofit (after catching up to main's T0–T5 overhaul).** The `context-*` e2e
+> column above refers to the old `CANVAS_SMOKE=e2e` probes, which main **deleted** (the homegrown
+> harness is gone; e2e is Playwright `_electron`). Per `docs/testing/TESTING.md` the Context
+> subsystem has **no mandatory e2e slivers** — every probe's assertion is now covered at the
+> unit/integration tier (budget/change/digest/memory/keystore/summary), audited 2026-06-04. The
+> probes were removed in the merge; the IPC tests were re-tiered onto `ipcTestHarness` and the
+> preload `api.llm.*` contract added. See `…-context-merge-test-retrofit.md`.
+
+The pre-merge gate (typecheck/lint/format:check/test) was clean throughout. The Vitest gate is now
+the unit + integration projects (`pnpm test`); the Playwright keep-set is separate and carries no
+Context spec.
 
 ## What's next (see `docs/roadmap-context.md`)
 

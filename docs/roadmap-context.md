@@ -47,9 +47,9 @@ in `<project>/.canvas/` (atomic write, default `.gitignore`d); the API key lives
 |---|---|
 | **Repos / zones** | app files touched (declared on the coordination board). Package is untouched until M-expose. |
 | **Build** | the unit(s) + any IPC + any UI for the task |
-| **e2e** | a `CANVAS_SMOKE=e2e` probe in `src/main/e2e/probes/context.ts` that **asserts the digest/memory actually changed** (not just that a call returned). Follows the existing `E2E_*` marker style. LLM is **mocked** (stub summarizer; no real network). |
+| **tests** | per `docs/testing/TESTING.md`: Context logic is **unit** (digest/memory/serialize) + **integration** for IPC handlers (via `ipcTestHarness`, foreign-sender rejection required) and jsdom for any panel/settings UI. **No e2e** — the Context subsystem has no mandatory e2e sliver (the old `CANVAS_SMOKE=e2e` probe harness was deleted in the T4 migration). LLM is **mocked** (`CANVAS_LLM_MOCK=1`; no real network). |
 | **Manual** | explicit steps + expected output (e.g. "open project X → panel slides in with N cards; card for board B shows its launchCommand") |
-| **Gate** | `pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build`; the board e2e harness (`CANVAS_SMOKE=e2e`) green |
+| **Gate** | `pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build` (Vitest unit + integration projects). The Playwright `_electron` keep-set carries no Context spec. |
 | **Handoff** | written after the task: what landed, files, test evidence, follow-ups, next-task pointer |
 
 ---
