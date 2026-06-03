@@ -12,14 +12,13 @@ import {
 } from './windowSecurity'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
-import { runE2ESmoke } from './e2e'
 import { installE2EMain } from './e2eMain'
 import { registerProjectHandlers } from './projectIpc'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
 
-const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "e2e"=board harness+quit
+const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit
 
 // Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
 // pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
@@ -88,10 +87,8 @@ function createWindow(): void {
   // Dev-only HTML screenshot path (committed, env-gated). Captures the renderer DOM
   // (NOT the native WebContentsView — that's what the e2e Browser capture is for).
   // Usage: $env:CANVAS_SHOT='C:\tmp\canvas.png'; pnpm start
-  // Skip when CANVAS_SMOKE=e2e: that run owns the did-finish-load lifecycle (and its
-  // 800ms app.quit would cut the multi-second e2e harness short).
   const shotPath = process.env.CANVAS_SHOT
-  if (shotPath && SMOKE !== 'e2e') {
+  if (shotPath) {
     mainWindow.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {
@@ -106,7 +103,7 @@ function createWindow(): void {
     })
   }
 
-  const e2e = SMOKE === 'e2e' || !!process.env.CANVAS_E2E
+  const e2e = !!process.env.CANVAS_E2E
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
     mainWindow.loadURL(e2e ? `${base}?e2e=1` : base)
@@ -147,24 +144,9 @@ app.whenReady().then(async () => {
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
-      if (SMOKE === 'e2e') {
-        const code = await runE2ESmoke(mainWindow!, localServer!.url)
-        process.exitCode = code
-        // app.exit() (not app.quit()): on Windows app.quit() ignores process.exitCode,
-        // so the harness exit code wouldn't reach the shell. app.exit() propagates it
-        // but bypasses `before-quit` — so flush the renderer autosave (BUG-M2) and call
-        // shutdown() explicitly first to drain the PTY tree / preview views / local
-        // server (shutdown is idempotent). AWAIT the drain (the PTY tree-kill is now
-        // awaitable, #49) before exiting so a deep child tree is reaped instead of
-        // orphaned by a fixed timer race.
-        await flushRenderer()
-        await shutdown()
-        app.exit(code)
-      } else {
-        const ok = await runSelfTest(mainWindow!, localServer!.url)
-        smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
-        if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
-      }
+      const ok = await runSelfTest(mainWindow!, localServer!.url)
+      smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
+      if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
     })
   }
 
