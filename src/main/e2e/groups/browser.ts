@@ -44,7 +44,9 @@ export const browser: GroupProbe<BrowserFixture> = {
       name: 'browser',
       ok: fx.browserOk,
       flaky: !fx.browserOk, // capturePage env flake → reported, not a hard fail
-      detail: fx.browserOk ? 'non-blank per-view capturePage' : 'capture blank/detached after 3 tries'
+      detail: fx.browserOk
+        ? 'non-blank per-view capturePage'
+        : 'capture blank/detached after 3 tries'
     }
   }
 }

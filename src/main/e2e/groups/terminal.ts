@@ -25,7 +25,11 @@ export const terminal: GroupProbe<TerminalFixture> = {
       )
       return typeof text === 'string' && text.includes(ctx.TERM_SENTINEL)
     }, 10000)
-    return { name: 'terminal', ok: termOk, detail: termOk ? 'sentinel in framebuffer' : 'no sentinel' }
+    return {
+      name: 'terminal',
+      ok: termOk,
+      detail: termOk ? 'sentinel in framebuffer' : 'no sentinel'
+    }
   }
 }
 
@@ -224,7 +228,15 @@ export const terminalAdopt: GroupProbe<TerminalFixture> = {
 export const terminalGroup: E2EGroup<TerminalFixture> = {
   name: 'terminal',
   setup: seedTerminal,
-  probes: [terminal, configNowheel, terminalFullview, fullviewClose, terminalLod, terminalRespawn, terminalAdopt],
+  probes: [
+    terminal,
+    configNowheel,
+    terminalFullview,
+    fullviewClose,
+    terminalLod,
+    terminalRespawn,
+    terminalAdopt
+  ],
   teardown: async (ctx) => {
     await ctx.evalIn('window.__canvasE2E.clearAllBoards()')
   }

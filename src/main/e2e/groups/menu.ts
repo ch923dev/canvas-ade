@@ -68,7 +68,10 @@ export const boardMenu: GroupProbe<MenuFixture> = {
 }
 
 /** Real OS click on a body-portaled .board-menu-item matched by trimmed text. */
-async function realClickMenuItem(ctx: import('../context').E2ECtx, label: string): Promise<boolean> {
+async function realClickMenuItem(
+  ctx: import('../context').E2ECtx,
+  label: string
+): Promise<boolean> {
   const at = await ctx.evalIn<{ x: number; y: number } | null>(
     `(() => {
        const item = [...document.querySelectorAll('.board-menu .board-menu-item')]
@@ -80,8 +83,20 @@ async function realClickMenuItem(ctx: import('../context').E2ECtx, label: string
   )
   if (!at) return false
   await ctx.ensureFocus() // sendInputEvent only delivers to a focused window
-  ctx.win.webContents.sendInputEvent({ type: 'mouseDown', x: Math.round(at.x), y: Math.round(at.y), button: 'left', clickCount: 1 })
-  ctx.win.webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(at.x), y: Math.round(at.y), button: 'left', clickCount: 1 })
+  ctx.win.webContents.sendInputEvent({
+    type: 'mouseDown',
+    x: Math.round(at.x),
+    y: Math.round(at.y),
+    button: 'left',
+    clickCount: 1
+  })
+  ctx.win.webContents.sendInputEvent({
+    type: 'mouseUp',
+    x: Math.round(at.x),
+    y: Math.round(at.y),
+    button: 'left',
+    clickCount: 1
+  })
   return true
 }
 

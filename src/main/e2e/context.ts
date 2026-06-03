@@ -1,8 +1,8 @@
 /**
  * Shared harness context for the in-process board e2e (CANVAS_SMOKE=e2e). Built once
  * by the runner and threaded through every probe. Carries the renderer-eval helpers,
- * the MAIN-side debug accessors (preview + pty internals the renderer can't see), a
- * MUTABLE ids bag the seed probes populate and later probes read, and the sentinels.
+ * the MAIN-side debug accessors (preview + pty internals the renderer can't see), and
+ * the sentinels.
  */
 import type { BrowserWindow } from 'electron'
 import { debugCaptureView, debugViewIds, debugViewWebContentsId } from '../preview'
@@ -16,16 +16,6 @@ export const TERM_SENTINEL2 = 'CANVAS_E2E_RESPAWN_OK'
 export const ADOPT_MARKER = 'CANVAS_E2E_ADOPT_MARKER'
 /** URL printed into the terminal so port detection succeeds (parser drops the slash). */
 export const DETECTED_URL = 'http://localhost:3000'
-
-/** Shared sequential state across the playlist (order-bound): seeded ids + carried flags. */
-export interface E2EIds {
-  termId?: string
-  browserId?: string
-  planId?: string
-  deadId?: string
-  /** The `browser` probe's capturePage verdict — gesture/focus probes gate on it. */
-  browserOk?: boolean
-}
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -55,8 +45,6 @@ export interface E2ECtx {
     viewIds: typeof debugViewIds
     viewWebContentsId: typeof debugViewWebContentsId
   }
-  /** Shared sequential state — seed probes WRITE, later probes READ. */
-  readonly ids: E2EIds
   readonly TERM_SENTINEL: string
   readonly TERM_SENTINEL2: string
   readonly ADOPT_MARKER: string
@@ -124,7 +112,6 @@ export function makeContext(win: BrowserWindow, localUrl: string): E2ECtx {
       viewIds: debugViewIds,
       viewWebContentsId: debugViewWebContentsId
     },
-    ids: {},
     TERM_SENTINEL,
     TERM_SENTINEL2,
     ADOPT_MARKER,

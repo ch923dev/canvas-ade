@@ -1,79 +1,45 @@
 /**
- * In-process board harness (CANVAS_SMOKE=e2e). MAIN seeds one of each board type
- * through the renderer hook (window.__canvasE2E) and asserts each works at runtime,
- * INCLUDING the Browser native WebContentsView layer that mainWindow.capturePage()
- * cannot see (asserted via the preview manager's own per-view capturePage).
+ * In-process board harness (CANVAS_SMOKE=e2e). MAIN seeds a typed fixture per GROUP through
+ * the renderer hook (window.__canvasE2E), runs that group's probes against the fixture, then
+ * tears the group down to an empty canvas before the next — so groups never leak into one
+ * another. Between probes the runner asserts the group's board-count invariant (reset model C)
+ * and hard-fails the group on violation instead of cascading.
  *
- * Formerly one 950-line function; now a fixed PLAYLIST of probe modules threaded with a
- * shared E2ECtx. The ORDER is load-bearing — probes share seeded ids and restore each
- * other's mutations (e.g. menu-chrome shrinks the terminal, preview-connect-gesture
- * widens it back; the final `seed` asserts the count returned to 4). Do NOT reorder.
+ * Emits one E2E_<NAME> marker per part + a final E2E_DONE, and returns a summary whose exitCode
+ * the caller assigns to process.exitCode. Verified by running the command; not a vitest target.
  *
- * Emits one marker line per part + a final E2E_DONE, and returns a summary whose
- * exitCode the caller assigns to process.exitCode. Verified by running the command;
- * not a vitest target (needs the live Electron runtime).
- *
- * Markers go to stdout via bare console.log — safe here because index.ts installs a
- * process.stdout 'error' handler (EPIPE swallow) before this runs whenever SMOKE is set.
+ * Markers go to stdout via bare console.log — safe because index.ts installs a process.stdout
+ * 'error' handler (EPIPE swallow) before this runs whenever SMOKE is set.
  */
 import type { BrowserWindow } from 'electron'
 import { summarizeE2E, type E2EPart } from '../e2eReport'
-import { makeContext } from './context'
-import type { E2EProbe } from './types'
-import {
-  terminal,
-  configNowheel,
-  terminalLod,
-  terminalRespawn,
-  terminalAdopt
-} from './probes/terminal'
-import { browser, browserGesture, focusDetach, browserDeadUrl } from './probes/browserPreview'
-import {
-  terminalFullview,
-  fullviewPreview,
-  fullviewSelfPreserve,
-  fullviewEmulator,
-  fullviewClose
-} from './probes/fullview'
-import { planning } from './probes/planning'
-import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
-import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
-import { tidy, tile } from './probes/layout'
-import { seed } from './probes/seed'
+import { makeContext, type E2ECtx } from './context'
+import type { E2EGroup } from './types'
+import { terminalGroup } from './groups/terminal'
+import { browserGroup } from './groups/browser'
+import { crossBoardGroup } from './groups/crossBoard'
+import { planningGroup } from './groups/planning'
+import { menuGroup } from './groups/menu'
+import { layoutGroup } from './groups/layout'
 
-// EXACT current execution order — interleaves themes by design (a probe's theme file is
-// just where it lives; this list is what actually runs, and order is the contract).
-const PLAYLIST: E2EProbe[] = [
-  terminal,
-  terminalFullview,
-  browser,
-  browserGesture,
-  focusDetach,
-  configNowheel,
-  planning,
-  fullviewPreview, // emits fullview-preview + fullview-preserve
-  fullviewSelfPreserve,
-  fullviewEmulator,
-  fullviewClose,
-  terminalLod,
-  terminalRespawn,
-  terminalAdopt,
-  browserDeadUrl,
-  previewEdgeStale,
-  duplicateKeepsLink,
-  boardMenu,
-  menuChrome,
-  menuPreviewDetach,
-  previewConnectGesture,
-  tidy,
-  tile,
-  seed
+// Groups run in this order; each tears down to empty, so the order is NOT load-bearing for
+// correctness (no shared state survives a teardown). Listed terminal→layout for readability.
+const GROUPS: E2EGroup<unknown>[] = [
+  terminalGroup as E2EGroup<unknown>,
+  browserGroup as E2EGroup<unknown>,
+  crossBoardGroup as E2EGroup<unknown>,
+  planningGroup as E2EGroup<unknown>,
+  menuGroup as E2EGroup<unknown>,
+  layoutGroup as E2EGroup<unknown>
 ]
+
+async function boardCount(ctx: E2ECtx): Promise<number> {
+  return ctx.evalIn<number>('window.__canvasE2E.getBoards().length')
+}
 
 export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise<number> {
   const ctx = makeContext(win, localUrl)
 
-  // The hook installs after React mounts — wait for it before driving anything.
   const hookReady = await ctx.poll(() => ctx.evalIn<boolean>('!!window.__canvasE2E'), 8000)
   if (!hookReady) {
     const s = summarizeE2E([
@@ -84,11 +50,34 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
   }
 
   const parts: E2EPart[] = []
-  for (const probe of PLAYLIST) {
-    const r = await probe.run(ctx)
-    if (Array.isArray(r)) parts.push(...r)
-    else parts.push(r)
+  for (const group of GROUPS) {
+    const fixture = await group.setup(ctx)
+    const baseline = await boardCount(ctx)
+    for (const probe of group.probes) {
+      const r = await probe.run(ctx, fixture)
+      if (Array.isArray(r)) parts.push(...r)
+      else parts.push(r)
+      const now = await boardCount(ctx)
+      if (now !== baseline) {
+        parts.push({
+          name: `${group.name}-fixture-broken`,
+          ok: false,
+          detail: `board count ${now} != baseline ${baseline} after probe '${probe.name}'`
+        })
+        break // stop this group; teardown still runs below
+      }
+    }
+    await group.teardown(ctx, fixture)
   }
+
+  // Every group tore down to empty → the canvas must be empty now (replaces the old `seed`
+  // final-count probe).
+  const finalCount = await boardCount(ctx)
+  parts.push({
+    name: 'canvas-empty',
+    ok: finalCount === 0,
+    detail: `${finalCount} boards remain after teardown`
+  })
 
   const summary = summarizeE2E(parts)
   for (const p of parts) console.log(`E2E_${p.name.toUpperCase()} ${JSON.stringify(p)}`)
