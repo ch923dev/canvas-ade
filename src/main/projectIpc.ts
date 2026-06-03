@@ -186,9 +186,7 @@ export function registerProjectHandlers(
         defaultPath: `${safeName}.${ext}`,
         filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
       }
-      const res = win
-        ? await dialog.showSaveDialog(win, opts)
-        : await dialog.showSaveDialog(opts)
+      const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
       if (res.canceled || !res.filePath) return { ok: false, canceled: true }
       try {
         await writeFileAtomic(res.filePath, Buffer.from(args.bytes))

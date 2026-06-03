@@ -20,7 +20,10 @@ export const EXPORT_COLORS = {
 } as const
 
 /** Note tint fills/edges (tints.ts NOTE_TINTS with `plain` resolved to concrete tokens). */
-export const EXPORT_NOTE_TINTS: Record<'yellow' | 'blue' | 'green' | 'plain', { fill: string; edge: string }> = {
+export const EXPORT_NOTE_TINTS: Record<
+  'yellow' | 'blue' | 'green' | 'plain',
+  { fill: string; edge: string }
+> = {
   yellow: { fill: '#2a2818', edge: '#3d3a22' },
   blue: { fill: '#16202b', edge: '#22354a' },
   green: { fill: '#16241d', edge: '#21392c' },

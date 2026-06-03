@@ -48,7 +48,14 @@ export function esc(s: string): string {
 }
 
 /** A multi-line <text> block: one <tspan> per source line, left-aligned at (x,y). */
-function textBlock(x: number, y: number, raw: string, size: number, fill: string, weight = 400): string {
+function textBlock(
+  x: number,
+  y: number,
+  raw: string,
+  size: number,
+  fill: string,
+  weight = 400
+): string {
   const lines = raw.split('\n')
   const tspans = lines
     .map((ln, i) => `<tspan x="${x}" dy="${i === 0 ? 0 : size + 4}">${esc(ln)}</tspan>`)
@@ -95,7 +102,10 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
 
 /** Render one element to SVG markup. `embedded` is true ONLY for an image whose
  *  bitmap data-URI was successfully inlined (drives ExportResult.embeddedCount). */
-function renderElement(el: PlanningElement, assets: ExportAssets): { markup: string; embedded: boolean } {
+function renderElement(
+  el: PlanningElement,
+  assets: ExportAssets
+): { markup: string; embedded: boolean } {
   switch (el.kind) {
     case 'arrow':
       return {

@@ -83,7 +83,12 @@ export interface CanvasE2E {
   exportBoard: (
     boardId: string,
     format: 'png' | 'svg'
-  ) => Promise<{ svg: string; byteLength: number; imageCount: number; embeddedCount: number } | null>
+  ) => Promise<{
+    svg: string
+    byteLength: number
+    imageCount: number
+    embeddedCount: number
+  } | null>
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */

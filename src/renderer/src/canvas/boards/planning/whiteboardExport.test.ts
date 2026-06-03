@@ -50,10 +50,7 @@ describe('boardToSvg — vectors', () => {
   })
 
   it('renders an arrowhead marker so the arrow has a head', () => {
-    const { svg } = boardToSvg(
-      board([{ id: 'a', kind: 'arrow', x: 0, y: 0, x2: 50, y2: 0 }]),
-      {}
-    )
+    const { svg } = boardToSvg(board([{ id: 'a', kind: 'arrow', x: 0, y: 0, x2: 50, y2: 0 }]), {})
     expect(svg).toContain('<marker')
     expect(svg).toContain('marker-end="url(#wb-export-arrow)"')
   })
@@ -62,7 +59,19 @@ describe('boardToSvg — vectors', () => {
 describe('boardToSvg — cards', () => {
   it('renders a note as a tinted rounded rect with its text', () => {
     const { svg } = boardToSvg(
-      board([{ id: 'n', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'yellow', text: 'hello', rotation: 0 }]),
+      board([
+        {
+          id: 'n',
+          kind: 'note',
+          x: 0,
+          y: 0,
+          w: 156,
+          h: 96,
+          tint: 'yellow',
+          text: 'hello',
+          rotation: 0
+        }
+      ]),
       {}
     )
     expect(svg).toContain('<rect')

@@ -926,7 +926,9 @@ export const whiteboardExport: E2EProbe = {
       parts.push({
         name: 'whiteboard-export-svg',
         ok: svgOk,
-        detail: svgOk ? `svg ${svgOut!.byteLength}B` : `bad svg: ${JSON.stringify(svgOut)?.slice(0, 140)}`
+        detail: svgOk
+          ? `svg ${svgOut!.byteLength}B`
+          : `bad svg: ${JSON.stringify(svgOut)?.slice(0, 140)}`
       })
 
       const pngOut = await ctx.evalIn<{ byteLength: number } | null>(
@@ -940,7 +942,11 @@ export const whiteboardExport: E2EProbe = {
       })
 
       // image embed: write a real asset, seed an image element, export → embeddedCount 1 + <image>.
-      const embed = await ctx.evalIn<{ svg: string; imageCount: number; embeddedCount: number } | null>(
+      const embed = await ctx.evalIn<{
+        svg: string
+        imageCount: number
+        embeddedCount: number
+      } | null>(
         `(async () => {
            const bytes = new Uint8Array([137,80,78,71,13,10,26,10]);
            const w = await window.api.asset.write(bytes, 'png');
@@ -950,7 +956,11 @@ export const whiteboardExport: E2EProbe = {
            return window.__canvasE2E.exportBoard(${id}, 'svg');
          })()`
       )
-      const embedOk = !!embed && embed.imageCount === 1 && embed.embeddedCount === 1 && embed.svg.includes('<image')
+      const embedOk =
+        !!embed &&
+        embed.imageCount === 1 &&
+        embed.embeddedCount === 1 &&
+        embed.svg.includes('<image')
       parts.push({
         name: 'whiteboard-export-image-embed',
         ok: embedOk,
@@ -965,15 +975,22 @@ export const whiteboardExport: E2EProbe = {
            return window.__canvasE2E.exportBoard(${id}, 'svg');
          })()`
       )
-      const missingOk = !!missing && missing.embeddedCount === 0 && missing.svg.includes('stroke-dasharray')
+      const missingOk =
+        !!missing && missing.embeddedCount === 0 && missing.svg.includes('stroke-dasharray')
       parts.push({
         name: 'whiteboard-export-missing-asset',
         ok: missingOk,
-        detail: missingOk ? 'fallback tile, no throw' : `bad: ${JSON.stringify(missing)?.slice(0, 140)}`
+        detail: missingOk
+          ? 'fallback tile, no throw'
+          : `bad: ${JSON.stringify(missing)?.slice(0, 140)}`
       })
     } finally {
       setCurrentDir(null)
-      try { rmSync(tmp, { recursive: true, force: true }) } catch { /* ignore */ }
+      try {
+        rmSync(tmp, { recursive: true, force: true })
+      } catch {
+        /* ignore */
+      }
     }
     return parts
   }
