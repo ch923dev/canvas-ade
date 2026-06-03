@@ -74,3 +74,44 @@ describe('BoardFrame full-chrome title bar', () => {
     expect(screen.getByTitle('Full view')).toBeTruthy()
   })
 })
+
+// Migrated from the e2e `board-menu` probe + the item-list / stroke-width parts of
+// `menu-chrome`. The probe asserted the popover lists exactly Full view/Duplicate/Delete,
+// that Duplicate/Delete fire (the store-count round-trip), and the ⋯ glyph renders with a
+// visible stroke. All of that is pure component behavior → it belongs at the jsdom tier.
+// What stays in `menu-chrome` (real-instance sliver): the title-bar containment (Bug13)
+// and the viewport clamp (Bug14), which need real layout rects (jsdom rects are 0), plus
+// the rest-colour check (a CSS-var computed style jsdom does not resolve).
+describe('BoardMenu — migrated chrome/menu contracts (from e2e menu probes)', () => {
+  it('lists exactly Full view / Duplicate / Delete', () => {
+    render(<BoardMenu onDuplicate={() => {}} onDelete={() => {}} onFull={() => {}} />)
+    fireEvent.click(screen.getByTitle('More'))
+    const labels = [...document.querySelectorAll('.board-menu-item')].map((b) =>
+      b.textContent?.trim()
+    )
+    expect(labels).toEqual(['Full view', 'Duplicate', 'Delete'])
+  })
+
+  it('fires Duplicate then Delete exactly once each (store round-trip equivalent)', () => {
+    const onDuplicate = vi.fn()
+    const onDelete = vi.fn()
+    render(<BoardMenu onDuplicate={onDuplicate} onDelete={onDelete} onFull={() => {}} />)
+    fireEvent.click(screen.getByTitle('More'))
+    const dup = screen.getByText('Duplicate')
+    fireEvent.pointerDown(dup)
+    fireEvent.click(dup)
+    // The click closed the menu (setOpen(false)); re-open for Delete.
+    fireEvent.click(screen.getByTitle('More'))
+    const del = screen.getByText('Delete')
+    fireEvent.pointerDown(del)
+    fireEvent.click(del)
+    expect(onDuplicate).toHaveBeenCalledTimes(1)
+    expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders the More (⋯) glyph with a visible stroke width (≥ 2)', () => {
+    render(<BoardMenu onDuplicate={() => {}} onDelete={() => {}} onFull={() => {}} />)
+    const svg = screen.getByTitle('More').querySelector('svg') as SVGElement
+    expect(parseFloat(svg.getAttribute('stroke-width') ?? '0')).toBeGreaterThanOrEqual(2)
+  })
+})

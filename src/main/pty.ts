@@ -628,6 +628,25 @@ export function disposeAllPtysCore(
 }
 
 /**
+ * The OS-specific command for reaping a process's whole tree. Extracted PURE from
+ * killTree so the exact argv (Windows) / signal+pgid (POSIX) is unit-testable —
+ * agentic CLIs spawn child process trees and a bare kill() leaves orphans (#49).
+ */
+export type KillTreeCommand =
+  | { kind: 'taskkill'; file: 'taskkill'; args: string[] }
+  | { kind: 'pgid'; pgid: number; signal: 'SIGKILL' }
+
+export function killTreeCommand(platform: NodeJS.Platform, pid: number): KillTreeCommand {
+  if (platform === 'win32') {
+    // taskkill /T reaps the descendant tree (proc.kill() only signals the console
+    // process list, not deeply re-parented children).
+    return { kind: 'taskkill', file: 'taskkill', args: ['/PID', String(pid), '/T', '/F'] }
+  }
+  // POSIX: the pty session is its own process group; kill the negative pgid.
+  return { kind: 'pgid', pgid: -pid, signal: 'SIGKILL' }
+}
+
+/**
  * Agentic CLIs spawn child process trees. On Windows a bare kill() leaves
  * orphans, so kill the whole tree with taskkill /T /F. Returns a Promise that
  * resolves when the tree-kill child process has exited (or a short safety timeout
@@ -636,10 +655,8 @@ export function disposeAllPtysCore(
  * is synchronous, so it always runs regardless of the taskkill timing.
  */
 function killTree(proc: pty.IPty): Promise<void> {
-  const pid = proc.pid
-  if (process.platform === 'win32') {
-    // taskkill /T /F reaps the descendant tree (taskkill alone, since proc.kill()
-    // only signals the console process list, not deeply re-parented children).
+  const cmd = killTreeCommand(process.platform, proc.pid)
+  if (cmd.kind === 'taskkill') {
     const reaped = new Promise<void>((resolve) => {
       let settled = false
       const finish = (): void => {
@@ -647,7 +664,7 @@ function killTree(proc: pty.IPty): Promise<void> {
         settled = true
         resolve()
       }
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => finish())
+      execFile(cmd.file, cmd.args, () => finish())
       // Bounded fallback: never block shutdown indefinitely on a hung taskkill.
       setTimeout(finish, 2000).unref?.()
     })
@@ -662,7 +679,7 @@ function killTree(proc: pty.IPty): Promise<void> {
     return reaped
   } else {
     try {
-      process.kill(-pid, 'SIGKILL')
+      process.kill(cmd.pgid, cmd.signal)
     } catch {
       try {
         proc.kill()

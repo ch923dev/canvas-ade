@@ -1,9 +1,10 @@
 /**
- * In-process E2E renderer hook (Stage 1). When the page is in e2e mode this installs
- * `window.__canvasE2E` — a tiny imperative surface MAIN drives via
- * `webContents.executeJavaScript`: seed boards through the real Zustand store, read
- * board/runtime state back, read a terminal's framebuffer, and fit the camera. All
- * return values are JSON-serializable so they survive the executeJavaScript bridge.
+ * In-process E2E renderer hook. When the page is in e2e mode this installs
+ * `window.__canvasE2E` — a tiny imperative surface the Playwright `_electron` harness
+ * drives via `page.evaluate` (T4): seed boards through the real Zustand store, read
+ * board/runtime state back, read a terminal's framebuffer, fit the camera, and reset
+ * the canvas between tests. All return values are JSON-serializable so they survive the
+ * evaluate bridge.
  *
  * Installed from CanvasInner (which owns the React Flow instance) and guarded by
  * isE2E(); a no-op in every normal run.
@@ -25,6 +26,7 @@ import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { e2eTerminals } from './e2eRegistry'
+import { disposeLiveResources } from '../store/disposeLiveResources'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
 interface RuntimeProbe {
@@ -131,6 +133,12 @@ export interface CanvasE2E {
    * measured the node. Memory `e2e-rf-measurement-race`.
    */
   fitCameraInstant: (id: string) => void
+  /**
+   * Return the app to an empty canvas for test isolation (T4 Playwright beforeEach):
+   * clear full-view/focus UI modes, tear down every native preview view + PTY tree
+   * (live AND parked), empty the store + history, and reset the seed-x cursor.
+   */
+  reset: () => Promise<{ ok: true }>
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -311,6 +319,20 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // padding/maxZoom mirror Canvas.tsx FULLVIEW_OPTIONS (0.1 / Z_MAX 2.5); duration 0 so
       // a re-fit-each-tick poll converges without animation. Memory e2e-rf-measurement-race.
       void rf.fitView({ padding: 0.1, maxZoom: 2.5, duration: 0, nodes: [{ id }] })
+    },
+    async reset() {
+      // 1. Clear UI modes first so nothing holds a board reference mid-teardown.
+      host.setFullView(null)
+      host.setFocus(null)
+      host.exitCameraFullView()
+      // 2. Empty the store + history (renderer stops referencing the old boards).
+      useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+      // 3. Tear down native resources: close all preview views + kill live AND parked
+      //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
+      await disposeLiveResources()
+      // 4. Reset the seed-x cursor so the next test's seedBoard positions restart.
+      seedX = 0
+      return { ok: true as const }
     }
   }
   window.__canvasE2E = api

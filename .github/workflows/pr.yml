@@ -7,15 +7,6 @@ on:
 
 permissions:
   contents: read
-  # Read @ch923dev/canvas-ade-mcp from GitHub Packages. The canvas-ade repo must be
-  # granted read access to that package for this token to resolve it (Package →
-  # Settings → Manage Actions access → add canvas-ade: Read).
-  packages: read
-
-# Auth for the GitHub Packages registry (@ch923dev scope in .npmrc). Applies to
-# every job's `pnpm install`.
-env:
-  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   # Fast feedback: typecheck + lint + tests + bundle on Linux.
@@ -39,36 +30,7 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
-  # runE2ESmoke sets process.exitCode + app.exit(code), so a failed assertion fails the job.
-  #
-  # FROZEN (2026-06-03): the board e2e smoke is DISABLED until we build a structured
-  # testing setup. There is a larger e2e reliability issue (the CANVAS_SMOKE=e2e harness
-  # is a brittle stand-in) on top of the known CI-only `whiteboard-fullview-add`
-  # determinism flake. Do NOT let e2e gate work meanwhile — `check` is the gate. Re-enable
-  # by removing this `if: false`. See CLAUDE.md › Status.
-  smoke:
-    if: false
-    needs: check
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Board e2e smoke
-        run: pnpm start
-        env:
-          CANVAS_SMOKE: e2e
-      # MCP live tier + all-board-listing smoke against the real running app.
-      # runMcpSmoke sets process.exitCode + app.exit(code), so a failed assertion fails the job.
-      - name: MCP smoke
-        run: pnpm start
-        env:
-          CANVAS_SMOKE: mcp
+  # NOTE: e2e (Playwright _electron) is NOT a GitHub Actions job. It runs LOCALLY as a
+  # pre-commit gate (the full Windows + Linux matrix via `.githooks/pre-commit` →
+  # `pnpm test:e2e:matrix`). Decided 2026-06-03 — Actions e2e was billing-blocked, and
+  # the native/Docker e2e is cheaper + faster on the dev box. See docs/testing/TESTING.md.
