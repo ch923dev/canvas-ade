@@ -24,6 +24,8 @@ import { startMcpServer, type RunningMcp } from './mcp'
 import { runMcpSmoke } from './mcpSmoke'
 import { listBoardMirror, registerBoardRegistryHandler } from './boardRegistry'
 import { sendMcpCommand } from './mcpCommand'
+import { createAuditLog } from './auditLog'
+import { registerAuditHandler } from './auditIpc'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -186,6 +188,10 @@ app.whenReady().then(async () => {
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
+  // 🔒 MCP dispatch audit trail (T4.1) — append-only JSONL under userData (NEVER the
+  // project folder). Registered now so the read IPC + the getAuditLog() seam the
+  // dispatch tools (T4.3+) append through are live before any board can dispatch.
+  registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: app.getPath('userData') }))
 
   createWindow()
 

@@ -5,6 +5,19 @@ import type { Rectangle, IpcRendererEvent } from 'electron'
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
 export type PtyState = 'spawning' | 'running' | 'exited' | 'spawn-failed'
 
+/** One MCP dispatch audit entry surfaced to the viewer (mirrors main `AuditEntry`, T4.1). */
+export interface AuditEntry {
+  seq: number
+  ts: number
+  type: string
+  targetId: string
+  prompt: string
+  nonce: string
+  status: string
+  outputs?: string
+  detail?: string
+}
+
 /** A discoverable shell for the per-board picker (mirrors main `ShellInfo`). */
 export interface ShellInfo {
   path: string
@@ -188,7 +201,13 @@ const api = {
       }
       ipcRenderer.on('mcp:command', listener)
       return () => ipcRenderer.removeListener('mcp:command', listener)
-    }
+    },
+
+    // Read-only view of the MCP dispatch audit trail (T4.1). Most-recent-first,
+    // capped MAIN-side. There is intentionally NO write side — entries are recorded
+    // only by the MAIN dispatch path, so the renderer can neither forge nor erase one.
+    readAudit: (opts?: { limit?: number }): Promise<AuditEntry[]> =>
+      ipcRenderer.invoke('audit:read', opts)
   }
 }
 
