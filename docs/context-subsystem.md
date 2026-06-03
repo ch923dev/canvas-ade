@@ -7,7 +7,7 @@
 > below). **Forward/undone work stays in `docs/roadmap-context.md`** (task cards for M-memory / M-expose);
 > the egress decision is in `docs/decisions/0003-llm-egress.md`. Add a milestone here only when it is DONE.
 
-**Status (2026-06-03):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅** on `feat/context`. **Next: M-memory T-M2** (meaningful-change detector + debounce).
+**Status (2026-06-04):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅ · T-M2 ✅** on `feat/context`. **Next: M-memory T-M3** (Tier-2 autonomous summarize loop — the first autonomous-spend path the T-B3 budget protects; wire only with the guard in place).
 
 ---
 
@@ -255,6 +255,49 @@ key is NEVER written there (stays in `userData/llm-keys.json`, safeStorage); gen
 untrusted passive context (written + read, never triggers an action); `contextIsolation`/`sandbox`/
 `no-nodeIntegration` untouched; no renderer read bridge yet (deferred to T-M4).
 
+### T-M2 — Meaningful-change detector + debounce ✅
+
+The DETECTOR half of the Tier-2 loop: decides *when* a board is worth re-summarizing and emits a
+`{ boardId }` intent — **no LLM call, no `.canvas/` write** (that is T-M3).
+
+- `src/main/memoryEngine.ts` — `createMemoryEngine({ onIntent, debounceMs?, schedule? }) →
+  { observe(doc), reset() }` + pure `boardFingerprint(board: unknown): string`. Electron-free; the
+  timer is an injected `Scheduler` (default `setTimeout`/`clearTimeout`, `.unref()`'d so a pending
+  debounce never blocks quit; tests inject a manual fake; e2e uses a short real debounce).
+  `DEFAULT_DEBOUNCE_MS = 45_000`, per-board independent **trailing-edge** timer (a burst collapses to
+  one intent).
+
+```ts
+type Scheduler = (fn: () => void, ms: number) => () => void
+interface SummarizeIntent { boardId: string }
+interface MemoryEngineDeps { onIntent: (i: SummarizeIntent) => void; debounceMs?: number; schedule?: Scheduler }
+interface MemoryEngine { observe(doc: unknown): void; reset(): void }
+function createMemoryEngine(deps: MemoryEngineDeps): MemoryEngine
+function boardFingerprint(board: unknown): string   // pure; mirrors digest.ts's meaningful fields
+```
+
+- **Fingerprint** mirrors `digest.ts`'s meaningful fields (terminal `launchCommand`/`cwd`/`port`;
+  browser `url`/`viewport`/`previewSourceId`; planning per-checklist `title` + items `{label,done}` +
+  note `text`) and **excludes** geometry/selection/canvas-pan-zoom — a pure move/resize/pan/select is a
+  no-op. **Process boundary:** MAIN can't import the renderer's `boardSchema`/`digest.ts`
+  (`tsconfig.node` = `src/main/**`), so the field set is picked **locally** from the `unknown` doc with
+  a parity comment + parity tests (sharing a constant across the main/renderer tsconfig split is not
+  possible — this is the resolution of the kickoff's "share a constant" note).
+- **Semantics:** first `observe` of a session = baseline (no emit, `primed` flag); a changed or
+  brand-new board (re)arms its debounce; a removed board cancels its pending intent + drops state;
+  `reset()` clears fingerprints + cancels timers on project switch.
+- **Wiring (`projectIpc.ts`):** one engine (default `onIntent` logs — T-M3 swaps in the summarize
+  loop); `project:save` feeds the doc after a **successful** write in its **own** try/catch (a detector
+  throw can never turn a good save into `false`); `project:open`/`project:current` `reset()` on switch.
+  `index.ts` untouched (engine param defaulted, so the existing 3-arg call site is unchanged).
+- e2e `src/main/e2e/probes/change.ts` `context-change`: drives `createMemoryEngine` directly with a
+  short real debounce → content change emits exactly 1 intent, a pure move emits 0.
+
+🔒 **T-M2 security model:** the detector only **reads** the already-trusted persisted doc and **emits
+an id** — it never triggers an action beyond the emit (T-M3 must keep the intent summarize-only, never
+a PTY write or board mutation); no new egress; no `llmService`/`canvasMemory` import; the `project:save`
+feed is best-effort and can never fail a save.
+
 ---
 
 ## Gate evidence (cumulative, on `feat/context`)
@@ -267,6 +310,7 @@ untrusted passive context (written + read, never triggers an action); `contextIs
 | T-B2 | `5678257` | 664 | `context-keystore` ok |
 | T-B3 | `cec15ba` | **682** | `context-budget` ok |
 | T-M1 | `2e0b1e7` | **702** | `context-memory` ok |
+| T-M2 | `<squash-sha>` | **724** | `context-change` ok |
 
 typecheck/lint/format:check clean throughout (1 pre-existing unrelated `PlanningBoard.tsx` no-console
 warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browser`/`browser-gesture`/
@@ -279,8 +323,9 @@ autonomous-spend path the T-B3 budget protects — wire only with the guard in p
 cached prose:
 - **T-M1** `src/main/canvasMemory.ts` — `.canvas/` paths + atomic writers + default `.gitignore` + opt-in
   commit + create/open scaffolding. ✅ **DONE** (see the M-memory section above).
-- **T-M2** meaningful-change detector + debounce (**next**). **T-M3** Tier-2 autonomous summary loop.
-  **T-M4** panel upgrade to cached prose on reopen.
+- **T-M2** ✅ meaningful-change detector + debounce (`src/main/memoryEngine.ts`, wired into
+  `projectIpc.ts`). **T-M3** Tier-2 autonomous summary loop (**next**). **T-M4** panel upgrade to
+  cached prose on reopen.
 
 **M-expose (DEFERRED)** — `canvas://memory` MCP read resource; gated on the MCP package (Phases 0–1) landing
 on `main`. ⚠️ Owes 2 reverse cross-links into `docs/roadmap-mcp.md` (M9 judge-board pivot becomes optional;

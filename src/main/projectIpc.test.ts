@@ -38,6 +38,7 @@ vi.mock('electron', () => ({
 }))
 
 import { registerProjectHandlers, isForeignSender, isUnsafeProjectDir } from './projectIpc'
+import type { MemoryEngine } from './memoryEngine'
 
 /** A minimal ipcMain stub that records handlers so a test can invoke them directly. */
 function makeIpcMain(): {
@@ -227,5 +228,69 @@ describe('export:save', () => {
     expect(result.ok).toBe(false)
     expect(result.canceled).toBe(true)
     expect(fs.existsSync(tmpFile)).toBe(false)
+  })
+})
+
+describe('projectIpc — T-M2 memory-engine wiring', () => {
+  const getWin = (): null => null // no window — guard uses synthetic senderFrame path
+
+  /** Register handlers with an injected engine over the module-mocked store. */
+  function harness(engine: MemoryEngine): {
+    invoke: (channel: string, ...a: unknown[]) => unknown
+  } {
+    const { ipcMain, invoke } = makeIpcMain()
+    registerProjectHandlers(ipcMain, getWin, '/userData', () => 0, engine)
+    return { invoke }
+  }
+
+  it('feeds the saved doc into the engine after a successful save', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    store.writeProject.mockResolvedValue(undefined)
+    const observe = vi.fn()
+    const engine: MemoryEngine = { observe, reset: vi.fn() }
+    const { invoke } = harness(engine)
+
+    const doc = { schemaVersion: 4, viewport: null, boards: [] }
+    const ok = await invoke('project:save', doc)
+    expect(ok).toBe(true)
+    expect(observe).toHaveBeenCalledWith(doc)
+  })
+
+  it('a throwing engine.observe never fails the save (best-effort feed)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    store.writeProject.mockResolvedValue(undefined)
+    const engine: MemoryEngine = {
+      observe: () => {
+        throw new Error('detector boom')
+      },
+      reset: vi.fn()
+    }
+    const { invoke } = harness(engine)
+
+    const ok = await invoke('project:save', { schemaVersion: 4, viewport: null, boards: [] })
+    expect(ok).toBe(true) // save still succeeds despite the detector throwing
+  })
+
+  it('resets the engine when a project is opened (switch)', async () => {
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
+    const reset = vi.fn()
+    const engine: MemoryEngine = { observe: vi.fn(), reset }
+    const { invoke } = harness(engine)
+
+    const r = invoke('project:open', '/proj') as { ok: boolean }
+    expect(r.ok).toBe(true)
+    expect(reset).toHaveBeenCalled()
+  })
+
+  it('resets the engine on project:current (re-baseline on reopen)', async () => {
+    recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
+    const reset = vi.fn()
+    const engine: MemoryEngine = { observe: vi.fn(), reset }
+    const { invoke } = harness(engine)
+
+    const r = (await invoke('project:current')) as { ok: boolean }
+    expect(r.ok).toBe(true)
+    expect(reset).toHaveBeenCalled()
   })
 })

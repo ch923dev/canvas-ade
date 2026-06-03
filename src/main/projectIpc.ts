@@ -22,6 +22,7 @@ import {
 } from './projectStore'
 import { scaffoldProjectMemory } from './canvasMemory'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
+import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
 
 /**
  * True when an IPC sender is NOT the main window's main frame (foreign → deny).
@@ -62,11 +63,21 @@ export function isUnsafeProjectDir(dir: string): boolean {
   return path.normalize(dir).split(/[/\\]/).includes('..') || dir.split(/[/\\]/).includes('..')
 }
 
+/**
+ * Default T-M2 intent sink: log only. T-M3 replaces this with the Tier-2 summarize loop
+ * (intent → runSummarize → canvasMemory.writeBoard). The intent is passive — it is an id,
+ * never an action.
+ */
+function logSummarizeIntent(intent: SummarizeIntent): void {
+  console.log(`[memoryEngine] summarize intent for board ${intent.boardId}`)
+}
+
 export function registerProjectHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
   userDataDir: string,
-  now: () => number = () => Date.now()
+  now: () => number = () => Date.now(),
+  memoryEngine: MemoryEngine = createMemoryEngine({ onIntent: logSummarizeIntent })
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean =>
     isForeignSender(e, () => getWin()?.webContents.mainFrame)
@@ -95,6 +106,11 @@ export function registerProjectHandlers(
     if (r.ok) {
       gcAssets(r.dir, collectAssetIds(r.doc))
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
+      try {
+        memoryEngine.reset() // T-M2: a project switch drops stale fingerprints/timers
+      } catch (err) {
+        console.warn('[memoryEngine] reset on open failed (non-fatal)', err)
+      }
     }
     return r
   })
@@ -127,6 +143,11 @@ export function registerProjectHandlers(
     // is visible instead of silently swallowed.
     try {
       await writeProject(dir, doc)
+      try {
+        memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
+      } catch (err) {
+        console.warn('[memoryEngine] observe failed (non-fatal)', err)
+      }
       return true
     } catch (err) {
       console.error('project:save failed', err)
@@ -149,6 +170,11 @@ export function registerProjectHandlers(
       touchRecent(userDataDir, r.dir, projectName(r.dir), now())
       gcAssets(r.dir, collectAssetIds(r.doc))
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
+      try {
+        memoryEngine.reset() // T-M2: re-baseline on reopen/switch
+      } catch (err) {
+        console.warn('[memoryEngine] reset on current failed (non-fatal)', err)
+      }
     }
     return r.ok ? r : null
   })

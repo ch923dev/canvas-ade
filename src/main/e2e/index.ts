@@ -37,6 +37,7 @@ import {
 } from './probes/fullview'
 import { planning } from './probes/planning'
 import { context, contextBrain } from './probes/context'
+import { contextChange } from './probes/change'
 import { contextMemory } from './probes/memory'
 import { contextBudget } from './probes/budget'
 import { settings } from './probes/settings'
@@ -98,6 +99,7 @@ const PLAYLIST: E2EProbe[] = [
   contextBrain, // M-brain T-B1: llm:summarize mock round-trip (no board dependency, safe last)
   contextBudget, // M-brain T-B3: opt-in cap → budget-exceeded; runs AFTER contextBrain (restores uncapped config)
   settings, // M-brain T-B2: key store hasKey round-trip + no-plaintext-leak invariant
+  contextChange, // M-memory T-M2: meaningful-change detector (content → 1 intent; move → 0)
   contextMemory // M-memory T-M1: .canvas/ scaffold + board summary round-trip (project-rooted; runs last)
 ]
 
