@@ -17,9 +17,9 @@
  */
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
-  type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type MouseEvent,
   type MouseEvent as ReactMouseEvent,
@@ -253,28 +253,43 @@ export function PlanningBoard({
     [beginChange, commit, elements]
   )
 
-  /** Paste an image from the clipboard → board centre. */
+  /** Paste an image from the clipboard → board centre. Bound at the DOCUMENT level, not
+   *  as the well's React onPaste: Chromium dispatches the `paste` event at the document
+   *  (not the focused non-editable well), so an onPaste on the well never fires for a real
+   *  Ctrl+V — only drag-drop reaches the well. We listen on the document and gate on this
+   *  board's well owning focus, so Ctrl+V only lands an image on the board the user is
+   *  working in (the Excalidraw/tldraw pattern). No image in the clipboard → we no-op
+   *  without preventDefault, so a text paste into a focused note still proceeds normally. */
   const onWellPaste = useCallback(
-    (e: ReactClipboardEvent): void => {
-      const items = e.clipboardData?.items
-      if (!items) return
-      for (const it of items) {
+    (e: ClipboardEvent): void => {
+      const well = wellRef.current
+      if (!well || !well.contains(document.activeElement)) return
+      const data = e.clipboardData
+      if (!data) return
+      // A pasted bitmap can surface either as a DataTransferItem (kind 'file') OR only in
+      // `.files` — which one depends on the OS/source. Check both so paste is robust.
+      let file: File | null = null
+      for (const it of data.items) {
         if (it.kind === 'file' && it.type.startsWith('image/')) {
-          const file = it.getAsFile()
-          if (file) {
-            e.preventDefault()
-            const r = wellRef.current?.getBoundingClientRect()
-            const at = r
-              ? toBoard({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })
-              : { x: board.w / 2, y: board.h / 2 }
-            void addImageFromBlob(file, at)
-            return
-          }
+          file = it.getAsFile()
+          if (file) break
         }
       }
+      if (!file) file = Array.from(data.files).find((f) => f.type.startsWith('image/')) ?? null
+      if (!file) return
+      e.preventDefault()
+      const r = well.getBoundingClientRect()
+      void addImageFromBlob(
+        file,
+        toBoard({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })
+      )
     },
-    [addImageFromBlob, toBoard, board.w, board.h]
+    [addImageFromBlob, toBoard]
   )
+  useEffect(() => {
+    document.addEventListener('paste', onWellPaste)
+    return () => document.removeEventListener('paste', onWellPaste)
+  }, [onWellPaste])
 
   /** Allow a file drag over the well (required for onDrop to fire). */
   const onWellDragOver = useCallback((e: ReactDragEvent): void => {
@@ -896,7 +911,6 @@ export function PlanningBoard({
         onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
         onContextMenu={onWellContextMenu}
-        onPaste={onWellPaste}
         onDrop={onWellDrop}
         onDragOver={onWellDragOver}
         onKeyDown={(e) => {
