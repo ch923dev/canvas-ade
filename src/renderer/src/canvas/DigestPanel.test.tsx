@@ -110,3 +110,44 @@ it('handles an empty canvas', () => {
   expect(container.querySelectorAll('[data-test=digest-card]')).toHaveLength(0)
   expect(screen.getByText('0 boards — 0 terminal, 0 browser, 0 planning')).toBeTruthy()
 })
+
+it('renders cached prose (heading stripped) for a board that has it', () => {
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      prose={{ t1: '# Dev server\n\nRuns the Vite dev server and serves the SPA.\n' }}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+    />
+  )
+  expect(screen.getByText('Runs the Vite dev server and serves the SPA.')).toBeTruthy()
+  expect(screen.queryByText('# Dev server')).toBeNull()
+  const cards = container.querySelectorAll('[data-test=digest-card]')
+  const termCard = cards[0]
+  expect(termCard.querySelector('[data-test=digest-prose]')).toBeTruthy()
+  expect(termCard.querySelector('.digest-lines')).toBeNull()
+})
+
+it('falls back to Tier-1 lines for boards without cached prose', () => {
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      prose={{ t1: '# Dev server\n\nprose for t1\n' }}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+    />
+  )
+  const browserCard = container.querySelectorAll('[data-test=digest-card]')[1]
+  expect(browserCard.querySelector('.digest-lines')).toBeTruthy()
+  expect(browserCard.querySelector('[data-test=digest-prose]')).toBeNull()
+})
+
+it('renders Tier-1 lines for every card when no prose map is passed', () => {
+  const { container } = render(
+    <DigestPanel digest={buildDigest(DOC)} open onOpen={() => {}} onClose={() => {}} />
+  )
+  expect(container.querySelectorAll('[data-test=digest-prose]')).toHaveLength(0)
+  expect(container.querySelectorAll('.digest-lines')).toHaveLength(3)
+})

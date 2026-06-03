@@ -6,6 +6,7 @@
  */
 import type { ReactElement } from 'react'
 import type { CanvasDigest } from '../lib/digest'
+import { stripHeading } from '../lib/digest'
 
 const TYPE_TAG: Record<string, string> = {
   terminal: 'TERM',
@@ -15,12 +16,14 @@ const TYPE_TAG: Record<string, string> = {
 
 export interface DigestPanelProps {
   digest: CanvasDigest
+  /** T-M4: cached Tier-2 prose by board id (raw board-<id>.md). Absent → Tier-1 lines. */
+  prose?: Record<string, string>
   open: boolean
   onOpen: () => void
   onClose: () => void
 }
 
-export function DigestPanel({ digest, open, onOpen, onClose }: DigestPanelProps): ReactElement {
+export function DigestPanel({ digest, prose, open, onOpen, onClose }: DigestPanelProps): ReactElement {
   return (
     <>
       {!open && (
@@ -58,11 +61,21 @@ export function DigestPanel({ digest, open, onOpen, onClose }: DigestPanelProps)
                   {b.status}
                 </span>
               </div>
-              <ul className="digest-lines">
-                {b.lines.map((l, i) => (
-                  <li key={i}>{l}</li>
-                ))}
-              </ul>
+              {(() => {
+                const raw = prose?.[b.boardId]
+                const body = raw ? stripHeading(raw) : ''
+                return body ? (
+                  <p className="digest-prose" data-test="digest-prose">
+                    {body}
+                  </p>
+                ) : (
+                  <ul className="digest-lines">
+                    {b.lines.map((l, i) => (
+                      <li key={i}>{l}</li>
+                    ))}
+                  </ul>
+                )
+              })()}
             </article>
           ))}
         </div>

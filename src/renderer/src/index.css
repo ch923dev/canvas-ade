@@ -1122,6 +1122,13 @@ body {
 .digest-lines li {
   margin-bottom: var(--space-4);
 }
+.digest-prose {
+  margin: var(--space-8) 0 0;
+  font-size: var(--fs-label);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
 .digest-reopen {
   position: fixed;
   top: 50%;
