@@ -3,11 +3,13 @@ import { join } from 'path'
 import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerPtyHandlers, disposeAllPtys } from './pty'
+import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import {
-  registerPreviewHandlers,
-  disposeAll as disposeAllPreviews,
-  isAllowedExternal
-} from './preview'
+  buildMainWindowWebPreferences,
+  windowOpenDecision,
+  computeAppOrigin,
+  navDecision
+} from './windowSecurity'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { runE2ESmoke } from './e2e'
@@ -40,13 +42,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     backgroundColor: '#0a0a0b',
     title: 'Canvas ADE',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webviewTag: false
-    }
+    webPreferences: buildMainWindowWebPreferences(join(__dirname, '../preload/index.js'))
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
@@ -55,8 +51,9 @@ function createWindow(): void {
   // (Bug #23) so a stray window.open of file:/smb:/custom-protocol is dropped, not
   // handed to the OS handler.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedExternal(url)) shell.openExternal(url)
-    return { action: 'deny' }
+    const d = windowOpenDecision(url)
+    if (d.openExternal) shell.openExternal(d.openExternal)
+    return { action: d.action }
   })
 
   // Same-frame navigation guard (Bug #16/#47): the main window must never navigate
@@ -65,27 +62,12 @@ function createWindow(): void {
   // preview view) with no in-app way back. Pin to the app origin; route an external
   // http(s) target to the OS browser, drop everything else. Compare ORIGIN (not the
   // full URL) so the e2e `?e2e=1` query / in-app hash changes don't trip the guard.
-  const appOrigin = ((): string | null => {
-    try {
-      const dev = process.env['ELECTRON_RENDERER_URL']
-      return dev ? new URL(dev).origin : null // packaged: file: origin is "null"
-    } catch {
-      return null
-    }
-  })()
+  const appOrigin = computeAppOrigin(process.env['ELECTRON_RENDERER_URL'])
   const guardNav = (event: { preventDefault: () => void }, url: string): void => {
-    let origin: string | null
-    try {
-      const u = new URL(url)
-      // Packaged app loads file://…/index.html — its URL origin is the string "null".
-      origin = u.protocol === 'file:' ? null : u.origin
-    } catch {
-      event.preventDefault()
-      return
-    }
-    if (origin === appOrigin) return // same app document — allow
+    const d = navDecision(url, appOrigin)
+    if (d.allow) return
     event.preventDefault()
-    if (isAllowedExternal(url)) shell.openExternal(url)
+    if (d.openExternal) shell.openExternal(d.openExternal)
   }
   mainWindow.webContents.on('will-navigate', (details, url) => guardNav(details, url))
   mainWindow.webContents.on('will-redirect', (details, url) => guardNav(details, url))
