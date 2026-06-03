@@ -172,7 +172,7 @@ describe('runSummarize', () => {
       { fetch: errFetch, env: { OPENROUTER_API_KEY: 'k' } }
     )
     expect(r.ok).toBe(false)
-    expect(r).toMatchObject({ reason: 'provider-error' })
+    expect(r).toMatchObject({ reason: 'provider-error', message: expect.any(String) })
   })
 
   it('returns the mock stub under e2e with no network', async () => {
