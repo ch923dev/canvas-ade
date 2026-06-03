@@ -41,19 +41,23 @@ export const boardMenu: GroupProbe<MenuFixture> = {
     await ctx.delay(150)
     const afterDup = await ctx.evalIn<number>('window.__canvasE2E.getBoards().length')
 
-    // Open the clone's ⋯ menu and real-click Delete.
-    await ctx.evalIn(
-      `(async () => {
-         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-         const boards = window.__canvasE2E.getBoards();
-         const dupId = boards.slice(-1)[0] && boards.slice(-1)[0].id;
-         const dupNode = dupId && document.querySelector('.react-flow__node[data-id=' + JSON.stringify(dupId) + ']');
-         const more = dupNode && dupNode.querySelector('button[title="More"]');
-         if (more) { more.click(); await sleep(80); }
-       })()`
-    )
-    await realClickMenuItem(ctx, 'Delete')
-    await ctx.delay(150)
+    // Open the clone's ⋯ menu and real-click Delete — ONLY if Duplicate actually added a board.
+    // Else slice(-1) would target the fixture planning board and Delete would nuke it (tripping
+    // the runner's count-invariant guard); the assertion below already fails when dup didn't fire.
+    if (afterDup > base) {
+      await ctx.evalIn(
+        `(async () => {
+           const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+           const boards = window.__canvasE2E.getBoards();
+           const dupId = boards.slice(-1)[0] && boards.slice(-1)[0].id;
+           const dupNode = dupId && document.querySelector('.react-flow__node[data-id=' + JSON.stringify(dupId) + ']');
+           const more = dupNode && dupNode.querySelector('button[title="More"]');
+           if (more) { more.click(); await sleep(80); }
+         })()`
+      )
+      await realClickMenuItem(ctx, 'Delete')
+      await ctx.delay(150)
+    }
     const afterDel = await ctx.evalIn<number>('window.__canvasE2E.getBoards().length')
 
     const ok = portaled && afterDup === base + 1 && afterDel === base

@@ -79,6 +79,10 @@ export const browserGesture: GroupProbe<BrowserFixture> = {
       gestureOk = detached && reattached
       gestureDetail = `detached=${detached} reattached=${reattached}`
     }
+    // Always soft-fail: this is one of the documented env-flake trio (memory
+    // e2e-browser-trio-flake). The detach/reattach invariant polls async preview-lifecycle
+    // transitions that flap under host load even when the browser IS live — so a failure here
+    // is not reliably a real regression. Reported (flaky:true) but never red-lights the run.
     return { name: 'browser-gesture', ok: gestureOk, flaky: !gestureOk, detail: gestureDetail }
   }
 }

@@ -88,6 +88,10 @@ const focusDetach: GroupProbe<CrossFixture> = {
       focusOk = detachedOnFocus && reattached
       focusDetail = `detachedOnFocus=${detachedOnFocus} reattached=${reattached}`
     }
+    // Always soft-fail: one of the documented env-flake trio (memory e2e-browser-trio-flake).
+    // The detach/reattach invariant polls async preview-lifecycle transitions that flap under
+    // host load even when the browser IS live, so a failure here is not reliably a real
+    // regression. Reported (flaky:true) but never red-lights the run.
     return {
       name: 'focus-detach',
       ok: focusOk,

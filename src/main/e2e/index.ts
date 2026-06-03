@@ -51,23 +51,40 @@ export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise
 
   const parts: E2EPart[] = []
   for (const group of GROUPS) {
-    const fixture = await group.setup(ctx)
-    const baseline = await boardCount(ctx)
-    for (const probe of group.probes) {
-      const r = await probe.run(ctx, fixture)
-      if (Array.isArray(r)) parts.push(...r)
-      else parts.push(r)
-      const now = await boardCount(ctx)
-      if (now !== baseline) {
-        parts.push({
-          name: `${group.name}-fixture-broken`,
-          ok: false,
-          detail: `board count ${now} != baseline ${baseline} after probe '${probe.name}'`
-        })
-        break // stop this group; teardown still runs below
+    let fixture: unknown
+    try {
+      fixture = await group.setup(ctx)
+    } catch (err) {
+      // A seed failure records a hard-fail part and moves on — never skips a group silently.
+      parts.push({ name: `${group.name}-setup-failed`, ok: false, detail: String(err) })
+      continue
+    }
+    try {
+      const baseline = await boardCount(ctx)
+      for (const probe of group.probes) {
+        const r = await probe.run(ctx, fixture)
+        if (Array.isArray(r)) parts.push(...r)
+        else parts.push(r)
+        const now = await boardCount(ctx)
+        if (now !== baseline) {
+          parts.push({
+            name: `${group.name}-fixture-broken`,
+            ok: false,
+            detail: `board count ${now} != baseline ${baseline} after probe '${probe.name}'`
+          })
+          break // stop this group; teardown still runs in the finally below
+        }
+      }
+    } catch (err) {
+      parts.push({ name: `${group.name}-error`, ok: false, detail: String(err) })
+    } finally {
+      // Teardown ALWAYS runs (even after a probe throw) so groups never leak into one another.
+      try {
+        await group.teardown(ctx, fixture)
+      } catch {
+        // best-effort: a teardown failure surfaces as the next group's setup or canvas-empty
       }
     }
-    await group.teardown(ctx, fixture)
   }
 
   // Every group tore down to empty → the canvas must be empty now (replaces the old `seed`
