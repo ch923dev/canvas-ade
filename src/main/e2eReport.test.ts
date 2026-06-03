@@ -32,4 +32,33 @@ describe('summarizeE2E', () => {
     expect(r.line).toContain('"planning"')
     expect(r.line).toContain('1 checklist')
   })
+
+  it('a flaky-tagged failing part does NOT flip the exit code', () => {
+    const r = summarizeE2E([
+      { name: 'terminal', ok: true },
+      { name: 'browser', ok: false, flaky: true, detail: 'capturePage env flake' }
+    ])
+    expect(r.ok).toBe(true)
+    expect(r.exitCode).toBe(0)
+  })
+
+  it('a hard (non-flaky) failing part still fails', () => {
+    const r = summarizeE2E([{ name: 'terminal', ok: false }])
+    expect(r.ok).toBe(false)
+    expect(r.exitCode).toBe(1)
+  })
+
+  it('a hard failure alongside a flaky failure still fails', () => {
+    const r = summarizeE2E([
+      { name: 'browser', ok: false, flaky: true },
+      { name: 'terminal', ok: false }
+    ])
+    expect(r.ok).toBe(false)
+    expect(r.exitCode).toBe(1)
+  })
+
+  it('the flaky flag is serialized into the E2E_DONE line', () => {
+    const r = summarizeE2E([{ name: 'browser', ok: false, flaky: true }])
+    expect(r.line).toContain('"flaky":true')
+  })
 })

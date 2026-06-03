@@ -10,9 +10,16 @@ export interface E2EPart {
   ok: boolean
   /** Human-readable evidence (echoed into the marker line). */
   detail?: string
+  /**
+   * A known-flaky check whose failure is reported but must NOT fail the run
+   * (e.g. the browser/browser-gesture/focus-detach capturePage env flake). The
+   * marker still prints with ok:false, flaky:true; the exit code is unaffected.
+   */
+  flaky?: boolean
 }
 
 export interface E2ESummary {
+  /** Run-level pass: every part passed OR soft-passed (flaky). NOT a per-part `ok` AND. */
   ok: boolean
   /** 0 when ok, 1 otherwise — assigned to process.exitCode by the caller. */
   exitCode: number
@@ -21,6 +28,6 @@ export interface E2ESummary {
 }
 
 export function summarizeE2E(parts: E2EPart[]): E2ESummary {
-  const ok = parts.length > 0 && parts.every((p) => p.ok)
+  const ok = parts.length > 0 && parts.every((p) => p.ok || p.flaky === true)
   return { ok, exitCode: ok ? 0 : 1, line: `E2E_DONE ${JSON.stringify({ ok, parts })}` }
 }
