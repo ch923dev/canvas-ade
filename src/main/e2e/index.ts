@@ -36,7 +36,7 @@ import {
   fullviewClose
 } from './probes/fullview'
 import { menuChrome, menuPreviewDetach } from './probes/menu'
-import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
+import { previewConnectGesture } from './probes/previewLink'
 import {
   whiteboardFullviewAdd,
   whiteboardPasteImage,
@@ -61,8 +61,6 @@ const PLAYLIST: E2EProbe[] = [
   terminalRespawn,
   terminalAdopt,
   browserDeadUrl,
-  previewEdgeStale,
-  duplicateKeepsLink,
   menuChrome,
   menuPreviewDetach,
   previewConnectGesture,

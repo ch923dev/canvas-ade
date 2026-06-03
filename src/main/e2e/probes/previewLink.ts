@@ -1,85 +1,14 @@
 /**
- * Terminal→Browser preview-link probes: the connector edge is solid while the source
- * terminal runs and dashed when it's down; a duplicated linked Browser keeps the same
- * source (+ its own edge); and the terminal globe routes by gesture — tap refreshes,
- * hold / right-click open the multi-select connect picker.
+ * Terminal→Browser preview-link SLIVER (post-T3): the terminal globe routes by gesture —
+ * tap refreshes, hold / right-click open the multi-select connect picker. This needs a
+ * REAL instance (live port-detection IPC + a long-press timer + the actual dev-server URL
+ * echoed into a node-pty terminal), so it stays in the harness. The edge-stale styling
+ * migrated to PreviewEdge.test.tsx and duplicate-keeps-link to canvasStore.test.ts (T3).
+ *
+ * Order-bound: widens the terminal back to w:360 (menu-chrome narrowed it to w:150), so the
+ * final `seed` probe sees the board count/size restored.
  */
 import type { E2EProbe } from '../types'
-
-// ── Bug 3 (stale preview link): the terminal→browser edge is solid while the source
-// terminal runs, dashed/dimmed once it's down. Link the browser to the terminal, assert
-// a non-dashed edge, mark the terminal down, assert it goes dashed. ──
-export const previewEdgeStale: E2EProbe = {
-  name: 'preview-edge-stale',
-  async run(ctx) {
-    const browserId = ctx.ids.browserId!
-    const termId = ctx.ids.termId!
-    await ctx.evalIn(
-      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: ${JSON.stringify(termId)} })`
-    )
-    await ctx.evalIn('window.__canvasE2E.fitView()') // frame all → both nodes measured + edge rendered
-    await ctx.delay(250)
-    const edgeDash = (): Promise<string> =>
-      ctx.evalIn<string>(
-        `(() => { const p = document.querySelector('.react-flow__edge[data-id="preview-${browserId}"] .react-flow__edge-path'); return p ? (p.style.strokeDasharray || 'none') : 'no-edge'; })()`
-      )
-    const dashRunning = await edgeDash()
-    await ctx.evalIn(`window.__canvasE2E.setTerminalDown(${JSON.stringify(termId)})`)
-    await ctx.delay(250)
-    const dashDown = await edgeDash()
-    await ctx.evalIn(
-      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: undefined })`
-    ) // unlink → restore
-    const edgeOk = dashRunning === 'none' && dashDown.includes('5')
-    return {
-      name: 'preview-edge-stale',
-      ok: edgeOk,
-      detail: edgeOk
-        ? 'solid while running → dashed when terminal down'
-        : `running=${dashRunning} down=${dashDown}`
-    }
-  }
-}
-
-// ── Duplicating a linked Browser keeps the preview link: a Browser connected to a
-// terminal should, when duplicated, leave the COPY linked to the SAME terminal. Link,
-// duplicate, assert the clone carries the same previewSourceId AND its own edge renders,
-// then delete the clone (restore seed count) and unlink the original. ──
-export const duplicateKeepsLink: E2EProbe = {
-  name: 'duplicate-keeps-link',
-  async run(ctx) {
-    const browserId = ctx.ids.browserId!
-    const termId = ctx.ids.termId!
-    await ctx.evalIn(
-      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: ${JSON.stringify(termId)} })`
-    )
-    const cloneId = await ctx.evalIn<string | null>(
-      `window.__canvasE2E.duplicateBoard(${JSON.stringify(browserId)})`
-    )
-    await ctx.evalIn('window.__canvasE2E.fitView()') // frame all (incl. the clone) so its edge renders
-    await ctx.delay(250)
-    const dup = await ctx.evalIn<{ cloneSource: string | null; edgePresent: boolean }>(
-      `(() => {
-         const clone = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(cloneId)});
-         const cloneSource = clone && clone.type === 'browser' ? (clone.previewSourceId ?? null) : null;
-         const edgePresent = !!document.querySelector('.react-flow__edge[data-id="preview-${cloneId}"]');
-         return { cloneSource, edgePresent };
-       })()`
-    )
-    if (cloneId) await ctx.evalIn(`window.__canvasE2E.deleteBoard(${JSON.stringify(cloneId)})`) // restore seed count
-    await ctx.evalIn(
-      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { previewSourceId: undefined })`
-    ) // unlink the original → restore baseline
-    const dupOk = !!cloneId && dup.cloneSource === termId && dup.edgePresent
-    return {
-      name: 'duplicate-keeps-link',
-      ok: dupOk,
-      detail: dupOk
-        ? 'duplicated Browser stays linked to the same terminal + its own preview edge renders'
-        : JSON.stringify({ cloneId, ...dup })
-    }
-  }
-}
 
 // ── Multi-browser connect (gesture routing): the terminal globe routes by gesture.
 // A plain TAP refreshes the browser(s) already linked; a press-and-HOLD (≥500ms) or a

@@ -94,3 +94,23 @@ collaborators + foreign-sender rejection). Copy its shape for new MAIN-IPC integ
 
 The renderer-facing preload bridge is contract-tested in `src/preload/preloadApi.integration.test.ts`:
 every `api.*` method is asserted to invoke the right `ipcRenderer.invoke` channel with the right args.
+
+## E2E push-down (T3) — what migrated, what stayed
+
+T3 moved redundant `CANVAS_SMOKE=e2e` probe coverage down to Vitest and deleted the migrated
+probes. The homegrown harness now holds only the irreducible native/real-instance **slivers**
+(deferred to the T4 Playwright keep-set):
+
+- **Migrated to Vitest:** whiteboard interactions (erase/shortcut/marquee/multidrag/shift-add/snap/
+  alt-dup/lock/group/align/group-align → `PlanningBoard.interaction.test.tsx`); board-menu contracts
+  (items/dup+delete/stroke-width → `BoardMenu.integration.test.tsx`); tidy span + planning checklist/
+  round-trip (→ `canvasStore.test.ts`); preview-edge stale styling (→ `PreviewEdge.test.tsx`). The
+  paste reload/dedup/gc + SVG/image-embed parts were already covered by `projectStore.test.ts` +
+  `whiteboardExport.test.ts`, and `duplicate-keeps-link` by `canvasStore.test.ts`.
+- **Kept as slivers (T4):** `whiteboardFullviewAdd` (real OS click through the live camera
+  transform), `whiteboardPasteImage` (real Ctrl+V clipboard), `whiteboardExport` (PNG raster),
+  `menuChrome` (real title-bar layout + viewport clamp + CSS-var rest colour), `menuPreviewDetach`
+  (native `WebContentsView` detach), `previewConnectGesture` (live port-detect IPC + long-press).
+  These need real OS input, a native view, or the renderer's raster pipeline — jsdom can't reproduce
+  them. The `planning`/`layout` probes were deleted outright; `whiteboardFullviewAdd` now seeds the
+  shared `ctx.ids.planId` the slivers read (the deleted `planning` probe used to).
