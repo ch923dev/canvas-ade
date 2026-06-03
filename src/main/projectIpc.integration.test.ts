@@ -295,6 +295,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     const r = cap.invoke('project:open', '/proj') as { ok: boolean }
     expect(r.ok).toBe(true)
     expect(reset).toHaveBeenCalled()
+    expect(canvasMemory.scaffoldProjectMemory).toHaveBeenCalledWith('/proj')
   })
 
   it('resets the engine on project:current (re-baseline on reopen)', async () => {
