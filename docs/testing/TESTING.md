@@ -76,3 +76,21 @@ Electron's security checklist is asserted at the **unit/integration** tier, not 
 2. Name the file for its tier (`*.test.ts` vs `*.integration.test.ts`) and colocate it with the code.
 3. `.ts` runs in node, `.tsx` in jsdom (handled by `environmentMatchGlobs`) — pick the extension to
    match what the test needs.
+
+## MAIN IPC integration — the harness
+
+MAIN-process IPC handlers are integration-tested **without booting Electron** via
+`src/main/ipcTestHarness.ts`. It captures the channels a `register*Handlers(ipcMain, …)` call
+registers, so a test invokes a handler directly with a chosen sender:
+
+- `createIpcCapture()` → `{ ipcMain, handlers, invoke, invokeAs }`. Pass `cap.ipcMain` to the
+  production `register*Handlers`; then `cap.invoke('channel', …args)` calls the handler as a trusted
+  internal caller, and `cap.invokeAs(foreignEvent, 'channel', …args)` calls it as a given sender.
+- Sender fixtures: `internalEvent` (no `senderFrame` → trusted), `foreignEvent` (a non-main frame →
+  must be rejected, checklist #17/#20), `mainWin` (a `getWin` resolving to the trusted main frame).
+
+Reference template: `src/main/projectIpc.integration.test.ts` (happy-path handlers with `vi.mock`
+collaborators + foreign-sender rejection). Copy its shape for new MAIN-IPC integration tests.
+
+The renderer-facing preload bridge is contract-tested in `src/preload/preloadApi.integration.test.ts`:
+every `api.*` method is asserted to invoke the right `ipcRenderer.invoke` channel with the right args.
