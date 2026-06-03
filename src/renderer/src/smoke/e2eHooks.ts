@@ -55,6 +55,8 @@ export interface CanvasE2E {
   setGesture: (active: boolean) => void
   /** Delete a board the way the canvas does (parks a terminal's session first). */
   deleteBoard: (id: string) => void
+  /** Remove every board (parking terminals first) and reset the seed cursor → empty canvas. */
+  clearAllBoards: () => void
   /** Duplicate a board (store path); returns the clone id (null if the source is gone). */
   duplicateBoard: (id: string) => string | null
   /** Undo the last store change (restores a deleted board → adopt path). */
@@ -164,6 +166,14 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       const b = useCanvasStore.getState().boards.find((x) => x.id === id)
       if (b?.type === 'terminal') void window.api.parkTerminal(id)
       useCanvasStore.getState().removeBoard(id)
+    },
+    clearAllBoards() {
+      const store = useCanvasStore.getState()
+      for (const b of [...store.boards]) {
+        if (b.type === 'terminal') void window.api.parkTerminal(b.id)
+        store.removeBoard(b.id)
+      }
+      seedX = 0 // next group seeds from a clean origin
     },
     duplicateBoard(id) {
       return useCanvasStore.getState().duplicateBoard(id)
