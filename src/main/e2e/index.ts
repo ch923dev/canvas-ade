@@ -36,6 +36,7 @@ import {
   fullviewClose
 } from './probes/fullview'
 import { planning } from './probes/planning'
+import { context } from './probes/context'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
@@ -67,7 +68,8 @@ const PLAYLIST: E2EProbe[] = [
   previewConnectGesture,
   tidy,
   tile,
-  seed
+  seed,
+  context
 ]
 
 export async function runE2ESmoke(win: BrowserWindow, localUrl: string): Promise<number> {
