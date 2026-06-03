@@ -40,8 +40,23 @@ function base(b: Board): BoardDigest {
   return { boardId: b.id, type: b.type, title: b.title, status: '', lines: [] }
 }
 
-function digestTerminal(b: TerminalBoard, _doc: CanvasDoc): BoardDigest {
-  return base(b)
+function digestTerminal(b: TerminalBoard, d: CanvasDoc): BoardDigest {
+  const lines: string[] = []
+  if (b.launchCommand) lines.push(`Runs \`${b.launchCommand}\``)
+  else lines.push('No launch command set')
+  if (b.cwd) lines.push(`cwd: ${b.cwd}`)
+  if (b.port !== undefined) lines.push(`Dev server port ${b.port}`)
+  const consumer = d.boards.find(
+    (o): o is BrowserBoard => o.type === 'browser' && o.previewSourceId === b.id
+  )
+  if (consumer) lines.push(`Feeds preview "${consumer.title}"`)
+  return {
+    boardId: b.id,
+    type: 'terminal',
+    title: b.title,
+    status: b.launchCommand ? 'ready' : 'idle',
+    lines
+  }
 }
 function digestBrowser(b: BrowserBoard, _doc: CanvasDoc): BoardDigest {
   return base(b)

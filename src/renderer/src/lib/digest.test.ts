@@ -51,3 +51,20 @@ describe('buildDigest — header', () => {
     expect(d.boards.every((x) => typeof x.title === 'string')).toBe(true)
   })
 })
+
+describe('buildDigest — terminal', () => {
+  it('reports launchCommand, cwd and port', () => {
+    const d = buildDigest(
+      doc([terminal({ id: 't1', launchCommand: 'claude', cwd: 'Z:/app', port: 5173 })])
+    )
+    const t = d.boards[0]
+    expect(t.status).toBe('ready')
+    expect(t.lines).toEqual(['Runs `claude`', 'cwd: Z:/app', 'Dev server port 5173'])
+  })
+
+  it('flags a terminal with no launch command as idle', () => {
+    const d = buildDigest(doc([terminal({ id: 't1' })]))
+    expect(d.boards[0].status).toBe('idle')
+    expect(d.boards[0].lines).toEqual(['No launch command set'])
+  })
+})
