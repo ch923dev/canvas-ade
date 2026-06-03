@@ -168,10 +168,11 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 > `workers: 1`. This **supersedes** the 2026-06-03 freeze and restores "e2e is a gate". The `check`
 > job (typecheck · lint · format:check · unit + integration) and `smoke` are BOTH gates — don't
 > merge red. The one e2e-only surface still uncovered is **auto-update** (deferred to Phase 5 —
-> needs packaging/electron-updater). *Verification note: the Linux leg is proven green on the
-> runner and the Windows-only `RangeError`/pid-reuse bug the matrix caught is fixed; the final
-> 2-consecutive-green stability confirm is **pending GitHub Actions billing** (paused 2026-06-03).
-> Until that lands, treat the gate as wired-but-unverified-stable — see `docs/testing/TESTING.md`.*
+> needs packaging/electron-updater). *Verification: both legs proven green + stable post-fix —
+> Windows on the dev machine, the ubuntu-latest leg green ×2 consecutive locally via Docker
+> (`Dockerfile.e2e`; `docker run -t` to avoid a non-TTY buffering false-hang). The Actions `smoke`
+> job auto-runs once Actions billing is restored (paused 2026-06-03); the matrix already caught +
+> verified-fixed a Windows-only `RangeError`/pid-reuse bug. See `docs/testing/TESTING.md`.*
 
 Durable contract is above. **Build history** (phases 0–5, per-slice specs/plans, phase handoffs)
 is summarized in **`docs/archive/build-history.md`** (originals in git history). **Review/bug-hunt

@@ -152,8 +152,25 @@ non-blank on both runners — **no GL flag needed**; the app sandbox is untouche
 `retries: 2` on CI, `workers: 1`. Process-tree-kill is covered by `killTreeCommand` (unit, both
 platforms — Windows `taskkill /T /F`, POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned
 child prints its pid; the probe asserts that exact pid is reaped after `deleteBoard` + `disposeAllPtys`,
-robust against OS pid reuse). *Verification status: the Linux leg is proven green on the runner; the
-final 2-consecutive-green stability confirm is pending (CI Actions billing paused 2026-06-03).*
+robust against OS pid reuse). *Verification: both legs are proven green + stable post-fix — Windows on
+the dev machine (21/21) and the ubuntu-latest leg green ×2 consecutive locally via Docker
+(`Dockerfile.e2e`, see below). The GitHub Actions `smoke` job is wired and will run automatically once
+Actions billing is restored (paused 2026-06-03); the matrix itself already caught + verified-fixed a
+Windows-only `RangeError`/pid-reuse bug.*
+
+### Local Linux e2e without GitHub Actions (`Dockerfile.e2e`)
+
+The ubuntu-latest leg can be reproduced locally — no Actions minutes — with the repo's `Dockerfile.e2e`
+(a `node:22-bookworm` image: Xvfb + `xauth` + the Electron shared libs; `pnpm install` rebuilds node-pty
+for the Electron ABI). Run:
+
+```bash
+docker build -f Dockerfile.e2e -t canvas-e2e-linux .
+docker run --rm -t canvas-e2e-linux        # CMD = xvfb-run -a pnpm test:e2e (CI=1 → --no-sandbox)
+```
+
+**Gotcha:** use `docker run -t` (allocate a TTY). Without it the Playwright reporter block-buffers on a
+non-TTY pipe and the run *looks* hung with zero output. `-t` line-buffers and the per-test output streams.
 
 **Still owed (deferred to Phase 5):** an **auto-update** e2e — electron-updater / packaging / signing
 don't exist yet, so the update flow can't be e2e-tested. It is the one remaining e2e-only surface.
