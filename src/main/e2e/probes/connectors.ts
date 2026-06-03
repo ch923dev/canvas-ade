@@ -32,6 +32,10 @@ export const connectorDrawDelete: E2EProbe = {
          const E = window.__canvasE2E;
          const T = ${JSON.stringify(termId)}, B = ${JSON.stringify(browserId)};
          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         const waitFor = async (fn, ms = 4000, step = 80) => {
+           const end = Date.now() + ms;
+           for (;;) { let v; try { v = fn(); } catch { v = false; } if (v) return true; if (Date.now() >= end) return false; await sleep(step); }
+         };
          const browser = E.getBoards().find((b) => b.id === B);
          const cx = browser.x + browser.w / 2, cy = browser.y + browser.h / 2;
 
@@ -42,14 +46,16 @@ export const connectorDrawDelete: E2EProbe = {
            (c) => c.id === id1 && c.kind === 'orchestration' && c.sourceId === T && c.targetId === B
          );
 
-         // 2) ✕-DELETE: select → the midpoint ✕ becomes visible → click removes it.
+         // 2) ✕-DELETE: select → poll for the midpoint ✕ becoming visible → click removes it.
          E.selectConnector(id1);
-         await sleep(100);
-         const btn = document.querySelector('.ca-connector-delete[data-connector="' + id1 + '"]');
-         const btnVisible = !!btn && getComputedStyle(btn).display !== 'none';
+         const sel = '.ca-connector-delete[data-connector="' + id1 + '"]';
+         const btnVisible = await waitFor(() => {
+           const b = document.querySelector(sel);
+           return b && getComputedStyle(b).display !== 'none';
+         });
+         const btn = document.querySelector(sel);
          if (btn) btn.click();
-         await sleep(80);
-         const afterX = E.getConnectors().length;
+         const afterX = (await waitFor(() => E.getConnectors().length === 0)) ? 0 : E.getConnectors().length;
          E.selectConnector(null);
 
          // 3) DELETE-BOARD CLEANUP + UNDO restores both, in one step.
@@ -60,8 +66,7 @@ export const connectorDrawDelete: E2EProbe = {
          const boardGone = !E.getBoards().some((b) => b.id === B);
          const connGone = E.getConnectors().length === 0;
          E.undo();
-         await sleep(80);
-         const boardBack = E.getBoards().some((b) => b.id === B);
+         const boardBack = await waitFor(() => E.getBoards().some((b) => b.id === B));
          const connBack = E.getConnectors().length === 1;
 
          // Restore baseline for later probes: drop the restored connector (board stays).
@@ -88,6 +93,79 @@ export const connectorDrawDelete: E2EProbe = {
       ok,
       detail: ok
         ? 'draw via resolveConnectTarget → ✕ deletes → removeBoard drops incident cable → undo restores board + cable'
+        : JSON.stringify(r)
+    }
+  }
+}
+
+// ── Typed edge render (T2.3, the M2 gate): an orchestration connector renders with a
+// stroke DISTINCT from the accent preview edge, reroutes when an endpoint board moves, and
+// the preview edge still renders (no regression from the floatingPath extraction). Links
+// browser→terminal (preview edge) AND draws a terminal→planning orchestration cable, then
+// compares. Restores baseline. ──
+export const connectorEdgeRender: E2EProbe = {
+  name: 'connector-edge-render',
+  async run(ctx) {
+    const termId = ctx.ids.termId!
+    const browserId = ctx.ids.browserId!
+    const planId = ctx.ids.planId!
+    const r = await ctx.evalIn<{
+      prevStroke: string | null
+      orchStroke: string | null
+      bothRendered: boolean
+      distinct: boolean
+      rerouted: boolean
+      previewRendered: boolean
+    }>(
+      `(async () => {
+         const E = window.__canvasE2E;
+         const T = ${JSON.stringify(termId)}, B = ${JSON.stringify(browserId)}, P = ${JSON.stringify(planId)};
+         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+         // Poll instead of a fixed delay: RF measures nodes + paints edges lazily, and on a
+         // contended host the settle can exceed any single sleep (memory e2e-rf-measurement-race).
+         const waitFor = async (fn, ms = 4000, step = 80) => {
+           const end = Date.now() + ms;
+           for (;;) { let v; try { v = fn(); } catch { v = false; } if (v) return true; if (Date.now() >= end) return false; await sleep(step); }
+         };
+         const pathSel = (id) => '.react-flow__edge[data-id="' + id + '"] .react-flow__edge-path';
+         const pathEl = (id) => document.querySelector(pathSel(id));
+         const dOf = (id) => { const p = pathEl(id); return p ? p.getAttribute('d') : null; };
+
+         // Preview edge (accent): link the browser to the terminal.
+         E.patchBoard(B, { previewSourceId: T });
+         // Orchestration edge (neutral): terminal → planning board.
+         const plan = E.getBoards().find((b) => b.id === P);
+         E.startConnect(T);
+         const connId = E.completeConnectAt(plan.x + plan.w / 2, plan.y + plan.h / 2);
+         E.fitView();
+         const bothRendered = await waitFor(() => pathEl('preview-' + B) && pathEl(connId));
+         const strokeOf = (id) => { const p = pathEl(id); return p ? getComputedStyle(p).stroke : null; };
+         const prevStroke = strokeOf('preview-' + B);
+         const orchStroke = strokeOf(connId);
+         const d1 = dOf(connId);
+         // Reroute: move the planning (target) board; the floating edge must re-path.
+         E.patchBoard(P, { x: plan.x + 320, y: plan.y + 220 });
+         const rerouted = await waitFor(() => { const d = dOf(connId); return !!d && !!d1 && d !== d1; });
+         // Restore baseline.
+         E.patchBoard(P, { x: plan.x, y: plan.y });
+         if (connId) E.removeConnector(connId);
+         E.patchBoard(B, { previewSourceId: undefined });
+         return {
+           prevStroke,
+           orchStroke,
+           bothRendered,
+           distinct: !!prevStroke && !!orchStroke && prevStroke !== orchStroke,
+           rerouted,
+           previewRendered: !!prevStroke
+         };
+       })()`
+    )
+    const ok = r.bothRendered && r.distinct && r.rerouted && r.previewRendered
+    return {
+      name: 'connector-edge-render',
+      ok,
+      detail: ok
+        ? 'orchestration edge stroke distinct from preview, reroutes on board move, preview edge unbroken'
         : JSON.stringify(r)
     }
   }

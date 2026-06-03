@@ -54,6 +54,7 @@ import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { OrchestrationEdge } from './edges/OrchestrationEdge'
 import { previewEdges } from '../lib/previewEdges'
+import { orchestrationEdges } from '../lib/orchestrationEdges'
 import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import type { ResolvedPushTarget } from '../lib/previewTarget'
@@ -265,32 +266,25 @@ function CanvasInner(): ReactElement {
     () => new Set(Object.keys(running).filter((id) => running[id])),
     [running]
   )
-  // Preview edges (accent) + orchestration connectors (neutral). Orchestration edges are
-  // derived from the store `connectors` (kind 'orchestration'), skipping any whose endpoint
-  // board is gone (mirrors previewEdges' dangling skip). T2.3 extracts the orchestration
-  // mapping into a pure `orchestrationEdges(connectors, boards)` module + test.
+  // Preview edges (accent) + orchestration connectors (neutral). Both derive from store
+  // state via pure helpers (previewEdges / orchestrationEdges, dangling-skipped); Canvas
+  // only decorates them with the marker, selection state, and the delete callback.
   const edges = useMemo(() => {
-    const ids = new Set(boards.map((b) => b.id))
     const preview = previewEdges(boards, runningIds).map((e) => ({
       ...e,
       markerEnd: { type: MarkerType.ArrowClosed, color: '#4f8cff', width: 16, height: 16 }
     }))
-    const orchestration = connectors
-      .filter((c) => c.kind === 'orchestration' && ids.has(c.sourceId) && ids.has(c.targetId))
-      .map((c) => ({
-        id: c.id,
-        source: c.sourceId,
-        target: c.targetId,
-        type: 'orchestration',
-        selected: c.id === selectedConnectorId,
-        data: { onDelete: () => removeConnector(c.id) },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: c.id === selectedConnectorId ? '#e6e6e6' : '#5a6573',
-          width: 16,
-          height: 16
-        }
-      }))
+    const orchestration = orchestrationEdges(connectors, boards).map((e) => ({
+      ...e,
+      selected: e.id === selectedConnectorId,
+      data: { onDelete: () => removeConnector(e.id) },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: e.id === selectedConnectorId ? '#e6e6e6' : '#5a6573',
+        width: 16,
+        height: 16
+      }
+    }))
     return [...preview, ...orchestration]
   }, [boards, runningIds, connectors, selectedConnectorId, removeConnector])
 

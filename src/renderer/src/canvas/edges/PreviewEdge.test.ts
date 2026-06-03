@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Position } from '@xyflow/react'
-import { edgePositions } from './PreviewEdge'
+import { edgePositions } from './floatingPath'
 
 // Bug M4: the bezier's source/target Position pair must follow the boards' geometry
 // (the dominant axis between the two centers), not a hardcoded Right→Left, or the
