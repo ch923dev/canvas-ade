@@ -885,3 +885,96 @@ export const whiteboardPasteImage: E2EProbe = {
     return parts
   }
 }
+
+// ── W5 export: build the SVG + PNG artifact for a planning board via the renderer BUILD
+// pipeline (buildExport), WITHOUT showing the native save dialog. Probes:
+//   svg       — SVG starts with <svg, contains a <path and the note text, byteLength > 100.
+//   png       — PNG bytes > 200 bytes.
+//   image-embed — write a minimal asset, seed an image element, export → embeddedCount 1 + <image> in SVG.
+//   missing-asset — bogus assetId → embeddedCount 0 + stroke-dasharray fallback tile, no throw.
+export const whiteboardExport: E2EProbe = {
+  name: 'whiteboard-export',
+  async run(ctx): Promise<E2EPart[]> {
+    const planId = ctx.ids.planId
+    if (!planId) return [{ name: 'whiteboard-export', ok: false, detail: 'planId not seeded' }]
+    const id = JSON.stringify(planId)
+    const parts: E2EPart[] = []
+    const tmp = mkdtempSync(join(tmpdir(), 'canvas-w5-'))
+    try {
+      await createProject(tmp, 'w5', {})
+      setCurrentDir(tmp)
+
+      // Seed note + stroke + checklist so the SVG has several element nodes.
+      await ctx.evalIn(
+        `window.__canvasE2E.patchBoard(${id}, { elements: [
+          { id: 'ex-note', kind: 'note', x: 20, y: 20, w: 156, h: 96, tint: 'blue', text: 'export me', rotation: 0 },
+          { id: 'ex-stroke', kind: 'stroke', x: 0, y: 0, points: [40,200,80,240,120,210] },
+          { id: 'ex-check', kind: 'checklist', x: 220, y: 20, w: 240, h: 0, title: 'T', items: [{ id:'a', label:'one', done:true }, { id:'b', label:'two', done:false }] }
+        ] })`
+      )
+      await ctx.delay(120)
+
+      const svgOut = await ctx.evalIn<{ svg: string; byteLength: number } | null>(
+        `window.__canvasE2E.exportBoard(${id}, 'svg')`
+      )
+      const svgOk =
+        !!svgOut &&
+        svgOut.svg.startsWith('<svg') &&
+        (svgOut.svg.match(/<path /g) ?? []).length >= 1 &&
+        svgOut.svg.includes('export me') &&
+        svgOut.byteLength > 100
+      parts.push({
+        name: 'whiteboard-export-svg',
+        ok: svgOk,
+        detail: svgOk ? `svg ${svgOut!.byteLength}B` : `bad svg: ${JSON.stringify(svgOut)?.slice(0, 140)}`
+      })
+
+      const pngOut = await ctx.evalIn<{ byteLength: number } | null>(
+        `window.__canvasE2E.exportBoard(${id}, 'png')`
+      )
+      const pngOk = !!pngOut && pngOut.byteLength > 200
+      parts.push({
+        name: 'whiteboard-export-png',
+        ok: pngOk,
+        detail: pngOk ? `png ${pngOut!.byteLength}B` : `bad png: ${JSON.stringify(pngOut)}`
+      })
+
+      // image embed: write a real asset, seed an image element, export → embeddedCount 1 + <image>.
+      const embed = await ctx.evalIn<{ svg: string; imageCount: number; embeddedCount: number } | null>(
+        `(async () => {
+           const bytes = new Uint8Array([137,80,78,71,13,10,26,10]);
+           const w = await window.api.asset.write(bytes, 'png');
+           if (!('assetId' in w)) return null;
+           window.__canvasE2E.patchBoard(${id}, { elements: [{ id:'ex-img', kind:'image', x:10, y:10, w:64, h:64, assetId: w.assetId }] });
+           await new Promise(r => setTimeout(r, 60));
+           return window.__canvasE2E.exportBoard(${id}, 'svg');
+         })()`
+      )
+      const embedOk = !!embed && embed.imageCount === 1 && embed.embeddedCount === 1 && embed.svg.includes('<image')
+      parts.push({
+        name: 'whiteboard-export-image-embed',
+        ok: embedOk,
+        detail: embedOk ? 'image embedded' : `bad embed: ${JSON.stringify(embed)?.slice(0, 140)}`
+      })
+
+      // missing asset: bogus assetId → embeddedCount 0 + dashed fallback, no throw.
+      const missing = await ctx.evalIn<{ embeddedCount: number; svg: string } | null>(
+        `(async () => {
+           window.__canvasE2E.patchBoard(${id}, { elements: [{ id:'ex-img2', kind:'image', x:10, y:10, w:64, h:64, assetId: 'does-not-exist.png' }] });
+           await new Promise(r => setTimeout(r, 40));
+           return window.__canvasE2E.exportBoard(${id}, 'svg');
+         })()`
+      )
+      const missingOk = !!missing && missing.embeddedCount === 0 && missing.svg.includes('stroke-dasharray')
+      parts.push({
+        name: 'whiteboard-export-missing-asset',
+        ok: missingOk,
+        detail: missingOk ? 'fallback tile, no throw' : `bad: ${JSON.stringify(missing)?.slice(0, 140)}`
+      })
+    } finally {
+      setCurrentDir(null)
+      try { rmSync(tmp, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
+    return parts
+  }
+}

@@ -78,6 +78,12 @@ export interface CanvasE2E {
   enterCameraFullView: (id: string) => void
   /** Exit Planning camera-full-view (restore the prior viewport). */
   exitCameraFullView: () => void
+  /** W5: build the export artifact (SVG + PNG bytes) for a planning board WITHOUT the
+   *  save dialog — returns a JSON-serializable summary for the harness to assert. */
+  exportBoard: (
+    boardId: string,
+    format: 'png' | 'svg'
+  ) => Promise<{ svg: string; byteLength: number; imageCount: number; embeddedCount: number } | null>
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -197,6 +203,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     exitCameraFullView() {
       host.exitCameraFullView()
+    },
+    async exportBoard(boardId, format) {
+      const b = useCanvasStore.getState().boards.find((x) => x.id === boardId)
+      if (!b || b.type !== 'planning') return null
+      const { buildExport } = await import('../canvas/boards/planning/exportBoard')
+      const { result, bytes } = await buildExport(b, format)
+      return {
+        svg: result.svg,
+        byteLength: bytes.length,
+        imageCount: result.imageCount,
+        embeddedCount: result.embeddedCount
+      }
     }
   }
   window.__canvasE2E = api

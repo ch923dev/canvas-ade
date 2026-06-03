@@ -48,7 +48,8 @@ import {
   whiteboardGroup,
   whiteboardAlign,
   whiteboardGroupAlign,
-  whiteboardPasteImage
+  whiteboardPasteImage,
+  whiteboardExport // W5: SVG/PNG export pipeline
 } from './probes/whiteboard'
 import { seed } from './probes/seed'
 
@@ -87,6 +88,7 @@ const PLAYLIST: E2EProbe[] = [
   whiteboardGroupAlign, // W3: align works on a GROUP (right-click expands the group)
   whiteboardFullviewAdd, // Option A: real-input add-note in Planning camera-full-view
   whiteboardPasteImage, // W4: real-paste image persists + reloads + dedups + GCs
+  whiteboardExport, // W5: SVG/PNG export pipeline (svg/png/image-embed/missing-asset)
   seed
 ]
 
