@@ -293,12 +293,14 @@ export const whiteboardFullviewAdd: E2EProbe = {
     // Enter camera full view (Option A) — the real path under test (sets the camera-
     // full-view MODE + does the animated fit).
     await ctx.evalIn(`window.__canvasE2E.enterCameraFullView(${JSON.stringify(planId)})`)
-    // Poll until the camera has actually fitted onto the board (rendered scale > 1.3) so
-    // the board is in the viewport and the click hits it. RE-FIT INSTANTLY EACH TICK:
-    // React Flow measures a freshly-resized node lazily (ResizeObserver), so the single
-    // animated fit above can no-op on a sluggish/contended CI host — zoom stays ~1, board
-    // off-screen, click misses, no note (the deterministic GitHub-runner flake). An instant
-    // re-fit per tick lands the moment RF has measured the node. Memory e2e-rf-measurement-race.
+    // Poll until the board is fitted ON-SCREEN (so a real click at its centre lands).
+    // GATE ON RENDER-PRESENCE, NOT A ZOOM THRESHOLD: a smaller CI window fits a 520x500
+    // board at zoom ~1.0 (height-constrained), so the old `scale > 1.3` gate could never
+    // pass on the GitHub runner even though the board was fully visible + clickable (the
+    // deterministic CI flake — passes locally where the window is larger). Memory
+    // e2e-modifier-keys-synthetic ("gate fit-polls on render-presence, not >1.0") +
+    // e2e-rf-measurement-race. Re-fit instantly each tick too, in case RF measured the
+    // freshly-resized node lazily and the single animated fit no-opped.
     const fitted = await ctx.poll(
       () =>
         ctx.evalIn<boolean>(
@@ -309,7 +311,19 @@ export const whiteboardFullviewAdd: E2EProbe = {
              const well = node && node.querySelector('.pl-well');
              if (!well || !(well.offsetWidth > 0)) return false;
              const r = well.getBoundingClientRect();
-             return r.width / well.offsetWidth > 1.3;
+             const scale = r.width / well.offsetWidth;
+             // Fitted = the whole well sits within the window (2px tolerance for
+             // sub-pixel rounding) so its centre is clickable. The pl-well node only
+             // exists above LOD, so its presence already rules out an LOD-collapsed
+             // card; the loose scale floor just rejects a mid-transition tiny frame
+             // (a small CI pane fits 520x500 at ~0.9, so keep it well under 1.0).
+             return (
+               scale > 0.4 &&
+               r.left >= -2 &&
+               r.top >= -2 &&
+               r.right <= window.innerWidth + 2 &&
+               r.bottom <= window.innerHeight + 2
+             );
            })()`
         ),
       4000
@@ -319,7 +333,7 @@ export const whiteboardFullviewAdd: E2EProbe = {
       return {
         name: 'whiteboard-fullview-add',
         ok: false,
-        detail: 'camera did not fit the board in full view (zoom stayed ~1)'
+        detail: 'camera did not fit the board on-screen in full view'
       }
     }
     await ctx.delay(60) // settle the final fitted frame before reading the rect
