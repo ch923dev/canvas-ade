@@ -1,6 +1,6 @@
 # Testing Strategy — design & roadmap
 
-**Date:** 2026-06-03 · **Branch:** `testing-strategy` · **Status:** approved design, pre-plan
+**Date:** 2026-06-03 · **Branch:** `testing-strategy` (single branch for the whole initiative; PR #37) · **Status:** T1 shipped; T0 (Testing Foundation) approved, pre-plan
 **Research backing:** `docs/research/2026-06-03-testing-strategy.md` (deep-research, 24/24 claims verified)
 
 ---
@@ -27,12 +27,16 @@ now** — independent of the MCP merge and Phase 5 packaging.
 
 | Decision | Choice |
 |---|---|
-| Branch name | `testing-strategy` (renamed from `docs/testing-strategy`; PR #36 preserved) |
+| Branch | **Single `testing-strategy` branch / PR #37 for the ENTIRE initiative.** No new branches per phase (decided 2026-06-03 — avoid branch sprawl + redundant settings). |
 | Test model | Testing Trophy — mostly integration; thin e2e |
+| Tiers (taxonomy) | **3 tiers: unit · integration · e2e** (+ static base). Component-render (jsdom) counts as **integration** (renders a real component tree). |
+| Naming convention | `*.test.ts(x)` = unit · `*.integration.test.ts(x)` = integration · e2e = separate harness. `.ts`→node, `.tsx`→jsdom (preserved). |
+| Runner | **Vitest projects** split unit vs integration (`test:unit` / `test:integration` / `test`). |
 | E2E tooling | **Playwright `_electron`** (Spectron dead; WebdriverIO the alternative we did not pick) |
-| First phase | **T1 — security-unit gap** (cheapest, highest-value, no new dep) |
+| Foundation | **T0 — Testing Foundation** (identity doc + taxonomy + split runner + classify/retrofit all files) is the base; built AFTER T1 shipped, and **retrofits T1** into the convention. |
+| T1 fate | **Keep + retrofit** (T1 shipped + green; folded under T0's convention, not discarded). |
 | Sequencing | Standalone, start now; independent of MCP / Phase 5 |
-| Roadmap shape | **Bottom-up trophy build** (low tier → high tier), one phase per branch/PR |
+| Roadmap shape | **Bottom-up trophy build** (low tier → high tier); all phases land on the one branch. |
 
 ### Approaches considered
 - **A — Bottom-up trophy build (CHOSEN):** security-units → IPC layer → push-down → Playwright →
@@ -70,29 +74,78 @@ unit coverage, and security/MAIN files (`index.ts`, `localServer.ts`, `mcp.ts`) 
 
 ---
 
-## Roadmap — 5 phases
+## Roadmap — T0 foundation + 5 phases
 
-Each phase = its own `test/*` branch + PR; full gate (typecheck · lint · format · unit) green after
-each. The static tier (TypeScript strict + ESLint) is already gated and stays as the trophy base.
+**All phases land on the single `testing-strategy` branch (PR #37)** — no per-phase branches. Full
+gate (typecheck · lint · format · unit + integration) green after each. The static tier (TypeScript
+strict + ESLint) is already gated and stays as the trophy base.
 
-### T1 — Security-unit gap  *(the executable plan; first)*
-**Goal:** raise the security floor at the fast tier — the highest-value, cheapest win, no new dep.
+> **Build order note:** T1 shipped first (the cheapest security win) BEFORE the foundation existed.
+> T0 now retrofits T1 + the whole suite into a deliberate structure. Going forward the foundation is
+> the base; T2–T5 build on it.
 
-**Architecture note:** `src/main/index.ts` currently builds the `BrowserWindow` `webPreferences`
-inline, which is not unit-testable. Extract a pure **window-options builder** (e.g.
-`buildWindowOptions()` returning the `webPreferences` object) so the security invariants can be
-asserted without constructing a window. This is the one production refactor T1 requires; it follows
-the existing "one file = one purpose" convention.
+### T0 — Testing Foundation (identity + structure)
+**Goal:** give the suite an *identity* — a single source of truth for which tier a test belongs to,
+a self-owned structure (naming + split runner) so we never rely on ad-hoc per-file convention, and a
+one-time classification/retrofit of every existing file (incl. T1) to that convention.
 
-**Work (decomposed):**
-1. Extract a pure window-options builder from `index.ts`.
-2. Unit-assert `webPreferences`: `contextIsolation:true`, `sandbox:true`, `nodeIntegration:false`.
-3. Test `setWindowOpenHandler` denies in-app nav and routes externals to `shell.openExternal`.
-4. IPC **sender-rejection** unit tests on `boardRegistry`, `projectIpc`, `mcp` (foreign sender → rejected).
-5. Test the locked rule: Browser-board content cannot reach the PTY write channel.
+**Components:**
 
-**Exit / gate:** new unit tests green in CI; Electron security-checklist items **#3, #4, #13, #14,
-#17, #20** each have a direct assertion. **New dep:** none.
+1. **Identity doc — `docs/testing/TESTING.md`** (the constitution):
+   - Model (Trophy) + the 3 tiers + static base.
+   - **The decision rule** (core artifact): *pure logic / single function* → **unit** (`*.test.ts`);
+     *renders a component tree (jsdom) OR wires multiple real units / IPC handlers / mocked electron*
+     → **integration** (`*.integration.test.ts`); *needs the real booted app* (native
+     `WebContentsView`, node-pty roundtrip, OS process-tree, auto-update, cross-platform) → **e2e**.
+   - What each tier MAY touch (unit: pure / mocked collaborators; integration: real units +
+     `electron-mock-ipc` / jsdom, **no app boot**; e2e: real instance, **MAIN-helpers only, sandbox
+     never weakened**).
+   - Security-checklist → tier map (#3/#4/#13/#14/#17/#20, from T1).
+   - e2e keep-set policy (native + happy-path + update + cross-platform only) → links research + this roadmap.
+
+2. **Naming + taxonomy convention** — `*.test.ts(x)` = unit · `*.integration.test.ts(x)` =
+   integration · e2e separate. `.ts`→node, `.tsx`→jsdom preserved.
+
+3. **Split runner — Vitest projects** (`vitest.config.ts` → projects):
+   - `unit` project: `src/**/*.test.{ts,tsx}` EXCLUDING `*.integration.*`.
+   - `integration` project: `src/**/*.integration.test.{ts,tsx}`.
+   - Both keep `environment: 'node'` + `environmentMatchGlobs [['**/*.tsx','jsdom']]`, the `react`
+     plugin, and the `@renderer` alias (no duplication — shared base).
+   - Scripts: `test` (all projects) · `test:unit` · `test:integration`. CI `check` runs `test` (both).
+
+4. **Classification + retrofit map** (audit all ~44 files; every file ends with an explicit tier):
+   - **Split the mixed main files** — extract the IPC-handler/registration suites into
+     `pty.integration.test.ts`, `preview.integration.test.ts`, `projectIpc.integration.test.ts`;
+     the pure-function suites stay in the matching `*.test.ts`. **← this is the T1 retrofit** (T1's
+     foreign-sender rejection suites move into the new `*.integration.test.ts` files).
+   - **6 jsdom component files → `*.integration.test.tsx`**: `BoardMenu`, `ChecklistCard`,
+     `ElementContextMenu`, `FreeText`, `ImageCard`, `NoteCard`.
+   - `persistence.integration.test.ts` already correct. `windowSecurity.test.ts` = unit (stays).
+     ~35 pure-function files stay `*.test.ts` (unit).
+
+**Exit / gate:** `TESTING.md` committed; `vitest.config.ts` runs `unit` + `integration` projects;
+every test file matches the naming convention for its tier; `test:unit` + `test:integration` both
+green; total test count preserved (~633); typecheck + lint clean. **New dep:** none.
+
+### T1 — Security-unit gap  ✅ SHIPPED (retrofitted under T0)
+**Status:** DONE (commits `dd7284d`..`9728277`, PR #37). 633 tests green. Plan:
+`docs/superpowers/plans/2026-06-03-testing-t1-security-unit-gap.md`.
+
+**Goal (achieved):** raise the security floor at the fast tier — highest-value, cheapest win, no dep.
+
+**Delivered:**
+1. Extracted the main-window security surface from `index.ts` → pure `src/main/windowSecurity.ts`
+   (`buildMainWindowWebPreferences` #3/#4, `windowOpenDecision` #14, `computeAppOrigin` + `navDecision`
+   #13), unit-tested.
+2. Foreign-sender **rejection** tests for **every guarded IPC handler** in `pty` / `preview` /
+   `projectIpc` (#17; #20 / Browser↛PTY).
+
+**Retrofit under T0:** the rejection suites move from `pty.test.ts` / `preview.test.ts` /
+`projectIpc.test.ts` into `*.integration.test.ts`; `windowSecurity.test.ts` stays unit.
+
+**Scope correction:** the original draft named `boardRegistry` / `mcp` — those files do **not** exist
+on this branch (pre-MCP); their rejection tests are deferred to `feat/mcp-integration`. Electron
+security-checklist items **#3/#4/#13/#14/#17/#20** each have a direct assertion. **Dep added:** none.
 
 ### T2 — IPC integration layer
 **Goal:** make MAIN-process logic + IPC testable **without launching the app**.
@@ -152,8 +205,10 @@ tested before packaging lands).
 ## Testing of this work (meta)
 
 Each phase adds the tests it describes; the phase is done only when CI is green including the new
-tests. T1–T3 are pure-Vitest and run in the existing `check` job. T4 adds a Playwright job; T5
-re-enables the `smoke` job as a gate. This supersedes the 2026-06-03 e2e freeze once T4/T5 land.
+tests. After **T0**, the `check` job runs the Vitest **`unit` + `integration` projects** (one
+command, `pnpm test`, runs both). T0–T3 are pure-Vitest. T4 adds a Playwright job; T5 re-enables the
+`smoke` job as a gate. This supersedes the 2026-06-03 e2e freeze once T4/T5 land. All phases share the
+single `testing-strategy` branch / PR #37 — no per-phase branches, no duplicated runner config.
 
 ---
 
