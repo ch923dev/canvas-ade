@@ -54,7 +54,7 @@ import {
 } from './probes/whiteboard'
 import { boardStatusPill } from './probes/status'
 import { lifecycleSpawnClose } from './probes/lifecycle'
-import { dispatchAudit, dispatchConfirm } from './probes/dispatch'
+import { dispatchAudit, dispatchConfirm, dispatchHandoff } from './probes/dispatch'
 import { seed } from './probes/seed'
 
 // EXACT current execution order — interleaves themes by design (a probe's theme file is
@@ -100,6 +100,7 @@ const PLAYLIST: E2EProbe[] = [
   lifecycleSpawnClose, // M3 T3.1+T3.2: addBoard → canvas+mirror+shell; drain+removeBoard → gone+reaped; baseline 4
   dispatchAudit, // M4 T4.1: MAIN append → audit:read IPC readback + viewer renders the row
   dispatchConfirm, // M4 T4.2: confirm gate blocks until answered; approve/deny round-trip
+  dispatchHandoff, // M4 T4.3: confirm→nonce→write into target PTY→audit; replay+label rejected
   seed
 ]
 

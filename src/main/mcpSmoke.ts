@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { debugSeedOutput } from './pty'
 import { recordBoardResult } from './boardResults'
+import { createDispatchGuard } from './dispatchGuard'
 import { __setMemoryDirForTest } from './boardMemory'
 
 /** One capped page of board output as the resource serializes it (T1.4). */
@@ -101,6 +102,8 @@ interface SmokeClient {
   callClose(id: string): Promise<CallOutcome>
   /** Call the configure_board write tool (T3.3). Resolves with the outcome (isError on tier denial). */
   callConfigure(id: string, args: Record<string, string>): Promise<CallOutcome>
+  /** Call the handoff_prompt dispatch tool (T4.3). Blocks until confirm+idle; isError on tier denial/rejection. */
+  callHandoff(boardId: string, prompt: string): Promise<CallOutcome>
   close(): Promise<void>
 }
 
@@ -311,6 +314,16 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         return {
           ok: true,
           result: await client.callTool({ name: 'configure_board', arguments: { id, ...args } })
+        }
+      } catch (e: unknown) {
+        return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
+      }
+    },
+    callHandoff: async (boardId: string, prompt: string): Promise<CallOutcome> => {
+      try {
+        return {
+          ok: true,
+          result: await client.callTool({ name: 'handoff_prompt', arguments: { boardId, prompt } })
         }
       } catch (e: unknown) {
         return { ok: false, threw: String(e), code: (e as { code?: number })?.code }
@@ -791,6 +804,93 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           }
         } else {
           log('MCP_REAP_SKIP set-CANVAS_MCP_IDLE_TTL_MS<5000-to-test')
+        }
+
+        // ── 🔒 dispatch handoff_prompt (T4.3, the M4 keystone): the orchestrator writes
+        // a prompt into a TARGET TERMINAL's PTY — but ONLY through a single-use nonce +
+        // a mandatory human confirm + an audit entry, and NEVER into a non-terminal.
+        // A worker tier is DENIED the tool server-side. Self-activating: SKIP on a pkg
+        // without handoff_prompt (the published ^0.2.4 floor) until 0.5.0 is published. ──
+        if (!orch.list.includes('handoff_prompt')) {
+          log('MCP_HANDOFF_SKIP pkg<0.5.0-unpublished')
+        } else {
+          const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
+          const APPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
+          // 1) tier split: a worker's tools/list must NOT contain the dispatch tool.
+          const hSplitOk = !worker.list.includes('handoff_prompt')
+          // 2) worker DENIED server-side (specific tool-not-found isError, not a transport error).
+          const workerHandoff = await worker.callHandoff('any-id', 'echo x')
+          const workerHandoffDenied =
+            workerHandoff.ok &&
+            isErrorResult(workerHandoff.result) &&
+            resultText(workerHandoff.result).includes('Tool handoff_prompt not found')
+          // 3) 🔒 non-terminal target rejected BEFORE any write / confirm: Browser content
+          //    must never reach a PTY. Spawn a browser, target it → isError, NO modal.
+          const bSpawn = await orch.callSpawn('browser')
+          const bId =
+            bSpawn.ok && !isErrorResult(bSpawn.result) ? resultText(bSpawn.result).trim() : ''
+          const nonTerm = bId
+            ? await orch.callHandoff(bId, 'echo x')
+            : { ok: false as const, threw: 'no-id' }
+          const nonTermRejected = nonTerm.ok && isErrorResult(nonTerm.result)
+          // 4) 🔒 label-targeting rejected for free: a TITLE is not an opaque id → not found.
+          const labelTargeted = await orch.callHandoff('Terminal', 'echo x')
+          const labelRejected = labelTargeted.ok && isErrorResult(labelTargeted.result)
+          // 5) happy path: spawn a terminal, hand off an echo sentinel, DRIVE the confirm
+          //    modal (no human in the smoke), and assert the text lands in the PTY. The
+          //    interim await-idle polls until the board leaves `running`; a live shell
+          //    never does, so we flip it idle via the e2e hook (M5 brings real attention).
+          const tSpawn = await orch.callSpawn('terminal')
+          const tId =
+            tSpawn.ok && !isErrorResult(tSpawn.result) ? resultText(tSpawn.result).trim() : ''
+          let landed = false
+          let handoffOk = false
+          let modalShown = false
+          if (tId) {
+            await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(tId)})`)
+            await poll(async () => (await orch.readBoardStatus(tId)) === 'running', 8000)
+            const sentinel = 'CANVAS_MCP_HANDOFF_OK'
+            const handoffP = orch.callHandoff(tId, `echo ${sentinel}`)
+            // The dispatch BLOCKS on the human gate — drive our trusted modal like a user.
+            modalShown = await poll(() => evalIn<boolean>(MODAL), 8000)
+            if (modalShown) await evalIn(APPROVE)
+            // Flip the terminal idle so the bounded await-idle poll returns promptly (the
+            // write already happened; the echo output still lands in the framebuffer).
+            await evalIn(`window.__canvasE2E.setTerminalDown(${JSON.stringify(tId)})`)
+            const handoff = await handoffP
+            handoffOk = handoff.ok && !isErrorResult(handoff.result)
+            landed = await poll(async () => {
+              const text = await evalIn<string | null>(
+                `window.__canvasE2E.readTerminal(${JSON.stringify(tId)})`
+              )
+              return typeof text === 'string' && text.includes(sentinel)
+            }, 10000)
+          }
+          // 6) 🔒 single-use-nonce replay invariant (in-process security unit): a nonce
+          //    consumes true exactly once, then false — replay can never re-authorize a write.
+          const g = createDispatchGuard()
+          const { nonce } = g.issue()
+          const replayRejected = g.consume(nonce) === true && g.consume(nonce) === false
+          // cleanup the boards we spawned (free the cap budget; the process exits anyway).
+          if (tId) await orch.callClose(tId)
+          if (bId) await orch.callClose(bId)
+          if (
+            hSplitOk &&
+            workerHandoffDenied &&
+            nonTermRejected &&
+            labelRejected &&
+            modalShown &&
+            handoffOk &&
+            landed &&
+            replayRejected
+          )
+            log('MCP_HANDOFF_OK')
+          else {
+            log(
+              `MCP_FAIL handoff split=${hSplitOk} workerDenied=${workerHandoffDenied} nonTerm=${nonTermRejected} label=${labelRejected} modal=${modalShown} ok=${handoffOk} landed=${landed} replay=${replayRejected}`
+            )
+            code = 1
+          }
         }
       }
     }

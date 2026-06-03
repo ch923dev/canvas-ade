@@ -8,6 +8,8 @@ import type {
   Orchestrator
 } from '@ch923dev/canvas-ade-mcp'
 import type { McpCommand, McpCommandAck } from './mcpCommand'
+import type { AuditInput } from './auditLog'
+import { createDispatchGuard, type DispatchGuard } from './dispatchGuard'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -32,6 +34,14 @@ export interface OrchestratorOpts {
   cap?: number
   idleTtlMs?: number
   spawnGraceMs?: number
+  /** 🔒 Single-use-nonce authority for dispatch (T4.3); a fresh guard per orchestrator by default. */
+  guard?: DispatchGuard
+  /** Sleep seam for the handoff await-idle poll (injected by tests to avoid real timers). */
+  sleep?: (ms: number) => Promise<void>
+  /** Poll interval while waiting for a dispatched terminal to leave `running` (T4.3). */
+  handoffPollMs?: number
+  /** Bound on the handoff await-idle wait — M5 replaces this with real attention. */
+  handoffTimeoutMs?: number
 }
 
 /** The adapter + the T3.4 idle-reap sweep (extra method beyond the package contract). */
@@ -76,6 +86,26 @@ export interface BoardRegistry {
    * no-op. Always resolves — close is best-effort graceful, never throws on the PTY.
    */
   drainPty(id: string): Promise<void>
+  /**
+   * 🔒 Write `text` into a terminal board's PTY (T4.3 dispatch). MAIN injects
+   * `pty.ts`'s `writeToPty`; a non-terminal / absent id returns false (no write). The
+   * orchestrator calls this ONLY after id-resolution + terminal-check + a single-use
+   * nonce + a human confirm + an audit entry have authorized it.
+   */
+  writeToPty(id: string, text: string): boolean
+  /**
+   * 🔒 Block on a mandatory human confirm (T4.2). MAIN injects `requestConfirm`
+   * (fail-closed everywhere); resolves `{ approved }` only on an explicit human yes.
+   * The decision authority is the human via our own trusted UI — never the
+   * worker-originated content that prompted the dispatch.
+   */
+  confirm(req: { title: string; body: string }): Promise<{ approved: boolean }>
+  /**
+   * 🔒 Append one dispatch audit entry (T4.1). MAIN injects `getAuditLog().append`.
+   * Every dispatch attempt — rejected / denied / failed / completed — is recorded with
+   * the resolved target, full prompt, and nonce before/after the action runs.
+   */
+  audit(input: AuditInput): Promise<void>
 }
 
 /**
@@ -112,6 +142,11 @@ export function buildOrchestrator(
   const cap = opts.cap ?? MCP_SPAWN_CAP
   const idleTtlMs = opts.idleTtlMs ?? MCP_IDLE_TTL_MS
   const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
+  // 🔒 One single-use-nonce authority per orchestrator (T4.3 dispatch).
+  const guard = opts.guard ?? createDispatchGuard()
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const handoffPollMs = opts.handoffPollMs ?? 250
+  const handoffTimeoutMs = opts.handoffTimeoutMs ?? MCP_IDLE_TTL_MS
   const sessionMap = (): Map<string, string> =>
     new Map(registry.listSessions().map((s) => [s.id, s.status]))
   // Boards this orchestrator has spawned — the cap budget (T3.1). `spawnedAt` gates
@@ -223,6 +258,127 @@ export function buildOrchestrator(
       // updateBoard filters to PATCHABLE_KEYS, so an off-type/ephemeral key is dropped.
       const ack = await registry.sendCommand({ type: 'configureBoard', id: boardId, patch: config })
       if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
+    },
+    async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
+      // 🔒 The dangerous path: a write into another agent's shell. Every branch that
+      // does NOT write still leaves an audit trail, and a nonce/confirm sit between the
+      // (possibly tainted) request and the PTY. See CLAUDE.md › Process model & security.
+
+      // (1) Resolve the target by its OPAQUE server id (never a label — a title is not
+      // an id, so label-targeting can't match here). Not found → audit + throw, no nonce.
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) {
+        await registry.audit({
+          type: 'handoff_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce: '',
+          status: 'rejected',
+          detail: 'board not found'
+        })
+        throw new Error(`handoff_prompt: board not found: ${boardId}`)
+      }
+
+      // (2) Terminal-only. Browser/Planning content must NEVER reach a PTY — reject
+      // BEFORE any nonce/confirm/write side effect.
+      if (board.type !== 'terminal') {
+        await registry.audit({
+          type: 'handoff_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce: '',
+          status: 'rejected',
+          detail: `non-terminal target (${board.type})`
+        })
+        throw new Error(`handoff_prompt: target is not a terminal (${board.type})`)
+      }
+
+      // (3) Mint the single-use nonce + monotonic sequence for this dispatch.
+      const { nonce, seq } = guard.issue()
+
+      // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
+      // carries the RESOLVED target + the EXACT prompt the human is authorizing.
+      const { approved } = await registry.confirm({
+        title: `Hand off to "${board.title}"`,
+        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${text}`
+      })
+      if (!approved) {
+        await registry.audit({
+          type: 'handoff_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce,
+          status: 'denied',
+          detail: `seq=${seq}`
+        })
+        throw new Error('handoff_prompt: dispatch denied by the human gate')
+      }
+
+      // (5) Redeem the nonce (defensive — a replayed/forged nonce can never reach a
+      // write). Belt-and-braces against a re-entrant/duplicated dispatch.
+      if (!guard.consume(nonce)) {
+        await registry.audit({
+          type: 'handoff_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce,
+          status: 'rejected',
+          detail: `replayed/forged nonce; seq=${seq}`
+        })
+        throw new Error('handoff_prompt: nonce already consumed (replay rejected)')
+      }
+
+      // (6) Write into the PTY (append CR so the shell actually runs the line). A false
+      // means no live terminal session held the id — audit failed + throw.
+      if (!registry.writeToPty(boardId, text + '\r')) {
+        await registry.audit({
+          type: 'handoff_prompt',
+          targetId: boardId,
+          prompt: text,
+          nonce,
+          status: 'failed',
+          detail: `pty write failed; seq=${seq}`
+        })
+        throw new Error('handoff_prompt: PTY write failed (no live terminal session)')
+      }
+
+      // 🔒 Record the write the MOMENT it lands — BEFORE the (bounded, up-to-minutes)
+      // await-idle wait. A crash or a failed append during the wait then still leaves a
+      // durable trail that the command was executed in the target shell (the audit log's
+      // BEFORE/AFTER contract). The matching `completed` entry follows once it goes idle.
+      await registry.audit({
+        type: 'handoff_prompt',
+        targetId: boardId,
+        prompt: text,
+        nonce,
+        status: 'dispatched',
+        detail: `seq=${seq}`
+      })
+
+      // (7) Await idle: poll the board's status until it leaves `running`, bounded by a
+      // timeout (M5 replaces this interim poll with real attention signalling).
+      const deadline = now() + handoffTimeoutMs
+      while (now() < deadline) {
+        const status = deriveStatus(
+          registry.listBoards().find((b) => b.id === boardId) ?? board,
+          sessionMap()
+        )
+        if (status !== 'running') break
+        await sleep(handoffPollMs)
+      }
+      const result = registry.readResult(boardId)
+
+      // (8) Record the completed dispatch (target + full prompt + nonce + seq + outputs).
+      await registry.audit({
+        type: 'handoff_prompt',
+        targetId: boardId,
+        prompt: text,
+        nonce,
+        status: 'completed',
+        outputs: JSON.stringify(result),
+        detail: `seq=${seq}`
+      })
+      return result
     },
     async dispatchPrompt(): Promise<void> {
       throw new Error('dispatchPrompt not available until Phase 4')

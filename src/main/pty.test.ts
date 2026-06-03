@@ -12,7 +12,8 @@ import {
   reapParkedCore,
   cleanupCore,
   disposeAllPtysCore,
-  safeCwd
+  safeCwd,
+  writeToPtyCore
 } from './pty'
 import type { ShellInfo } from './pty'
 
@@ -389,6 +390,32 @@ describe('disposeAllPtysCore (T1)', () => {
     expect(killTree).toHaveBeenCalledWith(parkProc)
     expect(killTree).toHaveBeenCalledTimes(2)
     expect(livePort.closed).toBe(true)
+  })
+})
+/* eslint-disable @typescript-eslint/no-explicit-any */
+// ── T4.3 (🔒 dispatch write primitive): writeToPty writes into a LIVE terminal
+// session's proc. Keyed on the `sessions` map (only terminals have sessions), so a
+// non-terminal / absent / unknown id has no session → false (no write, never crashes).
+describe('writeToPtyCore (T4.3 — dispatch write primitive)', () => {
+  it('writes the text to the live session proc and returns true', () => {
+    const { proc } = makeProc(900)
+    const sessions = new Map<string, any>([['t', { proc, buf: { data: '' } }]])
+    expect(writeToPtyCore('t', 'echo hi\r', sessions)).toBe(true)
+    expect(proc.write).toHaveBeenCalledWith('echo hi\r')
+  })
+
+  it('returns false (no write) when no session holds the id (absent / non-terminal)', () => {
+    const sessions = new Map<string, any>()
+    expect(writeToPtyCore('ghost', 'x', sessions)).toBe(false)
+  })
+
+  it('returns false when the proc write throws (a just-exited proc never crashes main)', () => {
+    const { proc } = makeProc(901)
+    proc.write.mockImplementationOnce(() => {
+      throw new Error('exited')
+    })
+    const sessions = new Map<string, any>([['t', { proc, buf: { data: '' } }]])
+    expect(writeToPtyCore('t', 'x', sessions)).toBe(false)
   })
 })
 /* eslint-enable @typescript-eslint/no-explicit-any */

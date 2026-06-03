@@ -772,3 +772,37 @@ export function debugWriteTerminal(id: string, data: string): boolean {
   s.proc.write(data)
   return true
 }
+
+/**
+ * 🔒 Pure core of the MCP dispatch write primitive (T4.3). Writes `text` into the live
+ * session's PTY proc, keyed on the session map. ONLY terminals have sessions, so an
+ * absent / non-terminal / unknown id has no entry → false (no write). A write into a
+ * proc that has just exited can throw — we swallow it and return false rather than let
+ * it crash MAIN (same discipline as `adoptCore`'s input forwarding). The boolean is the
+ * caller's signal: the orchestrator audits a `false` as a failed dispatch and throws.
+ */
+export function writeToPtyCore(
+  id: string,
+  text: string,
+  sessionMap: Map<string, { proc: Pick<pty.IPty, 'write'> }>
+): boolean {
+  const s = sessionMap.get(id)
+  if (!s) return false
+  try {
+    s.proc.write(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 🔒 Production dispatch write (T4.3): write `text` into terminal board `id`'s PTY.
+ * Returns false when no live terminal session holds the id (non-terminal target, closed
+ * board, or a just-exited proc). MAIN-only; never exposed to the renderer. The MCP
+ * dispatch path (mcpOrchestrator) calls this ONLY after a single-use nonce + a human
+ * confirm + an audit entry have authorized the write.
+ */
+export function writeToPty(id: string, text: string): boolean {
+  return writeToPtyCore(id, text, sessions)
+}

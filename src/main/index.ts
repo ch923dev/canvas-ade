@@ -7,7 +7,8 @@ import {
   disposeAllPtys,
   listPtySessions,
   readPtyOutput,
-  drainPty
+  drainPty,
+  writeToPty
 } from './pty'
 import { readBoardResult } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
@@ -25,7 +26,8 @@ import { runMcpSmoke } from './mcpSmoke'
 import { listBoardMirror, registerBoardRegistryHandler } from './boardRegistry'
 import { sendMcpCommand } from './mcpCommand'
 import { createAuditLog } from './auditLog'
-import { registerAuditHandler } from './auditIpc'
+import { registerAuditHandler, getAuditLog } from './auditIpc'
+import { requestConfirm } from './mcpConfirm'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -184,7 +186,18 @@ app.whenReady().then(async () => {
     // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
     sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
     // Graceful PTY drain before an MCP close_board removes the board (T3.2).
-    drainPty: (id) => drainPty(id)
+    drainPty: (id) => drainPty(id),
+    // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
+    // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
+    writeToPty: (id, text) => writeToPty(id, text),
+    // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
+    confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
+    // Append to the append-only dispatch audit trail (T4.1). The log is wired below
+    // (registerAuditHandler); read lazily so the closure resolves it at dispatch time.
+    audit: (e) =>
+      getAuditLog()
+        ?.append(e)
+        .then(() => {}) ?? Promise.resolve()
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
