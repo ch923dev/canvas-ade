@@ -15,3 +15,26 @@ export interface E2EProbe {
   /** One part, or several when a block asserts multiple invariants in one pass. */
   run(ctx: E2ECtx): Promise<E2EPart | E2EPart[]>
 }
+
+/**
+ * A probe inside a fixture group. Unlike the legacy E2EProbe it receives the
+ * group's TYPED fixture instead of reading the shared ctx.ids bag.
+ */
+export interface GroupProbe<F> {
+  /** Playlist label (the part name(s) on the returned E2EPart). */
+  readonly name: string
+  run(ctx: E2ECtx, fixture: F): Promise<E2EPart | E2EPart[]>
+}
+
+/**
+ * A themed group: seed a typed fixture once, run the group's probes against it
+ * (each self-restoring; the runner guards the board-count invariant between
+ * probes), then tear down to an empty canvas so groups cannot leak into one
+ * another.
+ */
+export interface E2EGroup<F = unknown> {
+  readonly name: string
+  setup(ctx: E2ECtx): Promise<F>
+  readonly probes: GroupProbe<F>[]
+  teardown(ctx: E2ECtx, fixture: F): Promise<void>
+}
