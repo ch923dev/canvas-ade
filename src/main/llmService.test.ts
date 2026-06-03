@@ -236,4 +236,41 @@ describe('registerLlmHandlers', () => {
     expect(s.provider).toBe('openrouter')
     expect(JSON.stringify(s)).not.toContain('secret-key')
   })
+
+  it('summarize rejects a foreign sender (guard chain through the handler)', async () => {
+    const mainFrame = {}
+    const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
+    registerLlmHandlers(
+      { handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h) } as never,
+      () => ({ webContents: { mainFrame } }) as never,
+      '/no/such/dir',
+      {
+        fetch: (() => {
+          throw new Error('no network')
+        }) as never,
+        env: { CANVAS_LLM_MOCK: '1' }
+      }
+    )
+    const r = await Promise.resolve(handlers.get('llm:summarize')!({ senderFrame: {} }, { text: 'x' }))
+    expect(r).toEqual({ ok: false, reason: 'provider-error', message: 'forbidden sender' })
+  })
+
+  it('status returns the degraded shape for a foreign sender', async () => {
+    const mainFrame = {}
+    const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
+    registerLlmHandlers(
+      { handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h) } as never,
+      () => ({ webContents: { mainFrame } }) as never,
+      '/no/such/dir',
+      {
+        fetch: (() => {
+          throw new Error('no network')
+        }) as never,
+        env: { OPENROUTER_API_KEY: 'secret-key' }
+      }
+    )
+    const s = (await Promise.resolve(handlers.get('llm:status')!({ senderFrame: {} }, undefined))) as LlmStatus
+    expect(s.hasProvider).toBe(false)
+    expect(JSON.stringify(s)).not.toContain('secret-key')
+  })
 })
