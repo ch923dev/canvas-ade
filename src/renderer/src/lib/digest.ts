@@ -35,11 +35,6 @@ function buildHeader(boards: Board[]): string {
   return `${n} board${n === 1 ? '' : 's'} — ${by('terminal')} terminal, ${by('browser')} browser, ${by('planning')} planning`
 }
 
-/** Common skeleton; per-type helpers fill `status` + `lines`. */
-function base(b: Board): BoardDigest {
-  return { boardId: b.id, type: b.type, title: b.title, status: '', lines: [] }
-}
-
 function digestTerminal(b: TerminalBoard, d: CanvasDoc): BoardDigest {
   const lines: string[] = []
   if (b.launchCommand) lines.push(`Runs \`${b.launchCommand}\``)
