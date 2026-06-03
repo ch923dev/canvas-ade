@@ -310,7 +310,7 @@ feed is best-effort and can never fail a save.
 | T-B2 | `5678257` | 664 | `context-keystore` ok |
 | T-B3 | `cec15ba` | **682** | `context-budget` ok |
 | T-M1 | `2e0b1e7` | **702** | `context-memory` ok |
-| T-M2 | `<squash-sha>` | **724** | `context-change` ok |
+| T-M2 | `221ddf8` | **724** | `context-change` ok |
 
 typecheck/lint/format:check clean throughout (1 pre-existing unrelated `PlanningBoard.tsx` no-console
 warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browser`/`browser-gesture`/
