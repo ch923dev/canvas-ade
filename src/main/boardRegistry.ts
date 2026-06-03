@@ -5,7 +5,27 @@ export interface BoardMirror {
   id: string
   type: string
   title: string
+  /**
+   * Coarse status bucket derived by the renderer from the live runtime stores
+   * (T1.1). Absent when the renderer predates T1.1 (the adapter then falls back to
+   * a PTY/presence-derived bucket). Validated against {@link STATUS_BUCKETS}.
+   */
+  status?: string
 }
+
+/**
+ * The buckets a renderer is allowed to publish (mirror of `BoardStatusBucket` in
+ * `renderer/src/store/boardStatus.ts`). `status` arrives over an IPC channel, so an
+ * unrecognized value is dropped — never forwarded to agents as-is.
+ */
+const STATUS_BUCKETS: ReadonlySet<string> = new Set([
+  'idle',
+  'running',
+  'awaiting-review',
+  'blocked',
+  'failed',
+  'static'
+])
 
 let mirror: BoardMirror[] = []
 
@@ -33,7 +53,7 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       typeof (b as BoardMirror).type === 'string' &&
       typeof (b as BoardMirror).title === 'string'
     ) {
-      const { id, type, title } = b as BoardMirror
+      const { id, type, title, status } = b as BoardMirror
       if (
         id.length > MAX_FIELD_LEN ||
         type.length > MAX_FIELD_LEN ||
@@ -41,7 +61,13 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       ) {
         continue
       }
-      out.push({ id, type, title })
+      // Attach status only when it is a known bucket; an invalid/absent value is
+      // dropped so the adapter falls back rather than forwarding garbage.
+      out.push(
+        typeof status === 'string' && STATUS_BUCKETS.has(status)
+          ? { id, type, title, status }
+          : { id, type, title }
+      )
     }
   }
   return out

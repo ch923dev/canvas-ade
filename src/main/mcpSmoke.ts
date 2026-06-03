@@ -31,6 +31,8 @@ interface SmokeClient {
   pingOrchestrator(): Promise<CallOutcome>
   /** Read the canvas://boards resource and return each board's `type` (control plane). */
   readBoardTypes(): Promise<string[]>
+  /** Read canvas://boards and return the status bucket of board `id` (null if absent). */
+  readBoardStatus(id: string): Promise<string | null>
   close(): Promise<void>
 }
 
@@ -75,6 +77,20 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
         // not yet propagated" — surface it so the log is actionable, not a silent [].
         log(`MCP_FAIL boards-unparseable len=${text.length}`)
         return []
+      }
+    },
+    readBoardStatus: async (id: string): Promise<string | null> => {
+      const res = await client.readResource({ uri: 'canvas://boards' })
+      const text = res.contents
+        .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+        .join('')
+      try {
+        const boards = JSON.parse(text) as Array<{ id?: unknown; status?: unknown }>
+        const board = Array.isArray(boards) ? boards.find((b) => b?.id === id) : undefined
+        return typeof board?.status === 'string' ? board.status : null
+      } catch {
+        log(`MCP_FAIL board-status-unparseable len=${text.length}`)
+        return null
       }
     },
     close: () => client.close()
@@ -169,6 +185,30 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
       if (ok) log('MCP_BOARDS_OK')
       else {
         log(`MCP_FAIL boards types=${types.join(',')}`)
+        code = 1
+      }
+    }
+
+    // ── status buckets (T1.1): a terminal that goes running→idle must move the
+    // board's `status` in canvas://boards through the SAME transition — proving the
+    // renderer-derived bucket (terminalRuntimeStore) actually propagates to the
+    // agent's view, not just that the resource returns *a* value. The board's own
+    // lifecycle drives `running` (fitView guarantees it is measured → the PTY spawns);
+    // we poll for that natural `running` FIRST so the spawn has settled, then force the
+    // store down — after spawn-success the board emits no further state until exit, so
+    // the forced `idle` is the last writer and can't be clobbered by a late spawn. ──
+    if (hookReady) {
+      const sid = await evalIn<string>("window.__canvasE2E.seedBoard('terminal')")
+      await evalIn(`window.__canvasE2E.fitView(${JSON.stringify(sid)})`)
+      const ranRunning = await poll(
+        async () => (await orch.readBoardStatus(sid)) === 'running',
+        8000
+      )
+      await evalIn(`window.__canvasE2E.setTerminalDown(${JSON.stringify(sid)})`)
+      const ranIdle = await poll(async () => (await orch.readBoardStatus(sid)) === 'idle', 8000)
+      if (ranRunning && ranIdle) log('MCP_STATUS_OK')
+      else {
+        log(`MCP_FAIL status running=${ranRunning} idle=${ranIdle}`)
         code = 1
       }
     }

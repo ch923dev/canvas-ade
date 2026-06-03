@@ -2,27 +2,29 @@ import type { BoardId, BoardSummary, Orchestrator } from '@ch923dev/canvas-ade-m
 
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
-  listBoards(): Array<{ id: string; type: string; title: string }>
+  listBoards(): Array<{ id: string; type: string; title: string; status?: string }>
   listSessions(): Array<{ id: string; status: string }>
 }
 
 /**
- * Coarse, type-derived status (v1). ONLY `terminal` is a real liveness signal —
- * overlaid from the live PTY session map ('running'/'exited' or 'no-session').
- * `browser` ('open') and `planning` ('static') are PRESENCE markers, NOT liveness
- * probes: a crashed/unreachable browser still reads 'open'. Real per-type liveness
- * (e.g. a dead browser, an awaiting/blocked terminal) is deferred to the Phase-5
- * attention slice, which wires the renderer runtime (previewStore) into the mirror.
- * An unrecognized (forward) board type maps to 'unknown' rather than being dropped.
+ * Coarse status bucket for a board (T1.1). The renderer-supplied `status` bucket
+ * wins — it is derived from the live runtime stores (terminalRuntimeStore +
+ * previewStore) and is the single source of truth shared with the on-canvas pill.
+ * When the mirror carries no bucket (a renderer predating T1.1, or a board not yet
+ * republished), fall back to a bucket derived from MAIN's own signals: the PTY
+ * session map for terminals, presence for the rest. The fallback is intentionally
+ * coarse — `running` only when the PTY is live, otherwise `idle`; `browser` is
+ * `idle` (presence, not liveness — a crashed browser still reads idle here);
+ * `planning` and any forward/unknown type are `static`.
  */
 function deriveStatus(
-  board: { id: string; type: string },
+  board: { id: string; type: string; status?: string },
   sessionById: Map<string, string>
 ): string {
-  if (board.type === 'terminal') return sessionById.get(board.id) ?? 'no-session'
-  if (board.type === 'browser') return 'open'
-  if (board.type === 'planning') return 'static'
-  return 'unknown'
+  if (board.status) return board.status
+  if (board.type === 'terminal') return sessionById.get(board.id) === 'running' ? 'running' : 'idle'
+  if (board.type === 'browser') return 'idle'
+  return 'static'
 }
 
 /**
