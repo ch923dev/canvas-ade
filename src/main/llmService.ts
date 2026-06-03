@@ -7,10 +7,9 @@
  * guard + egress ADR bolt on without touching callers. Network goes through an injected
  * fetch-like transport so this is unit-tested with a fake and e2e runs a mock provider.
  */
-import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { LlmConfig, ProviderName } from './llmConfig'
-import { readLlmConfig, writeLlmConfig, DEFAULT_MODELS } from './llmConfig'
-import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
+import type { KeyStore } from './llmKeyStore'
+import { DEFAULT_MAX_CALLS_PER_DAY, type BudgetStore } from './llmBudget'
 
 export type { ProviderName }
 
@@ -108,6 +107,8 @@ export interface ProviderDeps {
   env: Record<string, string | undefined>
   /** Store-first key source (T-B2). getKey-only so unit tests inject a tiny fake. */
   keyStore?: Pick<KeyStore, 'getKey'>
+  /** Per-day call budget (T-B3). Wired by registerLlmHandlers; the engine reserves against it. */
+  budget?: BudgetStore
 }
 
 export interface Provider {
@@ -133,6 +134,18 @@ export function keyForProvider(
 /** Mock is on for e2e/CI so no real network call is ever made. */
 export function isMockEnabled(env: Record<string, string | undefined>): boolean {
   return env.CANVAS_LLM_MOCK === '1' || env.CANVAS_SMOKE === 'e2e'
+}
+
+/**
+ * Whether the per-day budget is enforced for this call. Real egress: always (cap = config or
+ * the default). Under the mock seam (CI/e2e): only when an explicit cap is configured — so CI
+ * stays uncapped unless a probe opts in by setting maxCallsPerDay.
+ */
+export function shouldEnforceBudget(
+  config: LlmConfig,
+  env: Record<string, string | undefined>
+): boolean {
+  return isMockEnabled(env) ? config.maxCallsPerDay !== undefined : true
 }
 
 /**
@@ -164,6 +177,7 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
 export type SummarizeResult =
   | { ok: true; text: string }
   | { ok: false; reason: 'no-provider' }
+  | { ok: false; reason: 'budget-exceeded' }
   | { ok: false; reason: 'provider-error'; message: string }
 
 /**
@@ -178,6 +192,11 @@ export async function runSummarize(
 ): Promise<SummarizeResult> {
   const provider = getProvider(config, deps)
   if (!provider) return { ok: false, reason: 'no-provider' }
+  if (deps.budget && shouldEnforceBudget(config, deps.env)) {
+    const cap = config.maxCallsPerDay ?? DEFAULT_MAX_CALLS_PER_DAY
+    // Reserved before egress; a later provider-error is NOT refunded (count attempts, fail-closed).
+    if (!deps.budget.tryConsume(cap)) return { ok: false, reason: 'budget-exceeded' }
+  }
   try {
     return { ok: true, text: await provider.summarize(input) }
   } catch (err) {
@@ -189,114 +208,8 @@ export async function runSummarize(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Electron IPC layer (T-B1)
-// ---------------------------------------------------------------------------
-
-/**
- * True when an IPC sender is NOT the main window's main frame (foreign → deny). Matches
- * the pty/preview/project convention (a per-module copy is intentional here; consolidating
- * the three existing copies is a separate refactor, out of T-B1 scope).
- */
-export function isForeignSender(
-  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
-  getMainFrame: () => BrowserWindow['webContents']['mainFrame'] | null | undefined
-): boolean {
-  const main = getMainFrame()
-  if (!e.senderFrame) return false // synthetic/internal call — allow
-  if (!main) return true // real sender but window unresolved — DENY
-  return e.senderFrame !== main
-}
-
-/** Status surfaced to the renderer — provider/model + key presence, never key material. */
-export interface LlmStatus {
-  hasProvider: boolean
-  provider: ProviderName
-  model: string
-  /** Base URL for the `local` provider, echoed so Settings can round-trip it. Undefined otherwise. */
-  baseUrl?: string
-  /** True when the active provider has a stored key (presence only — never the key). */
-  hasKey: boolean
-}
-
-/** Result of a write-only LLM IPC call (setKey/clearKey/setConfig). Never carries key material. */
-export type LlmWriteResult = { ok: boolean; reason?: string }
-
 /** Default transport: Electron/Node global fetch, adapted to FetchLike. */
 export const defaultDeps = (): ProviderDeps => ({
   fetch: ((url, init) => fetch(url, init)) as FetchLike,
   env: process.env as Record<string, string | undefined>
 })
-
-const NOOP_KEY_STORE: KeyStore = {
-  getKey: () => undefined,
-  setKey: () => {
-    // No encryptor was wired into registerLlmHandlers — keys cannot be persisted. This is a
-    // mis-wire (index.ts must pass the safeStorage Encryptor), not a real no-keyring host.
-    console.warn('[llmService] setKey called with no encryptor — key not persisted (mis-wire)')
-    return false
-  },
-  clearKey: () => {},
-  hasKey: () => false
-}
-
-export function registerLlmHandlers(
-  ipcMain: IpcMain,
-  getWin: () => BrowserWindow | null,
-  userDataDir: string,
-  injectedDeps?: ProviderDeps,
-  encryptor?: Encryptor
-): void {
-  const keyStore: KeyStore = encryptor ? createKeyStore(userDataDir, encryptor) : NOOP_KEY_STORE
-  // Resolution uses the SAME store the IPC writes to (store-first), so a key set via
-  // llm:setKey is immediately visible to llm:summarize.
-  const deps: ProviderDeps = { ...(injectedDeps ?? defaultDeps()), keyStore }
-  const guard = (e: IpcMainInvokeEvent): boolean =>
-    isForeignSender(e, () => getWin()?.webContents.mainFrame)
-
-  ipcMain.handle('llm:summarize', async (e, input: SummarizeInput): Promise<SummarizeResult> => {
-    if (guard(e)) return { ok: false, reason: 'provider-error', message: 'forbidden sender' }
-    const config = readLlmConfig(userDataDir)
-    return runSummarize(config, input, deps)
-  })
-
-  ipcMain.handle('llm:status', (e): LlmStatus => {
-    if (guard(e))
-      return {
-        hasProvider: false,
-        provider: 'openrouter',
-        model: DEFAULT_MODELS.openrouter,
-        hasKey: false
-      }
-    const config = readLlmConfig(userDataDir)
-    return {
-      hasProvider: getProvider(config, deps) !== null,
-      provider: config.provider,
-      model: config.model,
-      baseUrl: config.baseUrl,
-      hasKey: keyStore.hasKey(config.provider)
-    }
-  })
-
-  ipcMain.handle('llm:setKey', (e, a: { provider: ProviderName; key: string }): LlmWriteResult => {
-    if (guard(e)) return { ok: false, reason: 'forbidden' }
-    return keyStore.setKey(a.provider, a.key)
-      ? { ok: true }
-      : { ok: false, reason: 'encryption-unavailable' }
-  })
-
-  ipcMain.handle('llm:clearKey', (e, a: { provider: ProviderName }): LlmWriteResult => {
-    if (guard(e)) return { ok: false, reason: 'forbidden' }
-    keyStore.clearKey(a.provider)
-    return { ok: true }
-  })
-
-  ipcMain.handle(
-    'llm:setConfig',
-    (e, a: { provider: ProviderName; model: string; baseUrl?: string }): LlmWriteResult => {
-      if (guard(e)) return { ok: false, reason: 'forbidden' }
-      writeLlmConfig(userDataDir, { provider: a.provider, model: a.model, baseUrl: a.baseUrl })
-      return { ok: true }
-    }
-  )
-}

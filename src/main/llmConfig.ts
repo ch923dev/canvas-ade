@@ -27,6 +27,8 @@ export interface LlmConfig {
   model: string
   /** Base URL for the `local` provider only (e.g. http://127.0.0.1:1234/v1). */
   baseUrl?: string
+  /** Per-day LLM call cap (T-B3). */
+  maxCallsPerDay?: number
 }
 
 function fileFor(userDataDir: string): string {
@@ -49,7 +51,13 @@ export function readLlmConfig(userDataDir: string): LlmConfig {
     const model =
       typeof p.model === 'string' && p.model.length > 0 ? p.model : DEFAULT_MODELS[provider]
     const baseUrl = typeof p.baseUrl === 'string' ? p.baseUrl : undefined
-    return { provider, model, baseUrl }
+    const maxCallsPerDay =
+      typeof p.maxCallsPerDay === 'number' &&
+      Number.isFinite(p.maxCallsPerDay) &&
+      p.maxCallsPerDay >= 0
+        ? Math.floor(p.maxCallsPerDay)
+        : undefined
+    return { provider, model, baseUrl, maxCallsPerDay }
   } catch {
     return defaults()
   }

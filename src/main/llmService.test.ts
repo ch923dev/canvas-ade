@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   buildRequest,
   parseResponse,
@@ -6,19 +6,13 @@ import {
   isMockEnabled,
   keyForProvider,
   runSummarize,
-  isForeignSender,
-  registerLlmHandlers,
   type SummarizeInput,
   type SummarizeResult,
   type ProviderDeps,
-  type FetchLike,
-  type LlmStatus
+  type FetchLike
 } from './llmService'
+import { DEFAULT_MAX_CALLS_PER_DAY } from './llmBudget'
 import type { KeyStore } from './llmKeyStore'
-import { mkdtempSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
-import type { Encryptor } from './llmKeyStore'
 
 const input: SummarizeInput = { system: 'be terse', text: 'hello world' }
 
@@ -216,6 +210,110 @@ describe('runSummarize', () => {
     )
     expect(r).toEqual<SummarizeResult>({ ok: true, text: '[mock] ping' })
   })
+
+  // --- T-B3: budget reservation -------------------------------------------------
+  // A fetch that records calls and returns a successful real-egress payload.
+  const okBudgetFetch = (): FetchLike =>
+    vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ choices: [{ message: { content: 'real' } }] }),
+        text: () => Promise.resolve('')
+      })
+    )
+
+  // A budget whose tryConsume is scripted; counts how many times it was consulted.
+  function budgetReturning(allowed: boolean): {
+    store: import('./llmBudget').BudgetStore
+    calls: () => number
+    lastCap: () => number | undefined
+  } {
+    let n = 0
+    let lastCap: number | undefined
+    return {
+      store: {
+        tryConsume: (cap) => {
+          n++
+          lastCap = cap
+          return allowed
+        },
+        peek: () => ({ day: '2026-06-03', calls: n })
+      },
+      calls: () => n,
+      lastCap: () => lastCap
+    }
+  }
+
+  const budgetCfg = { provider: 'openrouter' as const, model: 'm' }
+
+  it('real egress consults the budget and returns ok when allowed', async () => {
+    const fetch = okBudgetFetch()
+    const b = budgetReturning(true)
+    const r = await runSummarize(
+      budgetCfg,
+      { text: 'hi' },
+      { fetch, env: { OPENROUTER_API_KEY: 'k' }, budget: b.store }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: true, text: 'real' })
+    expect(b.calls()).toBe(1)
+    expect(b.lastCap()).toBe(DEFAULT_MAX_CALLS_PER_DAY) // no config cap → the default is passed
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes the configured cap through to the budget (config wins over the default)', async () => {
+    const fetch = okBudgetFetch()
+    const b = budgetReturning(true)
+    const r = await runSummarize(
+      { ...budgetCfg, maxCallsPerDay: 7 },
+      { text: 'hi' },
+      { fetch, env: { OPENROUTER_API_KEY: 'k' }, budget: b.store }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: true, text: 'real' })
+    expect(b.lastCap()).toBe(7)
+  })
+
+  it('returns budget-exceeded WITHOUT calling fetch when the cap is hit', async () => {
+    const fetch = okBudgetFetch()
+    const b = budgetReturning(false)
+    const r = await runSummarize(
+      budgetCfg,
+      { text: 'hi' },
+      { fetch, env: { OPENROUTER_API_KEY: 'k' }, budget: b.store }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: false, reason: 'budget-exceeded' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('does NOT consult the budget under the mock seam with no explicit cap', async () => {
+    const b = budgetReturning(false) // would block if consulted
+    const r = await runSummarize(
+      budgetCfg,
+      { text: 'hi' },
+      { fetch: vi.fn() as never, env: { CANVAS_SMOKE: 'e2e' }, budget: b.store }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: true, text: '[mock] hi' })
+    expect(b.calls()).toBe(0) // budget untouched
+  })
+
+  it('DOES enforce under the mock seam when an explicit cap is configured', async () => {
+    const b = budgetReturning(false)
+    const r = await runSummarize(
+      { ...budgetCfg, maxCallsPerDay: 1 },
+      { text: 'hi' },
+      { fetch: vi.fn() as never, env: { CANVAS_SMOKE: 'e2e' }, budget: b.store }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: false, reason: 'budget-exceeded' })
+  })
+
+  it('skips enforcement entirely when no budget is injected (back-compat)', async () => {
+    const r = await runSummarize(
+      budgetCfg,
+      { text: 'hi' },
+      { fetch: okBudgetFetch(), env: { OPENROUTER_API_KEY: 'k' } }
+    )
+    expect(r).toEqual<SummarizeResult>({ ok: true, text: 'real' })
+  })
 })
 
 // A getKey-only fake store for resolution tests.
@@ -250,195 +348,5 @@ describe('keyForProvider precedence (store-first, env fallback)', () => {
       { fetch: errFetch, env: {}, keyStore: fakeStore({ openrouter: 'sk' }) }
     )
     expect(p).not.toBeNull()
-  })
-})
-
-describe('isForeignSender', () => {
-  const frame = {} as never
-  it('allows a synthetic call (no senderFrame)', () => {
-    expect(isForeignSender({ senderFrame: null } as never, () => frame)).toBe(false)
-  })
-  it('denies a real sender when the window is unresolved', () => {
-    expect(isForeignSender({ senderFrame: frame } as never, () => null)).toBe(true)
-  })
-  it('allows the main frame and denies a different frame', () => {
-    expect(isForeignSender({ senderFrame: frame } as never, () => frame)).toBe(false)
-    expect(isForeignSender({ senderFrame: {} as never } as never, () => frame)).toBe(true)
-  })
-})
-
-describe('registerLlmHandlers', () => {
-  function fakeIpc(): {
-    ipcMain: { handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void }
-    call: (c: string, a?: unknown) => Promise<unknown>
-  } {
-    const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
-    return {
-      ipcMain: { handle: (c, h) => void handlers.set(c, h) },
-      call: (c, a) => Promise.resolve(handlers.get(c)!({ senderFrame: null }, a))
-    }
-  }
-
-  it('summarize round-trips through the handler (mock env, no network)', async () => {
-    const f = fakeIpc()
-    registerLlmHandlers(f.ipcMain as never, () => null, '/no/such/dir', {
-      fetch: (() => {
-        throw new Error('no network')
-      }) as never,
-      env: { CANVAS_LLM_MOCK: '1' }
-    })
-    const r = await f.call('llm:summarize', { text: 'ping' })
-    expect(r).toEqual({ ok: true, text: '[mock] ping' })
-  })
-
-  it('status reports a provider + model and never leaks key material', async () => {
-    const f = fakeIpc()
-    registerLlmHandlers(f.ipcMain as never, () => null, '/no/such/dir', {
-      fetch: (() => {
-        throw new Error('no network')
-      }) as never,
-      env: { OPENROUTER_API_KEY: 'secret-key' }
-    })
-    const s = (await f.call('llm:status')) as LlmStatus
-    expect(s.hasProvider).toBe(true)
-    expect(s.provider).toBe('openrouter')
-    expect(JSON.stringify(s)).not.toContain('secret-key')
-  })
-
-  it('summarize rejects a foreign sender (guard chain through the handler)', async () => {
-    const mainFrame = {}
-    const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
-    registerLlmHandlers(
-      {
-        handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h)
-      } as never,
-      () => ({ webContents: { mainFrame } }) as never,
-      '/no/such/dir',
-      {
-        fetch: (() => {
-          throw new Error('no network')
-        }) as never,
-        env: { CANVAS_LLM_MOCK: '1' }
-      }
-    )
-    const r = await Promise.resolve(
-      handlers.get('llm:summarize')!({ senderFrame: {} }, { text: 'x' })
-    )
-    expect(r).toEqual({ ok: false, reason: 'provider-error', message: 'forbidden sender' })
-  })
-
-  it('status returns the degraded shape for a foreign sender', async () => {
-    const mainFrame = {}
-    const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
-    registerLlmHandlers(
-      {
-        handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h)
-      } as never,
-      () => ({ webContents: { mainFrame } }) as never,
-      '/no/such/dir',
-      {
-        fetch: (() => {
-          throw new Error('no network')
-        }) as never,
-        env: { OPENROUTER_API_KEY: 'secret-key' }
-      }
-    )
-    const s = (await Promise.resolve(
-      handlers.get('llm:status')!({ senderFrame: {} }, undefined)
-    )) as LlmStatus
-    expect(s.hasProvider).toBe(false)
-    expect(JSON.stringify(s)).not.toContain('secret-key')
-  })
-})
-
-const fakeEncryptor = (available = true): Encryptor => ({
-  isEncryptionAvailable: () => available,
-  encryptString: (p) => Buffer.from('ENC:' + p, 'utf8'),
-  decryptString: (e) => e.toString('utf8').replace(/^ENC:/, '')
-})
-
-function setupKeyed(encryptor: Encryptor) {
-  const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
-  const dir = mkdtempSync(join(tmpdir(), 'llm-ipc-'))
-  registerLlmHandlers(
-    {
-      handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void handlers.set(c, h)
-    } as never,
-    () => null,
-    dir,
-    undefined,
-    encryptor
-  )
-  return {
-    dir,
-    call: (c: string, a?: unknown) => Promise.resolve(handlers.get(c)!({ senderFrame: null }, a)),
-    callForeign: (c: string, a?: unknown) =>
-      Promise.resolve(handlers.get(c)!({ senderFrame: {} }, a))
-  }
-}
-
-describe('registerLlmHandlers — key channels', () => {
-  it('setKey persists and status reports hasKey:true (key never returned)', async () => {
-    const f = setupKeyed(fakeEncryptor())
-    const set = (await f.call('llm:setKey', { provider: 'openrouter', key: 'sk-xyz' })) as {
-      ok: boolean
-    }
-    expect(set.ok).toBe(true)
-    const s = (await f.call('llm:status')) as LlmStatus
-    expect(s.hasKey).toBe(true)
-    expect(Object.values(s)).not.toContain('sk-xyz')
-  })
-
-  it('clearKey removes the key (hasKey:false after)', async () => {
-    const f = setupKeyed(fakeEncryptor())
-    await f.call('llm:setKey', { provider: 'openrouter', key: 'sk-xyz' })
-    const cleared = (await f.call('llm:clearKey', { provider: 'openrouter' })) as { ok: boolean }
-    expect(cleared.ok).toBe(true)
-    expect(((await f.call('llm:status')) as LlmStatus).hasKey).toBe(false)
-  })
-
-  it('setKey refuses cleanly when encryption is unavailable', async () => {
-    const f = setupKeyed(fakeEncryptor(false))
-    const set = (await f.call('llm:setKey', { provider: 'openrouter', key: 'x' })) as {
-      ok: boolean
-      reason?: string
-    }
-    expect(set).toEqual({ ok: false, reason: 'encryption-unavailable' })
-    expect(((await f.call('llm:status')) as LlmStatus).hasKey).toBe(false)
-  })
-
-  it('setConfig persists provider/model and status reflects it', async () => {
-    const f = setupKeyed(fakeEncryptor())
-    await f.call('llm:setConfig', { provider: 'anthropic', model: 'claude-3-5-haiku-latest' })
-    const s = (await f.call('llm:status')) as LlmStatus
-    expect(s.provider).toBe('anthropic')
-    expect(s.model).toBe('claude-3-5-haiku-latest')
-  })
-
-  it('status echoes the configured baseUrl for the local provider', async () => {
-    const f = setupKeyed(fakeEncryptor())
-    await f.call('llm:setConfig', {
-      provider: 'local',
-      model: 'local-model',
-      baseUrl: 'http://127.0.0.1:1234/v1'
-    })
-    const s = (await f.call('llm:status')) as LlmStatus
-    expect(s.baseUrl).toBe('http://127.0.0.1:1234/v1')
-  })
-
-  it('all new channels reject a foreign sender', async () => {
-    const f = setupKeyed(fakeEncryptor())
-    expect(await f.callForeign('llm:setKey', { provider: 'openrouter', key: 'x' })).toEqual({
-      ok: false,
-      reason: 'forbidden'
-    })
-    expect(await f.callForeign('llm:clearKey', { provider: 'openrouter' })).toEqual({
-      ok: false,
-      reason: 'forbidden'
-    })
-    expect(await f.callForeign('llm:setConfig', { provider: 'openai', model: 'm' })).toEqual({
-      ok: false,
-      reason: 'forbidden'
-    })
   })
 })

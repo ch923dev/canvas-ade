@@ -46,4 +46,21 @@ describe('llmConfig', () => {
     const raw = readFileSync(join(dir, 'llm-config.json'), 'utf8')
     expect(raw).not.toMatch(/api[_-]?key/i) // never persists key material
   })
+
+  it('round-trips an optional maxCallsPerDay cap', () => {
+    writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 5 })
+    expect(readLlmConfig(dir).maxCallsPerDay).toBe(5)
+  })
+
+  it('omits maxCallsPerDay when not set', () => {
+    writeLlmConfig(dir, { provider: 'openrouter', model: 'm' })
+    expect(readLlmConfig(dir).maxCallsPerDay).toBeUndefined()
+  })
+
+  it('rejects a negative or non-numeric cap (→ undefined)', () => {
+    writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: -3 })
+    expect(readLlmConfig(dir).maxCallsPerDay).toBeUndefined()
+    writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: NaN })
+    expect(readLlmConfig(dir).maxCallsPerDay).toBeUndefined()
+  })
 })

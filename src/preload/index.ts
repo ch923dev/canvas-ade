@@ -66,6 +66,7 @@ export type ProjectResult =
 export type LlmSummarizeResult =
   | { ok: true; text: string }
   | { ok: false; reason: 'no-provider' }
+  | { ok: false; reason: 'budget-exceeded' }
   | { ok: false; reason: 'provider-error'; message: string }
 
 export interface LlmStatus {
@@ -196,6 +197,7 @@ const api = {
       provider: LlmStatus['provider']
       model: string
       baseUrl?: string
+      maxCallsPerDay?: number
     }): Promise<LlmWriteResult> => ipcRenderer.invoke('llm:setConfig', args)
   }
 }
