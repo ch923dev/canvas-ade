@@ -18,13 +18,23 @@ test.describe('terminal (node-pty / ConPTY — real instance)', () => {
     expect(ok, 'sentinel in framebuffer').toBe(true)
   })
 
-  test('full view relocates the live subtree — same pid + scrollback survive', async ({ page, electronApp }) => {
+  test('full view relocates the live subtree — same pid + scrollback survive', async ({
+    page,
+    electronApp
+  }) => {
     const id = await seed(page, 'terminal', { launchCommand: `echo ${TERM_SENTINEL}` })
-    await pollEval(page, `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL)}); })()`, 10_000)
+    await pollEval(
+      page,
+      `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL)}); })()`,
+      10_000
+    )
     const pidBefore = await mainCall<number | null>(electronApp, 'terminalPid', id)
     await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
     await page.waitForTimeout(400)
-    const mounted = await evalIn<boolean>(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`)
+    const mounted = await evalIn<boolean>(
+      page,
+      `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`
+    )
     const pidDuring = await mainCall<number | null>(electronApp, 'terminalPid', id)
     const text = await evalIn<string | null>(page, readTerm(id))
     await evalIn(page, 'window.__canvasE2E.setFullView(null)')
@@ -62,28 +72,53 @@ test.describe('terminal (node-pty / ConPTY — real instance)', () => {
     const id = await seed(page, 'terminal', { launchCommand: `echo ${TERM_SENTINEL}` })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 5000)
     await evalIn(page, 'window.__canvasE2E.setZoom(0.2)') // < LOD_ZOOM (0.4)
-    const alive = await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 3000)
+    const alive = await pollEval(
+      page,
+      `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`,
+      3000
+    )
     expect(alive, 'mounted across LOD (session alive)').toBe(true)
   })
 
-  test('config respawn — new session echoes a fresh sentinel under the same id', async ({ page }) => {
+  test('config respawn — new session echoes a fresh sentinel under the same id', async ({
+    page
+  }) => {
     const id = await seed(page, 'terminal', { launchCommand: `echo ${TERM_SENTINEL}` })
-    await pollEval(page, `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL)}); })()`, 10_000)
+    await pollEval(
+      page,
+      `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL)}); })()`,
+      10_000
+    )
     // Mirror the homegrown probe: ensure zoom is settled so the re-mounted xterm relayouts.
     await evalIn(page, 'window.__canvasE2E.setZoom(1)')
-    await evalIn(page, `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { launchCommand: 'echo ${TERM_SENTINEL2}' })`)
+    await evalIn(
+      page,
+      `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { launchCommand: 'echo ${TERM_SENTINEL2}' })`
+    )
     // The patch tears the old PTY down + spawns a new one under the same id; let that
     // churn settle before polling so a worker-shared prior PTY's onExit can't race the read.
     await page.waitForTimeout(300)
-    const ok = await pollEval(page, `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL2)}); })()`, 15_000)
+    const ok = await pollEval(
+      page,
+      `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL2)}); })()`,
+      15_000
+    )
     expect(ok, 'new session echoed after respawn').toBe(true)
   })
 
   test('park + adopt on undo — same pid + replayed scrollback', async ({ page, electronApp }) => {
     const id = await seed(page, 'terminal', { launchCommand: `echo ${TERM_SENTINEL}` })
-    await pollEval(page, `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL)}); })()`, 10_000)
+    await pollEval(
+      page,
+      `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(TERM_SENTINEL)}); })()`,
+      10_000
+    )
     await mainCall(electronApp, 'writeTerminal', id, `echo ${ADOPT_MARKER}\r`)
-    const markerSeen = await pollEval(page, `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(ADOPT_MARKER)}); })()`, 8000)
+    const markerSeen = await pollEval(
+      page,
+      `(() => { const t=${readTerm(id)}; return typeof t==='string' && t.includes(${JSON.stringify(ADOPT_MARKER)}); })()`,
+      8000
+    )
     const pidBefore = await mainCall<number | null>(electronApp, 'terminalPid', id)
     await evalIn(page, `window.__canvasE2E.deleteBoard(${JSON.stringify(id)})`)
     await page.waitForTimeout(200)

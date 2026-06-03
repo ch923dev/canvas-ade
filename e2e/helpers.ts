@@ -6,15 +6,17 @@ export function evalIn<T>(page: Page, expr: string): Promise<T> {
   // The expr is a self-contained JS expression string (often an IIFE), matching the
   // homegrown probes verbatim. Wrap so `return` value crosses the bridge.
   return page.evaluate((source) => {
-    // eslint-disable-next-line no-eval
     return (0, eval)(source)
   }, expr) as Promise<T>
 }
 
 /** Call a MAIN registry method via electronApp.evaluate (the homegrown `ctx.dbg.*`). */
-export function mainCall<T>(app: ElectronApplication, method: string, ...args: unknown[]): Promise<T> {
+export function mainCall<T>(
+  app: ElectronApplication,
+  method: string,
+  ...args: unknown[]
+): Promise<T> {
   return app.evaluate(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ({}, { method, args }) => (globalThis as any).__canvasE2EMain[method](...args),
     { method, args }
   ) as Promise<T>

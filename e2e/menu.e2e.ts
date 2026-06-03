@@ -2,12 +2,19 @@ import { test, expect } from './fixtures'
 import { evalIn, mainCall, seed } from './helpers'
 
 test.describe('board ⋯ menu (real layout / native occlusion)', () => {
-  test('⋯ trigger stays in the title bar + popover clamps on-screen + visible at rest', async ({ page }) => {
+  test('⋯ trigger stays in the title bar + popover clamps on-screen + visible at rest', async ({
+    page
+  }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo menu', w: 150 })
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await evalIn(page, 'window.__canvasE2E.setZoom(1)')
     await page.waitForTimeout(150)
-    const chrome = await evalIn<{ found: boolean; triggerInBar: boolean; restColor: string; inViewport: boolean }>(
+    const chrome = await evalIn<{
+      found: boolean
+      triggerInBar: boolean
+      restColor: string
+      inViewport: boolean
+    }>(
       page,
       `(async () => {
          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -40,13 +47,21 @@ test.describe('board ⋯ menu (real layout / native occlusion)', () => {
     expect(chrome.restColor, 'rest colour resolves the CSS var').toBe('rgb(155, 155, 161)')
   })
 
-  test('open ⋯ menu detaches the live preview (un-occludes the popover) → reattaches on close', async ({ page, electronApp }) => {
+  test('open ⋯ menu detaches the live preview (un-occludes the popover) → reattaches on close', async ({
+    page,
+    electronApp
+  }) => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await evalIn(page, 'window.__canvasE2E.setZoom(1)')
     await page.waitForTimeout(250)
-    const occl = await evalIn<{ found: boolean; liveBefore: boolean; liveDuringMenu: boolean; liveAfter: boolean }>(
+    const occl = await evalIn<{
+      found: boolean
+      liveBefore: boolean
+      liveDuringMenu: boolean
+      liveAfter: boolean
+    }>(
       page,
       `(async () => {
          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

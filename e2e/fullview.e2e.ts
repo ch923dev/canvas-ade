@@ -7,7 +7,10 @@ const status = (id: string, s: string) =>
   `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(s)}; })()`
 
 test.describe('full view (native rebind — real instance)', () => {
-  test('a full-viewed OTHER board: browser stays detached through a mutation + webContents survives', async ({ page, electronApp }) => {
+  test('a full-viewed OTHER board: browser stays detached through a mutation + webContents survives', async ({
+    page,
+    electronApp
+  }) => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
     const planId = await seed(page, 'planning')
@@ -26,7 +29,10 @@ test.describe('full view (native rebind — real instance)', () => {
     expect(survived, 'browser webContents survived full view').toBe(true)
   })
 
-  test('full-viewing the browser ITSELF keeps the same webContents (no restart)', async ({ page, electronApp }) => {
+  test('full-viewing the browser ITSELF keeps the same webContents (no restart)', async ({
+    page,
+    electronApp
+  }) => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
@@ -44,14 +50,24 @@ test.describe('full view (native rebind — real instance)', () => {
     expect(after).toBe(before)
   })
 
-  test('Mobile full view is an aspect-correct letterboxed emulator (not stretched)', async ({ page }) => {
+  test('Mobile full view is an aspect-correct letterboxed emulator (not stretched)', async ({
+    page
+  }) => {
     const planId = await seed(page, 'planning') // any board works; we full-view the browser below
     void planId
     const browserId = await seed(page, 'browser', { url: 'http://127.0.0.1:59999/' })
-    await evalIn(page, `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`)
+    await evalIn(
+      page,
+      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { viewport: 'mobile' })`
+    )
     await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
     await page.waitForTimeout(450)
-    const emu = await evalIn<{ found: boolean; frameRatio: number; stageRatio: number; widthFrac: number }>(
+    const emu = await evalIn<{
+      found: boolean
+      frameRatio: number
+      stageRatio: number
+      widthFrac: number
+    }>(
       page,
       `(() => {
          const frame = document.querySelector('[data-bb-frame=' + JSON.stringify(${JSON.stringify(browserId)}) + ']');
@@ -71,9 +87,15 @@ test.describe('full view (native rebind — real instance)', () => {
     expect(emu.frameRatio, 'frame narrower-ratio than landscape stage').toBeLessThan(emu.stageRatio)
   })
 
-  test('chrome-less frame; Esc from the focused terminal textarea closes + unmounts', async ({ page }) => {
+  test('chrome-less frame; Esc from the focused terminal textarea closes + unmounts', async ({
+    page
+  }) => {
     const termId = await seed(page, 'terminal', { launchCommand: 'echo fullview-close' })
-    await pollEval(page, `(() => { const t = window.__canvasE2E.readTerminal(${JSON.stringify(termId)}); return typeof t === 'string' && t.includes('fullview-close'); })()`, 8000)
+    await pollEval(
+      page,
+      `(() => { const t = window.__canvasE2E.readTerminal(${JSON.stringify(termId)}); return typeof t === 'string' && t.includes('fullview-close'); })()`,
+      8000
+    )
     await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(termId)})`)
     await page.waitForTimeout(400)
     const fvClose = await evalIn<{ frame: boolean; bandGone: boolean; typed: boolean }>(

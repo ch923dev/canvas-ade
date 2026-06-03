@@ -87,6 +87,21 @@ export default tseslint.config(
     }
   },
 
+  // Playwright e2e harness (root-level `e2e/`). Mixed renderer/main world: it
+  // evaluates source strings in the page (`eval`), bridges MAIN registry calls
+  // (`any`), and uses Playwright's empty-pattern fixture signature `({}, use)`.
+  {
+    files: ['e2e/**/*.ts'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser }
+    },
+    rules: {
+      'no-eval': 'off',
+      'no-empty-pattern': 'off',
+      '@typescript-eslint/no-explicit-any': 'off'
+    }
+  },
+
   // Disable all formatting rules that would conflict with Prettier. MUST be last.
   eslintConfigPrettier
 )

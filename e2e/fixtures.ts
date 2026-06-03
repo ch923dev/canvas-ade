@@ -1,4 +1,10 @@
-import { _electron, test as base, expect, type ElectronApplication, type Page } from '@playwright/test'
+import {
+  _electron,
+  test as base,
+  expect,
+  type ElectronApplication,
+  type Page
+} from '@playwright/test'
 
 type TestFixtures = { page: Page }
 type WorkerFixtures = { electronApp: ElectronApplication }
@@ -33,7 +39,6 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: 'worker' }
   ],
   // Override the built-in `page` fixture to reset canvas state before each test.
-  // eslint-disable-next-line no-empty-pattern
   page: async ({ electronApp }, use) => {
     const page = await electronApp.firstWindow()
     await page.bringToFront() // sendInputEvent needs the window focused

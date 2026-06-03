@@ -4,7 +4,10 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
 const DETECTED_URL = 'http://localhost:3000'
 
 test.describe('terminal → browser preview link (live port-detect + gesture routing)', () => {
-  test('hold / right-click open the connect picker; Connect links; tap refreshes (no picker)', async ({ page, electronApp }) => {
+  test('hold / right-click open the connect picker; Connect links; tap refreshes (no picker)', async ({
+    page,
+    electronApp
+  }) => {
     const termId = await seed(page, 'terminal', { launchCommand: 'echo link', w: 360 })
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
@@ -17,7 +20,12 @@ test.describe('terminal → browser preview link (live port-detect + gesture rou
       8000
     )
     const gesture = await evalIn<{
-      detected: string[]; holdOpened: boolean; holdTitle: boolean; holdCount: number; rightOpened: boolean; tapOpened: boolean
+      detected: string[]
+      holdOpened: boolean
+      holdTitle: boolean
+      holdCount: number
+      rightOpened: boolean
+      tapOpened: boolean
     }>(
       page,
       `(async () => {

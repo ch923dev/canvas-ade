@@ -15,7 +15,11 @@ test.describe('browser preview (native WebContentsView — real instance)', () =
     const connected = await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
     expect(connected, 'browser reaches connected').toBe(true)
     await page.waitForTimeout(300) // one paint before capture
-    const cap = await mainCall<{ attached: boolean; empty: boolean }>(electronApp, 'captureView', id)
+    const cap = await mainCall<{ attached: boolean; empty: boolean }>(
+      electronApp,
+      'captureView',
+      id
+    )
     expect(cap.attached, 'native view attached').toBe(true)
     expect(cap.empty, 'capture is non-blank').toBe(false)
   })
@@ -39,7 +43,10 @@ test.describe('browser preview (native WebContentsView — real instance)', () =
     expect(reattached, 'reattached on gesture end').toBe(true)
   })
 
-  test('focus elsewhere detaches the browser view → reattaches on unfocus', async ({ page, electronApp }) => {
+  test('focus elsewhere detaches the browser view → reattaches on unfocus', async ({
+    page,
+    electronApp
+  }) => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const browserId = await seed(page, 'browser', { url })
     const termId = await seed(page, 'terminal', { launchCommand: 'echo focus' })
