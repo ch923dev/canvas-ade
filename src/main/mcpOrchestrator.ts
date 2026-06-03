@@ -11,6 +11,7 @@ import type {
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
 import { createDispatchGuard, type DispatchGuard } from './dispatchGuard'
+import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -315,14 +316,34 @@ export function buildOrchestrator(
         throw new Error(`handoff_prompt: target is not a terminal (${board.type})`)
       }
 
+      // (2.5) 🔒 One dispatch = one command line. Reject an embedded CR/LF (it would run
+      // N commands from a single approval) + strip control chars — BEFORE nonce/confirm so
+      // a multi-command payload is never shown to the human to rubber-stamp.
+      let safeText: string
+      try {
+        safeText = sanitizeDispatchText(text)
+      } catch (err) {
+        if (err instanceof DispatchPayloadError) {
+          await registry.audit({
+            type: 'handoff_prompt',
+            targetId: boardId,
+            prompt: text,
+            nonce: '',
+            status: 'rejected',
+            detail: `unsafe payload: ${err.message}`
+          })
+        }
+        throw err
+      }
+
       // (3) Mint the single-use nonce + monotonic sequence for this dispatch.
       const { nonce, seq } = guard.issue()
 
       // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
-      // carries the RESOLVED target + the EXACT prompt the human is authorizing.
+      // carries the RESOLVED target + the EXACT (sanitized) prompt the human is authorizing.
       const { approved } = await registry.confirm({
         title: `Hand off to "${board.title}"`,
-        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${text}`
+        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
       })
       if (!approved) {
         await registry.audit({
@@ -352,7 +373,7 @@ export function buildOrchestrator(
 
       // (6) Write into the PTY (append CR so the shell actually runs the line). A false
       // means no live terminal session held the id — audit failed + throw.
-      if (!registry.writeToPty(boardId, text + '\r')) {
+      if (!registry.writeToPty(boardId, safeText + '\r')) {
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
@@ -435,14 +456,33 @@ export function buildOrchestrator(
         throw new Error(`assign_prompt: target is not a terminal (${board.type})`)
       }
 
+      // (2.5) 🔒 One dispatch = one command line. Reject an embedded CR/LF (it would run
+      // N commands from a single approval) + strip control chars — BEFORE nonce/confirm.
+      let safeText: string
+      try {
+        safeText = sanitizeDispatchText(text)
+      } catch (err) {
+        if (err instanceof DispatchPayloadError) {
+          await registry.audit({
+            type: 'assign_prompt',
+            targetId: boardId,
+            prompt: text,
+            nonce: '',
+            status: 'rejected',
+            detail: `unsafe payload: ${err.message}`
+          })
+        }
+        throw err
+      }
+
       // (3) Mint the single-use nonce + monotonic sequence for this dispatch.
       const { nonce, seq } = guard.issue()
 
       // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
-      // carries the RESOLVED target + the EXACT prompt the human is authorizing.
+      // carries the RESOLVED target + the EXACT (sanitized) prompt the human is authorizing.
       const { approved } = await registry.confirm({
         title: `Assign to "${board.title}"`,
-        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${text}`
+        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
       })
       if (!approved) {
         await registry.audit({
@@ -471,7 +511,7 @@ export function buildOrchestrator(
 
       // (6) Write into the PTY (append CR so the shell runs the line). A false means no
       // live terminal session held the id — audit failed + throw.
-      if (!registry.writeToPty(boardId, text + '\r')) {
+      if (!registry.writeToPty(boardId, safeText + '\r')) {
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
@@ -546,13 +586,32 @@ export function buildOrchestrator(
         throw new Error('relay_prompt: relay requires a terminal source and a terminal target')
       }
 
+      // (2.5) 🔒 One dispatch = one command line. Reject an embedded CR/LF (it would run
+      // N commands from a single approval) + strip control chars — BEFORE nonce/confirm.
+      let safeText: string
+      try {
+        safeText = sanitizeDispatchText(text)
+      } catch (err) {
+        if (err instanceof DispatchPayloadError) {
+          await registry.audit({
+            type: 'relay_prompt',
+            targetId,
+            prompt: text,
+            nonce: '',
+            status: 'rejected',
+            detail: `unsafe payload: ${err.message}; ${sourceId}->${targetId}`
+          })
+        }
+        throw err
+      }
+
       // (3) Mint the single-use nonce + sequence.
       const { nonce, seq } = guard.issue()
 
-      // (4) Mandatory human confirm — the body names both endpoints + the exact prompt.
+      // (4) Mandatory human confirm — the body names both endpoints + the exact (sanitized) prompt.
       const { approved } = await registry.confirm({
         title: `Relay "${source.title}" → "${target.title}"`,
-        body: `Relay this prompt from terminal "${source.title}" to terminal "${target.title}" (${targetId})?\n\n${text}`
+        body: `Relay this prompt from terminal "${source.title}" to terminal "${target.title}" (${targetId})?\n\n${safeText}`
       })
       if (!approved) {
         await registry.audit({
@@ -580,7 +639,7 @@ export function buildOrchestrator(
       }
 
       // (6) Write into the TARGET's PTY (append CR so the shell runs it).
-      if (!registry.writeToPty(targetId, text + '\r')) {
+      if (!registry.writeToPty(targetId, safeText + '\r')) {
         await registry.audit({
           type: 'relay_prompt',
           targetId,

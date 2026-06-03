@@ -326,6 +326,26 @@ describe('buildOrchestrator', () => {
       expect(audits[0]).toMatchObject({ targetId: 'b1', status: 'rejected', nonce: '' })
     })
 
+    it('🔒 rejects a payload with an embedded CR — one approval must run ONE command (no confirm, no write)', async () => {
+      const { registry, audits, writes, confirms } = dispatchReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term' }]
+      })
+      const orch = buildOrchestrator(registry)
+      // "npm test\rrm -rf /" would submit TWO shell lines from a single human approval.
+      await expect(orch.handoffPrompt('t1', 'npm test\rrm -rf /')).rejects.toThrow(
+        /newline|payload/i
+      )
+      expect(writes).toEqual([]) // nothing reached the PTY
+      expect(confirms).toEqual([]) // rejected BEFORE the human gate — never shown the payload
+      expect(audits).toHaveLength(1)
+      expect(audits[0]).toMatchObject({
+        type: 'handoff_prompt',
+        targetId: 't1',
+        nonce: '', // rejected before a nonce is minted
+        status: 'rejected'
+      })
+    })
+
     it('🔒 a denied confirm blocks the write — audits denied, nonce minted, NO write', async () => {
       const { registry, audits, writes, confirms } = dispatchReg({
         boards: [{ id: 't1', type: 'terminal', title: 'Term' }],
