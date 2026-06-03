@@ -31,15 +31,17 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
-  #
-  # FROZEN (2026-06-03): DISABLED until we build a structured testing setup (larger e2e
-  # reliability issue + the known CI-only `whiteboard-fullview-add` flake). `check` is the
-  # gate meanwhile. Re-enable by removing this `if: false`. See CLAUDE.md › Status.
+  # Playwright _electron e2e gate (T5). Runs the real built app on a Win + Linux
+  # matrix — the ONLY tier allowed to touch the native layer (WebContentsView /
+  # node-pty / OS process-tree kill). Separate from `check` (Vitest stays the unit/
+  # integration gate). Linux needs Xvfb + --no-sandbox (set in e2e/fixtures.ts).
   smoke:
-    if: false
     needs: check
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,12 +51,25 @@ jobs:
         with:
           python-version: '3.11'
       - run: corepack enable
+      # postinstall (electron-builder install-app-deps) rebuilds node-pty for the
+      # Electron ABI on every OS — no extra rebuild step needed.
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Board e2e smoke
-        run: pnpm start
-        env:
-          CANVAS_SMOKE: e2e
+      - name: Install Xvfb (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Playwright e2e (Linux, under Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm test:e2e
+      - name: Playwright e2e (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
   package:
