@@ -38,6 +38,7 @@ vi.mock('electron', () => ({
 
 import { registerProjectHandlers } from './projectIpc'
 import { createIpcCapture, foreignEvent, mainWin } from './ipcTestHarness'
+import type { MemoryEngine } from './memoryEngine'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -238,5 +239,68 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
   it('asset:read returns null for a foreign sender', () => {
     const cap = setup()
     expect(cap.invokeAs(foreignEvent, 'asset:read', 'someId')).toBeNull()
+  })
+})
+
+// T-M2 (Context): registerProjectHandlers feeds saved docs into the MemoryEngine and
+// re-baselines it on project switch/reopen. Injected engine over the module-mocked store.
+describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
+  const getWin = (): null => null // no window — guard uses synthetic senderFrame path
+
+  function harness(engine: MemoryEngine): ReturnType<typeof createIpcCapture> {
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData', () => 0, engine)
+    return cap
+  }
+
+  it('feeds the saved doc into the engine after a successful save', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    store.writeProject.mockResolvedValue(undefined)
+    const observe = vi.fn()
+    const engine: MemoryEngine = { observe, reset: vi.fn() }
+    const cap = harness(engine)
+
+    const doc = { schemaVersion: 4, viewport: null, boards: [] }
+    const ok = await cap.invoke('project:save', doc)
+    expect(ok).toBe(true)
+    expect(observe).toHaveBeenCalledWith(doc)
+  })
+
+  it('a throwing engine.observe never fails the save (best-effort feed)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    store.writeProject.mockResolvedValue(undefined)
+    const engine: MemoryEngine = {
+      observe: () => {
+        throw new Error('detector boom')
+      },
+      reset: vi.fn()
+    }
+    const cap = harness(engine)
+
+    const ok = await cap.invoke('project:save', { schemaVersion: 4, viewport: null, boards: [] })
+    expect(ok).toBe(true) // save still succeeds despite the detector throwing
+  })
+
+  it('resets the engine when a project is opened (switch)', async () => {
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
+    const reset = vi.fn()
+    const engine: MemoryEngine = { observe: vi.fn(), reset }
+    const cap = harness(engine)
+
+    const r = cap.invoke('project:open', '/proj') as { ok: boolean }
+    expect(r.ok).toBe(true)
+    expect(reset).toHaveBeenCalled()
+  })
+
+  it('resets the engine on project:current (re-baseline on reopen)', async () => {
+    recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
+    const reset = vi.fn()
+    const engine: MemoryEngine = { observe: vi.fn(), reset }
+    const cap = harness(engine)
+
+    const r = (await cap.invoke('project:current')) as { ok: boolean }
+    expect(r.ok).toBe(true)
+    expect(reset).toHaveBeenCalled()
   })
 })

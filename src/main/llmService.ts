@@ -136,9 +136,9 @@ export function keyForProvider(
   return store?.getKey(provider) ?? env[KEY_ENV[provider]]
 }
 
-/** Mock is on for e2e/CI so no real network call is ever made. */
+/** Mock is on for CI/tests (CANVAS_LLM_MOCK) so no real network call is ever made. */
 export function isMockEnabled(env: Record<string, string | undefined>): boolean {
-  return env.CANVAS_LLM_MOCK === '1' || env.CANVAS_SMOKE === 'e2e'
+  return env.CANVAS_LLM_MOCK === '1'
 }
 
 /**

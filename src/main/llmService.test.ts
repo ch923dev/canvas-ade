@@ -115,9 +115,9 @@ describe('keyForProvider', () => {
 })
 
 describe('isMockEnabled', () => {
-  it('is on under CANVAS_LLM_MOCK=1 or CANVAS_SMOKE=e2e', () => {
+  it('is on under CANVAS_LLM_MOCK=1 only (the deleted CANVAS_SMOKE harness no longer applies)', () => {
     expect(isMockEnabled({ CANVAS_LLM_MOCK: '1' })).toBe(true)
-    expect(isMockEnabled({ CANVAS_SMOKE: 'e2e' })).toBe(true)
+    expect(isMockEnabled({ CANVAS_SMOKE: 'e2e' })).toBe(false)
     expect(isMockEnabled({})).toBe(false)
   })
 })
@@ -206,7 +206,7 @@ describe('runSummarize', () => {
     const r = await runSummarize(
       { provider: 'openrouter', model: 'm' },
       { text: 'ping' },
-      { fetch: errFetch, env: { CANVAS_SMOKE: 'e2e' } }
+      { fetch: errFetch, env: { CANVAS_LLM_MOCK: '1' } }
     )
     expect(r).toEqual<SummarizeResult>({ ok: true, text: '[mock] ping' })
   })
@@ -290,7 +290,7 @@ describe('runSummarize', () => {
     const r = await runSummarize(
       budgetCfg,
       { text: 'hi' },
-      { fetch: vi.fn() as never, env: { CANVAS_SMOKE: 'e2e' }, budget: b.store }
+      { fetch: vi.fn() as never, env: { CANVAS_LLM_MOCK: '1' }, budget: b.store }
     )
     expect(r).toEqual<SummarizeResult>({ ok: true, text: '[mock] hi' })
     expect(b.calls()).toBe(0) // budget untouched
@@ -301,7 +301,7 @@ describe('runSummarize', () => {
     const r = await runSummarize(
       { ...budgetCfg, maxCallsPerDay: 1 },
       { text: 'hi' },
-      { fetch: vi.fn() as never, env: { CANVAS_SMOKE: 'e2e' }, budget: b.store }
+      { fetch: vi.fn() as never, env: { CANVAS_LLM_MOCK: '1' }, budget: b.store }
     )
     expect(r).toEqual<SummarizeResult>({ ok: false, reason: 'budget-exceeded' })
   })

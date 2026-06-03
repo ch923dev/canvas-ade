@@ -123,6 +123,35 @@ describe('preload api → project / asset / dialog / export channels', () => {
   })
 })
 
+describe('preload api → llm channels (M-brain)', () => {
+  it.each([
+    [
+      'llm.summarize',
+      (a: CanvasApi) => a.llm.summarize({ text: 'hi' }),
+      ['llm:summarize', { text: 'hi' }]
+    ],
+    ['llm.status', (a: CanvasApi) => a.llm.status(), ['llm:status']],
+    [
+      'llm.setKey',
+      (a: CanvasApi) => a.llm.setKey({ provider: 'openrouter', key: 'sk-xyz' }),
+      ['llm:setKey', { provider: 'openrouter', key: 'sk-xyz' }]
+    ],
+    [
+      'llm.clearKey',
+      (a: CanvasApi) => a.llm.clearKey({ provider: 'openrouter' }),
+      ['llm:clearKey', { provider: 'openrouter' }]
+    ],
+    [
+      'llm.setConfig',
+      (a: CanvasApi) => a.llm.setConfig({ provider: 'anthropic', model: 'm' }),
+      ['llm:setConfig', { provider: 'anthropic', model: 'm' }]
+    ]
+  ] as const)('%s', (_label, call, expected) => {
+    call(api)
+    expect(h.invoke).toHaveBeenCalledWith(...expected)
+  })
+})
+
 // The two listener methods (onPreviewEvent, project.onFlush) use ipcRenderer.on, not
 // invoke — out of the invoke-mapping contract (see spec §error-handling). They are
 // covered here only to the extent that the api exposes them without throwing.
