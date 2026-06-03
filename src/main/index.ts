@@ -165,7 +165,7 @@ app.whenReady().then(async () => {
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this
   // logs the typed no-provider result (graceful degrade), proving the path end-to-end.
-  if (process.env.CANVAS_LLM_PING) {
+  if (process.env.CANVAS_LLM_PING && !SMOKE) {
     runSummarize(
       readLlmConfig(app.getPath('userData')),
       { system: 'Reply in one short sentence.', text: process.env.CANVAS_LLM_PING },

@@ -9,7 +9,7 @@
  */
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { LlmConfig, ProviderName } from './llmConfig'
-import { readLlmConfig } from './llmConfig'
+import { readLlmConfig, DEFAULT_MODELS } from './llmConfig'
 
 export type { ProviderName }
 
@@ -234,8 +234,9 @@ export function registerLlmHandlers(
   })
 
   ipcMain.handle('llm:status', (e): LlmStatus => {
+    if (guard(e))
+      return { hasProvider: false, provider: 'openrouter', model: DEFAULT_MODELS.openrouter }
     const config = readLlmConfig(userDataDir)
-    if (guard(e)) return { hasProvider: false, provider: config.provider, model: config.model }
     return {
       hasProvider: getProvider(config, deps) !== null,
       provider: config.provider,
