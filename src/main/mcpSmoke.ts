@@ -33,6 +33,8 @@ interface SmokeClient {
   readBoardTypes(): Promise<string[]>
   /** Read canvas://boards and return the status bucket of board `id` (null if absent). */
   readBoardStatus(id: string): Promise<string | null>
+  /** Read the templated canvas://board/{id}/status resource → { id, status }. */
+  readBoardStatusResource(id: string): Promise<{ id: string; status: string }>
   /** Read canvas://boards and return each board's id + status bucket. */
   readBoards(): Promise<Array<{ id: string; status: string }>>
   /**
@@ -105,6 +107,17 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
       } catch {
         log(`MCP_FAIL board-status-unparseable len=${text.length}`)
         return null
+      }
+    },
+    readBoardStatusResource: async (id: string): Promise<{ id: string; status: string }> => {
+      const res = await client.readResource({ uri: `canvas://board/${id}/status` })
+      const text = res.contents
+        .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+        .join('')
+      const parsed = JSON.parse(text) as { id?: unknown; status?: unknown }
+      return {
+        id: typeof parsed.id === 'string' ? parsed.id : '',
+        status: typeof parsed.status === 'string' ? parsed.status : ''
       }
     },
     readBoards: async (): Promise<Array<{ id: string; status: string }>> => {
@@ -278,9 +291,13 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
       )
       await evalIn(`window.__canvasE2E.setTerminalDown(${JSON.stringify(sid)})`)
       const ranIdle = await poll(async () => (await orch.readBoardStatus(sid)) === 'idle', 8000)
-      if (ranRunning && ranIdle) log('MCP_STATUS_OK')
+      // Also assert the templated per-board resource (T1.1) agrees with the list: same
+      // bucket, id echoed. Reads as the final resting state ('idle' after the down).
+      const res = ranIdle ? await orch.readBoardStatusResource(sid) : null
+      const resOk = res?.id === sid && res?.status === 'idle'
+      if (ranRunning && ranIdle && resOk) log('MCP_STATUS_OK')
       else {
-        log(`MCP_FAIL status running=${ranRunning} idle=${ranIdle}`)
+        log(`MCP_FAIL status running=${ranRunning} idle=${ranIdle} resource=${JSON.stringify(res)}`)
         code = 1
       }
     }
