@@ -4,9 +4,8 @@
  * note it stops pointer propagation so editing never disturbs the canvas, and the
  * `select` tool enables drag (from the gutter) + inline edit.
  */
-import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, type ReactElement } from 'react'
 import type { TextElement } from '../../../lib/boardSchema'
-import { Icon } from '../../Icon'
 
 export interface FreeTextProps {
   element: TextElement
@@ -16,23 +15,12 @@ export interface FreeTextProps {
   onDelete: (id: string) => void
   /** Called when the textarea gains focus — used to checkpoint undo. */
   onEditStart?: () => void
-}
-
-const delBtn: CSSProperties = {
-  position: 'absolute',
-  top: 2,
-  right: 2,
-  width: 18,
-  height: 18,
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--border)',
-  background: 'var(--surface-raised)',
-  color: 'var(--text-3)',
-  cursor: 'pointer',
-  opacity: 0,
-  transition: 'opacity .1s'
+  /** True when this element is in the board selection set (draws the accent ring). */
+  selected?: boolean
+  /** Select this element on grip press; `additive` = Shift held. */
+  onSelect?: (id: string, additive: boolean) => void
+  /** Report the rendered board-local size for selection/snap bbox (W2). */
+  onMeasure?: (id: string, w: number, h: number) => void
 }
 
 export function FreeText({
@@ -41,7 +29,10 @@ export function FreeText({
   onDragStart,
   onChangeText,
   onDelete,
-  onEditStart
+  onEditStart,
+  selected,
+  onSelect,
+  onMeasure
 }: FreeTextProps): ReactElement {
   const ref = useRef<HTMLTextAreaElement>(null)
   // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
@@ -55,7 +46,11 @@ export function FreeText({
     el.style.height = `${el.scrollHeight}px`
     el.style.width = 'auto'
     el.style.width = `${Math.max(40, el.scrollWidth)}px`
-  }, [element.text])
+    if (onMeasure) {
+      const host = el.parentElement // the .pl-text flex row
+      if (host) onMeasure(element.id, host.offsetWidth, host.offsetHeight)
+    }
+  }, [element.text, onMeasure, element.id])
 
   // Focus a freshly-dropped empty text element so the user can type immediately,
   // AND so leaving it untouched blurs → prunes it instead of leaving an orphan
@@ -72,7 +67,9 @@ export function FreeText({
         position: 'absolute',
         left: element.x,
         top: element.y,
-        display: 'flex'
+        display: 'flex',
+        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outlineOffset: 2
       }}
       // Only swallow the press in select mode; let a draw gesture (pen/arrow/place)
       // fall through to the well so it can START over the text (#6).
@@ -82,21 +79,8 @@ export function FreeText({
       // A dblclick on the text must not bubble to the canvas focus handler (#40).
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      {interactive && (
-        <button
-          type="button"
-          className="pl-del"
-          title="Delete"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(element.id)
-          }}
-          style={delBtn}
-        >
-          <Icon name="x" size={11} />
-        </button>
-      )}
+      {/* No inline delete button — removal is via the right-click menu or eraser (W3).
+          `onDelete` remains wired for the empty-text auto-prune (blur/Backspace) below. */}
       {/* Slim drag gutter on the left edge so the text stays selectable. */}
       <span
         className="pl-text-grip"
@@ -106,6 +90,7 @@ export function FreeText({
           // can START over the grip (#6); only swallow + drag in select mode.
           if (!interactive) return
           e.stopPropagation()
+          onSelect?.(element.id, e.shiftKey)
           // Suppress the empty-text blur-prune this gesture is about to trigger.
           dragging.current = true
           onDragStart(e, element.id)

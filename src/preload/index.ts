@@ -149,8 +149,22 @@ const api = {
       return () => ipcRenderer.removeListener('project:flush', listener)
     }
   },
+  // ── Phase 3 / W4 assets — write pasted/dropped bytes, read them back as bytes ──
+  asset: {
+    write: (bytes: Uint8Array, ext: string): Promise<{ assetId: string } | { error: string }> =>
+      ipcRenderer.invoke('asset:write', { bytes, ext }),
+    read: (assetId: string): Promise<Uint8Array | null> => ipcRenderer.invoke('asset:read', assetId)
+  },
   dialog: {
     openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
+  },
+  export: {
+    save: (args: {
+      bytes: Uint8Array
+      ext: 'png' | 'svg'
+      defaultName: string
+    }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
+      ipcRenderer.invoke('export:save', args)
   }
 }
 

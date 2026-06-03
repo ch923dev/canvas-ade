@@ -74,6 +74,29 @@ export interface CanvasE2E {
   setTerminalDown: (id: string) => void
   /** Focus a board (dim others) or clear focus (null) — the double-click focus path. Bug 2. */
   setFocus: (id: string | null) => void
+  /** Enter Planning camera-full-view (Option A: fitView the board, no portal/2nd transform). */
+  enterCameraFullView: (id: string) => void
+  /** Exit Planning camera-full-view (restore the prior viewport). */
+  exitCameraFullView: () => void
+  /** W5: build the export artifact (SVG + PNG bytes) for a planning board WITHOUT the
+   *  save dialog — returns a JSON-serializable summary for the harness to assert. */
+  exportBoard: (
+    boardId: string,
+    format: 'png' | 'svg'
+  ) => Promise<{
+    svg: string
+    byteLength: number
+    imageCount: number
+    embeddedCount: number
+  } | null>
+  /**
+   * Instant (duration 0) camera fit onto a board, matching Canvas FULLVIEW_OPTIONS. Lets
+   * the fullview-add probe re-fit each poll tick: RF measures freshly-resized nodes lazily,
+   * so the single animated fit from `enterCameraFullView` can no-op on a slow/contended CI
+   * host (zoom stays ~1). An instant re-fit per tick lands deterministically once RF has
+   * measured the node. Memory `e2e-rf-measurement-race`.
+   */
+  fitCameraInstant: (id: string) => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -82,6 +105,8 @@ export interface E2EHostHooks {
   openFullViewAnimated: (id: string) => void
   closeFullViewAnimated: () => void
   setFocus: (id: string | null) => void
+  enterCameraFullView: (id: string) => void
+  exitCameraFullView: () => void
 }
 
 declare global {
@@ -185,6 +210,29 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setFocus(id) {
       host.setFocus(id)
+    },
+    enterCameraFullView(id) {
+      host.enterCameraFullView(id)
+    },
+    exitCameraFullView() {
+      host.exitCameraFullView()
+    },
+    async exportBoard(boardId, format) {
+      const b = useCanvasStore.getState().boards.find((x) => x.id === boardId)
+      if (!b || b.type !== 'planning') return null
+      const { buildExport } = await import('../canvas/boards/planning/exportBoard')
+      const { result, bytes } = await buildExport(b, format)
+      return {
+        svg: result.svg,
+        byteLength: bytes.length,
+        imageCount: result.imageCount,
+        embeddedCount: result.embeddedCount
+      }
+    },
+    fitCameraInstant(id) {
+      // padding/maxZoom mirror Canvas.tsx FULLVIEW_OPTIONS (0.1 / Z_MAX 2.5); duration 0 so
+      // a re-fit-each-tick poll converges without animation. Memory e2e-rf-measurement-race.
+      void rf.fitView({ padding: 0.1, maxZoom: 2.5, duration: 0, nodes: [{ id }] })
     }
   }
   window.__canvasE2E = api

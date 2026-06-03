@@ -7,9 +7,8 @@
  * The card stops pointer propagation so interacting with it never starts a React
  * Flow node-drag or clears the canvas selection mid-edit.
  */
-import { useEffect, useRef, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useRef, type ReactElement } from 'react'
 import type { NoteElement } from '../../../lib/boardSchema'
-import { Icon } from '../../Icon'
 import { NOTE_TINTS } from './tints'
 
 export interface NoteCardProps {
@@ -22,23 +21,10 @@ export interface NoteCardProps {
   onDelete: (id: string) => void
   /** Called when the textarea gains focus — used to checkpoint undo. */
   onEditStart?: () => void
-}
-
-const delBtn: CSSProperties = {
-  position: 'absolute',
-  top: 2,
-  right: 2,
-  width: 18,
-  height: 18,
-  display: 'grid',
-  placeItems: 'center',
-  borderRadius: 'var(--r-pill)',
-  border: '1px solid var(--border)',
-  background: 'var(--surface-raised)',
-  color: 'var(--text-3)',
-  cursor: 'pointer',
-  opacity: 0,
-  transition: 'opacity .1s'
+  /** True when this element is in the board selection set (draws the accent ring). */
+  selected?: boolean
+  /** Select this element on grip press; `additive` = Shift held. */
+  onSelect?: (id: string, additive: boolean) => void
 }
 
 export function NoteCard({
@@ -47,7 +33,9 @@ export function NoteCard({
   onDragStart,
   onChangeText,
   onDelete,
-  onEditStart
+  onEditStart,
+  selected,
+  onSelect
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -84,6 +72,8 @@ export function NoteCard({
         border: `1px solid ${tint.edge}`,
         borderRadius: 'var(--r-inner)',
         boxShadow: 'var(--shadow-pop)',
+        outline: selected ? '1.5px solid var(--accent)' : 'none',
+        outlineOffset: 2,
         cursor: interactive ? 'grab' : 'default'
       }}
       onPointerDown={(e) => {
@@ -98,21 +88,9 @@ export function NoteCard({
         ref.current?.focus()
       }}
     >
-      {interactive && (
-        <button
-          type="button"
-          className="pl-del"
-          title="Delete"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(note.id)
-          }}
-          style={delBtn}
-        >
-          <Icon name="x" size={11} />
-        </button>
-      )}
+      {/* Deletion is intentionally NOT an inline button — elements are removed only via
+          the right-click menu (Delete) or the eraser tool (W3 decision). `onDelete` is
+          still wired for the empty-note auto-prune below, not a user delete affordance. */}
       {/* The padding ring is the drag handle: pressing anywhere on the grip (but
           not in the textarea, which stops propagation) starts the move (#13). */}
       <div
@@ -122,6 +100,7 @@ export function NoteCard({
           // mode this band is the drag handle (the textarea owns its own press).
           if (!interactive) return
           e.stopPropagation()
+          onSelect?.(note.id, e.shiftKey)
           // Suppress the empty-note blur-prune this gesture is about to trigger.
           dragging.current = true
           onDragStart(e, note.id)

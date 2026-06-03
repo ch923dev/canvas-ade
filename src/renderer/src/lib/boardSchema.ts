@@ -12,7 +12,7 @@
  */
 
 /** Bump on any breaking change to the persisted shape and add a migration below. */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 4
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -58,6 +58,10 @@ interface ElementCommon {
   id: string
   x: number
   y: number
+  /** W3: resist move/erase/delete. Absent ⇒ unlocked (read as `el.locked ?? false`). */
+  locked?: boolean
+  /** W3: lightweight grouping (move/delete-together). Absent ⇒ ungrouped. */
+  groupId?: string
 }
 
 export interface NoteElement extends ElementCommon {
@@ -101,12 +105,22 @@ export interface ChecklistElement extends ElementCommon {
   h: number
 }
 
+export interface ImageElement extends ElementCommon {
+  kind: 'image'
+  /** Display box (board-local px). */
+  w: number
+  h: number
+  /** Relative POSIX path to the blob: `assets/<sha1>.<ext>` (never a base64 data URL). */
+  assetId: string
+}
+
 export type PlanningElement =
   | NoteElement
   | TextElement
   | ArrowElement
   | StrokeElement
   | ChecklistElement
+  | ImageElement
 
 export interface PlanningBoard extends BoardCommon {
   type: 'planning'
@@ -192,7 +206,16 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
 
 // ── Serialization + migration ─────────────────────────────────────────────────
 
-/** Boards + camera → a versioned document. Deep-clones so the doc owns its data. */
+/**
+ * Boards + camera → a versioned document. Deep-clones so the doc owns its data.
+ *
+ * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion,
+ * viewport, boards}. Ephemeral session state (selected tool, selected element,
+ * in-flight draft/erase, hover) lives in React/Zustand and MUST NEVER be routed
+ * into `board.elements[]` or a board patch key, or it bloats every autosave and
+ * resurrects stale tool/selection state on reload. (Excalidraw's
+ * cleanAppStateForExport discipline, enforced here by omission.)
+ */
 export function toObject(boards: Board[], viewport: CanvasViewport | null): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -206,7 +229,13 @@ type Migration = (doc: CanvasDoc) => CanvasDoc
 /** Keyed by the FROM version. Each step returns a doc one version higher. */
 const MIGRATIONS: Record<number, Migration> = {
   // v1 had no camera. v2 adds `viewport` (null = fit on load).
-  1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null })
+  1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null }),
+  // v3 adds OPTIONAL element `locked?`/`groupId?` (W3). No backfill: absent reads as
+  // unlocked/ungrouped, so the migration only bumps the version.
+  2: (doc) => ({ ...doc, schemaVersion: 3 }),
+  // v4 adds the OPTIONAL image element (W4). assetId lives only on new image elements,
+  // so there is nothing to backfill — the migration only bumps the version.
+  3: (doc) => ({ ...doc, schemaVersion: 4 })
 }
 
 /**
@@ -285,6 +314,12 @@ function assertPlanningElement(el: unknown): void {
   if (!isRecord(el)) fail('planning element is not an object')
   if (typeof el.id !== 'string') fail('planning element has a non-string id')
   if (!isFiniteNum(el.x) || !isFiniteNum(el.y)) fail('planning element has non-finite x/y')
+  if (el.locked !== undefined && typeof el.locked !== 'boolean') {
+    fail('planning element has a non-boolean locked')
+  }
+  if (el.groupId !== undefined && typeof el.groupId !== 'string') {
+    fail('planning element has a non-string groupId')
+  }
 
   switch (el.kind) {
     case 'note':
@@ -328,6 +363,12 @@ function assertPlanningElement(el: unknown): void {
       }
       return
     }
+    case 'image':
+      if (!isPositiveNum(el.w) || !isPositiveNum(el.h)) fail('image element has non-positive w/h')
+      if (typeof el.assetId !== 'string' || el.assetId.length === 0) {
+        fail('image element has an empty/non-string assetId')
+      }
+      return
     default:
       fail(`planning element has an unknown kind ${String(el.kind)}`)
   }

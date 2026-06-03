@@ -21,6 +21,7 @@ export type IconName =
   | 'text'
   | 'arrow'
   | 'pen'
+  | 'erase'
   | 'refresh'
   | 'back'
   | 'forward'
@@ -36,6 +37,16 @@ export type IconName =
   | 'trash'
   | 'settings'
   | 'globe'
+  | 'download'
+  | 'magnet'
+  | 'align-left'
+  | 'align-center-h'
+  | 'align-right'
+  | 'align-top'
+  | 'align-middle'
+  | 'align-bottom'
+  | 'distribute-h'
+  | 'distribute-v'
 
 /** Icons drawn from multiple primitives (rect + path) rather than one path. */
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
@@ -55,6 +66,7 @@ const PATHS: Record<IconName, string> = {
   text: 'M5 6h14M12 6v12M9 18h6',
   arrow: 'M5 19L19 5M19 5h-7M19 5v7',
   pen: 'M5 19l2-6 9-9 4 4-9 9-6 2zM14 6l4 4',
+  erase: 'M16 7l5 5-9 9H7l-3-3z M9 21h12',
   refresh: 'M4 12a8 8 0 1 0 2.3-5.6M5 4v3.5H8.5',
   back: 'M15 6l-6 6 6 6',
   forward: 'M9 6l6 6-6 6',
@@ -72,7 +84,19 @@ const PATHS: Record<IconName, string> = {
   trash: 'M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13',
   settings: 'M4 8h7M15 8h5M4 16h5M13 16h7M13 6v4M9 14v4',
   globe:
-    'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18'
+    'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18',
+  download: 'M12 4v10M8 11l4 4 4-4M5 19h14',
+  magnet: 'M7 4v7a5 5 0 0 0 10 0V4M7 4h3.5M13.5 4H17M7 9h3.5M13.5 9H17',
+  // Align: a reference edge line + two bars snapped to that edge.
+  'align-left': 'M4 4v16M8 8h11M8 16h7',
+  'align-center-h': 'M12 4v16M6 8h12M8 16h8',
+  'align-right': 'M20 4v16M5 8h11M9 16h7',
+  'align-top': 'M4 4h16M8 8v11M16 8v7',
+  'align-middle': 'M4 12h16M8 6v12M16 8v8',
+  'align-bottom': 'M4 20h16M8 5v11M16 9v7',
+  // Distribute: three bars with equal gaps along the axis.
+  'distribute-h': 'M5 4v16M19 4v16M11 7h2v10h-2z',
+  'distribute-v': 'M4 5h16M4 19h16M7 11v2h10v-2z'
 }
 
 interface SvgProps {

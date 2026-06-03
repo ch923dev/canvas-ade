@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { ChecklistElement, PlanningElement } from '../../../lib/boardSchema'
+import type { ChecklistElement, ImageElement, PlanningElement } from '../../../lib/boardSchema'
 import {
   makeNote,
   makeText,
@@ -16,7 +16,16 @@ import {
   setItemLabel,
   checklistProgress,
   NOTE_SIZE,
-  CHECKLIST_W
+  CHECKLIST_W,
+  elementBBox,
+  anchors,
+  unionBBox,
+  translateMany,
+  shiftElement,
+  nominalChecklistHeight,
+  TEXT_NOMINAL,
+  makeImage,
+  fitImageSize
 } from './elements'
 import { TINT_CYCLE } from './tints'
 
@@ -235,5 +244,221 @@ describe('checklist mutations + live progress', () => {
       items: []
     }
     expect(checklistProgress(empty)).toEqual({ done: 0, total: 0, pct: 0 })
+  })
+})
+
+describe('elementBBox (per-kind, ± measured) — W2', () => {
+  it('note uses schema x/y/w/h', () => {
+    const n = makeNote('n', { x: 100, y: 100 }, 0)
+    expect(elementBBox(n)).toEqual({ x: n.x, y: n.y, w: n.w, h: n.h })
+  })
+  it('text falls back to TEXT_NOMINAL, or uses measured when given', () => {
+    const t = makeText('t', { x: 10, y: 20 })
+    expect(elementBBox(t)).toEqual({ x: 10, y: 20, w: TEXT_NOMINAL.w, h: TEXT_NOMINAL.h })
+    expect(elementBBox(t, { w: 80, h: 40 })).toEqual({ x: 10, y: 20, w: 80, h: 40 })
+  })
+  it('checklist uses nominal height from item count, or measured h', () => {
+    const cl = makeChecklist('cl', 'i0', { x: 0, y: 0 }) // 1 item
+    expect(elementBBox(cl)).toEqual({ x: cl.x, y: cl.y, w: cl.w, h: nominalChecklistHeight(1) })
+    expect(elementBBox(cl, { w: cl.w, h: 222 }).h).toBe(222)
+  })
+  it('arrow returns the endpoint extent box (no top-left assumption)', () => {
+    const a = { ...makeArrow('a', { x: 30, y: 50 }), x2: 10, y2: 90 }
+    expect(elementBBox(a)).toEqual({ x: 10, y: 50, w: 20, h: 40 })
+  })
+  it('stroke returns the min/max extent of its points', () => {
+    const s = makeStroke('s', [5, 5, 25, 15, 15, 35])
+    expect(elementBBox(s)).toEqual({ x: 5, y: 5, w: 20, h: 30 })
+  })
+})
+
+describe('anchors / unionBBox — W2', () => {
+  it('anchors derives edges + centers', () => {
+    expect(anchors({ x: 10, y: 20, w: 100, h: 40 })).toEqual({
+      left: 10,
+      centerX: 60,
+      right: 110,
+      top: 20,
+      centerY: 40,
+      bottom: 60
+    })
+  })
+  it('unionBBox spans all boxes; single box is itself; empty is a zero box', () => {
+    expect(
+      unionBBox([
+        { x: 0, y: 0, w: 10, h: 10 },
+        { x: 20, y: 5, w: 10, h: 30 }
+      ])
+    ).toEqual({ x: 0, y: 0, w: 30, h: 35 })
+    expect(unionBBox([])).toEqual({ x: 0, y: 0, w: 0, h: 0 })
+  })
+})
+
+describe('shiftElement / translateMany — W2', () => {
+  it('shiftElement moves a note top-left, an arrow both ends, a stroke all points', () => {
+    // makeNote centres on the drop point, so assert the shift relative to its base x/y.
+    const n = makeNote('n', { x: 0, y: 0 }, 0)
+    expect(shiftElement(n, 5, 7)).toMatchObject({ x: n.x + 5, y: n.y + 7 })
+    expect(shiftElement({ ...makeArrow('a', { x: 1, y: 2 }), x2: 3, y2: 4 }, 10, 10)).toMatchObject(
+      { x: 11, y: 12, x2: 13, y2: 14 }
+    )
+    expect(
+      (shiftElement(makeStroke('s', [0, 0, 2, 2]), 1, 1) as { points: number[] }).points
+    ).toEqual([1, 1, 3, 3])
+  })
+  it('translateMany shifts only ids in the set, in one immutable pass', () => {
+    const els: PlanningElement[] = [
+      makeNote('a', { x: 0, y: 0 }, 0),
+      makeNote('b', { x: 50, y: 0 }, 1),
+      makeNote('c', { x: 100, y: 0 }, 2)
+    ]
+    const [ax, bx, cx] = els.map((e) => e.x)
+    const [ay, by, cy] = els.map((e) => e.y)
+    const out = translateMany(els, new Set(['a', 'c']), 10, 20)
+    expect(out).not.toBe(els)
+    expect(out.map((e) => e.x)).toEqual([ax + 10, bx, cx + 10])
+    expect(out.map((e) => e.y)).toEqual([ay + 20, by, cy + 20])
+  })
+  it('translateMany accepts an array of ids and is a no-op for an empty set', () => {
+    const els: PlanningElement[] = [makeNote('a', { x: 0, y: 0 }, 0)]
+    const baseX = els[0].x
+    expect(translateMany(els, [], 9, 9)[0].x).toBe(baseX)
+    expect(translateMany(els, ['a'], 3, 0)[0].x).toBe(baseX + 3)
+  })
+})
+
+import {
+  isLocked,
+  expandGroups,
+  duplicateElements,
+  groupElements,
+  ungroupElements,
+  setLocked
+} from './elements'
+
+const note = (id: string, x = 0, y = 0, extra: Partial<PlanningElement> = {}): PlanningElement =>
+  ({
+    id,
+    kind: 'note',
+    x,
+    y,
+    w: 100,
+    h: 60,
+    tint: 'yellow',
+    text: '',
+    ...extra
+  }) as PlanningElement
+
+let counter = 0
+const seqId = (): string => `new-${counter++}`
+
+describe('W3 mutators', () => {
+  it('isLocked reads the optional flag', () => {
+    expect(isLocked(note('a'))).toBe(false)
+    expect(isLocked(note('b', 0, 0, { locked: true }))).toBe(true)
+  })
+
+  it('expandGroups pulls in siblings sharing a groupId', () => {
+    const els = [note('a', 0, 0, { groupId: 'g' }), note('b', 0, 0, { groupId: 'g' }), note('c')]
+    expect([...expandGroups(els, ['a'])].sort()).toEqual(['a', 'b'])
+    expect([...expandGroups(els, ['c'])]).toEqual(['c']) // ungrouped passes through
+  })
+
+  it('groupElements / ungroupElements set and clear groupId', () => {
+    const els = [note('a'), note('b')]
+    const grouped = groupElements(els, ['a', 'b'], 'g1')
+    expect(grouped.every((e) => e.groupId === 'g1')).toBe(true)
+    const ungrouped = ungroupElements(grouped, ['a', 'b'])
+    expect(ungrouped.every((e) => e.groupId === undefined)).toBe(true)
+  })
+
+  it('setLocked sets and removes the flag', () => {
+    const els = [note('a'), note('b')]
+    const locked = setLocked(els, ['a'], true)
+    expect(isLocked(locked.find((e) => e.id === 'a')!)).toBe(true)
+    expect(isLocked(locked.find((e) => e.id === 'b')!)).toBe(false)
+    const unlocked = setLocked(locked, ['a'], false)
+    expect(unlocked.find((e) => e.id === 'a')).not.toHaveProperty('locked')
+  })
+
+  it('duplicateElements clones, shifts, fresh ids, fresh per-group groupId, originals untouched', () => {
+    counter = 0
+    const els = [
+      note('a', 0, 0, { groupId: 'g' }),
+      note('b', 10, 10, { groupId: 'g' }),
+      note('c', 50, 50)
+    ]
+    const { elements, newIds } = duplicateElements(els, ['a', 'b', 'c'], 12, 12, seqId)
+    expect(elements).toHaveLength(6)
+    expect(newIds).toHaveLength(3)
+    // originals untouched
+    expect(elements.slice(0, 3)).toEqual(els)
+    const copies = elements.slice(3)
+    // shifted
+    expect(copies[0].x).toBe(12)
+    expect(copies[0].y).toBe(12)
+    // a and b shared a group → their copies share ONE fresh group, distinct from 'g'
+    const ga = copies[0].groupId
+    const gb = copies[1].groupId
+    expect(ga).toBe(gb)
+    expect(ga).not.toBe('g')
+    expect(ga).toBeTruthy()
+    // c had no group → its copy has none
+    expect(copies[2].groupId).toBeUndefined()
+  })
+
+  it('duplicateElements shifts arrows by both endpoints', () => {
+    counter = 0
+    const arrow: PlanningElement = { id: 'ar', kind: 'arrow', x: 0, y: 0, x2: 30, y2: 40 }
+    const { elements } = duplicateElements([arrow], ['ar'], 5, 7, seqId)
+    expect(elements[1]).toMatchObject({ kind: 'arrow', x: 5, y: 7, x2: 35, y2: 47 })
+  })
+})
+
+describe('W4 image helpers', () => {
+  it('fitImageSize scales down to the max longest side, preserving aspect', () => {
+    expect(fitImageSize(720, 360, 360)).toEqual({ w: 360, h: 180 })
+  })
+  it('fitImageSize does not upscale a small image', () => {
+    expect(fitImageSize(100, 50, 360)).toEqual({ w: 100, h: 50 })
+  })
+  it('fitImageSize floors degenerate input to a square', () => {
+    expect(fitImageSize(0, 0, 360)).toEqual({ w: 360, h: 360 })
+  })
+  it('makeImage centers the box on the point', () => {
+    const el = makeImage('i1', { x: 200, y: 100 }, 'assets/a.png', 120, 80)
+    expect(el).toMatchObject({
+      id: 'i1',
+      kind: 'image',
+      x: 140,
+      y: 60,
+      w: 120,
+      h: 80,
+      assetId: 'assets/a.png'
+    })
+  })
+  it('elementBBox returns the image box', () => {
+    const el: ImageElement = {
+      id: 'i1',
+      kind: 'image',
+      x: 5,
+      y: 6,
+      w: 30,
+      h: 40,
+      assetId: 'assets/a.png'
+    }
+    expect(elementBBox(el)).toEqual({ x: 5, y: 6, w: 30, h: 40 })
+  })
+  it('shiftElement translates an image by the top-left (default branch)', () => {
+    const el: ImageElement = {
+      id: 'i1',
+      kind: 'image',
+      x: 5,
+      y: 6,
+      w: 30,
+      h: 40,
+      assetId: 'assets/a.png'
+    }
+    expect(shiftElement(el, 10, -3)).toMatchObject({ x: 15, y: 3, w: 30, h: 40 })
   })
 })
