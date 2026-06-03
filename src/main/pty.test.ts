@@ -12,9 +12,11 @@ import {
   reapParkedCore,
   cleanupCore,
   disposeAllPtysCore,
-  safeCwd
+  safeCwd,
+  registerPtyHandlers
 } from './pty'
 import type { ShellInfo } from './pty'
+import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
 describe('safeCwd (SEC-1)', () => {
   it('returns an existing directory unchanged', () => {
@@ -392,3 +394,41 @@ describe('disposeAllPtysCore (T1)', () => {
   })
 })
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+// Checklist #17 + #20 (Browser↛PTY): the PTY control channel is shared by ALL
+// webContents, including per-board preview WebContentsViews that load untrusted
+// localhost pages. A foreign sender (anything that isn't the main window's main
+// frame) must be REJECTED — a previewed page must never be able to spawn or kill
+// a shell. This proves the guard is wired into the handlers, not just that the
+// pure isForeignSender works.
+describe('registerPtyHandlers — foreign-sender rejection (#17/#20 Browser↛PTY)', () => {
+  const mainFrame = { id: 'main-frame' }
+  // A preview/browser board's frame — a real sender that is NOT the main frame.
+  const foreign = { senderFrame: { id: 'preview-board-frame' } } as unknown as IpcMainInvokeEvent
+
+  function setup(): Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown> {
+    const handlers = new Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: (c: string, fn: (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown) =>
+        handlers.set(c, fn)
+    } as unknown as IpcMain
+    const getWin = (): never => ({ webContents: { mainFrame } }) as never
+    registerPtyHandlers(ipcMain, getWin)
+    return handlers
+  }
+
+  it('pty:spawn throws for a foreign sender (no shell is spawned)', () => {
+    const handlers = setup()
+    expect(() => handlers.get('pty:spawn')!(foreign, { id: 'b1' })).toThrow(/forbidden sender/)
+  })
+
+  it('pty:kill returns false for a foreign sender', () => {
+    const handlers = setup()
+    expect(handlers.get('pty:kill')!(foreign, 'b1')).toBe(false)
+  })
+
+  it('pty:shells returns [] for a foreign sender (no shell enumeration leaked)', () => {
+    const handlers = setup()
+    expect(handlers.get('pty:shells')!(foreign)).toEqual([])
+  })
+})
