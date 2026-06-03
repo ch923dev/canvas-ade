@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { registerPtyHandlers } from './pty'
-import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
+import { createIpcCapture, foreignEvent, mainWin } from './ipcTestHarness'
 
 // Checklist #17 + #20 (Browser↛PTY): the PTY control channel is shared by ALL
 // webContents, including per-board preview WebContentsViews that load untrusted
@@ -9,53 +9,44 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 // a shell. This proves the guard is wired into the handlers, not just that the
 // pure isForeignSender works.
 describe('registerPtyHandlers — foreign-sender rejection (#17/#20 Browser↛PTY)', () => {
-  const mainFrame = { id: 'main-frame' }
-  // A preview/browser board's frame — a real sender that is NOT the main frame.
-  const foreign = { senderFrame: { id: 'preview-board-frame' } } as unknown as IpcMainInvokeEvent
-
-  function setup(): Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown> {
-    const handlers = new Map<string, (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown>()
-    const ipcMain = {
-      handle: (c: string, fn: (e: IpcMainInvokeEvent, ...a: unknown[]) => unknown) =>
-        handlers.set(c, fn)
-    } as unknown as IpcMain
-    const getWin = (): BrowserWindow => ({ webContents: { mainFrame } }) as unknown as BrowserWindow
-    registerPtyHandlers(ipcMain, getWin)
-    return handlers
+  function setup(): ReturnType<typeof createIpcCapture> {
+    const cap = createIpcCapture()
+    registerPtyHandlers(cap.ipcMain, mainWin)
+    return cap
   }
 
   it('pty:spawn throws for a foreign sender (no shell is spawned)', () => {
-    const handlers = setup()
-    expect(() => handlers.get('pty:spawn')!(foreign, { id: 'b1' })).toThrow(/forbidden sender/)
+    const cap = setup()
+    expect(() => cap.invokeAs(foreignEvent, 'pty:spawn', { id: 'b1' })).toThrow(/forbidden sender/)
   })
 
   it('pty:kill returns false for a foreign sender', () => {
-    const handlers = setup()
-    expect(handlers.get('pty:kill')!(foreign, 'b1')).toBe(false)
+    const cap = setup()
+    expect(cap.invokeAs(foreignEvent, 'pty:kill', 'b1')).toBe(false)
   })
 
   it('pty:shells returns [] for a foreign sender (no shell enumeration leaked)', () => {
-    const handlers = setup()
-    expect(handlers.get('pty:shells')!(foreign)).toEqual([])
+    const cap = setup()
+    expect(cap.invokeAs(foreignEvent, 'pty:shells')).toEqual([])
   })
 
   it('terminal:detectPorts returns [] for a foreign sender', () => {
-    const handlers = setup()
-    expect(handlers.get('terminal:detectPorts')!(foreign, 'b1')).toEqual([])
+    const cap = setup()
+    expect(cap.invokeAs(foreignEvent, 'terminal:detectPorts', 'b1')).toEqual([])
   })
 
   it('pty:disposeAll returns false for a foreign sender', () => {
-    const handlers = setup()
-    expect(handlers.get('pty:disposeAll')!(foreign)).toBe(false)
+    const cap = setup()
+    expect(cap.invokeAs(foreignEvent, 'pty:disposeAll')).toBe(false)
   })
 
   it('pty:park returns false for a foreign sender', () => {
-    const handlers = setup()
-    expect(handlers.get('pty:park')!(foreign, 'b1')).toBe(false)
+    const cap = setup()
+    expect(cap.invokeAs(foreignEvent, 'pty:park', 'b1')).toBe(false)
   })
 
   it('pty:adopt returns { adopted: false } for a foreign sender', () => {
-    const handlers = setup()
-    expect(handlers.get('pty:adopt')!(foreign, 'b1')).toEqual({ adopted: false })
+    const cap = setup()
+    expect(cap.invokeAs(foreignEvent, 'pty:adopt', 'b1')).toEqual({ adopted: false })
   })
 })
