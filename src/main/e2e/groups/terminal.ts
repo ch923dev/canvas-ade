@@ -124,8 +124,12 @@ export const fullviewClose: GroupProbe<TerminalFixture> = {
        })()`
     )
     await ctx.realKey('Escape') // real OS Escape from the focused xterm textarea (was synthetic)
-    await ctx.delay(400) // exit tween (200ms) + onExited unmount
-    const closed = await ctx.evalIn<boolean>(`document.querySelector('.fullview-scrim') === null`)
+    // Poll for the scrim to unmount (exit tween 200ms + onExited) — robust to a slow host
+    // where the old fixed delay(400) under-waited the close under contention.
+    const closed = await ctx.poll(
+      () => ctx.evalIn<boolean>(`document.querySelector('.fullview-scrim') === null`),
+      4000
+    )
     const ok = pre.frame && pre.bandGone && pre.typed && closed
     return {
       name: 'fullview-close',

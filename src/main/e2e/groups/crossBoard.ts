@@ -4,6 +4,25 @@
  * globe → connect-picker gesture routing — all of which need both boards present.
  */
 import type { E2EGroup, GroupProbe } from '../types'
+import type { E2ECtx } from '../context'
+
+// React Flow measures freshly-seeded nodes lazily via a ResizeObserver. A single fitView()
+// can run BEFORE the just-seeded browser node is measured; fitView then no-ops (camera stays
+// at zoom 1) and React Flow renders NO edges at all (an edge needs both endpoints measured).
+// Re-fit on each poll tick so RF gets repeated render passes until the node is measured and
+// the edge renders — or time out, which still correctly fails on a genuine missing edge.
+function waitForEdge(ctx: E2ECtx, edgeId: string): Promise<boolean> {
+  return ctx.poll(
+    async () => {
+      await ctx.evalIn('window.__canvasE2E.fitView()')
+      return ctx.evalIn<boolean>(
+        `!!document.querySelector('.react-flow__edge[data-id="${edgeId}"]')`
+      )
+    },
+    8000,
+    250
+  )
+}
 
 export interface CrossFixture {
   termId: string
@@ -87,15 +106,18 @@ const previewEdgeStale: GroupProbe<CrossFixture> = {
     await ctx.evalIn(
       `window.__canvasE2E.patchBoard(${JSON.stringify(fx.browserId)}, { previewSourceId: ${JSON.stringify(fx.termId)} })`
     )
-    await ctx.evalIn('window.__canvasE2E.fitView()') // frame all → both nodes measured + edge rendered
-    await ctx.delay(250)
     const edgeDash = (): Promise<string> =>
       ctx.evalIn<string>(
         `(() => { const p = document.querySelector('.react-flow__edge[data-id="preview-${fx.browserId}"] .react-flow__edge-path'); return p ? (p.style.strokeDasharray || 'none') : 'no-edge'; })()`
       )
+    // Re-fit until the edge actually renders (defeats the RF node-measurement race), then
+    // confirm it is SOLID while the source terminal runs.
+    await waitForEdge(ctx, `preview-${fx.browserId}`)
+    await ctx.poll(async () => (await edgeDash()) === 'none', 4000)
     const dashRunning = await edgeDash()
     await ctx.evalIn(`window.__canvasE2E.setTerminalDown(${JSON.stringify(fx.termId)})`)
-    await ctx.delay(250)
+    // Poll for the edge to go DASHED once the terminal is marked down.
+    await ctx.poll(async () => (await edgeDash()).includes('5'), 4000)
     const dashDown = await edgeDash()
     await ctx.evalIn(
       `window.__canvasE2E.patchBoard(${JSON.stringify(fx.browserId)}, { previewSourceId: undefined })`
@@ -124,8 +146,8 @@ const duplicateKeepsLink: GroupProbe<CrossFixture> = {
     const cloneId = await ctx.evalIn<string | null>(
       `window.__canvasE2E.duplicateBoard(${JSON.stringify(fx.browserId)})`
     )
-    await ctx.evalIn('window.__canvasE2E.fitView()') // frame all (incl. the clone) so its edge renders
-    await ctx.delay(250)
+    // Re-fit until the clone's own preview edge renders (defeats the RF node-measurement race).
+    if (cloneId) await waitForEdge(ctx, `preview-${cloneId}`)
     const dup = await ctx.evalIn<{ cloneSource: string | null; edgePresent: boolean }>(
       `(() => {
          const clone = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(cloneId)});
