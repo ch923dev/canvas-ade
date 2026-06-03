@@ -10,7 +10,9 @@
 > ships with an e2e probe AND a manual test** · **a handoff doc is written after every task**.
 >
 > Companion docs: package phase ledger `Z:\canvas-ade-mcp\docs\roadmap.md` · status audit
-> `docs/reviews/2026-06-03-mcp-status-audit.md` · MCP facts `mcp-spec-state-2026-06` (memory).
+> `docs/reviews/2026-06-03-mcp-status-audit.md` · **packaging & serving model**
+> `docs/roadmap-mcp-packaging.md` (dev = `pnpm link`, release = bundled-in-MAIN) · MCP facts
+> `mcp-spec-state-2026-06` (memory).
 
 Legend: 🚦 hard gate · ✅ acceptance · 🔒 security-critical · ⛓ depends-on · 🧪 two-layer test
 (contract + live-against-Canvas-ADE) · ∥ parallelizable.
