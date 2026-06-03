@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import Canvas from './canvas/Canvas'
 import WelcomeScreen from './canvas/WelcomeScreen'
 import AuditLogViewer from './canvas/AuditLogViewer'
+import ConfirmModal from './canvas/ConfirmModal'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
@@ -41,6 +42,7 @@ function App(): React.ReactElement {
     <div style={{ position: 'fixed', inset: 0 }}>
       {status === 'open' ? <Canvas /> : <WelcomeScreen />}
       {status === 'open' && <AuditLogViewer />}
+      <ConfirmModal />
     </div>
   )
 }

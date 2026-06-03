@@ -5,6 +5,14 @@ import type { Rectangle, IpcRendererEvent } from 'electron'
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
 export type PtyState = 'spawning' | 'running' | 'exited' | 'spawn-failed'
 
+/** A human-confirm request surfaced to the modal (mirrors main `ConfirmRequest`, T4.2). */
+export interface ConfirmRequest {
+  title: string
+  body: string
+  confirmLabel?: string
+  denyLabel?: string
+}
+
 /** One MCP dispatch audit entry surfaced to the viewer (mirrors main `AuditEntry`, T4.1). */
 export interface AuditEntry {
   seq: number
@@ -207,7 +215,23 @@ const api = {
     // capped MAIN-side. There is intentionally NO write side — entries are recorded
     // only by the MAIN dispatch path, so the renderer can neither forge nor erase one.
     readAudit: (opts?: { limit?: number }): Promise<AuditEntry[]> =>
-      ipcRenderer.invoke('audit:read', opts)
+      ipcRenderer.invoke('audit:read', opts),
+
+    // 🔒 Human-confirm gate (T4.2): MAIN posts a confirm request; the renderer shows a
+    // modal and replies the human's decision on MAIN's unique reply channel. Returns an
+    // unsubscribe fn. MAIN owns the decision (it blocks the tool on this reply).
+    onConfirm: (
+      handler: (request: ConfirmRequest, reply: (decision: { approved: boolean }) => void) => void
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        msg: { request: ConfirmRequest; replyChannel: string }
+      ): void => {
+        handler(msg.request, (decision) => ipcRenderer.send(msg.replyChannel, decision))
+      }
+      ipcRenderer.on('mcp:confirm', listener)
+      return () => ipcRenderer.removeListener('mcp:confirm', listener)
+    }
   }
 }
 

@@ -11,9 +11,11 @@
  * No baseline mutation (the audit log is a separate userData file, not the canvas), so
  * nothing to restore beyond closing the viewer it opens.
  */
+import { ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { E2EProbe } from '../types'
 import { getAuditLog } from '../../auditIpc'
+import { requestConfirm } from '../../mcpConfirm'
 
 const SENTINEL = 'CANVAS_E2E_AUDIT_PROBE'
 const TOGGLE_KEY = `window.dispatchEvent(new KeyboardEvent('keydown',{key:'A',ctrlKey:true,shiftKey:true}))`
@@ -66,6 +68,66 @@ export const dispatchAudit: E2EProbe = {
       detail: ok
         ? `audit entry #${written.seq} persisted → read back via IPC + rendered in viewer`
         : JSON.stringify({ writtenSeq: written.seq, seenInRenderer, renderedInViewer })
+    }
+  }
+}
+
+const APPROVE = `document.querySelector('[data-testid="confirm-approve"]').click()`
+const DENY = `document.querySelector('[data-testid="confirm-deny"]').click()`
+const MODAL_PRESENT = `!!document.querySelector('[data-testid="confirm-modal"]')`
+
+/**
+ * Human-confirm gate probe (M4 T4.2). Proves the gate genuinely BLOCKS the caller until
+ * the human acts, and that approve / deny each resolve correctly through the real
+ * `mcp:confirm` round-trip (MAIN requestConfirm → modal → reply). Drives the modal the
+ * way a user would (clicking the rendered buttons).
+ */
+export const dispatchConfirm: E2EProbe = {
+  name: 'dispatch-confirm',
+  async run(ctx) {
+    // ── APPROVE path: the gate must stay pending until the human approves. ──
+    const approveP = requestConfirm(ipcMain, () => ctx.win, {
+      title: 'E2E confirm',
+      body: 'Approve this dispatch?'
+    })
+    const modalShown = await ctx.poll(() => ctx.evalIn<boolean>(MODAL_PRESENT), 4000)
+    // Race the still-unanswered promise against a delay: it MUST be pending (blocking).
+    const blockedBeforeAnswer =
+      (await Promise.race([
+        approveP.then(() => 'resolved' as const),
+        ctx.delay(250).then(() => 'pending' as const)
+      ])) === 'pending'
+    await ctx.evalIn(APPROVE)
+    const approveDecision = await approveP
+    const modalGone = await ctx.poll(async () => !(await ctx.evalIn<boolean>(MODAL_PRESENT)), 4000)
+
+    // ── DENY path: a second request, denied via the button. ──
+    const denyP = requestConfirm(ipcMain, () => ctx.win, {
+      title: 'E2E confirm',
+      body: 'Deny this dispatch?'
+    })
+    await ctx.poll(() => ctx.evalIn<boolean>(MODAL_PRESENT), 4000)
+    await ctx.evalIn(DENY)
+    const denyDecision = await denyP
+
+    const ok =
+      modalShown &&
+      blockedBeforeAnswer &&
+      approveDecision.approved === true &&
+      modalGone &&
+      denyDecision.approved === false
+    return {
+      name: 'dispatch-confirm',
+      ok,
+      detail: ok
+        ? 'gate blocked until answered; approve→{approved:true}, deny→{approved:false}'
+        : JSON.stringify({
+            modalShown,
+            blockedBeforeAnswer,
+            approveDecision,
+            modalGone,
+            denyDecision
+          })
     }
   }
 }
