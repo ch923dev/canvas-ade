@@ -116,7 +116,8 @@ export function PlanningBoard({
   dimmed,
   onFull,
   onDuplicate,
-  onDelete
+  onDelete,
+  onStartConnect
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -997,6 +998,7 @@ export function PlanningBoard({
       onFull={onFull}
       onDuplicate={onDuplicate}
       onDelete={onDelete}
+      onStartConnect={onStartConnect}
     >
       <div
         ref={wellRef}

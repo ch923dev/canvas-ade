@@ -107,6 +107,8 @@ export interface BoardViewProps<T extends Board = Board> {
   /** Terminal "Preview" action → push `url` to a chosen Browser target (refresh linked,
    *  connect, re-target, or spawn). Target chosen by gesture + the multi-select picker. */
   onPushPreviewTo?: (url: string, target: ResolvedPushTarget) => void
+  /** M2: title-bar connector handle → begin a connector drag from this board. */
+  onStartConnect?: () => void
 }
 
 export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>): ReactElement {
@@ -136,7 +138,8 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const onPushPreviewTo = acts
     ? (url: string, target: ResolvedPushTarget): void => acts.pushPreviewTo(board.id, url, target)
     : undefined
-  const actions = { onFull, onDuplicate, onDelete, onPushPreviewTo }
+  const onStartConnect = acts ? (): void => acts.startConnect(board.id) : undefined
+  const actions = { onFull, onDuplicate, onDelete, onPushPreviewTo, onStartConnect }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover

@@ -38,7 +38,7 @@ import {
 import { planning } from './probes/planning'
 import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
-import { connectorRoundtrip } from './probes/connectors'
+import { connectorRoundtrip, connectorDrawDelete } from './probes/connectors'
 import { tidy, tile } from './probes/layout'
 import {
   whiteboardErase,
@@ -81,6 +81,7 @@ const PLAYLIST: E2EProbe[] = [
   menuPreviewDetach,
   previewConnectGesture,
   connectorRoundtrip, // M2 T2.1: connector add/round-trip/remove through the store
+  connectorDrawDelete, // M2 T2.2: draw via resolveConnectTarget + ✕/board-delete cleanup + undo
   tidy,
   tile,
   whiteboardErase, // W1: emits whiteboard-erase + whiteboard-shortcut

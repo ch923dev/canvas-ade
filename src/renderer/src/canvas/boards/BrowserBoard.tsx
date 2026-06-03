@@ -115,7 +115,8 @@ export function BrowserBoard({
   fullView = false,
   onFull,
   onDuplicate,
-  onDelete
+  onDelete,
+  onStartConnect
 }: BoardViewProps<BrowserBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -176,6 +177,7 @@ export function BrowserBoard({
       onFull={onFull}
       onDuplicate={onDuplicate}
       onDelete={onDelete}
+      onStartConnect={onStartConnect}
     >
       {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
       <div className="bb-urlbar" style={{ height: URLBAR_H }}>

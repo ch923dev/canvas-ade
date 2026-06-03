@@ -20,6 +20,7 @@ import {
   type Connector,
   type ConnectorKind
 } from '../lib/boardSchema'
+import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
@@ -74,6 +75,16 @@ export interface CanvasE2E {
   removeConnector: (id: string) => void
   /** M2: connector count that survives a toObject→fromObject round-trip. */
   serializedConnectorCount: () => number
+  /** M2: arm a connector drag from `fromId` (mirrors the title-bar handle's pointer-down). */
+  startConnect: (fromId: string) => void
+  /**
+   * M2: complete the armed connector drag at a FLOW (world) point — runs the SAME
+   * resolution path as the real pointer-up (resolveConnectTarget → addConnector). Returns
+   * the new connector id, or null if the point hit no (other) board.
+   */
+  completeConnectAt: (flowX: number, flowY: number) => string | null
+  /** M2: select an orchestration connector (drives the ✕ affordance + Delete-key path). */
+  selectConnector: (id: string | null) => void
   /** Flag a node drag/resize gesture (drives the preview layer detach/reattach). */
   setGesture: (active: boolean) => void
   /** Delete a board the way the canvas does (parks a terminal's session first). */
@@ -130,6 +141,8 @@ export interface E2EHostHooks {
   setFocus: (id: string | null) => void
   enterCameraFullView: (id: string) => void
   exitCameraFullView: () => void
+  /** M2: select an orchestration connector (CanvasInner state) for the ✕/Delete path. */
+  selectConnector: (id: string | null) => void
 }
 
 declare global {
@@ -139,6 +152,8 @@ declare global {
 }
 
 let seedX = 0
+/** M2: the source board of an in-flight harness-driven connector drag (startConnect). */
+let connectFrom: string | null = null
 
 export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void {
   seedX = 0 // reset the seed cursor so a re-install (e.g. HMR) starts fresh + idempotent
@@ -228,6 +243,22 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     serializedConnectorCount() {
       return fromObject(useCanvasStore.getState().toObject()).connectors.length
+    },
+    startConnect(fromId) {
+      connectFrom = fromId
+    },
+    completeConnectAt(flowX, flowY) {
+      if (!connectFrom) return null
+      const boards = useCanvasStore.getState().boards
+      const target = resolveConnectTarget(boards, connectFrom, { x: flowX, y: flowY })
+      const id = target
+        ? useCanvasStore.getState().addConnector(connectFrom, target, 'orchestration')
+        : null
+      connectFrom = null
+      return id
+    },
+    selectConnector(id) {
+      host.selectConnector(id)
     },
     setGesture(active) {
       usePreviewStore.getState().setNodeGesture(active)

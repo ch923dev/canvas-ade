@@ -47,6 +47,7 @@ export type IconName =
   | 'align-bottom'
   | 'distribute-h'
   | 'distribute-v'
+  | 'connector'
 
 /** Icons drawn from multiple primitives (rect + path) rather than one path. */
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
@@ -96,7 +97,9 @@ const PATHS: Record<IconName, string> = {
   'align-bottom': 'M4 20h16M8 5v11M16 9v7',
   // Distribute: three bars with equal gaps along the axis.
   'distribute-h': 'M5 4v16M19 4v16M11 7h2v10h-2z',
-  'distribute-v': 'M4 5h16M4 19h16M7 11v2h10v-2z'
+  'distribute-v': 'M4 5h16M4 19h16M7 11v2h10v-2z',
+  // Connector: two node rings joined by a diagonal link (the draw-a-cable affordance).
+  connector: 'M9 17a2 2 0 1 1-4 0 2 2 0 1 1 4 0M19 7a2 2 0 1 1-4 0 2 2 0 1 1 4 0M8.5 15.5l7-7'
 }
 
 interface SvgProps {
