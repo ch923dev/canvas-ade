@@ -2,6 +2,7 @@ import { ipcMain, type BrowserWindow } from 'electron'
 import type { RunningMcp } from './mcp'
 import { sendMcpCommand } from './mcpCommand'
 import { debugSeedOutput } from './pty'
+import { recordBoardResult } from './boardResults'
 
 /** One capped page of board output as the resource serializes it (T1.4). */
 interface OutputPage {
@@ -10,6 +11,15 @@ interface OutputPage {
   returned: number
   nextCursor?: number
   droppedOlder: boolean
+}
+
+/** A board's structured last result as the resource serializes it (T1.5). */
+interface ResultShell {
+  present: boolean
+  status?: string
+  summary?: string
+  refs?: string[]
+  at?: string
 }
 
 /** stdout marker (EPIPE-safe like index.ts's smokeLog). */
@@ -65,6 +75,12 @@ interface SmokeClient {
    * resource is not registered (older installed pkg) → SKIP. Rethrows transport errors.
    */
   readBoardOutput(id: string, cursor?: number): Promise<OutputPage | null>
+  /**
+   * Read canvas://board/{id}/result (structured last result). Returns the page, or
+   * `null` when the resource is not registered (older installed pkg) → SKIP. Rethrows
+   * transport errors.
+   */
+  readBoardResult(id: string): Promise<ResultShell | null>
   close(): Promise<void>
 }
 
@@ -205,6 +221,19 @@ async function connect(url: string, token: string): Promise<SmokeClient> {
           .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
           .join('')
         return JSON.parse(text) as OutputPage
+      } catch (e: unknown) {
+        const code = (e as { code?: number })?.code
+        if (code === -32602 || /resource .*not found/i.test(String(e))) return null
+        throw e
+      }
+    },
+    readBoardResult: async (id: string): Promise<ResultShell | null> => {
+      try {
+        const res = await client.readResource({ uri: `canvas://board/${id}/result` })
+        const text = res.contents
+          .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
+          .join('')
+        return JSON.parse(text) as ResultShell
       } catch (e: unknown) {
         const code = (e as { code?: number })?.code
         if (code === -32602 || /resource .*not found/i.test(String(e))) return null
@@ -427,6 +456,39 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
           log(
             `MCP_FAIL output seeded=${seeded} pages=${pages} capped=${capped} ansi=${sawAnsi} dropped=${droppedOlder} total=${total}`
           )
+          code = 1
+        }
+      }
+    }
+
+    // ── result (T1.5): a board's structured last result is observable. v1 has no
+    // writer until M4 write_result, so a fresh board reads the empty shell
+    // {present:false}; after recording one (the M4 entry point, driven here), the
+    // resource returns it structured (references, not raw logs). Self-activating: SKIP
+    // on a pkg without the resource. ──
+    if (hookReady) {
+      const rid = await evalIn<string>("window.__canvasE2E.seedBoard('terminal')")
+      const empty = await orch.readBoardResult(rid)
+      if (empty === null) {
+        log('MCP_RESULT_SKIP pkg<0.3.1-unpublished')
+      } else {
+        const emptyOk = empty.present === false
+        recordBoardResult(rid, {
+          present: true,
+          status: 'success',
+          summary: 'smoke result',
+          refs: ['src/x.ts']
+        })
+        const filled = await orch.readBoardResult(rid)
+        const filledOk =
+          filled?.present === true &&
+          filled.status === 'success' &&
+          filled.summary === 'smoke result' &&
+          Array.isArray(filled.refs) &&
+          filled.refs[0] === 'src/x.ts'
+        if (emptyOk && filledOk) log('MCP_RESULT_OK')
+        else {
+          log(`MCP_FAIL result empty=${emptyOk} filled=${JSON.stringify(filled)}`)
           code = 1
         }
       }

@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import type { BoardOutput } from '@ch923dev/canvas-ade-mcp'
+import type { BoardOutput, BoardResult } from '@ch923dev/canvas-ade-mcp'
 import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
+const EMPTY_RESULT: BoardResult = { present: false }
 
 function reg(
   boards: Array<{ id: string; type: string; title: string; status?: string }>,
   sessions: Array<{ id: string; status: string }> = [],
-  outputs: Record<string, BoardOutput> = {}
+  outputs: Record<string, BoardOutput> = {},
+  resultsById: Record<string, BoardResult> = {}
 ): BoardRegistry {
   return {
     listBoards: () => boards,
     listSessions: () => sessions,
-    readOutput: (id) => outputs[id] ?? EMPTY_OUTPUT
+    readOutput: (id) => outputs[id] ?? EMPTY_OUTPUT,
+    readResult: (id) => resultsById[id] ?? EMPTY_RESULT
   }
 }
 
@@ -89,7 +92,8 @@ describe('buildOrchestrator', () => {
       readOutput: (_id, opts) => {
         seenCursor = opts?.cursor
         return page
-      }
+      },
+      readResult: () => EMPTY_RESULT
     })
     expect(await orch.boardOutput('t1', { cursor: 12345 })).toEqual(page)
     expect(seenCursor).toBe(12345)
@@ -98,6 +102,17 @@ describe('buildOrchestrator', () => {
   it('boardOutput on an absent board reads an empty page (output is observational)', async () => {
     const orch = buildOrchestrator(reg([]))
     expect(await orch.boardOutput('ghost')).toEqual(EMPTY_OUTPUT)
+  })
+
+  it('boardResult delegates to the registry and returns the structured result', async () => {
+    const result: BoardResult = { present: true, status: 'success', summary: 'ok', refs: ['a.ts'] }
+    const orch = buildOrchestrator(reg([], [], {}, { t1: result }))
+    expect(await orch.boardResult('t1')).toEqual(result)
+  })
+
+  it('boardResult on a board with no result reads the empty shell', async () => {
+    const orch = buildOrchestrator(reg([]))
+    expect(await orch.boardResult('ghost')).toEqual(EMPTY_RESULT)
   })
 
   it('spawnBoard / dispatchPrompt / gitDiff are phase-gated', async () => {

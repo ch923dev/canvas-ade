@@ -3,6 +3,7 @@ import { join } from 'path'
 import { writeFileSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerPtyHandlers, disposeAllPtys, listPtySessions, readPtyOutput } from './pty'
+import { readBoardResult } from './boardResults'
 import {
   registerPreviewHandlers,
   disposeAll as disposeAllPreviews,
@@ -166,7 +167,8 @@ app.whenReady().then(async () => {
   mcp = await startMcpServer({
     listBoards: listBoardMirror,
     listSessions: listPtySessions,
-    readOutput: readPtyOutput
+    readOutput: readPtyOutput,
+    readResult: readBoardResult
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerProjectHandlers(ipcMain, () => mainWindow, app.getPath('userData'))
