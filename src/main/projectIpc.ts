@@ -20,6 +20,7 @@ import {
   gcAssets,
   type ProjectResult
 } from './projectStore'
+import { scaffoldProjectMemory } from './canvasMemory'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
 
 /**
@@ -91,7 +92,10 @@ export function registerProjectHandlers(
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     const r = readProject(dir)
     remember(r)
-    if (r.ok) gcAssets(r.dir, collectAssetIds(r.doc))
+    if (r.ok) {
+      gcAssets(r.dir, collectAssetIds(r.doc))
+      scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
+    }
     return r
   })
 
@@ -144,6 +148,7 @@ export function registerProjectHandlers(
       setCurrentDir(r.dir)
       touchRecent(userDataDir, r.dir, projectName(r.dir), now())
       gcAssets(r.dir, collectAssetIds(r.doc))
+      scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
     }
     return r.ok ? r : null
   })

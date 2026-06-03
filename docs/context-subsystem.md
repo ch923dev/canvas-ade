@@ -7,7 +7,7 @@
 > below). **Forward/undone work stays in `docs/roadmap-context.md`** (task cards for M-memory / M-expose);
 > the egress decision is in `docs/decisions/0003-llm-egress.md`. Add a milestone here only when it is DONE.
 
-**Status (2026-06-03):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3)** on `feat/context`. **Next: M-memory T-M1.**
+**Status (2026-06-03):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅** on `feat/context`. **Next: M-memory T-M2** (meaningful-change detector + debounce).
 
 ---
 
@@ -199,6 +199,64 @@ never throws; callers treat `budget-exceeded` like `no-provider` (Tier-1).
 
 ---
 
+## M-memory — `.canvas/` engine + Tier-2 loop ⛓ M-brain
+
+The persistent project memory. **T-M1 (storage layer) ✅;** T-M2 (change detector) · T-M3 (Tier-2
+summarize loop — first autonomous-spend path the T-B3 budget protects) · T-M4 (panel cached-prose
+upgrade) are forward work in `docs/roadmap-context.md`.
+
+### T-M1 — `.canvas/` engine (paths + atomic writers) ✅
+
+`<project>/.canvas/` storage engine: paths, atomic markdown writers/readers, a default-private
+`.gitignore` with an opt-in-to-commit toggle, and project create/open scaffolding. **No LLM / loop /
+renderer read-bridge** (those are T-M2/T-M3/T-M4). `.canvas/` is **PROJECT data** rooted at the project
+folder — the opposite of the `userData`-rooted `llmConfig`/`llmKeyStore`/`llmBudget`.
+
+- `src/main/canvasMemory.ts` — `createCanvasMemory(projectDir) → CanvasMemory`. Electron-free (explicit
+  `projectDir`, mirrors the key/budget store discipline), `write-file-atomic.sync` + `mkdirSync` guards.
+
+```ts
+interface CanvasMemoryPaths { root; memoryDir; auditDir; gitignore; index; project; board(id): string }
+interface CanvasMemory {
+  paths: CanvasMemoryPaths
+  ensureScaffold(): void                  // mkdir memory/ + audit/; write default-private .gitignore IF ABSENT
+  writeBoard(id, md): boolean             // false on unsafe id; else atomic-write board-<id>.md
+  writeIndex(md): void; writeProject(md): void
+  readBoard(id): string | undefined; readIndex(): ...; readProject(): ...   // undefined on missing, NEVER throw
+  setCommitOptIn(commit: boolean): void   // true → '.gitignore' = 'audit/\n'; false → '*\n'
+  isCommitted(): boolean                  // matches the committed value (empty/corrupt → private = safe default)
+}
+function safeBoardId(id): boolean         // exported; true only for non-empty /^[A-Za-z0-9_-]+$/ (nanoid alphabet)
+function scaffoldProjectMemory(dir): void // best-effort: try/catch ensureScaffold + log; NEVER aborts an open
+```
+
+- **Layout:** `.canvas/memory/{MEMORY.md (index), project.md, board-<id>.md (per-board prose)}` +
+  reserved `.canvas/audit/`. **`.gitignore` toggle:** default private `*\n` (whole `.canvas/` invisible
+  to git); opt-in commit `audit/\n` (commits the prose, ignores only the volatile audit log). Scaffold
+  writes the default **only if absent** — never clobbers a user opt-in.
+- **Path-traversal defense:** `safeBoardId` validates the id before it reaches the `board-<id>.md`
+  filename; an unsafe id (`../evil`, `a/b`, empty) returns `false`/`undefined` and writes nothing
+  outside `memory/` (mirrors the `assets/` `ASSET_RE` discipline in `projectStore.ts`).
+- **Lifecycle wiring:** `projectStore.ts` `createProject` scaffolds on create (and on reuse of an
+  existing project); `projectIpc.ts` `project:open` + `project:current` scaffold **open-if-absent** so
+  projects predating T-M1 get `.canvas/` on first open. All four sites go through
+  `scaffoldProjectMemory` → **a permission/disk error (EACCES/ENOSPC on a read-only mount / network
+  share / OneDrive folder) is logged + swallowed**, never aborting the open (mirrors `project:save`'s
+  try/catch). No change to the `canvas.json` save/load contract; `.canvas/` content never routes into
+  `canvas.json` or a board patch key.
+- e2e `src/main/e2e/probes/memory.ts` `context-memory` (last in the PLAYLIST — it points the open dir
+  at a throwaway project, then restores `setCurrentDir(null)` + cleans the temp dir in `finally`):
+  proves `createProject` scaffolded `memory/` + `audit/` + a `*\n` `.gitignore` AND a board summary
+  round-trips on disk **under the project dir** (independent `existsSync` at the hardcoded path — not a
+  path-compares-to-itself check), never `userData`.
+
+🔒 **T-M1 security model:** `.canvas/` is project data (atomic, default-ignored, opt-in commit); the API
+key is NEVER written there (stays in `userData/llm-keys.json`, safeStorage); generated memory is
+untrusted passive context (written + read, never triggers an action); `contextIsolation`/`sandbox`/
+`no-nodeIntegration` untouched; no renderer read bridge yet (deferred to T-M4).
+
+---
+
 ## Gate evidence (cumulative, on `feat/context`)
 
 | Milestone | Commit | Unit | e2e |
@@ -208,6 +266,7 @@ never throws; callers treat `budget-exceeded` like `no-provider` (Tier-1).
 | T-B1 | `e7f7fcf` | 640 | `context-brain` ok |
 | T-B2 | `5678257` | 664 | `context-keystore` ok |
 | T-B3 | `cec15ba` | **682** | `context-budget` ok |
+| T-M1 | `feat/context-m1-canvas-engine` (squash pending) | **702** | `context-memory` ok |
 
 typecheck/lint/format:check clean throughout (1 pre-existing unrelated `PlanningBoard.tsx` no-console
 warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browser`/`browser-gesture`/
@@ -218,10 +277,10 @@ warning). `E2E_DONE` occasionally shows `ok:false` solely from the known `browse
 **M-memory** — the persistent `.canvas/` engine + the Tier-2 autonomous summarize-on-change loop (the first
 autonomous-spend path the T-B3 budget protects — wire only with the guard in place) + the panel upgrade to
 cached prose:
-- **T-M1** `src/main/canvasMemory.ts` — `.canvas/memory/{MEMORY.md,project.md,board-<id>.md}` paths + atomic
-  writers + default `.gitignore` + opt-in commit.
-- **T-M2** meaningful-change detector + debounce. **T-M3** Tier-2 autonomous summary loop. **T-M4** panel
-  upgrade to cached prose on reopen.
+- **T-M1** `src/main/canvasMemory.ts` — `.canvas/` paths + atomic writers + default `.gitignore` + opt-in
+  commit + create/open scaffolding. ✅ **DONE** (see the M-memory section above).
+- **T-M2** meaningful-change detector + debounce (**next**). **T-M3** Tier-2 autonomous summary loop.
+  **T-M4** panel upgrade to cached prose on reopen.
 
 **M-expose (DEFERRED)** — `canvas://memory` MCP read resource; gated on the MCP package (Phases 0–1) landing
 on `main`. ⚠️ Owes 2 reverse cross-links into `docs/roadmap-mcp.md` (M9 judge-board pivot becomes optional;
