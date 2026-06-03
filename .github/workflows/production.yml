@@ -1,16 +1,17 @@
-name: build
+name: production
 
+# Production: when a GitHub Release is published. Validates, packages the full
+# matrix, and publishes the build assets to that Release (electron-builder
+# --publish always). Still unsigned until Phase 5.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # upload assets to the Release
 
 jobs:
-  # Fast feedback: typecheck + bundle on Linux before the build matrix fans out.
   check:
     runs-on: ubuntu-latest
     steps:
@@ -31,29 +32,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  # Headless board e2e smoke on Windows (node-pty / ConPTY fidelity).
-  # runE2ESmoke sets process.exitCode + app.exit(code), so a failed assertion fails the job.
-  smoke:
-    needs: check
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: corepack enable
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Board e2e smoke
-        run: pnpm start
-        env:
-          CANVAS_SMOKE: e2e
-
-  # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
-  package:
+  # Full per-OS / per-arch packaging matrix → published to the Release.
+  publish:
     needs: check
     strategy:
       fail-fast: false
@@ -83,19 +63,9 @@ jobs:
       - run: corepack enable
       - name: Install (rebuilds node-pty against Electron ABI)
         run: pnpm install --frozen-lockfile
-      - name: Package
-        run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish never
+      - name: Package & publish to Release
+        run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish always
         env:
           # Skip macOS code-sign/notarize until Phase 5 (no certs in CI yet).
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: canvas-ade-${{ matrix.os }}
-          path: |
-            release/*.exe
-            release/*.dmg
-            release/*.AppImage
-            release/*.zip
-          if-no-files-found: ignore
-          retention-days: 7
