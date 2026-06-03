@@ -36,60 +36,42 @@ export interface E2EMain {
   joinPath(...parts: string[]): string
   /** The in-process local preview server URL — a deterministic page the browser probe seeds. */
   localUrl(): string
-  /** Live descendant pids of `pid` (transitive). [] when the tree is fully reaped. */
-  childPidsOf(pid: number): number[]
+  /**
+   * Of the given pids, which are still alive (present in the OS process table).
+   * The process-tree probe captures a child's EXACT pid (printed by the child) then
+   * asserts it is gone after the kill — robust against walking the fragile full OS
+   * pid→ppid graph (Windows reuses pids and roots many processes at System/Idle).
+   */
+  pidsAlive(pids: number[]): number[]
   /** Tear down EVERY pty session (live + parked) — the real MAIN kill path. */
   disposeAllPtys(): Promise<void>
 }
 
 /**
- * All (pid, ppid) pairs on the OS — Windows via PowerShell CIM, POSIX via `ps`.
- * Used only by the env-gated childPidsOf to assert a killed tree left no orphans.
+ * Every live pid on the OS — Windows via PowerShell CIM, POSIX via `ps`. Used by
+ * the env-gated pidsAlive to test whether specific captured pids still exist.
  */
-function listProcessParents(): Array<{ pid: number; ppid: number }> {
+function liveOsPids(): Set<number> {
   let out = ''
   try {
     if (process.platform === 'win32') {
       out = execFileSync(
         'powershell.exe',
-        [
-          '-NoProfile',
-          '-Command',
-          'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }'
-        ],
+        ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId }'],
         { encoding: 'utf8' }
       )
     } else {
-      out = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })
+      out = execFileSync('ps', ['-eo', 'pid='], { encoding: 'utf8' })
     }
   } catch {
-    return []
+    return new Set()
   }
-  return out
-    .split('\n')
-    .map((l) => l.trim().split(/\s+/))
-    .filter((p) => p.length === 2)
-    .map(([a, b]) => ({ pid: Number(a), ppid: Number(b) }))
-    .filter((p) => Number.isFinite(p.pid) && Number.isFinite(p.ppid))
-}
-
-/** Breadth-first transitive descendants of `root` from a (pid→ppid) snapshot. */
-function descendantPids(root: number): number[] {
-  const all = listProcessParents()
-  const childrenOf = new Map<number, number[]>()
-  for (const { pid, ppid } of all) {
-    const arr = childrenOf.get(ppid) ?? []
-    arr.push(pid)
-    childrenOf.set(ppid, arr)
-  }
-  const out: number[] = []
-  const queue = [...(childrenOf.get(root) ?? [])]
-  while (queue.length) {
-    const pid = queue.shift() as number
-    out.push(pid)
-    queue.push(...(childrenOf.get(pid) ?? []))
-  }
-  return out
+  return new Set(
+    out
+      .split('\n')
+      .map((l) => Number(l.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0)
+  )
 }
 
 declare global {
@@ -141,8 +123,9 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     localUrl() {
       return localUrl
     },
-    childPidsOf(pid) {
-      return descendantPids(pid)
+    pidsAlive(pids) {
+      const live = liveOsPids()
+      return pids.filter((p) => live.has(p))
     },
     disposeAllPtys() {
       return disposeAllPtys()
