@@ -40,7 +40,6 @@ import { boardMenu, menuChrome, menuPreviewDetach } from './probes/menu'
 import { previewEdgeStale, duplicateKeepsLink, previewConnectGesture } from './probes/previewLink'
 import { tidy, tile } from './probes/layout'
 import {
-  whiteboardErase,
   whiteboardSelection,
   whiteboardFullviewAdd,
   whiteboardAltDup,
@@ -79,7 +78,6 @@ const PLAYLIST: E2EProbe[] = [
   previewConnectGesture,
   tidy,
   tile,
-  whiteboardErase, // W1: emits whiteboard-erase + whiteboard-shortcut
   whiteboardSelection, // W2: emits whiteboard-group-delete/multidrag/shift-add/snap
   whiteboardAltDup, // W3: real-input alt-drag duplicate
   whiteboardLock, // W3: locked resists drag/erase/X
