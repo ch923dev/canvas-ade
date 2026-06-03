@@ -68,3 +68,33 @@ describe('buildDigest — terminal', () => {
     expect(d.boards[0].lines).toEqual(['No launch command set'])
   })
 })
+
+describe('buildDigest — browser', () => {
+  it('reports url and viewport for an unlinked browser', () => {
+    const d = buildDigest(
+      doc([browser({ id: 'b1', url: 'http://localhost:3000', viewport: 'mobile' })])
+    )
+    const b = d.boards[0]
+    expect(b.status).toBe('static')
+    expect(b.lines).toEqual(['URL http://localhost:3000', 'Viewport mobile'])
+  })
+
+  it('names the source terminal when previewSourceId is set', () => {
+    const d = buildDigest(
+      doc([
+        terminal({ id: 't1', title: 'Dev server', launchCommand: 'pnpm dev', port: 5173 }),
+        browser({ id: 'b1', previewSourceId: 't1' })
+      ])
+    )
+    const b = d.boards[1]
+    expect(b.status).toBe('linked')
+    expect(b.lines).toContain('Preview of "Dev server"')
+    // and the terminal side reports the reverse link
+    expect(d.boards[0].lines).toContain('Feeds preview "Browser"')
+  })
+
+  it('falls back to the raw id when the source terminal is gone', () => {
+    const d = buildDigest(doc([browser({ id: 'b1', previewSourceId: 'missing' })]))
+    expect(d.boards[0].lines).toContain('Preview of "missing"')
+  })
+})

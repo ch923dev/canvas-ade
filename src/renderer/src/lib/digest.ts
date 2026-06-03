@@ -58,8 +58,19 @@ function digestTerminal(b: TerminalBoard, d: CanvasDoc): BoardDigest {
     lines
   }
 }
-function digestBrowser(b: BrowserBoard, _doc: CanvasDoc): BoardDigest {
-  return base(b)
+function digestBrowser(b: BrowserBoard, d: CanvasDoc): BoardDigest {
+  const lines: string[] = [`URL ${b.url}`, `Viewport ${b.viewport}`]
+  if (b.previewSourceId) {
+    const src = d.boards.find((o) => o.id === b.previewSourceId)
+    lines.push(`Preview of "${src?.title ?? b.previewSourceId}"`)
+  }
+  return {
+    boardId: b.id,
+    type: 'browser',
+    title: b.title,
+    status: b.previewSourceId ? 'linked' : 'static',
+    lines
+  }
 }
 function digestPlanning(b: PlanningBoard): BoardDigest {
   return base(b)
