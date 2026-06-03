@@ -5,7 +5,7 @@ import * as path from 'node:path'
 
 // ── Mock the store + recent-projects modules so handlers are exercised in isolation ──
 // `vi.hoisted` so the mock factories (also hoisted) can reference these stubs.
-const { store, recents, electronDialog } = vi.hoisted(() => ({
+const { store, recents, electronDialog, canvasMemory } = vi.hoisted(() => ({
   store: {
     readProject: vi.fn(),
     writeProject: vi.fn(),
@@ -26,11 +26,16 @@ const { store, recents, electronDialog } = vi.hoisted(() => ({
   electronDialog: {
     showOpenDialog: vi.fn(),
     showSaveDialog: vi.fn()
+  },
+  canvasMemory: {
+    scaffoldProjectMemory: vi.fn(),
+    createCanvasMemory: vi.fn()
   }
 }))
 
 vi.mock('./projectStore', () => store)
 vi.mock('./recentProjects', () => recents)
+vi.mock('./canvasMemory', () => canvasMemory)
 vi.mock('electron', () => ({
   dialog: electronDialog,
   BrowserWindow: class {}
@@ -302,5 +307,51 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     const r = (await cap.invoke('project:current')) as { ok: boolean }
     expect(r.ok).toBe(true)
     expect(reset).toHaveBeenCalled()
+  })
+})
+
+describe('memory:readBoards (T-M4 cached-prose read bridge)', () => {
+  const getWin = (): null => null // no window — guard uses the synthetic senderFrame path
+
+  function withReader(
+    readBoard: (id: string) => string | undefined
+  ): ReturnType<typeof createIpcCapture> {
+    canvasMemory.createCanvasMemory.mockReturnValue({ readBoard })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+    return cap
+  }
+
+  it('returns raw markdown for ids that have a cached file, omitting absent ones', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const cap = withReader((id) => (id === 't1' ? '# Dev\n\nprose t1\n' : undefined))
+
+    const result = await cap.invoke('memory:readBoards', ['t1', 'b1'])
+    expect(result).toEqual({ t1: '# Dev\n\nprose t1\n' })
+  })
+
+  it('returns {} when there is no current dir (never reads disk)', async () => {
+    store.getCurrentDir.mockReturnValue(null)
+    const cap = withReader(() => '# x\n\ny\n')
+
+    expect(await cap.invoke('memory:readBoards', ['t1'])).toEqual({})
+    expect(canvasMemory.createCanvasMemory).not.toHaveBeenCalled()
+  })
+
+  it('returns {} for a non-array ids payload', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const cap = withReader(() => '# x\n\ny\n')
+
+    expect(await cap.invoke('memory:readBoards', 'not-an-array')).toEqual({})
+  })
+
+  it('rejects a foreign sender and reads nothing (#17)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    canvasMemory.createCanvasMemory.mockReturnValue({ readBoard: () => '# x\n\ny\n' })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, mainWin, '/userData')
+
+    expect(await cap.invokeAs(foreignEvent, 'memory:readBoards', ['t1'])).toEqual({})
+    expect(canvasMemory.createCanvasMemory).not.toHaveBeenCalled()
   })
 })

@@ -20,7 +20,7 @@ import {
   gcAssets,
   type ProjectResult
 } from './projectStore'
-import { scaffoldProjectMemory } from './canvasMemory'
+import { scaffoldProjectMemory, createCanvasMemory } from './canvasMemory'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
 import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
 
@@ -201,6 +201,24 @@ export function registerProjectHandlers(
     const dir = getCurrentDir()
     if (!dir) return null
     return readAsset(dir, assetId)
+  })
+
+  // T-M4: batch-read cached Tier-2 prose for the current project's boards. Pure disk read —
+  // NO LLM call. Returns the RAW board-<id>.md markdown per present id (the renderer strips
+  // the heading); absent ids are omitted. Generated memory is UNTRUSTED PASSIVE context —
+  // this only READS + returns it, it never triggers an action. Foreign sender → {}; no
+  // current dir → {}. readBoard already guards safeBoardId + never throws (canvasMemory.ts).
+  ipcMain.handle('memory:readBoards', (e, ids: string[]): Record<string, string> => {
+    if (guard(e)) return {}
+    const dir = getCurrentDir()
+    if (!dir || !Array.isArray(ids)) return {}
+    const mem = createCanvasMemory(dir)
+    const out: Record<string, string> = {}
+    for (const id of ids) {
+      const md = mem.readBoard(id)
+      if (md !== undefined) out[id] = md
+    }
+    return out
   })
 
   ipcMain.handle(
