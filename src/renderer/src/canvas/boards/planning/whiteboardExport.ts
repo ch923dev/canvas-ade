@@ -12,6 +12,7 @@
 import type { PlanningBoard, PlanningElement } from '../../../lib/boardSchema'
 import { elementBBox, unionBBox } from './elements'
 import { EXPORT_COLORS } from './exportColors'
+import { arrowPath, strokeToPath } from './svgPaths'
 
 /** assetId → data-URI (base64) for image elements; missing ids are absent. */
 export type ExportAssets = Record<string, string>
@@ -27,6 +28,11 @@ export interface ExportResult {
 }
 
 const PAD = 24
+
+/** Re-exported so tests + callers can assert the vector ink colour. */
+export const ARROW_COLOR = EXPORT_COLORS.borderStrong
+const STROKE_FILL = EXPORT_COLORS.text2
+const ARROW_MARKER_ID = 'wb-export-arrow'
 
 /** XML-escape text content / attribute values. */
 export function esc(s: string): string {
@@ -59,9 +65,14 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
     }
   }
 
+  const defs =
+    `<defs><marker id="${ARROW_MARKER_ID}" markerWidth="8" markerHeight="8" ` +
+    `refX="6" refY="4" orient="auto"><path d="M0 0 L7 4 L0 8 z" fill="${ARROW_COLOR}"/></marker></defs>`
+
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
     `viewBox="0 0 ${width} ${height}">` +
+    defs +
     `<rect x="0" y="0" width="${width}" height="${height}" fill="${EXPORT_COLORS.surface}"/>` +
     `<g transform="translate(${ox} ${oy})">${body.join('')}</g>` +
     `</svg>`
@@ -69,7 +80,22 @@ export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportRe
   return { svg, width, height, imageCount, embeddedCount }
 }
 
-// Placeholder; later tasks flesh each kind out.
-function renderElement(_el: PlanningElement, _assets: ExportAssets): { markup: string; embedded: boolean } {
-  return { markup: '', embedded: false }
+/** Render one element to SVG markup. `embedded` is true ONLY for an image whose
+ *  bitmap data-URI was successfully inlined (drives ExportResult.embeddedCount). */
+function renderElement(el: PlanningElement, _assets: ExportAssets): { markup: string; embedded: boolean } {
+  switch (el.kind) {
+    case 'arrow':
+      return {
+        markup:
+          `<path d="${arrowPath(el)}" fill="none" stroke="${ARROW_COLOR}" ` +
+          `stroke-width="1.5" marker-end="url(#${ARROW_MARKER_ID})"/>`,
+        embedded: false
+      }
+    case 'stroke': {
+      const d = strokeToPath(el.points)
+      return { markup: d ? `<path d="${d}" fill="${STROKE_FILL}"/>` : '', embedded: false }
+    }
+    default:
+      return { markup: '', embedded: false }
+  }
 }
