@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildRequest, parseResponse, type SummarizeInput } from './llmService'
+import { getProvider, isMockEnabled, keyForProvider, type ProviderDeps } from './llmService'
 
 const input: SummarizeInput = { system: 'be terse', text: 'hello world' }
 
@@ -71,5 +72,51 @@ describe('parseResponse', () => {
   it('throws on a malformed response', () => {
     expect(() => parseResponse('openai', {})).toThrow()
     expect(() => parseResponse('anthropic', { content: [] })).toThrow()
+  })
+})
+
+const fakeFetch = (): never => {
+  throw new Error('network must not be called in this test')
+}
+const deps = (env: Record<string, string | undefined>): ProviderDeps => ({ fetch: fakeFetch as never, env })
+
+describe('keyForProvider', () => {
+  it('reads the per-provider env var', () => {
+    expect(keyForProvider('openrouter', { OPENROUTER_API_KEY: 'a' })).toBe('a')
+    expect(keyForProvider('openai', { OPENAI_API_KEY: 'b' })).toBe('b')
+    expect(keyForProvider('anthropic', { ANTHROPIC_API_KEY: 'c' })).toBe('c')
+  })
+  it('returns undefined when the env var is absent', () => {
+    expect(keyForProvider('openrouter', {})).toBeUndefined()
+  })
+})
+
+describe('isMockEnabled', () => {
+  it('is on under CANVAS_LLM_MOCK=1 or CANVAS_SMOKE=e2e', () => {
+    expect(isMockEnabled({ CANVAS_LLM_MOCK: '1' })).toBe(true)
+    expect(isMockEnabled({ CANVAS_SMOKE: 'e2e' })).toBe(true)
+    expect(isMockEnabled({})).toBe(false)
+  })
+})
+
+describe('getProvider', () => {
+  it('returns null when no key is configured (no-provider)', () => {
+    expect(getProvider({ provider: 'openrouter', model: 'm' }, deps({}))).toBeNull()
+  })
+  it('returns a provider when the key env var is present', () => {
+    const p = getProvider({ provider: 'openrouter', model: 'm' }, deps({ OPENROUTER_API_KEY: 'k' }))
+    expect(p).not.toBeNull()
+  })
+  it('returns a mock provider that resolves a stub without network when mock is enabled', async () => {
+    const p = getProvider({ provider: 'openrouter', model: 'm' }, deps({ CANVAS_LLM_MOCK: '1' }))
+    expect(p).not.toBeNull()
+    await expect(p!.summarize({ text: 'ping' })).resolves.toBe('[mock] ping')
+  })
+  it('allows the local provider with no key', () => {
+    const p = getProvider(
+      { provider: 'local', model: 'm', baseUrl: 'http://127.0.0.1:1234/v1' },
+      deps({})
+    )
+    expect(p).not.toBeNull()
   })
 })

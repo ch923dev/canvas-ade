@@ -93,3 +93,62 @@ export function parseResponse(provider: ProviderName, json: unknown): string {
   if (typeof text !== 'string') throw new Error(`${provider}: no choices[0].message.content`)
   return text
 }
+
+/** Minimal fetch-like transport so the engine is testable without the network. */
+export type FetchLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string }
+) => Promise<{ ok: boolean; status: number; json(): Promise<unknown>; text(): Promise<string> }>
+
+export interface ProviderDeps {
+  fetch: FetchLike
+  env: Record<string, string | undefined>
+}
+
+export interface Provider {
+  summarize(input: SummarizeInput): Promise<string>
+}
+
+const KEY_ENV: Record<ProviderName, string> = {
+  openrouter: 'OPENROUTER_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  local: 'LLM_LOCAL_API_KEY'
+}
+
+/** The configured API key for a provider, from its env var (T-B1; safeStorage = T-B2). */
+export function keyForProvider(
+  provider: ProviderName,
+  env: Record<string, string | undefined>
+): string | undefined {
+  return env[KEY_ENV[provider]]
+}
+
+/** Mock is on for e2e/CI so no real network call is ever made. */
+export function isMockEnabled(env: Record<string, string | undefined>): boolean {
+  return env.CANVAS_LLM_MOCK === '1' || env.CANVAS_SMOKE === 'e2e'
+}
+
+/**
+ * Build a Provider for the config, or null → no-provider (callers fall back to Tier 1).
+ * Mock seam first (e2e/CI), then key presence. `local` may run without a key.
+ */
+export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | null {
+  if (isMockEnabled(deps.env)) {
+    return { summarize: (input) => Promise.resolve(`[mock] ${input.text}`) }
+  }
+  const key = keyForProvider(config.provider, deps.env)
+  if (config.provider !== 'local' && !key) return null
+  return {
+    async summarize(input: SummarizeInput): Promise<string> {
+      const req = buildRequest(config.provider, config, key ?? '', input)
+      const res = await deps.fetch(req.url, {
+        method: 'POST',
+        headers: req.headers,
+        body: req.body
+      })
+      if (!res.ok) throw new Error(`${config.provider} HTTP ${res.status}: ${await res.text()}`)
+      return parseResponse(config.provider, await res.json())
+    }
+  }
+}
