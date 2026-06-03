@@ -7,7 +7,9 @@
  * guard + egress ADR bolt on without touching callers. Network goes through an injected
  * fetch-like transport so this is unit-tested with a fake and e2e runs a mock provider.
  */
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { LlmConfig, ProviderName } from './llmConfig'
+import { readLlmConfig } from './llmConfig'
 
 export type { ProviderName }
 
@@ -177,4 +179,63 @@ export async function runSummarize(
   } catch (err) {
     return { ok: false, reason: 'provider-error', message: err instanceof Error ? err.message : String(err) }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Electron IPC layer (T-B1)
+// ---------------------------------------------------------------------------
+
+/**
+ * True when an IPC sender is NOT the main window's main frame (foreign → deny). Matches
+ * the pty/preview/project convention (a per-module copy is intentional here; consolidating
+ * the three existing copies is a separate refactor, out of T-B1 scope).
+ */
+export function isForeignSender(
+  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
+  getMainFrame: () => BrowserWindow['webContents']['mainFrame'] | null | undefined
+): boolean {
+  const main = getMainFrame()
+  if (!e.senderFrame) return false // synthetic/internal call — allow
+  if (!main) return true // real sender but window unresolved — DENY
+  return e.senderFrame !== main
+}
+
+/** Status surfaced to the renderer — provider/model + key presence, never key material. */
+export interface LlmStatus {
+  hasProvider: boolean
+  provider: ProviderName
+  model: string
+}
+
+/** Default transport: Electron/Node global fetch, adapted to FetchLike. */
+const defaultDeps = (): ProviderDeps => ({
+  fetch: ((url, init) => fetch(url, init)) as FetchLike,
+  env: process.env as Record<string, string | undefined>
+})
+
+export function registerLlmHandlers(
+  ipcMain: IpcMain,
+  getWin: () => BrowserWindow | null,
+  userDataDir: string,
+  injectedDeps?: ProviderDeps
+): void {
+  const deps = injectedDeps ?? defaultDeps()
+  const guard = (e: IpcMainInvokeEvent): boolean =>
+    isForeignSender(e, () => getWin()?.webContents.mainFrame)
+
+  ipcMain.handle('llm:summarize', async (e, input: SummarizeInput): Promise<SummarizeResult> => {
+    if (guard(e)) return { ok: false, reason: 'provider-error', message: 'forbidden sender' }
+    const config = readLlmConfig(userDataDir)
+    return runSummarize(config, input, deps)
+  })
+
+  ipcMain.handle('llm:status', (e): LlmStatus => {
+    const config = readLlmConfig(userDataDir)
+    if (guard(e)) return { hasProvider: false, provider: config.provider, model: config.model }
+    return {
+      hasProvider: getProvider(config, deps) !== null,
+      provider: config.provider,
+      model: config.model
+    }
+  })
 }

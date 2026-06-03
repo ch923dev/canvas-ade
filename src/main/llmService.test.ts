@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRequest, parseResponse, getProvider, isMockEnabled, keyForProvider, runSummarize, type SummarizeInput, type SummarizeResult, type ProviderDeps, type FetchLike } from './llmService'
+import { buildRequest, parseResponse, getProvider, isMockEnabled, keyForProvider, runSummarize, isForeignSender, registerLlmHandlers, type SummarizeInput, type SummarizeResult, type ProviderDeps, type FetchLike, type LlmStatus } from './llmService'
 
 const input: SummarizeInput = { system: 'be terse', text: 'hello world' }
 
@@ -182,5 +182,58 @@ describe('runSummarize', () => {
       { fetch: errFetch, env: { CANVAS_SMOKE: 'e2e' } }
     )
     expect(r).toEqual<SummarizeResult>({ ok: true, text: '[mock] ping' })
+  })
+})
+
+describe('isForeignSender', () => {
+  const frame = {} as never
+  it('allows a synthetic call (no senderFrame)', () => {
+    expect(isForeignSender({ senderFrame: null } as never, () => frame)).toBe(false)
+  })
+  it('denies a real sender when the window is unresolved', () => {
+    expect(isForeignSender({ senderFrame: frame } as never, () => null)).toBe(true)
+  })
+  it('allows the main frame and denies a different frame', () => {
+    expect(isForeignSender({ senderFrame: frame } as never, () => frame)).toBe(false)
+    expect(isForeignSender({ senderFrame: {} as never } as never, () => frame)).toBe(true)
+  })
+})
+
+describe('registerLlmHandlers', () => {
+  function fakeIpc(): {
+    ipcMain: { handle: (c: string, h: (e: unknown, a: unknown) => unknown) => void }
+    call: (c: string, a?: unknown) => Promise<unknown>
+  } {
+    const handlers = new Map<string, (e: unknown, a: unknown) => unknown>()
+    return {
+      ipcMain: { handle: (c, h) => void handlers.set(c, h) },
+      call: (c, a) => Promise.resolve(handlers.get(c)!({ senderFrame: null }, a))
+    }
+  }
+
+  it('summarize round-trips through the handler (mock env, no network)', async () => {
+    const f = fakeIpc()
+    registerLlmHandlers(f.ipcMain as never, () => null, '/no/such/dir', {
+      fetch: (() => {
+        throw new Error('no network')
+      }) as never,
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    const r = await f.call('llm:summarize', { text: 'ping' })
+    expect(r).toEqual({ ok: true, text: '[mock] ping' })
+  })
+
+  it('status reports a provider + model and never leaks key material', async () => {
+    const f = fakeIpc()
+    registerLlmHandlers(f.ipcMain as never, () => null, '/no/such/dir', {
+      fetch: (() => {
+        throw new Error('no network')
+      }) as never,
+      env: { OPENROUTER_API_KEY: 'secret-key' }
+    })
+    const s = (await f.call('llm:status')) as LlmStatus
+    expect(s.hasProvider).toBe(true)
+    expect(s.provider).toBe('openrouter')
+    expect(JSON.stringify(s)).not.toContain('secret-key')
   })
 })
