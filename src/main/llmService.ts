@@ -139,9 +139,10 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
   }
   const key = keyForProvider(config.provider, deps.env)
   if (config.provider !== 'local' && !key) return null
+  const resolvedKey = key ?? ''
   return {
     async summarize(input: SummarizeInput): Promise<string> {
-      const req = buildRequest(config.provider, config, key ?? '', input)
+      const req = buildRequest(config.provider, config, resolvedKey, input)
       const res = await deps.fetch(req.url, {
         method: 'POST',
         headers: req.headers,

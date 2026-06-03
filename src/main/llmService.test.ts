@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRequest, parseResponse, type SummarizeInput } from './llmService'
-import { getProvider, isMockEnabled, keyForProvider, type ProviderDeps } from './llmService'
+import { buildRequest, parseResponse, getProvider, isMockEnabled, keyForProvider, type SummarizeInput, type ProviderDeps } from './llmService'
 
 const input: SummarizeInput = { system: 'be terse', text: 'hello world' }
 
@@ -118,5 +117,13 @@ describe('getProvider', () => {
       deps({})
     )
     expect(p).not.toBeNull()
+  })
+  it('mock wins even when a real API key is present in env', async () => {
+    const p = getProvider(
+      { provider: 'openrouter', model: 'm' },
+      deps({ CANVAS_LLM_MOCK: '1', OPENROUTER_API_KEY: 'should-not-be-used' })
+    )
+    expect(p).not.toBeNull()
+    await expect(p!.summarize({ text: 'ping' })).resolves.toBe('[mock] ping')
   })
 })
