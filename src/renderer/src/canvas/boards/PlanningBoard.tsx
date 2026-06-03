@@ -17,8 +17,10 @@
  */
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent,
@@ -41,6 +43,7 @@ import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
 import { ChecklistCard } from './planning/ChecklistCard'
+import { ImageCard } from './planning/ImageCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { eraseHitTest } from './planning/erase'
 import { rectFromPoints, marqueeHits } from './planning/marquee'
@@ -49,6 +52,7 @@ import { shortcutTool, type PlanTool } from './planning/tools'
 import {
   makeArrow,
   makeChecklist,
+  makeImage,
   makeNote,
   makeStroke,
   makeText,
@@ -67,7 +71,9 @@ import {
   duplicateElements,
   groupElements,
   ungroupElements,
-  setLocked
+  setLocked,
+  fitImageSize,
+  IMAGE_MAX
 } from './planning/elements'
 import {
   alignElements,
@@ -90,6 +96,16 @@ const TOOLS: ReadonlyArray<{
 ]
 
 const newId = (): string => crypto.randomUUID()
+
+/** Clipboard/file MIME → the ext the assets pipeline stores (undefined = not an image we accept). */
+const imageExt = (type: string): string | undefined =>
+  ({
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg'
+  })[type]
 
 export function PlanningBoard({
   board,
@@ -210,6 +226,87 @@ export function PlanningBoard({
       )
     },
     [zoom]
+  )
+
+  /** Persist an image blob and drop an image element at `at` (one undo step). */
+  const addImageFromBlob = useCallback(
+    async (blob: Blob, at: { x: number; y: number }): Promise<void> => {
+      const ext = imageExt(blob.type)
+      if (!ext) return
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      const res = await window.api.asset.write(bytes, ext)
+      if ('error' in res) return
+      let w = IMAGE_MAX
+      let h = IMAGE_MAX
+      try {
+        const bmp = await createImageBitmap(blob)
+        const fit = fitImageSize(bmp.width, bmp.height)
+        w = fit.w
+        h = fit.h
+        bmp.close()
+      } catch {
+        /* undecodable → keep the square fallback size */
+      }
+      beginChange()
+      commit([...elements, makeImage(newId(), at, res.assetId, w, h)])
+    },
+    [beginChange, commit, elements]
+  )
+
+  /** Paste an image from the clipboard → board centre. Bound at the DOCUMENT level, not
+   *  as the well's React onPaste: Chromium dispatches the `paste` event at the document
+   *  (not the focused non-editable well), so an onPaste on the well never fires for a real
+   *  Ctrl+V — only drag-drop reaches the well. We listen on the document and gate on this
+   *  board's well owning focus, so Ctrl+V only lands an image on the board the user is
+   *  working in (the Excalidraw/tldraw pattern). No image in the clipboard → we no-op
+   *  without preventDefault, so a text paste into a focused note still proceeds normally. */
+  const onWellPaste = useCallback(
+    (e: ClipboardEvent): void => {
+      const well = wellRef.current
+      if (!well || !well.contains(document.activeElement)) return
+      const data = e.clipboardData
+      if (!data) return
+      // A pasted bitmap can surface either as a DataTransferItem (kind 'file') OR only in
+      // `.files` — which one depends on the OS/source. Check both so paste is robust.
+      let file: File | null = null
+      for (const it of data.items) {
+        if (it.kind === 'file' && it.type.startsWith('image/')) {
+          file = it.getAsFile()
+          if (file) break
+        }
+      }
+      if (!file) file = Array.from(data.files).find((f) => f.type.startsWith('image/')) ?? null
+      if (!file) return
+      e.preventDefault()
+      const r = well.getBoundingClientRect()
+      void addImageFromBlob(
+        file,
+        toBoard({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })
+      )
+    },
+    [addImageFromBlob, toBoard]
+  )
+  useEffect(() => {
+    document.addEventListener('paste', onWellPaste)
+    return () => document.removeEventListener('paste', onWellPaste)
+  }, [onWellPaste])
+
+  /** Allow a file drag over the well (required for onDrop to fire). */
+  const onWellDragOver = useCallback((e: ReactDragEvent): void => {
+    if (e.dataTransfer?.types?.includes('Files')) e.preventDefault()
+  }, [])
+
+  /** Drop an image file → at the cursor (board-local). */
+  const onWellDrop = useCallback(
+    (e: ReactDragEvent): void => {
+      const files = e.dataTransfer?.files
+      if (!files || files.length === 0) return
+      const file = Array.from(files).find((f) => f.type.startsWith('image/'))
+      if (!file) return
+      e.preventDefault()
+      void addImageFromBlob(file, toBoard(e))
+    },
+    [addImageFromBlob, toBoard]
   )
 
   // ── Element-level handlers (passed to the element components) ────────────────
@@ -814,6 +911,8 @@ export function PlanningBoard({
         onPointerCancel={onWellPointerCancel}
         onDoubleClick={onWellDoubleClick}
         onContextMenu={onWellContextMenu}
+        onDrop={onWellDrop}
+        onDragOver={onWellDragOver}
         onKeyDown={(e) => {
           if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
             e.stopPropagation()
@@ -945,6 +1044,18 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
+              />
+            )
+          }
+          if (el.kind === 'image') {
+            return (
+              <ImageCard
+                key={el.id}
+                image={el}
+                interactive={interactive}
+                onDragStart={startElementDrag}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
               />
             )
           }

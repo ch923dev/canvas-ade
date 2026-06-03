@@ -103,5 +103,8 @@ export function eraseHitTest(el: PlanningElement, p: HitPoint, tol = ERASE_TOL):
       return nearArrow(el, p, tol)
     case 'stroke':
       return nearStroke(el, p, tol)
+    // W4: image element — treat as a rect hit (renderer task handles display).
+    case 'image':
+      return inRect(p, el.x, el.y, el.w, el.h, tol)
   }
 }

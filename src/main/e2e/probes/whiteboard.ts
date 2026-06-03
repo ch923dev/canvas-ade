@@ -12,6 +12,18 @@
  * split into this themed e2e/ folder (#24): `evalIn(win, …)` → `ctx.evalIn(…)`,
  * `delay(…)` → `ctx.delay(…)`, `parts.push(…)` → a returned E2EPart[].
  */
+import { clipboard, nativeImage } from 'electron'
+import { mkdtempSync, rmSync, existsSync, readdirSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import {
+  createProject,
+  setCurrentDir,
+  readProject,
+  writeProject,
+  collectAssetIds,
+  gcAssets
+} from '../../projectStore'
 import type { E2EProbe, E2EPart } from '../types'
 
 // ── W1.1 Eraser + W1.2 letter shortcuts (whiteboard slice 1). Drive the REAL DOM:
@@ -720,5 +732,156 @@ export const whiteboardGroupAlign: E2EProbe = {
         ? 'right-click a grouped element → align-left flushes the whole group to x=12'
         : JSON.stringify(res)
     }
+  }
+}
+
+// ── W4 image paste: real clipboard paste persists a blob to assets/<sha1>, stores a
+// RELATIVE path (not base64), survives a reload, dedups identical bytes to one file,
+// and is swept by the open-time GC. MAIN-side: mints a temp project (e2e has no project
+// dir), puts an image on the system clipboard, focuses the well, and drives a REAL
+// Ctrl+V keystroke via webContents.sendInputEvent — the same path a user hits (memory
+// e2e-sendinputevent-vs-dispatchevent: real OS input, not a synthetic ClipboardEvent
+// which can't carry a file image item, and not webContents.paste() which is a no-op on
+// the non-editable well).
+export const whiteboardPasteImage: E2EProbe = {
+  name: 'whiteboard-paste-image',
+  async run(ctx): Promise<E2EPart[]> {
+    const planId = ctx.ids.planId
+    if (!planId) return [{ name: 'whiteboard-paste-image', ok: false, detail: 'planId not seeded' }]
+
+    const tmp = mkdtempSync(join(tmpdir(), 'canvas-w4-'))
+    const id = JSON.stringify(planId)
+    const imageCount = async (): Promise<number> =>
+      ctx.evalIn<number>(
+        `(() => { const b = window.__canvasE2E.getBoards().find(x => x.id === ${id});
+                  return b && b.type === 'planning' ? b.elements.filter(e => e.kind === 'image').length : -1; })()`
+      )
+    const firstAssetId = async (): Promise<string | null> =>
+      ctx.evalIn<string | null>(
+        `(() => { const b = window.__canvasE2E.getBoards().find(x => x.id === ${id});
+                  const img = (b && b.type === 'planning' ? b.elements : []).find(e => e.kind === 'image');
+                  return img ? img.assetId : null; })()`
+      )
+    // Focus the REAL well (the user surface) so a Ctrl+V keystroke targets the same
+    // element a user pastes onto. The well is tabIndex=0 → focusable.
+    const focusWell = async (): Promise<void> => {
+      await ctx.evalIn(
+        `(() => { const n = document.querySelector('.react-flow__node[data-id=' + ${JSON.stringify(
+          id
+        )} + ']'); const w = n && n.querySelector('.pl-well'); if (w) w.focus(); })()`
+      )
+    }
+    // Drive a REAL Ctrl+V keystroke (OS input). Chromium dispatches the `paste` DOM event
+    // to the focused well even though it is not editable; React's onPaste catches the
+    // bubbled event — the exact path a real user hits. (webContents.paste() is NOT used:
+    // it invokes the Paste *editing command*, a no-op on a non-editable element, so it
+    // never fires a paste event there — the trap the earlier proxy contingency hit.)
+    const pasteKey = (): void => {
+      const wc = ctx.win.webContents
+      wc.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: ['control'] })
+      wc.sendInputEvent({ type: 'char', keyCode: 'V', modifiers: ['control'] })
+      wc.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: ['control'] })
+    }
+    const parts: E2EPart[] = []
+    try {
+      await createProject(tmp, 'w4', {})
+      setCurrentDir(tmp)
+      await ctx.evalIn(`window.__canvasE2E.patchBoard(${id}, { elements: [] })`)
+      await ctx.delay(80)
+
+      // (1) PASTE — put a 10×10 opaque-red bitmap on the system clipboard, focus the well,
+      // and drive a real Ctrl+V. createFromBitmap takes raw RGBA (4 bytes/pixel, no encoding).
+      const width = 10
+      const height = 10
+      const bitmapBuf = Buffer.alloc(width * height * 4)
+      for (let i = 0; i < width * height; i++) {
+        bitmapBuf[i * 4] = 255 // R
+        bitmapBuf[i * 4 + 1] = 0 // G
+        bitmapBuf[i * 4 + 2] = 0 // B
+        bitmapBuf[i * 4 + 3] = 255 // A
+      }
+      const ni = nativeImage.createFromBitmap(bitmapBuf, { width, height })
+      clipboard.clear()
+      clipboard.writeImage(ni)
+      await focusWell()
+      await ctx.delay(40)
+      pasteKey()
+      const pasted = await ctx.poll(async () => (await imageCount()) === 1, 4000)
+      const assetId = await firstAssetId()
+      const relOk =
+        !!assetId && /^assets[/\\][0-9a-f]{40}\.png$/.test(assetId) && !assetId.startsWith('data:')
+      const fileOk = !!assetId && existsSync(join(tmp, assetId))
+      parts.push({
+        name: 'whiteboard-paste-image',
+        ok: pasted && relOk && fileOk,
+        detail:
+          pasted && relOk && fileOk
+            ? `paste wrote ${assetId} (relative path, blob on disk)`
+            : JSON.stringify({ pasted, assetId, relOk, fileOk })
+      })
+
+      // (2) RELOAD — write the doc, read it back, assert the image + assetId survive.
+      const docStr = await ctx.evalIn<string>(
+        `JSON.stringify({ schemaVersion: 4, viewport: null, boards: window.__canvasE2E.getBoards() })`
+      )
+      await writeProject(tmp, JSON.parse(docStr))
+      const reread = readProject(tmp)
+      const reImg =
+        reread.ok &&
+        collectAssetIds((reread as { doc: unknown }).doc).has(assetId ?? '__none__') &&
+        !!assetId &&
+        existsSync(join(tmp, assetId))
+      parts.push({
+        name: 'whiteboard-paste-reload',
+        ok: !!reImg,
+        detail: reImg
+          ? 'image element + blob survive a write/read round-trip'
+          : JSON.stringify({ reread: reread.ok })
+      })
+
+      // (3) DEDUP — paste the SAME image again → 2 elements, ONE blob file.
+      await focusWell()
+      await ctx.delay(40)
+      pasteKey()
+      const two = await ctx.poll(async () => (await imageCount()) === 2, 4000)
+      const fileCount = existsSync(join(tmp, 'assets'))
+        ? readdirSync(join(tmp, 'assets')).length
+        : -1
+      parts.push({
+        name: 'whiteboard-asset-dedup',
+        ok: two && fileCount === 1,
+        detail:
+          two && fileCount === 1
+            ? '2 image elements share 1 blob'
+            : JSON.stringify({ two, fileCount })
+      })
+
+      // (4) GC — clear elements, sweep, assert the orphan blob is gone.
+      await ctx.evalIn(`window.__canvasE2E.patchBoard(${id}, { elements: [] })`)
+      gcAssets(tmp, collectAssetIds({ boards: [] }))
+      const swept =
+        !existsSync(join(tmp, 'assets')) || readdirSync(join(tmp, 'assets')).length === 0
+      parts.push({
+        name: 'whiteboard-asset-gc',
+        ok: swept,
+        detail: swept
+          ? 'orphan blob swept at GC'
+          : JSON.stringify({ remaining: readdirSync(join(tmp, 'assets')) })
+      })
+    } catch (err) {
+      parts.push({
+        name: 'whiteboard-paste-image',
+        ok: false,
+        detail: 'ERR: ' + String((err as Error)?.message ?? err)
+      })
+    } finally {
+      setCurrentDir(null)
+      try {
+        rmSync(tmp, { recursive: true, force: true })
+      } catch {
+        /* best-effort temp cleanup */
+      }
+    }
+    return parts
   }
 }

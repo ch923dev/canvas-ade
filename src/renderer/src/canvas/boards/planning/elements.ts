@@ -11,6 +11,7 @@ import type {
   ArrowElement,
   ChecklistElement,
   ChecklistItem,
+  ImageElement,
   NoteElement,
   NoteTint,
   PlanningElement,
@@ -92,6 +93,39 @@ export function makeArrow(id: string, at: { x: number; y: number }): ArrowElemen
 /** A freehand stroke from a flat board-local point list. */
 export function makeStroke(id: string, points: number[]): StrokeElement {
   return { id, kind: 'stroke', x: 0, y: 0, points }
+}
+
+/** Max longest-side (board-local px) a pasted/dropped image is fit to. */
+export const IMAGE_MAX = 360
+
+/** Scale natural dimensions to fit `max` on the longest side (never upscale); floor 16. */
+export function fitImageSize(
+  natW: number,
+  natH: number,
+  max = IMAGE_MAX
+): { w: number; h: number } {
+  if (!(natW > 0) || !(natH > 0)) return { w: max, h: max }
+  const scale = Math.min(1, max / Math.max(natW, natH))
+  return { w: Math.max(16, Math.round(natW * scale)), h: Math.max(16, Math.round(natH * scale)) }
+}
+
+/** A new image element centred on the drop/paste point (top-left like a note). */
+export function makeImage(
+  id: string,
+  at: { x: number; y: number },
+  assetId: string,
+  w: number,
+  h: number
+): ImageElement {
+  return {
+    id,
+    kind: 'image',
+    x: Math.round(at.x - w / 2),
+    y: Math.round(at.y - h / 2),
+    w,
+    h,
+    assetId
+  }
 }
 
 // ── Immutable array transforms ────────────────────────────────────────────────
@@ -279,6 +313,9 @@ export function elementBBox(el: PlanningElement, measured?: Measured): BBox {
       }
       return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
     }
+    // W4: image element — bbox is its explicit w/h (renderer task handles display).
+    case 'image':
+      return { x: el.x, y: el.y, w: el.w, h: el.h }
   }
 }
 

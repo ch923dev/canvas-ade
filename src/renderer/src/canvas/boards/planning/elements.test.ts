@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { ChecklistElement, PlanningElement } from '../../../lib/boardSchema'
+import type { ChecklistElement, ImageElement, PlanningElement } from '../../../lib/boardSchema'
 import {
   makeNote,
   makeText,
@@ -23,7 +23,9 @@ import {
   translateMany,
   shiftElement,
   nominalChecklistHeight,
-  TEXT_NOMINAL
+  TEXT_NOMINAL,
+  makeImage,
+  fitImageSize
 } from './elements'
 import { TINT_CYCLE } from './tints'
 
@@ -410,5 +412,53 @@ describe('W3 mutators', () => {
     const arrow: PlanningElement = { id: 'ar', kind: 'arrow', x: 0, y: 0, x2: 30, y2: 40 }
     const { elements } = duplicateElements([arrow], ['ar'], 5, 7, seqId)
     expect(elements[1]).toMatchObject({ kind: 'arrow', x: 5, y: 7, x2: 35, y2: 47 })
+  })
+})
+
+describe('W4 image helpers', () => {
+  it('fitImageSize scales down to the max longest side, preserving aspect', () => {
+    expect(fitImageSize(720, 360, 360)).toEqual({ w: 360, h: 180 })
+  })
+  it('fitImageSize does not upscale a small image', () => {
+    expect(fitImageSize(100, 50, 360)).toEqual({ w: 100, h: 50 })
+  })
+  it('fitImageSize floors degenerate input to a square', () => {
+    expect(fitImageSize(0, 0, 360)).toEqual({ w: 360, h: 360 })
+  })
+  it('makeImage centers the box on the point', () => {
+    const el = makeImage('i1', { x: 200, y: 100 }, 'assets/a.png', 120, 80)
+    expect(el).toMatchObject({
+      id: 'i1',
+      kind: 'image',
+      x: 140,
+      y: 60,
+      w: 120,
+      h: 80,
+      assetId: 'assets/a.png'
+    })
+  })
+  it('elementBBox returns the image box', () => {
+    const el: ImageElement = {
+      id: 'i1',
+      kind: 'image',
+      x: 5,
+      y: 6,
+      w: 30,
+      h: 40,
+      assetId: 'assets/a.png'
+    }
+    expect(elementBBox(el)).toEqual({ x: 5, y: 6, w: 30, h: 40 })
+  })
+  it('shiftElement translates an image by the top-left (default branch)', () => {
+    const el: ImageElement = {
+      id: 'i1',
+      kind: 'image',
+      x: 5,
+      y: 6,
+      w: 30,
+      h: 40,
+      assetId: 'assets/a.png'
+    }
+    expect(shiftElement(el, 10, -3)).toMatchObject({ x: 15, y: 3, w: 30, h: 40 })
   })
 })

@@ -12,7 +12,7 @@
  */
 
 /** Bump on any breaking change to the persisted shape and add a migration below. */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -105,12 +105,22 @@ export interface ChecklistElement extends ElementCommon {
   h: number
 }
 
+export interface ImageElement extends ElementCommon {
+  kind: 'image'
+  /** Display box (board-local px). */
+  w: number
+  h: number
+  /** Relative POSIX path to the blob: `assets/<sha1>.<ext>` (never a base64 data URL). */
+  assetId: string
+}
+
 export type PlanningElement =
   | NoteElement
   | TextElement
   | ArrowElement
   | StrokeElement
   | ChecklistElement
+  | ImageElement
 
 export interface PlanningBoard extends BoardCommon {
   type: 'planning'
@@ -222,7 +232,10 @@ const MIGRATIONS: Record<number, Migration> = {
   1: (doc) => ({ ...doc, schemaVersion: 2, viewport: (doc as CanvasDoc).viewport ?? null }),
   // v3 adds OPTIONAL element `locked?`/`groupId?` (W3). No backfill: absent reads as
   // unlocked/ungrouped, so the migration only bumps the version.
-  2: (doc) => ({ ...doc, schemaVersion: 3 })
+  2: (doc) => ({ ...doc, schemaVersion: 3 }),
+  // v4 adds the OPTIONAL image element (W4). assetId lives only on new image elements,
+  // so there is nothing to backfill — the migration only bumps the version.
+  3: (doc) => ({ ...doc, schemaVersion: 4 })
 }
 
 /**
@@ -350,6 +363,12 @@ function assertPlanningElement(el: unknown): void {
       }
       return
     }
+    case 'image':
+      if (!isPositiveNum(el.w) || !isPositiveNum(el.h)) fail('image element has non-positive w/h')
+      if (typeof el.assetId !== 'string' || el.assetId.length === 0) {
+        fail('image element has an empty/non-string assetId')
+      }
+      return
     default:
       fail(`planning element has an unknown kind ${String(el.kind)}`)
   }
