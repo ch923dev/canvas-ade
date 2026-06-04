@@ -175,10 +175,18 @@ export function collectAssetIds(doc: unknown): Set<string> {
   return ids
 }
 
+const TRASH = '.trash'
+
 /**
- * Mark-and-sweep: delete every file in `<dir>/assets/` whose `assets/<file>` path is
- * NOT in `referenced`. No-op when `assets/` is absent. Called ONLY at project open —
- * the undo stack is empty across sessions, so a swept blob is truly unreferenced.
+ * Mark-and-sweep: quarantine-move every file in `<dir>/assets/` whose `assets/<file>`
+ * path is NOT in `referenced` into `<dir>/assets/.trash/` (recoverable). Hard-deletion
+ * is intentionally avoided — a mis-read/corrupt load must not permanently destroy blobs.
+ * No-op when `assets/` is absent. Called ONLY at project open — the undo stack is empty
+ * across sessions, so a swept blob is truly unreferenced.
+ *
+ * Safety: `collectAssetIds` / `readAsset` match only `ASSET_RE`
+ * (`assets/<40-hex>.<ext>`), so the `.trash` directory name can never be a valid assetId
+ * and is never returned as a referenced or readable asset.
  */
 export function gcAssets(dir: string, referenced: Set<string>): void {
   const assetsDir = join(dir, ASSETS)
@@ -190,11 +198,15 @@ export function gcAssets(dir: string, referenced: Set<string>): void {
     return
   }
   for (const f of files) {
+    if (f === TRASH) continue // never sweep the quarantine dir itself
     if (!referenced.has(`${ASSETS}/${f}`)) {
       try {
-        unlinkSync(join(assetsDir, f))
+        const trashDir = join(assetsDir, TRASH)
+        mkdirSync(trashDir, { recursive: true })
+        copyFileSync(join(assetsDir, f), join(trashDir, f))
+        unlinkSync(join(assetsDir, f)) // move = copy-then-unlink; the quarantine copy is retained
       } catch {
-        /* a locked / already-removed file must not abort the sweep */
+        /* a locked / already-moved file must not abort the sweep */
       }
     }
   }
