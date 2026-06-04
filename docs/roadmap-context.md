@@ -246,6 +246,26 @@ for completeness; **do not start until the MCP wiring lands**.
 - **Add an ADR** when a load-bearing decision lands (the LLM egress; later, the memory schema).
 - **Coordination:** declare each sub-branch's zones on `.claude/coordination/ACTIVE-WORK.md` first.
 
+## Follow-up (non-blocking) — `feat/context-followup` ⛓ none (M-expose stays MCP-gated)
+
+The core subsystem (M-digest + M-brain + M-memory) shipped to `main` 2026-06-04 (`4c321c2`, PR #39). This
+milestone clears the non-blocking follow-on backlog in ONE PR off `main` — NOT MCP-gated. Full kickoff:
+`docs/superpowers/plans/2026-06-04-context-followup-kickoff.md`; start-here: the matching handoff in
+`docs/superpowers/handoffs/`.
+
+- **T-F1 (headline) — terminal runtime status capture.** Fold a terminal's runtime state (running/idle/
+  exited + last activity) into the Tier-2 summary via the loop (MAIN-side; Tier-1 is disk-only). 🔓 Open:
+  structured `pty.ts` state hook (recommended) vs scrape scrollback (resolves open-Q 2 below). ⚠️ `pty.ts`
+  CROSS-ZONE with MCP #32 → sequence after MCP / keep additive.
+- **T-F2** — F-C: align board `title` between `summaryLoop.boardContent` and `memoryEngine.boardFingerprint`
+  (a title-only rename currently never refreshes prose).
+- **T-F3** — a11y: `inert` on the `DigestPanel` `<aside>` when closed.
+- **T-F4** — manual "refresh summary" per card (guarded `memory:refresh(boardId)` → loop, same key+budget gate).
+- **T-F5** — re-verify `DEFAULT_MODELS` ids current; lock `llmConfig.ts` ↔ `llmModels.ts` in step.
+- **T-F6** — Linux no-keyring: proactive Settings notice when safeStorage is unavailable (resolves open-Q 1).
+
+**Out of scope here:** UI placement tweaks (deferred to after MCP) · M-expose · live `terminal:status` IPC.
+
 ## Deferred (not in this roadmap)
 
 Multi-project / global memory · embeddings / vector search · semantic cross-board linking · any
@@ -254,10 +274,11 @@ memory-driven *write* action (forbidden) · the MCP swarm roadmap M0–M10 (sibl
 ## Open questions (resolve at the relevant milestone)
 
 1. **safeStorage on Linux without a keyring** falls back to plaintext — document the caveat (T-B2);
-   decide whether to warn the user.
+   decide whether to warn the user. → **being addressed in T-F6** (`feat/context-followup`).
 2. **Runtime last-command/status capture** (T-M3): scrape PTY output vs a structured terminal-state
-   hook — pick the lowest-coupling source when the loop is built.
+   hook — pick the lowest-coupling source when the loop is built. → **being addressed in T-F1**
+   (`feat/context-followup`); recommendation = structured `pty.ts` hook.
 3. **Per-provider HTTP shape** (T-B1): confirm the minimal request/response for OpenRouter / OpenAI /
-   Anthropic / local; keep the adapter interface stable across them.
+   Anthropic / local; keep the adapter interface stable across them. *(resolved in M-brain T-B1.)*
 ```
 
