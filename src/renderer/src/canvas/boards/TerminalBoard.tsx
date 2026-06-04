@@ -531,7 +531,7 @@ export function TerminalBoard({
     url: string
     candidates: PreviewCandidate[]
   } | null>(null)
-  const NEW_BROWSER = ' new' // sentinel checkbox key for "+ New browser"
+  const NEW_BROWSER = ' new' // sentinel checkbox key for "+ New browser"
   const [checked, setChecked] = useState<Set<string>>(new Set())
 
   // Route a resolved url by gesture. Tap + linked browser(s) → refresh them. Otherwise
