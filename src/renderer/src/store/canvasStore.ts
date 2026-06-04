@@ -624,7 +624,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ...get().connectors
     ]),
   loadObject: (doc) => {
-    const d = fromObject(doc)
+    // Guard the deep-validation throw (corrupt board/element or too-new schemaVersion):
+    // a raw-doc load with no dir can't do a .bak retry, so on a throw set status:'error'
+    // (with the message) and leave board/connector/viewport state UNTOUCHED — do NOT null
+    // lastRecorded or flag restored terminals until the parse actually succeeds. Matches
+    // applyOpenResult's guard so a corrupt doc never throws out and blanks the app (T4).
+    let d: ReturnType<typeof fromObject>
+    try {
+      d = fromObject(doc)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'failed to load project'
+      set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
+      return
+    }
     // Clear the dedup ref: it points at the pre-load snapshot; a fresh project's history
     // starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
     lastRecorded = null
@@ -646,7 +658,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: r.error } }))
       return
     }
-    const d = fromObject(r.doc)
+    // Guard the deep-validation throw: MAIN validated only the envelope, so an
+    // envelope-valid but deep-corrupt doc (or one with a too-new schemaVersion) throws
+    // out of fromObject here. Route it to status:'error' (carrying the message) and leave
+    // board state untouched, instead of letting the throw blank the app (T4).
+    let d: ReturnType<typeof fromObject>
+    try {
+      d = fromObject(r.doc)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'failed to load project'
+      set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
+      return
+    }
     // Clear the dedup ref (see loadObject): the opened project's history starts empty.
     lastRecorded = null
     // Restored terminals start idle — flag every loaded terminal idle-on-mount (M-1).
