@@ -26,11 +26,11 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 
 ## Stack (locked)
 
-- **Electron 33** + **TypeScript** + **React 18**; **electron-vite** (dev/build), **electron-builder** + **electron-updater** (package/update).
+- **Electron 42** + **TypeScript** + **React 18**; **electron-vite 5** / **vite 7** (dev/build), **electron-builder 26** + **electron-updater** (package/update). (Bumped 33→42 off EOL in T9; toolchain went vite 5→7 / electron-vite 2→5 / vitest 2→4 to clear a critical vitest CVE.)
 - **Canvas engine: `@xyflow/react` (React Flow) v12** — NOT tldraw (see ADR 0001). Each board = a custom React Flow node.
 - **Whiteboard: custom** — vendored `perfect-freehand` (pen) + React Flow edges/bezier for arrows. NOT Excalidraw (see ADR 0001).
 - **Terminal: `@xterm/xterm` ≥5.5** (+ fit + webgl addons) ⇄ **`node-pty`** in MAIN.
-- **`node-pty` 1.2.0-beta.13** (pinned) — winpty-free / ConPTY-only. REQUIRED: the repo path `Z:\Canvas ADE` has a space, and node-pty ≤1.1 bundles winpty whose build (`GetCommitHash.bat`) hard-fails on spaced paths. The beta drops winpty and builds clean. Do not downgrade without relocating the repo to a space-free path.
+- **`node-pty` 1.2.0-beta.13** (pinned) — winpty-free / ConPTY-only. REQUIRED: the repo path `Z:\Canvas ADE` has a space, and node-pty ≤1.1 bundles winpty whose build (`GetCommitHash.bat`) hard-fails on spaced paths. The beta drops winpty and builds clean. Do not downgrade without relocating the repo to a space-free path. **Build prereq (Windows, since Electron 42):** the Electron-42 ABI has no node-pty prebuilt, so node-pty SOURCE-compiles, and its `binding.gyp` sets `SpectreMitigation: 'Spectre'` → the build needs the **MSVC x64/x86 Spectre-mitigated libs** VS component installed (we keep the hardening rather than patch it off). Linux/macOS unaffected.
 - **Preview: Electron `WebContentsView`** (NOT iframe/webview). Multiple views, synced to the camera by a PreviewManager.
 - **State: Zustand** (app/ephemeral). **Persistence: JSON per project** (see below).
 - **Git: `simple-git`** in MAIN for per-agent worktrees. **`write-file-atomic`** for saves.
@@ -155,7 +155,7 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 
 ## Environment notes (this machine)
 
-- Node 22.17, pnpm 9.15 (via corepack), git 2.54, Python 3.12.4, VS Build Tools 2022 (VC++ x64). node-pty builds locally.
+- Node 22.17, pnpm 9.15 (via corepack), git 2.54, Python 3.12.4, VS Build Tools 2022 (VC++ x64 **+ MSVC x64/x86 Spectre-mitigated libs** — required for the node-pty source build on Electron 42; see Stack). node-pty builds locally.
 - `.npmrc` sets `node-linker=hoisted` so @electron/rebuild + electron-builder work with pnpm.
 - **Repo path has a space** → node-pty MUST stay winpty-free (the beta). See Stack.
 
