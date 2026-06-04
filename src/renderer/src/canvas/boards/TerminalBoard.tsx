@@ -33,6 +33,7 @@ import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
+import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPreview'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -519,10 +520,7 @@ export function TerminalBoard({
   }, [])
 
   // Slice C′: detected dev-server URLs (picker when >1) + a transient "not found" note.
-  type DetectedUrl = { url: string; host: string; port: number }
-  /** Gesture that opened the flow: a tap refreshes the linked browser(s); a long-press
-   *  always opens the connect picker (so does a tap when nothing is linked yet). */
-  type Gesture = 'tap' | 'hold'
+  // DetectedUrl and Gesture types are imported from ./terminalPreview.
   const [portChoices, setPortChoices] = useState<{ urls: DetectedUrl[]; gesture: Gesture } | null>(
     null
   )
@@ -533,7 +531,7 @@ export function TerminalBoard({
     url: string
     candidates: PreviewCandidate[]
   } | null>(null)
-  const NEW_BROWSER = ' new' // sentinel checkbox key for "+ New browser"
+  const NEW_BROWSER = ' new' // sentinel checkbox key for "+ New browser"
   const [checked, setChecked] = useState<Set<string>>(new Set())
 
   // Route a resolved url by gesture. Tap + linked browser(s) → refresh them. Otherwise
@@ -560,19 +558,14 @@ export function TerminalBoard({
   )
 
   const onPreview = useCallback(
-    async (gesture: Gesture) => {
-      setPreviewNote(null)
-      const urls = await window.api.detectPorts(board.id)
-      if (urls.length === 0) {
-        setPreviewNote('No dev server detected yet — start it, then try again.')
-        return
-      }
-      if (urls.length === 1) {
-        routeUrl(urls[0].url, gesture)
-        return
-      }
-      setPortChoices({ urls, gesture }) // disambiguate the server first, then route by gesture
-    },
+    (gesture: Gesture) =>
+      runDetectPorts(
+        () => window.api.detectPorts(board.id),
+        setPreviewNote,
+        routeUrl,
+        setPortChoices,
+        gesture
+      ),
     [board.id, routeUrl]
   )
 

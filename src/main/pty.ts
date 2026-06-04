@@ -24,6 +24,24 @@ import type { TerminalRuntime } from './summaryLoop'
  * MessagePort as `{ t: 'state', … }` so the board can render its identity pill.
  */
 /**
+ * Validate terminal resize dimensions before forwarding to ConPTY. Both cols
+ * and rows must be positive integers in the range [1, 1000]. This guards both
+ * MessagePort listener sites (spawn-time and adopt-time) — a non-integer
+ * (80.5), zero, negative, or absurd value must never reach proc.resize().
+ * Exported so the unit test targets the real code path used by both listeners.
+ */
+export function isValidResize(cols: number, rows: number): boolean {
+  return (
+    Number.isInteger(cols) &&
+    Number.isInteger(rows) &&
+    cols > 0 &&
+    rows > 0 &&
+    cols <= 1000 &&
+    rows <= 1000
+  )
+}
+
+/**
  * Append `chunk` to a capped output ring buffer, keeping only the last `cap`
  * characters (drop-oldest). Pure, so it is unit-tested. Used to record each
  * session's recent output for replay when a deleted terminal is adopted on undo.
@@ -182,7 +200,7 @@ export function adoptCore(
     // would escape to uncaughtException → app.exit(1). Swallow it.
     try {
       if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
-      else if (m.t === 'resize' && m.cols && m.rows) p.proc.resize(m.cols, m.rows)
+      else if (m.t === 'resize' && isValidResize(m.cols!, m.rows!)) p.proc.resize(m.cols!, m.rows!)
     } catch {
       /* pty already exited */
     }
@@ -537,7 +555,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // crashing the whole app — so swallow it (the session is being torn down).
       try {
         if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
-        else if (m.t === 'resize' && m.cols && m.rows) proc.resize(m.cols, m.rows)
+        else if (m.t === 'resize' && isValidResize(m.cols!, m.rows!)) proc.resize(m.cols!, m.rows!)
       } catch {
         /* pty already exited */
       }
