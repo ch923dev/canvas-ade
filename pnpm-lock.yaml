@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@ch923dev/canvas-ade-mcp':
-        specifier: ^0.8.0
-        version: 0.8.0
+        specifier: ^0.8.2
+        version: 0.8.2
       '@electron-toolkit/preload':
         specifier: ^3.0.1
         version: 3.0.2(electron@33.4.11)
@@ -247,8 +247,8 @@ packages:
     resolution: {integrity: sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw==}
     hasBin: true
 
-  '@ch923dev/canvas-ade-mcp@0.8.0':
-    resolution: {integrity: sha512-a1vveH50/roiN9X9tvd6Sj+U30SMdLVz1mq91B6ZYNSmFqSA50uRmddBWxS25v6dj1ejo3AABU4CMrowdzeKng==, tarball: https://npm.pkg.github.com/download/@ch923dev/canvas-ade-mcp/0.8.0/9f6d8e327c5db39965941d4ae7c2b74ddf1a4d6a}
+  '@ch923dev/canvas-ade-mcp@0.8.2':
+    resolution: {integrity: sha512-U+C11+C9bk9dNPRMH83/VnAS8D4fdlUDq7Td4rKmC9pVSzL7+5Vt6a0GJs0vX6VeU/LLedE1GIE4SkXNtrZBeQ==, tarball: https://npm.pkg.github.com/download/@ch923dev/canvas-ade-mcp/0.8.2/c66182e1c058ac81296a95ac5e2faca14b228ebb}
     engines: {node: '>=20'}
 
   '@csstools/color-helpers@6.0.2':
@@ -3573,7 +3573,7 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
-  '@ch923dev/canvas-ade-mcp@0.8.0':
+  '@ch923dev/canvas-ade-mcp@0.8.2':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       express: 5.2.1

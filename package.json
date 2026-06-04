@@ -42,7 +42,7 @@
     "build:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {
-    "@ch923dev/canvas-ade-mcp": "^0.8.0",
+    "@ch923dev/canvas-ade-mcp": "^0.8.2",
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^3.0.0",
     "@xterm/addon-fit": "^0.10.0",
