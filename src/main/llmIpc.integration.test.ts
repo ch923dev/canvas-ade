@@ -149,6 +149,37 @@ describe('registerLlmHandlers — key channels', () => {
     expect(Object.values(s)).not.toContain('sk-xyz')
   })
 
+  // BUG-012: setKey must validate the provider against the known set and bound the key, BEFORE
+  // anything reaches the key store / encryptor (no key-file pollution, no false hasKey, no DoS).
+  it('setKey rejects an unknown provider and an empty/over-long key (BUG-012)', async () => {
+    const { cap } = setupKeyed(fakeEncryptor())
+    // Unknown provider (the '__proto__' pollution case) — rejected, nothing stored.
+    expect(await cap.invoke('llm:setKey', { provider: '__proto__', key: 'x' })).toEqual({
+      ok: false,
+      reason: 'invalid-provider'
+    })
+    expect(await cap.invoke('llm:setKey', { provider: 'nope', key: 'x' })).toEqual({
+      ok: false,
+      reason: 'invalid-provider'
+    })
+    // Empty key — would falsely report hasKey:true on a non-empty ciphertext; rejected.
+    expect(await cap.invoke('llm:setKey', { provider: 'openrouter', key: '' })).toEqual({
+      ok: false,
+      reason: 'invalid-key'
+    })
+    // Over-long key (> MAX_KEY_LEN 1024) — would be encrypted + synchronously written; rejected.
+    expect(
+      await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'A'.repeat(2000) })
+    ).toEqual({ ok: false, reason: 'invalid-key' })
+    // None of the rejected calls persisted a key.
+    expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(false)
+    // A valid key still round-trips.
+    expect(await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'sk-real' })).toEqual({
+      ok: true
+    })
+    expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(true)
+  })
+
   it('clearKey removes the key (hasKey:false after)', async () => {
     const { cap } = setupKeyed(fakeEncryptor())
     await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'sk-xyz' })

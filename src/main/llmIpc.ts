@@ -54,6 +54,21 @@ export interface LlmStatus {
 /** Result of a write-only LLM IPC call (setKey/clearKey/setConfig). Never carries key material. */
 export type LlmWriteResult = { ok: boolean; reason?: string }
 
+/**
+ * BUG-012: the known ProviderName set, derived from DEFAULT_MODELS (a typed Record<ProviderName,…>)
+ * so it can't drift from the union. TypeScript's ProviderName is erased at runtime, so without this
+ * a renderer could write an arbitrary `provider` key (e.g. '__proto__') into the key file.
+ */
+const VALID_PROVIDERS = new Set<string>(Object.keys(DEFAULT_MODELS))
+
+/**
+ * BUG-012: upper bound for an API key written over IPC. Real provider keys are well under this; a
+ * larger string is a mistake/abuse and would otherwise be encrypted + synchronously written to
+ * disk in MAIN (event-loop stall / DoS surface). Empty keys are rejected separately (an empty key
+ * still encrypts to a non-empty ciphertext → hasKey would falsely report true).
+ */
+const MAX_KEY_LEN = 1024
+
 const NOOP_KEY_STORE: KeyStore = {
   getKey: () => undefined,
   setKey: () => {
@@ -122,6 +137,13 @@ export function registerLlmHandlers(
 
   ipcMain.handle('llm:setKey', (e, a: { provider: ProviderName; key: string }): LlmWriteResult => {
     if (guard(e)) return { ok: false, reason: 'forbidden' }
+    // BUG-012: validate the IPC args before the key store / encryptor. `provider`/`key` are
+    // `unknown` at runtime — an unknown provider would pollute the key file (e.g. '__proto__'),
+    // an empty key would falsely report hasKey:true, and an unbounded key would be encrypted +
+    // written synchronously (event-loop stall). Reject all three cleanly here.
+    if (!VALID_PROVIDERS.has(a?.provider as string)) return { ok: false, reason: 'invalid-provider' }
+    if (typeof a.key !== 'string' || a.key.length === 0 || a.key.length > MAX_KEY_LEN)
+      return { ok: false, reason: 'invalid-key' }
     return keyStore.setKey(a.provider, a.key)
       ? { ok: true }
       : { ok: false, reason: 'encryption-unavailable' }
