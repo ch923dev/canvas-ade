@@ -97,6 +97,8 @@ export interface LlmStatus {
   model: string
   baseUrl?: string
   hasKey: boolean
+  /** T-F6: false when the OS can't encrypt a key (e.g. Linux without a keyring). */
+  encryptionAvailable: boolean
 }
 
 export type LlmWriteResult = { ok: boolean; reason?: string }
@@ -208,7 +210,11 @@ const api = {
   // ── M-memory T-M4: read cached Tier-2 prose for the panel (pure disk read; MAIN-guarded) ──
   memory: {
     readBoards: (ids: string[]): Promise<Record<string, string>> =>
-      ipcRenderer.invoke('memory:readBoards', ids)
+      ipcRenderer.invoke('memory:readBoards', ids),
+    // T-F4: force a re-summary of one board (bypasses the debounce; still budget/key-gated +
+    // passive in MAIN). {ok:false} when no project is open / over cap. Renderer re-reads prose after.
+    refresh: (boardId: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('memory:refresh', boardId)
   },
   // ── M-brain T-B1/T-B2: provider-agnostic LLM (MAIN owns the key/egress) ──
   llm: {

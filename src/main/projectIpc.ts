@@ -77,7 +77,10 @@ export function registerProjectHandlers(
   getWin: () => BrowserWindow | null,
   userDataDir: string,
   now: () => number = () => Date.now(),
-  memoryEngine: MemoryEngine = createMemoryEngine({ onIntent: logSummarizeIntent })
+  memoryEngine: MemoryEngine = createMemoryEngine({ onIntent: logSummarizeIntent }),
+  // T-F4: the manual-refresh sink. index.ts wires this to summaryLoop.onIntent so a user ⟳ runs
+  // the SAME budgeted/passive summarize the detector does (no new egress). Default = no-op.
+  onRefresh: (boardId: string) => Promise<void> = async () => {}
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean =>
     isForeignSender(e, () => getWin()?.webContents.mainFrame)
@@ -225,6 +228,19 @@ export function registerProjectHandlers(
       if (md !== undefined) out[id] = md
     }
     return out
+  })
+
+  // T-F4: a USER-driven "refresh this board's summary now" — bypasses the T-M2 debounce by calling
+  // the SAME summarize path (onRefresh = summaryLoop.onIntent) the detector uses. Still 🔒 passive +
+  // key/budget-gated INSIDE the loop (no new egress rule): with no key / over cap the loop simply
+  // no-ops and the prose is unchanged. Foreign sender / non-string id / no open project → {ok:false}.
+  // {ok:true} means the refresh ran (the renderer re-reads prose via memory:readBoards either way).
+  ipcMain.handle('memory:refresh', async (e, boardId: unknown): Promise<{ ok: boolean }> => {
+    if (guard(e)) return { ok: false }
+    if (typeof boardId !== 'string' || boardId.length === 0) return { ok: false }
+    if (!getCurrentDir()) return { ok: false }
+    await onRefresh(boardId)
+    return { ok: true }
   })
 
   ipcMain.handle(

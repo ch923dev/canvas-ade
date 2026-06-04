@@ -15,6 +15,9 @@
  * {label,done}, note text). Geometry/selection/canvas pan/zoom are excluded so a pure
  * move/resize/pan/select yields an identical fingerprint. browser previewSourceId is also
  * excluded — it never reaches the summary input, so it would churn spend without changing output.
+ * The board TITLE is likewise excluded here AND from summaryLoop.boardContent (F-C/T-F2): the two
+ * field sets are kept in lockstep, so a title-only rename neither re-summarizes nor leaves stale
+ * prose naming the old title (the panel card shows the live title separately).
  *
  * 🔒 Security: generated/observed memory is untrusted passive context. The detector only
  * READS the already-trusted persisted doc and EMITS an id; it never triggers an action

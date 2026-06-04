@@ -7,6 +7,10 @@ import * as path from 'node:path'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
 import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi, type OutputPage } from './ptyOutput'
+// T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
+// Type-only import (erased at runtime → no coupling to the LLM stack) so the returned shape is
+// guaranteed to match what createSummaryLoop expects.
+import type { TerminalRuntime } from './summaryLoop'
 
 /**
  * Terminal data plane lives on a MessagePort (binary-ish, high-volume PTY
@@ -80,6 +84,14 @@ interface SessionLike {
    * field tracks lifecycle honestly for when that contract widens in Phase 2).
    */
   state: PtyState
+  /**
+   * T-F1: epoch ms of the last PTY output, set at spawn/adopt and bumped on each
+   * onData. Lets the Context Tier-2 summary distinguish an actively-working agent from
+   * an idle/parked shell (getTerminalRuntime).
+   */
+  lastActivityAt: number
+  /** T-F1: exit code, recorded in onExit (while the session briefly survives before cleanup). */
+  exitCode?: number
 }
 interface ParkedLike {
   proc: pty.IPty
@@ -179,7 +191,13 @@ export function adoptCore(
 
   // Back into `sessions` with the SAME boxed buffer; the spawn-time onData listener
   // now forwards live output to this new port (it looks up sessions.get(id)).
-  sessionsMap.set(id, { proc: p.proc, port: port1, buf: p.buf, state: 'running' })
+  sessionsMap.set(id, {
+    proc: p.proc,
+    port: port1,
+    buf: p.buf,
+    state: 'running',
+    lastActivityAt: Date.now() // T-F1: adopt = fresh activity (scrollback is about to replay)
+  })
   transferPort(port2)
 
   // Replay recorded scrollback, then re-announce running.
@@ -471,6 +489,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       // late bytes would bleed into a freshly-restarted session under the same id.
       const live = sessions.get(opts.id)
       if (live && live.proc === proc) {
+        live.lastActivityAt = Date.now() // T-F1: output = activity (drives running-vs-idle)
         try {
           live.port.postMessage({ t: 'data', d })
         } catch {
@@ -492,6 +511,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         const live = sessions.get(opts.id)
         if (live && live.proc === proc) {
           live.state = 'exited'
+          live.exitCode = exitCode // T-F1: record the code while the session briefly survives
           live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
           live.port.postMessage({ t: 'exit', code: exitCode })
         }
@@ -524,7 +544,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     })
     port1.start()
 
-    sessions.set(opts.id, { proc, port: port1, buf, state: 'running' })
+    sessions.set(opts.id, { proc, port: port1, buf, state: 'running', lastActivityAt: Date.now() })
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
 
     // Announce running, then — spawn the SHELL, not the agent — write the
@@ -708,6 +728,31 @@ export function disposeAllPtys(): Promise<void> {
  */
 export function listPtySessions(): Array<{ id: string; status: PtyState }> {
   return [...sessions.entries()].map(([id, s]) => ({ id, status: s.state }))
+}
+
+/**
+ * 🔒 Pure core of getTerminalRuntime (T-F1). Reads one board's runtime snapshot from the session
+ * map. Keyed on `state`/`lastActivityAt`/`exitCode` only (narrowed map type) so it unit-tests with a
+ * fake map. An absent id (non-terminal / closed / parked-not-live / already-cleaned-up) → undefined.
+ * READ-ONLY, control-plane only — never the PTY data stream, never a write.
+ */
+export function getTerminalRuntimeCore(
+  id: string,
+  sessionMap: Map<string, { state: PtyState; lastActivityAt: number; exitCode?: number }>
+): TerminalRuntime | undefined {
+  const s = sessionMap.get(id)
+  if (!s) return undefined
+  return { state: s.state, lastActivityAt: s.lastActivityAt, exitCode: s.exitCode }
+}
+
+/**
+ * MAIN-internal accessor for a terminal board's live runtime (T-F1), injected into the Context
+ * Tier-2 summary loop (createSummaryLoop) so a board's prose can reflect running/idle/exited. Returns
+ * undefined for any id without a LIVE session — the loop then omits the status line (never throws,
+ * never blocks). Read-only; not exposed to the renderer.
+ */
+export function getTerminalRuntime(id: string): TerminalRuntime | undefined {
+  return getTerminalRuntimeCore(id, sessions)
 }
 
 /**

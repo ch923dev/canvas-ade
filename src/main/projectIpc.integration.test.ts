@@ -366,3 +366,53 @@ describe('memory:readBoards (T-M4 cached-prose read bridge)', () => {
     expect(canvasMemory.createCanvasMemory).not.toHaveBeenCalled()
   })
 })
+
+describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
+  const getWin = (): null => null
+
+  function withRefresh(
+    onRefresh: (boardId: string) => Promise<void>
+  ): ReturnType<typeof createIpcCapture> {
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData', undefined, undefined, onRefresh)
+    return cap
+  }
+
+  it('calls onRefresh with the board id and returns {ok:true} when a project is open', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const onRefresh = vi.fn(async () => {})
+    const cap = withRefresh(onRefresh)
+
+    expect(await cap.invoke('memory:refresh', 't1')).toEqual({ ok: true })
+    expect(onRefresh).toHaveBeenCalledWith('t1')
+  })
+
+  it('no-ops ({ok:false}) when no project is open — never calls onRefresh', async () => {
+    store.getCurrentDir.mockReturnValue(null)
+    const onRefresh = vi.fn(async () => {})
+    const cap = withRefresh(onRefresh)
+
+    expect(await cap.invoke('memory:refresh', 't1')).toEqual({ ok: false })
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-string / empty board id ({ok:false}, no refresh)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const onRefresh = vi.fn(async () => {})
+    const cap = withRefresh(onRefresh)
+
+    expect(await cap.invoke('memory:refresh', 123)).toEqual({ ok: false })
+    expect(await cap.invoke('memory:refresh', '')).toEqual({ ok: false })
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  it('rejects a foreign sender and never refreshes (#17)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const onRefresh = vi.fn(async () => {})
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, mainWin, '/userData', undefined, undefined, onRefresh)
+
+    expect(await cap.invokeAs(foreignEvent, 'memory:refresh', 't1')).toEqual({ ok: false })
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+})

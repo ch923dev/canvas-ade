@@ -16,12 +16,22 @@ const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
   { id: 'local', label: 'Local' }
 ]
 
+/** T-F6: the env var each provider reads its key from when no keyring is available to encrypt one. */
+const ENV_VAR: Record<keyof typeof DEFAULT_MODELS, string> = {
+  openrouter: 'OPENROUTER_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  local: 'OPENAI_API_KEY'
+}
+
 export function SettingsModal({ onClose }: { onClose: () => void }): ReactElement {
   const [provider, setProvider] = useState<keyof typeof DEFAULT_MODELS>('openrouter')
   const [model, setModel] = useState<string>(DEFAULT_MODELS.openrouter)
   const [baseUrl, setBaseUrl] = useState('')
   const [key, setKey] = useState('')
   const [hasKey, setHasKey] = useState(false)
+  // T-F6: default true so we don't flash a keyring warning before status resolves.
+  const [encryptionAvailable, setEncryptionAvailable] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -37,6 +47,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       setProvider(s.provider)
       setModel(s.model)
       setHasKey(s.hasKey)
+      setEncryptionAvailable(s.encryptionAvailable !== false) // tolerate an older no-field status
       if (s.baseUrl) setBaseUrl(s.baseUrl)
     })
   }, [])
@@ -168,6 +179,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
           />
         </label>
 
+        {!encryptionAvailable && provider !== 'local' && (
+          <div role="note" data-test="settings-no-keyring" style={styles.notice}>
+            No system keyring detected — a key can&apos;t be stored encrypted on this machine. Set
+            the <code>{ENV_VAR[provider]}</code> environment variable instead.
+          </div>
+        )}
+
         {error && (
           <div role="alert" data-test="settings-error" style={styles.error}>
             {error}
@@ -229,6 +247,15 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11.5,
     lineHeight: '15px',
     color: 'var(--warn)',
+    background: 'var(--inset)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 6,
+    padding: '7px 9px'
+  },
+  notice: {
+    fontSize: 11.5,
+    lineHeight: '15px',
+    color: 'var(--text-3)',
     background: 'var(--inset)',
     border: '1px solid var(--border-subtle)',
     borderRadius: 6,

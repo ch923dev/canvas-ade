@@ -9,7 +9,8 @@ import {
   listPtySessions,
   readPtyOutput,
   drainPty,
-  writeToPty
+  writeToPty,
+  getTerminalRuntime
 } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { readBoardResult, recordBoardResult } from './boardResults'
@@ -223,7 +224,9 @@ app.whenReady().then(async () => {
     llmDataDir,
     encryptor: llmEncryptor,
     getCurrentDir,
-    readProject
+    readProject,
+    // T-F1: fold each terminal board's live runtime (running/idle/exited) into its summary.
+    getTerminalRuntime
   })
   const memoryEngine = createMemoryEngine({
     onIntent: (intent) => void summaryLoop.onIntent(intent)
@@ -233,7 +236,10 @@ app.whenReady().then(async () => {
     () => mainWindow,
     app.getPath('userData'),
     undefined,
-    memoryEngine
+    memoryEngine,
+    // T-F4: manual ⟳ refresh → the SAME budgeted/passive summarize the detector drives (awaited so
+    // the renderer can flip its "updating…" state off once the prose is rewritten).
+    (boardId) => summaryLoop.onIntent({ boardId })
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
 

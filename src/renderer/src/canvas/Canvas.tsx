@@ -262,6 +262,21 @@ function CanvasInner(): ReactElement {
     // boards read live (getState) so this does not re-fetch on every board edit.
   }, [openedProjectKey])
 
+  // T-F4: manual ⟳ refresh for one card. Forces a re-summary in MAIN (budgeted + passive — no
+  // new egress), then re-reads only that board's prose and merges it in. Best-effort: a no-key /
+  // over-cap refresh leaves the prose unchanged (re-read returns the same / nothing). Never throws.
+  const refreshBoardProse = useCallback(async (boardId: string): Promise<void> => {
+    try {
+      await window.api.memory.refresh(boardId)
+      const map = await window.api.memory.readBoards([boardId])
+      const md = map[boardId]
+      if (md !== undefined) setProse((prev) => ({ ...prev, [boardId]: md }))
+    } catch {
+      // Both handlers are written to never reject; this guard keeps an unexpected rejection
+      // from surfacing as an unhandled promise. The card simply stops its "updating…" state.
+    }
+  }, [])
+
   // Enter camera full view on a (Planning) board: save the viewport, fit the camera to
   // the board, select it. Portal + camera full views are mutually exclusive.
   const enterCameraFullView = useCallback(
@@ -998,6 +1013,7 @@ function CanvasInner(): ReactElement {
           <DigestPanel
             digest={digest}
             prose={prose}
+            onRefresh={refreshBoardProse}
             open={digestOpen}
             onOpen={() => setDigestOpen(true)}
             onClose={() => setDigestOpen(false)}

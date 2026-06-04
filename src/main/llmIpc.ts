@@ -43,6 +43,12 @@ export interface LlmStatus {
   baseUrl?: string
   /** True when the active provider has a stored key (presence only — never the key). */
   hasKey: boolean
+  /**
+   * T-F6: whether the OS can encrypt a key at all (Electron safeStorage). False on a Linux host
+   * with no available keyring → a key can't be stored encrypted (Settings proactively warns).
+   * False also when no encryptor was wired (mis-wire / tests). Presence only — never key material.
+   */
+  encryptionAvailable: boolean
 }
 
 /** Result of a write-only LLM IPC call (setKey/clearKey/setConfig). Never carries key material. */
@@ -84,13 +90,17 @@ export function registerLlmHandlers(
     return runSummarize(config, input, deps)
   })
 
+  // T-F6: a key can only be stored when the OS keyring is available. No encryptor wired → false.
+  const encryptionAvailable = (): boolean => (encryptor ? encryptor.isEncryptionAvailable() : false)
+
   ipcMain.handle('llm:status', (e): LlmStatus => {
     if (guard(e))
       return {
         hasProvider: false,
         provider: 'openrouter',
         model: DEFAULT_MODELS.openrouter,
-        hasKey: false
+        hasKey: false,
+        encryptionAvailable: false
       }
     const config = readLlmConfig(userDataDir)
     return {
@@ -98,7 +108,8 @@ export function registerLlmHandlers(
       provider: config.provider,
       model: config.model,
       baseUrl: config.baseUrl,
-      hasKey: keyStore.hasKey(config.provider)
+      hasKey: keyStore.hasKey(config.provider),
+      encryptionAvailable: encryptionAvailable()
     }
   })
 
