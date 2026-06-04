@@ -11,8 +11,14 @@
  * `cameraBounds.Rect`, which is screen-geometry math, not persisted board data.
  */
 
-/** Bump on any breaking change to the persisted shape and add a migration below. */
-export const SCHEMA_VERSION = 4
+/**
+ * Bump on any breaking change to the persisted shape and add a migration below.
+ *
+ * SCHEMA-VERSION CLAIM (2026-06-03): **v5 is MCP M2 — spatial connectors.** The
+ * draw.io (D2/D3) and any future whiteboard track also plan a bump; first-to-land
+ * takes v5, the others rebase to v6+. Do not silently reuse v5 for a different shape.
+ */
+export const SCHEMA_VERSION = 5
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -129,6 +135,21 @@ export interface PlanningBoard extends BoardCommon {
 
 export type Board = TerminalBoard | BrowserBoard | PlanningBoard
 
+// ── Connectors (M2 — spatial board↔board edges) ────────────────────────────────
+// A typed cable between two boards. `preview` mirrors the runtime `previewSourceId`
+// link (Browser ← its source terminal); `orchestration` is a user-drawn relationship
+// the MCP dispatch layer (M4) later flows along. Generalizes PreviewEdge so the canvas
+// renders both edge families from one derived-edge approach.
+
+export type ConnectorKind = 'preview' | 'orchestration'
+
+export interface Connector {
+  id: string
+  sourceId: string
+  targetId: string
+  kind: ConnectorKind
+}
+
 /** Persisted camera transform. `null` in a doc means "fit on load". */
 export interface CanvasViewport {
   x: number
@@ -141,6 +162,12 @@ export interface CanvasDoc {
   schemaVersion: number
   viewport: CanvasViewport | null
   boards: Board[]
+  /**
+   * Typed board↔board connectors (M2, schema v5). `preview` connectors are derived
+   * from each Browser's `previewSourceId` (still the runtime source of truth) and are
+   * folded back on load — only `orchestration` connectors are carried in memory.
+   */
+  connectors: Connector[]
 }
 
 // ── Sizes ─────────────────────────────────────────────────────────────────────
@@ -207,20 +234,51 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
 // ── Serialization + migration ─────────────────────────────────────────────────
 
 /**
- * Boards + camera → a versioned document. Deep-clones so the doc owns its data.
+ * Derive the `preview` connectors implied by board state: one per Browser board with a
+ * present, non-dangling `previewSourceId`, with the STABLE id `preview-<browserId>`
+ * (matches PreviewEdge's edge id). Pure; reused by the v4→v5 migration (fold-forward)
+ * and the store's toObject (re-derive on every save). `previewSourceId` remains the
+ * runtime source of truth — these connectors are derived from it, never the reverse.
+ */
+export function previewConnectorsFor(boards: Board[]): Connector[] {
+  const ids = new Set(boards.map((b) => b.id))
+  const out: Connector[] = []
+  for (const b of boards) {
+    if (b.type === 'browser' && b.previewSourceId && ids.has(b.previewSourceId)) {
+      out.push({
+        id: `preview-${b.id}`,
+        sourceId: b.previewSourceId,
+        targetId: b.id,
+        kind: 'preview'
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Boards + camera + connectors → a versioned document. Deep-clones so the doc owns its
+ * data. `connectors` is the FULL set the caller wants persisted (the store passes
+ * preview-derived + orchestration); it defaults to `[]` so existing 2-arg callers and
+ * tests still produce a valid current-version doc.
  *
  * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion,
- * viewport, boards}. Ephemeral session state (selected tool, selected element,
- * in-flight draft/erase, hover) lives in React/Zustand and MUST NEVER be routed
- * into `board.elements[]` or a board patch key, or it bloats every autosave and
- * resurrects stale tool/selection state on reload. (Excalidraw's
- * cleanAppStateForExport discipline, enforced here by omission.)
+ * viewport, boards, connectors}. Ephemeral session state (selected tool, selected
+ * element, in-flight draft/erase, hover, the in-flight "connecting" gesture) lives in
+ * React/Zustand and MUST NEVER be routed into `board.elements[]`, a board patch key,
+ * or `connectors[]`, or it bloats every autosave and resurrects stale state on reload.
+ * (Excalidraw's cleanAppStateForExport discipline, enforced here by omission.)
  */
-export function toObject(boards: Board[], viewport: CanvasViewport | null): CanvasDoc {
+export function toObject(
+  boards: Board[],
+  viewport: CanvasViewport | null,
+  connectors: Connector[] = []
+): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,
     viewport: viewport ? { ...viewport } : null,
-    boards: structuredClone(boards)
+    boards: structuredClone(boards),
+    connectors: structuredClone(connectors)
   }
 }
 
@@ -235,7 +293,12 @@ const MIGRATIONS: Record<number, Migration> = {
   2: (doc) => ({ ...doc, schemaVersion: 3 }),
   // v4 adds the OPTIONAL image element (W4). assetId lives only on new image elements,
   // so there is nothing to backfill — the migration only bumps the version.
-  3: (doc) => ({ ...doc, schemaVersion: 4 })
+  3: (doc) => ({ ...doc, schemaVersion: 4 }),
+  // v5 adds `connectors` (M2). Backfill: fold each Browser's present + valid
+  // previewSourceId into a `preview` connector (the stable preview-<id>), so an older
+  // project's preview links survive into the connector model. `previewSourceId` is left
+  // on the board untouched (it stays the runtime source of truth — Decision B).
+  4: (doc) => ({ ...doc, schemaVersion: 5, connectors: previewConnectorsFor(doc.boards) })
 }
 
 /**
@@ -414,6 +477,45 @@ function assertBoard(b: unknown): void {
   }
 }
 
+const CONNECTOR_KINDS: readonly ConnectorKind[] = ['preview', 'orchestration']
+
+/** Validate one connector (id/sourceId/targetId strings + a known kind); throws on mismatch. */
+function assertConnector(c: unknown): void {
+  if (!isRecord(c)) fail('connector is not an object')
+  if (typeof c.id !== 'string') fail('connector has a non-string id')
+  if (typeof c.sourceId !== 'string') fail('connector has a non-string sourceId')
+  if (typeof c.targetId !== 'string') fail('connector has a non-string targetId')
+  if (!CONNECTOR_KINDS.includes(c.kind as ConnectorKind)) {
+    fail(`connector has an invalid kind ${String(c.kind)}`)
+  }
+}
+
+/**
+ * Reconcile a migrated doc's connectors into the in-memory shape (Decision B,
+ * dual-source). Validates every connector, drops danglers (an endpoint board is gone),
+ * folds each `preview` connector BACK into its target Browser's `previewSourceId` (the
+ * runtime source of truth) and then DROPS it — only `orchestration` connectors are kept
+ * in memory. Mutates `doc.boards` (the fold-back) and returns the kept connectors.
+ */
+function reconcileConnectors(doc: CanvasDoc): Connector[] {
+  const raw = Array.isArray(doc.connectors) ? doc.connectors : []
+  raw.forEach(assertConnector)
+  const ids = new Set(doc.boards.map((b) => b.id))
+  const kept: Connector[] = []
+  for (const c of raw as Connector[]) {
+    if (!ids.has(c.sourceId) || !ids.has(c.targetId)) continue // dangling → drop
+    if (c.kind === 'preview') {
+      // Fold back: ensure the target Browser carries the previewSourceId, then drop the
+      // connector — previewSourceId is the SoT, the connector is derived on next save.
+      const tgt = doc.boards.find((b) => b.id === c.targetId)
+      if (tgt && tgt.type === 'browser' && !tgt.previewSourceId) tgt.previewSourceId = c.sourceId
+      continue
+    }
+    kept.push(c)
+  }
+  return kept
+}
+
 /** Parse + migrate an unknown value into a current-version document. */
 export function fromObject(doc: unknown): CanvasDoc {
   if (!isCanvasDoc(doc)) {
@@ -441,6 +543,10 @@ export function fromObject(doc: unknown): CanvasDoc {
     }
   }
   const migrated = migrate(owned)
+  // Reconcile connectors (M2): validate, strip danglers, fold preview→previewSourceId,
+  // keep orchestration only in memory (Decision B). Runs post-migrate so a v4 doc's
+  // freshly-folded preview connectors are reconciled the same as a v5 doc's.
+  migrated.connectors = reconcileConnectors(migrated)
   // A corrupt camera shouldn't fail the whole load — drop to fit-on-load.
   if (!isValidViewport(migrated.viewport)) migrated.viewport = null
   return migrated

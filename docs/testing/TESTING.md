@@ -94,7 +94,7 @@ test when you introduce a genuinely new native/real-instance surface (see "E2E k
 | **Planning / whiteboard** (notes/arrows/pen/checklist/shapes·mermaid) | **integration (jsdom)** — render the real `PlanningBoard`; unit for pure geometry (snapping/tools/layout) | only the transform/real-OS-input slivers: full-view add-note (real click through live camera) · real Ctrl+V paste · PNG export raster. New shapes/mermaid → cover in jsdom; add an e2e ONLY if it needs real OS input or the native raster pipeline. |
 | **Persistence / migrations** (`canvas.json`, schema) | unit — `boardSchema` (de)serialize, migration pipeline, atomic-write contract, scene/session split | none (no native surface) — never e2e what a schema round-trip proves |
 | **MAIN / IPC & security** (`index.ts`, pty/preview/projectIpc, `localServer.ts`) | **integration** via `ipcTestHarness` (no app boot) + unit `windowSecurity` | none — assert the Electron security checklist at unit/integration (see Security map). Foreign-sender rejection is REQUIRED for every new guarded handler. |
-| **MCP swarm layer** (`canvas-ade-mcp`, when built) | unit — tool/resource handlers, request shapes; integration — registration + **foreign-sender rejection** (Host-header CVE = browser-board attack vector) | none unless a tool drives a real board surface; prefer integration. |
+| **MCP swarm layer** (`@ch923dev/canvas-ade-mcp`, hosted in MAIN) | unit — orchestrator lifecycle/dispatch logic (`mcpOrchestrator` · `dispatchGuard` · `auditLog` · `ptyOutput` · `boardStatus` · `orchestrationEdges` · `resolveConnectTarget` · `useMcpCommands`); integration — IPC registration + **foreign-sender rejection** (`auditIpc` · `mcpConfirm` · `mcpCommand` `.integration`) + viewer/modal render (`AuditLogViewer` · `ConfirmModal` `.integration`). The Host-header DNS-rebind guard is tested in the sibling pkg repo. | `CANVAS_SMOKE=mcp` (`mcpSmoke.ts`) — the live tier-enforcement + real `handoff_prompt`→PTY smoke against the built app (two real loopback MCP clients, drives the confirm modal). The **one surviving `CANVAS_SMOKE` exception**; a Playwright `_electron` port (`e2e/mcp.e2e.ts`) is a tracked follow-up. |
 | **Feature Workspaces / git worktrees** (deferred; `simple-git` in MAIN) | integration — worktree create/remove, dirty-on-delete prompt logic, `git init` opt-in/reuse/never-nest rules (mock `simple-git`) | one real-instance test of an actual worktree create→remove only if logic can't prove it. |
 | **Context subsystem** (`.canvas/` memory, digest) | unit — digest build, memory read/write, serialization | none. |
 | **Packaging / auto-update** (Phase 5) | — | **the one outstanding e2e-only surface**: an auto-update flow e2e once electron-updater/packaging/signing exist. Deferred until then. |
@@ -127,8 +127,8 @@ every `api.*` method is asserted to invoke the right `ipcRenderer.invoke` channe
 
 T3 moved redundant `CANVAS_SMOKE=e2e` probe coverage down to Vitest and deleted the migrated
 probes. The homegrown harness was trimmed to only the irreducible native/real-instance **slivers**,
-which T4 ported to the Playwright `_electron` keep-set (the `CANVAS_SMOKE` harness has since been
-deleted):
+which T4 ported to the Playwright `_electron` keep-set (the `CANVAS_SMOKE=e2e` board harness has since
+been deleted — the `CANVAS_SMOKE=mcp` live MCP smoke is the one surviving entry, see the MCP row above):
 
 - **Migrated to Vitest:** whiteboard interactions (erase/shortcut/marquee/multidrag/shift-add/snap/
   alt-dup/lock/group/align/group-align → `PlanningBoard.interaction.test.tsx`); board-menu contracts

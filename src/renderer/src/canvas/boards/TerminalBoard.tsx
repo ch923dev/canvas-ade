@@ -103,7 +103,8 @@ export function TerminalBoard({
   onFull,
   onDuplicate,
   onDelete,
-  onPushPreviewTo
+  onPushPreviewTo,
+  onStartConnect
 }: BoardViewProps<TerminalBoardData>): ReactElement {
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -631,6 +632,7 @@ export function TerminalBoard({
         onFull={onFull}
         onDuplicate={onDuplicate}
         onDelete={onDelete}
+        onStartConnect={onStartConnect}
       >
         <div style={lod ? shellHidden : shell}>
           {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}

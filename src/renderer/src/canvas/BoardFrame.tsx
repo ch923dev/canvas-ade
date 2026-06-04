@@ -40,7 +40,8 @@ export function IconBtn({
   onClick,
   onLongPress,
   longPressMs = 500,
-  onContextMenu
+  onContextMenu,
+  onPointerDown
 }: {
   name: IconName
   title: string
@@ -53,6 +54,10 @@ export function IconBtn({
    *  trigger uses `--text-2` so it isn't near-invisible at rest. */
   restColor?: string
   onClick?: (e: MouseEvent) => void
+  /** Press-to-drag start (M2 connector handle): fires on pointer-down, before any
+   *  click/long-press timing, so a press-drag-release that ends off the button still
+   *  begins the gesture. Receives the down event (already stop-propagated from the drag). */
+  onPointerDown?: (e: MouseEvent) => void
   /** Press-and-hold handler. When the pointer is held ≥`longPressMs`, this fires and the
    *  subsequent click (the release) is suppressed so `onClick` does NOT also run. */
   onLongPress?: () => void
@@ -124,6 +129,7 @@ export function IconBtn({
       onMouseDown={(e) => {
         e.stopPropagation()
         handlePointerDown()
+        onPointerDown?.(e)
       }}
       onMouseUp={clearTimer}
       style={{
@@ -289,6 +295,8 @@ export interface BoardFrameProps {
   onDuplicate?: () => void
   /** ⋯ menu → Delete (danger). */
   onDelete?: () => void
+  /** M2: begin a connector drag from this board (renders the title-bar connector handle). */
+  onStartConnect?: () => void
   children?: ReactNode
 }
 
@@ -307,6 +315,7 @@ export function BoardFrame({
   onFull,
   onDuplicate,
   onDelete,
+  onStartConnect,
   children
 }: BoardFrameProps): ReactElement {
   // Effective full-view: the explicit prop wins; otherwise read the ambient flag
@@ -518,6 +527,17 @@ export function BoardFrame({
         </div>
         {/* Universal controls, pinned at the far right — always visible & clickable. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
+          {/* M2 connector handle — press-drag to draw an orchestration cable to another
+              board. Pointer-down begins the gesture (Canvas tracks the rubber-band + drop
+              target); hidden in full view (no canvas to drop onto). */}
+          {onStartConnect && !isFullView && (
+            <IconBtn
+              name="connector"
+              title="Draw a connector to another board"
+              size={14}
+              onPointerDown={() => onStartConnect()}
+            />
+          )}
           {/* In full view this same toggle is the EXIT affordance (USER DECISION
               2026-06-01: no separate top band) — restore glyph + an Esc-hinting title.
               onFull already toggles full view off. */}

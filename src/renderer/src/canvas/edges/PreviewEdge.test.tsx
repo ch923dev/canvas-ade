@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import { Position, ReactFlowProvider, type EdgeProps } from '@xyflow/react'
-import { edgePositions, PreviewEdge } from './PreviewEdge'
+import { PreviewEdge } from './PreviewEdge'
+import { edgePositions } from './floatingPath'
 
 // globals:false → RTL's auto-cleanup hook isn't registered, so each render would leak its
 // path into the next test (and querySelector would return a stale earlier edge). Clean up.

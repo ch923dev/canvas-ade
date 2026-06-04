@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # THROWAWAY (T5) — reproduce the ubuntu-latest e2e leg locally, without GitHub
 # Actions. node:22-bookworm is built on buildpack-deps (has gcc/g++/make/python3
 # → node-pty rebuilds for the Electron ABI via the postinstall). Adds Xvfb + the
@@ -16,7 +17,12 @@ RUN corepack enable
 
 WORKDIR /work
 COPY . /work
-RUN pnpm install --frozen-lockfile
+# @ch923dev/canvas-ade-mcp is private (GitHub Packages); the install needs a
+# read:packages token. Inject it via a BuildKit secret (env-backed) so it is
+# available to .npmrc's ${NODE_AUTH_TOKEN} during install but never lands in an
+# image layer. The published floor (0.2.4) installs here — the app's MCP server
+# boots graceful-degraded; the e2e keep-set exercises the native layer, not MCP.
+RUN --mount=type=secret,id=node_auth_token,env=NODE_AUTH_TOKEN pnpm install --frozen-lockfile
 
 ENV CI=1
 # Build then run under Xvfb with the `line` reporter — it streams line-by-line and

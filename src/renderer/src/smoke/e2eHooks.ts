@@ -13,7 +13,15 @@ import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
-import { fromObject, type Board, type BoardType } from '../lib/boardSchema'
+import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
+import {
+  fromObject,
+  type Board,
+  type BoardType,
+  type Connector,
+  type ConnectorKind
+} from '../lib/boardSchema'
+import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
@@ -45,6 +53,14 @@ export interface CanvasE2E {
   tidy: (mode?: TidyMode, aspect?: number) => void
   /** Tile: resize + move every board to fill zones of `area` with `template`. */
   tile: (template: TileTemplate, area: { x: number; y: number; w: number; h: number }) => void
+  /**
+   * T1.6 — the LIVE coarse status bucket for a board (the SAME value `buildBoardSnapshot`
+   * pushes to MCP `canvas://boards`), or null if the board is gone. Lets the board-chrome
+   * probe assert the on-canvas pill agrees with the agent-facing bucket.
+   */
+  boardBucket: (id: string) => string | null
+  /** T1.6 — the pill dot colour token for a bucket (the `bucketToPill` dot, or null). */
+  bucketPillDot: (bucket: string) => string | null
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
   /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
@@ -53,6 +69,24 @@ export interface CanvasE2E {
   terminalMounted: (id: string) => boolean
   /** True if the live store round-trips through toObject→fromObject without throwing. */
   roundTripOk: () => boolean
+  /** M2: add a connector between two boards; returns its id (null if rejected). */
+  addConnector: (sourceId: string, targetId: string, kind?: ConnectorKind) => string | null
+  /** M2: the live in-memory connectors (plain data — serializable). */
+  getConnectors: () => Connector[]
+  /** M2: remove a connector by id (probe cleanup). */
+  removeConnector: (id: string) => void
+  /** M2: connector count that survives a toObject→fromObject round-trip. */
+  serializedConnectorCount: () => number
+  /** M2: arm a connector drag from `fromId` (mirrors the title-bar handle's pointer-down). */
+  startConnect: (fromId: string) => void
+  /**
+   * M2: complete the armed connector drag at a FLOW (world) point — runs the SAME
+   * resolution path as the real pointer-up (resolveConnectTarget → addConnector). Returns
+   * the new connector id, or null if the point hit no (other) board.
+   */
+  completeConnectAt: (flowX: number, flowY: number) => string | null
+  /** M2: select an orchestration connector (drives the ✕ affordance + Delete-key path). */
+  selectConnector: (id: string | null) => void
   /** Flag a node drag/resize gesture (drives the preview layer detach/reattach). */
   setGesture: (active: boolean) => void
   /** Delete a board the way the canvas does (parks a terminal's session first). */
@@ -120,6 +154,8 @@ export interface E2EHostHooks {
   setDigestOpen(open: boolean): void
   enterCameraFullView: (id: string) => void
   exitCameraFullView: () => void
+  /** M2: select an orchestration connector (CanvasInner state) for the ✕/Delete path. */
+  selectConnector: (id: string | null) => void
 }
 
 declare global {
@@ -129,6 +165,8 @@ declare global {
 }
 
 let seedX = 0
+/** M2: the source board of an in-flight harness-driven connector drag (startConnect). */
+let connectFrom: string | null = null
 
 export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void {
   seedX = 0 // reset the seed cursor so a re-install (e.g. HMR) starts fresh + idempotent
@@ -177,6 +215,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     tile(template, area) {
       useCanvasStore.getState().tileBoards(template, area)
     },
+    boardBucket(id) {
+      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+      if (!board) return null
+      return boardStatusBucket(board.type, {
+        terminalRunning: useTerminalRuntimeStore.getState().running[id],
+        preview: usePreviewStore.getState().byId[id]?.status
+      })
+    },
+    bucketPillDot(bucket) {
+      // Cast: the harness passes a string; bucketToPill only reads known keys (others → null).
+      return bucketToPill(bucket as Parameters<typeof bucketToPill>[0])?.dot ?? null
+    },
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })
     },
@@ -194,6 +244,34 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       } catch {
         return false
       }
+    },
+    addConnector(sourceId, targetId, kind = 'orchestration') {
+      return useCanvasStore.getState().addConnector(sourceId, targetId, kind)
+    },
+    getConnectors() {
+      return useCanvasStore.getState().connectors
+    },
+    removeConnector(id) {
+      useCanvasStore.getState().removeConnector(id)
+    },
+    serializedConnectorCount() {
+      return fromObject(useCanvasStore.getState().toObject()).connectors.length
+    },
+    startConnect(fromId) {
+      connectFrom = fromId
+    },
+    completeConnectAt(flowX, flowY) {
+      if (!connectFrom) return null
+      const boards = useCanvasStore.getState().boards
+      const target = resolveConnectTarget(boards, connectFrom, { x: flowX, y: flowY })
+      const id = target
+        ? useCanvasStore.getState().addConnector(connectFrom, target, 'orchestration')
+        : null
+      connectFrom = null
+      return id
+    },
+    selectConnector(id) {
+      host.selectConnector(id)
     },
     setGesture(active) {
       usePreviewStore.getState().setNodeGesture(active)
@@ -258,8 +336,19 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       host.setFullView(null)
       host.setFocus(null)
       host.exitCameraFullView()
+      // The digest panel (feat/context) is a per-project UI mode too — close it so an
+      // open panel from one test can't leak into the next.
+      host.setDigestOpen(false)
       // 2. Empty the store + history (renderer stops referencing the old boards).
-      useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+      //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
+      //    connector survives reset() and pollutes the next test.
+      useCanvasStore.setState({
+        boards: [],
+        connectors: [],
+        past: [],
+        future: [],
+        selectedId: null
+      })
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()

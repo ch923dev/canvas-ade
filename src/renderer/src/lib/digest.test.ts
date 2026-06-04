@@ -33,7 +33,7 @@ function planning(
   return { type: 'planning', x: 0, y: 0, w: 516, h: 366, title: 'Planning', elements: [], ...p }
 }
 function doc(boards: CanvasDoc['boards']): CanvasDoc {
-  return { schemaVersion: 2, viewport: null, boards }
+  return { schemaVersion: 2, viewport: null, boards, connectors: [] }
 }
 
 describe('buildDigest — header', () => {

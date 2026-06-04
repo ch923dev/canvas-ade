@@ -1,7 +1,11 @@
 import { useEffect } from 'react'
 import Canvas from './canvas/Canvas'
 import WelcomeScreen from './canvas/WelcomeScreen'
+import AuditLogViewer from './canvas/AuditLogViewer'
+import ConfirmModal from './canvas/ConfirmModal'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
+import { useMcpPublish } from './store/useMcpPublish'
+import { useMcpCommands } from './store/useMcpCommands'
 import { useCanvasStore } from './store/canvasStore'
 import { useAutosave } from './store/useAutosave'
 import { isE2E } from './smoke/e2eRegistry'
@@ -14,6 +18,8 @@ import { isE2E } from './smoke/e2eRegistry'
 function App(): React.ReactElement {
   useRendererSmoke()
   useAutosave()
+  useMcpPublish()
+  useMcpCommands()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
@@ -35,6 +41,8 @@ function App(): React.ReactElement {
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
       {status === 'open' ? <Canvas /> : <WelcomeScreen />}
+      {status === 'open' && <AuditLogViewer />}
+      <ConfirmModal />
     </div>
   )
 }

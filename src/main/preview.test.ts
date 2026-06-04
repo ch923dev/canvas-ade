@@ -269,7 +269,10 @@ describe('isForeignSender', () => {
   const mainFrame = { name: 'main' } as unknown as IpcMainInvokeEvent['senderFrame']
   const foreignFrame = { name: 'foreign' } as unknown as IpcMainInvokeEvent['senderFrame']
   const winWithMain = (): BrowserWindow =>
-    ({ webContents: { mainFrame } }) as unknown as BrowserWindow
+    ({
+      isDestroyed: () => false,
+      webContents: { mainFrame, isDestroyed: () => false }
+    }) as unknown as BrowserWindow
 
   it('allows a synthetic/internal call with no senderFrame', () => {
     expect(isForeignSender({ senderFrame: null }, () => winWithMain())).toBe(false)
@@ -285,5 +288,21 @@ describe('isForeignSender', () => {
 
   it('blocks a real sender when the window is unresolved (null)', () => {
     expect(isForeignSender({ senderFrame: mainFrame }, () => null)).toBe(true)
+  })
+
+  it('denies (never throws) when the webContents is destroyed mid-teardown', () => {
+    // A late invoke can arrive after the WebContents is destroyed but while the
+    // BrowserWindow still resolves; reading `.mainFrame` then throws. We must
+    // short-circuit on isDestroyed() and DENY, never touch mainFrame.
+    const destroyed = {
+      isDestroyed: () => false,
+      webContents: {
+        isDestroyed: () => true,
+        get mainFrame(): never {
+          throw new Error('Object has been destroyed')
+        }
+      }
+    } as unknown as BrowserWindow
+    expect(isForeignSender({ senderFrame: mainFrame }, () => destroyed)).toBe(true)
   })
 })
