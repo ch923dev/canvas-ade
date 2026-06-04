@@ -409,6 +409,130 @@ describe('createSummaryLoop — no key → no spend / no write', () => {
   })
 })
 
+describe('createSummaryLoop — BUG-015 in-flight guard is per (project,board)', () => {
+  it('a same-id board in a DIFFERENT project is summarized, not blocked by a sibling in-flight call', async () => {
+    const projA = mkdtempSync(join(tmpdir(), 'm3-projA-'))
+    const projB = mkdtempSync(join(tmpdir(), 'm3-projB-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    // Both projects hold a board with the SAME id 'shared'. `current` is the open project; we flip
+    // it between the two onIntent calls so intent #1 captures projA and intent #2 captures projB.
+    // A controllable fetch keeps #1 in flight while #2 is fired, so they truly overlap. Pre-fix
+    // the boardId-keyed guard saw 'shared' already in-flight and dropped #2 → projB never written.
+    let current = projA
+    let fetchCalls = 0
+    let releaseFirst: () => void = () => {}
+    const firstStarted = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let unblock: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      unblock = resolve
+    })
+    const fetchImpl = (async () => {
+      const n = ++fetchCalls
+      const reply = {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: 'sum' } }] }),
+        text: async () => ''
+      }
+      if (n === 1) {
+        releaseFirst()
+        await gate // hold call #1 in flight until the test has fired #2
+        return reply
+      }
+      return reply
+    }) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => current,
+      readProject: (dir) => ({
+        ok: true,
+        dir,
+        name: 'proj',
+        doc: docWith([planNote('shared', 'hello world')])
+      }),
+      now: () => new Date(),
+      fetch: fetchImpl,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      const first = loop.onIntent({ boardId: 'shared' }) // captures projA, now in flight
+      await firstStarted
+      current = projB // user switched to project B
+      await loop.onIntent({ boardId: 'shared' }) // pre-fix: dropped; post-fix: runs for projB
+      current = projA // switch back so call #1's TOCTOU re-check still matches its captured projA
+      unblock() // let call #1 finish
+      await first
+      await new Promise((r) => setTimeout(r, 10))
+      expect(createCanvasMemory(projA).readBoard('shared')).toContain('sum')
+      expect(createCanvasMemory(projB).readBoard('shared')).toContain('sum')
+    } finally {
+      rmSync(projA, { recursive: true, force: true })
+      rmSync(projB, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a dropped second intent (same project+board) is re-fired after the first call FAILS', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    // Non-mock provider with an injected transport: the 1st summarize fails (HTTP 500), the 2nd
+    // succeeds. We fire intent #1 (slow-failing) and, while it is in flight, intent #2 for the
+    // SAME board — that 2nd is parked in `pending`. Pre-fix it was silently dropped; post-fix the
+    // `finally` re-fires it after the failed first call, so the retry's success writes the prose.
+    let fetchCalls = 0
+    let releaseFirst: () => void = () => {}
+    const firstStarted = new Promise<void>((resolve) => {
+      // resolved when the first fetch begins, so the test can fire the 2nd intent mid-flight
+      releaseFirst = resolve
+    })
+    const fetchImpl = (async () => {
+      const n = ++fetchCalls
+      if (n === 1) {
+        releaseFirst()
+        // give the test a tick to fire the 2nd intent before the first resolves
+        await new Promise((r) => setTimeout(r, 10))
+        return { ok: false, status: 500, json: async () => ({}), text: async () => '' }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: 'retry ok' } }] }),
+        text: async () => ''
+      }
+    }) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({
+        ok: true,
+        dir: proj,
+        name: 'proj',
+        doc: docWith([planNote('p1', 'hello world')])
+      }),
+      now: () => new Date(),
+      fetch: fetchImpl,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      const first = loop.onIntent({ boardId: 'p1' })
+      await firstStarted // first fetch is now running
+      await loop.onIntent({ boardId: 'p1' }) // parked in pending (guard hit)
+      await first // first fails → finally re-fires the pending retry
+      // The retry uses fetch call #2 (success). Drain any trailing microtasks/timers.
+      await new Promise((r) => setTimeout(r, 20))
+      expect(fetchCalls).toBeGreaterThanOrEqual(2)
+      expect(createCanvasMemory(proj).readBoard('p1')).toContain('retry ok')
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('createSummaryLoop — in-flight guard', () => {
   it('a second concurrent onIntent for a board already summarizing is dropped', async () => {
     const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))

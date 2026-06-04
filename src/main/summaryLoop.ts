@@ -222,18 +222,29 @@ export interface SummaryLoop {
 }
 
 export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
+  // BUG-015: key the in-flight guard on (project,board), NOT boardId alone. A board id that
+  // collides across projects (deterministic fixture ids; theoretically nanoid) would otherwise
+  // let a stale in-flight call from project A block — or, worse, silently drop — a legitimately
+  // different board's intent in project B after a rapid switch. `pending` remembers an intent
+  // dropped by the guard so the in-flight call's `finally` re-fires it: a content change that
+  // raced an in-flight summarize is no longer lost when the first call fails.
   const inFlight = new Set<string>()
+  const pending = new Set<string>()
   const fetchImpl = deps.fetch ?? defaultDeps().fetch
   const env = deps.env ?? process.env
   const now = deps.now ?? ((): Date => new Date())
 
-  return {
-    async onIntent({ boardId }) {
-      if (inFlight.has(boardId)) return // a slow call for this board is already running
-      inFlight.add(boardId)
+  async function doIntent({ boardId }: SummarizeIntent): Promise<void> {
+    {
+      const dir = deps.getCurrentDir()
+      if (!dir) return
+      const key = `${dir}\u0000${boardId}` // NUL can't appear in a real path → unambiguous join
+      if (inFlight.has(key)) {
+        pending.add(key) // a slow call for this (project,board) is running — remember to retry
+        return
+      }
+      inFlight.add(key)
       try {
-        const dir = deps.getCurrentDir()
-        if (!dir) return
         const r = deps.readProject(dir)
         if (!r.ok) return
         const boards = (r.doc as { boards?: unknown })?.boards
@@ -288,8 +299,18 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
       } catch (err) {
         console.warn('[summaryLoop] onIntent failed (non-fatal)', err)
       } finally {
-        inFlight.delete(boardId)
+        inFlight.delete(key)
+        // BUG-015: a content change that raced this in-flight call was parked in `pending` (and
+        // its fingerprint already advanced in memoryEngine, so no future observe() would re-arm
+        // it). Re-fire it now that the slot is free — whether this call succeeded OR failed — so a
+        // warranted re-summarize is not silently lost on a slow first-call failure.
+        if (pending.delete(key)) void loop.onIntent({ boardId })
       }
     }
   }
+
+  const loop: SummaryLoop = {
+    onIntent: doIntent
+  }
+  return loop
 }
