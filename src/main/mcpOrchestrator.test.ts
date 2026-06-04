@@ -223,6 +223,40 @@ describe('buildOrchestrator', () => {
       await expect(orch.closeBoard('b')).rejects.toThrow(/no-window/)
     })
 
+    it('BUG-009: frees the cap slot even when removeBoard fails (PTY is already dead)', async () => {
+      // The PTY is drained/killed before the removeBoard ack; if the renderer rejects the
+      // removal the board is still dead, so a failed close must NOT permanently burn the
+      // cap slot. OLD code threw before tracked.delete → the slot leaked and every spawn
+      // after the cap was hit kept rejecting.
+      const drained: string[] = []
+      let removeOk = false
+      const orch = buildOrchestrator(
+        reg(
+          [],
+          [],
+          {},
+          {},
+          {},
+          async (cmd) => {
+            if (cmd.type === 'removeBoard') return removeOk ? { ok: true, type: cmd.type } : { ok: false, error: 'no-window' }
+            return { ok: true, type: cmd.type }
+          },
+          async (id) => {
+            drained.push(id)
+          }
+        )
+      )
+      const ids: string[] = []
+      for (let i = 0; i < MCP_SPAWN_CAP; i++) ids.push((await orch.spawnBoard({ type: 'terminal' })).id)
+      await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i) // at the cap
+      // Close one, but the renderer rejects the removeBoard — the close throws…
+      await expect(orch.closeBoard(ids[0])).rejects.toThrow(/no-window/)
+      expect(drained).toContain(ids[0]) // the PTY was drained/killed regardless
+      // …yet the slot was freed (finally), so a fresh spawn succeeds (no leaked slot).
+      removeOk = true
+      await expect(orch.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id')
+    })
+
     it('frees a cap slot so a new spawn succeeds after a close', async () => {
       const { sendCommand, drainPty } = okCommands()
       const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand, drainPty))
@@ -1145,6 +1179,55 @@ describe('buildOrchestrator', () => {
       expect(drained).toContain(idle) // it was gracefully closed (drained + removed)
       expect(boards.some((b) => b.id === idle)).toBe(false) // gone from the mirror
       expect(boards.some((b) => b.id === busy)).toBe(true) // the running board survives
+    })
+
+    it('BUG-009: a failing close mid-sweep does not abort the reap — the rest are still closed', async () => {
+      // Two boards go idle past the TTL in the same sweep, but the renderer rejects the
+      // removeBoard for the FIRST one. OLD code: the throw propagated out of reapIdle,
+      // abandoning the second board and re-failing on the first every future sweep. The
+      // fix swallows per-id so the second board is still reaped.
+      let clock = 0
+      const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
+      const removed: string[] = []
+      let failId: string | null = null
+      const registry: BoardRegistry = {
+        listBoards: () => boards,
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => {
+          if (cmd.type === 'addBoard')
+            boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T', status: 'running' })
+          if (cmd.type === 'removeBoard') {
+            if (cmd.id === failId) return { ok: false, error: 'no-window' }
+            const i = boards.findIndex((b) => b.id === cmd.id)
+            if (i >= 0) boards.splice(i, 1)
+            removed.push(cmd.id)
+          }
+          return { ok: true, type: cmd.type }
+        },
+        drainPty: async () => {},
+        ...DISPATCH_DEFAULTS
+      }
+      const setStatus = (id: string, status: string): void => {
+        const b = boards.find((x) => x.id === id)
+        if (b) b.status = status
+      }
+      const orch = buildOrchestrator(registry, { now: () => clock, idleTtlMs: 1000 })
+      const { id: a } = await orch.spawnBoard({ type: 'terminal' })
+      const { id: b } = await orch.spawnBoard({ type: 'terminal' })
+      setStatus(a, 'idle')
+      setStatus(b, 'idle')
+      failId = a // the FIRST reapable board's removal will fail
+      await orch.reapIdle() // sweep 1: arm idleSince for both
+      clock = 1500 // both idle past the TTL
+      const reaped = await orch.reapIdle()
+      // The whole sweep did NOT abort: board b was still closed despite a failing.
+      expect(reaped).toEqual([b])
+      expect(removed).toEqual([b])
+      expect(boards.some((x) => x.id === b)).toBe(false) // b gone from the mirror
     })
 
     it('a board that returns to running before the TTL is NOT reaped (idle clock resets)', async () => {

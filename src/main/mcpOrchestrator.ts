@@ -242,11 +242,16 @@ export function buildOrchestrator(
       // Graceful FIRST: drain (then tree-kill) the PTY so the shell/agent gets a clean
       // exit rather than an abrupt SIGKILL. Best-effort — a non-terminal id is a no-op.
       await registry.drainPty(boardId)
-      // Then remove the board from the canvas via the command channel.
-      const ack = await registry.sendCommand({ type: 'removeBoard', id: boardId })
-      if (!ack.ok) throw new Error(`close_board failed: ${ack.error}`)
-      // Free the cap budget so a later spawn can reuse the slot (T3.1 cap).
-      tracked.delete(boardId)
+      // The PTY is already drained/killed above, so the board is dead either way. Free the
+      // cap budget in a `finally` so a failed removeBoard ack does NOT permanently burn the
+      // slot (BUG-009): leaving it tracked would also make every reapIdle sweep retry the
+      // same already-dead board forever. The throw still propagates to the caller.
+      try {
+        const ack = await registry.sendCommand({ type: 'removeBoard', id: boardId })
+        if (!ack.ok) throw new Error(`close_board failed: ${ack.error}`)
+      } finally {
+        tracked.delete(boardId)
+      }
     },
     async reapIdle(): Promise<string[]> {
       // 🔒 Idle-reaping (T3.4): close MCP-spawned boards that have stayed idle past the
@@ -270,8 +275,22 @@ export function buildOrchestrator(
         }
         if (t - rec.idleSince >= idleTtlMs) reapable.push(id)
       }
-      for (const id of reapable) await this.closeBoard(id)
-      return reapable
+      // Close each reapable board independently: a single failed close (e.g. the renderer
+      // never acks removeBoard) must NOT abort the whole sweep and leave the rest of the
+      // idle boards un-reaped (BUG-009). Swallow per-id so the loop continues, and return
+      // only the ids that actually closed.
+      const reaped: string[] = []
+      for (const id of reapable) {
+        try {
+          await this.closeBoard(id)
+          reaped.push(id)
+        } catch {
+          // best-effort: skip a board that failed to close and continue the sweep. Its
+          // cap slot is already freed (closeBoard's finally), so it won't re-enter the
+          // budget; the next sweep re-evaluates it from the live mirror.
+        }
+      }
+      return reaped
     },
     async configureBoard(
       boardId: BoardId,
