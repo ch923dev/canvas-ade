@@ -92,12 +92,12 @@ describe('navDecision (#13)', () => {
   const APP_DOC = '/C:/app/resources/app.asar/out/renderer/index.html'
 
   it('allows same-origin navigation (query/hash change)', () => {
-    expect(navDecision('http://localhost:5173/?e2e=1', { appOrigin: 'http://localhost:5173' })).toEqual(
-      {
-        allow: true,
-        openExternal: null
-      }
-    )
+    expect(
+      navDecision('http://localhost:5173/?e2e=1', { appOrigin: 'http://localhost:5173' })
+    ).toEqual({
+      allow: true,
+      openExternal: null
+    })
   })
 
   it('allows the app document file: URL in packaged build (appOrigin null)', () => {
@@ -192,12 +192,12 @@ describe('navDecision (#13)', () => {
   })
 
   it('blocks a file: drop in dev (appOrigin set, no appDocPath) with no external open', () => {
-    expect(navDecision('file:///C:/Windows/win.ini', { appOrigin: 'http://localhost:5173' })).toEqual(
-      {
-        allow: false,
-        openExternal: null
-      }
-    )
+    expect(
+      navDecision('file:///C:/Windows/win.ini', { appOrigin: 'http://localhost:5173' })
+    ).toEqual({
+      allow: false,
+      openExternal: null
+    })
   })
 
   it('blocks an unparseable URL with no external open', () => {
