@@ -466,25 +466,38 @@ export function buildOrchestrator(
       })
 
       // (7) Await idle: poll the board's status until it leaves `running`, bounded by a
-      // timeout (M5 replaces this interim poll with real attention signalling).
+      // timeout (M5 replaces this interim poll with real attention signalling). RE-RESOLVE
+      // the live board every tick — a board closed mid-wait must NOT fall back to the stale
+      // pre-write snapshot (BUG-008): the snapshot's `status: 'running'` short-circuits
+      // `deriveStatus` and stalls the loop to the full deadline. Absent from the mirror =
+      // the board is gone (user-closed / reaped) → stop waiting and record `closed`.
       const deadline = now() + handoffTimeoutMs
+      let exit: 'idle' | 'closed' | 'timed_out' = 'timed_out'
       while (now() < deadline) {
-        const status = deriveStatus(
-          registry.listBoards().find((b) => b.id === boardId) ?? board,
-          sessionMap()
-        )
-        if (status !== 'running') break
+        const live = registry.listBoards().find((b) => b.id === boardId)
+        if (!live) {
+          exit = 'closed'
+          break
+        }
+        if (deriveStatus(live, sessionMap()) !== 'running') {
+          exit = 'idle'
+          break
+        }
         await sleep(handoffPollMs)
       }
       const result = registry.readResult(boardId)
 
-      // (8) Record the completed dispatch (target + full prompt + nonce + seq + outputs).
+      // (8) Record the dispatch outcome (target + full prompt + nonce + seq + outputs). The
+      // status distinguishes a true completion (`completed`) from a board that closed
+      // mid-dispatch (`closed`) or never left `running` before the deadline (`timed_out`),
+      // so the MCP client/audit trail can tell them apart instead of always seeing
+      // `completed` over a false-empty result (BUG-008).
       await registry.audit({
         type: 'handoff_prompt',
         targetId: boardId,
         prompt: text,
         nonce,
-        status: 'completed',
+        status: exit === 'idle' ? 'completed' : exit,
         outputs: JSON.stringify(result),
         detail: `seq=${seq}`
       })
