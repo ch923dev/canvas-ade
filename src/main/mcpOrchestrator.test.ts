@@ -1125,6 +1125,49 @@ describe('buildOrchestrator', () => {
       expect(audits.some((a) => a.status === 'failed')).toBe(true)
     })
 
+    it('🔒 BUG-021: a cable deleted DURING the confirm wait blocks the relay (TOCTOU)', async () => {
+      // The cable IS the authorization. It exists at the initial check, but the user
+      // deletes it on the canvas while the confirm modal is open (the connector mirror
+      // is overwritten mid-wait). OLD code never re-checked → the relay fired without a
+      // live cable. The fix re-verifies the edge post-confirm and rejects when it's gone.
+      const audits: AuditInput[] = []
+      const writes: Array<{ id: string; text: string }> = []
+      // A MUTABLE connector mirror: starts with the A→B cable, emptied during confirm.
+      let connectors: Array<{ id: string; sourceId: string; targetId: string; kind: string }> = [
+        { id: 'c1', sourceId: 'A', targetId: 'B', kind: 'orchestration' }
+      ]
+      const registry: BoardRegistry = {
+        listBoards: () => twoTerminals,
+        listConnectors: () => connectors, // reads the live (mutable) mirror each call
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: (id, text) => {
+          writes.push({ id, text })
+          return true
+        },
+        // The human approves — but while the modal was open the cable was deleted.
+        confirm: async () => {
+          connectors = [] // canvas interaction removes the authorization cable mid-wait
+          return { approved: true }
+        },
+        audit: async (input) => {
+          audits.push(input)
+        },
+        recordResult: () => {}
+      }
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'pnpm build')).rejects.toThrow(
+        /connector|cable|removed/i
+      )
+      expect(writes).toEqual([]) // the relay never reached the PTY — no live authorization
+      expect(audits.some((a) => a.status === 'rejected')).toBe(true)
+    })
+
     it('🔒 defensive: a forged/replayed nonce (consume=false) blocks the relay', async () => {
       const { registry, writes, confirms, audits } = relayReg({
         boards: twoTerminals,
