@@ -233,7 +233,10 @@ app.whenReady().then(async () => {
     () => mainWindow,
     app.getPath('userData'),
     undefined,
-    memoryEngine
+    memoryEngine,
+    // T-F4: manual ⟳ refresh → the SAME budgeted/passive summarize the detector drives (awaited so
+    // the renderer can flip its "updating…" state off once the prose is rewritten).
+    (boardId) => summaryLoop.onIntent({ boardId })
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
 

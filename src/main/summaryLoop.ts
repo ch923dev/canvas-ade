@@ -38,13 +38,22 @@ function num(v: unknown): string {
   return typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
 }
 
-/** The meaningful, human-readable content slice of one board (mirrors digest.ts fields). */
+/**
+ * The meaningful, human-readable content slice of one board (mirrors digest.ts fields).
+ *
+ * F-C / T-F2: the board TITLE is intentionally EXCLUDED from this prompt so it agrees with
+ * `memoryEngine.boardFingerprint` (which also omits title). If title were summarized but not
+ * fingerprinted, a title-only rename would never re-summarize yet the stale prose could keep
+ * naming the OLD title; if it were both, every rename would burn a budgeted summarize for an
+ * identical body. We pick neither: the panel card already shows the LIVE title, and the
+ * Tier-2 prose describes what the board IS, not what it's called. Keep this field set and
+ * boardFingerprint's in lockstep.
+ */
 function boardContent(b: RawBoard): string {
-  const title = str(b.title)
   switch (b.type) {
     case 'terminal':
       return [
-        `Terminal board "${title}".`,
+        'Terminal board.',
         str(b.launchCommand) && `Runs: ${str(b.launchCommand)}`,
         str(b.cwd) && `cwd: ${str(b.cwd)}`,
         num(b.port) && `Dev server port: ${num(b.port)}`
@@ -53,7 +62,7 @@ function boardContent(b: RawBoard): string {
         .join('\n')
     case 'browser':
       return [
-        `Browser preview board "${title}".`,
+        'Browser preview board.',
         str(b.url) && `URL: ${str(b.url)}`,
         str(b.viewport) && `Viewport: ${str(b.viewport)}`
       ]
@@ -61,7 +70,7 @@ function boardContent(b: RawBoard): string {
         .join('\n')
     case 'planning': {
       const els = Array.isArray(b.elements) ? (b.elements as RawBoard[]) : []
-      const lines: string[] = [`Planning board "${title}".`]
+      const lines: string[] = ['Planning board.']
       for (const e of els) {
         if (e.kind === 'checklist') {
           const items = Array.isArray(e.items) ? (e.items as RawBoard[]) : []
@@ -74,14 +83,82 @@ function boardContent(b: RawBoard): string {
       return lines.join('\n')
     }
     default:
-      return `Board "${title}" (${str(b.type) || 'unknown'}).`
+      return `Board (${str(b.type) || 'unknown'}).`
   }
 }
 
-/** Pure: a board → a capped SummarizeInput. Never throws on malformed input. */
-export function buildSummarizeInput(board: unknown): SummarizeInput {
+// ── T-F1: terminal RUNTIME status (running/idle/exited) folded into the summary ──────
+//
+// Runtime state lives in MAIN (pty.ts), NOT on disk — Tier-1 (disk-only) and the detector
+// (canvas.json only) can't see it, so the Tier-2 loop is the one place that can surface it.
+// The loop reads it via an injected MAIN-internal getter (see SummaryLoopDeps.getTerminalRuntime)
+// and folds a single status line into the terminal board's summarize input. This mirrors the
+// renderer's `PtyState` union without importing pty.ts (process-boundary; preload mirrors it the
+// same way). The getter is optional + defensive: undefined → omit the line, never throw, never block.
+
+/** A terminal session's runtime, sourced from MAIN (mirrors pty.ts `PtyState` + activity clock). */
+export interface TerminalRuntime {
+  state: 'spawning' | 'running' | 'exited' | 'spawn-failed'
+  /** Epoch ms of the last PTY data/exit, when known. */
+  lastActivityAt?: number
+  /** Exit code when `state === 'exited'`. */
+  exitCode?: number
+}
+
+/** A running session with no activity for this long reads as "idle" rather than "running". */
+export const IDLE_AFTER_MS = 60_000
+
+/** Pure: a coarse relative-time phrase for a non-negative ms delta ("just now" / "3m ago"). */
+function relTime(deltaMs: number): string {
+  const s = Math.max(0, Math.round(deltaMs / 1000))
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  return `${h}h ago`
+}
+
+/**
+ * Pure: one human runtime line for a terminal board, or null when unknown. "running" with stale
+ * activity (older than IDLE_AFTER_MS) degrades to "idle" so the prose distinguishes an active agent
+ * from a parked shell. `now` is injected for deterministic tests.
+ */
+export function terminalRuntimeLine(rt: TerminalRuntime | undefined, now: number): string | null {
+  if (!rt) return null
+  switch (rt.state) {
+    case 'spawning':
+      return 'Status: starting up'
+    case 'running': {
+      const age = typeof rt.lastActivityAt === 'number' ? now - rt.lastActivityAt : undefined
+      const when = age !== undefined ? `, last active ${relTime(age)}` : ''
+      const label = age !== undefined && age >= IDLE_AFTER_MS ? 'idle' : 'running'
+      return `Status: ${label}${when}`
+    }
+    case 'exited':
+      return `Status: exited${typeof rt.exitCode === 'number' ? ` (code ${rt.exitCode})` : ''}`
+    case 'spawn-failed':
+      return 'Status: failed to start'
+  }
+}
+
+/**
+ * Pure: a board → a capped SummarizeInput. Never throws on malformed input. For a terminal board
+ * an optional `runtime` (from MAIN's getTerminalRuntime) folds in a live status line; `now` (default
+ * Date.now()) only affects that relative phrase. Non-terminal boards ignore both extra args.
+ */
+export function buildSummarizeInput(
+  board: unknown,
+  runtime?: TerminalRuntime,
+  now: number = Date.now()
+): SummarizeInput {
   const b = (board ?? {}) as RawBoard
-  const text = boardContent(b).slice(0, MAX_INPUT_CHARS)
+  const lines = [boardContent(b)]
+  if (b.type === 'terminal') {
+    const status = terminalRuntimeLine(runtime, now)
+    if (status) lines.push(status)
+  }
+  const text = lines.join('\n').slice(0, MAX_INPUT_CHARS)
   return { system: SYSTEM, text: text.length > 0 ? text : 'Empty board.' }
 }
 
@@ -125,6 +202,12 @@ export interface SummaryLoopDeps {
   getCurrentDir: () => string | null
   /** Read a project's doc from disk (post-save). */
   readProject: (dir: string) => ProjectResult
+  /**
+   * T-F1: MAIN-internal accessor for a terminal board's live runtime (running/idle/exited).
+   * Optional + defensive — when absent (e.g. not yet wired to pty.ts) or it returns undefined,
+   * the summary simply omits the status line. NEVER an action surface: the loop only READS it.
+   */
+  getTerminalRuntime?: (boardId: string) => TerminalRuntime | undefined
   /** Clock for the per-day budget (default new Date()). */
   now?: () => Date
   /** Transport (default global fetch); the mock seam short-circuits it under e2e. */
@@ -159,13 +242,25 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
           : undefined
         if (!board) return // deleted between the debounce and the fire
 
+        // T-F1: fold the terminal's live runtime (if the getter is wired + returns one) into the
+        // input. Defensive: a throwing/absent getter must never fail the summarize or block a save.
+        let runtime: TerminalRuntime | undefined
+        try {
+          runtime = deps.getTerminalRuntime?.(boardId)
+        } catch {
+          runtime = undefined
+        }
         const config = readLlmConfig(deps.llmDataDir)
-        const result = await runSummarize(config, buildSummarizeInput(board), {
-          fetch: fetchImpl,
-          env,
-          keyStore: createKeyStore(deps.llmDataDir, deps.encryptor),
-          budget: createBudgetStore(deps.llmDataDir, now)
-        })
+        const result = await runSummarize(
+          config,
+          buildSummarizeInput(board, runtime, now().getTime()),
+          {
+            fetch: fetchImpl,
+            env,
+            keyStore: createKeyStore(deps.llmDataDir, deps.encryptor),
+            budget: createBudgetStore(deps.llmDataDir, now)
+          }
+        )
         if (!result.ok) return // no-provider / budget-exceeded / provider-error → Tier-1 stays
 
         const mem = createCanvasMemory(dir)

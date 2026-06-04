@@ -1,5 +1,5 @@
 import { it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { DigestPanel } from './DigestPanel'
 import { buildDigest } from '../lib/digest'
 import type { CanvasDoc } from '../lib/boardSchema'
@@ -95,6 +95,16 @@ it('hides the panel and shows a reopen tab when closed', () => {
   expect(onOpen).toHaveBeenCalledTimes(1)
 })
 
+it('T-F3: marks the panel inert only when closed (keeps it out of the tab order)', () => {
+  const { container, rerender } = render(
+    <DigestPanel digest={buildDigest(DOC)} open={false} onOpen={() => {}} onClose={() => {}} />
+  )
+  const panel = container.querySelector('[data-test=digest-panel]')!
+  expect(panel.hasAttribute('inert')).toBe(true)
+  rerender(<DigestPanel digest={buildDigest(DOC)} open onOpen={() => {}} onClose={() => {}} />)
+  expect(panel.hasAttribute('inert')).toBe(false)
+})
+
 it('calls onClose when the dismiss button is clicked', () => {
   const onClose = vi.fn()
   const { container } = render(
@@ -151,4 +161,66 @@ it('renders Tier-1 lines for every card when no prose map is passed', () => {
   )
   expect(container.querySelectorAll('[data-test=digest-prose]')).toHaveLength(0)
   expect(container.querySelectorAll('.digest-lines')).toHaveLength(3)
+})
+
+it('T-F4: renders no refresh control when onRefresh is not provided', () => {
+  const { container } = render(
+    <DigestPanel digest={buildDigest(DOC)} open onOpen={() => {}} onClose={() => {}} />
+  )
+  expect(container.querySelectorAll('[data-test=digest-refresh]')).toHaveLength(0)
+})
+
+it('T-F4: a ⟳ per card calls onRefresh(boardId) and shows a busy state until it resolves', async () => {
+  let release: () => void = () => {}
+  const onRefresh = vi.fn(
+    () =>
+      new Promise<void>((res) => {
+        release = res
+      })
+  )
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+      onRefresh={onRefresh}
+    />
+  )
+  const buttons = container.querySelectorAll('[data-test=digest-refresh]')
+  expect(buttons).toHaveLength(3) // one per board
+  const first = buttons[0] as HTMLButtonElement
+  first.click()
+  expect(onRefresh).toHaveBeenCalledWith('t1')
+  await waitFor(() => expect(first.getAttribute('data-busy')).toBe('true'))
+  expect(first.disabled).toBe(true)
+  release()
+  await waitFor(() => expect(first.getAttribute('data-busy')).toBe('false'))
+  expect(first.disabled).toBe(false)
+})
+
+it('T-F4: ignores repeat clicks while a refresh is already in flight', async () => {
+  let release: () => void = () => {}
+  const onRefresh = vi.fn(
+    () =>
+      new Promise<void>((res) => {
+        release = res
+      })
+  )
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+      onRefresh={onRefresh}
+    />
+  )
+  const first = container.querySelectorAll('[data-test=digest-refresh]')[0] as HTMLButtonElement
+  first.click()
+  await waitFor(() => expect(first.getAttribute('data-busy')).toBe('true'))
+  first.click() // disabled + guarded → no second call
+  first.click()
+  expect(onRefresh).toHaveBeenCalledTimes(1)
+  release()
 })

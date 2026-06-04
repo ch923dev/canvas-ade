@@ -19,7 +19,8 @@ beforeEach(() => {
     hasProvider: false,
     provider: 'openrouter',
     model: 'google/gemini-2.5-flash',
-    hasKey: false
+    hasKey: false,
+    encryptionAvailable: true
   })
   llm.setKey.mockResolvedValue({ ok: true })
   llm.clearKey.mockResolvedValue({ ok: true })
@@ -85,6 +86,27 @@ it('Clear key calls clearKey for the active provider', async () => {
   await screen.findByLabelText(/api key/i)
   fireEvent.click(screen.getByRole('button', { name: /clear key/i }))
   await waitFor(() => expect(llm.clearKey).toHaveBeenCalledWith({ provider: 'openrouter' }))
+})
+
+it('T-F6: shows a no-keyring notice when encryption is unavailable', async () => {
+  llm.status.mockResolvedValue({
+    hasProvider: false,
+    provider: 'openrouter',
+    model: 'google/gemini-2.5-flash',
+    hasKey: false,
+    encryptionAvailable: false
+  })
+  render(<SettingsModal onClose={() => {}} />)
+  const notice = (await screen.findByRole('note')) as HTMLElement
+  expect(notice.getAttribute('data-test')).toBe('settings-no-keyring')
+  expect(notice.textContent).toMatch(/keyring/i)
+  expect(notice.textContent).toMatch(/OPENROUTER_API_KEY/)
+})
+
+it('T-F6: hides the no-keyring notice when encryption IS available', async () => {
+  render(<SettingsModal onClose={() => {}} />) // beforeEach: encryptionAvailable true
+  await screen.findByLabelText(/api key/i)
+  expect(screen.queryByRole('note')).toBeNull()
 })
 
 it('keeps the modal open and shows an error when the key save fails', async () => {

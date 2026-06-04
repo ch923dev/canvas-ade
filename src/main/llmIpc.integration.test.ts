@@ -65,6 +65,8 @@ describe('registerLlmHandlers', () => {
     expect(s.hasProvider).toBe(true)
     expect(s.provider).toBe('openrouter')
     expect(JSON.stringify(s)).not.toContain('secret-key')
+    // T-F6: no encryptor wired here → a key can't be stored encrypted.
+    expect(s.encryptionAvailable).toBe(false)
   })
 
   it('summarize rejects a foreign sender (guard chain through the handler)', async () => {
@@ -135,6 +137,15 @@ describe('registerLlmHandlers — key channels', () => {
     }
     expect(set).toEqual({ ok: false, reason: 'encryption-unavailable' })
     expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(false)
+  })
+
+  it('T-F6: status.encryptionAvailable reflects the encryptor (true / false)', async () => {
+    const yes = setupKeyed(fakeEncryptor(true))
+    expect(((await yes.cap.invoke('llm:status')) as LlmStatus).encryptionAvailable).toBe(true)
+    const no = setupKeyed(fakeEncryptor(false))
+    expect(((await no.cap.invoke('llm:status')) as LlmStatus).encryptionAvailable).toBe(false)
+    rmSync(yes.dir, { recursive: true, force: true })
+    rmSync(no.dir, { recursive: true, force: true })
   })
 
   it('setConfig persists provider/model and status reflects it', async () => {
