@@ -277,8 +277,75 @@ export function buildOrchestrator(
       boardId: BoardId,
       config: { shell?: string; launchCommand?: string; cwd?: string }
     ): Promise<void> {
-      // Apply the durable per-type config via the command channel. The renderer's
-      // updateBoard filters to PATCHABLE_KEYS, so an off-type/ephemeral key is dropped.
+      // 🔒 `launchCommand` is the exec vector (BUG-002): it is free-text written verbatim
+      // as the FIRST PTY line on the board's next spawn, so a configure that sets it can
+      // pre-stage an arbitrary shell command with deferred execution. Gate it with the same
+      // protections handoffPrompt uses — sanitize (reject embedded CR/LF) → human confirm →
+      // audit — BEFORE the value is ever persisted. Shell/cwd-only patches carry no exec
+      // vector, so they pass through unchanged (no confirm) to keep the existing contract.
+      if (config.launchCommand !== undefined && config.launchCommand !== '') {
+        // (a) One launchCommand = one command line. Reject an embedded CR/LF (it would run
+        // N commands on spawn) + strip control chars — BEFORE the human gate so a
+        // multi-command payload is never shown to the human to rubber-stamp.
+        let safeLaunch: string
+        try {
+          safeLaunch = sanitizeDispatchText(config.launchCommand)
+        } catch (err) {
+          if (err instanceof DispatchPayloadError) {
+            await registry.audit({
+              type: 'configure_board',
+              targetId: boardId,
+              prompt: config.launchCommand,
+              nonce: '',
+              status: 'rejected',
+              detail: `unsafe launchCommand: ${err.message}`
+            })
+          }
+          throw err
+        }
+
+        // (b) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
+        // carries the target board + the EXACT (sanitized) command the human is authorizing.
+        const { approved } = await registry.confirm({
+          title: `Configure launch command for board ${boardId}`,
+          body: `Set this command to run on terminal "${boardId}" the next time it spawns?\n\n${safeLaunch}`
+        })
+        if (!approved) {
+          await registry.audit({
+            type: 'configure_board',
+            targetId: boardId,
+            prompt: safeLaunch,
+            nonce: '',
+            status: 'rejected',
+            detail: 'launchCommand configure denied by the human gate'
+          })
+          throw new Error('configure_board: launchCommand denied by the human gate')
+        }
+
+        // (c) Apply the durable per-type config via the command channel (sanitized value).
+        const ack = await registry.sendCommand({
+          type: 'configureBoard',
+          id: boardId,
+          patch: { ...config, launchCommand: safeLaunch }
+        })
+        if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
+
+        // Record the approved configure (target board id + the new launchCommand) AFTER it
+        // lands so the audit trail reflects a write that actually persisted.
+        await registry.audit({
+          type: 'configure_board',
+          targetId: boardId,
+          prompt: safeLaunch,
+          nonce: '',
+          status: 'configured',
+          detail: 'launchCommand set via configure_board'
+        })
+        return
+      }
+
+      // No launchCommand → no exec vector. Apply the durable per-type config via the command
+      // channel. The renderer's updateBoard filters to PATCHABLE_KEYS, so an off-type/
+      // ephemeral key is dropped.
       const ack = await registry.sendCommand({ type: 'configureBoard', id: boardId, patch: config })
       if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
     },
