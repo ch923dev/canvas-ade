@@ -229,7 +229,14 @@ export function registerProjectHandlers(
     if (guard(e)) return null
     const recents = listRecents(userDataDir)
     if (recents.length === 0) return null
-    const r = readProject(recents[0].path)
+    const dir = recents[0].path
+    // project-current-skips-unsafe-dir-guard: vet the persisted recents path before any fs
+    // touch, exactly like project:open — a tampered recents file must not reach readProject.
+    if (isUnsafeProjectDir(dir)) {
+      console.warn('[project:current] skipping reopen of an unsafe most-recent path:', dir)
+      return null
+    }
+    const r = readProject(dir)
     if (r.ok) {
       setCurrentDir(r.dir)
       touchRecent(userDataDir, r.dir, projectName(r.dir), now())
@@ -244,6 +251,10 @@ export function registerProjectHandlers(
       } catch (err) {
         console.warn('[memoryEngine] reset/observe on current failed (non-fatal)', err)
       }
+    } else {
+      // project-current-readproject-swallow: an auto-reopen read failure was returned as a
+      // bare null with no trace. Surface it so a failed reopen of the last project is visible.
+      console.warn('[project:current] failed to reopen most-recent project:', dir, '—', r.error)
     }
     return r.ok ? r : null
   })

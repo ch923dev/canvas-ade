@@ -72,6 +72,17 @@ export function readBak(dir: string): ProjectResult {
   return { ok: false, error: `No readable canvas.json.bak in ${dir}` }
 }
 
+/**
+ * Atomically rotate the prior good `canvas.json` → `canvas.json.bak`. Uses write-file-atomic's
+ * temp-write + rename (the same primitive the primary write uses) instead of a raw
+ * `copyFileSync`, so a crash mid-rotation can never leave a torn `.bak`
+ * (bak-rotation-non-atomic-copy). The caller has already verified `primary` parses, so reading
+ * its bytes here is safe.
+ */
+export function rotateBakAtomic(primary: string, bakPath: string): void {
+  writeFileAtomic.sync(bakPath, readFileSync(primary))
+}
+
 /** Rotate the prior good canvas.json → .bak, then atomic-write the new doc. */
 export async function writeProject(dir: string, doc: unknown): Promise<void> {
   // PERSIST-1: envelope-guard the INCOMING doc before any disk touch. MAIN trusts the
@@ -86,7 +97,7 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   const primary = join(dir, CANVAS)
   if (tryParse(primary) !== undefined) {
     try {
-      copyFileSync(primary, join(dir, CANVAS_BAK))
+      rotateBakAtomic(primary, join(dir, CANVAS_BAK))
     } catch {
       /* a missing/locked prior file must not block the new write */
     }

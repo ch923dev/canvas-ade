@@ -51,7 +51,7 @@ export function AppChrome({ onAdd, onTidy }: AppChromeProps): ReactElement {
 // Dropdown: shows the current project name; lets the user open a recent project,
 // open a folder, or create one. On switch: flush-save → mark loading (suppress
 // autosave) → dispose live native views/PTYs → load the new project.
-function ProjectSwitcher(): ReactElement {
+export function ProjectSwitcher(): ReactElement {
   const name = useCanvasStore((s) => s.project.name)
   const count = useCanvasStore((s) => s.boards.length)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
@@ -59,6 +59,24 @@ function ProjectSwitcher(): ReactElement {
   const toObject = useCanvasStore((s) => s.toObject)
   const [open, setOpen] = useState(false)
   const [recents, setRecents] = useState<RecentProject[]>([])
+
+  // project-switcher-no-outside-close: dismiss the dropdown on an outside pointerdown /
+  // Escape / resize, matching BoardMenu and the layout-preset picker below.
+  useEffect(() => {
+    if (!open) return
+    const close = (): void => setOpen(false)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', close)
+    }
+  }, [open])
 
   const toggle = async (): Promise<void> => {
     if (!open) setRecents(await window.api.project.recents())
@@ -116,6 +134,9 @@ function ProjectSwitcher(): ReactElement {
       <button
         className="project-switcher-trigger"
         style={styles.proj}
+        // Stop the trigger's own pointerdown from reaching the document outside-close listener,
+        // or re-clicking to close would close-then-reopen (BoardMenu parity).
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={() => void toggle()}
         title="Switch project"
       >
@@ -133,7 +154,13 @@ function ProjectSwitcher(): ReactElement {
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
       {open && (
-        <div className="project-switcher-menu" role="menu">
+        // Inside pointerdowns must not reach the document outside-close listener, so a menu-item
+        // click isn't pre-empted by an unmount (BoardMenu parity).
+        <div
+          className="project-switcher-menu"
+          role="menu"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           {recents.map((r) => (
             <button key={r.path} onClick={() => void openRecent(r.path)} title={r.path}>
               {r.name}

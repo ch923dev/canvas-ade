@@ -32,6 +32,7 @@ import type { Encryptor } from './llmKeyStore'
 import { readLlmConfig } from './llmConfig'
 import { createSummaryLoop } from './summaryLoop'
 import { createMemoryEngine } from './memoryEngine'
+import { performGuardedQuit } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
 import { startMcpServer, type RunningMcp } from './mcp'
 import { runMcpSmoke } from './mcpSmoke'
@@ -367,9 +368,15 @@ app.on('before-quit', (event) => {
   if (quitting) return
   quitting = true
   event.preventDefault()
-  void flushRenderer()
-    .then(() => shutdown())
-    .finally(() => app.exit(0))
+  // performGuardedQuit catches a flush rejection so shutdown() (the PTY-tree drain) always
+  // runs — a wedged renderer must never orphan a deep agent child tree (before-quit-flush-no-catch).
+  void performGuardedQuit({
+    flush: flushRenderer,
+    shutdown,
+    exit: (code) => app.exit(code),
+    onFlushError: (err) =>
+      console.error('[before-quit] renderer flush failed; proceeding to shutdown', err)
+  })
 })
 
 // Crash-path / signal cleanup (#50): before-quit/window-all-closed don't fire on an
