@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { BrowserWindow, IpcMain } from 'electron'
 import { requestConfirm, type ConfirmRequest } from './mcpConfirm'
 
@@ -146,6 +146,53 @@ describe('requestConfirm', () => {
     const p = requestConfirm(bus, () => win, REQ)
     fire('render-process-gone')
     await expect(p).resolves.toEqual({ approved: false })
+  })
+
+  it('🔒 BUG-010: a frozen renderer (no reply, no lifecycle event) denies via the default backstop timeout', async () => {
+    // The gap the destroyed/render-process-gone hatches cannot cover: a hung renderer
+    // keeps the process alive (neither lifecycle event fires) and never sends a reply.
+    // Without a finite default timeout the promise — and the MCP tool/SSE connection
+    // behind it — would hang forever. The default backstop must fire and deny.
+    vi.useFakeTimers()
+    try {
+      const mainFrame = { name: 'main' }
+      const { win } = fakeWinWithLifecycle(mainFrame)
+      const { bus } = fakeBus()
+      const p = requestConfirm(bus, () => win, REQ) // no opts → default backstop timeout
+      let settled = false
+      void p.then(() => {
+        settled = true
+      })
+      // Before the backstop fires, the promise is still pending (a human is allowed time).
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      // Advance past the 10-minute default backstop — the frozen request now denies.
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      await expect(p).resolves.toEqual({ approved: false })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('🔒 BUG-010: an explicit Infinity opt-out arms no timer (human may take unbounded time)', async () => {
+    // A caller can opt out of the backstop with a non-finite bound; no timer is armed, so
+    // the promise stays pending until a real reply/lifecycle event arrives.
+    vi.useFakeTimers()
+    try {
+      const mainFrame = { name: 'main' }
+      const { win } = fakeWinWithLifecycle(mainFrame)
+      const { bus } = fakeBus()
+      const p = requestConfirm(bus, () => win, REQ, { timeoutMs: Infinity })
+      let settled = false
+      void p.then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000) // an hour — still no timer fired
+      await Promise.resolve()
+      expect(settled).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('🔒 denies when the send throws', async () => {
