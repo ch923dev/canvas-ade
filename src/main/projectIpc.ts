@@ -108,8 +108,12 @@ export function registerProjectHandlers(
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
       try {
         memoryEngine.reset() // T-M2: a project switch drops stale fingerprints/timers
+        // Baseline from the LOADED doc so the FIRST meaningful post-open edit emits an intent.
+        // Without this, the first project:save becomes the baseline (no emit) and the first
+        // edit after every open/switch is silently swallowed until a second save.
+        memoryEngine.observe(r.doc)
       } catch (err) {
-        console.warn('[memoryEngine] reset on open failed (non-fatal)', err)
+        console.warn('[memoryEngine] reset/observe on open failed (non-fatal)', err)
       }
     }
     return r
@@ -172,8 +176,10 @@ export function registerProjectHandlers(
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
       try {
         memoryEngine.reset() // T-M2: re-baseline on reopen/switch
+        // Baseline from the loaded doc (see project:open) so the first post-reopen edit emits.
+        memoryEngine.observe(r.doc)
       } catch (err) {
-        console.warn('[memoryEngine] reset on current failed (non-fatal)', err)
+        console.warn('[memoryEngine] reset/observe on current failed (non-fatal)', err)
       }
     }
     return r.ok ? r : null

@@ -286,28 +286,38 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     expect(ok).toBe(true) // save still succeeds despite the detector throwing
   })
 
-  it('resets the engine when a project is opened (switch)', async () => {
-    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
+  it('resets THEN baselines the engine with the loaded doc when a project is opened (switch)', () => {
+    const doc = { schemaVersion: 4, viewport: null, boards: [] }
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
     const reset = vi.fn()
-    const engine: MemoryEngine = { observe: vi.fn(), reset }
+    const observe = vi.fn()
+    const engine: MemoryEngine = { observe, reset }
     const cap = harness(engine)
 
     const r = cap.invoke('project:open', '/proj') as { ok: boolean }
     expect(r.ok).toBe(true)
     expect(reset).toHaveBeenCalled()
+    // F1: baseline from the loaded doc so the first post-open edit emits (not swallowed).
+    expect(observe).toHaveBeenCalledWith(doc)
+    // Order matters: reset() (primed=false) must precede observe() (baseline-not-emit).
+    expect(reset.mock.invocationCallOrder[0]).toBeLessThan(observe.mock.invocationCallOrder[0])
     expect(canvasMemory.scaffoldProjectMemory).toHaveBeenCalledWith('/proj')
   })
 
-  it('resets the engine on project:current (re-baseline on reopen)', async () => {
+  it('resets THEN baselines with the loaded doc on project:current (re-baseline on reopen)', async () => {
+    const doc = { schemaVersion: 4, viewport: null, boards: [] }
     recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
-    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
     const reset = vi.fn()
-    const engine: MemoryEngine = { observe: vi.fn(), reset }
+    const observe = vi.fn()
+    const engine: MemoryEngine = { observe, reset }
     const cap = harness(engine)
 
     const r = (await cap.invoke('project:current')) as { ok: boolean }
     expect(r.ok).toBe(true)
     expect(reset).toHaveBeenCalled()
+    expect(observe).toHaveBeenCalledWith(doc)
+    expect(reset.mock.invocationCallOrder[0]).toBeLessThan(observe.mock.invocationCallOrder[0])
   })
 })
 

@@ -87,11 +87,16 @@ describe('boardFingerprint — content-sensitive', () => {
     expect(boardFingerprint(terminal({ cwd: '/other' }))).not.toBe(base)
     expect(boardFingerprint(terminal({ port: 3000 }))).not.toBe(base)
   })
-  it('browser: url / viewport / previewSourceId changes are detected', () => {
+  it('browser: url / viewport changes are detected', () => {
     const base = boardFingerprint(browser())
     expect(boardFingerprint(browser({ url: 'http://localhost:3000' }))).not.toBe(base)
     expect(boardFingerprint(browser({ viewport: 'mobile' }))).not.toBe(base)
-    expect(boardFingerprint(browser({ previewSourceId: 't2' }))).not.toBe(base)
+  })
+  it('browser: a previewSourceId-only change is NOT detected (excluded — never in the summary)', () => {
+    // The Tier-2 summary omits the preview link, so a link-only change must not arm a
+    // re-summarize (it would burn a budgeted call for identical prose).
+    const base = boardFingerprint(browser())
+    expect(boardFingerprint(browser({ previewSourceId: 't2' }))).toBe(base)
   })
   it('planning: note text + checklist item label/done changes are detected', () => {
     expect(boardFingerprint(planning([note('hi')]))).not.toBe(

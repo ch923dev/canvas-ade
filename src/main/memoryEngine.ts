@@ -11,9 +11,10 @@
  * (tsconfig.node only includes src/main/**), so the meaningful-field set is picked here
  * defensively from the `unknown` doc. The picked fields MIRROR the fields
  * src/renderer/src/lib/digest.ts surfaces per type — keep the two in sync (terminal:
- * launchCommand/cwd/port · browser: url/viewport/previewSourceId · planning: per-checklist
- * title + items {label,done}, note text). Geometry/selection/canvas pan/zoom are excluded so a
- * pure move/resize/pan/select yields an identical fingerprint.
+ * launchCommand/cwd/port · browser: url/viewport · planning: per-checklist title + items
+ * {label,done}, note text). Geometry/selection/canvas pan/zoom are excluded so a pure
+ * move/resize/pan/select yields an identical fingerprint. browser previewSourceId is also
+ * excluded — it never reaches the summary input, so it would churn spend without changing output.
  *
  * 🔒 Security: generated/observed memory is untrusted passive context. The detector only
  * READS the already-trusted persisted doc and EMITS an id; it never triggers an action
@@ -56,11 +57,14 @@ export function boardFingerprint(board: unknown): string {
         port: numOrNull(b.port)
       })
     case 'browser':
+      // previewSourceId is intentionally EXCLUDED: the Tier-2 summary (summaryLoop.boardContent)
+      // never includes the preview link, so a link-only change can't change the cached prose —
+      // fingerprinting it would only burn a budgeted summarize call that produces identical output.
+      // The fingerprint mirrors the SUMMARY INPUT, not digest.ts's richer Tier-1 line set.
       return JSON.stringify({
         t: 'browser',
         url: str(b.url),
-        viewport: str(b.viewport),
-        previewSourceId: str(b.previewSourceId)
+        viewport: str(b.viewport)
       })
     case 'planning': {
       const elements = Array.isArray(b.elements) ? (b.elements as RawBoard[]) : []

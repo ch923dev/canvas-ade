@@ -78,6 +78,10 @@ export function createBudgetStore(userDataDir: string, clock: Clock): BudgetStor
   return {
     peek: current,
     tryConsume(cap) {
+      // Read→check→write is fully SYNCHRONOUS (no await): single-threaded Node cannot
+      // interleave two tryConsume calls, so the summaryLoop and the llm:summarize IPC path —
+      // which each hold their own store over this same file — can never double-spend a slot.
+      // Cross-process double-spend is precluded by Electron's single-instance lock.
       const state = current()
       if (state.calls >= cap) return false
       write(userDataDir, { day: state.day, calls: state.calls + 1 })
