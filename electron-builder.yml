@@ -44,5 +44,11 @@ linux:
     - target: AppImage
   category: Development
 
-# auto-update feed is configured in Phase 5; placeholder generic provider.
+# SECURITY INVARIANT (audit `electron-updater-unsigned-latent`): auto-update stays
+# DORMANT until Phase 5. The `electron-updater` dep is present but intentionally NOT
+# wired (no `autoUpdater` import anywhere in src/). Do NOT set a `publish:` feed or
+# call `autoUpdater.checkForUpdates*` until BOTH land: (1) code-signing — mac notarize
+# + Win Authenticode (see `identity: null` above + the win/Phase-5 signing) — and
+# (2) an HTTPS update feed. An unsigned auto-update over a non-HTTPS feed is a remote
+# code-execution vector; enabling it before signing would ship that hole.
 publish: null
