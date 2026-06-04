@@ -67,4 +67,43 @@ describe('createKeyStore', () => {
     expect(store.getKey('openrouter')).toBeUndefined()
     expect(store.hasKey('openrouter')).toBe(false)
   })
+
+  // BUG-005 (1): encryption available at WRITE but unavailable at READ (keyring stopped after the
+  // key was stored). getKey can't decrypt → undefined; hasKey must AGREE (false), not report a
+  // misleading true. Old behaviour: hasKey returned true off the raw on-disk string → split-brain.
+  it('hasKey agrees with getKey when encryption becomes unavailable after a key was written', () => {
+    let available = true
+    const flippable: Encryptor = {
+      isEncryptionAvailable: () => available,
+      encryptString: (plain) => Buffer.from('ENC:' + plain, 'utf8'),
+      decryptString: (enc) => enc.toString('utf8').replace(/^ENC:/, '')
+    }
+    const store = createKeyStore(dir, flippable)
+    expect(store.setKey('openrouter', 'sk-secret')).toBe(true)
+    expect(store.hasKey('openrouter')).toBe(true) // available → present + decryptable
+    available = false // keyring stopped
+    expect(store.getKey('openrouter')).toBeUndefined() // inaccessible, not exposed as plaintext
+    expect(store.hasKey('openrouter')).toBe(false) // no split-brain: hasKey now agrees
+  })
+
+  // BUG-005 (2): a present, non-empty entry whose ciphertext fails to decrypt (corruption /
+  // keyring user change). getKey returns undefined; hasKey must NOT report true off the raw string.
+  it('hasKey agrees with getKey when stored ciphertext fails to decrypt', () => {
+    const throwingDecrypt: Encryptor = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain) => Buffer.from('ENC:' + plain, 'utf8'),
+      decryptString: () => {
+        throw new Error('decrypt failed (corrupt ciphertext)')
+      }
+    }
+    // Seed a valid-JSON file with a non-empty base64 entry (the split-brain precondition).
+    writeFileSync(
+      join(dir, 'llm-keys.json'),
+      JSON.stringify({ openrouter: Buffer.from('garbage', 'utf8').toString('base64') }),
+      'utf8'
+    )
+    const store = createKeyStore(dir, throwingDecrypt)
+    expect(store.getKey('openrouter')).toBeUndefined()
+    expect(store.hasKey('openrouter')).toBe(false) // agrees: not a misleading true
+  })
 })

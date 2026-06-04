@@ -24,7 +24,8 @@ export interface KeyStore {
   /** Encrypt + persist. Returns false (and writes nothing) if encryption is unavailable. */
   setKey(provider: ProviderName, key: string): boolean
   clearKey(provider: ProviderName): void
-  /** Presence only — true when a non-empty entry exists for the provider. */
+  /** Presence — true only when a stored key for the provider actually DECRYPTS (BUG-005: this
+   *  must agree with getKey; a present-but-undecryptable entry reports false, not true). */
   hasKey(provider: ProviderName): boolean
 }
 
@@ -51,15 +52,35 @@ function writeFile(userDataDir: string, data: KeyFile): void {
 }
 
 export function createKeyStore(userDataDir: string, encryptor: Encryptor): KeyStore {
+  /**
+   * Decrypt the stored entry for a provider, or undefined when ABSENT. A present-but-undecryptable
+   * entry (BUG-005) is a DISTINCT state from "no key": it happens when the OS keyring became
+   * unavailable after the key was written, or the ciphertext is tampered/corrupt. We surface that
+   * distinction with a safe warning (provider name only — NEVER the entry bytes or key material)
+   * so a silently-vanishing provider is diagnosable, and `hasKey`/`getKey` agree on "present" by
+   * both routing through this one decrypt — closing the hasKey:true / getKey:undefined split-brain.
+   */
+  function tryDecrypt(provider: ProviderName): string | undefined {
+    const enc = readFile(userDataDir)[provider]
+    if (!enc) return undefined // genuinely absent
+    if (!encryptor.isEncryptionAvailable()) {
+      console.warn(
+        `[llmKeyStore] stored key for "${provider}" exists but encryption is unavailable — cannot decrypt (key inaccessible, not absent)`
+      )
+      return undefined
+    }
+    try {
+      return encryptor.decryptString(Buffer.from(enc, 'base64'))
+    } catch {
+      console.warn(
+        `[llmKeyStore] stored key for "${provider}" failed to decrypt (corrupt ciphertext or keyring change) — treating as inaccessible`
+      )
+      return undefined
+    }
+  }
   return {
     getKey(provider) {
-      const enc = readFile(userDataDir)[provider]
-      if (!enc) return undefined
-      try {
-        return encryptor.decryptString(Buffer.from(enc, 'base64'))
-      } catch {
-        return undefined
-      }
+      return tryDecrypt(provider)
     },
     setKey(provider, key) {
       if (!encryptor.isEncryptionAvailable()) return false
@@ -75,8 +96,11 @@ export function createKeyStore(userDataDir: string, encryptor: Encryptor): KeySt
       writeFile(userDataDir, data)
     },
     hasKey(provider) {
-      const enc = readFile(userDataDir)[provider]
-      return typeof enc === 'string' && enc.length > 0
+      // BUG-005: "present" must mean the SAME thing for hasKey and getKey, or llm:status reports
+      // hasKey:true while getProvider returns null (split-brain). Route through the shared decrypt
+      // so a present-but-undecryptable entry (keyring gone / corrupt ciphertext) reports false,
+      // not a misleading true. tryDecrypt logs the absent-vs-inaccessible distinction safely.
+      return tryDecrypt(provider) !== undefined
     }
   }
 }
