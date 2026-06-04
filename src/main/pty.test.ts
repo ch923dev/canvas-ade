@@ -463,7 +463,9 @@ describe('getTerminalRuntimeCore (T-F1 — runtime snapshot for the Context summ
   })
 
   it('carries the exit code for an exited session', () => {
-    const sessions = new Map<string, any>([['t', { state: 'exited', lastActivityAt: 9, exitCode: 1 }]])
+    const sessions = new Map<string, any>([
+      ['t', { state: 'exited', lastActivityAt: 9, exitCode: 1 }]
+    ])
     expect(getTerminalRuntimeCore('t', sessions)).toEqual({
       state: 'exited',
       lastActivityAt: 9,

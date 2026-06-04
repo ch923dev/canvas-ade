@@ -47,7 +47,10 @@ function fakeWinWithLifecycle(mainFrame: object): {
         listeners.set(event, arr)
       },
       removeListener: (event: string, cb: () => void) => {
-        listeners.set(event, (listeners.get(event) ?? []).filter((f) => f !== cb))
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((f) => f !== cb)
+        )
       },
       send: () => {}
     }
