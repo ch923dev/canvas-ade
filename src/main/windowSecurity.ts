@@ -64,9 +64,12 @@ export function normalizeDocPath<T extends string | null | undefined>(
   platform: NodeJS.Platform = process.platform
 ): T {
   if (pathname == null) return pathname
-  let decoded = pathname
+  // After the null guard `pathname` is the non-null branch of T; pin it to `string`
+  // so the decoded reassignment type-checks (the `as T` restores the caller's type).
+  const raw = pathname as string
+  let decoded = raw
   try {
-    decoded = decodeURIComponent(pathname)
+    decoded = decodeURIComponent(raw)
   } catch {
     // Malformed %-sequence — keep the raw value (it simply won't match the doc).
   }
