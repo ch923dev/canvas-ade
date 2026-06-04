@@ -89,12 +89,19 @@ export function registerLlmHandlers(
   encryptor?: Encryptor
 ): void {
   const keyStore: KeyStore = encryptor ? createKeyStore(userDataDir, encryptor) : NOOP_KEY_STORE
+  // BUG-013: HONOR an injected budget — only build a fresh store when none was injected, so a
+  // caller/test that injects a budget (for isolation) is not silently ignored. Computed once into
+  // a named local rather than relying on the spread-then-override order being correct.
+  const budget = injectedDeps?.budget ?? createBudgetStore(userDataDir, () => new Date())
   // Resolution uses the SAME store the IPC writes to (store-first) and the SAME budget the
   // engine reserves against, so a key/cap set over IPC is immediately live for summarize.
+  // NOTE: `injectedDeps.keyStore` is INTENTIONALLY ignored — the keyStore is always built from
+  // `encryptor` so the llm:setKey/clearKey/status write channels and the summarize resolution
+  // share one store (a per-injection store would let the IPC writes and reads drift apart).
   const deps: ProviderDeps = {
     ...(injectedDeps ?? defaultDeps()),
     keyStore,
-    budget: injectedDeps?.budget ?? createBudgetStore(userDataDir, () => new Date())
+    budget
   }
   const guard = (e: IpcMainInvokeEvent): boolean =>
     isForeignSender(e, () => getWin()?.webContents.mainFrame)

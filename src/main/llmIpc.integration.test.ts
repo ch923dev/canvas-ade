@@ -85,6 +85,37 @@ describe('registerLlmHandlers', () => {
     }
   })
 
+  // BUG-013: an injected budget must be the one the summarize path consumes (not a fresh store
+  // silently constructed in its place) — a caller/test that injects a budget for isolation must
+  // not be ignored.
+  it('honors an injected budget store instead of building a fresh one (BUG-013)', async () => {
+    let consumed = 0
+    const injectedBudget = {
+      tryConsume: (_cap: number) => {
+        consumed++
+        return true
+      },
+      peek: () => ({ day: '2026-06-04', calls: consumed })
+    }
+    const cap = createIpcCapture()
+    const dir = mkdtempSync(join(tmpdir(), 'llmipc-bug013-'))
+    try {
+      // Explicit cap so the budget is enforced under the mock seam (shouldEnforceBudget opts in).
+      writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 5 })
+      registerLlmHandlers(cap.ipcMain, mainWin, dir, {
+        fetch: noNetwork,
+        env: { CANVAS_LLM_MOCK: '1' },
+        budget: injectedBudget
+      })
+      await cap.invoke('llm:summarize', { text: 'a' })
+      await cap.invoke('llm:summarize', { text: 'b' })
+      // The INJECTED budget was the one consumed (twice), proving it wasn't replaced.
+      expect(consumed).toBe(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('status reports a provider + model and never leaks key material', async () => {
     const cap = createIpcCapture()
     registerLlmHandlers(cap.ipcMain, mainWin, '/no/such/dir', {
