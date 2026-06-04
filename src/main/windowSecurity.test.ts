@@ -3,6 +3,7 @@ import {
   buildMainWindowWebPreferences,
   windowOpenDecision,
   computeAppOrigin,
+  normalizeDocPath,
   navDecision
 } from './windowSecurity'
 
@@ -61,47 +62,146 @@ describe('computeAppOrigin', () => {
   })
 })
 
-// Checklist #13: the main window must never navigate away from its own document.
-// Same-ORIGIN navigation is allowed (so ?e2e=1 / hash changes pass); a different
-// origin is blocked and, if http(s)/mailto, routed to the OS browser.
-describe('navDecision (#13)', () => {
-  it('allows same-origin navigation (query/hash change)', () => {
-    expect(navDecision('http://localhost:5173/?e2e=1', 'http://localhost:5173')).toEqual({
-      allow: true,
-      openExternal: null
-    })
+// normalizeDocPath: the packaged app-document pathname is normalized so a file:
+// URL's pathname can be compared against it ignoring percent-encoding (%20) and,
+// on Windows, ASCII case (file paths are case-insensitive there).
+describe('normalizeDocPath', () => {
+  it('decodes percent-encoding and lowercases (win32-style)', () => {
+    expect(normalizeDocPath('/C:/Program%20Files/App/index.html', 'win32')).toBe(
+      '/c:/program files/app/index.html'
+    )
   })
 
-  it('allows a file: URL when appOrigin is null (packaged build)', () => {
-    expect(navDecision('file:///C:/app/index.html', null)).toEqual({
-      allow: true,
+  it('preserves case on non-win32 (file paths are case-sensitive)', () => {
+    expect(normalizeDocPath('/opt/App/index.html', 'linux')).toBe('/opt/App/index.html')
+  })
+
+  it('returns null/undefined unchanged', () => {
+    expect(normalizeDocPath(null, 'win32')).toBeNull()
+    expect(normalizeDocPath(undefined, 'win32')).toBeUndefined()
+  })
+})
+
+// Checklist #13: the main window must never navigate away from its own document.
+// Same-ORIGIN navigation is allowed (so ?e2e=1 / hash changes pass); a different
+// origin is blocked and, if http(s)/mailto, routed to the OS browser. For a
+// PACKAGED build (appOrigin null), a file: URL is allowed ONLY when it targets the
+// app's own document (appDocPath) — every other local file is blocked.
+describe('navDecision (#13)', () => {
+  // The packaged app document, as computed in index.ts from loadFile's path.
+  const APP_DOC = '/C:/app/resources/app.asar/out/renderer/index.html'
+
+  it('allows same-origin navigation (query/hash change)', () => {
+    expect(navDecision('http://localhost:5173/?e2e=1', { appOrigin: 'http://localhost:5173' })).toEqual(
+      {
+        allow: true,
+        openExternal: null
+      }
+    )
+  })
+
+  it('allows the app document file: URL in packaged build (appOrigin null)', () => {
+    expect(
+      navDecision('file:///C:/app/resources/app.asar/out/renderer/index.html', {
+        appOrigin: null,
+        appDocPath: APP_DOC,
+        platform: 'win32'
+      })
+    ).toEqual({ allow: true, openExternal: null })
+  })
+
+  it('allows the app document file: URL with ?e2e=1 query and a #hash', () => {
+    expect(
+      navDecision('file:///C:/app/resources/app.asar/out/renderer/index.html?e2e=1#/board/3', {
+        appOrigin: null,
+        appDocPath: APP_DOC,
+        platform: 'win32'
+      })
+    ).toEqual({ allow: true, openExternal: null })
+  })
+
+  it('allows the app document file: URL ignoring ASCII case on win32', () => {
+    expect(
+      navDecision('file:///C:/APP/resources/app.asar/out/renderer/INDEX.HTML', {
+        appOrigin: null,
+        appDocPath: APP_DOC,
+        platform: 'win32'
+      })
+    ).toEqual({ allow: true, openExternal: null })
+  })
+
+  it('allows the app document file: URL with percent-encoded spaces in the path', () => {
+    expect(
+      navDecision('file:///C:/Program%20Files/App/out/renderer/index.html', {
+        appOrigin: null,
+        appDocPath: '/C:/Program Files/App/out/renderer/index.html',
+        platform: 'win32'
+      })
+    ).toEqual({ allow: true, openExternal: null })
+  })
+
+  it('BLOCKS file:///etc/passwd in packaged build (not the app doc)', () => {
+    expect(
+      navDecision('file:///etc/passwd', {
+        appOrigin: null,
+        appDocPath: APP_DOC,
+        platform: 'win32'
+      })
+    ).toEqual({ allow: false, openExternal: null })
+  })
+
+  it('BLOCKS file:///C:/Windows/win.ini in packaged build (not the app doc)', () => {
+    expect(
+      navDecision('file:///C:/Windows/win.ini', {
+        appOrigin: null,
+        appDocPath: APP_DOC,
+        platform: 'win32'
+      })
+    ).toEqual({ allow: false, openExternal: null })
+  })
+
+  it('BLOCKS a sibling file in the app document directory', () => {
+    expect(
+      navDecision('file:///C:/app/resources/app.asar/out/renderer/secret.html', {
+        appOrigin: null,
+        appDocPath: APP_DOC,
+        platform: 'win32'
+      })
+    ).toEqual({ allow: false, openExternal: null })
+  })
+
+  it('BLOCKS any file: URL when appDocPath is unset (defensive — no pin available)', () => {
+    expect(navDecision('file:///C:/app/index.html', { appOrigin: null })).toEqual({
+      allow: false,
       openExternal: null
     })
   })
 
   it('blocks a different http origin and routes it externally', () => {
-    expect(navDecision('https://evil.com/', 'http://localhost:5173')).toEqual({
+    expect(navDecision('https://evil.com/', { appOrigin: 'http://localhost:5173' })).toEqual({
       allow: false,
       openExternal: 'https://evil.com/'
     })
   })
 
   it('blocks a cross-origin http nav in the packaged build (appOrigin null) and routes it externally', () => {
-    expect(navDecision('https://evil.com/', null)).toEqual({
+    expect(navDecision('https://evil.com/', { appOrigin: null })).toEqual({
       allow: false,
       openExternal: 'https://evil.com/'
     })
   })
 
-  it('blocks a file: drop in dev (different origin) with no external open', () => {
-    expect(navDecision('file:///C:/Windows/win.ini', 'http://localhost:5173')).toEqual({
-      allow: false,
-      openExternal: null
-    })
+  it('blocks a file: drop in dev (appOrigin set, no appDocPath) with no external open', () => {
+    expect(navDecision('file:///C:/Windows/win.ini', { appOrigin: 'http://localhost:5173' })).toEqual(
+      {
+        allow: false,
+        openExternal: null
+      }
+    )
   })
 
   it('blocks an unparseable URL with no external open', () => {
-    expect(navDecision('::::bad', 'http://localhost:5173')).toEqual({
+    expect(navDecision('::::bad', { appOrigin: 'http://localhost:5173' })).toEqual({
       allow: false,
       openExternal: null
     })

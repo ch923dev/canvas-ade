@@ -83,7 +83,62 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       // App.tsx uses `// eslint-disable-next-line no-console` for its one log;
       // keep that disable meaningful by flagging stray console in the renderer.
-      'no-console': 'warn'
+      'no-console': 'warn',
+      // SECURITY INVARIANT (sandboxed renderer): the renderer runs with
+      // contextIsolation/sandbox and must NEVER import Node built-ins, native, or
+      // main-only modules — those live in src/main and reach the renderer only via
+      // the preload contextBridge. `patterns` covers both bare (`fs`) and
+      // `node:`-prefixed (`node:fs`) specifiers in one shot; `paths` bans the
+      // specific main-only packages (incl. `electron`, which the renderer must
+      // never import directly — use the preload bridge). NOT applied to
+      // src/main/** or src/preload/** (those legitimately use Node).
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                'fs',
+                'fs/*',
+                'path',
+                'os',
+                'child_process',
+                'crypto',
+                'net',
+                'http',
+                'https',
+                'stream',
+                'worker_threads',
+                'node:*'
+              ],
+              message:
+                'Renderer is sandboxed — use the preload contextBridge, not Node/native modules (security invariant).'
+            }
+          ],
+          paths: [
+            {
+              name: 'electron',
+              message:
+                'Renderer must not import electron directly — use the preload contextBridge (security invariant).'
+            },
+            {
+              name: 'node-pty',
+              message:
+                'node-pty is MAIN-only — the renderer reaches the PTY via the preload bridge (security invariant).'
+            },
+            {
+              name: 'simple-git',
+              message:
+                'simple-git is MAIN-only — the renderer must not run git (security invariant).'
+            },
+            {
+              name: 'write-file-atomic',
+              message:
+                'write-file-atomic is MAIN-only filesystem access — not allowed in the sandboxed renderer (security invariant).'
+            }
+          ]
+        }
+      ]
     }
   },
 
