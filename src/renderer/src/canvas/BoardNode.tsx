@@ -18,6 +18,7 @@ import {
   useState,
   type ReactElement
 } from 'react'
+import { ErrorBoundary } from './ErrorBoundary'
 import { createPortal } from 'react-dom'
 import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Board } from '../lib/boardSchema'
@@ -222,13 +223,21 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
             The board renders its own BoardFrame chrome once loaded; subsequent mounts
             are synchronous (module cached). */}
         <Suspense fallback={null}>
-          {board.type === 'terminal' && (
-            <TerminalBoard board={board} lod={lod} {...common} {...actions} />
-          )}
-          {board.type === 'browser' && (
-            <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
-          )}
-          {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+          <ErrorBoundary
+            fallback={
+              <div className="board-error" style={{ padding: 16, color: 'var(--text-2)' }}>
+                This board failed to render
+              </div>
+            }
+          >
+            {board.type === 'terminal' && (
+              <TerminalBoard board={board} lod={lod} {...common} {...actions} />
+            )}
+            {board.type === 'browser' && (
+              <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
+            )}
+            {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+          </ErrorBoundary>
         </Suspense>
       </div>
     </BoardFullViewContext.Provider>

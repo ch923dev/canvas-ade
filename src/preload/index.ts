@@ -168,6 +168,11 @@ const api = {
     create: (dir: string, name: string, opts: { gitInit?: boolean }): Promise<ProjectResult> =>
       ipcRenderer.invoke('project:create', { dir, name, opts }),
     open: (dir: string): Promise<ProjectResult> => ipcRenderer.invoke('project:open', dir),
+    // T5: deep-validation recovery — fetch ONLY canvas.json.bak so the renderer can retry
+    // `fromObject` against the last good snapshot when the primary is envelope-valid but
+    // deep-corrupt (MAIN's own .bak fallback only covers parse/envelope failures).
+    reopenFromBak: (dir: string): Promise<ProjectResult> =>
+      ipcRenderer.invoke('project:reopenFromBak', dir),
     save: (doc: unknown): Promise<boolean> => ipcRenderer.invoke('project:save', doc),
     recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
     current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current'),

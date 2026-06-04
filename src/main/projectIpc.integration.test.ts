@@ -8,6 +8,7 @@ import * as path from 'node:path'
 const { store, recents, electronDialog, canvasMemory } = vi.hoisted(() => ({
   store: {
     readProject: vi.fn(),
+    readBak: vi.fn(),
     writeProject: vi.fn(),
     createProject: vi.fn(),
     getCurrentDir: vi.fn(),
@@ -118,6 +119,36 @@ describe('registerProjectHandlers (T4)', () => {
     const result = await cap.invoke('project:current')
     expect(result).toBeNull()
     expect(store.readProject).not.toHaveBeenCalled()
+  })
+
+  // T5: project:reopenFromBak is a pure recovery read — it returns the .bak doc and must
+  // NOT touch the current dir / recents / asset GC (the open project is unchanged).
+  it('project:reopenFromBak returns the .bak doc (pure read, no currentDir/recents/gc)', async () => {
+    const bakDoc = { schemaVersion: 2, viewport: null, boards: [{ ok: true }] }
+    store.readBak.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: bakDoc })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    const result = (await cap.invoke('project:reopenFromBak', '/proj')) as {
+      ok: boolean
+      doc?: unknown
+    }
+    expect(result.ok).toBe(true)
+    expect(result.doc).toEqual(bakDoc)
+    expect(store.readBak).toHaveBeenCalledWith('/proj')
+    // Recovery probe: leaves the open-project bookkeeping alone.
+    expect(store.setCurrentDir).not.toHaveBeenCalled()
+    expect(recents.touchRecent).not.toHaveBeenCalled()
+    expect(store.gcAssets).not.toHaveBeenCalled()
+  })
+
+  it('project:reopenFromBak rejects an unsafe dir before any store touch', async () => {
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    const result = await cap.invoke('project:reopenFromBak', '../../etc')
+    expect(result).toEqual({ ok: false, error: 'invalid path' })
+    expect(store.readBak).not.toHaveBeenCalled()
   })
 })
 
@@ -239,6 +270,13 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
   it('project:current returns null for a foreign sender', async () => {
     const cap = setup()
     expect(await cap.invokeAs(foreignEvent, 'project:current')).toBeNull()
+  })
+
+  it('project:reopenFromBak returns { ok: false, error: "forbidden" } for a foreign sender', async () => {
+    const cap = setup()
+    const result = await cap.invokeAs(foreignEvent, 'project:reopenFromBak', 'C:\\proj')
+    expect(result).toEqual({ ok: false, error: 'forbidden' })
+    expect(store.readBak).not.toHaveBeenCalled()
   })
 
   it('asset:read returns null for a foreign sender', () => {

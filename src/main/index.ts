@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
 import { writeFileSync, mkdtempSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -19,7 +20,7 @@ import {
   buildMainWindowWebPreferences,
   windowOpenDecision,
   computeAppOrigin,
-  navDecision
+  createNavGuard
 } from './windowSecurity'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
@@ -88,13 +89,22 @@ function createWindow(): void {
   // preview view) with no in-app way back. Pin to the app origin; route an external
   // http(s) target to the OS browser, drop everything else. Compare ORIGIN (not the
   // full URL) so the e2e `?e2e=1` query / in-app hash changes don't trip the guard.
+  //
+  // PACKAGED builds load via loadFile (file:), where every file: URL shares the
+  // opaque origin "null" — origin alone can't tell renderer/index.html from
+  // file:///etc/passwd (audit `packaged-fileurl-nav-allowed`). So we additionally
+  // pin packaged file: nav to the EXACT app document path. In dev (loadURL) the
+  // appOrigin is the http dev origin and appDocPath stays undefined → file: URLs are
+  // blocked exactly as before.
+  const usePackagedFile = !(is.dev && process.env['ELECTRON_RENDERER_URL'])
+  const indexHtmlPath = join(__dirname, '../renderer/index.html')
   const appOrigin = computeAppOrigin(process.env['ELECTRON_RENDERER_URL'])
-  const guardNav = (event: { preventDefault: () => void }, url: string): void => {
-    const d = navDecision(url, appOrigin)
-    if (d.allow) return
-    event.preventDefault()
-    if (d.openExternal) shell.openExternal(d.openExternal)
-  }
+  const appDocPath = usePackagedFile ? pathToFileURL(indexHtmlPath).pathname : undefined
+  const guardNav = createNavGuard({
+    appOrigin,
+    appDocPath,
+    openExternal: (u) => shell.openExternal(u)
+  })
   mainWindow.webContents.on('will-navigate', (details, url) => guardNav(details, url))
   mainWindow.webContents.on('will-redirect', (details, url) => guardNav(details, url))
   // will-frame-navigate (Electron ≥22) covers subframes too — the renderer has none
@@ -137,10 +147,8 @@ function createWindow(): void {
     const base = process.env['ELECTRON_RENDERER_URL']
     mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
   } else {
-    mainWindow.loadFile(
-      join(__dirname, '../renderer/index.html'),
-      seedHarness ? { query: { e2e: '1' } } : undefined
-    )
+    // Same path the nav guard pins to via appDocPath above (indexHtmlPath).
+    mainWindow.loadFile(indexHtmlPath, seedHarness ? { query: { e2e: '1' } } : undefined)
   }
 }
 

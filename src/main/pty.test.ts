@@ -15,7 +15,8 @@ import {
   killTreeCommand,
   safeCwd,
   writeToPtyCore,
-  getTerminalRuntimeCore
+  getTerminalRuntimeCore,
+  isValidResize
 } from './pty'
 import type { ShellInfo } from './pty'
 
@@ -478,3 +479,77 @@ describe('getTerminalRuntimeCore (T-F1 — runtime snapshot for the Context summ
   })
 })
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+// ── isValidResize (Wave-4 pty-resize-unbounded) ──────────────────────────────
+// The guard used at BOTH MessagePort listener sites (spawn-time and adopt-time).
+// Tests are written against the real exported helper — both listeners call it,
+// so covering it here is real coverage of both code paths, not a replica.
+describe('isValidResize (Wave-4 — bounded integer validation)', () => {
+  it('accepts a normal terminal size (80×24)', () => {
+    expect(isValidResize(80, 24)).toBe(true)
+  })
+
+  it('accepts the minimum valid size (1×1)', () => {
+    expect(isValidResize(1, 1)).toBe(true)
+  })
+
+  it('accepts the maximum valid size (1000×1000)', () => {
+    expect(isValidResize(1000, 1000)).toBe(true)
+  })
+
+  it('rejects a non-integer cols (80.5×24)', () => {
+    expect(isValidResize(80.5, 24)).toBe(false)
+  })
+
+  it('rejects a non-integer rows (80×24.9)', () => {
+    expect(isValidResize(80, 24.9)).toBe(false)
+  })
+
+  it('rejects zero cols (0×24)', () => {
+    expect(isValidResize(0, 24)).toBe(false)
+  })
+
+  it('rejects zero rows (80×0)', () => {
+    expect(isValidResize(80, 0)).toBe(false)
+  })
+
+  it('rejects negative cols (-1×24)', () => {
+    expect(isValidResize(-1, 24)).toBe(false)
+  })
+
+  it('rejects negative rows (80×-1)', () => {
+    expect(isValidResize(80, -1)).toBe(false)
+  })
+
+  it('rejects cols above the 1000 upper bound (1001×24)', () => {
+    expect(isValidResize(1001, 24)).toBe(false)
+  })
+
+  it('rejects rows above the 1000 upper bound (80×1001)', () => {
+    expect(isValidResize(80, 1001)).toBe(false)
+  })
+
+  it('rejects NaN for cols', () => {
+    expect(isValidResize(NaN, 24)).toBe(false)
+  })
+
+  it('rejects NaN for rows', () => {
+    expect(isValidResize(80, NaN)).toBe(false)
+  })
+
+  it('rejects undefined for cols (cast via unknown message payload)', () => {
+    expect(isValidResize(undefined as unknown as number, 24)).toBe(false)
+  })
+
+  it('rejects undefined for rows (cast via unknown message payload)', () => {
+    expect(isValidResize(80, undefined as unknown as number)).toBe(false)
+  })
+
+  it('rejects Infinity for cols', () => {
+    expect(isValidResize(Infinity, 24)).toBe(false)
+  })
+
+  it('rejects Infinity for rows', () => {
+    expect(isValidResize(80, Infinity)).toBe(false)
+  })
+})

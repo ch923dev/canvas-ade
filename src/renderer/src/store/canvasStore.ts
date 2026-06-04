@@ -80,8 +80,13 @@ export interface CanvasState {
   viewport: CanvasViewport | null
   /** Current project lifecycle (welcome/loading/open/error). */
   project: ProjectState
-  /** Apply an open/create IPC result: load on ok, set error otherwise (no clobber). */
-  applyOpenResult: (r: OpenResult) => void
+  /**
+   * Apply an open/create IPC result: load on ok, set error otherwise (no clobber). Async
+   * because on a deep-validation throw it retries the project's `canvas.json.bak` over IPC
+   * (`project.reopenFromBak`) before giving up — `.bak` loads → recover to 'open', else
+   * fall through to 'error' (T5). Callers must handle the returned promise (await / chain).
+   */
+  applyOpenResult: (r: OpenResult) => Promise<void>
   /** Mark the project as loading (suppresses autosave mid-switch). */
   setProjectLoading: () => void
 
@@ -624,7 +629,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       ...get().connectors
     ]),
   loadObject: (doc) => {
-    const d = fromObject(doc)
+    // Guard the deep-validation throw (corrupt board/element or too-new schemaVersion):
+    // a raw-doc load with no dir can't do a .bak retry, so on a throw set status:'error'
+    // (with the message) and leave board/connector/viewport state UNTOUCHED — do NOT null
+    // lastRecorded or flag restored terminals until the parse actually succeeds. Matches
+    // applyOpenResult's guard so a corrupt doc never throws out and blanks the app (T4).
+    let d: ReturnType<typeof fromObject>
+    try {
+      d = fromObject(doc)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'failed to load project'
+      set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
+      return
+    }
     // Clear the dedup ref: it points at the pre-load snapshot; a fresh project's history
     // starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
     lastRecorded = null
@@ -641,12 +658,51 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     })
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
-  applyOpenResult: (r) => {
+  applyOpenResult: async (r) => {
     if (!r.ok) {
       set((s) => ({ project: { ...s.project, status: 'error', error: r.error } }))
       return
     }
-    const d = fromObject(r.doc)
+    // Guard the deep-validation throw: MAIN validated only the envelope, so an
+    // envelope-valid but deep-corrupt doc (or one with a too-new schemaVersion) throws
+    // out of fromObject here. Route it to status:'error' (carrying the message) and leave
+    // board state untouched, instead of letting the throw blank the app (T4).
+    let d: ReturnType<typeof fromObject>
+    try {
+      d = fromObject(r.doc)
+    } catch (err) {
+      // T5: the primary was envelope-valid (so MAIN's parse/envelope .bak fallback never
+      // fired) but deep-corrupt. Retry the project's canvas.json.bak — if it loads, recover
+      // to 'open'; if it ALSO throws (or there is no readable .bak), fall through to 'error'
+      // carrying the ORIGINAL primary-parse message.
+      const bak = await window.api.project.reopenFromBak(r.dir)
+      if (bak.ok) {
+        try {
+          const d2 = fromObject(bak.doc)
+          lastRecorded = null
+          markRestoredIdle(d2.boards)
+          set({
+            boards: d2.boards,
+            connectors: d2.connectors,
+            viewport: d2.viewport,
+            selectedId: null,
+            past: [],
+            future: [],
+            project: { dir: r.dir, name: r.name, status: 'open' }
+          })
+          return
+        } catch (bakErr) {
+          // .bak is also deep-corrupt → fall through to the error path below (carrying the
+          // ORIGINAL primary message). Warn so the lost last-good snapshot leaves a trace,
+          // matching the repo's recovery-failure logging (llmBudget/llmKeyStore).
+          // eslint-disable-next-line no-console
+          console.warn('[canvasStore] canvas.json.bak recovery also failed to parse', bakErr)
+        }
+      }
+      const msg = err instanceof Error ? err.message : 'failed to load project'
+      set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
+      return
+    }
     // Clear the dedup ref (see loadObject): the opened project's history starts empty.
     lastRecorded = null
     // Restored terminals start idle — flag every loaded terminal idle-on-mount (M-1).

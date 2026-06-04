@@ -243,6 +243,17 @@ function ensure(id: string, win: BrowserWindow): Entry {
     e = { view, attached: false, zoom: 1, failed: false }
     views.set(id, e)
     const wc = view.webContents
+    // Deny-by-default permission policy on this view's session (Bug: no-permission-
+    // handler-preview-views). The preview loads UNTRUSTED localhost content; without
+    // a handler the page could request camera/mic/geolocation/notifications/etc. and
+    // the user would see an OS-level prompt from what looks like the app itself.
+    // Each view gets its own in-memory session (`partition: preview-<id>`), so this
+    // fires once per freshly-created view and never re-sets an already-configured
+    // session. Both the async request handler and the synchronous check handler are
+    // set for defense-in-depth.
+    const sess = wc.session
+    sess.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    sess.setPermissionCheckHandler(() => false)
     // External links open in the OS browser, never inside the preview (security:
     // the preview must never become a general web browser / nav target). The scheme
     // is allowlisted (Bug #23) so untrusted preview content can't smuggle a

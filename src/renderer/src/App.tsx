@@ -24,6 +24,22 @@ function App(): React.ReactElement {
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
 
+  // Belt-and-suspenders against drop-to-navigate (audit `packaged-fileurl-nav-allowed`):
+  // a file or URL dropped anywhere on the window default-navigates the whole frame to
+  // it (replacing the React app + every live PTY/preview). Cancel the DEFAULT on the
+  // window-level dragover/drop so a stray drop can never start a navigation. We only
+  // preventDefault (NOT stopPropagation), so component-level drop handlers — the
+  // Planning board's image-drop well — still receive the event and run normally.
+  useEffect(() => {
+    const cancel = (e: DragEvent): void => e.preventDefault()
+    window.addEventListener('dragover', cancel)
+    window.addEventListener('drop', cancel)
+    return () => {
+      window.removeEventListener('dragover', cancel)
+      window.removeEventListener('drop', cancel)
+    }
+  }, [])
+
   useEffect(() => {
     // E2E (CANVAS_E2E) seeds boards directly and never opens a project. Flip to
     // `open` so the canvas mounts (and installs `window.__canvasE2E`); the disk path
@@ -33,8 +49,12 @@ function App(): React.ReactElement {
       return
     }
     void window.api.project.current().then((r) => {
-      if (r && r.ok) applyOpenResult(r)
+      // applyOpenResult is async (it may retry canvas.json.bak on a deep-validation
+      // failure); await it INSIDE the .then so its promise (and any rejection) is owned
+      // here instead of floating unhandled.
+      if (r && r.ok) return applyOpenResult(r)
       // null → stay on the welcome screen (initial status is 'welcome').
+      return undefined
     })
   }, [applyOpenResult])
 

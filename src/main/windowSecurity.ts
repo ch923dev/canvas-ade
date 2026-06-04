@@ -53,24 +53,91 @@ export function computeAppOrigin(rendererUrl: string | undefined): string | null
 }
 
 /**
+ * Normalize a `file:` pathname for comparison. Percent-encoding (`%20`) is decoded
+ * by reading `URL.pathname` upstream, but we also tolerate a raw encoded value here
+ * by decoding once. On win32 the comparison is case-insensitive (NTFS/ConPTY paths
+ * are case-insensitive) and on POSIX it is case-sensitive. Returns the input
+ * untouched when it is null/undefined so callers can thread an absent appDocPath.
+ */
+export function normalizeDocPath<T extends string | null | undefined>(
+  pathname: T,
+  platform: NodeJS.Platform = process.platform
+): T {
+  if (pathname == null) return pathname
+  // After the null guard `pathname` is the non-null branch of T; pin it to `string`
+  // so the decoded reassignment type-checks (the `as T` restores the caller's type).
+  const raw = pathname as string
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    // Malformed %-sequence — keep the raw value (it simply won't match the doc).
+  }
+  return (platform === 'win32' ? decoded.toLowerCase() : decoded) as T
+}
+
+/**
  * Same-frame navigation guard decision (#13): the main window must never navigate
- * away from its own document. Compare ORIGIN (not the full URL) so the e2e
- * `?e2e=1` query / in-app hash changes pass. A file: URL has origin "null"
- * (represented here as `null`) → allowed against a null appOrigin (packaged). A
- * different origin is blocked; if it is an allowlisted http(s)/mailto target it is
- * routed to the OS browser, otherwise just dropped.
+ * away from its own document.
+ *
+ * - Non-`file:` URLs: compare ORIGIN (not the full URL) so the e2e `?e2e=1` query /
+ *   in-app hash changes pass. A different origin is blocked; an allowlisted
+ *   http(s)/mailto target is routed to the OS browser, everything else is dropped.
+ * - `file:` URLs (packaged build): a `file:` URL's web origin is the opaque string
+ *   "null", which can NOT distinguish the app's own `renderer/index.html` from any
+ *   other local file (audit `packaged-fileurl-nav-allowed`). So we pin to the exact
+ *   app document: allow IFF `appDocPath` is set AND the navigation target's
+ *   normalized PATHNAME equals the normalized `appDocPath` (ignoring query/hash and,
+ *   on win32, ASCII case). Any other `file:` URL is blocked and is NEVER routed to
+ *   the OS browser (openExternal stays http(s)/mailto-only). In dev `appDocPath` is
+ *   absent, so every `file:` URL is blocked — identical to the prior behaviour.
  */
 export function navDecision(
   url: string,
-  appOrigin: string | null
+  opts: { appOrigin: string | null; appDocPath?: string | null; platform?: NodeJS.Platform }
 ): { allow: boolean; openExternal: string | null } {
-  let origin: string | null
+  const { appOrigin, appDocPath, platform } = opts
+  let u: URL
   try {
-    const u = new URL(url)
-    origin = u.protocol === 'file:' ? null : u.origin
+    u = new URL(url)
   } catch {
     return { allow: false, openExternal: null }
   }
-  if (origin === appOrigin) return { allow: true, openExternal: null }
+  if (u.protocol === 'file:') {
+    // Pin to the exact app document; never hand a rejected local file to the OS.
+    if (
+      appDocPath != null &&
+      normalizeDocPath(u.pathname, platform) === normalizeDocPath(appDocPath, platform)
+    ) {
+      return { allow: true, openExternal: null }
+    }
+    return { allow: false, openExternal: null }
+  }
+  if (u.origin === appOrigin) return { allow: true, openExternal: null }
   return { allow: false, openExternal: isAllowedExternal(url) ? url : null }
+}
+
+/**
+ * Build the navigation-guard side effect (#13) from a navDecision predicate. The
+ * returned handler is wired to the window's `will-navigate` / `will-redirect` /
+ * `will-frame-navigate` events: an allowed target (same-origin nav, an in-app hash
+ * change, or the app's own `location.reload()` — which re-navigates to the pinned
+ * appDocPath/appOrigin) passes through untouched; a blocked target is
+ * `preventDefault`'d, and an allowlisted http(s)/mailto URL is handed to the OS
+ * browser. Extracted from index.ts so the event wiring — not just the predicate — is
+ * unit-testable; index.ts injects the real `event.preventDefault` + `shell.openExternal`.
+ */
+export function createNavGuard(opts: {
+  appOrigin: string | null
+  appDocPath?: string | null
+  platform?: NodeJS.Platform
+  openExternal: (url: string) => void
+}): (event: { preventDefault: () => void }, url: string) => void {
+  const { appOrigin, appDocPath, platform, openExternal } = opts
+  return (event, url) => {
+    const d = navDecision(url, { appOrigin, appDocPath, platform })
+    if (d.allow) return
+    event.preventDefault()
+    if (d.openExternal) openExternal(d.openExternal)
+  }
 }

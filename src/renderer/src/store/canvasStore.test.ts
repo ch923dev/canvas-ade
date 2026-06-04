@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from './canvasStore'
 import { SCHEMA_VERSION, toObject, createBoard, fromObject } from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
@@ -546,7 +546,14 @@ describe('canvasStore — duplicateBoard', () => {
 })
 
 describe('canvasStore — project lifecycle', () => {
+  // applyOpenResult is async and, on a deep-validation throw, calls
+  // window.api.project.reopenFromBak over the (here non-existent) IPC bridge. Stub it per
+  // test: default = no readable .bak so the corrupt/too-new cases land on status:'error'.
+  const reopenFromBak = vi.fn(async () => ({ ok: false }) as { ok: false; error?: string })
   beforeEach(() => {
+    reopenFromBak.mockReset()
+    reopenFromBak.mockResolvedValue({ ok: false })
+    vi.stubGlobal('window', { api: { project: { reopenFromBak } } })
     useCanvasStore.setState({
       boards: [],
       viewport: null,
@@ -556,13 +563,16 @@ describe('canvasStore — project lifecycle', () => {
       project: { dir: null, name: null, status: 'welcome' }
     })
   })
+  afterEach(() => {
+    vi.unstubAllGlobals() // don't leak the stubbed `window` into later describes
+  })
 
   it('defaults to welcome status', () => {
     expect(useCanvasStore.getState().project.status).toBe('welcome')
   })
 
-  it('applyOpenResult(ok) loads the doc and marks open', () => {
-    useCanvasStore.getState().applyOpenResult({
+  it('applyOpenResult(ok) loads the doc and marks open', async () => {
+    await useCanvasStore.getState().applyOpenResult({
       ok: true,
       dir: 'C:/p',
       name: 'p',
@@ -571,19 +581,168 @@ describe('canvasStore — project lifecycle', () => {
     const s = useCanvasStore.getState()
     expect(s.project).toEqual({ dir: 'C:/p', name: 'p', status: 'open' })
     expect(s.viewport).toEqual({ x: 1, y: 2, zoom: 1 })
+    // A clean load never needs the .bak recovery probe.
+    expect(reopenFromBak).not.toHaveBeenCalled()
   })
 
-  it('applyOpenResult(error) sets error status without clobbering boards', () => {
+  it('applyOpenResult(error) sets error status without clobbering boards', async () => {
     useCanvasStore.setState({
       boards: [
         { id: 'x', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
       ] as never
     })
-    useCanvasStore.getState().applyOpenResult({ ok: false, error: 'bad' })
+    await useCanvasStore.getState().applyOpenResult({ ok: false, error: 'bad' })
     const s = useCanvasStore.getState()
     expect(s.project.status).toBe('error')
     expect(s.project.error).toBe('bad')
     expect(s.boards).toHaveLength(1) // untouched
+  })
+
+  // T4: an envelope-VALID but deep-corrupt doc (passes MAIN's envelope check, so MAIN's
+  // .bak fallback never fires) must NOT throw out of applyOpenResult and blank the app —
+  // route the fromObject throw to status:'error' and leave board state untouched. Here the
+  // .bak retry (T5) also fails (default reopenFromBak stub → {ok:false}) so it lands error.
+  it('applyOpenResult(ok) with a deep-corrupt doc (no .bak) → status:error, boards untouched', async () => {
+    useCanvasStore.setState({
+      boards: [
+        { id: 'keep', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+      ] as never
+    })
+    const before = useCanvasStore.getState().boards
+    // Envelope-valid (numeric schemaVersion + boards[]) but a board has a non-string id,
+    // which assertBoard rejects → fromObject throws (verified: "board has a non-string id").
+    await useCanvasStore.getState().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: {
+        schemaVersion: 5,
+        viewport: null,
+        boards: [
+          { id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+        ]
+      }
+    })
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.boards).toBe(before) // boards untouched (same ref)
+    expect(reopenFromBak).toHaveBeenCalledWith('C:/p') // tried the backup first
+  })
+
+  // T4: a doc whose schemaVersion is newer than we support also routes to status:error,
+  // carrying migrate()'s "newer than supported" message (no .bak to recover from).
+  it('applyOpenResult(ok) with a too-new schemaVersion (no .bak) → status:error (newer than supported)', async () => {
+    await useCanvasStore.getState().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: { schemaVersion: 999, boards: [] }
+    })
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.project.error).toMatch(/newer than supported/)
+  })
+
+  // T5: primary deep-corrupt, but the .bak is a GOOD doc → recover to status:'open' with
+  // the recovered boards/viewport (and the dir/name of the project being opened).
+  it('applyOpenResult(ok) deep-corrupt primary but a GOOD .bak → recovers to status:open', async () => {
+    reopenFromBak.mockResolvedValue({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: {
+        schemaVersion: 2,
+        viewport: { x: 9, y: 9, zoom: 2 },
+        boards: [
+          {
+            id: 'recovered',
+            type: 'planning',
+            x: 0,
+            y: 0,
+            w: 300,
+            h: 200,
+            title: 'R',
+            elements: []
+          }
+        ]
+      }
+    } as never)
+    await useCanvasStore.getState().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: {
+        schemaVersion: 5,
+        viewport: null,
+        boards: [
+          { id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+        ]
+      }
+    })
+    const s = useCanvasStore.getState()
+    expect(s.project).toEqual({ dir: 'C:/p', name: 'p', status: 'open' })
+    expect(s.boards).toHaveLength(1)
+    expect(s.boards[0].id).toBe('recovered')
+    expect(s.viewport).toEqual({ x: 9, y: 9, zoom: 2 })
+  })
+
+  // T5: primary deep-corrupt AND the .bak is also bad (returns a deep-corrupt doc that
+  // fromObject rejects) → fall through to status:'error' carrying the ORIGINAL message.
+  it('applyOpenResult(ok) deep-corrupt primary AND a deep-corrupt .bak → status:error', async () => {
+    reopenFromBak.mockResolvedValue({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      // Envelope-valid but a board with a non-string id → fromObject throws on the .bak too.
+      doc: { schemaVersion: 5, viewport: null, boards: [{ id: 456 }] }
+    } as never)
+    await useCanvasStore.getState().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: {
+        schemaVersion: 5,
+        viewport: null,
+        boards: [
+          { id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+        ]
+      }
+    })
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    // The original primary-parse message is preserved (not the .bak's).
+    expect(s.project.error).toMatch(/non-string id/)
+  })
+
+  // T4 (loadObject): envelope-valid but deep-corrupt doc must route the fromObject throw to
+  // status:'error' and leave board state UNTOUCHED — loadObject has no .bak retry path.
+  it('loadObject with a deep-corrupt doc → status:error, boards untouched', () => {
+    useCanvasStore.setState({
+      boards: [
+        { id: 'keep', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+      ] as never
+    })
+    const before = useCanvasStore.getState().boards
+    // Envelope-valid (numeric schemaVersion + boards[]) but a board has a non-string id,
+    // which assertBoard rejects → fromObject throws (same corrupt shape used in applyOpenResult T4).
+    useCanvasStore.getState().loadObject({
+      schemaVersion: 5,
+      viewport: null,
+      boards: [{ id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }]
+    } as never)
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.project.error).toBeTruthy()
+    expect(s.boards).toBe(before) // boards untouched (same ref)
+  })
+
+  // T4 (loadObject): a doc whose schemaVersion is newer than we support routes to
+  // status:'error' carrying migrate()'s "newer than supported" message.
+  it('loadObject with a too-new schemaVersion → status:error (newer than supported)', () => {
+    useCanvasStore.getState().loadObject({ schemaVersion: 999, boards: [] } as never)
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.project.error).toMatch(/newer than supported/)
   })
 })
 

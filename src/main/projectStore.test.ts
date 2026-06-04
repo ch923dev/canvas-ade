@@ -1,9 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync
+} from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
   readProject,
+  readBak,
   writeProject,
   createProject,
   writeAsset,
@@ -105,6 +114,32 @@ describe('projectStore', () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.doc).toEqual(doc)
   })
+
+  // T5: readBak skips the primary and reads ONLY canvas.json.bak — the renderer calls it
+  // after a DEEP-validation failure (the primary is envelope-valid, so readProject would
+  // happily return that same deep-corrupt primary; only the .bak can recover).
+  it('readBak returns the .bak doc even when canvas.json is envelope-valid but deep-corrupt', () => {
+    // Primary: envelope-valid (numeric schemaVersion + boards[]) but a board has a
+    // non-string id — readProject would return THIS (envelope check passes), so the
+    // renderer needs readBak to reach the backup instead.
+    writeFileSync(
+      join(dir, 'canvas.json'),
+      JSON.stringify({ schemaVersion: 5, viewport: null, boards: [{ id: 123 }] })
+    )
+    writeFileSync(
+      join(dir, 'canvas.json.bak'),
+      JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ ok: true }] })
+    )
+    const r = readBak(dir)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect((r.doc as { boards: { ok: boolean }[] }).boards[0].ok).toBe(true)
+  })
+
+  it('readBak returns { ok: false } when no .bak exists', () => {
+    writeFileSync(join(dir, 'canvas.json'), JSON.stringify(doc))
+    const r = readBak(dir)
+    expect(r.ok).toBe(false)
+  })
 })
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'w4-store-'))
@@ -171,20 +206,51 @@ describe('W4 assets pipeline', () => {
     expect(collectAssetIds(doc)).toEqual(new Set(['assets/a.png', 'assets/b.png']))
   })
 
-  it('gcAssets deletes orphans, keeps referenced, no-ops on absent assets/', async () => {
+  it('gcAssets quarantine-moves orphans to .trash, keeps referenced, no-ops on absent assets/', async () => {
     const dir = tmp()
     try {
       const keep = await writeAsset(dir, bytes('keep'), 'png')
       const drop = await writeAsset(dir, bytes('drop'), 'png')
       gcAssets(dir, new Set([keep.assetId]))
       expect(existsSync(join(dir, keep.assetId))).toBe(true)
+      // orphan is removed from the live assets dir
       expect(existsSync(join(dir, drop.assetId))).toBe(false)
+      // orphan is recoverable in the quarantine
+      const dropFile = drop.assetId.split('/')[1] // 'assets/<sha1>.png' → '<sha1>.png'
+      expect(existsSync(join(dir, 'assets', '.trash', dropFile))).toBe(true)
+      // no-ops on absent assets/
       const empty = tmp()
       try {
         expect(() => gcAssets(empty, new Set())).not.toThrow()
       } finally {
         rmSync(empty, { recursive: true, force: true })
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('gcAssets moves an orphan to assets/.trash, keeps referenced, never hard-deletes', async () => {
+    const dir = tmp()
+    try {
+      const keep = await writeAsset(dir, bytes('keep2'), 'png')
+      const orphan = await writeAsset(dir, bytes('orphan'), 'png')
+      gcAssets(dir, new Set([keep.assetId]))
+      expect(existsSync(join(dir, keep.assetId))).toBe(true) // referenced kept in place
+      expect(existsSync(join(dir, orphan.assetId))).toBe(false) // removed from the live assets dir
+      const orphanFile = orphan.assetId.split('/')[1] // 'assets/<sha1>.png' → '<sha1>.png'
+      expect(existsSync(join(dir, 'assets', '.trash', orphanFile))).toBe(true) // recoverable in quarantine
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('gcAssets does not sweep or delete its own .trash dir', () => {
+    const dir = tmp()
+    try {
+      mkdirSync(join(dir, 'assets', '.trash'), { recursive: true })
+      expect(() => gcAssets(dir, new Set())).not.toThrow()
+      expect(existsSync(join(dir, 'assets', '.trash'))).toBe(true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

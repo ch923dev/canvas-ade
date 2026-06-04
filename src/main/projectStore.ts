@@ -60,6 +60,18 @@ export function readProject(dir: string): ProjectResult {
   return { ok: false, error: `No readable canvas.json in ${dir}` }
 }
 
+/**
+ * Read ONLY canvas.json.bak (skip the primary) — the renderer-reported deep-validation
+ * recovery path (T5). `readProject` would return the primary whenever it is merely
+ * envelope-valid, so a deep-corrupt-but-envelope-valid primary masks the backup; this
+ * forces the .bak so the renderer can retry `fromObject` against the last good snapshot.
+ */
+export function readBak(dir: string): ProjectResult {
+  const backup = tryParse(join(dir, CANVAS_BAK))
+  if (backup !== undefined) return { ok: true, dir, name: projectName(dir), doc: backup }
+  return { ok: false, error: `No readable canvas.json.bak in ${dir}` }
+}
+
 /** Rotate the prior good canvas.json → .bak, then atomic-write the new doc. */
 export async function writeProject(dir: string, doc: unknown): Promise<void> {
   // PERSIST-1: envelope-guard the INCOMING doc before any disk touch. MAIN trusts the
@@ -163,10 +175,18 @@ export function collectAssetIds(doc: unknown): Set<string> {
   return ids
 }
 
+const TRASH = '.trash'
+
 /**
- * Mark-and-sweep: delete every file in `<dir>/assets/` whose `assets/<file>` path is
- * NOT in `referenced`. No-op when `assets/` is absent. Called ONLY at project open —
- * the undo stack is empty across sessions, so a swept blob is truly unreferenced.
+ * Mark-and-sweep: quarantine-move every file in `<dir>/assets/` whose `assets/<file>`
+ * path is NOT in `referenced` into `<dir>/assets/.trash/` (recoverable). Hard-deletion
+ * is intentionally avoided — a mis-read/corrupt load must not permanently destroy blobs.
+ * No-op when `assets/` is absent. Called ONLY at project open — the undo stack is empty
+ * across sessions, so a swept blob is truly unreferenced.
+ *
+ * Safety: `collectAssetIds` / `readAsset` match only `ASSET_RE`
+ * (`assets/<40-hex>.<ext>`), so the `.trash` directory name can never be a valid assetId
+ * and is never returned as a referenced or readable asset.
  */
 export function gcAssets(dir: string, referenced: Set<string>): void {
   const assetsDir = join(dir, ASSETS)
@@ -178,11 +198,15 @@ export function gcAssets(dir: string, referenced: Set<string>): void {
     return
   }
   for (const f of files) {
+    if (f === TRASH) continue // never sweep the quarantine dir itself
     if (!referenced.has(`${ASSETS}/${f}`)) {
       try {
-        unlinkSync(join(assetsDir, f))
+        const trashDir = join(assetsDir, TRASH)
+        mkdirSync(trashDir, { recursive: true })
+        copyFileSync(join(assetsDir, f), join(trashDir, f))
+        unlinkSync(join(assetsDir, f)) // move = copy-then-unlink; the quarantine copy is retained
       } catch {
-        /* a locked / already-removed file must not abort the sweep */
+        /* a locked / already-moved file must not abort the sweep */
       }
     }
   }

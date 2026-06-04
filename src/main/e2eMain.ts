@@ -9,7 +9,7 @@
  */
 import { clipboard, nativeImage, type BrowserWindow } from 'electron'
 import { execFileSync } from 'child_process'
-import { existsSync, mkdtempSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { debugCaptureView, debugViewIds, debugViewWebContentsId } from './preview'
@@ -28,6 +28,13 @@ export interface E2EMain {
   createTempProject(prefix: string, name: string): Promise<string>
   /** Clear the current dir + delete the temp project (best-effort). */
   teardownProject(tmp: string): void
+  /**
+   * Write a bare file (e.g. a deliberately corrupt `canvas.json` or a good
+   * `canvas.json.bak`) into a temp project dir — the corrupt-doc recovery probe seeds
+   * the on-disk state the real `project:open` → `applyOpenResult` → `reopenFromBak`
+   * cascade then reads back. `name` must be a bare filename (no separator / `..`).
+   */
+  writeProjectFile(tmp: string, name: string, contents: string): void
   /** Put a w×h opaque-red RGBA bitmap on the system clipboard (for the paste sliver). */
   putRedBitmapOnClipboard(w: number, h: number): void
   /** True if an absolute path exists on disk (assert a pasted blob landed). */
@@ -107,6 +114,13 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
       } catch {
         /* best-effort temp cleanup */
       }
+    },
+    writeProjectFile(tmp, name, contents) {
+      // Bare filename only — never let a probe escape the temp dir via a separator or `..`.
+      if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+        throw new Error(`writeProjectFile: unsafe name ${name}`)
+      }
+      writeFileSync(join(tmp, name), contents, 'utf8')
     },
     putRedBitmapOnClipboard(w, h) {
       const buf = Buffer.alloc(w * h * 4)

@@ -143,6 +143,24 @@ export interface CanvasE2E {
    * (live AND parked), empty the store + history, and reset the seed-x cursor.
    */
   reset: () => Promise<{ ok: true }>
+  /**
+   * Serialize the live store to a canvas.json string (the store's toObject). The
+   * corrupt-doc recovery probe writes this as a good `canvas.json.bak`, then corrupts
+   * the primary, to prove the renderer recovers the last-good snapshot on reopen.
+   */
+  serializeDoc: () => string
+  /**
+   * Drive the REAL disk-open recovery cascade for a project dir: invoke the
+   * `project:open` IPC, then run the store's `applyOpenResult` — which deep-validates
+   * via fromObject, retries `canvas.json.bak` on a deep-corrupt-but-envelope-valid
+   * primary (`project:reopenFromBak`), and routes an unrecoverable doc to
+   * status:'error'. Returns the resulting project status/error + live board count so
+   * the probe can assert recovery-to-open vs the error card. e2e bypasses the
+   * WelcomeScreen open flow, so this is the only way the harness reaches the path.
+   */
+  openProjectFromDisk: (
+    dir: string
+  ) => Promise<{ status: string; error: string | null; boardCount: number }>
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -355,6 +373,19 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // 4. Reset the seed-x cursor so the next test's seedBoard positions restart.
       seedX = 0
       return { ok: true as const }
+    },
+    serializeDoc() {
+      return JSON.stringify(useCanvasStore.getState().toObject())
+    },
+    async openProjectFromDisk(dir) {
+      const r = await window.api.project.open(dir)
+      await useCanvasStore.getState().applyOpenResult(r)
+      const p = useCanvasStore.getState().project
+      return {
+        status: p.status,
+        error: p.error ?? null,
+        boardCount: useCanvasStore.getState().boards.length
+      }
     }
   }
   window.__canvasE2E = api
