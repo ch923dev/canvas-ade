@@ -282,7 +282,11 @@ function CanvasInner(): ReactElement {
   const enterCameraFullView = useCallback(
     (id: string) => {
       hardCloseFullView()
-      priorViewportRef.current = rf.getViewport()
+      // Only capture the user's real viewport on a fresh entry — if we're already in
+      // camera full view (switching board A → board B), the ref already holds the
+      // pre-full-view position; overwriting it with board A's fitted viewport would
+      // restore to A's fit instead of the user's original position on exit.
+      if (!cameraFullViewIdRef.current) priorViewportRef.current = rf.getViewport()
       setCameraFullViewId(id)
       selectBoard(id)
       void rf.fitView(cameraAnim({ ...FULLVIEW_OPTIONS, nodes: [{ id }] }))
@@ -819,9 +823,9 @@ function CanvasInner(): ReactElement {
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
         e.preventDefault()
         setDiag((v) => !v)
-      } else if (e.key === '1' && !typing) {
+      } else if (e.key === '1' && !typing && !t?.closest('.react-flow__node')) {
         void rf.fitView(cameraAnim(FIT_FRAME))
-      } else if (e.key === '0' && !typing) {
+      } else if (e.key === '0' && !typing && !t?.closest('.react-flow__node')) {
         // Recenter content at 100% rather than zoomTo(1)-in-place, which can
         // strand every board off-screen after a far pan/zoom (#41).
         void rf.fitView(cameraAnim(RESET_FRAME))
@@ -867,15 +871,25 @@ function CanvasInner(): ReactElement {
 
   // Track Ctrl/⌘ for the snap-suppress escape hatch. keydown AND keyup both read the live
   // modifier state so holding/releasing mid-drag toggles snapping without a stale latch.
+  // blur + visibilitychange reset the ref when the window loses focus (e.g. alt-tab while
+  // holding Ctrl): the OS swallows the keyup so without this the ref stays latched true and
+  // snapping stays suppressed for the rest of the session.
   useEffect(() => {
     const update = (e: KeyboardEvent): void => {
       snapSuppressRef.current = e.ctrlKey || e.metaKey
     }
+    const reset = (): void => {
+      snapSuppressRef.current = false
+    }
     window.addEventListener('keydown', update)
     window.addEventListener('keyup', update)
+    window.addEventListener('blur', reset)
+    document.addEventListener('visibilitychange', reset)
     return () => {
       window.removeEventListener('keydown', update)
       window.removeEventListener('keyup', update)
+      window.removeEventListener('blur', reset)
+      document.removeEventListener('visibilitychange', reset)
     }
   }, [])
 
