@@ -298,6 +298,54 @@ describe('createSummaryLoop — no-op paths', () => {
   })
 })
 
+describe('createSummaryLoop — BUG-006 project-switch TOCTOU guard', () => {
+  it('does NOT write into the captured dir when the project switched during the await', async () => {
+    const projA = mkdtempSync(join(tmpdir(), 'm3-projA-'))
+    const projB = mkdtempSync(join(tmpdir(), 'm3-projB-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    // First getCurrentDir() (the capture at the top of onIntent) returns A; every call AFTER that
+    // — i.e. the post-await re-check — returns B, simulating the user opening project B while the
+    // (mocked-but-still-async) runSummarize is in flight.
+    let calls = 0
+    const getCurrentDir = (): string => (calls++ === 0 ? projA : projB)
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir,
+      // readProject uses the dir it is HANDED (the captured A), not getCurrentDir(), so the read
+      // resolves against A — the write is what must be suppressed.
+      readProject: (dir) => ({ ok: true, dir, name: 'projA', doc: docWith([planNote('p1', 'x')]) }),
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' } // forces a provider so runSummarize resolves ok (would write)
+    })
+    try {
+      await loop.onIntent({ boardId: 'p1' })
+      // Pre-fix this wrote board-p1.md into projA (the stale captured dir). Post-fix: nothing.
+      expect(existsSync(join(projA, '.canvas', 'memory', 'board-p1.md'))).toBe(false)
+      expect(existsSync(join(projB, '.canvas', 'memory', 'board-p1.md'))).toBe(false)
+    } finally {
+      rmSync(projA, { recursive: true, force: true })
+      rmSync(projB, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('still writes when the project did NOT change across the await (guard is not over-eager)', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))
+    const { loop, llmDataDir } = makeLoop({
+      getDir: () => proj,
+      doc: docWith([planNote('p1', 'hello world')])
+    })
+    try {
+      await loop.onIntent({ boardId: 'p1' })
+      expect(createCanvasMemory(proj).readBoard('p1')).toContain('[mock]')
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('createSummaryLoop — no key → no spend / no write', () => {
   it('with NO mock and NO key, runSummarize is no-provider → nothing is written', async () => {
     const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))

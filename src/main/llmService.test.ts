@@ -218,6 +218,33 @@ describe('runSummarize', () => {
     expect(r).toMatchObject({ reason: 'provider-error', message: expect.any(String) })
   })
 
+  // BUG-003 (data leak): the raw provider HTTP error body — which can echo back partial key
+  // material on an auth error — must NEVER reach the surfaced message. Only provider+status.
+  it('does NOT leak the provider response body into the provider-error message', async () => {
+    const leakyBody =
+      '{"error":{"message":"Incorrect API key provided: sk-abc123SECRET","type":"invalid_request_error"}}'
+    const leakyFetch: FetchLike = () =>
+      Promise.resolve({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve(leakyBody)
+      })
+    const r = await runSummarize(
+      { provider: 'openrouter', model: 'm' },
+      { text: 'hi' },
+      { fetch: leakyFetch, env: { OPENROUTER_API_KEY: 'k' } }
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok && r.reason === 'provider-error') {
+      expect(r.message).not.toContain('sk-abc123SECRET')
+      expect(r.message).not.toContain(leakyBody)
+      // still useful: provider + status survive for diagnostics
+      expect(r.message).toContain('openrouter')
+      expect(r.message).toContain('401')
+    }
+  })
+
   it('returns the mock stub under e2e with no network', async () => {
     const r = await runSummarize(
       { provider: 'openrouter', model: 'm' },

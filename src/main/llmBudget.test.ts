@@ -65,6 +65,36 @@ describe('llmBudget', () => {
     expect(b.peek().calls).toBe(0) // corrupt → zero
   })
 
+  // BUG-004 (data-integrity): a user-writable on-disk `calls` must be a finite, non-negative
+  // integer within a sane bound — floats, Infinity, and huge values are corrupt → reset to 0,
+  // never trusted (which would drift the cap boundary or wedge the budget at cap all day).
+  it('rejects a fractional calls value and resets to zero', () => {
+    writeFileSync(join(dir, 'llm-budget.json'), '{"day":"2026-06-03","calls":0.5}', 'utf8')
+    const b = createBudgetStore(dir, clockAt('2026-06-03T10:00:00'))
+    expect(b.peek().calls).toBe(0)
+    expect(b.tryConsume(2)).toBe(true) // a clean integer count, not 0.5 → 1.5 drift
+    expect(b.peek().calls).toBe(1)
+  })
+
+  it('rejects an Infinity calls value (JSON 1e309) and resets to zero', () => {
+    // JSON.parse('{"calls":1e309}') yields Infinity in Node — would otherwise wedge at cap.
+    writeFileSync(join(dir, 'llm-budget.json'), '{"day":"2026-06-03","calls":1e309}', 'utf8')
+    const b = createBudgetStore(dir, clockAt('2026-06-03T10:00:00'))
+    expect(b.peek().calls).toBe(0)
+    expect(b.tryConsume(2)).toBe(true) // not frozen at cap
+  })
+
+  it('rejects an out-of-bound calls value (overflow DoS) and resets to zero', () => {
+    writeFileSync(
+      join(dir, 'llm-budget.json'),
+      `{"day":"2026-06-03","calls":${Number.MAX_SAFE_INTEGER}}`,
+      'utf8'
+    )
+    const b = createBudgetStore(dir, clockAt('2026-06-03T10:00:00'))
+    expect(b.peek().calls).toBe(0) // not trusted → no all-day block at any reasonable cap
+    expect(b.tryConsume(DEFAULT_MAX_CALLS_PER_DAY)).toBe(true)
+  })
+
   it('writes llm-budget.json into the given dir only', () => {
     createBudgetStore(dir, clockAt('2026-06-03T10:00:00')).tryConsume(5)
     expect(existsSync(join(dir, 'llm-budget.json'))).toBe(true)

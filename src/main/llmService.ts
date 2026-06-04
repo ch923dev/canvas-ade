@@ -185,7 +185,10 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
           body: req.body,
           signal: controller.signal
         })
-        if (!res.ok) throw new Error(`${config.provider} HTTP ${res.status}: ${await res.text()}`)
+        // BUG-003 (data leak): NEVER embed the raw provider response body — on an auth error a
+        // provider may echo back partial/whole key material or request detail, and this string
+        // travels into SummarizeResult.message over IPC. Surface only an opaque provider+status.
+        if (!res.ok) throw new Error(`${config.provider} HTTP ${res.status}`)
         return parseResponse(config.provider, await res.json())
       } finally {
         clearTimeout(timer)

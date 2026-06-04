@@ -31,8 +31,17 @@ export interface ConfirmDecision {
   approved: boolean
 }
 
-/** A human takes time — no decision timeout by default. Degenerate cases still deny. */
-const DEFAULT_TIMEOUT_MS: number | undefined = undefined
+/**
+ * Backstop wall-clock timeout for a confirm decision (BUG-010). A human is allowed to
+ * take time, but a FROZEN renderer (UI deadlock, hung event loop, modal that never
+ * registered its reply handler) fires neither `destroyed` nor `render-process-gone`, so
+ * without a finite default the awaiting MCP tool call — and the SSE connection behind it
+ * — would hang forever. 10 minutes is generous enough for a real human yet bounded so a
+ * stuck modal can never permanently hold the connection. On expiry the request fails
+ * closed (`{ approved: false }`) and tears down the pending listeners via `finish`.
+ * Callers may still pass an explicit `timeoutMs` (including `Infinity` to opt out).
+ */
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
 const DENIED: ConfirmDecision = { approved: false }
 
@@ -80,8 +89,14 @@ export function requestConfirm(
         (decision as ConfirmDecision).approved === true
       finish({ approved })
     }
-    // Optional safety timeout (deny). Off by default — a human is allowed to take time.
-    const timer = timeoutMs === undefined ? null : setTimeout(() => finish(DENIED), timeoutMs)
+    // Backstop safety timeout (deny on expiry). Defaults to DEFAULT_TIMEOUT_MS so a frozen
+    // renderer can't hang the awaiting tool forever (BUG-010). Arm only for a finite
+    // positive bound — `Infinity` / `<= 0` is an explicit opt-out (no timer) for callers
+    // that truly want to wait indefinitely.
+    const timer =
+      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? setTimeout(() => finish(DENIED), timeoutMs)
+        : null
     bus.once(replyChannel, onReply)
     // If the window/render-process dies after the modal is shown but before a reply,
     // `bus.once` never fires — deny so the awaiting MCP tool call can't hang forever.
