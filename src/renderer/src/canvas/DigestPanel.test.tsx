@@ -55,9 +55,10 @@ const DOC: CanvasDoc = {
         }
       ]
     }
-  ]
+  ],
+  connectors: []
 }
-const EMPTY: CanvasDoc = { schemaVersion: 2, viewport: null, boards: [] }
+const EMPTY: CanvasDoc = { schemaVersion: 2, viewport: null, boards: [], connectors: [] }
 
 it('renders one card per board with title, status and lines', () => {
   const { container } = render(

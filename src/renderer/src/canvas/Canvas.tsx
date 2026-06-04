@@ -57,7 +57,10 @@ import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
 import type { TileTemplate } from '../lib/tileLayout'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { PreviewEdge } from './edges/PreviewEdge'
+import { OrchestrationEdge } from './edges/OrchestrationEdge'
 import { previewEdges } from '../lib/previewEdges'
+import { orchestrationEdges } from '../lib/orchestrationEdges'
+import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import type { ResolvedPushTarget } from '../lib/previewTarget'
 import type { Board } from '../lib/boardSchema'
@@ -74,7 +77,7 @@ import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
-const edgeTypes: EdgeTypes = { preview: PreviewEdge }
+const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
 // Fit/reset framing now lives in lib/canvasView (FIT_FRAME / RESET_FRAME) so the
 // camera-cluster buttons in AppChrome share the exact same presets. Used instant for
 // fit-on-load & initial mount; user-triggered fit/reset wrap them in `cameraAnim`.
@@ -118,6 +121,9 @@ function CanvasInner(): ReactElement {
   const redo = useCanvasStore((s) => s.redo)
   const setViewport = useCanvasStore((s) => s.setViewport)
   const duplicateBoard = useCanvasStore((s) => s.duplicateBoard)
+  const connectors = useCanvasStore((s) => s.connectors)
+  const addConnector = useCanvasStore((s) => s.addConnector)
+  const removeConnector = useCanvasStore((s) => s.removeConnector)
   const tidyBoards = useCanvasStore((s) => s.tidyBoards)
   const tileBoards = useCanvasStore((s) => s.tileBoards)
   const projectStatus = useCanvasStore((s) => s.project.status)
@@ -133,6 +139,12 @@ function CanvasInner(): ReactElement {
   const setNodeGesture = usePreviewStore((s) => s.setNodeGesture)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
+  // M2 connector gesture (EPHEMERAL — never persisted): the source board of an in-flight
+  // connector drag + the live pointer (client coords) for the rubber-band overlay; the
+  // currently-selected orchestration connector (for the ✕ / Delete-key affordances).
+  const [connectFromId, setConnectFromId] = useState<string | null>(null)
+  const [connectPointer, setConnectPointer] = useState<{ x: number; y: number } | null>(null)
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(null)
   // Live "tiled mode": the tile template currently owning the layout, or null = free placement.
   // While set, the canvas re-tiles to the window aspect on every pane resize (responsive
   // tiling). Released when the user moves/resizes a board, undoes, or picks Smart. Ephemeral
@@ -218,8 +230,8 @@ function CanvasInner(): ReactElement {
     setDigestOpen(true)
   }
   const digest = useMemo(
-    () => buildDigest({ schemaVersion: SCHEMA_VERSION, viewport, boards }),
-    [boards, viewport]
+    () => buildDigest({ schemaVersion: SCHEMA_VERSION, viewport, boards, connectors }),
+    [boards, viewport, connectors]
   )
 
   // T-M4: cached Tier-2 prose by board id, fetched once per project open (pure disk read,
@@ -305,14 +317,27 @@ function CanvasInner(): ReactElement {
     () => new Set(Object.keys(running).filter((id) => running[id])),
     [running]
   )
-  const edges = useMemo(
-    () =>
-      previewEdges(boards, runningIds).map((e) => ({
-        ...e,
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#4f8cff', width: 16, height: 16 }
-      })),
-    [boards, runningIds]
-  )
+  // Preview edges (accent) + orchestration connectors (neutral). Both derive from store
+  // state via pure helpers (previewEdges / orchestrationEdges, dangling-skipped); Canvas
+  // only decorates them with the marker, selection state, and the delete callback.
+  const edges = useMemo(() => {
+    const preview = previewEdges(boards, runningIds).map((e) => ({
+      ...e,
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#4f8cff', width: 16, height: 16 }
+    }))
+    const orchestration = orchestrationEdges(connectors, boards).map((e) => ({
+      ...e,
+      selected: e.id === selectedConnectorId,
+      data: { onDelete: () => removeConnector(e.id) },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: e.id === selectedConnectorId ? '#e6e6e6' : '#5a6573',
+        width: 16,
+        height: 16
+      }
+    }))
+    return [...preview, ...orchestration]
+  }, [boards, runningIds, connectors, selectedConnectorId, removeConnector])
 
   // Translate React Flow changes into store mutations. Position covers both node
   // drag and the origin shift from N/W/NW resize; dimensions (only while actively
@@ -584,6 +609,7 @@ function CanvasInner(): ReactElement {
   const clearSelection = useCallback(() => {
     selectBoard(null)
     setFocusedId(null)
+    setSelectedConnectorId(null)
   }, [selectBoard])
 
   // Board-level actions handed to every BoardNode (via context) so the shared ⋯ menu
@@ -654,6 +680,13 @@ function CanvasInner(): ReactElement {
         const from = st.boards.find((b) => b.id === fromBoardId)
         if (!from) return
         applyPush(st, from, url, target)
+      },
+      // M2: begin a connector drag — arm the ephemeral gesture; the window pointer
+      // listeners (effect below) track the rubber-band + resolve the drop target on release.
+      startConnect: (fromBoardId) => {
+        setSelectedConnectorId(null)
+        setConnectPointer(null)
+        setConnectFromId(fromBoardId)
       }
     }
   }, [
@@ -701,6 +734,47 @@ function CanvasInner(): ReactElement {
     setCameraFullViewId((c) => (c !== null && !boards.some((b) => b.id === c) ? null : c))
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [boards])
+
+  // M2 connector drag: while a source board is armed (title-bar connector handle pressed),
+  // track the pointer for the rubber-band and, on release, resolve the drop target from
+  // STORE GEOMETRY (pure resolveConnectTarget — no DOM hit-test) → add an orchestration
+  // connector. Window-level so the drag still resolves when released past the board edge.
+  useEffect(() => {
+    if (!connectFromId) return
+    const onMove = (e: PointerEvent): void => setConnectPointer({ x: e.clientX, y: e.clientY })
+    const onUp = (e: PointerEvent): void => {
+      const flow = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      const target = resolveConnectTarget(useCanvasStore.getState().boards, connectFromId, flow)
+      if (target) addConnector(connectFromId, target, 'orchestration')
+      setConnectFromId(null)
+      setConnectPointer(null)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [connectFromId, rf, addConnector])
+
+  // M2: while an orchestration connector is selected, Delete/Backspace removes it. Selecting
+  // a connector clears the board selection, so React Flow's deleteKeyCode finds no selected
+  // node → no double-fire (board deletion). Guarded against firing while typing.
+  useEffect(() => {
+    if (!selectedConnectorId) return
+    const onKey = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement | null
+      const typing =
+        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !typing) {
+        e.preventDefault()
+        removeConnector(selectedConnectorId)
+        setSelectedConnectorId(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedConnectorId, removeConnector])
 
   // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
   // Backspace/Delete deletes the selected board via React Flow's deleteKeyCode.
@@ -801,7 +875,8 @@ function CanvasInner(): ReactElement {
         setFocus: setFocusedId,
         setDigestOpen,
         enterCameraFullView,
-        exitCameraFullView
+        exitCameraFullView,
+        selectConnector: setSelectedConnectorId
       })
   }, [rf, openFullView, closeFullView, setDigestOpen, enterCameraFullView, exitCameraFullView])
 
@@ -843,6 +918,14 @@ function CanvasInner(): ReactElement {
               clearSelection()
               exitCameraFullView()
             }}
+            onEdgeClick={(_, edge) => {
+              // Select an orchestration connector for delete (✕ / Delete-key). Clear the
+              // board selection so RF's deleteKeyCode can't also delete a board.
+              if (edge.type !== 'orchestration') return
+              selectBoard(null)
+              setFocusedId(null)
+              setSelectedConnectorId(edge.id)
+            }}
             onNodeDoubleClick={focusBoard}
             onNodeDragStart={onNodeDragStart}
             onNodeDragStop={onNodeDragStop}
@@ -874,6 +957,41 @@ function CanvasInner(): ReactElement {
           </ReactFlow>
 
           <AlignmentGuides guides={guides} overlaps={overlaps} />
+
+          {/* M2 connector rubber-band: a calm dashed line from the source board's center to
+              the live pointer while a connector drag is in flight (ephemeral — drawn only,
+              the actual link is resolved on release). Positioned `fixed` so it shares the
+              client-coordinate space of both the pointer and flowToScreenPosition (no pane
+              rect / ref read in render); pointer-events off. */}
+          {connectFromId &&
+            connectPointer &&
+            (() => {
+              const src = boards.find((b) => b.id === connectFromId)
+              if (!src) return null
+              const c = rf.flowToScreenPosition({ x: src.x + src.w / 2, y: src.y + src.h / 2 })
+              return (
+                <svg
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    width: '100vw',
+                    height: '100vh',
+                    pointerEvents: 'none',
+                    zIndex: 50
+                  }}
+                >
+                  <line
+                    x1={c.x}
+                    y1={c.y}
+                    x2={connectPointer.x}
+                    y2={connectPointer.y}
+                    stroke="var(--border-strong)"
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                  />
+                </svg>
+              )
+            })()}
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
           <AppChrome onAdd={addCentered} onTidy={tidyAndFit} />

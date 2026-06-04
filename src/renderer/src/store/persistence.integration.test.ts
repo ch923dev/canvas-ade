@@ -56,7 +56,14 @@ const seed: Board[] = [
 
 describe('persistence — full reopen fidelity', () => {
   beforeEach(() => {
-    useCanvasStore.setState({ boards: [], viewport: null, selectedId: null, past: [], future: [] })
+    useCanvasStore.setState({
+      boards: [],
+      connectors: [],
+      viewport: null,
+      selectedId: null,
+      past: [],
+      future: []
+    })
   })
 
   it('boards + planning elements + camera survive a serialize→deserialize cycle', () => {
@@ -80,5 +87,39 @@ describe('persistence — full reopen fidelity', () => {
     const onDisk = useCanvasStore.getState().toObject()
     useCanvasStore.getState().loadObject(onDisk)
     expect(useCanvasStore.getState().boards).not.toBe(onDisk.boards)
+  })
+
+  it('orchestration connectors survive a reopen; preview links fold via previewSourceId (M2)', () => {
+    // Link the Browser to the terminal (runtime preview SoT) + draw an orchestration cable.
+    const linkedSeed = seed.map((b) => (b.id === 'b1' ? { ...b, previewSourceId: 't1' } : b))
+    useCanvasStore.setState({ boards: linkedSeed, connectors: [] })
+    const cableId = useCanvasStore.getState().addConnector('t1', 'p1', 'orchestration')!
+    expect(cableId).toBeTypeOf('string')
+
+    const onDisk = JSON.parse(JSON.stringify(useCanvasStore.getState().toObject()))
+    // The persisted doc carries BOTH the derived preview connector AND the orchestration cable.
+    expect(onDisk.connectors).toContainEqual({
+      id: 'preview-b1',
+      sourceId: 't1',
+      targetId: 'b1',
+      kind: 'preview'
+    })
+    expect(onDisk.connectors).toContainEqual({
+      id: cableId,
+      sourceId: 't1',
+      targetId: 'p1',
+      kind: 'orchestration'
+    })
+
+    // Reopen.
+    useCanvasStore.setState({ boards: [], connectors: [] })
+    useCanvasStore.getState().loadObject(onDisk)
+    const s = useCanvasStore.getState()
+    // Orchestration kept in memory; preview folded back into previewSourceId (not retained).
+    expect(s.connectors).toEqual([
+      { id: cableId, sourceId: 't1', targetId: 'p1', kind: 'orchestration' }
+    ])
+    const b = s.boards.find((x) => x.id === 'b1')!
+    expect(b.type === 'browser' ? b.previewSourceId : null).toBe('t1')
   })
 })

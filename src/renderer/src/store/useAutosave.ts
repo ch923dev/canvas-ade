@@ -92,12 +92,20 @@ export function useAutosave(): void {
       onError: (e) => console.error('autosave failed', e)
     })
 
-    // Save when boards or camera change (skip pure selection/tool churn).
+    // Save when boards, connectors, or camera change (skip pure selection/tool churn).
+    // connectors (M2) ride their own ref — a connector add/remove leaves `boards`
+    // untouched, so it must be watched explicitly or a new cable wouldn't autosave.
     let prevBoards = useCanvasStore.getState().boards
+    let prevConnectors = useCanvasStore.getState().connectors
     let prevViewport = useCanvasStore.getState().viewport
     const unsub = useCanvasStore.subscribe((s) => {
-      if (s.boards !== prevBoards || s.viewport !== prevViewport) {
+      if (
+        s.boards !== prevBoards ||
+        s.connectors !== prevConnectors ||
+        s.viewport !== prevViewport
+      ) {
         prevBoards = s.boards
+        prevConnectors = s.connectors
         prevViewport = s.viewport
         saver.schedule()
       }

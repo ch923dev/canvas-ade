@@ -20,15 +20,17 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { NodeResizer, useStore, Handle, Position, type Node, type NodeProps } from '@xyflow/react'
-import type { Board, BoardType } from '../lib/boardSchema'
+import type { Board } from '../lib/boardSchema'
 import { BoardActionsContext } from './boardActions'
 import type { ResolvedPushTarget } from '../lib/previewTarget'
 import { BoardFullViewContext, FullViewContext } from './fullViewContext'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
+import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
+import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
 import { isLod } from '../lib/canvasView'
-import { BoardFrame, type BoardStatus } from './BoardFrame'
+import { BoardFrame } from './BoardFrame'
 
 // §F code-split: each board type is its own lazy chunk so its heavy deps load only
 // when a board of that type first mounts — a no-terminal project never fetches xterm
@@ -105,17 +107,22 @@ export interface BoardViewProps<T extends Board = Board> {
   /** Terminal "Preview" action → push `url` to a chosen Browser target (refresh linked,
    *  connect, re-target, or spawn). Target chosen by gesture + the multi-select picker. */
   onPushPreviewTo?: (url: string, target: ResolvedPushTarget) => void
-}
-
-/** Status dot shown on the LOD card (no label at LOD). */
-function lodStatus(type: BoardType): BoardStatus | null {
-  if (type === 'terminal') return { dot: 'var(--text-3)' }
-  if (type === 'browser') return { dot: 'var(--ok)' }
-  return null
+  /** M2: title-bar connector handle → begin a connector drag from this board. */
+  onStartConnect?: () => void
 }
 
 export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>): ReactElement {
   const board = data.board
+  // T1.6: the LOD card's status dot is derived from the SAME bucket the MCP sees
+  // (boardStatusBucket over the live terminal/preview stores), so the zoomed-out dot
+  // and the agent's canvas://boards view never disagree. (The old type-only dot lied —
+  // a browser always read green, ignoring load-failed.) Terminals keep their own rich
+  // pill in TerminalBoard; this LOD path is taken only by browser/planning boards.
+  const termRunning = useTerminalRuntimeStore((s) => !!s.running[board.id])
+  const previewStatus = usePreviewStore((s) => s.byId[board.id]?.status)
+  const lodPill = bucketToPill(
+    boardStatusBucket(board.type, { terminalRunning: termRunning, preview: previewStatus })
+  )
   // Subscribe to the derived LOD boolean, NOT the raw zoom scalar: with Object.is
   // equality the selected value only flips at the LOD threshold, so a BoardNode
   // re-renders only at the crossover instead of on every intra-band zoom frame (#39).
@@ -131,7 +138,8 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const onPushPreviewTo = acts
     ? (url: string, target: ResolvedPushTarget): void => acts.pushPreviewTo(board.id, url, target)
     : undefined
-  const actions = { onFull, onDuplicate, onDelete, onPushPreviewTo }
+  const onStartConnect = acts ? (): void => acts.startConnect(board.id) : undefined
+  const actions = { onFull, onDuplicate, onDelete, onPushPreviewTo, onStartConnect }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
@@ -192,7 +200,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           selected={selected}
           dimmed={dimmed}
           lod
-          status={lodStatus(board.type)}
+          status={lodPill}
         />
       </div>
     )

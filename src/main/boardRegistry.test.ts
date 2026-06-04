@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest'
+import {
+  __setMirrorForTest,
+  __setConnectorsForTest,
+  listBoardMirror,
+  listConnectors,
+  sanitizeSnapshot,
+  sanitizeConnectors
+} from './boardRegistry'
+
+describe('boardRegistry', () => {
+  it('sanitizeSnapshot keeps well-formed entries and drops malformed ones', () => {
+    const out = sanitizeSnapshot([
+      { id: 'a', type: 'terminal', title: 'T' },
+      { id: 'b', type: 'browser', title: 'B' },
+      { id: 1, type: 'planning', title: 'P' }, // bad id
+      { id: 'c', type: 'planning' }, // missing title
+      'nope'
+    ])
+    expect(out).toEqual([
+      { id: 'a', type: 'terminal', title: 'T' },
+      { id: 'b', type: 'browser', title: 'B' }
+    ])
+  })
+
+  it('keeps a valid status bucket and drops an invalid/absent one', () => {
+    const out = sanitizeSnapshot([
+      { id: 'a', type: 'terminal', title: 'T', status: 'running' },
+      { id: 'b', type: 'browser', title: 'B', status: 'bogus-bucket' }, // invalid → dropped
+      { id: 'c', type: 'planning', title: 'P', status: 123 }, // non-string → dropped
+      { id: 'd', type: 'terminal', title: 'D' } // legacy, no status
+    ])
+    expect(out).toEqual([
+      { id: 'a', type: 'terminal', title: 'T', status: 'running' },
+      { id: 'b', type: 'browser', title: 'B' },
+      { id: 'c', type: 'planning', title: 'P' },
+      { id: 'd', type: 'terminal', title: 'D' }
+    ])
+  })
+
+  it('listBoardMirror returns the last stored snapshot (empty by default)', () => {
+    __setMirrorForTest([{ id: 'x', type: 'terminal', title: 'X' }])
+    expect(listBoardMirror()).toEqual([{ id: 'x', type: 'terminal', title: 'X' }])
+    __setMirrorForTest([])
+    expect(listBoardMirror()).toEqual([])
+  })
+
+  it('sanitizeConnectors keeps well-formed edges and drops malformed/bad-kind ones', () => {
+    const out = sanitizeConnectors([
+      { id: 'c1', sourceId: 'a', targetId: 'b', kind: 'orchestration' },
+      { id: 'c2', sourceId: 'a', targetId: 'b', kind: 'preview' },
+      { id: 'c3', sourceId: 'a', targetId: 'b', kind: 'bogus' }, // bad kind → dropped
+      { id: 'c4', sourceId: 'a', kind: 'orchestration' }, // missing targetId → dropped
+      { id: 5, sourceId: 'a', targetId: 'b', kind: 'orchestration' }, // bad id → dropped
+      'nope'
+    ])
+    expect(out).toEqual([
+      { id: 'c1', sourceId: 'a', targetId: 'b', kind: 'orchestration' },
+      { id: 'c2', sourceId: 'a', targetId: 'b', kind: 'preview' }
+    ])
+  })
+
+  it('listConnectors returns the last stored connectors (empty by default)', () => {
+    __setConnectorsForTest([{ id: 'c1', sourceId: 'a', targetId: 'b', kind: 'orchestration' }])
+    expect(listConnectors()).toEqual([
+      { id: 'c1', sourceId: 'a', targetId: 'b', kind: 'orchestration' }
+    ])
+    __setConnectorsForTest([])
+    expect(listConnectors()).toEqual([])
+  })
+})

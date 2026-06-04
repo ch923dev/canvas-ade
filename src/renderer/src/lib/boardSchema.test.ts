@@ -7,7 +7,9 @@ import {
   toObject,
   fromObject,
   migrate,
+  previewConnectorsFor,
   type Board,
+  type Connector,
   type PlanningBoard,
   type CanvasDoc,
   type CanvasViewport
@@ -454,7 +456,7 @@ describe('migrate', () => {
 
   it('throws when the doc is newer than the supported version', () => {
     expect(() =>
-      migrate({ schemaVersion: SCHEMA_VERSION + 1, viewport: null, boards: [] })
+      migrate({ schemaVersion: SCHEMA_VERSION + 1, viewport: null, boards: [], connectors: [] })
     ).toThrow()
   })
 
@@ -466,23 +468,23 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 4', () => {
-    expect(SCHEMA_VERSION).toBe(4)
+  it('SCHEMA_VERSION is 5', () => {
+    expect(SCHEMA_VERSION).toBe(5)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 4, viewport: vp, boards: [] })
+    expect(doc).toEqual({ schemaVersion: 5, viewport: vp, boards: [], connectors: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
     expect(toObject([], null).viewport).toBeNull()
   })
 
-  it('migrates a v1 doc (no viewport) to v4 (via v2, v3) with viewport=null', () => {
+  it('migrates a v1 doc (no viewport) to v5 (via v2, v3, v4) with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(4)
+    expect(out.schemaVersion).toBe(5)
     expect(out.viewport).toBeNull()
   })
 
@@ -500,7 +502,7 @@ describe('schema v2 — viewport', () => {
   })
 
   it('fromObject deep-clones — returned doc never aliases input (BUG-027)', () => {
-    const input: CanvasDoc = { schemaVersion: 2, viewport: { ...vp }, boards: [] }
+    const input: CanvasDoc = { schemaVersion: 2, viewport: { ...vp }, boards: [], connectors: [] }
     const out = fromObject(input)
     expect(out).not.toBe(input)
     expect(out.viewport).not.toBe(input.viewport)
@@ -549,6 +551,7 @@ describe('W3 schema v3', () => {
     const v2: CanvasDoc = {
       schemaVersion: 2,
       viewport: null,
+      connectors: [],
       boards: [
         {
           id: 'p1',
@@ -651,8 +654,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 4', () => {
-    expect(SCHEMA_VERSION).toBe(4)
+  it('SCHEMA_VERSION is 5', () => {
+    expect(SCHEMA_VERSION).toBe(5)
   })
 
   it('round-trips a valid image element', () => {
@@ -692,7 +695,7 @@ describe('W4 image element', () => {
       ]
     }
     const doc = fromObject(v3)
-    expect(doc.schemaVersion).toBe(4)
+    expect(doc.schemaVersion).toBe(5)
     const el = (doc.boards[0] as { elements: Array<{ assetId: string; w: number }> }).elements[0]
     expect(el.assetId).toBe('assets/y.png')
     expect(el.w).toBe(50)
@@ -700,5 +703,131 @@ describe('W4 image element', () => {
 
   it('rejects a negative h', () => {
     expect(() => fromObject(imageBoard('assets/x.png', { h: -1 }))).toThrow(/non-positive/)
+  })
+})
+
+// ── M2 spatial connectors (schema v5) ──────────────────────────────────────────
+// Connector {id,sourceId,targetId,kind} on CanvasDoc. The v4→v5 migration folds each
+// linked Browser's previewSourceId into a `preview` connector with the STABLE id
+// `preview-<browserId>`; `previewSourceId` stays the runtime source of truth (Decision
+// B: dual-source), so fromObject folds the preview connector BACK into the board and
+// keeps only `orchestration` connectors in the loaded doc. Orchestration connectors are
+// user-drawn board↔board cables that round-trip verbatim.
+describe('M2 connectors (schema v5)', () => {
+  const term = (): Board => createBoard('terminal', { id: 't1', x: 0, y: 0 })
+  const browser = (previewSourceId?: string): Board => ({
+    ...createBoard('browser', { id: 'b1', x: 800, y: 0 }),
+    ...(previewSourceId ? { previewSourceId } : {})
+  })
+
+  describe('previewConnectorsFor (pure preview-link derivation)', () => {
+    it('emits one preview connector per linked Browser with the stable preview-<id> id', () => {
+      expect(previewConnectorsFor([term(), browser('t1')])).toEqual([
+        { id: 'preview-b1', sourceId: 't1', targetId: 'b1', kind: 'preview' }
+      ])
+    })
+
+    it('skips a Browser with no previewSourceId and one whose source is absent', () => {
+      const dangling = {
+        ...createBoard('browser', { id: 'b2', x: 1600, y: 0 }),
+        previewSourceId: 'gone'
+      }
+      expect(previewConnectorsFor([term(), browser(), dangling])).toEqual([])
+    })
+  })
+
+  describe('migration 4→5', () => {
+    it('backfills an empty connectors array on a doc with no preview links', () => {
+      const v4 = { schemaVersion: 4, viewport: null, boards: [term()] } as unknown as CanvasDoc
+      const out = migrate(structuredClone(v4))
+      expect(out.schemaVersion).toBe(5)
+      expect(out.connectors).toEqual([])
+    })
+
+    it('folds a present + valid previewSourceId into a preview connector', () => {
+      const v4 = {
+        schemaVersion: 4,
+        viewport: null,
+        boards: [term(), browser('t1')]
+      } as unknown as CanvasDoc
+      const out = migrate(structuredClone(v4))
+      expect(out.schemaVersion).toBe(5)
+      expect(out.connectors).toEqual([
+        { id: 'preview-b1', sourceId: 't1', targetId: 'b1', kind: 'preview' }
+      ])
+    })
+
+    it('folds nothing for a dangling previewSourceId (source board absent)', () => {
+      const v4 = {
+        schemaVersion: 4,
+        viewport: null,
+        boards: [browser('gone')]
+      } as unknown as CanvasDoc
+      const out = migrate(structuredClone(v4))
+      expect(out.connectors).toEqual([])
+    })
+  })
+
+  describe('fromObject — dual-source reconciliation', () => {
+    it('folds a preview connector BACK into previewSourceId and drops it from in-memory connectors', () => {
+      const v4 = {
+        schemaVersion: 4,
+        viewport: null,
+        boards: [term(), browser('t1')]
+      } as unknown as CanvasDoc
+      const back = fromObject(v4)
+      // previewSourceId stays the runtime SoT…
+      const b = back.boards.find((x) => x.id === 'b1')
+      expect(b && b.type === 'browser' ? b.previewSourceId : 'MISSING').toBe('t1')
+      // …and the preview connector is NOT retained in the loaded connectors array.
+      expect(back.connectors).toEqual([])
+    })
+
+    it('round-trips an orchestration connector verbatim', () => {
+      const orch: Connector = { id: 'o1', sourceId: 't1', targetId: 'b1', kind: 'orchestration' }
+      const back = fromObject(toObject([term(), browser()], null, [orch]))
+      expect(back.connectors).toEqual([orch])
+    })
+
+    it('strips a dangling orchestration connector (an endpoint board is absent)', () => {
+      const orch: Connector = { id: 'o2', sourceId: 't1', targetId: 'gone', kind: 'orchestration' }
+      const back = fromObject(toObject([term(), browser()], null, [orch]))
+      expect(back.connectors).toEqual([])
+    })
+
+    it('is idempotent across a re-serialized round-trip', () => {
+      const orch: Connector = { id: 'o1', sourceId: 't1', targetId: 'b1', kind: 'orchestration' }
+      const once = fromObject(toObject([term(), browser('t1')], null, [orch]))
+      const twice = fromObject(toObject(once.boards, once.viewport, once.connectors))
+      expect(twice.connectors).toEqual(once.connectors)
+      expect(twice.boards).toEqual(once.boards)
+    })
+
+    it('rejects a connector missing targetId', () => {
+      const bad = {
+        schemaVersion: 5,
+        viewport: null,
+        boards: [term(), browser()],
+        connectors: [{ id: 'o1', sourceId: 't1', kind: 'orchestration' }]
+      }
+      expect(() => fromObject(bad)).toThrow(/connector/)
+    })
+
+    it('rejects a connector with an unknown kind', () => {
+      const bad = {
+        schemaVersion: 5,
+        viewport: null,
+        boards: [term(), browser()],
+        connectors: [{ id: 'o1', sourceId: 't1', targetId: 'b1', kind: 'wormhole' }]
+      }
+      expect(() => fromObject(bad)).toThrow(/connector/)
+    })
+  })
+
+  it('toObject serializes the connectors it is given (deep-cloned)', () => {
+    const orch: Connector = { id: 'o1', sourceId: 't1', targetId: 'b1', kind: 'orchestration' }
+    const doc = toObject([term(), browser()], null, [orch])
+    expect(doc.connectors).toEqual([orch])
+    expect(doc.connectors[0]).not.toBe(orch) // owns its data
   })
 })

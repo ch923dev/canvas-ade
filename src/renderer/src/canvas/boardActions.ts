@@ -13,6 +13,14 @@ export interface BoardActions {
    *  multi-select picker. Setting an existing browser re-points its `previewSourceId`,
    *  severing any prior terminal link. */
   pushPreviewTo: (fromBoardId: string, url: string, target: ResolvedPushTarget) => void
+  /**
+   * Begin a connector drag from `fromBoardId` (M2). The board's title-bar connector
+   * handle calls this on pointer-down; Canvas then tracks the pointer (rubber-band
+   * overlay) and on release resolves the drop target from store geometry
+   * (`resolveConnectTarget`) → `addConnector(from, target, 'orchestration')`. The
+   * in-flight "connecting" state is EPHEMERAL (never persisted — scene/session split).
+   */
+  startConnect: (fromBoardId: string) => void
 }
 
 export const BoardActionsContext = createContext<BoardActions | null>(null)

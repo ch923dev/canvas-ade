@@ -3,8 +3,17 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { writeFileSync, mkdtempSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { registerPtyHandlers, disposeAllPtys } from './pty'
+import {
+  registerPtyHandlers,
+  disposeAllPtys,
+  listPtySessions,
+  readPtyOutput,
+  drainPty,
+  writeToPty
+} from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
+import { readBoardResult, recordBoardResult } from './boardResults'
+import { readProjectMemory, readBoardSummary } from './boardMemory'
 import {
   buildMainWindowWebPreferences,
   windowOpenDecision,
@@ -22,11 +31,19 @@ import { readLlmConfig } from './llmConfig'
 import { createSummaryLoop } from './summaryLoop'
 import { createMemoryEngine } from './memoryEngine'
 import { getCurrentDir, readProject } from './projectStore'
+import { startMcpServer, type RunningMcp } from './mcp'
+import { runMcpSmoke } from './mcpSmoke'
+import { listBoardMirror, listConnectors, registerBoardRegistryHandler } from './boardRegistry'
+import { sendMcpCommand } from './mcpCommand'
+import { createAuditLog } from './auditLog'
+import { registerAuditHandler, getAuditLog } from './auditIpc'
+import { requestConfirm } from './mcpConfirm'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
+let mcp: RunningMcp | null = null
 
-const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit
+const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "mcp"=MCP tier smoke+quit
 
 // Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
 // pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
@@ -111,14 +128,17 @@ function createWindow(): void {
     })
   }
 
-  const e2e = !!process.env.CANVAS_E2E
+  // The Playwright e2e boot (CANVAS_E2E) and the MCP tier smoke (CANVAS_SMOKE='mcp')
+  // both need the renderer's seeding hook (window.__canvasE2E) to populate the board
+  // mirror, so load with ?e2e=1 for either.
+  const seedHarness = !!process.env.CANVAS_E2E || SMOKE === 'mcp'
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
-    mainWindow.loadURL(e2e ? `${base}?e2e=1` : base)
+    mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
   } else {
     mainWindow.loadFile(
       join(__dirname, '../renderer/index.html'),
-      e2e ? { query: { e2e: '1' } } : undefined
+      seedHarness ? { query: { e2e: '1' } } : undefined
     )
   }
 }
@@ -144,6 +164,35 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  registerBoardRegistryHandler(ipcMain, () => mainWindow)
+  mcp = await startMcpServer({
+    listBoards: listBoardMirror,
+    // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
+    listConnectors,
+    listSessions: listPtySessions,
+    readOutput: readPtyOutput,
+    readResult: readBoardResult,
+    readMemory: readProjectMemory,
+    readSummary: readBoardSummary,
+    // The MCP write path (T3.1+): frame-guarded control-plane command → renderer.
+    sendCommand: (command) => sendMcpCommand(ipcMain, () => mainWindow, command),
+    // Graceful PTY drain before an MCP close_board removes the board (T3.2).
+    drainPty: (id) => drainPty(id),
+    // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
+    // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
+    writeToPty: (id, text) => writeToPty(id, text),
+    // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
+    confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
+    // Append to the append-only dispatch audit trail (T4.1). The log is wired below
+    // (registerAuditHandler); read lazily so the closure resolves it at dispatch time.
+    audit: (e) =>
+      getAuditLog()
+        ?.append(e)
+        .then(() => {}) ?? Promise.resolve(),
+    // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
+    // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
+    recordResult: (id, result) => recordBoardResult(id, result)
+  })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
 
   // T-B2: encrypt the API key with Electron safeStorage. Built here (index already imports
@@ -198,15 +247,30 @@ app.whenReady().then(async () => {
       defaultDeps()
     ).then((r) => console.log('LLM_PING', JSON.stringify(r)))
   }
+  // 🔒 MCP dispatch audit trail (T4.1) — append-only JSONL under userData (NEVER the
+  // project folder). Registered now so the read IPC + the getAuditLog() seam the
+  // dispatch tools (T4.3+) append through are live before any board can dispatch.
+  registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: app.getPath('userData') }))
 
   createWindow()
   if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl)
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
-      const ok = await runSelfTest(mainWindow!, localServer!.url)
-      smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
-      if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
+      if (SMOKE === 'mcp') {
+        const code = await runMcpSmoke(mcp, mainWindow!)
+        process.exitCode = code
+        // Drain the renderer's debounced autosave before teardown (the mcp smoke
+        // seeds boards under ?e2e=1, arming useAutosave) so a late `project:save`
+        // invoke can't race the window destruction.
+        await flushRenderer()
+        await shutdown()
+        app.exit(code)
+      } else {
+        const ok = await runSelfTest(mainWindow!, localServer!.url)
+        smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
+        if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
+      }
     })
   }
 
@@ -224,9 +288,11 @@ app.whenReady().then(async () => {
 function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
   disposeAllPreviews()
+  const mcpClosed = mcp?.close() ?? Promise.resolve()
+  mcp = null
   localServer?.close()
   localServer = null
-  return drained
+  return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 
 /**

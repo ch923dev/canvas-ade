@@ -55,6 +55,12 @@ export const foreignEvent = {
   senderFrame: { id: 'preview-board-frame' }
 } as unknown as IpcMainInvokeEvent
 
-/** A getWin whose window resolves to the trusted mainFrame (for guard comparison). */
+/** A getWin whose window resolves to the trusted mainFrame (for guard comparison).
+ * Carries `isDestroyed: () => false` on the window and webContents so the hardened
+ * `isForeignSender` (which guards a torn-down window before touching `.mainFrame`)
+ * sees a live window. */
 export const mainWin = (): BrowserWindow =>
-  ({ webContents: { mainFrame } }) as unknown as BrowserWindow
+  ({
+    isDestroyed: () => false,
+    webContents: { mainFrame, isDestroyed: () => false }
+  }) as unknown as BrowserWindow

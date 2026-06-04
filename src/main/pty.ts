@@ -6,6 +6,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
+import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi, type OutputPage } from './ptyOutput'
 
 /**
  * Terminal data plane lives on a MessagePort (binary-ish, high-volume PTY
@@ -72,6 +73,13 @@ interface SessionLike {
    * to it across the move (closures capture the box, not the map entry).
    */
   buf: { data: string }
+  /**
+   * Last lifecycle state, read by the MCP board registry. A live session is
+   * 'running'; it is marked 'exited' in onExit immediately before cleanup() removes
+   * it from the map, so listPtySessions in practice reports running boards (the
+   * field tracks lifecycle honestly for when that contract widens in Phase 2).
+   */
+  state: PtyState
 }
 interface ParkedLike {
   proc: pty.IPty
@@ -171,7 +179,7 @@ export function adoptCore(
 
   // Back into `sessions` with the SAME boxed buffer; the spawn-time onData listener
   // now forwards live output to this new port (it looks up sessions.get(id)).
-  sessionsMap.set(id, { proc: p.proc, port: port1, buf: p.buf })
+  sessionsMap.set(id, { proc: p.proc, port: port1, buf: p.buf, state: 'running' })
   transferPort(port2)
 
   // Replay recorded scrollback, then re-announce running.
@@ -483,6 +491,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         // session that has since respawned under the same id (mirrors isStaleExit).
         const live = sessions.get(opts.id)
         if (live && live.proc === proc) {
+          live.state = 'exited'
           live.port.postMessage({ t: 'state', state: 'exited' satisfies PtyState, code: exitCode })
           live.port.postMessage({ t: 'exit', code: exitCode })
         }
@@ -515,7 +524,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     })
     port1.start()
 
-    sessions.set(opts.id, { proc, port: port1, buf })
+    sessions.set(opts.id, { proc, port: port1, buf, state: 'running' })
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
 
     // Announce running, then — spawn the SHELL, not the agent — write the
@@ -692,6 +701,75 @@ export function disposeAllPtys(): Promise<void> {
 }
 
 /**
+ * Snapshot of live PTY sessions for the MCP board registry (read-only; control
+ * plane only — never the PTY data stream). Parked (deleted-but-undoable) sessions
+ * are excluded: they are not live boards. Exited sessions are removed by cleanup()
+ * on their onExit, so every listed board is effectively 'running' today.
+ */
+export function listPtySessions(): Array<{ id: string; status: PtyState }> {
+  return [...sessions.entries()].map(([id, s]) => ({ id, status: s.state }))
+}
+
+/**
+ * Gracefully close the live PTY for `id` before its board is removed (MCP close_board,
+ * T3.2). Best-effort GRACEFUL FIRST: interrupt any running foreground agent (Ctrl-C)
+ * and ask the shell to `exit`, then wait a short grace window for a natural exit
+ * (onExit → cleanup drops it from `sessions`). Anything still alive after the window is
+ * hard tree-killed via `cleanup` (taskkill /T /F — see "kill the tree"). A non-terminal
+ * or absent id is a no-op. Always resolves; never throws on the PTY (close is
+ * best-effort). The board-unmount `pty:kill` that follows the removal then no-ops.
+ */
+export async function drainPty(id: string, graceMs = 600): Promise<void> {
+  const s = sessions.get(id)
+  if (!s) return
+  try {
+    s.proc.write('\x03') // Ctrl-C — interrupt a running foreground agent/command
+    s.proc.write('exit\r') // then ask the shell itself to exit cleanly
+  } catch {
+    /* proc already gone — fall through to the hard kill */
+  }
+  const deadline = Date.now() + graceMs
+  while (Date.now() < deadline) {
+    if (!sessions.has(id)) return // exited cleanly within the grace window
+    await new Promise((r) => setTimeout(r, 60))
+  }
+  await cleanup(id) // still alive → hard tree-kill
+}
+
+/**
+ * Read one capped, ANSI-stripped, tail-anchored page of a board's PTY scrollback
+ * for the MCP layer (T1.4 🔒). READ-ONLY, control-plane only — it reads the SAME
+ * 256 KB ring (`buf.data`) that adopt-replay uses (live OR parked, so exited boards
+ * stay readable for post-mortem), strips escape codes, and slices ONE page; it never
+ * returns the raw unbounded buffer and never writes to the PTY. `truncatedHead` is
+ * derived from ring saturation (`raw.length >= RING_CAP_BYTES`) so the page can
+ * honestly report `droppedOlder` when the cap has discarded older output.
+ */
+export function readPtyOutput(id: string, opts?: { cursor?: number; limit?: number }): OutputPage {
+  const raw = sessions.get(id)?.buf.data ?? parked.get(id)?.buf.data ?? ''
+  const truncatedHead = raw.length >= RING_CAP_BYTES
+  return pageOutput(stripAnsi(raw), {
+    cursor: opts?.cursor,
+    limit: Math.min(opts?.limit ?? MAX_OUTPUT_PAGE, MAX_OUTPUT_PAGE),
+    truncatedHead
+  })
+}
+
+/**
+ * E2E ONLY — append `text` straight into the live session's output ring (through the
+ * real `appendRing` cap), simulating PTY output so the harness can deterministically
+ * fill the buffer past the cap with known/ANSI content and assert the paged read.
+ * Shell-agnostic (no dependence on what a command happens to print). Read path only;
+ * exposes nothing to the renderer. Returns false if no live session holds `id`.
+ */
+export function debugSeedOutput(id: string, text: string): boolean {
+  const s = sessions.get(id)
+  if (!s) return false
+  s.buf.data = appendRing(s.buf.data, text, RING_CAP_BYTES)
+  return true
+}
+
+/**
  * E2E (in-process smoke) ONLY — pid of the live OR parked session for `id`, so the
  * harness can assert process IDENTITY across a delete→undo (adopt must reattach the
  * SAME process, not spawn a new one). Read-only; exposes nothing new to the renderer.
@@ -710,4 +788,38 @@ export function debugWriteTerminal(id: string, data: string): boolean {
   if (!s) return false
   s.proc.write(data)
   return true
+}
+
+/**
+ * 🔒 Pure core of the MCP dispatch write primitive (T4.3). Writes `text` into the live
+ * session's PTY proc, keyed on the session map. ONLY terminals have sessions, so an
+ * absent / non-terminal / unknown id has no entry → false (no write). A write into a
+ * proc that has just exited can throw — we swallow it and return false rather than let
+ * it crash MAIN (same discipline as `adoptCore`'s input forwarding). The boolean is the
+ * caller's signal: the orchestrator audits a `false` as a failed dispatch and throws.
+ */
+export function writeToPtyCore(
+  id: string,
+  text: string,
+  sessionMap: Map<string, { proc: Pick<pty.IPty, 'write'> }>
+): boolean {
+  const s = sessionMap.get(id)
+  if (!s) return false
+  try {
+    s.proc.write(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 🔒 Production dispatch write (T4.3): write `text` into terminal board `id`'s PTY.
+ * Returns false when no live terminal session holds the id (non-terminal target, closed
+ * board, or a just-exited proc). MAIN-only; never exposed to the renderer. The MCP
+ * dispatch path (mcpOrchestrator) calls this ONLY after a single-use nonce + a human
+ * confirm + an audit entry have authorized the write.
+ */
+export function writeToPty(id: string, text: string): boolean {
+  return writeToPtyCore(id, text, sessions)
 }
