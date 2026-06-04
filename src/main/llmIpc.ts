@@ -148,7 +148,8 @@ export function registerLlmHandlers(
     // `unknown` at runtime — an unknown provider would pollute the key file (e.g. '__proto__'),
     // an empty key would falsely report hasKey:true, and an unbounded key would be encrypted +
     // written synchronously (event-loop stall). Reject all three cleanly here.
-    if (!VALID_PROVIDERS.has(a?.provider as string)) return { ok: false, reason: 'invalid-provider' }
+    if (!VALID_PROVIDERS.has(a?.provider as string))
+      return { ok: false, reason: 'invalid-provider' }
     if (typeof a.key !== 'string' || a.key.length === 0 || a.key.length > MAX_KEY_LEN)
       return { ok: false, reason: 'invalid-key' }
     return keyStore.setKey(a.provider, a.key)
