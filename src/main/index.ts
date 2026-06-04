@@ -166,6 +166,13 @@ app.whenReady().then(async () => {
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerBoardRegistryHandler(ipcMain, () => mainWindow)
+  // 🔒 MCP dispatch audit trail (T4.1) — wired BEFORE startMcpServer (BUG-025) so the
+  // getAuditLog() seam the dispatch tools append through is already non-null the instant
+  // the HTTP server is live. Previously this ran ~85 lines later, so any dispatch arriving
+  // in that boot window had its audit entry silently dropped (getAuditLog() → null → the
+  // `?? Promise.resolve()` short-circuit), leaving an invisible gap in the forensic trail.
+  // Append-only JSONL under userData (NEVER the project folder — must outlive any project).
+  registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: app.getPath('userData') }))
   mcp = await startMcpServer({
     listBoards: listBoardMirror,
     // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
@@ -184,8 +191,8 @@ app.whenReady().then(async () => {
     writeToPty: (id, text) => writeToPty(id, text),
     // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
     confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
-    // Append to the append-only dispatch audit trail (T4.1). The log is wired below
-    // (registerAuditHandler); read lazily so the closure resolves it at dispatch time.
+    // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
+    // (registerAuditHandler — BUG-025); read lazily so the closure resolves it at dispatch time.
     audit: (e) =>
       getAuditLog()
         ?.append(e)
@@ -253,10 +260,7 @@ app.whenReady().then(async () => {
       defaultDeps()
     ).then((r) => console.log('LLM_PING', JSON.stringify(r)))
   }
-  // 🔒 MCP dispatch audit trail (T4.1) — append-only JSONL under userData (NEVER the
-  // project folder). Registered now so the read IPC + the getAuditLog() seam the
-  // dispatch tools (T4.3+) append through are live before any board can dispatch.
-  registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: app.getPath('userData') }))
+  // (The MCP dispatch audit trail is now registered earlier, before startMcpServer — BUG-025.)
 
   createWindow()
   if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl)
