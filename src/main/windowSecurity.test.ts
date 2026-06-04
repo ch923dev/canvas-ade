@@ -26,6 +26,15 @@ describe('buildMainWindowWebPreferences (#3/#4)', () => {
   it('passes the preload path through', () => {
     expect(wp.preload).toBe('/app/out/preload/index.js')
   })
+
+  // implicit-secure-defaults-not-pinned: webSecurity / allowRunningInsecureContent /
+  // experimentalFeatures default to the safe values, but pin them explicitly so a future
+  // edit can't silently flip the same-origin policy or enable insecure/experimental surfaces.
+  it('pins webSecurity on and disables insecure-content + experimental features', () => {
+    expect(wp.webSecurity).toBe(true)
+    expect(wp.allowRunningInsecureContent).toBe(false)
+    expect(wp.experimentalFeatures).toBe(false)
+  })
 })
 
 // Checklist #13/#14: the main window ALWAYS denies in-app window creation; an
