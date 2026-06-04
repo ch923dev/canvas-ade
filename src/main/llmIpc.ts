@@ -86,6 +86,13 @@ export function registerLlmHandlers(
 
   ipcMain.handle('llm:summarize', async (e, input: SummarizeInput): Promise<SummarizeResult> => {
     if (guard(e)) return { ok: false, reason: 'provider-error', message: 'forbidden sender' }
+    // BUG-011: the IPC arg is `unknown` at runtime — a caller sending `{}` / `{ system: 'x' }`
+    // (no `text`) would push `content: undefined` into the provider body (JSON.stringify drops it
+    // → malformed request the provider rejects with a 400, AND a budget slot is consumed first).
+    // Reject cleanly here, before any provider/budget work, so no future renderer caller can leak
+    // a null-content request or waste the daily cap.
+    if (typeof input?.text !== 'string' || input.text.length === 0)
+      return { ok: false, reason: 'provider-error', message: 'invalid input: text is required' }
     const config = readLlmConfig(userDataDir)
     return runSummarize(config, input, deps)
   })

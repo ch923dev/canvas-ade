@@ -55,6 +55,36 @@ describe('registerLlmHandlers', () => {
     }
   })
 
+  // BUG-011: a summarize call with no/empty `text` must be rejected at the handler with a typed
+  // error BEFORE any provider/budget work — never reach the provider as a null-content request.
+  it('rejects summarize with a missing or empty text field (BUG-011)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llmipc-bug011-'))
+    try {
+      // Configure an explicit cap so the budget store is engaged under the mock seam — proves the
+      // guard fires BEFORE budget is touched.
+      writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 5 })
+      const cap = createIpcCapture()
+      registerLlmHandlers(cap.ipcMain, mainWin, dir, {
+        fetch: noNetwork,
+        env: { CANVAS_LLM_MOCK: '1' }
+      })
+      const invalid = { ok: false, reason: 'provider-error', message: 'invalid input: text is required' }
+      // No `text` key (the masked-by-mock case: old behavior returned { ok:true, text:'[mock] undefined' }).
+      expect(await cap.invoke('llm:summarize', { system: 'x' })).toEqual(invalid)
+      // Empty string.
+      expect(await cap.invoke('llm:summarize', { text: '' })).toEqual(invalid)
+      // Non-string text.
+      expect(await cap.invoke('llm:summarize', { text: 123 } as never)).toEqual(invalid)
+      // null/undefined input object — must not throw, returns the typed error.
+      expect(await cap.invoke('llm:summarize', null as never)).toEqual(invalid)
+      // The budget was never consumed (guard short-circuits before runSummarize).
+      const ok = await cap.invoke('llm:summarize', { text: 'real' })
+      expect(ok).toEqual({ ok: true, text: '[mock] real' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('status reports a provider + model and never leaks key material', async () => {
     const cap = createIpcCapture()
     registerLlmHandlers(cap.ipcMain, mainWin, '/no/such/dir', {
