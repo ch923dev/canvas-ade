@@ -33,17 +33,13 @@ jobs:
           python-version: '3.11'
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      # SCA / supply-chain gate. NON-BLOCKING for now: the current tree carries
-      # HIGH/critical advisories (EOL Electron 33 + transitive tar/node-gyp + a
-      # vitest dev-server CVE) that can't be cleared until the Electron bump (T9).
-      # `continue-on-error` keeps it visible (red step, surfaces new advisories on
-      # every PR) without blocking the gate. `|| true` also keeps the step resilient
-      # if `pnpm audit` itself errors on the private @ch923dev scope advisory lookup.
-      # TODO(T9): flip to a hard gate (drop continue-on-error + `|| true`) once
-      # Electron is bumped off EOL and the tree is clean.
-      - name: pnpm audit (SCA — non-blocking until T9)
-        continue-on-error: true
-        run: pnpm audit --audit-level=high || true
+      # SCA / supply-chain gate — HARD as of T9. The tree is clean at high+:
+      # Electron 33→42 (off EOL), vitest 2→4 (cleared the dev-server CVE), and a
+      # pnpm `overrides` pin of tar ≥7.5.8 (the electron-builder squirrel-windows
+      # sub-chain still dragged tar 6.2.1). A new HIGH/critical advisory now BLOCKS
+      # the PR. One moderate (PostCSS) remains, below the --audit-level=high threshold.
+      - name: pnpm audit (SCA)
+        run: pnpm audit --audit-level=high
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
