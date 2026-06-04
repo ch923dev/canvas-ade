@@ -75,11 +75,18 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     board: (id) => join(memoryDir, `board-${id}.md`)
   }
 
+  // BUG-017: the canonical .canvas/ tree = memory/ + audit/. Both ensureScaffold and
+  // setCommitOptIn must create the full set, not just root, so the on-disk scaffold is never left
+  // in an inconsistent partial state (root + .gitignore but no memory/ or audit/).
+  const ensureDirs = (): void => {
+    mkdirSync(memoryDir, { recursive: true })
+    mkdirSync(auditDir, { recursive: true })
+  }
+
   return {
     paths,
     ensureScaffold() {
-      mkdirSync(memoryDir, { recursive: true })
-      mkdirSync(auditDir, { recursive: true })
+      ensureDirs()
       // Write the default-private ignore only if absent — never clobber a user opt-in.
       if (!existsSync(gitignore)) {
         writeFileAtomic.sync(gitignore, IGNORE_PRIVATE, 'utf8')
@@ -123,7 +130,9 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
       return readMd(paths.project)
     },
     setCommitOptIn(commit) {
-      mkdirSync(root, { recursive: true })
+      // BUG-017: create the full scaffold (memory/ + audit/), not just root, so toggling the commit
+      // flag on a fresh project never leaves a partial tree (root + .gitignore but no memory/audit).
+      ensureDirs()
       writeFileAtomic.sync(gitignore, commit ? IGNORE_COMMITTED : IGNORE_PRIVATE, 'utf8')
     },
     isCommitted() {

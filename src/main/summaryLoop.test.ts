@@ -290,6 +290,27 @@ describe('createSummaryLoop — write on ok', () => {
       rmSync(llmDataDir, { recursive: true, force: true })
     }
   })
+
+  it('BUG-017: ensures the .canvas scaffold (.gitignore present) before writing memory files', async () => {
+    // Simulate scaffoldProjectMemory having failed silently at open: the project dir exists but
+    // .canvas/.gitignore was never written. A successful summarize must (re)create the scaffold so
+    // the generated memory stays default-private. Pre-fix onIntent never called ensureScaffold →
+    // board-p1.md was written but .canvas/.gitignore stayed absent.
+    const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))
+    const { loop, llmDataDir } = makeLoop({
+      getDir: () => proj,
+      doc: docWith([planNote('p1', 'hello world')])
+    })
+    try {
+      expect(existsSync(join(proj, '.canvas', '.gitignore'))).toBe(false) // pre-condition
+      await loop.onIntent({ boardId: 'p1' })
+      expect(existsSync(join(proj, '.canvas', '.gitignore'))).toBe(true)
+      expect(existsSync(join(proj, '.canvas', 'memory', 'board-p1.md'))).toBe(true)
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('createSummaryLoop — T-F1 getTerminalRuntime injection', () => {

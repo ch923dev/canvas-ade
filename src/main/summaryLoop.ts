@@ -315,6 +315,16 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         if (deps.getCurrentDir() !== dir) return // project switched mid-summarize → drop the write
 
         const mem = createCanvasMemory(dir)
+        // BUG-017: ensure the .canvas/ scaffold (incl. the default-private .gitignore) exists before
+        // writing memory files. scaffoldProjectMemory at project-open swallows ALL errors, so a
+        // transient ENOSPC/EACCES there could leave .gitignore absent — then these writes would
+        // create un-ignored board-*.md, breaking the default-private contract. ensureScaffold is
+        // idempotent (existsSync-guarded) and best-effort: a failure must not abort the summarize.
+        try {
+          mem.ensureScaffold()
+        } catch (err) {
+          console.warn('[summaryLoop] ensureScaffold failed (non-fatal)', err)
+        }
         // BUG-016: sanitize + bound the untrusted LLM output before it lands on disk. The input
         // was capped (MAX_INPUT_CHARS) but the response was not - a local/openrouter endpoint with
         // no server-side token cap could return a giant or control-char-laced blob written verbatim.
