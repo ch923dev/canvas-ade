@@ -1,7 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, appendFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+
+// BUG-024 (1): inject a one-shot appendFile failure to prove a failed WRITE does not burn
+// its seq. The mock wraps the REAL fs/promises so every other test keeps real disk behavior;
+// only `failNextAppend` (armed per-test) makes the next appendFile reject (e.g. ENOSPC).
+const fsControl = vi.hoisted(() => ({ failNextAppend: false }))
+vi.mock('node:fs/promises', async () => {
+  const real = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  return {
+    ...real,
+    appendFile: (...args: Parameters<typeof real.appendFile>) => {
+      if (fsControl.failNextAppend) {
+        fsControl.failNextAppend = false
+        return Promise.reject(
+          Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+        )
+      }
+      return real.appendFile(...args)
+    }
+  }
+})
+
 import { createAuditLog, shapeAuditEntry, type AuditInput } from './auditLog'
 
 let dir: string
@@ -11,6 +32,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'canvas-audit-'))
 })
 afterEach(() => {
+  fsControl.failNextAppend = false
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -101,6 +123,38 @@ describe('createAuditLog (append-only JSONL)', () => {
     const raw = readFileSync(join(dir, FILE), 'utf8')
     const lines = raw.split('\n').filter((l) => l.trim())
     expect(lines).toHaveLength(2)
+  })
+
+  it('a failed write does NOT burn the seq — the next append reuses it, no gap (BUG-024 #1)', async () => {
+    const log = createAuditLog({ dir, now: () => 1 })
+    expect((await log.append(input({ prompt: 'first' }))).seq).toBe(1)
+
+    // The next appendFile fails (ENOSPC). The reserved seq (2) must NOT advance.
+    fsControl.failNextAppend = true
+    await expect(log.append(input({ prompt: 'lost' }))).rejects.toThrow(/ENOSPC/)
+
+    // The retry must REUSE seq 2 (not skip to 3) — an audit trail must be gap-free.
+    expect((await log.append(input({ prompt: 'retry' }))).seq).toBe(2)
+
+    const back = await log.read()
+    expect(back.map((e) => e.seq).sort((x, y) => x - y)).toEqual([1, 2])
+    expect(back.map((e) => e.prompt).sort()).toEqual(['first', 'retry']) // 'lost' never persisted
+  })
+
+  it('concurrent appends land in the file in SEQ order (BUG-024 #2: serialized writes)', async () => {
+    const log = createAuditLog({ dir, now: () => 1 })
+    // Fire many appends concurrently. The full write (not just the seq arithmetic) is
+    // serialized through the tail promise, so the physical JSONL line order must equal the
+    // seq order — the pre-fix code only chained the seq number, letting writes interleave.
+    await Promise.all(
+      Array.from({ length: 8 }, (_, i) => log.append(input({ prompt: `p${i}` })))
+    )
+    const raw = readFileSync(join(dir, FILE), 'utf8')
+    const seqsInFileOrder = raw
+      .split('\n')
+      .filter((l) => l.trim())
+      .map((l) => (JSON.parse(l) as { seq: number }).seq)
+    expect(seqsInFileOrder).toEqual([1, 2, 3, 4, 5, 6, 7, 8]) // physical order === seq order
   })
 
   it('read tolerates a corrupt / blank line and returns the well-formed entries', async () => {
