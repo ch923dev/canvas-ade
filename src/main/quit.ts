@@ -22,3 +22,27 @@ export function performGuardedQuit(deps: {
     .then(() => deps.shutdown())
     .finally(() => deps.exit(0))
 }
+
+/**
+ * Crash/signal cleanup (#50), extracted from index.ts for the same testability reason as
+ * performGuardedQuit. before-quit/window-all-closed don't fire on an uncaught error or an external
+ * SIGINT/SIGTERM, which would orphan the node-pty child trees. The returned handler — shared by all
+ * the crash sinks (uncaughtException / unhandledRejection / SIGINT / SIGTERM) — is idempotent (the
+ * FIRST crash wins, so a cascading error during teardown can't re-enter), logs the error when one is
+ * present, fires the best-effort tree-kill (shutdown is fire-and-forget — a crash handler can't await
+ * the async taskkill), then exits with the given code.
+ */
+export function makeCrashHandler(deps: {
+  shutdown: () => Promise<void>
+  exit: (code: number) => void
+  logError?: (err: unknown) => void
+}): (exitCode: number, err?: unknown) => void {
+  let crashing = false
+  return (exitCode, err) => {
+    if (crashing) return
+    crashing = true
+    if (err !== undefined) deps.logError?.(err)
+    void deps.shutdown()
+    deps.exit(exitCode)
+  }
+}

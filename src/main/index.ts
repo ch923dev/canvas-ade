@@ -32,7 +32,7 @@ import type { Encryptor } from './llmKeyStore'
 import { readLlmConfig } from './llmConfig'
 import { createSummaryLoop } from './summaryLoop'
 import { createMemoryEngine } from './memoryEngine'
-import { performGuardedQuit } from './quit'
+import { performGuardedQuit, makeCrashHandler } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
 import { startMcpServer, type RunningMcp } from './mcp'
 import { runMcpSmoke } from './mcpSmoke'
@@ -379,19 +379,14 @@ app.on('before-quit', (event) => {
   })
 })
 
-// Crash-path / signal cleanup (#50): before-quit/window-all-closed don't fire on an
-// uncaught error or an external SIGINT/SIGTERM, which would orphan the node-pty child
-// trees. shutdown() is idempotent, so firing it here (in addition to the normal paths)
-// is safe. An uncaughtException handler can't await the async taskkill before exit, so
-// this is best-effort — but firing the tree-kill at all beats the zero-cleanup path.
-let crashing = false
-function crashShutdown(exitCode: number, err?: unknown): void {
-  if (crashing) return
-  crashing = true
-  if (err) console.error(err)
-  void shutdown()
-  app.exit(exitCode)
-}
+// Crash-path / signal cleanup (#50): before-quit/window-all-closed don't fire on an uncaught
+// error or an external SIGINT/SIGTERM, which would orphan the node-pty child trees. The handler
+// (idempotent, best-effort tree-kill, see quit.ts) is shared by all the crash sinks.
+const crashShutdown = makeCrashHandler({
+  shutdown,
+  exit: (code) => app.exit(code),
+  logError: (err) => console.error(err)
+})
 process.on('uncaughtException', (err) => crashShutdown(1, err))
 process.on('unhandledRejection', (reason) => crashShutdown(1, reason))
 process.on('SIGINT', () => crashShutdown(0))
