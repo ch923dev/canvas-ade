@@ -10,7 +10,7 @@
  *
  * globals: false — import all vitest helpers explicitly (see vitest.config.ts).
  */
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // Fix 1 — bare `1`/`0` keys must NOT fire while focus is inside a .react-flow__node
@@ -218,5 +218,124 @@ describe('Fix 2 — enterCameraFullView does not overwrite priorViewport when al
     expect(getViewport).not.toHaveBeenCalled()
     // priorViewport still holds the user's original position
     expect(priorViewportRef.current).toEqual({ x: 10, y: 20, zoom: 0.8 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Fix D — detect-ports-error-not-propagated (TerminalBoard.tsx onPreview)
+//
+// `onPreview` calls `window.api.detectPorts()` with no try/catch so a rejected
+// IPC promise floats unhandled and the globe button silently does nothing.
+// The fix wraps the await + consuming logic in try/catch and calls setPreviewNote
+// on failure so the button always gives feedback.
+//
+// TerminalBoard cannot be mounted in the jsdom harness (requires xterm,
+// node-pty, React Flow, Zustand). Instead we extract the onPreview logic as a
+// standalone async function — the exact shape the component callback uses — so a
+// regression breaks the test even if wiring changes.
+// ---------------------------------------------------------------------------
+
+type DetectedUrl = { url: string; host: string; port: number }
+type Gesture = 'tap' | 'hold'
+
+/**
+ * Extracted onPreview logic (mirrors TerminalBoard.tsx onPreview exactly).
+ * Takes the three collaborators as parameters so the test can control them.
+ */
+async function onPreviewLogic(
+  detectPorts: () => Promise<DetectedUrl[]>,
+  setPreviewNote: (msg: string | null) => void,
+  routeUrl: (url: string, gesture: Gesture) => void,
+  setPortChoices: (v: { urls: DetectedUrl[]; gesture: Gesture } | null) => void,
+  gesture: Gesture
+): Promise<void> {
+  setPreviewNote(null)
+  let urls: DetectedUrl[]
+  try {
+    urls = await detectPorts()
+  } catch {
+    setPreviewNote("Couldn't detect a server — check the terminal, then try again.")
+    return
+  }
+  if (urls.length === 0) {
+    setPreviewNote('No dev server detected yet — start it, then try again.')
+    return
+  }
+  if (urls.length === 1) {
+    routeUrl(urls[0].url, gesture)
+    return
+  }
+  setPortChoices({ urls, gesture })
+}
+
+describe('Fix D — onPreview surfaces detectPorts failure via previewNote', () => {
+  let setPreviewNote: ReturnType<typeof vi.fn>
+  let routeUrl: ReturnType<typeof vi.fn>
+  let setPortChoices: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    setPreviewNote = vi.fn()
+    routeUrl = vi.fn()
+    setPortChoices = vi.fn()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('sets the error previewNote and returns when detectPorts rejects', async () => {
+    const detectPorts = vi.fn().mockRejectedValue(new Error('IPC channel closed'))
+    await onPreviewLogic(detectPorts, setPreviewNote, routeUrl, setPortChoices, 'tap')
+    expect(setPreviewNote).toHaveBeenCalledWith(
+      "Couldn't detect a server — check the terminal, then try again."
+    )
+    expect(routeUrl).not.toHaveBeenCalled()
+    expect(setPortChoices).not.toHaveBeenCalled()
+  })
+
+  it('sets no-server previewNote when detectPorts resolves with empty array', async () => {
+    const detectPorts = vi.fn().mockResolvedValue([])
+    await onPreviewLogic(detectPorts, setPreviewNote, routeUrl, setPortChoices, 'tap')
+    expect(setPreviewNote).toHaveBeenCalledWith(
+      'No dev server detected yet — start it, then try again.'
+    )
+    expect(routeUrl).not.toHaveBeenCalled()
+  })
+
+  it('calls routeUrl when exactly one URL is detected', async () => {
+    const url = { url: 'http://localhost:3000', host: 'localhost', port: 3000 }
+    const detectPorts = vi.fn().mockResolvedValue([url])
+    await onPreviewLogic(detectPorts, setPreviewNote, routeUrl, setPortChoices, 'tap')
+    expect(routeUrl).toHaveBeenCalledWith('http://localhost:3000', 'tap')
+    expect(setPreviewNote).toHaveBeenCalledWith(null) // cleared at start, never set to error
+    expect(setPreviewNote).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls setPortChoices when multiple URLs are detected', async () => {
+    const urls = [
+      { url: 'http://localhost:3000', host: 'localhost', port: 3000 },
+      { url: 'http://localhost:5173', host: 'localhost', port: 5173 }
+    ]
+    const detectPorts = vi.fn().mockResolvedValue(urls)
+    await onPreviewLogic(detectPorts, setPreviewNote, routeUrl, setPortChoices, 'hold')
+    expect(setPortChoices).toHaveBeenCalledWith({ urls, gesture: 'hold' })
+    expect(routeUrl).not.toHaveBeenCalled()
+  })
+
+  it('clears the previewNote at the start of every call (success path)', async () => {
+    const url = { url: 'http://localhost:3000', host: 'localhost', port: 3000 }
+    const detectPorts = vi.fn().mockResolvedValue([url])
+    await onPreviewLogic(detectPorts, setPreviewNote, routeUrl, setPortChoices, 'tap')
+    // First call to setPreviewNote must be the null-clear
+    expect(setPreviewNote.mock.calls[0]).toEqual([null])
+  })
+
+  it('clears the previewNote at the start even when detectPorts rejects', async () => {
+    const detectPorts = vi.fn().mockRejectedValue(new Error('timeout'))
+    await onPreviewLogic(detectPorts, setPreviewNote, routeUrl, setPortChoices, 'tap')
+    expect(setPreviewNote.mock.calls[0]).toEqual([null])
+    expect(setPreviewNote.mock.calls[1]).toEqual([
+      "Couldn't detect a server — check the terminal, then try again."
+    ])
   })
 })

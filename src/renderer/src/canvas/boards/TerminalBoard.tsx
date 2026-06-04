@@ -562,7 +562,13 @@ export function TerminalBoard({
   const onPreview = useCallback(
     async (gesture: Gesture) => {
       setPreviewNote(null)
-      const urls = await window.api.detectPorts(board.id)
+      let urls: Awaited<ReturnType<typeof window.api.detectPorts>>
+      try {
+        urls = await window.api.detectPorts(board.id)
+      } catch {
+        setPreviewNote("Couldn't detect a server — check the terminal, then try again.")
+        return
+      }
       if (urls.length === 0) {
         setPreviewNote('No dev server detected yet — start it, then try again.')
         return
