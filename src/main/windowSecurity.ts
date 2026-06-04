@@ -116,3 +116,28 @@ export function navDecision(
   if (u.origin === appOrigin) return { allow: true, openExternal: null }
   return { allow: false, openExternal: isAllowedExternal(url) ? url : null }
 }
+
+/**
+ * Build the navigation-guard side effect (#13) from a navDecision predicate. The
+ * returned handler is wired to the window's `will-navigate` / `will-redirect` /
+ * `will-frame-navigate` events: an allowed target (same-origin nav, an in-app hash
+ * change, or the app's own `location.reload()` — which re-navigates to the pinned
+ * appDocPath/appOrigin) passes through untouched; a blocked target is
+ * `preventDefault`'d, and an allowlisted http(s)/mailto URL is handed to the OS
+ * browser. Extracted from index.ts so the event wiring — not just the predicate — is
+ * unit-testable; index.ts injects the real `event.preventDefault` + `shell.openExternal`.
+ */
+export function createNavGuard(opts: {
+  appOrigin: string | null
+  appDocPath?: string | null
+  platform?: NodeJS.Platform
+  openExternal: (url: string) => void
+}): (event: { preventDefault: () => void }, url: string) => void {
+  const { appOrigin, appDocPath, platform, openExternal } = opts
+  return (event, url) => {
+    const d = navDecision(url, { appOrigin, appDocPath, platform })
+    if (d.allow) return
+    event.preventDefault()
+    if (d.openExternal) openExternal(d.openExternal)
+  }
+}

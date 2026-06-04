@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   buildMainWindowWebPreferences,
   windowOpenDecision,
   computeAppOrigin,
   normalizeDocPath,
-  navDecision
+  navDecision,
+  createNavGuard
 } from './windowSecurity'
 
 // Checklist #3/#4: the main window must run with contextIsolation + sandbox ON and
@@ -205,5 +206,75 @@ describe('navDecision (#13)', () => {
       allow: false,
       openExternal: null
     })
+  })
+})
+
+// The guardNav side effect wired to will-navigate/will-redirect/will-frame-navigate
+// (#13): navDecision's predicate is exhaustively covered above; this asserts the
+// EVENT WIRING the predicate feeds — an allowed nav passes through untouched, a
+// blocked one is preventDefault'd, and an allowlisted external is routed to the OS
+// browser. The packaged file: pathname-pin is dev/e2e-inert (electron-vite dev-serves
+// over http, so appDocPath is undefined), so this closure is the only place the
+// allow→reload / block→preventDefault wiring is exercised outside a packaged build.
+// The packaged file:// pin itself still needs a manual post-packaging smoke (drop a
+// local file on the window → it must not navigate away). See docs/testing/TESTING.md.
+describe('createNavGuard (#13 event wiring)', () => {
+  const APP_DOC = '/C:/app/resources/app.asar/out/renderer/index.html'
+
+  function harness(opts: Parameters<typeof createNavGuard>[0]) {
+    const event = { preventDefault: vi.fn() }
+    const guard = createNavGuard(opts)
+    return { event, guard }
+  }
+
+  it('passes a same-origin nav through (no preventDefault, no external)', () => {
+    const openExternal = vi.fn()
+    const { event, guard } = harness({ appOrigin: 'http://localhost:5173', openExternal })
+    guard(event, 'http://localhost:5173/?e2e=1')
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  it("allows the app's own document reload in a packaged build (file: appDocPath match)", () => {
+    const openExternal = vi.fn()
+    const { event, guard } = harness({
+      appOrigin: null,
+      appDocPath: APP_DOC,
+      platform: 'win32',
+      openExternal
+    })
+    // location.reload() re-navigates to the exact app document URL.
+    guard(event, 'file:///C:/app/resources/app.asar/out/renderer/index.html')
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  it('blocks a non-app file: URL — preventDefault, never routed to the OS', () => {
+    const openExternal = vi.fn()
+    const { event, guard } = harness({
+      appOrigin: null,
+      appDocPath: APP_DOC,
+      platform: 'win32',
+      openExternal
+    })
+    guard(event, 'file:///C:/Windows/win.ini')
+    expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  it('blocks a cross-origin http nav and routes it to the OS browser', () => {
+    const openExternal = vi.fn()
+    const { event, guard } = harness({ appOrigin: 'http://localhost:5173', openExternal })
+    guard(event, 'https://evil.com/')
+    expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    expect(openExternal).toHaveBeenCalledWith('https://evil.com/')
+  })
+
+  it('blocks an unparseable URL — preventDefault, no external open', () => {
+    const openExternal = vi.fn()
+    const { event, guard } = harness({ appOrigin: 'http://localhost:5173', openExternal })
+    guard(event, '::::bad')
+    expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    expect(openExternal).not.toHaveBeenCalled()
   })
 })

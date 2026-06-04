@@ -20,7 +20,7 @@ import {
   buildMainWindowWebPreferences,
   windowOpenDecision,
   computeAppOrigin,
-  navDecision
+  createNavGuard
 } from './windowSecurity'
 import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
@@ -100,12 +100,11 @@ function createWindow(): void {
   const indexHtmlPath = join(__dirname, '../renderer/index.html')
   const appOrigin = computeAppOrigin(process.env['ELECTRON_RENDERER_URL'])
   const appDocPath = usePackagedFile ? pathToFileURL(indexHtmlPath).pathname : undefined
-  const guardNav = (event: { preventDefault: () => void }, url: string): void => {
-    const d = navDecision(url, { appOrigin, appDocPath })
-    if (d.allow) return
-    event.preventDefault()
-    if (d.openExternal) shell.openExternal(d.openExternal)
-  }
+  const guardNav = createNavGuard({
+    appOrigin,
+    appDocPath,
+    openExternal: (u) => shell.openExternal(u)
+  })
   mainWindow.webContents.on('will-navigate', (details, url) => guardNav(details, url))
   mainWindow.webContents.on('will-redirect', (details, url) => guardNav(details, url))
   // will-frame-navigate (Electron ≥22) covers subframes too — the renderer has none
