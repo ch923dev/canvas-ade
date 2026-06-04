@@ -277,7 +277,12 @@ app.whenReady().then(async () => {
         await shutdown()
         app.exit(code)
       } else {
-        const ok = await runSelfTest(mainWindow!, localServer!.url)
+        // BUG-026: reuse defaultPreviewUrl (already '' when startLocalServer threw) instead
+        // of the non-null assertion localServer!.url — if the bind failed (EACCES/firewall/
+        // fd exhaustion) localServer is null, and the assertion would throw a TypeError into
+        // the uncaughtException sink → crashShutdown(1), turning a graceful degraded boot into
+        // an exit-1 smoke failure with no SELFTEST_DONE line. runSelfTest tolerates an empty URL.
+        const ok = await runSelfTest(mainWindow!, defaultPreviewUrl)
         smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
         if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
       }
