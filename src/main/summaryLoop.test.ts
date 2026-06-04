@@ -346,6 +346,42 @@ describe('createSummaryLoop — BUG-006 project-switch TOCTOU guard', () => {
   })
 })
 
+describe('createSummaryLoop — BUG-014 index rebuilt from FRESH doc, not the stale snapshot', () => {
+  it('a board added during the await appears in MEMORY.md (index uses the post-await read)', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    // readProject is called twice: once at the top of onIntent (capture), once after the await
+    // (BUG-014 fresh re-read). The first read sees just p1; by the second a save has added p2.
+    let reads = 0
+    const docFirst = docWith([planNote('p1', 'hello world')])
+    const docFresh = docWith([planNote('p1', 'hello world'), planNote('p2', 'added mid-await')])
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({
+        ok: true,
+        dir: proj,
+        name: 'proj',
+        doc: reads++ === 0 ? docFirst : docFresh
+      }),
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    try {
+      await loop.onIntent({ boardId: 'p1' })
+      const index = createCanvasMemory(proj).readIndex()
+      // Pre-fix the index was built from the stale 1-board snapshot → p2 omitted. Post-fix the
+      // post-await re-read lists both boards.
+      expect(index).toContain('board-p1.md')
+      expect(index).toContain('board-p2.md')
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('createSummaryLoop — no key → no spend / no write', () => {
   it('with NO mock and NO key, runSummarize is no-provider → nothing is written', async () => {
     const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))

@@ -275,8 +275,16 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
           boardId,
           `# ${str((board as RawBoard).title) || boardId}\n\n${result.text}\n`
         )
-        mem.writeIndex(buildMemoryIndex(r.doc, (id) => mem.readBoard(id) !== undefined))
-        mem.writeProject(buildProjectRollup(projectName(dir), r.doc))
+        // BUG-014: the index + rollup enumerate the WHOLE board list, so they must reflect any
+        // boards added/removed during the (up to 30 s) await — not the `r.doc` snapshot taken
+        // before it. With another board's intent racing concurrently, the stale snapshot would
+        // make the last writer silently overwrite MEMORY.md with an out-of-date board list. The
+        // dir is already re-confirmed by the TOCTOU guard above, so this re-read is the SAME
+        // project; fall back to the snapshot only if the fresh read fails.
+        const fresh = deps.readProject(dir)
+        const doc = fresh.ok ? fresh.doc : r.doc
+        mem.writeIndex(buildMemoryIndex(doc, (id) => mem.readBoard(id) !== undefined))
+        mem.writeProject(buildProjectRollup(projectName(dir), doc))
       } catch (err) {
         console.warn('[summaryLoop] onIntent failed (non-fatal)', err)
       } finally {
