@@ -72,6 +72,32 @@ function logSummarizeIntent(intent: SummarizeIntent): void {
   console.log(`[memoryEngine] summarize intent for board ${intent.boardId}`)
 }
 
+/**
+ * BUG-018 #2: after baselining at project open, re-arm a summarize for any board whose cached
+ * `board-<id>.md` was deleted externally (user/GC) between sessions. A content-identical re-open
+ * never emits via observe() (the baseline matches), so without this the memory dir would stay
+ * empty until a real content edit. Best-effort + pure-read: a malformed doc or fs error never
+ * aborts the open. Reuses a single CanvasMemory instance (no per-id construction).
+ */
+function rehydrateMissingSummaries(dir: string, doc: unknown, engine: MemoryEngine): void {
+  try {
+    const boards = (doc as { boards?: unknown })?.boards
+    if (!Array.isArray(boards)) return
+    const mem = createCanvasMemory(dir)
+    const missing: string[] = []
+    for (const board of boards) {
+      const id = (board as { id?: unknown })?.id
+      // readBoard guards safeBoardId + returns undefined when the file is absent.
+      if (typeof id === 'string' && id.length > 0 && mem.readBoard(id) === undefined) {
+        missing.push(id)
+      }
+    }
+    if (missing.length > 0) engine.rehydrate(missing)
+  } catch (err) {
+    console.warn('[memoryEngine] rehydrate of missing summaries failed (non-fatal)', err)
+  }
+}
+
 export function registerProjectHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
@@ -115,6 +141,8 @@ export function registerProjectHandlers(
         // Without this, the first project:save becomes the baseline (no emit) and the first
         // edit after every open/switch is silently swallowed until a second save.
         memoryEngine.observe(r.doc)
+        // BUG-018 #2: re-summarize boards whose cached summary file is missing on disk.
+        rehydrateMissingSummaries(r.dir, r.doc, memoryEngine)
       } catch (err) {
         console.warn('[memoryEngine] reset/observe on open failed (non-fatal)', err)
       }
@@ -181,6 +209,8 @@ export function registerProjectHandlers(
         memoryEngine.reset() // T-M2: re-baseline on reopen/switch
         // Baseline from the loaded doc (see project:open) so the first post-reopen edit emits.
         memoryEngine.observe(r.doc)
+        // BUG-018 #2: re-summarize boards whose cached summary file is missing on disk.
+        rehydrateMissingSummaries(r.dir, r.doc, memoryEngine)
       } catch (err) {
         console.warn('[memoryEngine] reset/observe on current failed (non-fatal)', err)
       }

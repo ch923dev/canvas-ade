@@ -15,9 +15,10 @@
  * {label,done}, note text). Geometry/selection/canvas pan/zoom are excluded so a pure
  * move/resize/pan/select yields an identical fingerprint. browser previewSourceId is also
  * excluded — it never reaches the summary input, so it would churn spend without changing output.
- * The board TITLE is likewise excluded here AND from summaryLoop.boardContent (F-C/T-F2): the two
- * field sets are kept in lockstep, so a title-only rename neither re-summarizes nor leaves stale
- * prose naming the old title (the panel card shows the live title separately).
+ * The board TITLE is INCLUDED for terminal/browser because summaryLoop.boardContent opens the LLM
+ * prompt with it (`Terminal board "${title}".`): a title-only rename changes the model input, so the
+ * fingerprint must change too or the cached prose stays stale naming the old title (BUG-018). The
+ * planning board-level title is left out (checklist/note content dominates its summary input).
  *
  * 🔒 Security: generated/observed memory is untrusted passive context. The detector only
  * READS the already-trusted persisted doc and EMITS an id; it never triggers an action
@@ -55,6 +56,9 @@ export function boardFingerprint(board: unknown): string {
     case 'terminal':
       return JSON.stringify({
         t: 'terminal',
+        // title IS the opening line of summaryLoop.boardContent's LLM prompt → a rename
+        // changes the summary input, so it must change the fingerprint too (BUG-018).
+        title: str(b.title),
         launchCommand: str(b.launchCommand),
         cwd: str(b.cwd),
         port: numOrNull(b.port)
@@ -66,6 +70,8 @@ export function boardFingerprint(board: unknown): string {
       // The fingerprint mirrors the SUMMARY INPUT, not digest.ts's richer Tier-1 line set.
       return JSON.stringify({
         t: 'browser',
+        // title IS the opening line of summaryLoop.boardContent's LLM prompt (BUG-018).
+        title: str(b.title),
         url: str(b.url),
         viewport: str(b.viewport)
       })
@@ -105,6 +111,15 @@ export interface MemoryEngine {
   observe(doc: unknown): void
   /** Drop all per-board state + cancel pending timers (call on project switch). */
   reset(): void
+  /**
+   * Force-arm a summarize intent for explicitly listed boards, BYPASSING the primed guard +
+   * the no-change check (BUG-018 #2). Use at project-open to re-summarize boards whose cached
+   * `board-<id>.md` file was deleted externally — a content-identical re-open never emits via
+   * observe(), so without this the memory dir stays empty until a real content change. Only
+   * arms boards the engine already knows (has a baseline fingerprint for); unknown ids are
+   * ignored. Best-effort: a falsy/missing id is skipped.
+   */
+  rehydrate(boardIds: readonly string[]): void
 }
 
 /** Default real timer: setTimeout/clearTimeout. */
@@ -172,6 +187,14 @@ export function createMemoryEngine(deps: MemoryEngineDeps): MemoryEngine {
       for (const id of [...timers.keys()]) cancelTimer(id)
       fingerprints.clear()
       primed = false
+    },
+    rehydrate(boardIds) {
+      for (const rawId of boardIds) {
+        const id = str(rawId)
+        // Only arm boards we've baselined — a fingerprint entry proves the board exists in
+        // the current doc, so we never schedule a summarize for a stale/unknown id.
+        if (id && fingerprints.has(id)) armDebounce(id)
+      }
     }
   }
 }

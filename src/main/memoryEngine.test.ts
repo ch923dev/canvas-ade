@@ -66,8 +66,9 @@ const checklist = (items: { label: string; done: boolean }[]): unknown => ({
 
 describe('boardFingerprint — move-invariant', () => {
   it('terminal: pure move/resize does not change the fingerprint', () => {
+    // title is now PART of the fingerprint (BUG-018), so hold it fixed and vary only geometry.
     expect(boardFingerprint(terminal())).toBe(
-      boardFingerprint(terminal({ x: 999, y: 888, w: 1000, h: 900, z: 5, title: 'Renamed' }))
+      boardFingerprint(terminal({ x: 999, y: 888, w: 1000, h: 900, z: 5 }))
     )
   })
   it('browser: pure move does not change the fingerprint', () => {
@@ -91,6 +92,14 @@ describe('boardFingerprint — content-sensitive', () => {
     const base = boardFingerprint(browser())
     expect(boardFingerprint(browser({ url: 'http://localhost:3000' }))).not.toBe(base)
     expect(boardFingerprint(browser({ viewport: 'mobile' }))).not.toBe(base)
+  })
+  it('terminal: a title-only rename IS detected (title opens the LLM prompt — BUG-018)', () => {
+    // boardContent emits `Terminal board "${title}".`, so a rename changes the summary input
+    // → the fingerprint MUST change or the cached prose stays stale with the old name.
+    expect(boardFingerprint(terminal({ title: 'Renamed' }))).not.toBe(boardFingerprint(terminal()))
+  })
+  it('browser: a title-only rename IS detected (title opens the LLM prompt — BUG-018)', () => {
+    expect(boardFingerprint(browser({ title: 'Renamed' }))).not.toBe(boardFingerprint(browser()))
   })
   it('browser: a previewSourceId-only change is NOT detected (excluded — never in the summary)', () => {
     // The Tier-2 summary omits the preview link, so a link-only change must not arm a
@@ -275,5 +284,52 @@ describe('createMemoryEngine — reset', () => {
     expect(() => engine.observe({ boards: 'nope' })).not.toThrow()
     flush()
     expect(intents).toEqual([])
+  })
+})
+
+describe('createMemoryEngine — title rename arms an intent (BUG-018)', () => {
+  const titled = (id: string, title: string): unknown => ({
+    id,
+    type: 'terminal',
+    x: 0,
+    y: 0,
+    w: 420,
+    h: 340,
+    title,
+    launchCommand: 'pnpm dev'
+  })
+
+  it('a title-only rename after baseline emits a re-summarize intent', () => {
+    const { schedule, flush } = fakeScheduler()
+    const intents: SummarizeIntent[] = []
+    const engine = createMemoryEngine({ onIntent: (i) => intents.push(i), schedule })
+    engine.observe(docOf([titled('t1', 'Build')])) // baseline
+    engine.observe(docOf([titled('t1', 'Renamed')])) // title-only rename
+    flush()
+    expect(intents).toEqual([{ boardId: 't1' }])
+  })
+})
+
+describe('createMemoryEngine — rehydrate (BUG-018 #2: missing summary recovery)', () => {
+  it('arms an intent for a KNOWN board even with no content change (bypasses primed guard)', () => {
+    const { schedule, flush } = fakeScheduler()
+    const intents: SummarizeIntent[] = []
+    const engine = createMemoryEngine({ onIntent: (i) => intents.push(i), schedule })
+    engine.observe(docOf([term('t1', 'pnpm dev')])) // baseline (primed, no emit)
+    // Simulate a re-open with identical content + an externally-deleted board-t1.md:
+    // observe() alone would never emit, but rehydrate force-arms the listed board.
+    engine.rehydrate(['t1'])
+    flush()
+    expect(intents).toEqual([{ boardId: 't1' }])
+  })
+
+  it('ignores ids the engine has not baselined (no stale/unknown summarize)', () => {
+    const { schedule, flush } = fakeScheduler()
+    const intents: SummarizeIntent[] = []
+    const engine = createMemoryEngine({ onIntent: (i) => intents.push(i), schedule })
+    engine.observe(docOf([term('t1', 'pnpm dev')])) // only t1 is known
+    engine.rehydrate(['t1', 'ghost', '']) // ghost + empty must be ignored
+    flush()
+    expect(intents).toEqual([{ boardId: 't1' }])
   })
 })

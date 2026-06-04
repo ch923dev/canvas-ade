@@ -262,7 +262,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     store.getCurrentDir.mockReturnValue('/proj')
     store.writeProject.mockResolvedValue(undefined)
     const observe = vi.fn()
-    const engine: MemoryEngine = { observe, reset: vi.fn() }
+    const engine: MemoryEngine = { observe, reset: vi.fn(), rehydrate: vi.fn() }
     const cap = harness(engine)
 
     const doc = { schemaVersion: 4, viewport: null, boards: [] }
@@ -278,7 +278,8 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
       observe: () => {
         throw new Error('detector boom')
       },
-      reset: vi.fn()
+      reset: vi.fn(),
+      rehydrate: vi.fn()
     }
     const cap = harness(engine)
 
@@ -291,7 +292,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
     const reset = vi.fn()
     const observe = vi.fn()
-    const engine: MemoryEngine = { observe, reset }
+    const engine: MemoryEngine = { observe, reset, rehydrate: vi.fn() }
     const cap = harness(engine)
 
     const r = cap.invoke('project:open', '/proj') as { ok: boolean }
@@ -310,7 +311,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
     const reset = vi.fn()
     const observe = vi.fn()
-    const engine: MemoryEngine = { observe, reset }
+    const engine: MemoryEngine = { observe, reset, rehydrate: vi.fn() }
     const cap = harness(engine)
 
     const r = (await cap.invoke('project:current')) as { ok: boolean }
