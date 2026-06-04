@@ -5,8 +5,10 @@
 **not** MCP-gated (that's M-expose, separate/deferred).
 
 ## Where you are
-- **Branch:** `feat/context-followup` · **Worktree:** `Z:\canvas-ade-context-followup` · **Base:** `main`
-  (`b69a30a`). node_modules is junctioned from main (no native rebuild). One session per worktree.
+- **These planning docs live on branch `feat/context-followup`** (pushed; base `main` `b69a30a`). There is
+  **no pre-made worktree or PR** — when you start implementing, create your own worktree from this branch
+  (`pwsh .claude/tools/new-worktree.ps1 -Name context-followup -Base feat/context-followup ...`) so you get
+  these docs + node_modules junction. One session per worktree.
 - **READ FIRST:** the kickoff plan `docs/superpowers/plans/2026-06-04-context-followup-kickoff.md` — full
   scope, per-task design, the open question, cross-zone, gate, ordering. This handoff is the short version.
 - Supporting context: `docs/context-subsystem.md` (shipped build log), `docs/roadmap-context.md`,
