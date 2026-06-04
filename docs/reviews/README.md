@@ -6,8 +6,9 @@ cards were collapsed here on 2026-06-01 during the docs centralization). To reco
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
-**Current open findings** (anything not yet fixed) live in the newest dated review file
-in this folder — start there, not in the tables below.
+**Current open findings:** none — Round-3 (2026-06-01) cleared all 12 findings; see the
+table below. When the next review run happens, a new dated file will appear here and this
+line should be updated to point to it.
 
 | # | File / status |
 |---|---|

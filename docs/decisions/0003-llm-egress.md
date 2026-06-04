@@ -61,8 +61,8 @@ the model's output is treated as untrusted passive context that never drives an 
 
 ## Out of scope (not decided here)
 
-- The MCP server's **Host-header attack surface** (a separate egress/ingress concern; covered by the MCP
-  ADR — memory `mcp-spec-state-2026-06`).
+- The MCP server's **Host-header attack surface** (a separate egress/ingress concern; to be covered in a
+  forthcoming MCP ADR — not yet written).
 - **Token-dimension budgets** — deferred; the per-day call cap is the v1 guard (deterministic + always
   available; token usage would need per-provider response plumbing).
 - Per-provider request hardening / retries / streaming.

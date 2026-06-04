@@ -10,8 +10,11 @@
 1. **Canvas engine = `@xyflow/react` (React Flow) v12** (MIT).
 2. **Whiteboard = custom**: vendored `perfect-freehand` (pen) + React Flow edges/bezier for
    arrows + plain React for notes/text. **Excalidraw rejected.**
-3. **Cross-board arrows = React Flow edges** (hidden title-bar handle, `connectionMode="loose"`,
-   `edge.zIndex` raised so arrowheads sit above target chrome). Intra-board sketch arrows use RF bezier utils.
+3. **Cross-board arrows = React Flow edges** (preview-link connectors). `BoardNode` exposes hidden,
+   non-connectable `Handle` anchors (`opacity:0`, `pointerEvents:none`) at Left/Right so RF can
+   attach edges with no connection UX. Edge geometry is floating, computed from board-center
+   border-intersection math in `PreviewEdge.tsx`, so arrows reroute as boards move. No
+   `connectionMode` override. Intra-board sketch arrows use RF bezier utils.
 
 ## Why tldraw was dropped
 

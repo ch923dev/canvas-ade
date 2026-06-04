@@ -8,8 +8,9 @@
 > grounding → per-finding feasibility verify (44 raw → 36 feasible, each flagged
 > `needs_shapes_epic` + canvas-RF-vs-in-board) → prioritized synthesis. 50 agents.
 >
-> **Companion to `excalidraw-feature-borrowing.md` — read together. Both passes
-> independently converge on one conclusion (see § Shapes-epic verdict).**
+> **Companion to the Excalidraw whiteboard pass (shipped W1–W5; compiled in
+> `../archive/2026-06-03-whiteboard-epic.md`). Both passes independently converge on one
+> conclusion (see § Shapes-epic verdict).**
 
 ## TL;DR
 
@@ -96,6 +97,10 @@ the LOD snapshot card shows. Ship PNG+JSON first; decline HTML export (CDN dep) 
 single-user use case). Use fit-all bounds (reuse `FIT_FRAME` in `canvasView.ts`).
 
 ### 3. `withChange()` transaction-wrapper refactor of the undo path
+> **SHIPPED.** Landed as `trackedChange` in PR #18 (f7ffbbf). All listed actions (`tidyBoards`,
+> `tileBoards`, `addBoard`, `removeBoard`, `duplicateBoard`, `undo`/`redo`) are routed through it.
+> The analysis below is retained as design rationale.
+
 **Effort: S.** Borrow mxGraph's nested `beginUpdate`/`endUpdate` counter — "emit a change/undo event
 only when the counter returns to 0 AND state actually changed" — which is structurally exactly the
 guarantee that prevents the documented phantom-undo class (`undo-lastrecorded-phantom` memory / #BUG
@@ -244,7 +249,7 @@ connectors/containers/z-order, local-first persistence, git-diffable JSON) or a 
    an IPC handler.
 3. **`z` field** — DELETE `BoardCommon.z` (`:31`) + createBoard/assertBoard/clone paths, OR honor it
    by mapping `board.z` → RF `node.zIndex` (no schema change, render only).
-4. **`withChange`** — NO schema change; internal `canvasStore` refactor only.
+4. **`withChange`** — NO schema change; internal `canvasStore` refactor only. ✓ **Done** (shipped as `trackedChange`, PR #18 f7ffbbf).
 
 **Shapes-epic tier (gated behind a new ADR + user sign-off):**
 5. **`ArrowElement` upgrade** (currently `{kind:'arrow'; x;y;x2;y2}`) — add optional
@@ -272,6 +277,7 @@ persist for diff hygiene.
 
 *Method note: 4 parallel web-research facets → codebase grounding (Explore over the board model + RF
 edge wiring) → per-finding adversarial feasibility verify (flagging `needs_shapes_epic` +
-canvas-RF-vs-in-board) → prioritized synthesis. 50 agents, 44 raw findings → 36 feasible. Not yet on
-the roadmap — promote chosen slices into `../roadmap.md` when scheduled. Cross-reference
-`excalidraw-feature-borrowing.md`: both passes converge on the shapes epic.*
+canvas-RF-vs-in-board) → prioritized synthesis. 50 agents, 44 raw findings → 36 feasible.
+Sequencing and scheduling of the remaining slices is owned by `../roadmap-drawio.md`, which points
+here as the why/how/risk reference. Cross-reference the Excalidraw whiteboard pass
+(`../archive/2026-06-03-whiteboard-epic.md`): both passes converge on the shapes epic.*

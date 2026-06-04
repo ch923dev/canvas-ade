@@ -196,7 +196,7 @@ persistent `.canvas/` project memory (M-digest + M-brain + M-memory): instant pe
 (Tier-1 heuristic, no key) upgraded to cached LLM prose on reopen (Tier-2, provider-agnostic, key in
 `safeStorage`, per-day budget, ADR `0003-llm-egress.md`). New units `src/main/{llmService,llmIpc,llmConfig,
 llmKeyStore,llmBudget,canvasMemory,memoryEngine,summaryLoop}.ts` + `digest.ts`/`DigestPanel`/`SettingsModal`.
-Generated memory is untrusted passive context (never drives an action). Build log `docs/context-subsystem.md`.
+Generated memory is untrusted passive context (never drives an action). Build log `docs/archive/2026-06-04-context-subsystem.md`.
 **M-expose** (`canvas://memory` MCP read resource — lets agents read the memory) remains DEFERRED, gated on
 the MCP package landing on `main`. Post-merge gate green (852 unit+integration; e2e matrix green on the
 identical pre-merge tree).

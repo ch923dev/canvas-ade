@@ -46,7 +46,9 @@ so each step **isolates one risk variable** and is independently testable. Steps
 
 **1-E · N views + responsive + lifecycle** ⛓ 1-D
 - 2+ simultaneous views; viewport reflow at true breakpoint width (390/834/1280) via
-  `setZoomFactor`+`setBounds`; cap ~4 live, close far/over-cap; `webContents.close()` leak check.
+  `setZoomFactor`+`setBounds`; cap ~4 live. **Lifecycle (refined post-PR #14): detach far/over-cap
+  boards — never `webContents.close()` on a board you may revisit** (close discards the page → the
+  PREV-A resurrection bug). Over-cap close only with a snapshot fallback; full-view always detaches.
 - ✅📏 multi-view stays aligned; reflow correct; memory stable across open/close (no renderer leaks).
 
 **🚦 GATE verdict (end of 1-E):** smooth + leak-free + aligned → proceed. **If janky and unfixable**,
@@ -104,12 +106,10 @@ design specs + salvage map + parallel guidance: **`docs/archive/build-history.md
 
 - **Focus** (double-click → camera fit one board, dim others 55%) + **Full view** (modal overlay,
   `FULL VIEW` band + `✕ Esc`, camera unchanged). Preview bounds-sync follows in/out of both.
-  ✅ DONE — Focus shipped in Phase 2; **Full view** lands in Slice B (branch `phase-3-board-actions`,
-  2026-05-30) as a live **portal relocation** (the board's live subtree is `createPortal`-moved into
-  the modal — no remount, so PTY/xterm/native view survive) rather than the originally-planned
-  snapshot/reattach: in full view a Browser board's native `WebContentsView` is **re-bound to the
-  portaled device-frame's live DOM rect** while every other view detaches, so HTML chrome isn't
-  punched through. Spec/plan: `docs/archive/build-history.md` › Phase 3-B (originals in git).
+  ✅ DONE — Focus shipped in Phase 2; **Full view** landed in Slice B (2026-05-30). **The original
+  portal-relocation mechanism was superseded by PR #14** (`ad21389`): full view now **detaches** every
+  board's native `WebContentsView` (never `close()`, never portal-relocates) and reattaches on exit, so
+  a navigated page survives full-view round-trips. See `docs/archive/build-history.md` › Post-Phase-4.
 - **Duplicate** (⋯): clone geometry + state offset 36px, select copy; Browser clone → next viewport
   preset, own independent `WebContentsView`. ✅ DONE (branch `phase-3-board-actions`, 2026-05-30):
   `duplicateBoard(id)` offsets +36px, selects the copy, one undo step; Browser clones advance to the
@@ -128,7 +128,8 @@ design specs + salvage map + parallel guidance: **`docs/archive/build-history.md
 - **Port detect → push to preview** (Slice C′, replaces the old worktrees+ports slice): a Terminal
   board reads the localhost URL its dev server printed and one click opens/points a Browser board at
   it. **Detect, don't assign** — output-parse only, on-click, reuse-else-spawn target, read-only,
-  agent-agnostic, no git. ✅ DONE (branch `phase-3-slice-c`, 2026-05-31; 296 tests, full gate green):
+  agent-agnostic, no git. ✅ DONE (branch `phase-3-slice-c`, 2026-05-31; full gate green — baseline has
+  since grown to 679 unit+integration on `main`):
   pure `main/portDetect.ts` parser over a frame-guarded `terminal:detectPorts` IPC; `Canvas.pushPreview`
   + `lib/previewTarget.ts` resolve the target; a React Flow floating connector arrow
   (`lib/previewEdges.ts` + `canvas/edges/PreviewEdge.tsx`) is derived from the new optional
@@ -153,7 +154,7 @@ design specs + salvage map + parallel guidance: **`docs/archive/build-history.md
 
 ---
 
-## Phase 4 — Design pass & polish ⛓ Phase 3
+## Phase 4 — Design pass & polish ✅ DONE (commit `abd7fa2`, PR #9) ⛓ Phase 3
 
 - Apply every DESIGN.md token, board-chrome rule, state, and motion spec (+ `prefers-reduced-motion`).
 
@@ -174,6 +175,29 @@ design specs + salvage map + parallel guidance: **`docs/archive/build-history.md
 - Harden CSP to nonce-based (drop `unsafe-inline`) for the packaged build. Load Geist / Geist Mono.
 - Code-split the renderer bundle (xterm / React Flow lazy where sensible).
 - ✅ visual parity with the design frames; all states reachable and styled.
+
+---
+
+## Post-Phase-4 / in flight (shipped + queued after the core build)
+
+Significant work landed on `main` after Phase 4, outside the original phase ladder. Full detail is in
+`docs/archive/build-history.md` › Post-Phase-4 work (with pointers to the compiled build-logs).
+
+**Shipped on `main`:**
+- **Layout presets / smart tidy** (PR #13, `14f77d7`) — FancyZones-style presets + one-press Tidy + fit.
+- **D1.1 `trackedChange` undo-rail refactor** (PR #18) — opened the draw.io track (`roadmap-drawio.md`).
+- **Full-view preview state-preservation** (PR #14, `ad21389`) — detach-not-close; closed PREV-A.
+- **Round-3 review backlog cleared** (PR #15 + #20) — 12 findings, no open backlog (`reviews/README.md`).
+- **Whiteboard epic W1–W5** (PR #34) — schema → v4; build-log `archive/2026-06-03-whiteboard-epic.md`.
+- **Testing T0–T5** — Playwright `_electron` + local pre-commit matrix; `testing/TESTING.md` +
+  build-log `archive/2026-06-03-testing-strategy-initiative.md`.
+- **Context subsystem** (PR #39, `4c321c2`) — desktop LLM brain + `.canvas/` memory; ADR 0003;
+  build-log `archive/2026-06-04-context-subsystem.md`.
+
+**Queued (in-flight branches, merge order Context ✅ → MCP → … → rebrand last):**
+- **MCP integration** (PR #32, `feat/mcp-integration`) — the `canvas-ade-mcp` swarm layer; gates
+  Feature Workspaces. Carries its own per-task handoff docs (to be compiled on merge).
+- **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last.
 
 ---
 
@@ -202,6 +226,14 @@ design specs + salvage map + parallel guidance: **`docs/archive/build-history.md
 
 CDP/debug attach to previews (build views CDP-ready, don't implement) · SQLite persistence ·
 multiplayer/collaboration · hand-drawn (roughjs) whiteboard aesthetic.
+
+- **Whiteboard shapes epic (XL)** — geometric shapes (rect/ellipse/diamond) + shape-bound connectors.
+  The single missing primitive that gates sloppiness, bound-arrow reflow, and Mermaid/AI-diagram. Kept
+  out of the shipped W1–W5 track deliberately; rationale + the blocked-feature table are in
+  `archive/2026-06-03-whiteboard-epic.md` › Deferred and `research/drawio-feature-borrowing.md`.
+- **Context M-expose** — `canvas://memory` MCP read-only resource exposing `.canvas/memory/` to agents.
+  Gated on the MCP package landing on `main`; then build the resource that reads the files the shipped
+  Context subsystem already writes. See `archive/2026-06-04-context-subsystem.md`.
 
 > 🌳 **Feature Workspaces — worktree-backed board zones (post-MCP phase, deferred 2026-05-30).**
 > The deferred home for git worktrees, re-modelled. A project's infinite canvas hosts multiple

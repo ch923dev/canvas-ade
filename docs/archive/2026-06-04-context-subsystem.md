@@ -1,13 +1,16 @@
 # Context subsystem — build log (compiled)
 
-> **This is the single read-this-instead-of-the-plans doc for the Context subsystem.** It compiles the
-> design + every **completed** milestone (architecture, contracts, files, decisions, gate evidence) so a
-> session can get full context without reading the per-task specs/plans/handoffs. Those per-task docs were
-> **collapsed into this file and deleted** (2026-06-03) — the originals live in git history (see commits
-> below). **Forward/undone work stays in `docs/roadmap-context.md`** (task cards for M-memory / M-expose);
-> the egress decision is in `docs/decisions/0003-llm-egress.md`. Add a milestone here only when it is DONE.
+> Point-in-time compiled record of the Context subsystem — design + every milestone (architecture,
+> contracts, files, decisions, gate evidence). **Not live truth** — durable contract is `CLAUDE.md`,
+> the egress decision is ADR `0003-llm-egress.md`, forward work (M-expose) is `docs/roadmap.md` ›
+> Deferred. The per-task specs/plans/handoffs were collapsed here and deleted — originals in git history
+> (see Collapsed docs, end of file).
 
-**Status (2026-06-04):** **M-digest ✅ · M-brain ✅ (T-B1·T-B2·T-B3) · M-memory T-M1 ✅ · T-M2 ✅ · T-M3 ✅ · T-M4 ✅ — M-memory COMPLETE** on `feat/context`. The DigestPanel now renders cached Tier-2 prose on reopen (heading-stripped, via a guarded `memory:readBoards` bridge); the panel falls back to the Tier-1 `<ul>` per board when no prose is cached. No LLM call on open.
+**Status:** **SHIPPED to `main`** via PR #39 (`4c321c2`, 2026-06-04). M-digest ✅ · M-brain ✅
+(T-B1·T-B2·T-B3) · M-memory ✅ (T-M1·T-M2·T-M3·T-M4). Only **M-expose** (`canvas://memory` MCP read
+resource) remains — DEFERRED, gated on the MCP package landing on `main`. The DigestPanel renders cached
+Tier-2 prose on reopen (heading-stripped, via a guarded `memory:readBoards` bridge); falls back to the
+Tier-1 `<ul>` per board when no prose is cached. No LLM call on open.
 
 ---
 
@@ -17,9 +20,8 @@ The **desktop itself** (Electron MAIN) gets a small LLM brain + a persistent **p
 reopening a project shows an **instant per-board context digest** — "what is each board doing" —
 reconstructed from memory, **with zero agents and zero MCP session**.
 
-- **Standalone** `feat/context` off `main` (worktree `Z:\canvas-ade-context`). Sibling of the MCP roadmap
-  with a **one-way dep**: MCP only *reads* memory via a thin resource; memory never imports MCP. Ships
-  before/independent of MCP.
+- Sibling of the MCP roadmap with a **one-way dep**: MCP only *reads* memory via a thin resource; memory
+  never imports MCP. Shipped before/independent of MCP.
 - **Two tiers, cheap first:**
   - **Tier 1** — no LLM, no key. A structured heuristic digest from `canvas.json` on disk. App fully works
     at Tier 1 with no key.
@@ -366,7 +368,7 @@ when none is available. **No LLM call on open** — the read is a pure disk read
 
 ---
 
-## Gate evidence (cumulative, on `feat/context`)
+## Gate evidence (cumulative)
 
 | Milestone | Commit | Unit | e2e |
 |---|---|---|---|
@@ -392,20 +394,9 @@ The pre-merge gate (typecheck/lint/format:check/test) was clean throughout. The 
 the unit + integration projects (`pnpm test`); the Playwright keep-set is separate and carries no
 Context spec.
 
-## What's next (see `docs/roadmap-context.md`)
-
-**M-memory** — the persistent `.canvas/` engine + the Tier-2 autonomous summarize-on-change loop (the first
-autonomous-spend path the T-B3 budget protects — wire only with the guard in place) + the panel upgrade to
-cached prose:
-- **T-M1** `src/main/canvasMemory.ts` — `.canvas/` paths + atomic writers + default `.gitignore` + opt-in
-  commit + create/open scaffolding. ✅ **DONE** (see the M-memory section above).
-- **T-M2** ✅ meaningful-change detector + debounce (`src/main/memoryEngine.ts`, wired into
-  `projectIpc.ts`). **T-M3** ✅ Tier-2 autonomous summary loop (`src/main/summaryLoop.ts`, wired
-  via `index.ts`). **T-M4** ✅ panel upgrade to cached prose on reopen (see above). **M-memory COMPLETE.**
-
-**M-expose (DEFERRED)** — `canvas://memory` MCP read resource; gated on the MCP package (Phases 0–1) landing
-on `main`. ⚠️ Owes 2 reverse cross-links into `docs/roadmap-mcp.md` (M9 judge-board pivot becomes optional;
-M1/M10 expose memory) — staged on `feat/mcp-integration`, not here.
+**Still open: M-expose (DEFERRED)** — `canvas://memory` MCP read resource; gated on the MCP package
+landing on `main`. Tracked in `docs/roadmap.md` › Deferred. When built it reads the `.canvas/memory/`
+files this subsystem writes.
 
 ## Collapsed docs (originals in git history)
 
