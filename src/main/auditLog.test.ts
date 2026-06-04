@@ -146,9 +146,7 @@ describe('createAuditLog (append-only JSONL)', () => {
     // Fire many appends concurrently. The full write (not just the seq arithmetic) is
     // serialized through the tail promise, so the physical JSONL line order must equal the
     // seq order — the pre-fix code only chained the seq number, letting writes interleave.
-    await Promise.all(
-      Array.from({ length: 8 }, (_, i) => log.append(input({ prompt: `p${i}` })))
-    )
+    await Promise.all(Array.from({ length: 8 }, (_, i) => log.append(input({ prompt: `p${i}` }))))
     const raw = readFileSync(join(dir, FILE), 'utf8')
     const seqsInFileOrder = raw
       .split('\n')

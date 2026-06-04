@@ -239,7 +239,8 @@ describe('buildOrchestrator', () => {
           {},
           {},
           async (cmd) => {
-            if (cmd.type === 'removeBoard') return removeOk ? { ok: true, type: cmd.type } : { ok: false, error: 'no-window' }
+            if (cmd.type === 'removeBoard')
+              return removeOk ? { ok: true, type: cmd.type } : { ok: false, error: 'no-window' }
             return { ok: true, type: cmd.type }
           },
           async (id) => {
@@ -248,7 +249,8 @@ describe('buildOrchestrator', () => {
         )
       )
       const ids: string[] = []
-      for (let i = 0; i < MCP_SPAWN_CAP; i++) ids.push((await orch.spawnBoard({ type: 'terminal' })).id)
+      for (let i = 0; i < MCP_SPAWN_CAP; i++)
+        ids.push((await orch.spawnBoard({ type: 'terminal' })).id)
       await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i) // at the cap
       // Close one, but the renderer rejects the removeBoard — the close throws…
       await expect(orch.closeBoard(ids[0])).rejects.toThrow(/no-window/)

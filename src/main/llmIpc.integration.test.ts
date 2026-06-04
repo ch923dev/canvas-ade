@@ -68,7 +68,11 @@ describe('registerLlmHandlers', () => {
         fetch: noNetwork,
         env: { CANVAS_LLM_MOCK: '1' }
       })
-      const invalid = { ok: false, reason: 'provider-error', message: 'invalid input: text is required' }
+      const invalid = {
+        ok: false,
+        reason: 'provider-error',
+        message: 'invalid input: text is required'
+      }
       // No `text` key (the masked-by-mock case: old behavior returned { ok:true, text:'[mock] undefined' }).
       expect(await cap.invoke('llm:summarize', { system: 'x' })).toEqual(invalid)
       // Empty string.
