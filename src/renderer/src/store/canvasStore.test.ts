@@ -713,6 +713,39 @@ describe('canvasStore — project lifecycle', () => {
     // The original primary-parse message is preserved (not the .bak's).
     expect(s.project.error).toMatch(/non-string id/)
   })
+
+  // T4 (loadObject): envelope-valid but deep-corrupt doc must route the fromObject throw to
+  // status:'error' and leave board state UNTOUCHED — loadObject has no .bak retry path.
+  it('loadObject with a deep-corrupt doc → status:error, boards untouched', () => {
+    useCanvasStore.setState({
+      boards: [
+        { id: 'keep', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+      ] as never
+    })
+    const before = useCanvasStore.getState().boards
+    // Envelope-valid (numeric schemaVersion + boards[]) but a board has a non-string id,
+    // which assertBoard rejects → fromObject throws (same corrupt shape used in applyOpenResult T4).
+    useCanvasStore.getState().loadObject({
+      schemaVersion: 5,
+      viewport: null,
+      boards: [
+        { id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
+      ]
+    } as never)
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.project.error).toBeTruthy()
+    expect(s.boards).toBe(before) // boards untouched (same ref)
+  })
+
+  // T4 (loadObject): a doc whose schemaVersion is newer than we support routes to
+  // status:'error' carrying migrate()'s "newer than supported" message.
+  it('loadObject with a too-new schemaVersion → status:error (newer than supported)', () => {
+    useCanvasStore.getState().loadObject({ schemaVersion: 999, boards: [] } as never)
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('error')
+    expect(s.project.error).toMatch(/newer than supported/)
+  })
 })
 
 describe('preview link cleanup', () => {
