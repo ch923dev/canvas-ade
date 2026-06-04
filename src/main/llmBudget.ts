@@ -16,6 +16,13 @@ import writeFileAtomic from 'write-file-atomic'
 /** Default per-day call cap — cheap/fast summaries are short + frequent; 200/day is generous. */
 export const DEFAULT_MAX_CALLS_PER_DAY = 200
 
+/**
+ * Upper bound for a persisted `calls` value (BUG-004). The running count can never legitimately
+ * exceed any reasonable cap, so an on-disk value beyond 10× the default is corrupt/tampered and
+ * is rejected (→ reset to 0) rather than trusted — closing the overflow-DoS / cap-wedge class.
+ */
+const MAX_PERSISTED_CALLS = DEFAULT_MAX_CALLS_PER_DAY * 10
+
 /** Injected clock so the day boundary is deterministic in tests. */
 export type Clock = () => Date
 
@@ -53,7 +60,18 @@ function read(userDataDir: string): BudgetState | null {
   if (!existsSync(f)) return null
   try {
     const p = JSON.parse(readFileSync(f, 'utf8')) as Partial<BudgetState>
-    if (typeof p.day === 'string' && typeof p.calls === 'number' && p.calls >= 0) {
+    // BUG-004 (data-integrity): the on-disk `calls` is user-writable (local userData path) and
+    // must be a finite, non-negative INTEGER within a sane bound. A bare `>= 0` check admits
+    // floats (cap-boundary drift), Infinity (note: JSON.parse('{"calls":1e309}') === Infinity →
+    // wedges the budget at cap all day), and MAX_SAFE_INTEGER (overflow DoS — every call blocked
+    // until midnight). Anything outside the bound falls through to the warn + reset-to-0 path.
+    if (
+      typeof p.day === 'string' &&
+      typeof p.calls === 'number' &&
+      Number.isInteger(p.calls) &&
+      p.calls >= 0 &&
+      p.calls <= MAX_PERSISTED_CALLS
+    ) {
       return { day: p.day, calls: p.calls }
     }
     // Malformed shape → today's count resets to 0. Trace it so an unexpected budget reset
