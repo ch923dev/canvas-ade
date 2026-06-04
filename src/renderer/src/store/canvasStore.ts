@@ -691,8 +691,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             project: { dir: r.dir, name: r.name, status: 'open' }
           })
           return
-        } catch {
-          /* .bak also bad → fall through to the error path below */
+        } catch (bakErr) {
+          // .bak is also deep-corrupt → fall through to the error path below (carrying the
+          // ORIGINAL primary message). Warn so the lost last-good snapshot leaves a trace,
+          // matching the repo's recovery-failure logging (llmBudget/llmKeyStore).
+          console.warn('[canvasStore] canvas.json.bak recovery also failed to parse', bakErr)
         }
       }
       const msg = err instanceof Error ? err.message : 'failed to load project'
