@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BoardOutput, BoardResult, MemoryDoc } from '@ch923dev/canvas-ade-mcp'
 import { buildOrchestrator, MCP_SPAWN_CAP, type BoardRegistry } from './mcpOrchestrator'
+import { createDispatchGuard } from './dispatchGuard'
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
 
@@ -633,6 +634,38 @@ describe('buildOrchestrator', () => {
       expect(confirms).toHaveLength(1) // confirm runs first…
       expect(writes).toEqual([]) // …but a failed consume still blocks the write
       expect(audits.some((a) => a.status === 'rejected' || a.status === 'failed')).toBe(true)
+    })
+
+    it('🔒 BUG-020: a DENIED handoff evicts its issued nonce (no unbounded outstanding-set leak)', async () => {
+      // OLD code threw on the deny branch WITHOUT consuming the issued nonce, leaking one
+      // entry into the guard's outstanding set per denial. The fix consumes (deletes) it.
+      // We drive a REAL createDispatchGuard via the same instance across many denials and
+      // assert the issued nonce is no longer redeemable AFTER the deny — i.e. it was evicted.
+      const consumed: string[] = []
+      let issuedNonce = ''
+      const realGuard = createDispatchGuard()
+      const spyGuard = {
+        issue: () => {
+          const r = realGuard.issue()
+          issuedNonce = r.nonce
+          return r
+        },
+        consume: (n: string) => {
+          consumed.push(n)
+          return realGuard.consume(n)
+        }
+      }
+      const { registry } = dispatchReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term' }],
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry, { guard: spyGuard })
+      await expect(orch.handoffPrompt('t1', 'rm -rf /')).rejects.toThrow(/deni|human gate/i)
+      // The issued nonce was consumed (evicted) on the deny path…
+      expect(consumed).toContain(issuedNonce)
+      // …so a follow-up consume of that exact nonce finds nothing (it is NOT lingering in
+      // the outstanding set). OLD behavior: the nonce was still present → this returns true.
+      expect(realGuard.consume(issuedNonce)).toBe(false)
     })
   })
 

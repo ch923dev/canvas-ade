@@ -432,6 +432,9 @@ export function buildOrchestrator(
         body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
@@ -584,6 +587,9 @@ export function buildOrchestrator(
         body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
@@ -713,6 +719,9 @@ export function buildOrchestrator(
         body: `Relay this prompt from terminal "${source.title}" to terminal "${target.title}" (${targetId})?\n\n${safeText}`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'relay_prompt',
           targetId,
@@ -802,6 +811,9 @@ export function buildOrchestrator(
         body: `Send Ctrl-C (interrupt) to terminal "${board.title}" (${boardId})?`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'interrupt',
           targetId: boardId,
