@@ -72,6 +72,40 @@ function logSummarizeIntent(intent: SummarizeIntent): void {
   console.log(`[memoryEngine] summarize intent for board ${intent.boardId}`)
 }
 
+/**
+ * BUG-027: upper bound on the ids[] memory:readBoards will service in one call. Each id costs a
+ * synchronous existsSync on the IPC thread, so an unbounded array (a compromised renderer could
+ * pass thousands) would block other handlers. The legitimate caller passes the live board ids,
+ * naturally bounded to the real board count, so 256 is a generous practical ceiling.
+ */
+const MAX_READ_BOARD_IDS = 256
+
+/**
+ * BUG-018 #2: after baselining at project open, re-arm a summarize for any board whose cached
+ * `board-<id>.md` was deleted externally (user/GC) between sessions. A content-identical re-open
+ * never emits via observe() (the baseline matches), so without this the memory dir would stay
+ * empty until a real content edit. Best-effort + pure-read: a malformed doc or fs error never
+ * aborts the open. Reuses a single CanvasMemory instance (no per-id construction).
+ */
+function rehydrateMissingSummaries(dir: string, doc: unknown, engine: MemoryEngine): void {
+  try {
+    const boards = (doc as { boards?: unknown })?.boards
+    if (!Array.isArray(boards)) return
+    const mem = createCanvasMemory(dir)
+    const missing: string[] = []
+    for (const board of boards) {
+      const id = (board as { id?: unknown })?.id
+      // readBoard guards safeBoardId + returns undefined when the file is absent.
+      if (typeof id === 'string' && id.length > 0 && mem.readBoard(id) === undefined) {
+        missing.push(id)
+      }
+    }
+    if (missing.length > 0) engine.rehydrate(missing)
+  } catch (err) {
+    console.warn('[memoryEngine] rehydrate of missing summaries failed (non-fatal)', err)
+  }
+}
+
 export function registerProjectHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
@@ -84,6 +118,17 @@ export function registerProjectHandlers(
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean =>
     isForeignSender(e, () => getWin()?.webContents.mainFrame)
+
+  // BUG-027: memory:readBoards built a fresh CanvasMemory on EVERY IPC call. Memoize one per
+  // project dir and reuse it across calls (re-create only when the open project changes), so a
+  // burst of reads doesn't re-run the path scaffolding each time.
+  let cachedMemory: { dir: string; mem: ReturnType<typeof createCanvasMemory> } | null = null
+  const memoryFor = (dir: string): ReturnType<typeof createCanvasMemory> => {
+    if (!cachedMemory || cachedMemory.dir !== dir) {
+      cachedMemory = { dir, mem: createCanvasMemory(dir) }
+    }
+    return cachedMemory.mem
+  }
 
   ipcMain.handle('dialog:openFolder', async (e): Promise<string | null> => {
     if (guard(e)) return null
@@ -115,6 +160,8 @@ export function registerProjectHandlers(
         // Without this, the first project:save becomes the baseline (no emit) and the first
         // edit after every open/switch is silently swallowed until a second save.
         memoryEngine.observe(r.doc)
+        // BUG-018 #2: re-summarize boards whose cached summary file is missing on disk.
+        rehydrateMissingSummaries(r.dir, r.doc, memoryEngine)
       } catch (err) {
         console.warn('[memoryEngine] reset/observe on open failed (non-fatal)', err)
       }
@@ -181,6 +228,8 @@ export function registerProjectHandlers(
         memoryEngine.reset() // T-M2: re-baseline on reopen/switch
         // Baseline from the loaded doc (see project:open) so the first post-reopen edit emits.
         memoryEngine.observe(r.doc)
+        // BUG-018 #2: re-summarize boards whose cached summary file is missing on disk.
+        rehydrateMissingSummaries(r.dir, r.doc, memoryEngine)
       } catch (err) {
         console.warn('[memoryEngine] reset/observe on current failed (non-fatal)', err)
       }
@@ -221,7 +270,10 @@ export function registerProjectHandlers(
     if (guard(e)) return {}
     const dir = getCurrentDir()
     if (!dir || !Array.isArray(ids)) return {}
-    const mem = createCanvasMemory(dir)
+    // BUG-027: bound the request so a compromised renderer can't pin the IPC thread with
+    // thousands of synchronous existsSync calls. Real callers pass live board ids (≪ 256).
+    if (ids.length > MAX_READ_BOARD_IDS) return {}
+    const mem = memoryFor(dir) // BUG-027: reuse one CanvasMemory per dir, not one per call
     const out: Record<string, string> = {}
     for (const id of ids) {
       const md = mem.readBoard(id)

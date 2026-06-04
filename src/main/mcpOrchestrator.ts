@@ -432,6 +432,9 @@ export function buildOrchestrator(
         body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
@@ -584,6 +587,9 @@ export function buildOrchestrator(
         body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
@@ -713,6 +719,9 @@ export function buildOrchestrator(
         body: `Relay this prompt from terminal "${source.title}" to terminal "${target.title}" (${targetId})?\n\n${safeText}`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'relay_prompt',
           targetId,
@@ -722,6 +731,32 @@ export function buildOrchestrator(
           detail: `${sourceId}->${targetId}; seq=${seq}`
         })
         throw new Error('relay_prompt: dispatch denied by the human gate')
+      }
+
+      // (4.5) 🔒 TOCTOU re-check (BUG-021): the cable IS the authorization, but the
+      // confirm await is unbounded and `listConnectors()` reads a mutable mirror the
+      // renderer can overwrite mid-wait (the user can delete the cable on the canvas while
+      // the modal is open). Re-verify the SAME directed orchestration edge still exists
+      // BEFORE consuming the nonce / writing — a human who approved "authorized by cable X"
+      // must not have the relay fire once that cable is gone. Missing → evict + reject.
+      const cableStillLive = registry
+        .listConnectors()
+        .some(
+          (c) => c.kind === 'orchestration' && c.sourceId === sourceId && c.targetId === targetId
+        )
+      if (!cableStillLive) {
+        guard.consume(nonce)
+        await registry.audit({
+          type: 'relay_prompt',
+          targetId,
+          prompt: text,
+          nonce,
+          status: 'rejected',
+          detail: `authorization cable removed during confirm; ${sourceId}->${targetId}; seq=${seq}`
+        })
+        throw new Error(
+          `relay_prompt: authorization connector ${sourceId} -> ${targetId} removed during confirm`
+        )
       }
 
       // (5) Redeem the nonce (defensive replay guard).
@@ -802,6 +837,9 @@ export function buildOrchestrator(
         body: `Send Ctrl-C (interrupt) to terminal "${board.title}" (${boardId})?`
       })
       if (!approved) {
+        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
+        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
+        guard.consume(nonce)
         await registry.audit({
           type: 'interrupt',
           targetId: boardId,

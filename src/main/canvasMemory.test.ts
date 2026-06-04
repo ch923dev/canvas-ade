@@ -140,6 +140,16 @@ describe('canvasMemory', () => {
       expect(readFileSync(m.paths.gitignore, 'utf8')).toBe('*\n')
     })
 
+    it('BUG-017: setCommitOptIn on a fresh project creates the FULL scaffold (memory/ + audit/)', () => {
+      // Pre-fix this only mkdir-ed root + wrote .gitignore, leaving memory/ and audit/ absent until
+      // the next write — a partial, inconsistent on-disk tree.
+      const m = createCanvasMemory(dir)
+      m.setCommitOptIn(true) // no prior ensureScaffold
+      expect(statSync(m.paths.memoryDir).isDirectory()).toBe(true)
+      expect(statSync(m.paths.auditDir).isDirectory()).toBe(true)
+      expect(existsSync(m.paths.gitignore)).toBe(true)
+    })
+
     it('isCommitted is false when no .gitignore exists', () => {
       const m = createCanvasMemory(dir)
       expect(m.isCommitted()).toBe(false)

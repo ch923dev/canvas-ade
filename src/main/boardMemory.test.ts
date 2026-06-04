@@ -58,4 +58,19 @@ describe('boardMemory', () => {
     expect(readBoardSummary('..').present).toBe(false)
     expect(readBoardSummary('').present).toBe(false)
   })
+
+  it('🔒 rejects an over-length board id even when a matching file exists (BUG-019)', () => {
+    // A 65-char id passes the charset but EXCEEDS the 64-char cap (mirroring
+    // canvasMemory.safeBoardId). Seed a real file whose name uses that exact 65-char id:
+    // the OLD code (no length cap) would find + return it (present:true); the FIXED guard
+    // rejects the id BEFORE the fs touch, so it stays the empty shell.
+    const overLen = 'a'.repeat(65)
+    seedMemory({ [`board-${overLen}.md`]: 'should-not-be-readable' })
+    expect(readBoardSummary(overLen)).toEqual({ present: false, text: '' })
+
+    // The boundary (exactly 64) is still accepted: a real file at that id IS read.
+    const atCap = 'b'.repeat(64)
+    seedMemory({ [`board-${atCap}.md`]: 'cap-ok' })
+    expect(readBoardSummary(atCap)).toEqual({ present: true, text: 'cap-ok' })
+  })
 })

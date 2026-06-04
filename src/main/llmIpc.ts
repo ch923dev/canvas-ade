@@ -54,6 +54,21 @@ export interface LlmStatus {
 /** Result of a write-only LLM IPC call (setKey/clearKey/setConfig). Never carries key material. */
 export type LlmWriteResult = { ok: boolean; reason?: string }
 
+/**
+ * BUG-012: the known ProviderName set, derived from DEFAULT_MODELS (a typed Record<ProviderName,…>)
+ * so it can't drift from the union. TypeScript's ProviderName is erased at runtime, so without this
+ * a renderer could write an arbitrary `provider` key (e.g. '__proto__') into the key file.
+ */
+const VALID_PROVIDERS = new Set<string>(Object.keys(DEFAULT_MODELS))
+
+/**
+ * BUG-012: upper bound for an API key written over IPC. Real provider keys are well under this; a
+ * larger string is a mistake/abuse and would otherwise be encrypted + synchronously written to
+ * disk in MAIN (event-loop stall / DoS surface). Empty keys are rejected separately (an empty key
+ * still encrypts to a non-empty ciphertext → hasKey would falsely report true).
+ */
+const MAX_KEY_LEN = 1024
+
 const NOOP_KEY_STORE: KeyStore = {
   getKey: () => undefined,
   setKey: () => {
@@ -74,18 +89,32 @@ export function registerLlmHandlers(
   encryptor?: Encryptor
 ): void {
   const keyStore: KeyStore = encryptor ? createKeyStore(userDataDir, encryptor) : NOOP_KEY_STORE
+  // BUG-013: HONOR an injected budget — only build a fresh store when none was injected, so a
+  // caller/test that injects a budget (for isolation) is not silently ignored. Computed once into
+  // a named local rather than relying on the spread-then-override order being correct.
+  const budget = injectedDeps?.budget ?? createBudgetStore(userDataDir, () => new Date())
   // Resolution uses the SAME store the IPC writes to (store-first) and the SAME budget the
   // engine reserves against, so a key/cap set over IPC is immediately live for summarize.
+  // NOTE: `injectedDeps.keyStore` is INTENTIONALLY ignored — the keyStore is always built from
+  // `encryptor` so the llm:setKey/clearKey/status write channels and the summarize resolution
+  // share one store (a per-injection store would let the IPC writes and reads drift apart).
   const deps: ProviderDeps = {
     ...(injectedDeps ?? defaultDeps()),
     keyStore,
-    budget: injectedDeps?.budget ?? createBudgetStore(userDataDir, () => new Date())
+    budget
   }
   const guard = (e: IpcMainInvokeEvent): boolean =>
     isForeignSender(e, () => getWin()?.webContents.mainFrame)
 
   ipcMain.handle('llm:summarize', async (e, input: SummarizeInput): Promise<SummarizeResult> => {
     if (guard(e)) return { ok: false, reason: 'provider-error', message: 'forbidden sender' }
+    // BUG-011: the IPC arg is `unknown` at runtime — a caller sending `{}` / `{ system: 'x' }`
+    // (no `text`) would push `content: undefined` into the provider body (JSON.stringify drops it
+    // → malformed request the provider rejects with a 400, AND a budget slot is consumed first).
+    // Reject cleanly here, before any provider/budget work, so no future renderer caller can leak
+    // a null-content request or waste the daily cap.
+    if (typeof input?.text !== 'string' || input.text.length === 0)
+      return { ok: false, reason: 'provider-error', message: 'invalid input: text is required' }
     const config = readLlmConfig(userDataDir)
     return runSummarize(config, input, deps)
   })
@@ -115,6 +144,13 @@ export function registerLlmHandlers(
 
   ipcMain.handle('llm:setKey', (e, a: { provider: ProviderName; key: string }): LlmWriteResult => {
     if (guard(e)) return { ok: false, reason: 'forbidden' }
+    // BUG-012: validate the IPC args before the key store / encryptor. `provider`/`key` are
+    // `unknown` at runtime — an unknown provider would pollute the key file (e.g. '__proto__'),
+    // an empty key would falsely report hasKey:true, and an unbounded key would be encrypted +
+    // written synchronously (event-loop stall). Reject all three cleanly here.
+    if (!VALID_PROVIDERS.has(a?.provider as string)) return { ok: false, reason: 'invalid-provider' }
+    if (typeof a.key !== 'string' || a.key.length === 0 || a.key.length > MAX_KEY_LEN)
+      return { ok: false, reason: 'invalid-key' }
     return keyStore.setKey(a.provider, a.key)
       ? { ok: true }
       : { ok: false, reason: 'encryption-unavailable' }

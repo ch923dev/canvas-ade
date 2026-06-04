@@ -262,7 +262,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     store.getCurrentDir.mockReturnValue('/proj')
     store.writeProject.mockResolvedValue(undefined)
     const observe = vi.fn()
-    const engine: MemoryEngine = { observe, reset: vi.fn() }
+    const engine: MemoryEngine = { observe, reset: vi.fn(), rehydrate: vi.fn() }
     const cap = harness(engine)
 
     const doc = { schemaVersion: 4, viewport: null, boards: [] }
@@ -278,7 +278,8 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
       observe: () => {
         throw new Error('detector boom')
       },
-      reset: vi.fn()
+      reset: vi.fn(),
+      rehydrate: vi.fn()
     }
     const cap = harness(engine)
 
@@ -291,7 +292,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
     const reset = vi.fn()
     const observe = vi.fn()
-    const engine: MemoryEngine = { observe, reset }
+    const engine: MemoryEngine = { observe, reset, rehydrate: vi.fn() }
     const cap = harness(engine)
 
     const r = cap.invoke('project:open', '/proj') as { ok: boolean }
@@ -310,7 +311,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
     const reset = vi.fn()
     const observe = vi.fn()
-    const engine: MemoryEngine = { observe, reset }
+    const engine: MemoryEngine = { observe, reset, rehydrate: vi.fn() }
     const cap = harness(engine)
 
     const r = (await cap.invoke('project:current')) as { ok: boolean }
@@ -364,6 +365,54 @@ describe('memory:readBoards (T-M4 cached-prose read bridge)', () => {
 
     expect(await cap.invokeAs(foreignEvent, 'memory:readBoards', ['t1'])).toEqual({})
     expect(canvasMemory.createCanvasMemory).not.toHaveBeenCalled()
+  })
+
+  it('reuses ONE CanvasMemory across calls for the same dir (BUG-027)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const readBoard = vi.fn((id: string) => (id === 't1' ? 'prose' : undefined))
+    canvasMemory.createCanvasMemory.mockReturnValue({ readBoard })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    await cap.invoke('memory:readBoards', ['t1'])
+    await cap.invoke('memory:readBoards', ['t1'])
+    await cap.invoke('memory:readBoards', ['t1'])
+    // Pre-fix: one createCanvasMemory PER call (3). Memoized: built once, reused.
+    expect(canvasMemory.createCanvasMemory).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-builds the CanvasMemory when the open project dir changes (BUG-027)', async () => {
+    canvasMemory.createCanvasMemory.mockReturnValue({ readBoard: () => 'prose' })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    store.getCurrentDir.mockReturnValue('/projA')
+    await cap.invoke('memory:readBoards', ['t1'])
+    store.getCurrentDir.mockReturnValue('/projB')
+    await cap.invoke('memory:readBoards', ['t1'])
+    expect(canvasMemory.createCanvasMemory).toHaveBeenCalledTimes(2)
+    expect(canvasMemory.createCanvasMemory).toHaveBeenNthCalledWith(1, '/projA')
+    expect(canvasMemory.createCanvasMemory).toHaveBeenNthCalledWith(2, '/projB')
+  })
+
+  it('caps the ids array — an over-limit request returns {} without touching disk (BUG-027)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const readBoard = vi.fn(() => 'prose')
+    canvasMemory.createCanvasMemory.mockReturnValue({ readBoard })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    // 257 ids (> the 256 cap) must short-circuit before any CanvasMemory / readBoard touch.
+    const tooMany = Array.from({ length: 257 }, (_, i) => `id${i}`)
+    expect(await cap.invoke('memory:readBoards', tooMany)).toEqual({})
+    expect(canvasMemory.createCanvasMemory).not.toHaveBeenCalled()
+    expect(readBoard).not.toHaveBeenCalled()
+
+    // The boundary (exactly 256) is still serviced.
+    const atCap = Array.from({ length: 256 }, (_, i) => `id${i}`)
+    await cap.invoke('memory:readBoards', atCap)
+    expect(canvasMemory.createCanvasMemory).toHaveBeenCalledTimes(1)
+    expect(readBoard).toHaveBeenCalledTimes(256)
   })
 })
 

@@ -97,6 +97,30 @@ describe('requestConfirm', () => {
     await expect(p).resolves.toEqual({ approved: true })
   })
 
+  it('🔒 BUG-022: the reply channel is a CSPRNG UUID (unguessable, not Date.now()/Math.random)', async () => {
+    // The OLD channel was `mcp:confirm:reply:${Date.now()}:${Math.random().toString(36)}`
+    // — both components are predictable, so a renderer could precompute/guess the channel
+    // for a given request and forge an early {approved:true}. The fix uses randomUUID().
+    const mainFrame = { name: 'main' }
+    const { win: win1, sent: sent1 } = fakeWin(mainFrame)
+    const { bus: bus1 } = fakeBus()
+    void requestConfirm(bus1, () => win1, REQ)
+
+    const ch = sent1[0].payload.replyChannel
+    // A v4 UUID suffix — 8-4-4-4-12 hex with the version/variant nibbles fixed.
+    const uuidV4 =
+      /^mcp:confirm:reply:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    expect(ch).toMatch(uuidV4)
+    // It must NOT be the OLD predictable shape (two colon-separated numeric/base36 parts).
+    expect(ch).not.toMatch(/^mcp:confirm:reply:\d+:[0-9a-z]+$/)
+
+    // Two distinct requests must yield two distinct channels (no collision/reuse).
+    const { win: win2, sent: sent2 } = fakeWin(mainFrame)
+    const { bus: bus2 } = fakeBus()
+    void requestConfirm(bus2, () => win2, REQ)
+    expect(sent2[0].payload.replyChannel).not.toBe(ch)
+  })
+
   it('resolves a deny decision', async () => {
     const mainFrame = { name: 'main' }
     const { win } = fakeWin(mainFrame)

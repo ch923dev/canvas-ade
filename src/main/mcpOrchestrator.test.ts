@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BoardOutput, BoardResult, MemoryDoc } from '@ch923dev/canvas-ade-mcp'
 import { buildOrchestrator, MCP_SPAWN_CAP, type BoardRegistry } from './mcpOrchestrator'
+import { createDispatchGuard } from './dispatchGuard'
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
 
@@ -634,6 +635,38 @@ describe('buildOrchestrator', () => {
       expect(writes).toEqual([]) // …but a failed consume still blocks the write
       expect(audits.some((a) => a.status === 'rejected' || a.status === 'failed')).toBe(true)
     })
+
+    it('🔒 BUG-020: a DENIED handoff evicts its issued nonce (no unbounded outstanding-set leak)', async () => {
+      // OLD code threw on the deny branch WITHOUT consuming the issued nonce, leaking one
+      // entry into the guard's outstanding set per denial. The fix consumes (deletes) it.
+      // We drive a REAL createDispatchGuard via the same instance across many denials and
+      // assert the issued nonce is no longer redeemable AFTER the deny — i.e. it was evicted.
+      const consumed: string[] = []
+      let issuedNonce = ''
+      const realGuard = createDispatchGuard()
+      const spyGuard = {
+        issue: () => {
+          const r = realGuard.issue()
+          issuedNonce = r.nonce
+          return r
+        },
+        consume: (n: string) => {
+          consumed.push(n)
+          return realGuard.consume(n)
+        }
+      }
+      const { registry } = dispatchReg({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term' }],
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry, { guard: spyGuard })
+      await expect(orch.handoffPrompt('t1', 'rm -rf /')).rejects.toThrow(/deni|human gate/i)
+      // The issued nonce was consumed (evicted) on the deny path…
+      expect(consumed).toContain(issuedNonce)
+      // …so a follow-up consume of that exact nonce finds nothing (it is NOT lingering in
+      // the outstanding set). OLD behavior: the nonce was still present → this returns true.
+      expect(realGuard.consume(issuedNonce)).toBe(false)
+    })
   })
 
   describe('🔒 dispatchPrompt / assign_prompt (T4.4, fire-and-forget dispatch)', () => {
@@ -1090,6 +1123,49 @@ describe('buildOrchestrator', () => {
       const orch = buildOrchestrator(registry)
       await expect(orch.relayPrompt('A', 'B', 'x')).rejects.toThrow(/write|failed/i)
       expect(audits.some((a) => a.status === 'failed')).toBe(true)
+    })
+
+    it('🔒 BUG-021: a cable deleted DURING the confirm wait blocks the relay (TOCTOU)', async () => {
+      // The cable IS the authorization. It exists at the initial check, but the user
+      // deletes it on the canvas while the confirm modal is open (the connector mirror
+      // is overwritten mid-wait). OLD code never re-checked → the relay fired without a
+      // live cable. The fix re-verifies the edge post-confirm and rejects when it's gone.
+      const audits: AuditInput[] = []
+      const writes: Array<{ id: string; text: string }> = []
+      // A MUTABLE connector mirror: starts with the A→B cable, emptied during confirm.
+      let connectors: Array<{ id: string; sourceId: string; targetId: string; kind: string }> = [
+        { id: 'c1', sourceId: 'A', targetId: 'B', kind: 'orchestration' }
+      ]
+      const registry: BoardRegistry = {
+        listBoards: () => twoTerminals,
+        listConnectors: () => connectors, // reads the live (mutable) mirror each call
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: (id, text) => {
+          writes.push({ id, text })
+          return true
+        },
+        // The human approves — but while the modal was open the cable was deleted.
+        confirm: async () => {
+          connectors = [] // canvas interaction removes the authorization cable mid-wait
+          return { approved: true }
+        },
+        audit: async (input) => {
+          audits.push(input)
+        },
+        recordResult: () => {}
+      }
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', 'pnpm build')).rejects.toThrow(
+        /connector|cable|removed/i
+      )
+      expect(writes).toEqual([]) // the relay never reached the PTY — no live authorization
+      expect(audits.some((a) => a.status === 'rejected')).toBe(true)
     })
 
     it('🔒 defensive: a forged/replayed nonce (consume=false) blocks the relay', async () => {

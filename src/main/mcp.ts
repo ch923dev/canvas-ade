@@ -1,9 +1,23 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
 import type { TokenStore } from '@ch923dev/canvas-ade-mcp'
 
+/**
+ * Parse a positive-millisecond env override, falling back to `fallback` when the value
+ * is absent or not a FINITE POSITIVE number (BUG-023). The old `Number(env) || fallback`
+ * idiom only caught falsy values (0 / NaN / ''): a NEGATIVE override like `-1` is truthy
+ * and passed straight through, which made the idle-reap predicate `t - idleSince >= -1`
+ * always true → every MCP-spawned board got reaped on its first idle sweep. Reject any
+ * value <= 0 (and NaN) so a misconfigured/negative env can never disable or invert the
+ * TTL; a legitimate small POSITIVE value still drives the live smoke's fast reap.
+ */
+export function positiveMsEnv(raw: string | undefined, fallback: number): number {
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
 /** Idle-reap TTL + sweep interval (T3.4). Env-overridable so the live smoke can drive a fast reap. */
-const IDLE_TTL_MS = Number(process.env.CANVAS_MCP_IDLE_TTL_MS) || MCP_IDLE_TTL_MS
-const REAP_INTERVAL_MS = Number(process.env.CANVAS_MCP_REAP_INTERVAL_MS) || 60_000
+const IDLE_TTL_MS = positiveMsEnv(process.env.CANVAS_MCP_IDLE_TTL_MS, MCP_IDLE_TTL_MS)
+const REAP_INTERVAL_MS = positiveMsEnv(process.env.CANVAS_MCP_REAP_INTERVAL_MS, 60_000)
 
 export interface RunningMcp {
   port: number

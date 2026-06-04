@@ -55,6 +55,67 @@ describe('registerLlmHandlers', () => {
     }
   })
 
+  // BUG-011: a summarize call with no/empty `text` must be rejected at the handler with a typed
+  // error BEFORE any provider/budget work — never reach the provider as a null-content request.
+  it('rejects summarize with a missing or empty text field (BUG-011)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llmipc-bug011-'))
+    try {
+      // Configure an explicit cap so the budget store is engaged under the mock seam — proves the
+      // guard fires BEFORE budget is touched.
+      writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 5 })
+      const cap = createIpcCapture()
+      registerLlmHandlers(cap.ipcMain, mainWin, dir, {
+        fetch: noNetwork,
+        env: { CANVAS_LLM_MOCK: '1' }
+      })
+      const invalid = { ok: false, reason: 'provider-error', message: 'invalid input: text is required' }
+      // No `text` key (the masked-by-mock case: old behavior returned { ok:true, text:'[mock] undefined' }).
+      expect(await cap.invoke('llm:summarize', { system: 'x' })).toEqual(invalid)
+      // Empty string.
+      expect(await cap.invoke('llm:summarize', { text: '' })).toEqual(invalid)
+      // Non-string text.
+      expect(await cap.invoke('llm:summarize', { text: 123 } as never)).toEqual(invalid)
+      // null/undefined input object — must not throw, returns the typed error.
+      expect(await cap.invoke('llm:summarize', null as never)).toEqual(invalid)
+      // The budget was never consumed (guard short-circuits before runSummarize).
+      const ok = await cap.invoke('llm:summarize', { text: 'real' })
+      expect(ok).toEqual({ ok: true, text: '[mock] real' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // BUG-013: an injected budget must be the one the summarize path consumes (not a fresh store
+  // silently constructed in its place) — a caller/test that injects a budget for isolation must
+  // not be ignored.
+  it('honors an injected budget store instead of building a fresh one (BUG-013)', async () => {
+    let consumed = 0
+    const injectedBudget = {
+      tryConsume: (_cap: number) => {
+        consumed++
+        return true
+      },
+      peek: () => ({ day: '2026-06-04', calls: consumed })
+    }
+    const cap = createIpcCapture()
+    const dir = mkdtempSync(join(tmpdir(), 'llmipc-bug013-'))
+    try {
+      // Explicit cap so the budget is enforced under the mock seam (shouldEnforceBudget opts in).
+      writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 5 })
+      registerLlmHandlers(cap.ipcMain, mainWin, dir, {
+        fetch: noNetwork,
+        env: { CANVAS_LLM_MOCK: '1' },
+        budget: injectedBudget
+      })
+      await cap.invoke('llm:summarize', { text: 'a' })
+      await cap.invoke('llm:summarize', { text: 'b' })
+      // The INJECTED budget was the one consumed (twice), proving it wasn't replaced.
+      expect(consumed).toBe(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('status reports a provider + model and never leaks key material', async () => {
     const cap = createIpcCapture()
     registerLlmHandlers(cap.ipcMain, mainWin, '/no/such/dir', {
@@ -117,6 +178,37 @@ describe('registerLlmHandlers — key channels', () => {
     const s = (await cap.invoke('llm:status')) as LlmStatus
     expect(s.hasKey).toBe(true)
     expect(Object.values(s)).not.toContain('sk-xyz')
+  })
+
+  // BUG-012: setKey must validate the provider against the known set and bound the key, BEFORE
+  // anything reaches the key store / encryptor (no key-file pollution, no false hasKey, no DoS).
+  it('setKey rejects an unknown provider and an empty/over-long key (BUG-012)', async () => {
+    const { cap } = setupKeyed(fakeEncryptor())
+    // Unknown provider (the '__proto__' pollution case) — rejected, nothing stored.
+    expect(await cap.invoke('llm:setKey', { provider: '__proto__', key: 'x' })).toEqual({
+      ok: false,
+      reason: 'invalid-provider'
+    })
+    expect(await cap.invoke('llm:setKey', { provider: 'nope', key: 'x' })).toEqual({
+      ok: false,
+      reason: 'invalid-provider'
+    })
+    // Empty key — would falsely report hasKey:true on a non-empty ciphertext; rejected.
+    expect(await cap.invoke('llm:setKey', { provider: 'openrouter', key: '' })).toEqual({
+      ok: false,
+      reason: 'invalid-key'
+    })
+    // Over-long key (> MAX_KEY_LEN 1024) — would be encrypted + synchronously written; rejected.
+    expect(
+      await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'A'.repeat(2000) })
+    ).toEqual({ ok: false, reason: 'invalid-key' })
+    // None of the rejected calls persisted a key.
+    expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(false)
+    // A valid key still round-trips.
+    expect(await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'sk-real' })).toEqual({
+      ok: true
+    })
+    expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(true)
   })
 
   it('clearKey removes the key (hasKey:false after)', async () => {

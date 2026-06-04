@@ -132,17 +132,35 @@ export function createAuditLog(opts: {
 
   return {
     async append(input) {
-      // Reserve a sequence by CHAINING through the single tail promise: each caller awaits
-      // the prior reservation, so two concurrent appends can't both read the same pending
-      // seq (which would dup the seq + interleave writes). The tail resolves to the seq
-      // the NEXT caller will use; this caller consumes the value it awaited.
-      const reservation = initSeq()
-      nextSeq = reservation.then((seq) => seq + 1)
-      const seq = await reservation
-      const entry = shapeAuditEntry(input, seq, now())
-      await mkdir(opts.dir, { recursive: true })
-      await appendFile(path, JSON.stringify(entry) + '\n', 'utf8')
-      return entry
+      // Serialize the ENTIRE append (seq reservation + the actual write) through a single
+      // tail promise (BUG-024). Each caller chains its build+write onto the prior tail and
+      // resolves the tail to the NEXT seq only AFTER its own appendFile completes:
+      //   • physical file order matches seq order — a later caller's write can't begin until
+      //     the earlier write has finished (the prior split only serialized the seq ARITHMETIC,
+      //     so two appendFile calls could be in-flight at once → out-of-order JSONL lines).
+      //   • a failed write does NOT burn its seq — the tail is reset to the SAME seq (not seq+1)
+      //     so the next append retries that number instead of leaving an invisible gap.
+      // The caller still gets the entry it wrote (or the write error) via a captured deferred.
+      let settle!: (entry: AuditEntry) => void
+      let fail!: (err: unknown) => void
+      const result = new Promise<AuditEntry>((res, rej) => {
+        settle = res
+        fail = rej
+      })
+      const tail = initSeq()
+      nextSeq = tail.then(async (seq) => {
+        try {
+          const entry = shapeAuditEntry(input, seq, now())
+          await mkdir(opts.dir, { recursive: true })
+          await appendFile(path, JSON.stringify(entry) + '\n', 'utf8')
+          settle(entry)
+          return seq + 1 // advance ONLY after a durable write
+        } catch (err) {
+          fail(err)
+          return seq // write failed → keep the seq so the next append retries it (no gap)
+        }
+      })
+      return result
     },
     async read(readOpts) {
       const limit = readOpts?.limit ?? DEFAULT_READ_LIMIT

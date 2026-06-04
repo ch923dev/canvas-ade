@@ -642,38 +642,46 @@ export async function runMcpSmoke(mcp: RunningMcp | null, win: BrowserWindow): P
     // under the MAIN dir seam, it serves the doc. Self-activating: SKIP without the pkg
     // resource. ──
     {
-      const root = mkdtempSync(join(tmpdir(), 'canvas-mem-smoke-'))
-      __setMemoryDirForTest(root) // empty dir → no .canvas/memory yet
-      const emptyMem = await orch.readMemory()
-      if (emptyMem === null) {
-        __setMemoryDirForTest(null)
-        rmSync(root, { recursive: true, force: true })
-        log('MCP_MEMORY_SKIP pkg<0.3.2-unpublished')
-      } else {
-        const gracefulOk = emptyMem.present === false
-        const memDir = join(root, '.canvas', 'memory')
-        mkdirSync(memDir, { recursive: true })
-        writeFileSync(join(memDir, 'MEMORY.md'), '# smoke memory', 'utf8')
-        writeFileSync(join(memDir, 'board-memprobe.md'), 'memprobe summary', 'utf8')
-        const served = await orch.readMemory()
-        const sum = await orch.readSummaryDoc('memprobe')
-        // 🔒 a traversal id must NOT escape the memory dir even with a fixture present.
-        const traversal = await orch.readSummaryDoc('..%2f..%2fMEMORY')
-        __setMemoryDirForTest(null)
-        rmSync(root, { recursive: true, force: true })
-        const servedOk =
-          served?.present === true &&
-          served.text.includes('smoke memory') &&
-          sum?.present === true &&
-          sum.text.includes('memprobe summary')
-        const guardOk = traversal?.present === false
-        if (gracefulOk && servedOk && guardOk) log('MCP_MEMORY_OK')
-        else {
-          log(
-            `MCP_FAIL memory graceful=${gracefulOk} served=${JSON.stringify(served)} sum=${JSON.stringify(sum)} guard=${guardOk}`
-          )
-          code = 1
+      // BUG-028: the temp dir + the `__setMemoryDirForTest` override MUST always be torn
+      // down, even if `orch.readMemory()` / `readSummaryDoc()` throws an unexpected
+      // transport error (e.g. -32001 Session not found, ECONNREFUSED) instead of returning
+      // null. The old code only cleaned up inside the two success branches, so a throw left
+      // the temp dir on disk AND a poisoned dir override for the rest of the process. A
+      // try/finally guarantees both are reverted on every exit path.
+      let root: string | null = null
+      try {
+        root = mkdtempSync(join(tmpdir(), 'canvas-mem-smoke-'))
+        __setMemoryDirForTest(root) // empty dir → no .canvas/memory yet
+        const emptyMem = await orch.readMemory()
+        if (emptyMem === null) {
+          log('MCP_MEMORY_SKIP pkg<0.3.2-unpublished')
+        } else {
+          const gracefulOk = emptyMem.present === false
+          const memDir = join(root, '.canvas', 'memory')
+          mkdirSync(memDir, { recursive: true })
+          writeFileSync(join(memDir, 'MEMORY.md'), '# smoke memory', 'utf8')
+          writeFileSync(join(memDir, 'board-memprobe.md'), 'memprobe summary', 'utf8')
+          const served = await orch.readMemory()
+          const sum = await orch.readSummaryDoc('memprobe')
+          // 🔒 a traversal id must NOT escape the memory dir even with a fixture present.
+          const traversal = await orch.readSummaryDoc('..%2f..%2fMEMORY')
+          const servedOk =
+            served?.present === true &&
+            served.text.includes('smoke memory') &&
+            sum?.present === true &&
+            sum.text.includes('memprobe summary')
+          const guardOk = traversal?.present === false
+          if (gracefulOk && servedOk && guardOk) log('MCP_MEMORY_OK')
+          else {
+            log(
+              `MCP_FAIL memory graceful=${gracefulOk} served=${JSON.stringify(served)} sum=${JSON.stringify(sum)} guard=${guardOk}`
+            )
+            code = 1
+          }
         }
+      } finally {
+        __setMemoryDirForTest(null)
+        if (root) rmSync(root, { recursive: true, force: true })
       }
     }
 
