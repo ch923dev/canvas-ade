@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
           # Default + security-extended query suite for broader coverage.
@@ -34,6 +34,6 @@ jobs:
       # so we skip `pnpm install`/`build` (avoids the private @ch923dev scope auth
       # and the node-pty native rebuild). Analyze the source as-is.
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: '/language:javascript-typescript'
