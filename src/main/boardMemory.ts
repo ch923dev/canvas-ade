@@ -20,6 +20,14 @@ const MAX_MEMORY_CHARS = 100_000
 
 /** Board ids are uuid/nanoid-like; anything else (`.`, `/`, `\`, empty) is rejected. */
 const SAFE_ID = /^[A-Za-z0-9_-]+$/
+/**
+ * Upper bound on a board id (BUG-019), mirroring canvasMemory.ts's safeBoardId(). Without it,
+ * an agent-controlled id of e.g. 100 000 valid chars passes the charset, reaches join(root,
+ * `board-${id}.md`), and hands a ~100k-char path to existsSync/readFileSync — a wasted syscall
+ * that fails with ERROR_FILENAME_EXCED_RANGE (Win) / ENAMETOOLONG (Linux). Real ids are uuid/
+ * nanoid-sized, so 64 is generous.
+ */
+const MAX_ID_LEN = 64
 
 /** E2E-only override of the project dir the reader resolves against (mirrors the smoke seams). */
 let overrideDir: string | null = null
@@ -54,6 +62,6 @@ export function readProjectMemory(): MemoryDoc {
 /** A board's memory summary (`board-<id>.md`), or the empty shell when absent/invalid id. */
 export function readBoardSummary(id: string): MemoryDoc {
   const root = memoryRoot()
-  if (!root || !SAFE_ID.test(id)) return { present: false, text: '' }
+  if (!root || id.length > MAX_ID_LEN || !SAFE_ID.test(id)) return { present: false, text: '' }
   return readDoc(join(root, `board-${id}.md`))
 }
