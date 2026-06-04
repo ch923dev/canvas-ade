@@ -43,13 +43,21 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
   }, [menuToken, setMenuOpen])
 
   useEffect(() => {
+    // BUG-007(1): without a cancellation flag a slow llm.status() resolving AFTER the user has
+    // already edited the provider/model silently clobbers their input back to the persisted values.
+    // Mirror the prose-fetch guard pattern: skip the overwrite if the effect was cleaned up.
+    let cancelled = false
     void window.api.llm.status().then((s) => {
+      if (cancelled) return
       setProvider(s.provider)
       setModel(s.model)
       setHasKey(s.hasKey)
       setEncryptionAvailable(s.encryptionAvailable !== false) // tolerate an older no-field status
       if (s.baseUrl) setBaseUrl(s.baseUrl)
     })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -63,19 +71,36 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
   const onProvider = (p: keyof typeof DEFAULT_MODELS): void => {
     setProvider(p)
     setModel(DEFAULT_MODELS[p]) // prefill the cheap/fast default; still editable
+    // BUG-007(3): hasKey tracked the load-time provider only, so after a dropdown change the
+    // "· set" indicator (and a Clear-key target) stayed stale. Re-fetch the key presence for the
+    // newly-selected provider. Guarded against an out-of-order resolve by re-reading current state.
+    void window.api.llm.status().then((s) => {
+      setHasKey(s.provider === p ? s.hasKey : false)
+    })
   }
 
   const save = async (): Promise<void> => {
     setBusy(true)
     setError(null)
     try {
-      await window.api.llm.setConfig({
+      // BUG-007(2): a non-throwing `{ ok: false }` (e.g. frame-guard 'forbidden', or a rejected
+      // baseUrl) would otherwise fall through to setKey + onClose, silently closing the modal as if
+      // the (un-persisted) config had saved. Guard on the result before going any further.
+      const cr = await window.api.llm.setConfig({
         provider,
         model,
         baseUrl: provider === 'local' && baseUrl ? baseUrl : undefined
       })
-      if (key.trim()) {
-        const r = await window.api.llm.setKey({ provider, key: key.trim() })
+      if (!cr.ok) {
+        setError('Could not save settings — please try again.')
+        return
+      }
+      // BUG-007(4): strip ALL whitespace (incl. embedded \r\n/tabs from a wrapped paste) before the
+      // guard and before storage — `trim()` only removes the ends, so an embedded newline survived
+      // and later threw an opaque "invalid header value" on every summarize.
+      const cleanKey = key.replace(/\s+/g, '')
+      if (cleanKey) {
+        const r = await window.api.llm.setKey({ provider, key: cleanKey })
         if (!r.ok) {
           setError(
             r.reason === 'encryption-unavailable'
@@ -111,7 +136,9 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
 
   return createPortal(
     <div
-      style={styles.scrim}
+      // BUG-007(5): while a save is in flight a scrim click is correctly swallowed, but with no
+      // visual cue the user re-clicks thinking it failed. Show a 'wait' cursor so the lock is felt.
+      style={{ ...styles.scrim, cursor: busy ? 'wait' : 'default' }}
       onPointerDown={() => {
         if (!busy) onClose()
       }}
