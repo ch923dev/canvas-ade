@@ -263,6 +263,13 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         )
         if (!result.ok) return // no-provider / budget-exceeded / provider-error → Tier-1 stays
 
+        // BUG-006: TOCTOU guard. `dir` was snapshotted before the (up to 30 s) await; the user can
+        // close project A and open project B while the LLM call is in flight. memoryEngine.reset()
+        // cancels pending debounces but has no handle to this already-running promise, so without
+        // this re-check we'd write board-<id>.md / MEMORY.md / project.md into the OLD project's
+        // .canvas/ — stale prose for a board that may not even exist in the now-open project.
+        if (deps.getCurrentDir() !== dir) return // project switched mid-summarize → drop the write
+
         const mem = createCanvasMemory(dir)
         mem.writeBoard(
           boardId,
