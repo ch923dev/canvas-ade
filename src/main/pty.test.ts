@@ -14,7 +14,8 @@ import {
   disposeAllPtysCore,
   killTreeCommand,
   safeCwd,
-  writeToPtyCore
+  writeToPtyCore,
+  getTerminalRuntimeCore
 } from './pty'
 import type { ShellInfo } from './pty'
 
@@ -446,6 +447,32 @@ describe('writeToPtyCore (T4.3 — dispatch write primitive)', () => {
     })
     const sessions = new Map<string, any>([['t', { proc, buf: { data: '' } }]])
     expect(writeToPtyCore('t', 'x', sessions)).toBe(false)
+  })
+})
+
+describe('getTerminalRuntimeCore (T-F1 — runtime snapshot for the Context summary)', () => {
+  it('returns the live session runtime (state + lastActivityAt + exitCode)', () => {
+    const sessions = new Map<string, any>([
+      ['t', { state: 'running', lastActivityAt: 1700, exitCode: undefined }]
+    ])
+    expect(getTerminalRuntimeCore('t', sessions)).toEqual({
+      state: 'running',
+      lastActivityAt: 1700,
+      exitCode: undefined
+    })
+  })
+
+  it('carries the exit code for an exited session', () => {
+    const sessions = new Map<string, any>([['t', { state: 'exited', lastActivityAt: 9, exitCode: 1 }]])
+    expect(getTerminalRuntimeCore('t', sessions)).toEqual({
+      state: 'exited',
+      lastActivityAt: 9,
+      exitCode: 1
+    })
+  })
+
+  it('returns undefined for an absent id (non-terminal / closed / parked-not-live)', () => {
+    expect(getTerminalRuntimeCore('ghost', new Map())).toBeUndefined()
   })
 })
 /* eslint-enable @typescript-eslint/no-explicit-any */
