@@ -175,6 +175,55 @@ describe('registerLlmHandlers — key channels', () => {
     expect(s.baseUrl).toBe('http://127.0.0.1:1234/v1')
   })
 
+  // BUG-001 (SSRF): setConfig must reject a non-loopback baseUrl BEFORE persisting it, and the
+  // rejected URL must never reach a summarize fetch. A valid loopback URL still round-trips.
+  it('rejects a non-loopback baseUrl at setConfig and never reaches fetch (BUG-001)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llm-ssrf-'))
+    const cap = createIpcCapture()
+    let fetched = false
+    // A real (non-mock) env so a poisoned config would actually try to egress.
+    registerLlmHandlers(
+      cap.ipcMain,
+      mainWin,
+      dir,
+      {
+        fetch: (() => {
+          fetched = true
+          throw new Error('SSRF: fetch must never be reached')
+        }) as never,
+        env: {}
+      },
+      fakeEncryptor()
+    )
+    const res = (await cap.invoke('llm:setConfig', {
+      provider: 'local',
+      model: 'local-model',
+      baseUrl: 'http://169.254.169.254/latest/meta-data/'
+    })) as { ok: boolean; reason?: string }
+    expect(res).toEqual({ ok: false, reason: 'invalid-baseUrl' })
+    // Nothing was persisted → status reports no configured baseUrl.
+    expect(readLlmConfig(dir).baseUrl).toBeUndefined()
+    // And a follow-up summarize can't egress to the attacker URL.
+    const sum = await cap.invoke('llm:summarize', { text: 'secret board content' })
+    expect(sum).toEqual({ ok: false, reason: 'no-provider' })
+    expect(fetched).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('accepts a valid loopback baseUrl at setConfig (BUG-001)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llm-ssrf-ok-'))
+    const cap = createIpcCapture()
+    registerLlmHandlers(cap.ipcMain, mainWin, dir, { fetch: noNetwork, env: {} }, fakeEncryptor())
+    const res = (await cap.invoke('llm:setConfig', {
+      provider: 'local',
+      model: 'local-model',
+      baseUrl: 'http://127.0.0.1:1234'
+    })) as { ok: boolean; reason?: string }
+    expect(res).toEqual({ ok: true })
+    expect(readLlmConfig(dir).baseUrl).toBe('http://127.0.0.1:1234')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('all write channels reject a foreign sender', async () => {
     const { cap } = setupKeyed(fakeEncryptor())
     expect(
