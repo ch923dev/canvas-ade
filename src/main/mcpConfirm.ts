@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
 import { isForeignSender } from './preview'
 
@@ -66,7 +67,11 @@ export function requestConfirm(
   }
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   return new Promise<ConfirmDecision>((resolve) => {
-    const replyChannel = `mcp:confirm:reply:${Date.now()}:${Math.random().toString(36).slice(2)}`
+    // 🔒 Cryptographically-strong, unguessable per-request reply channel (BUG-022). The
+    // channel name is posted to the renderer; a CSPRNG UUID (not Date.now()+Math.random,
+    // both predictable) means it can't be guessed/precomputed to forge an early
+    // `{approved:true}` on this request's channel.
+    const replyChannel = `mcp:confirm:reply:${randomUUID()}`
     let done = false
     const finish = (decision: ConfirmDecision): void => {
       if (done) return
