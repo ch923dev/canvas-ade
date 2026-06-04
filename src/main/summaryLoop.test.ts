@@ -208,6 +208,7 @@ describe('sanitizeSummary — BUG-016 bound + clean untrusted LLM output', () =>
     const dirty = 'a\u0000b\u0007c\u001bd\ne\tf'
     const clean = sanitizeSummary(dirty)
     expect(clean).toBe('abcd\ne\tf')
+    // eslint-disable-next-line no-control-regex -- asserts control chars are stripped
     expect(clean).not.toMatch(/[\u0000\u0007\u001b]/)
   })
   it('normalizes CRLF / lone CR to LF', () => {
@@ -260,6 +261,7 @@ describe('createSummaryLoop — BUG-016 sanitizes provider output before writing
       // The file = "# <title>\n\n<sanitized>\n"; the sanitized body must be capped + control-free
       // + must NOT contain a forged top-level heading on its own line.
       expect(md!.length).toBeLessThan(MAX_OUTPUT_CHARS + 200) // title + framing only
+      // eslint-disable-next-line no-control-regex -- asserts control chars are stripped
       expect(md).not.toMatch(/[\u0000\u0007]/)
       expect(md).not.toMatch(/^# FORGED HEADING/m)
     } finally {
