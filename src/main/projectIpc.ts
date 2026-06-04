@@ -9,6 +9,7 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import writeFileAtomic from 'write-file-atomic'
 import {
   readProject,
+  readBak,
   writeProject,
   createProject,
   getCurrentDir,
@@ -167,6 +168,16 @@ export function registerProjectHandlers(
       }
     }
     return r
+  })
+
+  // T5: renderer-reported deep-validation recovery. After `fromObject` throws on a
+  // primary that MAIN passed (envelope-valid but deep-corrupt), the renderer asks for the
+  // .bak so it can retry the parse against the last good snapshot. Pure read — NO gcAssets,
+  // NO setCurrentDir/touchRecent (the open project is unchanged; this is a recovery probe).
+  ipcMain.handle('project:reopenFromBak', (e, dir: string): ProjectResult => {
+    if (guard(e)) return { ok: false, error: 'forbidden' }
+    if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
+    return readBak(dir)
   })
 
   ipcMain.handle(

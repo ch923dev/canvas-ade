@@ -80,8 +80,13 @@ export interface CanvasState {
   viewport: CanvasViewport | null
   /** Current project lifecycle (welcome/loading/open/error). */
   project: ProjectState
-  /** Apply an open/create IPC result: load on ok, set error otherwise (no clobber). */
-  applyOpenResult: (r: OpenResult) => void
+  /**
+   * Apply an open/create IPC result: load on ok, set error otherwise (no clobber). Async
+   * because on a deep-validation throw it retries the project's `canvas.json.bak` over IPC
+   * (`project.reopenFromBak`) before giving up — `.bak` loads → recover to 'open', else
+   * fall through to 'error' (T5). Callers must handle the returned promise (await / chain).
+   */
+  applyOpenResult: (r: OpenResult) => Promise<void>
   /** Mark the project as loading (suppresses autosave mid-switch). */
   setProjectLoading: () => void
 
@@ -653,7 +658,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     })
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
-  applyOpenResult: (r) => {
+  applyOpenResult: async (r) => {
     if (!r.ok) {
       set((s) => ({ project: { ...s.project, status: 'error', error: r.error } }))
       return
@@ -666,6 +671,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     try {
       d = fromObject(r.doc)
     } catch (err) {
+      // T5: the primary was envelope-valid (so MAIN's parse/envelope .bak fallback never
+      // fired) but deep-corrupt. Retry the project's canvas.json.bak — if it loads, recover
+      // to 'open'; if it ALSO throws (or there is no readable .bak), fall through to 'error'
+      // carrying the ORIGINAL primary-parse message.
+      const bak = await window.api.project.reopenFromBak(r.dir)
+      if (bak.ok) {
+        try {
+          const d2 = fromObject(bak.doc)
+          lastRecorded = null
+          markRestoredIdle(d2.boards)
+          set({
+            boards: d2.boards,
+            connectors: d2.connectors,
+            viewport: d2.viewport,
+            selectedId: null,
+            past: [],
+            future: [],
+            project: { dir: r.dir, name: r.name, status: 'open' }
+          })
+          return
+        } catch {
+          /* .bak also bad → fall through to the error path below */
+        }
+      }
       const msg = err instanceof Error ? err.message : 'failed to load project'
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return

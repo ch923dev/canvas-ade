@@ -33,8 +33,12 @@ function App(): React.ReactElement {
       return
     }
     void window.api.project.current().then((r) => {
-      if (r && r.ok) applyOpenResult(r)
+      // applyOpenResult is async (it may retry canvas.json.bak on a deep-validation
+      // failure); await it INSIDE the .then so its promise (and any rejection) is owned
+      // here instead of floating unhandled.
+      if (r && r.ok) return applyOpenResult(r)
       // null → stay on the welcome screen (initial status is 'welcome').
+      return undefined
     })
   }, [applyOpenResult])
 

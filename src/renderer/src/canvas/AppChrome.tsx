@@ -86,8 +86,9 @@ function ProjectSwitcher(): ReactElement {
     // 2. Suppress autosave + dispose native views/PTYs.
     setProjectLoading()
     await disposeLiveResources()
-    // 3. Load the new project.
-    applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
+    // 3. Load the new project. applyOpenResult is async (it may retry canvas.json.bak on a
+    //    deep-validation failure) — await so the switch completes (or settles error) here.
+    await applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
   }
 
   const openRecent = (dir: string): Promise<void> => switchTo(() => window.api.project.open(dir))

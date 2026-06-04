@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import {
   readProject,
+  readBak,
   writeProject,
   createProject,
   writeAsset,
@@ -104,6 +105,32 @@ describe('projectStore', () => {
     const r = readProject(dir)
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.doc).toEqual(doc)
+  })
+
+  // T5: readBak skips the primary and reads ONLY canvas.json.bak — the renderer calls it
+  // after a DEEP-validation failure (the primary is envelope-valid, so readProject would
+  // happily return that same deep-corrupt primary; only the .bak can recover).
+  it('readBak returns the .bak doc even when canvas.json is envelope-valid but deep-corrupt', () => {
+    // Primary: envelope-valid (numeric schemaVersion + boards[]) but a board has a
+    // non-string id — readProject would return THIS (envelope check passes), so the
+    // renderer needs readBak to reach the backup instead.
+    writeFileSync(
+      join(dir, 'canvas.json'),
+      JSON.stringify({ schemaVersion: 5, viewport: null, boards: [{ id: 123 }] })
+    )
+    writeFileSync(
+      join(dir, 'canvas.json.bak'),
+      JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ ok: true }] })
+    )
+    const r = readBak(dir)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect((r.doc as { boards: { ok: boolean }[] }).boards[0].ok).toBe(true)
+  })
+
+  it('readBak returns { ok: false } when no .bak exists', () => {
+    writeFileSync(join(dir, 'canvas.json'), JSON.stringify(doc))
+    const r = readBak(dir)
+    expect(r.ok).toBe(false)
   })
 })
 

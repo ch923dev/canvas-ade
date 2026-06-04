@@ -18,7 +18,8 @@ export default function WelcomeScreen(): React.ReactElement {
 
   const openDir = async (dir: string): Promise<void> => {
     setProjectLoading()
-    applyOpenResult(await window.api.project.open(dir))
+    // applyOpenResult is async (it may retry canvas.json.bak on a deep-validation failure).
+    await applyOpenResult(await window.api.project.open(dir))
   }
 
   const onOpen = async (): Promise<void> => {
@@ -35,7 +36,7 @@ export default function WelcomeScreen(): React.ReactElement {
         .replace(/[/\\]+$/, '')
         .split(/[/\\]/)
         .pop() || dir
-    applyOpenResult(await window.api.project.create(dir, name, {}))
+    await applyOpenResult(await window.api.project.create(dir, name, {}))
   }
 
   return (
