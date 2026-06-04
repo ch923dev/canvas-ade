@@ -15,7 +15,7 @@
  *
  * globals: false — import all vitest helpers explicitly (see vitest.config.ts).
  */
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach, type Mock } from 'vitest'
 import { shouldFireCameraShortcut } from './cameraShortcut'
 import { runDetectPorts } from './boards/terminalPreview'
 
@@ -87,14 +87,17 @@ describe('Fix #20 — 1/0 camera shortcuts guarded by .react-flow__node ancestor
 // ---------------------------------------------------------------------------
 
 describe('Fix #57 — onPreview surfaces detectPorts failure via previewNote', () => {
-  let setPreviewNote: ReturnType<typeof vi.fn>
-  let routeUrl: ReturnType<typeof vi.fn>
-  let setPortChoices: ReturnType<typeof vi.fn>
+  // vitest 4: an untyped `vi.fn()` is `Mock<Procedure | Constructable>` and no longer
+  // assignable to a specific function parameter — type each mock to the real
+  // runDetectPorts signature (kept in sync via Parameters<>).
+  let setPreviewNote: Mock<Parameters<typeof runDetectPorts>[1]>
+  let routeUrl: Mock<Parameters<typeof runDetectPorts>[2]>
+  let setPortChoices: Mock<Parameters<typeof runDetectPorts>[3]>
 
   beforeEach(() => {
-    setPreviewNote = vi.fn()
-    routeUrl = vi.fn()
-    setPortChoices = vi.fn()
+    setPreviewNote = vi.fn<Parameters<typeof runDetectPorts>[1]>()
+    routeUrl = vi.fn<Parameters<typeof runDetectPorts>[2]>()
+    setPortChoices = vi.fn<Parameters<typeof runDetectPorts>[3]>()
   })
 
   afterEach(() => {

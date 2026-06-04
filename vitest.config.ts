@@ -1,10 +1,19 @@
 import { resolve } from 'path'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vitest/config'
+import { defineConfig, configDefaults } from 'vitest/config'
 
-// Shared Vitest base. Both workspace projects (unit, integration) extend this via
-// vitest.workspace.ts, so plugins / alias / environment rules live in ONE place.
-// `.test.tsx` files run in jsdom (DOM rendering); `.test.ts` stay in node.
+// Two test tiers × two environments, as four projects (vitest 4 removed
+// `environmentMatchGlobs` and the external `vitest.workspace.ts` file — both fold into
+// `test.projects` here). The tier of a test = its filename, the environment = its
+// extension:
+//   unit          → src/**/*.test.{ts,tsx}              (excluding *.integration.*)
+//   integration   → src/**/*.integration.test.{ts,tsx}
+//   *.ts  → node (main-process / pure logic)   *.tsx → jsdom (React rendering)
+// `pnpm test` runs all four; `pnpm test:unit` / `:integration` select by `--project`
+// wildcard (`unit-*` / `integration-*`). Plugins / alias live here and are inherited by
+// each project via `extends: true`.
+const INTEGRATION = 'src/**/*.integration.test.{ts,tsx}'
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -13,8 +22,42 @@ export default defineConfig({
     }
   },
   test: {
-    environment: 'node',
-    environmentMatchGlobs: [['**/*.tsx', 'jsdom']],
-    globals: false
+    globals: false,
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit-node',
+          environment: 'node',
+          include: ['src/**/*.test.ts'],
+          exclude: [...configDefaults.exclude, INTEGRATION]
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'unit-dom',
+          environment: 'jsdom',
+          include: ['src/**/*.test.tsx'],
+          exclude: [...configDefaults.exclude, INTEGRATION]
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration-node',
+          environment: 'node',
+          include: ['src/**/*.integration.test.ts']
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration-dom',
+          environment: 'jsdom',
+          include: ['src/**/*.integration.test.tsx']
+        }
+      }
+    ]
   }
 })
