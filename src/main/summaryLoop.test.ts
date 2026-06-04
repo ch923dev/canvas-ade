@@ -9,6 +9,8 @@ import {
   terminalRuntimeLine,
   IDLE_AFTER_MS,
   MAX_INPUT_CHARS,
+  MAX_OUTPUT_CHARS,
+  sanitizeSummary,
   createSummaryLoop,
   type TerminalRuntime
 } from './summaryLoop'
@@ -195,6 +197,75 @@ describe('buildProjectRollup — small project-level header', () => {
     expect(md).toContain('1 terminal')
     expect(md).toContain('1 browser')
     expect(md).toContain('1 planning')
+  })
+})
+
+describe('sanitizeSummary — BUG-016 bound + clean untrusted LLM output', () => {
+  it('caps an over-long completion to MAX_OUTPUT_CHARS', () => {
+    expect(sanitizeSummary('x'.repeat(MAX_OUTPUT_CHARS * 3)).length).toBe(MAX_OUTPUT_CHARS)
+  })
+  it('strips control chars (NUL / BEL / ESC) but keeps \\n and \\t', () => {
+    const dirty = 'a\u0000b\u0007c\u001bd\ne\tf'
+    const clean = sanitizeSummary(dirty)
+    expect(clean).toBe('abcd\ne\tf')
+    expect(clean).not.toMatch(/[\u0000\u0007\u001b]/)
+  })
+  it('normalizes CRLF / lone CR to LF', () => {
+    expect(sanitizeSummary('a\r\nb\rc')).toBe('a\nb\nc')
+  })
+  it('neutralizes a forged Markdown heading at line start (no new `# `)', () => {
+    const out = sanitizeSummary('intro\n# Injected heading\n## also')
+    // every line that began with # is escaped to \# so it no longer renders as a heading
+    expect(out).not.toMatch(/^#/m)
+    expect(out).toContain('\\# Injected heading')
+    expect(out).toContain('\\## also')
+  })
+  it('a non-string yields an empty string (never throws)', () => {
+    expect(sanitizeSummary(undefined)).toBe('')
+    expect(sanitizeSummary(12345 as unknown)).toBe('')
+  })
+})
+
+describe('createSummaryLoop — BUG-016 sanitizes provider output before writing board-<id>.md', () => {
+  it('a giant control-char-laced completion is bounded + cleaned on disk', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    // A malicious local/openrouter-style response: > MAX_OUTPUT_CHARS, NUL/BEL bytes, a forged
+    // top-level heading. Non-mock provider so result.text is the raw `content` from the response.
+    const evil = `# FORGED HEADING\u0000\u0007${'Z'.repeat(MAX_OUTPUT_CHARS * 2)}`
+    const fetchImpl = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: evil } }] }),
+      text: async () => ''
+    })) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({
+        ok: true,
+        dir: proj,
+        name: 'proj',
+        doc: docWith([planNote('p1', 'hello world')])
+      }),
+      now: () => new Date(),
+      fetch: fetchImpl,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      await loop.onIntent({ boardId: 'p1' })
+      const md = createCanvasMemory(proj).readBoard('p1')
+      expect(md).toBeDefined()
+      // The file = "# <title>\n\n<sanitized>\n"; the sanitized body must be capped + control-free
+      // + must NOT contain a forged top-level heading on its own line.
+      expect(md!.length).toBeLessThan(MAX_OUTPUT_CHARS + 200) // title + framing only
+      expect(md).not.toMatch(/[\u0000\u0007]/)
+      expect(md).not.toMatch(/^# FORGED HEADING/m)
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
   })
 })
 

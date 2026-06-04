@@ -26,8 +26,41 @@ import type { SummarizeIntent } from './memoryEngine'
 /** Cap the board-content text fed to the model (canvas.json has no live scrollback). */
 export const MAX_INPUT_CHARS = 4000
 
+/**
+ * BUG-016: cap the model's OUTPUT before it lands on disk. MAX_INPUT_CHARS bounds the prompt, not
+ * the response - a `local`/`openrouter` endpoint with no server-side max_tokens (e.g. Ollama
+ * num_predict=-1) can return a multi-megabyte completion that gets written verbatim into
+ * board-<id>.md. ~8k chars is roughly 4x the 1024-token summary budget - generous for a 1-2
+ * sentence summary, tight enough to stop a disk-fill / injection blob.
+ */
+export const MAX_OUTPUT_CHARS = 8000
+
 const SYSTEM =
   'Summarize what this board is for in 1-2 sentences. Be concise and factual; do not invent details.'
+
+/**
+ * BUG-016: sanitize an untrusted LLM completion before it is written into a Markdown memory
+ * file. The summary is passive context (shown + MCP-read, never action-triggering), but a
+ * misbehaving or malicious provider can return control chars, NUL bytes, or a giant blob. We:
+ *  - normalize CRLF / lone CR to LF,
+ *  - drop C0/C1 control chars except newline + tab (NUL/BEL/ESC corrupt the file + readers),
+ *  - neutralize a forged leading-`#` Markdown heading on each line (escape to `\\#`) so the
+ *    model can't break the `# <title>` framing of the file or inject a new top-level heading,
+ *  - hard-cap the length to MAX_OUTPUT_CHARS.
+ * Pure + total: never throws; a non-string yields ''.
+ */
+export function sanitizeSummary(text: unknown): string {
+  if (typeof text !== 'string') return ''
+  return (
+    text
+      .replace(/\r\n?/g, '\n') // CRLF / lone CR -> LF
+      // strip C0/C1 control chars except \n (\u000a) and \t (\u0009)
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
+      .replace(/^[ \t]*#/gm, '\\#') // neutralize a forged Markdown heading at line start
+      .slice(0, MAX_OUTPUT_CHARS)
+  )
+}
 
 type RawBoard = { id?: unknown; type?: unknown; title?: unknown; [k: string]: unknown }
 
@@ -282,9 +315,12 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         if (deps.getCurrentDir() !== dir) return // project switched mid-summarize → drop the write
 
         const mem = createCanvasMemory(dir)
+        // BUG-016: sanitize + bound the untrusted LLM output before it lands on disk. The input
+        // was capped (MAX_INPUT_CHARS) but the response was not - a local/openrouter endpoint with
+        // no server-side token cap could return a giant or control-char-laced blob written verbatim.
         mem.writeBoard(
           boardId,
-          `# ${str((board as RawBoard).title) || boardId}\n\n${result.text}\n`
+          `# ${str((board as RawBoard).title) || boardId}\n\n${sanitizeSummary(result.text)}\n`
         )
         // BUG-014: the index + rollup enumerate the WHOLE board list, so they must reflect any
         // boards added/removed during the (up to 30 s) await — not the `r.doc` snapshot taken
