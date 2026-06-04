@@ -75,6 +75,7 @@ import { buildDigest } from '../lib/digest'
 import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
+import { shouldFireCameraShortcut } from './cameraShortcut'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
@@ -823,9 +824,9 @@ function CanvasInner(): ReactElement {
       } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
         e.preventDefault()
         setDiag((v) => !v)
-      } else if (e.key === '1' && !typing && !t?.closest('.react-flow__node')) {
+      } else if (e.key === '1' && shouldFireCameraShortcut(t, typing)) {
         void rf.fitView(cameraAnim(FIT_FRAME))
-      } else if (e.key === '0' && !typing && !t?.closest('.react-flow__node')) {
+      } else if (e.key === '0' && shouldFireCameraShortcut(t, typing)) {
         // Recenter content at 100% rather than zoomTo(1)-in-place, which can
         // strand every board off-screen after a far pan/zoom (#41).
         void rf.fitView(cameraAnim(RESET_FRAME))
