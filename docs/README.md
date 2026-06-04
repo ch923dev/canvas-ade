@@ -9,14 +9,14 @@ contract is `../design-reference/`.
 
 | Path | Purpose | Live? |
 |---|---|---|
-| [`roadmap.md`](roadmap.md) | Phase-by-phase build order + status (Phases 0–4 shipped; Phase 5 = packaging). | ✅ live |
-| [`roadmap-whiteboard.md`](roadmap-whiteboard.md) | Separate feature track — Excalidraw feature integration for the Planning whiteboard (W1–W5, shapes deferred). Parallel to the main roadmap. | ✅ live |
-| [`roadmap-drawio.md`](roadmap-drawio.md) | Separate feature track — draw.io diagram/dev-tooling integration (D1–D3). Mermaid = decision gate. Shapes epic deferred (co-owned with the whiteboard track). | ✅ live |
+| [`roadmap.md`](roadmap.md) | Phase-by-phase build order + status (Phases 0–4 shipped + Post-Phase-4/in-flight; Phase 5 = packaging). | ✅ live |
+| [`roadmap-drawio.md`](roadmap-drawio.md) | Separate feature track — draw.io diagram/dev-tooling integration (D1.1 shipped; D1.2/D2/D3 open). Shapes epic deferred. | ✅ live |
 | [`feature-proposals.md`](feature-proposals.md) | Research-backed feature ideas (proposals only, nothing committed). | ✅ live |
-| [`decisions/`](decisions/) | ADRs — `0001-stack.md` (React Flow / custom whiteboard), `0002-preview-gate.md` (WebContentsView). | ✅ live |
-| [`reviews/`](reviews/) | All code reviews & bug hunts, newest first. [`reviews/README.md`](reviews/README.md) is the index; the newest dated file holds the **current open backlog**. | ✅ live |
-| [`research/`](research/) | Standalone research notes (`self-smoke-testing.md`, `excalidraw-feature-borrowing.md`, `drawio-feature-borrowing.md`). | ✅ live |
-| [`archive/`](archive/) | Historical record — `build-history.md` (phases + per-slice specs/plans + handoffs) and pointers to git for collapsed docs. | 🗄 history |
+| [`decisions/`](decisions/) | ADRs (durable contract) — stack, preview gate, LLM egress, … one file per decision. | ✅ live |
+| [`reviews/`](reviews/) | All code reviews & bug hunts. [`reviews/README.md`](reviews/README.md) is the index; the newest dated file holds the current open backlog (none open as of Round-3). | ✅ live |
+| [`research/`](research/) | Standalone research notes feeding the open feature tracks (draw.io borrowing, …). Shipped research is compiled into `archive/`. | ✅ live |
+| [`testing/`](testing/) | [`testing/TESTING.md`](testing/TESTING.md) — living testing contract (tiers, Playwright `_electron`, pre-commit matrix). | ✅ live |
+| [`archive/`](archive/) | Historical compiled build-logs — `build-history.md` (master) + the whiteboard, testing, and context initiatives. Plus git pointers for collapsed docs. | 🗄 history |
 
 ## Conventions
 

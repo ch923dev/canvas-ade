@@ -9,7 +9,8 @@ NOT block Phase 5 (packaging) or the MCP layer**.
 Borrow IDEAS, not the engine — draw.io/mxGraph (Apache-2.0) is studied, not adopted
 (`decisions/0001-stack.md`).
 
-**Reads with the Excalidraw track** ([`roadmap-whiteboard.md`](roadmap-whiteboard.md)). Both research
+**Reads with the Excalidraw whiteboard track** (shipped W1–W5; compiled in
+[`archive/2026-06-03-whiteboard-epic.md`](archive/2026-06-03-whiteboard-epic.md)). Both research
 passes independently converge on the SAME conclusion — the **shapes epic** is the one structural gap.
 That epic is shared, deferred, and owned in ONE place (see § Deferred). This track owns the *diagram /
 dev-tooling* borrows draw.io adds on top: Mermaid, embedded-source export, anchored connectors,
@@ -66,19 +67,11 @@ Carried from the research + locked decisions. A slice that violates one is wrong
 
 No user surface. Land together — all S, no locked-decision reversal.
 
-### D1.1 — `withChange()` transaction-wrapper refactor 🚦 **recommended first slice**
-Borrow mxGraph's nested `beginUpdate`/`endUpdate` counter: emit an undo snapshot only when state
-**actually changed**, in ONE place.
-- **Why:** the phantom-undo guarantee is today four hand-maintained `lastRecorded` syncs scattered
-  across `tidyBoards`/`tileBoards`/add/remove/duplicate/undo/redo — each a future regression (memory
-  `undo-lastrecorded-phantom`, #BUG M3 class). Centralizing pays off before every later slice adds a
-  gesture.
-- **How:** add `withChange(mutator)` to `canvasStore` — snapshot `s.boards`, run mutator, diff by
-  reference, `recordPast` only if changed, set `lastRecorded` in ONE place. Collapse the existing
-  hand-rolled actions into it.
-- **Risks:** touches the undo rails → **MUST re-run `canvasStore.test.ts` (phantom-step cases) + the
-  e2e harness before handoff** (`e2e-before-handoff` memory). Pure-internal, no new dep, no schema.
-- **📏** existing phantom-step unit cases stay green; e2e undo/redo unchanged.
+### D1.1 — `withChange()` transaction-wrapper refactor ✅ done — PR #18 (`f7ffbbf`)
+Shipped as `trackedChange`. The 5 mutating actions (`tidyBoards`/`tileBoards`/add/remove/duplicate)
+now route through the centralized rail; `lastRecorded` is set in one place, eliminating the
+hand-maintained scatter. Phantom-after edge intentionally not closed (would break granular move-undo —
+see memory `undo-lastrecorded-phantom`). 495 unit + e2e 24/24 green post-merge.
 
 ### D1.2 — Resolve the dead `BoardCommon.z` field (decision, not feature)
 `boardSchema.ts:31` `z` is validated/migrated/persisted but NEVER honored on render; `duplicateBoard`
@@ -129,9 +122,11 @@ checklists. Covers ~80% of "I need a real diagram on my canvas" WITHOUT reopenin
 ## Phase D3 — Export + durable generators (M) ⛓ D1.1, D2
 
 ### D3.1 — PNG export with embedded editable source (M) ⛓ none
-We have ZERO user-facing export today (only internal LOD snapshots + `canvas.json`). draw.io's
-"PNG carries the source" pattern maps onto our strictly-better setup — a versioned lossless JSON
-source AND a raster path already exist.
+The board-scoped primitive now exists: **W5** (PR #33) shipped PNG/SVG export of a single Planning
+board. D3.1 is the *whole-canvas, reopenable-project* cut — still unbuilt, but can reuse the
+`WhiteboardSvg`/`capturePage` helpers W5 established. draw.io's "PNG carries the source" pattern
+maps onto our strictly-better setup — a versioned lossless JSON source AND a raster path already
+exist.
 - **How:** promote the `CANVAS_SHOT` capture in `src/main/index.ts` into a frame-guarded
   `ipcMain.handle('export:png')` (mirror `projectIpc.ts`). Reuse `toObject(boards,viewport)` as the
   embedded payload (no new serializer); inject it into a PNG `tEXt` chunk before `write-file-atomic`.
@@ -142,10 +137,10 @@ source AND a raster path already exist.
   snapshots `preview.ts` already produces, or export only at zoom levels where the LOD snapshot card
   shows. Ship PNG+JSON first; **decline HTML export** (CDN dep) and **URL export** (no single-user use
   case).
-- **Overlap:** the Excalidraw track's **W5 (PNG/SVG of a single Planning board)** is the *board-scoped*
-  cut; this D3.1 is the *whole-canvas, reopenable-project* cut. Same `WhiteboardSvg`/`capturePage`
-  primitives — **build the shared capture/serialize helper once**, expose both surfaces. Whichever
-  lands first owns the helper.
+- **Overlap:** the Excalidraw track's **W5 (PNG/SVG of a single Planning board, shipped PR #33)** is
+  the *board-scoped* cut; this D3.1 is the *whole-canvas, reopenable-project* cut. Same
+  `WhiteboardSvg`/`capturePage` primitives — **build the shared capture/serialize helper once**, expose
+  both surfaces. W5 landed first and owns the helper; D3.1 extends it.
 - **📏** round-trip: export PNG → reopen → boards/viewport restored lossless; native-view composite
   correct (no blank Browser regions).
 
@@ -191,8 +186,8 @@ agent emits the outline).
 
 ## Deferred — the shapes epic (L tight / XL if it sprawls)
 
-**Shared with the Excalidraw track — owned in ONE place, not forked.** See
-[`roadmap-whiteboard.md`](roadmap-whiteboard.md) › Deferred. Both research passes independently
+**Shared with the Excalidraw whiteboard track — owned in ONE place, not forked.** See
+[`roadmap.md`](roadmap.md) › Deferred (and `archive/2026-06-03-whiteboard-epic.md` › Deferred). Both research passes independently
 converge here: the absence of geometric SHAPES (rect/ellipse/diamond/compartment-box) + shape-bound
 connectors is THE structural blocker for every classic dev diagram (flowcharts, all 14 UML types, ERD,
 C4, mind maps, BPMN, wireframes).
@@ -237,4 +232,4 @@ C4, mind maps, BPMN, wireframes).
 Promote a slice's detailed spec/plan into `docs/superpowers/specs/` when scheduled; update this table
 as slices land. Per-slice *why/how/risk* depth lives in
 [`research/drawio-feature-borrowing.md`](research/drawio-feature-borrowing.md). The shapes epic is
-co-owned with [`roadmap-whiteboard.md`](roadmap-whiteboard.md) — schedule it from ONE track only.
+co-owned with the whiteboard track ([`roadmap.md`](roadmap.md) › Deferred) — schedule it from ONE track only.

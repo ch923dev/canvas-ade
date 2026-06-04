@@ -3,55 +3,61 @@
 Point-in-time record of how Canvas ADE was built, phase by phase. **Not live truth** — the
 durable contract is `CLAUDE.md`; the build order + current status is `docs/roadmap.md`.
 
-Per-slice **specs, plans, and phase handoffs were collapsed into this summary on 2026-06-01**
-(docs centralization). The full documents remain in git history. To recover one:
-`git log --all --oneline -- docs/superpowers/` or `-- docs/handoffs/`, then check out the path
-at that commit.
+Per-slice **specs, plans, and phase handoffs were collapsed into summaries on 2026-06-01 and again
+on 2026-06-04** (docs centralization). The full documents remain in git history. To recover one:
+`git log --all --oneline -- docs/superpowers/` or `-- docs/handoffs/`, then check out the path at that
+commit. Two large initiatives have their own compiled build-logs in this folder — see Post-Phase-4 below.
 
 ## Phases (all shipped on `main`)
 
 | Phase | What shipped | Landed |
 |---|---|---|
 | 0 — Toolchain proof | electron-vite + TS + React, secure defaults; React Flow / xterm+webgl / node-pty (ConPTY over MessagePort) / WebContentsView→localhost / electron-builder all verified e2e; CI matrix. | `4d057e0` |
-| 1 — Preview feasibility gate | Native `WebContentsView` stays camera-correct under pan/zoom on Windows; steps 1-A…1-E (diagnostics, static overlay, live pan/zoom, detach+snapshot, N-views+responsive+lifecycle). Gate passed. | (Phase 1 branches) |
+| 1 — Preview feasibility gate | Native `WebContentsView` stays camera-correct under pan/zoom on Windows; steps 1-A…1-E (diagnostics, static overlay, live pan/zoom, detach+snapshot, N-views+responsive+lifecycle). Gate passed (ADR 0002). | (Phase 1 branches) |
 | 2 — Core boards | Foundation 2.0 (tokens · store+schema · canvas+`BoardFrame`+`NodeResizer`+LOD · app chrome) then Terminal · Browser · Planning+Checklist in parallel. Checklist = Planning element, not a 4th type. | (Phase 2 branches) |
-| 3 — Board actions & projects | Slice A persistence (`canvas.json` v2 + `.bak`, atomic write, autosave, recent-projects, project switch) · Slice B board actions (Full view via live portal-relocation, Duplicate, ⋯ menu) · Slice C′ port-detect→push-to-preview (git worktrees deferred to Feature Workspaces). | `139bc69` |
+| 3 — Board actions & projects | Slice A persistence (`canvas.json` v2 + `.bak`, atomic write, autosave, recent-projects, project switch) · Slice B board actions (Full view, Duplicate, ⋯ menu) · Slice C′ port-detect→push-to-preview (git worktrees deferred to Feature Workspaces). | `139bc69` |
 | 4 — Design pass & polish | Every DESIGN.md token / board-chrome rule / state / motion (+ `prefers-reduced-motion`); full-view motion; §6.1 top band descoped into the title-bar toggle. | `abd7fa2` (PR #9) |
 | 5 — Packaging & release | **Not started.** CI matrix unsigned until here; signing (mac notarize + Win Authenticode), electron-updater feed, app icons. | — |
 
-**Post-Phase-4 fixes (chronological):**
-- **Full-view preview state-preservation** (`fix/fullview-preview-reset`, 2026-06-02) — toggling full
-  view **restarted** Browser boards: `applyLiveness`'s full-view branch tore down native views with
-  `webContents.close()` (both the full-viewed board, in the motion sub-branch, and every OTHER board),
-  which discards the page — so on exit `attachBoard` re-`openPreview`d at the durable `board.url`,
-  snapping the user's navigated page back to the root. Now both paths **detach** (snapshot + keep the
-  live `WebContentsView`); on exit `attachBoard` re-attaches via `attachPreview` (no `loadURL`), state
-  intact. The #44652 over-modal ghost stays handled by `detach()`'s `setVisible(false)`. Removed the
-  now-dead `evictLiveBoard`. **Test-gap closed:** the e2e harness wired `setFullView` to the raw id
-  setter, so it never set `fullViewEntering` → never reached the motion branch; added an animated
-  harness path (`openFullViewAnimated`/`closeFullViewAnimated`) + a `debugViewWebContentsId` accessor,
-  and two probes — `fullview-preserve` (other board) + `fullview-self-preserve` (webContents-id
-  survival across the enter+exit tween).
+> **Note on the Phase 3 Full-view mechanism:** Phase 3-B originally shipped Full view via *live portal
+> relocation*. That model was **superseded** by PR #14 (see Post-Phase-4) — full view now **detaches**
+> every board's native `WebContentsView` (never `close()`, never portal-relocates) to preserve page state.
 
-## Per-slice specs & plans (in git history under `docs/superpowers/`)
+## Post-Phase-4 work (chronological)
 
-Each followed the cadence **brainstorm → spec → plan → execute (subagent workflow)**.
+- **Layout presets / smart tidy** (PR #13, `14f77d7`) — FancyZones-style layout presets + a one-press
+  Tidy (shelf-pack to the pane aspect) + fit-to-frame; `t` shortcut. Memory `tidy-and-fit-feature`.
+- **D1.1 — `trackedChange` undo-rail refactor** (PR #18, `f7ffbbf`) — collapsed the per-action
+  `lastRecorded` phantom-undo discipline into one `trackedChange` helper routing add/remove/duplicate/
+  tidy/undo-redo. A no-op gesture on add/remove/duplicate is a tolerated phantom edge (memory
+  `undo-lastrecorded-phantom`). Opened the draw.io feature track (`docs/roadmap-drawio.md`).
+- **Full-view preview state-preservation** (PR #14, `ad21389`) — toggling full view **restarted**
+  Browser boards: `applyLiveness`'s full-view branch tore down native views with `webContents.close()`,
+  which discards the page, so on exit `attachBoard` re-`openPreview`d at the durable `board.url`,
+  snapping the navigated page back to root. Now both paths **detach** (snapshot + keep the live
+  `WebContentsView`); exit re-attaches via `attachPreview` (no `loadURL`), state intact. Removed the
+  now-dead `evictLiveBoard` (closed the PREV-A resurrection class). Added animated e2e harness path +
+  `fullview-preserve`/`fullview-self-preserve` probes.
+- **Round-3 review backlog cleared** (PR #15 `cd588be` + PR #20 `3be2c62`) — the 2026-06-01 6-dimension
+  in-depth review's 12 findings (PTY-2 · WB-1 · STATE-1/2 · SEC-1/2 · PERSIST-A/B/C · PREV-A/B/C), all
+  verified-fixed and on `main`. No open findings remain (`docs/reviews/README.md`). PREV-A was closed by
+  the PR #14 fullview refactor; the rest by #15/#20.
+- **Whiteboard epic (W1–W5)** — eraser/shortcuts · multi-select/snapping · align/lock/group · image
+  assets · PNG/SVG export. Shipped on `main` via `feat/whiteboard` PR #34 (`9533f67`), schema → v4.
+  Full compiled build-log: **`2026-06-03-whiteboard-epic.md`** (this folder).
+- **Testing strategy T0–T5** — migrated the homegrown `CANVAS_SMOKE=e2e` harness to Playwright
+  `_electron` + a local Windows-native/Linux-Docker pre-commit matrix; the GitHub Actions e2e/smoke job
+  was retired. Full compiled build-log: **`2026-06-03-testing-strategy-initiative.md`** (this folder);
+  living contract: `docs/testing/TESTING.md`.
+- **Context subsystem (M-digest + M-brain + M-memory)** — desktop LLM brain + `.canvas/` project memory
+  → instant per-board context digest on reopen, zero agents/MCP. Shipped on `main` via PR #39
+  (`4c321c2`); ADR `0003-llm-egress.md`. Full compiled build-log: **`2026-06-04-context-subsystem.md`**
+  (this folder). Only M-expose (MCP read resource) remains, deferred — `docs/roadmap.md` › Deferred.
 
-| Slice / work | spec + plan (git paths) |
-|---|---|
-| Persistence (Phase 3-A) | `specs/2026-05-30-persistence-design.md` · `plans/2026-05-30-persistence.md` |
-| Board actions (Phase 3-B) | `specs/2026-05-30-board-actions-design.md` · `plans/2026-05-30-board-actions.md` |
-| Port-detect → preview (Phase 3-C′) | `specs/2026-05-30-port-detect-preview-design.md` · `plans/2026-05-30-port-detect-preview.md` |
-| Terminal undo (session 15) | `specs/2026-05-30-terminal-undo-session-15-design.md` · `plans/2026-05-30-terminal-undo-session-15.md` |
-| Phase 4 design pass | `plans/2026-05-31-phase-4-design-pass.md` · `specs/2026-05-31-fullview-motion.md` |
-| Phase 3 bug-fix batch | `plans/2026-05-31-phase-3-bug-fixes.md` |
-| Alignment guides | `research/2026-05-31-alignment-guides.md` · `specs/2026-05-31-alignment-guides.md` · `plans/2026-05-31-alignment-guides.md` + slice-2a/2b/2b-caseB/3-resize plans (2026-06-01) |
-| Self-smoke harness (stage 1) | `plans/2026-05-29-self-smoke-harness-stage1.md` |
-| Findings remediation | `plans/2026-05-29-findings-remediation.md` |
+## Per-slice specs, plans & handoffs (in git history)
 
-## Phase handoffs (in git history under `docs/handoffs/`)
-
-Entry/exit notes per phase, superseded by the table above + `CLAUDE.md` Status:
-`status-archive.md` (consolidated phase log) · `phase-1.md` · `phase-1-a.md` · `phase-2.md` ·
-`phase-2-followup.md` · `phase-3-slice-c.md` · `phase-4.md` · `session-15-terminal-undo.md` ·
-`2026-05-31-phase-3-bug-fixes-handoff.md` · `2026-05-31-phase-4-progress-handoff.md`.
+Each slice followed the cadence **brainstorm → spec → plan → execute (subagent workflow)** with a
+per-task handoff. Phases 0–4 plans/specs/handoffs were under `docs/superpowers/` and `docs/handoffs/`;
+the whiteboard, context, and testing per-task docs were collapsed into the compiled build-logs above on
+2026-06-04. All originals are recoverable from git history:
+`git log --all --oneline -- docs/superpowers/ docs/handoffs/`, then check out the path at that commit.

@@ -41,15 +41,18 @@ sync code (camera→bounds math, keyed `PreviewManager`, single rAF batch, detac
 
 - **A `WebContentsView` paints above ALL HTML** → it occludes other (HTML) boards and any in-canvas
   chrome it overlaps. Mitigations: LOD/motion snapshots (HTML, clippable) cover most cases; **put chrome
-  in a bar OUTSIDE the canvas pane** (views are bounded to the pane); Full view (Phase 3) renders a
-  Browser board via snapshot so HTML chrome isn't punched through. Boards rarely overlap in normal use.
+  in a bar OUTSIDE the canvas pane** (views are bounded to the pane); Full view DETACHes the native view
+  during the modal tween and re-ATTACHes on exit (snapshot is an intermediate fallback only, not a
+  permanent stand-in) so HTML chrome is never punched through. Boards rarely overlap in normal use.
 - **Zoom-factor floor (0.25)** → the 1280 desktop preset can't reach a true 1280 CSS px at heavy camera
   zoom-out (it clamps to a narrower breakpoint); correct in the working-zoom band, and a snapshot below
   40% anyway. Phase 2 picks board world-sizes that keep presets unclamped across the normal zoom band.
 
 ## Consequences
 
-- Phase 2.0 promotes the sync code into the shared `BoardFrame` + production canvas; the spike harness
-  (`FlowSmoke`, smoke tabs, the leak-cycle button) is throwaway.
-- The "cap ~4 live + close far/over-cap, recreate on demand" policy is implemented but only exercised with
-  2 boards here; revisit under real board counts in Phase 2.2.
+- Phase 2.0 promoted the sync code into the shared `BoardFrame` + `BrowserPreviewLayer`; `FlowSmoke.tsx`
+  is a dead spike file (kept as reference, not wired into the app).
+- The liveness policy was refined through Phase 2.2 and finalised in PR #14: **LOD/occluded boards
+  DETACH** (webContents is kept alive for fast reattach); **over-cap boards are closed**
+  (`webContents.close()`) only when a snapshot fallback already exists; **full-view exit always DETACHes**
+  (never closes) so the page's navigation state is preserved across modal transitions.

@@ -51,8 +51,7 @@ If a behavior is provable at a lower tier, write it there — duplicating it as 
 E2E is reserved for surfaces that ONLY reproduce in the real app:
 **core happy-path boot · node-pty/terminal · native `WebContentsView` (browser preview, full view) ·
 auto-update · OS process-tree kill / cross-platform.** Everything else pushes down to
-integration/unit. (Roadmap T3 migrates the redundant probes down; T4 moves the keep-set onto
-Playwright; T5 re-enables it as a gate.)
+integration/unit.
 
 ## Security boundaries → tier map
 
@@ -91,7 +90,7 @@ test when you introduce a genuinely new native/real-instance surface (see "E2E k
 | **Terminal board** (node-pty/ConPTY) | unit — state machine, output parse, `killTreeCommand`, ring buffer, shell resolve | spawn→echo · full-view relocate (same pid) · LOD survives · config respawn · park+adopt on undo · **process-tree kill (no orphan)** |
 | **Browser board / preview** (`WebContentsView`) | unit — `cameraBounds`/`canvasView` bounds+scale math, `portDetect`, `previewEdges` | native attach + non-blank capturePage · gesture detach/reattach · focus detach · dead-URL load-failed · port-detect→connect gesture |
 | **Full view** (native rebind) | unit — fit math; jsdom — Planning camera-fit | webContents survives (no restart) · self-preserve · letterboxed emulator · chrome-less Esc-close |
-| **Planning / whiteboard** (notes/arrows/pen/checklist/shapes·mermaid) | **integration (jsdom)** — render the real `PlanningBoard`; unit for pure geometry (snapping/tools/layout) | only the transform/real-OS-input slivers: full-view add-note (real click through live camera) · real Ctrl+V paste · PNG export raster. New shapes/mermaid → cover in jsdom; add an e2e ONLY if it needs real OS input or the native raster pipeline. |
+| **Planning / whiteboard** (notes/arrows/pen/checklist; shapes·mermaid = in-flight research, not shipped) | **integration (jsdom)** — render the real `PlanningBoard`; unit for pure geometry (snapping/tools/layout) | only the transform/real-OS-input slivers: full-view add-note (real click through live camera) · real Ctrl+V paste · PNG export raster. New shapes/mermaid → cover in jsdom; add an e2e ONLY if it needs real OS input or the native raster pipeline. |
 | **Persistence / migrations** (`canvas.json`, schema) | unit — `boardSchema` (de)serialize, migration pipeline, atomic-write contract, scene/session split | none (no native surface) — never e2e what a schema round-trip proves |
 | **MAIN / IPC & security** (`index.ts`, pty/preview/projectIpc, `localServer.ts`) | **integration** via `ipcTestHarness` (no app boot) + unit `windowSecurity` | none — assert the Electron security checklist at unit/integration (see Security map). Foreign-sender rejection is REQUIRED for every new guarded handler. |
 | **MCP swarm layer** (`@ch923dev/canvas-ade-mcp`, hosted in MAIN) | unit — orchestrator lifecycle/dispatch logic (`mcpOrchestrator` · `dispatchGuard` · `auditLog` · `ptyOutput` · `boardStatus` · `orchestrationEdges` · `resolveConnectTarget` · `useMcpCommands`); integration — IPC registration + **foreign-sender rejection** (`auditIpc` · `mcpConfirm` · `mcpCommand` `.integration`) + viewer/modal render (`AuditLogViewer` · `ConfirmModal` `.integration`). The Host-header DNS-rebind guard is tested in the sibling pkg repo. | `CANVAS_SMOKE=mcp` (`mcpSmoke.ts`) — the live tier-enforcement + real `handoff_prompt`→PTY smoke against the built app (two real loopback MCP clients, drives the confirm modal). The **one surviving `CANVAS_SMOKE` exception**; a Playwright `_electron` port (`e2e/mcp.e2e.ts`) is a tracked follow-up. |
@@ -123,33 +122,15 @@ collaborators + foreign-sender rejection). Copy its shape for new MAIN-IPC integ
 The renderer-facing preload bridge is contract-tested in `src/preload/preloadApi.integration.test.ts`:
 every `api.*` method is asserted to invoke the right `ipcRenderer.invoke` channel with the right args.
 
-## E2E push-down (T3) — what migrated, what stayed
+> The T3 push-down and T4 Playwright migration history is compiled in
+> `docs/archive/2026-06-03-testing-strategy-initiative.md`.
 
-T3 moved redundant `CANVAS_SMOKE=e2e` probe coverage down to Vitest and deleted the migrated
-probes. The homegrown harness was trimmed to only the irreducible native/real-instance **slivers**,
-which T4 ported to the Playwright `_electron` keep-set (the `CANVAS_SMOKE=e2e` board harness has since
-been deleted — the `CANVAS_SMOKE=mcp` live MCP smoke is the one surviving entry, see the MCP row above):
-
-- **Migrated to Vitest:** whiteboard interactions (erase/shortcut/marquee/multidrag/shift-add/snap/
-  alt-dup/lock/group/align/group-align → `PlanningBoard.interaction.test.tsx`); board-menu contracts
-  (items/dup+delete/stroke-width → `BoardMenu.integration.test.tsx`); tidy span + planning checklist/
-  round-trip (→ `canvasStore.test.ts`); preview-edge stale styling (→ `PreviewEdge.test.tsx`). The
-  paste reload/dedup/gc + SVG/image-embed parts were already covered by `projectStore.test.ts` +
-  `whiteboardExport.test.ts`, and `duplicate-keeps-link` by `canvasStore.test.ts`.
-- **Ported to Playwright keep-set (T4):** `whiteboardFullviewAdd` (real OS click through the live
-  camera transform), `whiteboardPasteImage` (real Ctrl+V clipboard), `whiteboardExport` (PNG raster),
-  `menuChrome` (real title-bar layout + viewport clamp + CSS-var rest colour), `menuPreviewDetach`
-  (native `WebContentsView` detach), `previewConnectGesture` (live port-detect IPC + long-press).
-  These need real OS input, a native view, or the renderer's raster pipeline — jsdom can't reproduce
-  them. The `planning`/`layout` probes were deleted outright; `whiteboardFullviewAdd` now seeds the
-  shared `ctx.ids.planId` the slivers read (the deleted `planning` probe used to).
-
-## E2E — Playwright `_electron` (T4)
+## E2E — Playwright `_electron`
 
 The e2e tier is `@playwright/test` `_electron`, driving the BUILT app (`out/main/index.js`).
 Run with `pnpm test:e2e` (the `pretest:e2e` hook builds first). It is **separate** from the
-Vitest `check` gate (`pnpm test` stays unit + integration only). Re-enabling it as a CI gate is
-**T5**.
+Vitest `check` gate (`pnpm test` stays unit + integration only). It runs as a local pre-commit
+gate (see below) rather than in GitHub Actions.
 
 **Boot mode:** launched with `CANVAS_E2E=1`, which loads the renderer with `?e2e=1` (installs the
 `window.__canvasE2E` hook) and installs the MAIN-side `globalThis.__canvasE2EMain` registry, WITHOUT
@@ -164,7 +145,7 @@ self-running or auto-quitting — Playwright drives and closes the app.
 
 **Layout:** `e2e/fixtures.ts` (per-spec Electron launch + `reset()` `beforeEach`), `e2e/helpers.ts`
 (`evalIn`/`mainCall`/`pollEval`/`seed`), and one spec per subsystem: `terminal` · `browser` ·
-`fullview` · `menu` · `previewLink` · `whiteboard` (20 tests total). Each test seeds its own boards
+`fullview` · `menu` · `previewLink` · `processTree` · `whiteboard` (see `e2e/` for the current test count). Each test seeds its own boards
 — no shared ordered state.
 
 **MAIN-helpers only:** Playwright's renderer-side IPC helpers require `contextIsolation:false` +
@@ -179,7 +160,7 @@ Actions CI gate is now the `check` job only (typecheck · lint · format · unit
 Process-tree-kill is covered by `killTreeCommand` (unit, both platforms — Windows `taskkill /T /F`,
 POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned child prints its pid; the probe asserts
 that exact pid is reaped after `deleteBoard` + `disposeAllPtys`, robust against OS pid reuse). Both legs
-proven green: Windows on the dev machine (21/21), the Linux leg ×2 via Docker. The spike confirmed
+proven green: Windows on the dev machine, the Linux leg ×2 via Docker. The spike confirmed
 capturePage is non-blank on both with `--no-sandbox` + `--disable-dev-shm-usage` (Linux) — **no GL flag
 needed**; the app sandbox is untouched.
 

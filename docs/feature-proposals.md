@@ -46,7 +46,7 @@ makes nearly free.
 status-detection ─────► prompt-queue (auto-advance) ─────► Run-on-Agent
                   └────► attention queue + notifications
 
-git-worktrees (Phase 3) ─► diff panel ─► fan-out ─► commit/merge/PR
+FW-1 / Feature Workspaces (post-MCP) ─► diff panel ─► fan-out ─► commit/merge/PR
                                       └► broadcast-input (complements fan-out)
 
 persistence (Phase 3: canvas.json + schemaVersion)
@@ -60,9 +60,9 @@ zero-dependency (ship anytime):
    └─► browser console capture
 ```
 
-**Key takeaway:** **Phase 3 (persistence + git-worktrees-per-board) is the unlock gate.** Landing
-it makes the largest batch of these features viable at once. Two features (scrollback search,
-console capture) have **no dependency** and can ship immediately.
+**Key takeaway:** **Persistence (Phase 3, shipped) + FW-1 / Feature Workspaces (post-MCP) are the
+unlock gates.** Persistence already landed; FW-1 gates the worktree-dependent features. Two features
+(scrollback search, console capture) have **no dependency** and can ship immediately.
 
 ---
 
@@ -324,9 +324,9 @@ side-by-side for visual comparison is exactly what a canvas does better than tab
 - Seed identical first prompt via the spawn flow's `launchCommand` / first PTY line.
 
 ### Viability checklist (run at ship time)
-- [ ] Per-board git worktrees shipped (Phase 3) — N isolated worktrees + N branches create cleanly.
-- [ ] Per-board port assignment shipped — N agents don't collide on localhost ports
-      (worktrees isolate files, NOT ports — see CLAUDE.md).
+- [ ] FW-1 / Feature Workspaces (post-MCP, deferred) — N isolated worktrees + N branches create cleanly.
+- [ ] Runtime port detection (Slice C′, shipped) — N agents each detect their own port; no static
+      per-board port assignment (worktrees isolate files, NOT ports — see CLAUDE.md).
 - [ ] WebGL budget holds with N more terminals at once (`WEBGL_BUDGET = 8` in `TerminalBoard.tsx`;
       verify the over-budget DOM-fallback path under a 4-way fan-out + existing boards).
 - [ ] Process-tree kill works when discarding losing siblings (Windows `taskkill /T /F`).
@@ -339,7 +339,7 @@ side-by-side for visual comparison is exactly what a canvas does better than tab
 
 ## SB-4 · Board-to-board connectors (typed edges) ⭐
 
-- **Status:** proposed
+- **Status:** in-progress (connector model on feat/mcp-integration, lands with PR #32; preview-edge half already on main)
 - **Effort:** medium
 - **Roadmap slot:** Phase 3 (needs `canvas.json` schema/persistence). Foundational for Run-on-Agent
   bindings and agent→note routing.
@@ -406,7 +406,7 @@ worktree means no tab-switch to an external editor. Headline feature across the 
 - "Unreviewed" badge = compare last-viewed mtime/HEAD vs current.
 
 ### Viability checklist (run at ship time)
-- [ ] Per-board worktrees shipped (Phase 3) — each board has a resolvable worktree path on its branch.
+- [ ] FW-1 / Feature Workspaces (post-MCP, deferred) — each board has a resolvable worktree path on its branch.
 - [ ] `simple-git` diff/status performs acceptably on a large repo (debounce + cap hunk size; don't
       block the MAIN event loop — shared with node-pty's IPC fan-out).
 - [ ] File-watch doesn't fire a storm during an active agent write burst (debounce verified).
@@ -674,7 +674,7 @@ ADE — the "no tool-switching" value users praise (Conductor, Claude Squad, Scu
 - UI in board chrome.
 
 ### Viability checklist (run at ship time)
-- [ ] Per-board worktrees + branches shipped (Phase 3).
+- [ ] FW-1 / Feature Workspaces (post-MCP, deferred) — per-zone worktrees + branches available.
 - [ ] `gh` CLI presence detected gracefully (fall back to `git push` + manual PR link if absent).
 - [ ] Merge/rebase conflict surfaced safely — never auto-resolve; flag and let the user/agent handle.
 - [ ] Clean-merge worktree cleanup goes through `git worktree remove` (never `rm -rf`) and the
@@ -744,13 +744,16 @@ the reason no longer holds.
 # Recommended sequencing
 
 1. **Ship now (zero-dependency quick wins):** QW-3 scrollback search, QW-4 console capture. Pure
-   additive, one-addon / one-listener, immediate value, no Phase 3 needed.
-2. **Land Phase 3 (the unlock):** persistence + git-worktrees-per-board + per-board ports. This
-   gates the largest batch — SB-2, SB-3, SB-4, SB-5, QW-5, QW-6, OS-1.
+   additive, one-addon / one-listener, immediate value.
+2. **In-flight merges (sequential, full gate + e2e after each):** Context #39 (merged) → MCP #32
+   (lands SB-4 connector model + swarm layer) → rebrand #17 (last). Phase 3 persistence + runtime
+   port detection (Slice C′) already shipped on main. FW-1 / Feature Workspaces (post-MCP) gates the
+   remaining worktree-dependent proposals — SB-3, SB-5, OS-1 — and is scheduled after MCP (#32) lands.
 3. **Highest-leverage single feature:** SB-1 status + attention queue. Only *medium* effort (glyph
    plumbing exists), answers the #1 multi-agent pain, and shares the camera-fly API with Focus/Full.
-4. **Then the spatial/multi-agent chain:** SB-5 diff panel → SB-3 fan-out → OS-1 commit/merge/PR;
-   and SB-4 connectors → SB-2 Run-on-Agent. QW-1 prompt-queue + QW-2 minimap slot in alongside SB-1.
+4. **Then the spatial/multi-agent chain:** SB-5 diff panel → SB-3 fan-out → OS-1 commit/merge/PR
+   (all gated on FW-1); and SB-4 connectors (lands with #32) → SB-2 Run-on-Agent. QW-1 prompt-queue
+   + QW-2 minimap slot in alongside SB-1.
 
 ---
 
