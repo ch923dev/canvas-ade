@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync
+} from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -228,9 +236,9 @@ describe('W4 assets pipeline', () => {
       const keep = await writeAsset(dir, bytes('keep2'), 'png')
       const orphan = await writeAsset(dir, bytes('orphan'), 'png')
       gcAssets(dir, new Set([keep.assetId]))
-      expect(existsSync(join(dir, keep.assetId))).toBe(true)          // referenced kept in place
-      expect(existsSync(join(dir, orphan.assetId))).toBe(false)        // removed from the live assets dir
-      const orphanFile = orphan.assetId.split('/')[1]                  // 'assets/<sha1>.png' → '<sha1>.png'
+      expect(existsSync(join(dir, keep.assetId))).toBe(true) // referenced kept in place
+      expect(existsSync(join(dir, orphan.assetId))).toBe(false) // removed from the live assets dir
+      const orphanFile = orphan.assetId.split('/')[1] // 'assets/<sha1>.png' → '<sha1>.png'
       expect(existsSync(join(dir, 'assets', '.trash', orphanFile))).toBe(true) // recoverable in quarantine
     } finally {
       rmSync(dir, { recursive: true, force: true })

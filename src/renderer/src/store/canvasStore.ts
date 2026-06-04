@@ -695,6 +695,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           // .bak is also deep-corrupt → fall through to the error path below (carrying the
           // ORIGINAL primary message). Warn so the lost last-good snapshot leaves a trace,
           // matching the repo's recovery-failure logging (llmBudget/llmKeyStore).
+          // eslint-disable-next-line no-console
           console.warn('[canvasStore] canvas.json.bak recovery also failed to parse', bakErr)
         }
       }

@@ -728,9 +728,7 @@ describe('canvasStore — project lifecycle', () => {
     useCanvasStore.getState().loadObject({
       schemaVersion: 5,
       viewport: null,
-      boards: [
-        { id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }
-      ]
+      boards: [{ id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }]
     } as never)
     const s = useCanvasStore.getState()
     expect(s.project.status).toBe('error')
