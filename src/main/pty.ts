@@ -1,5 +1,6 @@
-import type { IpcMain, BrowserWindow, MessagePortMain, IpcMainInvokeEvent } from 'electron'
+import type { IpcMain, BrowserWindow, MessagePortMain } from 'electron'
 import { MessageChannelMain } from 'electron'
+import { isForeignSender } from './ipcGuard'
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
@@ -420,44 +421,24 @@ export function resolveShell(shell: string | undefined, shells: ShellInfo[]): st
 }
 
 /**
- * Bug #33 (defense-in-depth): reject IPC that did not originate from the main
- * window's main frame. ipcMain channels are shared by ALL webContents, including the
- * per-board preview WebContentsViews that load untrusted localhost content. Today
- * those views have no preload (no ipcRenderer), so this is not exploitable — but the
- * allowlist ENFORCES the PTY-isolation invariant rather than leaving it incidental to
- * the absence of a preview preload. A synthetic/internal call (no senderFrame) is
- * allowed; only a real foreign frame is blocked.
+ * Bug #33 (defense-in-depth): every handler below rejects IPC that did not originate from the
+ * main window's main frame via the shared `isForeignSender` (./ipcGuard). ipcMain channels are
+ * shared by ALL webContents, including the per-board preview WebContentsViews that load untrusted
+ * localhost content; today those views have no preload, so this is not exploitable — but the
+ * guard ENFORCES the PTY-isolation invariant rather than leaving it incidental.
  */
-export function isForeignSender(
-  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
-  getMainFrame: () => unknown | null
-): boolean {
-  const main = getMainFrame()
-  // A synthetic/internal call has no senderFrame — always allow (e.g. our own
-  // in-process e2e harness invoking a handler directly).
-  if (!e.senderFrame) return false
-  // A REAL sender but the window/main-frame is unresolved (destroyed/closing):
-  // we can't prove it's the trusted frame, so treat it as foreign and DENY.
-  if (!main) return true
-  return e.senderFrame !== main
-}
-
 export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
-  // Resolve the trusted main frame lazily at call time — the window may be
-  // (re)created or destroyed across a handler's lifetime.
-  const getMainFrame = (): unknown | null => getWin()?.webContents.mainFrame ?? null
-
-  ipcMain.handle('pty:shells', (e) => (isForeignSender(e, getMainFrame) ? [] : enumerateShells()))
+  ipcMain.handle('pty:shells', (e) => (isForeignSender(e, getWin) ? [] : enumerateShells()))
 
   ipcMain.handle('terminal:detectPorts', (e, id: string) => {
-    if (isForeignSender(e, getMainFrame)) return []
+    if (isForeignSender(e, getWin)) return []
     // Read whichever buffer holds this board's output — live session or parked.
     const raw = sessions.get(id)?.buf.data ?? parked.get(id)?.buf.data ?? ''
     return parsePortsFromOutput(raw)
   })
 
   ipcMain.handle('pty:spawn', (e, opts: SpawnOpts) => {
-    if (isForeignSender(e, getMainFrame)) throw new Error('pty:spawn — forbidden sender')
+    if (isForeignSender(e, getWin)) throw new Error('pty:spawn — forbidden sender')
     const win = getWin()
     if (!win) throw new Error('pty:spawn — no window')
 
@@ -575,7 +556,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
   })
 
   ipcMain.handle('pty:kill', (e, id: string) => {
-    if (isForeignSender(e, getMainFrame)) return false
+    if (isForeignSender(e, getWin)) return false
     cleanup(id)
     return true
   })
@@ -585,18 +566,18 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
   // ago, awaiting undo, lives in the `parked` map, not `sessions`), leaking its
   // child tree until the 120s TTL fired. disposeAllPtys() drains both maps now.
   ipcMain.handle('pty:disposeAll', (e) => {
-    if (isForeignSender(e, getMainFrame)) return false
+    if (isForeignSender(e, getWin)) return false
     return disposeAllPtys().then(() => true)
   })
 
   ipcMain.handle('pty:park', (e, id: string) => {
-    if (isForeignSender(e, getMainFrame)) return false
+    if (isForeignSender(e, getWin)) return false
     park(id)
     return true
   })
 
   ipcMain.handle('pty:adopt', (e, id: string) => {
-    if (isForeignSender(e, getMainFrame)) return { adopted: false }
+    if (isForeignSender(e, getWin)) return { adopted: false }
     const win = getWin()
     if (!win) return { adopted: false }
     return adopt(id, win)

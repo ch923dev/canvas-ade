@@ -1,5 +1,6 @@
-import type { IpcMain, BrowserWindow, Rectangle, IpcMainInvokeEvent } from 'electron'
+import type { IpcMain, BrowserWindow, Rectangle } from 'electron'
 import { WebContentsView, shell } from 'electron'
+import { isForeignSender } from './ipcGuard'
 
 /**
  * Preview lifecycle event pushed main → renderer (Phase 2.2). The renderer keys it
@@ -411,27 +412,13 @@ interface AttachArgs {
 }
 
 /**
- * Bug #33 (defense-in-depth): reject IPC that did not originate from the main
- * window's main frame. ipcMain channels are shared by ALL webContents, including the
- * per-board preview WebContentsViews that load untrusted localhost content. Today
- * those views have no preload (no ipcRenderer), so this is not exploitable — but the
- * allowlist ENFORCES the preview-isolation invariant rather than leaving it incidental
- * to the absence of a preview preload. A synthetic/internal call (no senderFrame) is
- * allowed; only a real foreign frame is blocked.
+ * Bug #33 (defense-in-depth): every handler below rejects IPC that did not originate from the
+ * main window's main frame via the shared `isForeignSender` (./ipcGuard). ipcMain channels are
+ * shared by ALL webContents, including the per-board preview WebContentsViews that load untrusted
+ * localhost content; today those views have no preload (no ipcRenderer), so this is not
+ * exploitable — but the guard ENFORCES the preview-isolation invariant rather than leaving it
+ * incidental to the absence of a preview preload.
  */
-export function isForeignSender(
-  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
-  getWin: () => BrowserWindow | null
-): boolean {
-  if (!e.senderFrame) return false // synthetic/internal call — allow
-  const win = getWin()
-  // During shutdown the window can still resolve while its webContents is already
-  // destroyed (a late in-flight invoke — e.g. a debounced autosave `project:save` —
-  // races teardown). Touching `.webContents.mainFrame` then throws "Object has been
-  // destroyed". An unresolved OR destroyed window has no main frame to match → DENY.
-  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return true
-  return e.senderFrame !== win.webContents.mainFrame
-}
 
 export function registerPreviewHandlers(
   ipcMain: IpcMain,

@@ -6,7 +6,6 @@ import {
   isStaleExit,
   appendRing,
   resolveShell,
-  isForeignSender,
   parkCore,
   adoptCore,
   reapParkedCore,
@@ -149,30 +148,8 @@ describe('resolveShell (M5 — validate before spawn)', () => {
   })
 })
 
-// M6: the foreign-sender guard. ipcMain channels are shared by ALL webContents.
-// A synthetic/internal call (no senderFrame) is allowed; a real foreign frame is
-// blocked; the trusted main frame is allowed; and a real sender with the window
-// unresolved (destroyed/closing) is DENIED — we can't prove it's trusted.
-describe('isForeignSender (M6 — frame guard)', () => {
-  const mainFrame = { id: 'main' }
-  const otherFrame = { id: 'other' }
-
-  it('allows a synthetic/internal call (no senderFrame)', () => {
-    expect(isForeignSender({ senderFrame: null } as never, () => mainFrame)).toBe(false)
-  })
-
-  it('blocks a real foreign frame', () => {
-    expect(isForeignSender({ senderFrame: otherFrame } as never, () => mainFrame)).toBe(true)
-  })
-
-  it('allows the trusted main frame', () => {
-    expect(isForeignSender({ senderFrame: mainFrame } as never, () => mainFrame)).toBe(false)
-  })
-
-  it('DENIES a real sender when the window/main-frame is unresolved (null)', () => {
-    expect(isForeignSender({ senderFrame: otherFrame } as never, () => null)).toBe(true)
-  })
-})
+// M6: the foreign-sender guard is now the shared ./ipcGuard — its branches (incl. the
+// destroyed-window case) live in ipcGuard.test.ts.
 
 // T5: the OS process-tree kill command builder. Extracted pure so the actual
 // argv/signal (previously buried in the private killTree) is asserted directly —
