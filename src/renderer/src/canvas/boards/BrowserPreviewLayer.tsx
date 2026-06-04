@@ -872,12 +872,22 @@ export function BrowserPreviewLayer({
       return changed
     }
 
-    // Initial sync, then on every store change.
-    syncSelection(useCanvasStore.getState())
-    reconcile(toGeom(useCanvasStore.getState().boards))
+    // Initial sync, then on every store change. The reconcile is gated on the BOARDS slice:
+    // camera pan/zoom fires setViewport every frame, which leaves the `boards` array
+    // reference untouched — so a viewport-only change skips the per-frame toGeom + reconcile
+    // and we re-run it only when board geometry actually changes (#perf —
+    // previewlayer-reconcile-on-every-viewport-frame). Selection + full-view liveness still
+    // re-evaluate on every change.
+    const initial = useCanvasStore.getState()
+    syncSelection(initial)
+    reconcile(toGeom(initial.boards))
+    let prevBoards = initial.boards
     const unsub = useCanvasStore.subscribe((s) => {
       const selChanged = syncSelection(s)
-      reconcile(toGeom(s.boards))
+      if (s.boards !== prevBoards) {
+        prevBoards = s.boards
+        reconcile(toGeom(s.boards))
+      }
       // Selection (or the selected board's geometry) changed but no camera/node gesture
       // is in flight → re-evaluate static occlusion so an already-attached Browser view
       // demotes (or reattaches) against the new selection. Geometry-driven changes are

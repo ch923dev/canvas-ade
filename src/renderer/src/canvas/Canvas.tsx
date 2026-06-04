@@ -51,11 +51,13 @@ import {
   type Guide,
   type Rect
 } from '../lib/alignmentGuides'
+import { boardsBounds, snapOthers } from '../lib/boardGeometry'
 import { AlignmentGuides } from './AlignmentGuides'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
 import type { TileTemplate } from '../lib/tileLayout'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
+import { buildBoardNodes, type NodeCache } from './boardNodes'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { OrchestrationEdge } from './edges/OrchestrationEdge'
 import { previewEdges } from '../lib/previewEdges'
@@ -177,6 +179,13 @@ function CanvasInner(): ReactElement {
   // True while Ctrl/⌘ is held — suppresses snapping mid-drag (Figma parity). A ref so the
   // snap pass reads it without re-creating onNodesChange.
   const snapSuppressRef = useRef(false)
+  // The OTHER boards' rects for the active drag / resize snap pass, computed ONCE at
+  // gesture-start (the non-active boards don't move during a single-board drag/resize) and
+  // reused every frame instead of re-filtering + re-mapping the whole board list per frame
+  // (#perf — onnodeschange-perframe-snap-allocation). Keyed by the active board id; cleared
+  // when its gesture ends so the next gesture recomputes against the current layout.
+  const dragOthersRef = useRef<{ id: string; rects: Rect[] } | null>(null)
+  const resizeOthersRef = useRef<{ id: string; rects: Rect[] } | null>(null)
   // The native WebContentsView can't be CSS-animated and a frame scale() pollutes the
   // rect it binds to, so the full-view Browser view is HELD detached while the frame is
   // mid-transform (enter OR exit) and snaps in at settle.
@@ -306,25 +315,19 @@ function CanvasInner(): ReactElement {
   const [diag, setDiag] = useState(import.meta.env.DEV)
 
   // Controlled nodes: one React Flow node per board, selection + dim mirrored from
-  // state. The title bar is the only drag handle (BoardFrame marks it).
+  // state. The title bar is the only drag handle (BoardFrame marks it). buildBoardNodes
+  // REUSES each board's prior node + data object when that board's inputs are unchanged
+  // (per-id cache), so moving one board re-renders only that BoardNode — not all of them
+  // (#perf — nodes-memo-data-object-churn).
+  // Stable per-id node cache (a lazily-created Map held in state, not a ref — so it can be
+  // read in render without tripping react-hooks/refs). buildBoardNodes mutates it as a pure
+  // memo cache: identical board+flag inputs return the identical node refs, so the
+  // double-invoke under StrictMode stays idempotent.
+  const [nodeCache] = useState<NodeCache>(() => new Map())
   const nodes = useMemo<BoardFlowNode[]>(
     () =>
-      boards.map((b) => ({
-        id: b.id,
-        type: 'board',
-        position: { x: b.x, y: b.y },
-        style: { width: b.w, height: b.h },
-        data: {
-          board: b,
-          dimmed:
-            (focusedId !== null && focusedId !== b.id) ||
-            (cameraFullViewId !== null && cameraFullViewId !== b.id),
-          fullView: fullViewId === b.id || cameraFullViewId === b.id
-        },
-        selected: b.id === selectedId,
-        dragHandle: '.board-titlebar'
-      })),
-    [boards, selectedId, focusedId, fullViewId, cameraFullViewId]
+      buildBoardNodes(boards, { selectedId, focusedId, fullViewId, cameraFullViewId }, nodeCache),
+    [boards, selectedId, focusedId, fullViewId, cameraFullViewId, nodeCache]
   )
 
   // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
@@ -370,12 +373,18 @@ function CanvasInner(): ReactElement {
       // while Ctrl/⌘ is held (freehand) and on multi-select drag (canonical single-node only).
       const active = changes.filter((c) => c.type === 'position' && c.dragging)
       const single = active.length === 1 ? active[0] : null
+      // Release the cached drag-others when no single-board drag is active (drop / multi-select)
+      // so the NEXT drag recomputes the others against the current layout.
+      if (!single) dragOthersRef.current = null
       if (single && single.type === 'position' && single.position && !snapSuppressRef.current) {
         const dragged = boards.find((b) => b.id === single.id)
         if (dragged) {
-          const others = boards
-            .filter((b) => b.id !== single.id)
-            .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
+          // Compute the other boards' rects ONCE per gesture (they don't move while one board
+          // is dragged); reuse across frames instead of re-filtering + re-mapping per frame.
+          if (dragOthersRef.current?.id !== single.id) {
+            dragOthersRef.current = { id: single.id, rects: snapOthers(boards, single.id) }
+          }
+          const others = dragOthersRef.current.rects
           const rect = { x: single.position.x, y: single.position.y, w: dragged.w, h: dragged.h }
           const snap = computeAlignment(rect, others, SNAP_THRESHOLD_PX / rf.getZoom())
           single.position.x = snap.x
@@ -393,6 +402,8 @@ function CanvasInner(): ReactElement {
       // centers (align line) or a 16px gutter (gap pill). Mutate the dimensions (+ N/W position)
       // change before nodeChangesToIntents, like the drag pass. Skipped while Ctrl/⌘ is held.
       const resizing = changes.find((c) => c.type === 'dimensions' && c.dimensions && c.resizing)
+      // Release the cached resize-others when no resize is active (resize end / pure drag).
+      if (!resizing) resizeOthersRef.current = null
       // Manually resizing a board releases live tiled mode (no-op if already free).
       if (resizing) setActiveTile(null)
       if (
@@ -409,9 +420,11 @@ function CanvasInner(): ReactElement {
           const posP = posChange?.type === 'position' ? posChange.position : undefined
           const px = posP?.x ?? prevBoard.x
           const py = posP?.y ?? prevBoard.y
-          const others = boards
-            .filter((b) => b.id !== prevBoard.id)
-            .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }))
+          // Other boards' rects computed once per resize gesture (see the drag pass).
+          if (resizeOthersRef.current?.id !== prevBoard.id) {
+            resizeOthersRef.current = { id: prevBoard.id, rects: snapOthers(boards, prevBoard.id) }
+          }
+          const others = resizeOthersRef.current.rects
           const prop: Rect = {
             x: px,
             y: py,
@@ -502,15 +515,15 @@ function CanvasInner(): ReactElement {
     (animate = true) => {
       const { w, h } = paneSize()
       const boards = useCanvasStore.getState().boards
-      if (boards.length === 0 || w <= 0 || h <= 0) {
+      // Single linear pass for the extremes (boardsBounds) instead of four Math.min/max
+      // spreads; null ⇒ no boards ⇒ fall back to the default frame (#perf —
+      // fittoboards-repeated-minmax-spread).
+      const bb = boardsBounds(boards)
+      if (!bb || w <= 0 || h <= 0) {
         void rf.fitView(animate ? cameraAnim(FIT_FRAME) : { ...FIT_FRAME, duration: 0 })
         return
       }
-      const minX = Math.min(...boards.map((b) => b.x))
-      const minY = Math.min(...boards.map((b) => b.y))
-      const maxX = Math.max(...boards.map((b) => b.x + b.w))
-      const maxY = Math.max(...boards.map((b) => b.y + b.h))
-      const bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+      const bounds = { x: bb.minX, y: bb.minY, width: bb.maxX - bb.minX, height: bb.maxY - bb.minY }
       const vp = getViewportForBounds(
         bounds,
         w,
