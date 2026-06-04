@@ -238,7 +238,14 @@ export function PlanningBoard({
       if (!ext) return
       const bytes = new Uint8Array(await blob.arrayBuffer())
       const res = await window.api.asset.write(bytes, ext)
-      if ('error' in res) return
+      if ('error' in res) {
+        // Surface the write failure (disk full / no project open / bad ext) instead of
+        // silently abandoning the paste/drop. Keep the early return — we never add a
+        // broken image element — but don't swallow the cause.
+        // eslint-disable-next-line no-console
+        console.error('image write failed:', res.error)
+        return
+      }
       let w = IMAGE_MAX
       let h = IMAGE_MAX
       try {
@@ -251,9 +258,15 @@ export function PlanningBoard({
         /* undecodable → keep the square fallback size */
       }
       beginChange()
-      commit([...elements, makeImage(newId(), at, res.assetId, w, h)])
+      // Re-read the LIVE elements at COMMIT time, not the closure captured at call time:
+      // updateBoard fully REPLACES `elements` (no merge), so an edit landing during the
+      // two awaits above (asset.write + createImageBitmap) would be silently dropped if we
+      // spread the stale captured array (lost update). Mirrors growForChecklist's getState().
+      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
+      const cur = live?.type === 'planning' ? live.elements : []
+      commit([...cur, makeImage(newId(), at, res.assetId, w, h)])
     },
-    [beginChange, commit, elements]
+    [beginChange, commit, board.id]
   )
 
   /** Paste an image from the clipboard → board centre. Bound at the DOCUMENT level, not
@@ -327,7 +340,19 @@ export function PlanningBoard({
       try {
         const { buildExport } = await import('./planning/exportBoard')
         const { bytes, ext } = await buildExport(board, format)
-        await window.api.export.save({ bytes, ext, defaultName: board.title || 'whiteboard' })
+        // export:save RETURNS a discriminated result — it never throws on a write failure,
+        // so the catch below alone would let a real failure (permission denied / disk full)
+        // look like a user cancel. Inspect the result: surface a genuine error, but stay
+        // silent on an explicit cancel (the user dismissed the save dialog).
+        const res = await window.api.export.save({
+          bytes,
+          ext,
+          defaultName: board.title || 'whiteboard'
+        })
+        if (!res.ok && !res.canceled) {
+          // eslint-disable-next-line no-console
+          console.error('whiteboard export failed:', res.error)
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('whiteboard export failed', err)
