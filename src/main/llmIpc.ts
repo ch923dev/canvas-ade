@@ -7,7 +7,7 @@
  */
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import type { ProviderName, LlmConfig } from './llmConfig'
-import { readLlmConfig, writeLlmConfig, DEFAULT_MODELS } from './llmConfig'
+import { readLlmConfig, writeLlmConfig, DEFAULT_MODELS, isLoopbackBaseUrl } from './llmConfig'
 import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
 import { createBudgetStore } from './llmBudget'
 import {
@@ -133,6 +133,11 @@ export function registerLlmHandlers(
       a: { provider: ProviderName; model: string; baseUrl?: string; maxCallsPerDay?: number }
     ): LlmWriteResult => {
       if (guard(e)) return { ok: false, reason: 'forbidden' }
+      // BUG-001 (SSRF): reject a non-loopback baseUrl BEFORE it is persisted, so a renderer
+      // caller can't point LLM egress at file://, IMDS (169.254.169.254), or internal hosts.
+      // An empty/omitted baseUrl is fine (non-local providers ignore it).
+      if (a.baseUrl !== undefined && !isLoopbackBaseUrl(a.baseUrl))
+        return { ok: false, reason: 'invalid-baseUrl' }
       // Preserve an already-configured cap when the caller omits it (the Settings modal does):
       // otherwise every Save silently wipes maxCallsPerDay back to the 200 default (F-B).
       const existing = readLlmConfig(userDataDir)

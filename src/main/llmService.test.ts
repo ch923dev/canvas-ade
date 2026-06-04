@@ -76,6 +76,19 @@ describe('buildRequest', () => {
       buildRequest('local', { provider: 'local', model: 'm' }, '', { text: 'hi' })
     ).toThrow(/baseUrl/)
   })
+
+  // BUG-001 (SSRF): even if a poisoned baseUrl slips past the write/read guards, buildRequest is
+  // the last line of defense — it must refuse a non-loopback target rather than egress to it.
+  it('throws on a non-loopback local baseUrl instead of egressing (BUG-001)', () => {
+    expect(() =>
+      buildRequest(
+        'local',
+        { provider: 'local', model: 'm', baseUrl: 'http://169.254.169.254/latest/meta-data/' },
+        '',
+        { text: 'hi' }
+      )
+    ).toThrow(/loopback/)
+  })
 })
 
 describe('parseResponse', () => {

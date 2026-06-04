@@ -8,6 +8,7 @@
  * fetch-like transport so this is unit-tested with a fake and e2e runs a mock provider.
  */
 import type { LlmConfig, ProviderName } from './llmConfig'
+import { isLoopbackBaseUrl } from './llmConfig'
 import type { KeyStore } from './llmKeyStore'
 import { DEFAULT_MAX_CALLS_PER_DAY, type BudgetStore } from './llmBudget'
 
@@ -70,6 +71,10 @@ export function buildRequest(
   let base: string
   if (provider === 'local') {
     if (!config.baseUrl) throw new Error('local provider requires a baseUrl in config')
+    // BUG-001 (SSRF): last-line defense — never egress to a non-loopback http(s) URL even if a
+    // poisoned baseUrl slipped past the write/read guards. The `local` server is always local.
+    if (!isLoopbackBaseUrl(config.baseUrl))
+      throw new Error('local provider baseUrl must be a loopback http(s) URL')
     base = config.baseUrl
   } else {
     base = OPENAI_SHAPE_BASE[provider]

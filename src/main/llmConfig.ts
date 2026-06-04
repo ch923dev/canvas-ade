@@ -35,6 +35,28 @@ export interface LlmConfig {
   maxCallsPerDay?: number
 }
 
+/** Loopback hostnames the `local` provider may target. Anything else → reject. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
+
+/**
+ * BUG-001 (SSRF egress guard): the ONLY legitimate `baseUrl` is a local LLM server
+ * (LM Studio / Ollama), so the scheme must be http/https and the host must be loopback.
+ * Returns the original string when valid, else undefined. Centralized so write-time
+ * (llm:setConfig), read-time (readLlmConfig) and use-time (buildRequest) all enforce it —
+ * a config poisoned on disk (file://, IMDS 169.254.169.254, internal hosts) can never egress.
+ */
+export function isLoopbackBaseUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || raw.length === 0) return false
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+  return LOOPBACK_HOSTS.has(u.hostname)
+}
+
 function fileFor(userDataDir: string): string {
   return join(userDataDir, 'llm-config.json')
 }
@@ -54,7 +76,9 @@ export function readLlmConfig(userDataDir: string): LlmConfig {
       : 'openrouter'
     const model =
       typeof p.model === 'string' && p.model.length > 0 ? p.model : DEFAULT_MODELS[provider]
-    const baseUrl = typeof p.baseUrl === 'string' ? p.baseUrl : undefined
+    // Defensive read-time guard (BUG-001): drop a baseUrl that isn't a loopback http(s)
+    // URL so an externally-poisoned config on disk can't reach the egress fetch.
+    const baseUrl = isLoopbackBaseUrl(p.baseUrl) ? p.baseUrl : undefined
     const maxCallsPerDay =
       typeof p.maxCallsPerDay === 'number' &&
       Number.isFinite(p.maxCallsPerDay) &&
