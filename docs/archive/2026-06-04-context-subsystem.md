@@ -398,6 +398,50 @@ Context spec.
 landing on `main`. Tracked in `docs/roadmap.md` › Deferred. When built it reads the `.canvas/memory/`
 files this subsystem writes.
 
+## Follow-up (non-blocking) — `feat/context-followup` (`76cb89f`, 2026-06-04)
+
+The non-blocking follow-on backlog (kickoff:
+`docs/superpowers/plans/2026-06-04-context-followup-kickoff.md`). All MCP-disjoint; gate-green
+(typecheck · lint · format:check · **877 unit+integration** · build; Windows e2e 21/21). Security model
+untouched (key inbound-only/safeStorage, generated memory stays untrusted+passive, every IPC frame-guarded,
+egress only via the budgeted `runSummarize`).
+
+- **T-F1 — terminal runtime status (PARTIAL; pty.ts getter HELD for post-MCP).** Decision = structured
+  `pty.ts` hook (Option A), not scrollback scraping. `summaryLoop.ts` now takes an injected, defensive
+  `getTerminalRuntime(boardId)` (optional dep) and a pure `terminalRuntimeLine(rt, now)` that folds a
+  `Status: running | idle | exited (code N) | starting up | failed to start` line (+ relative last-active)
+  into the terminal `buildSummarizeInput`. Running with activity older than `IDLE_AFTER_MS` (60s) degrades
+  to `idle`. Default-off: with no getter wired, the input is byte-identical to before. **HELD:** add the
+  `getTerminalRuntime` accessor to `pty.ts` (reuse MCP #32's session state + a `lastActivityAt` bump on
+  data/exit) and wire it into `createSummaryLoop` in `index.ts`, AFTER MCP lands on `main`. Detector note:
+  runtime status does NOT change `canvas.json`, so it only refreshes on a content edit OR via T-F4's manual
+  ⟳ — accepted (cheapest); no idle→active nudge added.
+- **T-F2 — title parity (F-C).** Dropped the board `title` from `summaryLoop.boardContent` so its field set
+  matches `memoryEngine.boardFingerprint` (both omit title). A title-only rename no longer churns a budgeted
+  summarize nor leaves cached prose naming the old title (the panel card shows the live title separately).
+  Prompts are now type-generic (`Terminal board.` / `Browser preview board.` / `Planning board.`).
+- **T-F3 — panel a11y.** `DigestPanel`'s `<aside>` is marked `inert` when closed (set imperatively via a
+  ref/effect — React 18.3 drops a boolean `inert` prop at runtime) so its off-screen buttons leave the tab
+  order; `aria-hidden` retained for older AT.
+- **T-F4 — manual refresh.** New guarded `memory:refresh(boardId)` IPC (`projectIpc.ts`) → an injected
+  `onRefresh` wired in `index.ts` to `summaryLoop.onIntent` — bypasses the 45s debounce but runs the SAME
+  budgeted + key-gated + passive summarize (no new egress). `api.memory.refresh`; a calm,
+  `prefers-reduced-motion`-safe ⟳ per `DigestPanel` card with a per-board busy state;
+  `Canvas.refreshBoardProse` re-reads only that board's prose via `memory.readBoards` after. Foreign sender /
+  non-string id / no open project → `{ ok: false }`.
+- **T-F5 — model-id lockstep.** Re-verified the defaults are current (openrouter `google/gemini-2.5-flash`,
+  openai `gpt-4.1-nano`, anthropic `claude-haiku-4-5` — no drift). Added `llmModels.lockstep.test.ts`
+  asserting `llmConfig.DEFAULT_MODELS` deep-equals the renderer mirror `lib/llmModels.DEFAULT_MODELS`, so a
+  one-sided edit fails CI.
+- **T-F6 — Linux no-keyring warning.** `llm:status` now returns `encryptionAvailable`
+  (`encryptor.isEncryptionAvailable()`; false when no encryptor wired). `SettingsModal` shows a proactive
+  one-line notice (provider env-var hint, e.g. `OPENROUTER_API_KEY`) when it's false. No weakening of the
+  no-plaintext rule — `setKey` still refuses when encryption is unavailable.
+
+**Owed before the →`main` PR:** rebase onto current `main` (1 docs-only commit `416464d` ahead at branch
+time) **and** after MCP #32 merges, land T-F1's `pty.ts` getter + `index.ts` wire, then re-run the full gate
++ e2e matrix. Merge order: MCP #32 → … → this follow-up → rebrand #17 last.
+
 ## Collapsed docs (originals in git history)
 
 The per-task spec, plans, and handoffs were compiled into this file and deleted on 2026-06-03. Recover any
