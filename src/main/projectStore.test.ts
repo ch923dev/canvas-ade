@@ -14,6 +14,7 @@ import {
   readProject,
   readBak,
   writeProject,
+  rotateBakAtomic,
   createProject,
   writeAsset,
   readAsset,
@@ -81,6 +82,22 @@ describe('projectStore', () => {
     await writeProject(dir, { schemaVersion: 2, viewport: null, boards: [{ v: 2 }] })
     const bak = JSON.parse(readFileSync(join(dir, 'canvas.json.bak'), 'utf8'))
     expect(bak.boards[0].v).toBe(1)
+  })
+
+  it('rotateBakAtomic copies the primary to the .bak byte-identically, leaving no temp file', () => {
+    // bak-rotation-non-atomic-copy: the rotation must go through the atomic write/rename
+    // primitive (no torn .bak on a mid-copy crash), not a raw copyFileSync.
+    const primary = join(dir, 'canvas.json')
+    const bak = join(dir, 'canvas.json.bak')
+    const content = JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ v: 1 }] })
+    writeFileSync(primary, content)
+
+    rotateBakAtomic(primary, bak)
+
+    expect(readFileSync(bak, 'utf8')).toBe(content)
+    // write-file-atomic writes a temp sibling then renames; on success nothing is left behind.
+    const stray = readdirSync(dir).filter((f) => f !== 'canvas.json' && f !== 'canvas.json.bak')
+    expect(stray).toEqual([])
   })
 
   it('falls back to .bak when canvas.json is corrupt', async () => {
