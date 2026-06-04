@@ -36,7 +36,12 @@ import {
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore, selectLiveCount } from '../store/previewStore'
-import { DEFAULT_BOARD_SIZE, MIN_BOARD_SIZE, type BoardType } from '../lib/boardSchema'
+import {
+  DEFAULT_BOARD_SIZE,
+  MIN_BOARD_SIZE,
+  SCHEMA_VERSION,
+  type BoardType
+} from '../lib/boardSchema'
 import { FIT_FRAME, GRID_GAP, RESET_FRAME, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
 import {
@@ -62,6 +67,8 @@ import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
+import { DigestPanel } from './DigestPanel'
+import { buildDigest } from '../lib/digest'
 import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
@@ -114,6 +121,8 @@ function CanvasInner(): ReactElement {
   const tidyBoards = useCanvasStore((s) => s.tidyBoards)
   const tileBoards = useCanvasStore((s) => s.tileBoards)
   const projectStatus = useCanvasStore((s) => s.project.status)
+  const projectDir = useCanvasStore((s) => s.project.dir)
+  const viewport = useCanvasStore((s) => s.viewport)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -198,6 +207,48 @@ function CanvasInner(): ReactElement {
   }, [])
   const handleFullViewEntered = useCallback(() => setFullViewEntering(false), [])
   const handleFullViewExited = useCallback(() => hardCloseFullView(), [hardCloseFullView])
+  const [digestOpen, setDigestOpen] = useState(false)
+  // Auto-open the digest once per project open/switch — the React "adjust state during
+  // render when a key changes" pattern (avoids setState-in-effect). Closing it stays
+  // closed for that project; switching projects re-opens for the new one.
+  const [digestProjectKey, setDigestProjectKey] = useState<string | null>(null)
+  const openedProjectKey = projectStatus === 'open' ? (projectDir ?? 'open') : null
+  if (openedProjectKey !== null && openedProjectKey !== digestProjectKey) {
+    setDigestProjectKey(openedProjectKey)
+    setDigestOpen(true)
+  }
+  const digest = useMemo(
+    () => buildDigest({ schemaVersion: SCHEMA_VERSION, viewport, boards }),
+    [boards, viewport]
+  )
+
+  // T-M4: cached Tier-2 prose by board id, fetched once per project open (pure disk read,
+  // NO LLM call). DigestPanel renders the prose body when present, else the Tier-1 lines.
+  const [prose, setProse] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (openedProjectKey === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setProse({})
+      return
+    }
+    let cancelled = false
+    const ids = useCanvasStore.getState().boards.map((b) => b.id)
+    void window.api.memory
+      .readBoards(ids)
+      .then((map) => {
+        if (!cancelled) setProse(map)
+      })
+      .catch(() => {
+        // The handler is written to never reject (returns {} on any guard/no-dir case);
+        // this is a defensive guard so an unexpected rejection can't surface as an
+        // unhandled promise. Prose stays empty → Tier-1 lines render.
+      })
+    return () => {
+      cancelled = true
+    }
+    // Fire once per open/switch: openedProjectKey changes on each project-open transition.
+    // boards read live (getState) so this does not re-fetch on every board edit.
+  }, [openedProjectKey])
 
   // Enter camera full view on a (Planning) board: save the viewport, fit the camera to
   // the board, select it. Portal + camera full views are mutually exclusive.
@@ -748,10 +799,11 @@ function CanvasInner(): ReactElement {
         openFullViewAnimated: openFullView,
         closeFullViewAnimated: closeFullView,
         setFocus: setFocusedId,
+        setDigestOpen,
         enterCameraFullView,
         exitCameraFullView
       })
-  }, [rf, openFullView, closeFullView, enterCameraFullView, exitCameraFullView])
+  }, [rf, openFullView, closeFullView, setDigestOpen, enterCameraFullView, exitCameraFullView])
 
   // Capture the live camera into the (untracked) store so autosave persists it.
   // onChange fires on the rAF-coalesced camera updates React Flow emits — no new
@@ -825,6 +877,13 @@ function CanvasInner(): ReactElement {
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
           <AppChrome onAdd={addCentered} onTidy={tidyAndFit} />
+          <DigestPanel
+            digest={digest}
+            prose={prose}
+            open={digestOpen}
+            onOpen={() => setDigestOpen(true)}
+            onClose={() => setDigestOpen(false)}
+          />
           {diag && <DiagOverlay liveViews={liveViews} />}
         </div>
         {fullViewBoard && (

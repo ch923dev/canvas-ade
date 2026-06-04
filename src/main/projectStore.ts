@@ -8,6 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkS
 import { createHash } from 'crypto'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
+import { scaffoldProjectMemory } from './canvasMemory'
 
 const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
@@ -90,13 +91,17 @@ export async function createProject(
   // `gitInit` is accepted for forward-compat with Slice C (worktrees) but is inert here.
   mkdirSync(dir, { recursive: true })
   const existing = readProject(dir)
-  if (existing.ok) return existing
+  if (existing.ok) {
+    scaffoldProjectMemory(dir) // open-if-absent on a reused project (best-effort)
+    return existing
+  }
   // PERSIST-C: route the fresh write through writeProject so a canvas.json is only ever
   // created via the one envelope-guarded + atomic path (the same guard project:save uses)
   // — a future change to the fresh-doc shape can't silently bypass it. There is no prior
   // file here (reuse-if-exists returned above), so the .bak rotation is a no-op.
   const fresh = { schemaVersion: 2, viewport: null, boards: [] }
   await writeProject(dir, fresh)
+  scaffoldProjectMemory(dir) // T-M1: project data lives in <project>/.canvas/ (best-effort)
   return { ok: true, dir, name: projectName(dir), doc: fresh }
 }
 

@@ -62,6 +62,24 @@ export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
   | { ok: false; error: string }
 
+// ── M-brain T-B1/T-B2 — mirrors main `SummarizeResult` / `LlmStatus` (preload stays decoupled) ──
+export type LlmSummarizeResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: 'no-provider' }
+  | { ok: false; reason: 'budget-exceeded' }
+  | { ok: false; reason: 'provider-error'; message: string }
+
+export interface LlmStatus {
+  hasProvider: boolean
+  /** Mirrors main `ProviderName` — keep in sync if a provider is added. */
+  provider: 'openrouter' | 'openai' | 'anthropic' | 'local'
+  model: string
+  baseUrl?: string
+  hasKey: boolean
+}
+
+export type LlmWriteResult = { ok: boolean; reason?: string }
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -165,6 +183,27 @@ const api = {
       defaultName: string
     }): Promise<{ ok: true; path: string } | { ok: false; canceled?: boolean; error?: string }> =>
       ipcRenderer.invoke('export:save', args)
+  },
+  // ── M-memory T-M4: read cached Tier-2 prose for the panel (pure disk read; MAIN-guarded) ──
+  memory: {
+    readBoards: (ids: string[]): Promise<Record<string, string>> =>
+      ipcRenderer.invoke('memory:readBoards', ids)
+  },
+  // ── M-brain T-B1/T-B2: provider-agnostic LLM (MAIN owns the key/egress) ──
+  llm: {
+    summarize: (input: { system?: string; text: string }): Promise<LlmSummarizeResult> =>
+      ipcRenderer.invoke('llm:summarize', input),
+    status: (): Promise<LlmStatus> => ipcRenderer.invoke('llm:status'),
+    setKey: (args: { provider: LlmStatus['provider']; key: string }): Promise<LlmWriteResult> =>
+      ipcRenderer.invoke('llm:setKey', args),
+    clearKey: (args: { provider: LlmStatus['provider'] }): Promise<LlmWriteResult> =>
+      ipcRenderer.invoke('llm:clearKey', args),
+    setConfig: (args: {
+      provider: LlmStatus['provider']
+      model: string
+      baseUrl?: string
+      maxCallsPerDay?: number
+    }): Promise<LlmWriteResult> => ipcRenderer.invoke('llm:setConfig', args)
   }
 }
 

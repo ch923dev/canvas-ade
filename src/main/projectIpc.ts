@@ -20,7 +20,9 @@ import {
   gcAssets,
   type ProjectResult
 } from './projectStore'
+import { scaffoldProjectMemory, createCanvasMemory } from './canvasMemory'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
+import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
 
 /**
  * True when an IPC sender is NOT the main window's main frame (foreign → deny).
@@ -61,11 +63,21 @@ export function isUnsafeProjectDir(dir: string): boolean {
   return path.normalize(dir).split(/[/\\]/).includes('..') || dir.split(/[/\\]/).includes('..')
 }
 
+/**
+ * Default T-M2 intent sink: log only. T-M3 replaces this with the Tier-2 summarize loop
+ * (intent → runSummarize → canvasMemory.writeBoard). The intent is passive — it is an id,
+ * never an action.
+ */
+function logSummarizeIntent(intent: SummarizeIntent): void {
+  console.log(`[memoryEngine] summarize intent for board ${intent.boardId}`)
+}
+
 export function registerProjectHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
   userDataDir: string,
-  now: () => number = () => Date.now()
+  now: () => number = () => Date.now(),
+  memoryEngine: MemoryEngine = createMemoryEngine({ onIntent: logSummarizeIntent })
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean =>
     isForeignSender(e, () => getWin()?.webContents.mainFrame)
@@ -91,7 +103,19 @@ export function registerProjectHandlers(
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     const r = readProject(dir)
     remember(r)
-    if (r.ok) gcAssets(r.dir, collectAssetIds(r.doc))
+    if (r.ok) {
+      gcAssets(r.dir, collectAssetIds(r.doc))
+      scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
+      try {
+        memoryEngine.reset() // T-M2: a project switch drops stale fingerprints/timers
+        // Baseline from the LOADED doc so the FIRST meaningful post-open edit emits an intent.
+        // Without this, the first project:save becomes the baseline (no emit) and the first
+        // edit after every open/switch is silently swallowed until a second save.
+        memoryEngine.observe(r.doc)
+      } catch (err) {
+        console.warn('[memoryEngine] reset/observe on open failed (non-fatal)', err)
+      }
+    }
     return r
   })
 
@@ -123,6 +147,11 @@ export function registerProjectHandlers(
     // is visible instead of silently swallowed.
     try {
       await writeProject(dir, doc)
+      try {
+        memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
+      } catch (err) {
+        console.warn('[memoryEngine] observe failed (non-fatal)', err)
+      }
       return true
     } catch (err) {
       console.error('project:save failed', err)
@@ -144,6 +173,14 @@ export function registerProjectHandlers(
       setCurrentDir(r.dir)
       touchRecent(userDataDir, r.dir, projectName(r.dir), now())
       gcAssets(r.dir, collectAssetIds(r.doc))
+      scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
+      try {
+        memoryEngine.reset() // T-M2: re-baseline on reopen/switch
+        // Baseline from the loaded doc (see project:open) so the first post-reopen edit emits.
+        memoryEngine.observe(r.doc)
+      } catch (err) {
+        console.warn('[memoryEngine] reset/observe on current failed (non-fatal)', err)
+      }
     }
     return r.ok ? r : null
   })
@@ -170,6 +207,24 @@ export function registerProjectHandlers(
     const dir = getCurrentDir()
     if (!dir) return null
     return readAsset(dir, assetId)
+  })
+
+  // T-M4: batch-read cached Tier-2 prose for the current project's boards. Pure disk read —
+  // NO LLM call. Returns the RAW board-<id>.md markdown per present id (the renderer strips
+  // the heading); absent ids are omitted. Generated memory is UNTRUSTED PASSIVE context —
+  // this only READS + returns it, it never triggers an action. Foreign sender → {}; no
+  // current dir → {}. readBoard already guards safeBoardId + never throws (canvasMemory.ts).
+  ipcMain.handle('memory:readBoards', (e, ids: string[]): Record<string, string> => {
+    if (guard(e)) return {}
+    const dir = getCurrentDir()
+    if (!dir || !Array.isArray(ids)) return {}
+    const mem = createCanvasMemory(dir)
+    const out: Record<string, string> = {}
+    for (const id of ids) {
+      const md = mem.readBoard(id)
+      if (md !== undefined) out[id] = md
+    }
+    return out
   })
 
   ipcMain.handle(

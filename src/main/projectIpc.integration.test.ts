@@ -5,7 +5,7 @@ import * as path from 'node:path'
 
 // ── Mock the store + recent-projects modules so handlers are exercised in isolation ──
 // `vi.hoisted` so the mock factories (also hoisted) can reference these stubs.
-const { store, recents, electronDialog } = vi.hoisted(() => ({
+const { store, recents, electronDialog, canvasMemory } = vi.hoisted(() => ({
   store: {
     readProject: vi.fn(),
     writeProject: vi.fn(),
@@ -26,11 +26,16 @@ const { store, recents, electronDialog } = vi.hoisted(() => ({
   electronDialog: {
     showOpenDialog: vi.fn(),
     showSaveDialog: vi.fn()
+  },
+  canvasMemory: {
+    scaffoldProjectMemory: vi.fn(),
+    createCanvasMemory: vi.fn()
   }
 }))
 
 vi.mock('./projectStore', () => store)
 vi.mock('./recentProjects', () => recents)
+vi.mock('./canvasMemory', () => canvasMemory)
 vi.mock('electron', () => ({
   dialog: electronDialog,
   BrowserWindow: class {}
@@ -38,6 +43,7 @@ vi.mock('electron', () => ({
 
 import { registerProjectHandlers } from './projectIpc'
 import { createIpcCapture, foreignEvent, mainWin } from './ipcTestHarness'
+import type { MemoryEngine } from './memoryEngine'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -238,5 +244,125 @@ describe('registerProjectHandlers — foreign-sender rejection (#17)', () => {
   it('asset:read returns null for a foreign sender', () => {
     const cap = setup()
     expect(cap.invokeAs(foreignEvent, 'asset:read', 'someId')).toBeNull()
+  })
+})
+
+// T-M2 (Context): registerProjectHandlers feeds saved docs into the MemoryEngine and
+// re-baselines it on project switch/reopen. Injected engine over the module-mocked store.
+describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
+  const getWin = (): null => null // no window — guard uses synthetic senderFrame path
+
+  function harness(engine: MemoryEngine): ReturnType<typeof createIpcCapture> {
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData', () => 0, engine)
+    return cap
+  }
+
+  it('feeds the saved doc into the engine after a successful save', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    store.writeProject.mockResolvedValue(undefined)
+    const observe = vi.fn()
+    const engine: MemoryEngine = { observe, reset: vi.fn() }
+    const cap = harness(engine)
+
+    const doc = { schemaVersion: 4, viewport: null, boards: [] }
+    const ok = await cap.invoke('project:save', doc)
+    expect(ok).toBe(true)
+    expect(observe).toHaveBeenCalledWith(doc)
+  })
+
+  it('a throwing engine.observe never fails the save (best-effort feed)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    store.writeProject.mockResolvedValue(undefined)
+    const engine: MemoryEngine = {
+      observe: () => {
+        throw new Error('detector boom')
+      },
+      reset: vi.fn()
+    }
+    const cap = harness(engine)
+
+    const ok = await cap.invoke('project:save', { schemaVersion: 4, viewport: null, boards: [] })
+    expect(ok).toBe(true) // save still succeeds despite the detector throwing
+  })
+
+  it('resets THEN baselines the engine with the loaded doc when a project is opened (switch)', () => {
+    const doc = { schemaVersion: 4, viewport: null, boards: [] }
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
+    const reset = vi.fn()
+    const observe = vi.fn()
+    const engine: MemoryEngine = { observe, reset }
+    const cap = harness(engine)
+
+    const r = cap.invoke('project:open', '/proj') as { ok: boolean }
+    expect(r.ok).toBe(true)
+    expect(reset).toHaveBeenCalled()
+    // F1: baseline from the loaded doc so the first post-open edit emits (not swallowed).
+    expect(observe).toHaveBeenCalledWith(doc)
+    // Order matters: reset() (primed=false) must precede observe() (baseline-not-emit).
+    expect(reset.mock.invocationCallOrder[0]).toBeLessThan(observe.mock.invocationCallOrder[0])
+    expect(canvasMemory.scaffoldProjectMemory).toHaveBeenCalledWith('/proj')
+  })
+
+  it('resets THEN baselines with the loaded doc on project:current (re-baseline on reopen)', async () => {
+    const doc = { schemaVersion: 4, viewport: null, boards: [] }
+    recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
+    const reset = vi.fn()
+    const observe = vi.fn()
+    const engine: MemoryEngine = { observe, reset }
+    const cap = harness(engine)
+
+    const r = (await cap.invoke('project:current')) as { ok: boolean }
+    expect(r.ok).toBe(true)
+    expect(reset).toHaveBeenCalled()
+    expect(observe).toHaveBeenCalledWith(doc)
+    expect(reset.mock.invocationCallOrder[0]).toBeLessThan(observe.mock.invocationCallOrder[0])
+  })
+})
+
+describe('memory:readBoards (T-M4 cached-prose read bridge)', () => {
+  const getWin = (): null => null // no window — guard uses the synthetic senderFrame path
+
+  function withReader(
+    readBoard: (id: string) => string | undefined
+  ): ReturnType<typeof createIpcCapture> {
+    canvasMemory.createCanvasMemory.mockReturnValue({ readBoard })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+    return cap
+  }
+
+  it('returns raw markdown for ids that have a cached file, omitting absent ones', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const cap = withReader((id) => (id === 't1' ? '# Dev\n\nprose t1\n' : undefined))
+
+    const result = await cap.invoke('memory:readBoards', ['t1', 'b1'])
+    expect(result).toEqual({ t1: '# Dev\n\nprose t1\n' })
+  })
+
+  it('returns {} when there is no current dir (never reads disk)', async () => {
+    store.getCurrentDir.mockReturnValue(null)
+    const cap = withReader(() => '# x\n\ny\n')
+
+    expect(await cap.invoke('memory:readBoards', ['t1'])).toEqual({})
+    expect(canvasMemory.createCanvasMemory).not.toHaveBeenCalled()
+  })
+
+  it('returns {} for a non-array ids payload', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const cap = withReader(() => '# x\n\ny\n')
+
+    expect(await cap.invoke('memory:readBoards', 'not-an-array')).toEqual({})
+  })
+
+  it('rejects a foreign sender and reads nothing (#17)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    canvasMemory.createCanvasMemory.mockReturnValue({ readBoard: () => '# x\n\ny\n' })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, mainWin, '/userData')
+
+    expect(await cap.invokeAs(foreignEvent, 'memory:readBoards', ['t1'])).toEqual({})
+    expect(canvasMemory.createCanvasMemory).not.toHaveBeenCalled()
   })
 })

@@ -48,6 +48,18 @@ describe('projectStore', () => {
     if (r.ok) expect(r.doc).toEqual({ schemaVersion: 2, viewport: null, boards: [] })
   })
 
+  it('createProject scaffolds the .canvas memory tree', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'projmem-'))
+    try {
+      await createProject(dir, 'p', {})
+      expect(existsSync(join(dir, '.canvas', 'memory'))).toBe(true)
+      expect(existsSync(join(dir, '.canvas', 'audit'))).toBe(true)
+      expect(readFileSync(join(dir, '.canvas', '.gitignore'), 'utf8')).toBe('*\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('write then read round-trips', async () => {
     await writeProject(dir, doc)
     const r = readProject(dir)
