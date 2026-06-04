@@ -46,7 +46,10 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       tier: 'orchestrator'
     })
     const orchestrator = buildOrchestrator(registry, { idleTtlMs: IDLE_TTL_MS })
-    const server = await createMcpHttpServer({ orchestrator, tokens })
+    // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
+    // just above). A second orchestrator-tier token (bound to a different board) then can't
+    // drive orchestration cables it doesn't own. Matches the orchestratorToken's boardId.
+    const server = await createMcpHttpServer({ orchestrator, tokens, commandBoardId: 'app' })
     // 🔒 Idle-reap sweep (T3.4): periodically close MCP-spawned boards that have gone
     // idle past the TTL, so the swarm can't accrete dormant boards. unref() so the
     // timer never keeps the process alive at shutdown.
