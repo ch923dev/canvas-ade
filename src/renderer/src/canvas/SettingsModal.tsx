@@ -75,6 +75,10 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
         }
       }
       onClose()
+    } catch {
+      // An IPC rejection (channel gone, main-side throw, teardown race) would otherwise vanish
+      // silently and leave the modal looking saved (H1). Surface it so the user can retry.
+      setError('Could not save settings — please try again.')
     } finally {
       setBusy(false)
     }
@@ -82,10 +86,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
 
   const clear = async (): Promise<void> => {
     setBusy(true)
+    setError(null)
     try {
       await window.api.llm.clearKey({ provider })
       setHasKey(false)
       setKey('')
+    } catch {
+      setError('Could not clear the key — please try again.')
     } finally {
       setBusy(false)
     }

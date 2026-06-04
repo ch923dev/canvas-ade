@@ -10,7 +10,7 @@ import { registerLlmHandlers, type LlmStatus } from './llmIpc'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { writeLlmConfig } from './llmConfig'
+import { writeLlmConfig, readLlmConfig } from './llmConfig'
 import type { Encryptor } from './llmKeyStore'
 import { createIpcCapture, foreignEvent, mainWin } from './ipcTestHarness'
 
@@ -143,6 +143,14 @@ describe('registerLlmHandlers — key channels', () => {
     const s = (await cap.invoke('llm:status')) as LlmStatus
     expect(s.provider).toBe('anthropic')
     expect(s.model).toBe('claude-3-5-haiku-latest')
+  })
+
+  it('setConfig preserves an already-configured maxCallsPerDay when the caller omits it (F-B)', async () => {
+    const { cap, dir } = setupKeyed(fakeEncryptor())
+    writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 7 })
+    // The Settings modal sends only provider/model/baseUrl — the cap must survive the Save.
+    await cap.invoke('llm:setConfig', { provider: 'openai', model: 'gpt-4.1-nano' })
+    expect(readLlmConfig(dir).maxCallsPerDay).toBe(7)
   })
 
   it('status echoes the configured baseUrl for the local provider', async () => {

@@ -142,6 +142,9 @@ describe('getProvider', () => {
     )
     expect(p).not.toBeNull()
   })
+  it('returns null for the local provider with no baseUrl (honest hasProvider:false — M1)', () => {
+    expect(getProvider({ provider: 'local', model: 'm' }, deps({}))).toBeNull()
+  })
   it('mock wins even when a real API key is present in env', async () => {
     const p = getProvider(
       { provider: 'openrouter', model: 'm' },

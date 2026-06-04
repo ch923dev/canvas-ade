@@ -18,7 +18,7 @@ beforeEach(() => {
   llm.status.mockResolvedValue({
     hasProvider: false,
     provider: 'openrouter',
-    model: 'google/gemini-2.0-flash-001',
+    model: 'google/gemini-2.5-flash',
     hasKey: false
   })
   llm.setKey.mockResolvedValue({ ok: true })
@@ -33,7 +33,7 @@ it('prefills provider + model from status on open', async () => {
   const provider = screen.getByLabelText(/provider/i) as HTMLSelectElement
   const model = screen.getByLabelText(/model/i) as HTMLInputElement
   await waitFor(() => expect(provider.value).toBe('openrouter'))
-  expect(model.value).toBe('google/gemini-2.0-flash-001')
+  expect(model.value).toBe('google/gemini-2.5-flash')
 })
 
 it('prefills the Base URL field for a local provider', async () => {
@@ -64,7 +64,7 @@ it('Save writes config and the key when a key is entered', async () => {
   await waitFor(() =>
     expect(llm.setConfig).toHaveBeenCalledWith({
       provider: 'openrouter',
-      model: 'google/gemini-2.0-flash-001',
+      model: 'google/gemini-2.5-flash',
       baseUrl: undefined
     })
   )
@@ -95,5 +95,15 @@ it('keeps the modal open and shows an error when the key save fails', async () =
   fireEvent.change(key, { target: { value: 'sk-secret' } })
   fireEvent.click(screen.getByRole('button', { name: /save/i }))
   await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/keyring/i))
+  expect(onClose).not.toHaveBeenCalled()
+})
+
+it('surfaces an error (not a silent failure) when an IPC call rejects on Save (H1)', async () => {
+  const onClose = vi.fn()
+  llm.setConfig.mockRejectedValue(new Error('channel gone'))
+  render(<SettingsModal onClose={onClose} />)
+  await screen.findByLabelText(/api key/i)
+  fireEvent.click(screen.getByRole('button', { name: /save/i }))
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/could not save/i))
   expect(onClose).not.toHaveBeenCalled()
 })

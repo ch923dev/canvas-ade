@@ -10,11 +10,15 @@ import writeFileAtomic from 'write-file-atomic'
 
 export type ProviderName = 'openrouter' | 'openai' | 'anthropic' | 'local'
 
-/** Cheap/fast-class defaults — user-overridable via config (and later the Settings modal). */
+/**
+ * Cheap/fast-class defaults — user-overridable via config (and the Settings modal).
+ * Verified current 2026-06-04: gemini-2.0-flash-001 was discontinued 2026-06-01, gpt-4o-mini
+ * superseded by the 4.1/5.x line. Keep this in sync with src/renderer/src/lib/llmModels.ts.
+ */
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
-  openrouter: 'google/gemini-2.0-flash-001',
-  openai: 'gpt-4o-mini',
-  anthropic: 'claude-3-5-haiku-latest',
+  openrouter: 'google/gemini-2.5-flash',
+  openai: 'gpt-4.1-nano',
+  anthropic: 'claude-haiku-4-5',
   local: 'local-model'
 }
 

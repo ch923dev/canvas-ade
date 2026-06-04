@@ -163,6 +163,10 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
   }
   const key = keyForProvider(config.provider, deps.env, deps.keyStore)
   if (config.provider !== 'local' && !key) return null
+  // local needs no key but DOES need a baseUrl; without it summarize would throw deep in
+  // buildRequest. Return null here so llm:status honestly reports hasProvider:false instead of
+  // claiming "configured" while every summarize silently provider-errors (M1).
+  if (config.provider === 'local' && !config.baseUrl) return null
   const resolvedKey = key ?? ''
   return {
     async summarize(input: SummarizeInput): Promise<string> {

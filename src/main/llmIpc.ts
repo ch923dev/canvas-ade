@@ -122,11 +122,14 @@ export function registerLlmHandlers(
       a: { provider: ProviderName; model: string; baseUrl?: string; maxCallsPerDay?: number }
     ): LlmWriteResult => {
       if (guard(e)) return { ok: false, reason: 'forbidden' }
+      // Preserve an already-configured cap when the caller omits it (the Settings modal does):
+      // otherwise every Save silently wipes maxCallsPerDay back to the 200 default (F-B).
+      const existing = readLlmConfig(userDataDir)
       const cfg: LlmConfig = {
         provider: a.provider,
         model: a.model,
         baseUrl: a.baseUrl,
-        maxCallsPerDay: a.maxCallsPerDay
+        maxCallsPerDay: a.maxCallsPerDay ?? existing.maxCallsPerDay
       }
       writeLlmConfig(userDataDir, cfg)
       return { ok: true }

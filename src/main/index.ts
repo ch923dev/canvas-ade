@@ -156,9 +156,14 @@ app.whenReady().then(async () => {
     encryptString: (s) => safeStorage.encryptString(s),
     decryptString: (b) => safeStorage.decryptString(b)
   }
-  const llmDataDir =
-    SMOKE === 'e2e' ? mkdtempSync(join(tmpdir(), 'canvas-e2e-llm-')) : app.getPath('userData')
-  if (SMOKE === 'e2e') process.env.CANVAS_E2E_LLM_DIR = llmDataDir
+  // Isolate the key/config/budget store under a throwaway temp dir for ANY e2e run so a test
+  // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the
+  // retired CANVAS_SMOKE=e2e), so gate on both — the old SMOKE-only guard was dead (F-A).
+  const llmIsolated = !!process.env.CANVAS_E2E || SMOKE === 'e2e'
+  const llmDataDir = llmIsolated
+    ? mkdtempSync(join(tmpdir(), 'canvas-e2e-llm-'))
+    : app.getPath('userData')
+  if (llmIsolated) process.env.CANVAS_E2E_LLM_DIR = llmDataDir
 
   // T-M3: the Tier-2 autonomous summary loop. The detector (T-M2) emits a {boardId} intent;
   // the loop re-reads the board, summarizes via the budgeted runSummarize (own file-backed

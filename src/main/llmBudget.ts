@@ -56,8 +56,12 @@ function read(userDataDir: string): BudgetState | null {
     if (typeof p.day === 'string' && typeof p.calls === 'number' && p.calls >= 0) {
       return { day: p.day, calls: p.calls }
     }
+    // Malformed shape → today's count resets to 0. Trace it so an unexpected budget reset
+    // (e.g. a OneDrive/network-share write conflict truncating the file) isn't invisible (M2).
+    console.warn('[llmBudget] budget file has an invalid shape — resetting day count')
     return null
   } catch {
+    console.warn('[llmBudget] budget file unreadable/corrupt — resetting day count')
     return null
   }
 }

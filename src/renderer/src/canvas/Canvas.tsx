@@ -233,9 +233,16 @@ function CanvasInner(): ReactElement {
     }
     let cancelled = false
     const ids = useCanvasStore.getState().boards.map((b) => b.id)
-    void window.api.memory.readBoards(ids).then((map) => {
-      if (!cancelled) setProse(map)
-    })
+    void window.api.memory
+      .readBoards(ids)
+      .then((map) => {
+        if (!cancelled) setProse(map)
+      })
+      .catch(() => {
+        // The handler is written to never reject (returns {} on any guard/no-dir case);
+        // this is a defensive guard so an unexpected rejection can't surface as an
+        // unhandled promise. Prose stays empty → Tier-1 lines render.
+      })
     return () => {
       cancelled = true
     }

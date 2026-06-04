@@ -48,6 +48,17 @@ the model's output is treated as untrusted passive context that never drives an 
 - The preload bridge mirrors the `budget-exceeded` result; every caller treats it like `no-provider`
   (degrade to Tier-1). No new secret crosses IPC or lands in `llm-budget.json`.
 
+## Accepted residual risk
+
+- **Renderer-set `local` `baseUrl` is an unvalidated egress target.** The `local` provider needs no
+  key, and its `baseUrl` is set by the (trusted) renderer via `llm:setConfig`. A renderer-side
+  foothold could therefore point summaries at an arbitrary `http(s)` endpoint and exfiltrate board
+  content (the summarize input) there with no key and no user gesture. We accept this: the renderer
+  is the trusted frame (a renderer compromise already implies broader access), egress stays
+  budget-capped, and `local` is *designed* for arbitrary local/LAN endpoints (LM Studio, Ollama,
+  a dev box) — restricting it to loopback would break legitimate use. Revisit if the renderer ever
+  hosts untrusted content. (Found in the 2026-06-04 pre-merge hunt; SEC-Low.)
+
 ## Out of scope (not decided here)
 
 - The MCP server's **Host-header attack surface** (a separate egress/ingress concern; covered by the MCP
