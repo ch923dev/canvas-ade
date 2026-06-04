@@ -191,11 +191,20 @@ see `docs/testing/TESTING.md`). Latest baseline: **679 unit + integration** gree
 trio is a known live-`WebContentsView` env flake, memory `e2e-browser-trio-flake` — rerun for clean,
 not a regression).
 
+**Context subsystem SHIPPED to `main` (2026-06-04, `4c321c2`, squash PR #39).** The desktop's LLM brain +
+persistent `.canvas/` project memory (M-digest + M-brain + M-memory): instant per-board reopen digest
+(Tier-1 heuristic, no key) upgraded to cached LLM prose on reopen (Tier-2, provider-agnostic, key in
+`safeStorage`, per-day budget, ADR `0003-llm-egress.md`). New units `src/main/{llmService,llmIpc,llmConfig,
+llmKeyStore,llmBudget,canvasMemory,memoryEngine,summaryLoop}.ts` + `digest.ts`/`DigestPanel`/`SettingsModal`.
+Generated memory is untrusted passive context (never drives an action). Build log `docs/context-subsystem.md`.
+**M-expose** (`canvas://memory` MCP read resource — lets agents read the memory) remains DEFERRED, gated on
+the MCP package landing on `main`. Post-merge gate green (852 unit+integration; e2e matrix green on the
+identical pre-merge tree).
+
 **In flight (parallel worktree streams + open PRs — `main` is integration-only):**
 - **PR #32 `feat/mcp-integration`** — re-port of the MCP integration onto current `main` (rescues the
-  closed #7/#8; large, ~101 files). Gates the swarm layer + Feature Workspaces.
-- **PR #39 `feat/context`** — Desktop Context subsystem (M-digest + M-brain: T-B1 LLM service, T-B2
-  safeStorage key store + Settings UX). Ships before MCP per plan.
+  closed #7/#8; large, ~101 files). Gates the swarm layer + Feature Workspaces. **NEXT to merge** — rebase
+  onto current `main` first (Context-brain landed; additively-shared `index.ts`/`preload`/`App.tsx`).
 - **PR #17 `chore/rebrand-expanse`** — Canvas ADE → **Expanse** rename (code + build IDs + docs).
   **Merges LAST** (2 cross-zone one-liners), memory `rebrand-expanse`.
 - Research-only PRs: #29 (Maestri teardown) · #27 (demo-video playbook) · #25 (SaaS strategy).
@@ -208,7 +217,7 @@ findings; reviews are stale-clear — heavy new code (MCP/Context) has landed on
 fresh hunt against the post-merge tree is warranted before release.
 
 **Start here next:** Open candidates (see `docs/roadmap.md`): land the in-flight PRs sequentially
-(full gate + e2e after EACH merge; **Context #39 → MCP #32 → … → rebrand #17 last**) · **Phase 5 —
+(full gate + e2e after EACH merge; **~~Context #39~~ ✅ merged `4c321c2` → MCP #32 NEXT → … → rebrand #17 last**) · **Phase 5 —
 packaging/signing** (CI matrix unsigned until Phase 5) · the **`canvas-ade-mcp` swarm layer** (memory
 `canvas-ade-mcp`) · the post-MCP **Feature Workspaces / worktrees** model (FW-1). Deferred: **agentic
 session resume** (roadmap note) · auto-update e2e coverage (Phase 5, needs packaging/electron-updater).
