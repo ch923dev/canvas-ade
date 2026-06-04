@@ -18,11 +18,44 @@ function fakeWin(mainFrame: object): {
     webContents: {
       mainFrame,
       isDestroyed: () => false,
+      once: () => {},
+      removeListener: () => {},
       send: (channel: string, payload: { request: ConfirmRequest; replyChannel: string }) =>
         sent.push({ channel, payload })
     }
   } as unknown as BrowserWindow
   return { win, sent }
+}
+
+/**
+ * A fake main window whose `webContents` records its lifecycle listeners so a test can
+ * fire `'destroyed'` / `'render-process-gone'` AFTER the confirm modal has been shown.
+ */
+function fakeWinWithLifecycle(mainFrame: object): {
+  win: BrowserWindow
+  fire: (event: string) => void
+} {
+  const listeners = new Map<string, (() => void)[]>()
+  const win = {
+    isDestroyed: () => false,
+    webContents: {
+      mainFrame,
+      isDestroyed: () => false,
+      once: (event: string, cb: () => void) => {
+        const arr = listeners.get(event) ?? []
+        arr.push(cb)
+        listeners.set(event, arr)
+      },
+      removeListener: (event: string, cb: () => void) => {
+        listeners.set(event, (listeners.get(event) ?? []).filter((f) => f !== cb))
+      },
+      send: () => {}
+    }
+  } as unknown as BrowserWindow
+  return {
+    win,
+    fire: (event: string) => (listeners.get(event) ?? []).slice().forEach((f) => f())
+  }
 }
 
 /** A fake ipc bus that captures the one-shot reply handler so a test can fire it. */
@@ -93,6 +126,25 @@ describe('requestConfirm', () => {
     await expect(requestConfirm(bus, () => null, REQ)).resolves.toEqual({ approved: false })
   })
 
+  it('🔒 denies (never hangs) when the window is destroyed AFTER send but before reply', async () => {
+    const mainFrame = { name: 'main' }
+    const { win, fire } = fakeWinWithLifecycle(mainFrame)
+    const { bus } = fakeBus()
+    const p = requestConfirm(bus, () => win, REQ)
+    // No human reply ever arrives; the window is torn down instead.
+    fire('destroyed')
+    await expect(p).resolves.toEqual({ approved: false })
+  })
+
+  it('🔒 denies (never hangs) when the render process is gone after send', async () => {
+    const mainFrame = { name: 'main' }
+    const { win, fire } = fakeWinWithLifecycle(mainFrame)
+    const { bus } = fakeBus()
+    const p = requestConfirm(bus, () => win, REQ)
+    fire('render-process-gone')
+    await expect(p).resolves.toEqual({ approved: false })
+  })
+
   it('🔒 denies when the send throws', async () => {
     const mainFrame = { name: 'main' }
     const win = {
@@ -100,6 +152,8 @@ describe('requestConfirm', () => {
       webContents: {
         mainFrame,
         isDestroyed: () => false,
+        once: () => {},
+        removeListener: () => {},
         send: () => {
           throw new Error('send failed')
         }

@@ -84,6 +84,25 @@ describe('createAuditLog (append-only JSONL)', () => {
     expect(JSON.parse(lines[1]).prompt).toBe('second')
   })
 
+  it('serializes concurrent appends — distinct, gap-free, monotonic seqs, both written', async () => {
+    const log = createAuditLog({ dir, now: () => 1 })
+    // Fire two appends WITHOUT awaiting between them — they both race the same pending
+    // initSeq(); the reservation must be serialized so they get distinct seqs.
+    const [a, b] = await Promise.all([
+      log.append(input({ prompt: 'first' })),
+      log.append(input({ prompt: 'second' }))
+    ])
+    const seqs = [a.seq, b.seq].sort((x, y) => x - y)
+    expect(seqs).toEqual([1, 2]) // distinct, gap-free, monotonic
+    // Both entries are persisted (no interleaved/lost write).
+    const back = await log.read()
+    expect(back).toHaveLength(2)
+    expect(back.map((e) => e.seq).sort((x, y) => x - y)).toEqual([1, 2])
+    const raw = readFileSync(join(dir, FILE), 'utf8')
+    const lines = raw.split('\n').filter((l) => l.trim())
+    expect(lines).toHaveLength(2)
+  })
+
   it('read tolerates a corrupt / blank line and returns the well-formed entries', async () => {
     const log = createAuditLog({ dir, now: () => 1 })
     await log.append(input({ prompt: 'good' }))

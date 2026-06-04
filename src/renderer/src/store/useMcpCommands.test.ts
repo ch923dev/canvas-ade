@@ -26,6 +26,14 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(boards[0]).toMatchObject({ id: 'srv-1', type: 'terminal' })
   })
 
+  it('addBoard is idempotent by id — a double add yields one board and acks ok both times', () => {
+    const first = applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    const second = applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    expect(first).toEqual({ ok: true, type: 'addBoard' })
+    expect(second).toEqual({ ok: true, type: 'addBoard' })
+    expect(useCanvasStore.getState().boards).toHaveLength(1)
+  })
+
   it('rejects an unknown board type WITHOUT adding a board (defense in depth)', () => {
     const ack = applyMcpCommand({
       type: 'addBoard',

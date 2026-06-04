@@ -3,8 +3,8 @@ import { join } from 'node:path'
 
 /**
  * 🔒 Append-only audit trail for MCP dispatch (M4). EVERY action that writes into
- * another board's shell — handoff_prompt / assign_prompt / interrupt (T4.3–T4.5) —
- * records an entry here BEFORE/AFTER it runs: the resolved target board id, the full
+ * another board's shell — handoff_prompt / assign_prompt / interrupt / relay_prompt
+ * (T4.3–T4.6) — records an entry here BEFORE/AFTER it runs: the resolved target board id, the full
  * prompt, the single-use nonce + monotonic sequence, the outcome, and a timestamp.
  * The log is the forensic record that a tainted/worker-originated prompt can trigger
  * nothing without leaving a trace + passing the human gate.
@@ -132,9 +132,13 @@ export function createAuditLog(opts: {
 
   return {
     async append(input) {
-      const seq = await initSeq()
-      // reserve the next sequence atomically against concurrent appends in this instance
-      nextSeq = Promise.resolve(seq + 1)
+      // Reserve a sequence by CHAINING through the single tail promise: each caller awaits
+      // the prior reservation, so two concurrent appends can't both read the same pending
+      // seq (which would dup the seq + interleave writes). The tail resolves to the seq
+      // the NEXT caller will use; this caller consumes the value it awaited.
+      const reservation = initSeq()
+      nextSeq = reservation.then((seq) => seq + 1)
+      const seq = await reservation
       const entry = shapeAuditEntry(input, seq, now())
       await mkdir(opts.dir, { recursive: true })
       await appendFile(path, JSON.stringify(entry) + '\n', 'utf8')

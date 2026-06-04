@@ -159,6 +159,8 @@ export function registerBoardRegistryHandler(
     const main = getWin()?.webContents.mainFrame
     if (main && e.senderFrame && e.senderFrame !== main) return // foreign frame
     if (Array.isArray(payload)) {
+      // Legacy / version-skew only: a renderer that predates T4.6 sends a bare boards
+      // array (no connectors). The current renderer always sends `{ boards, connectors }`.
       mirror = sanitizeSnapshot(payload)
       connectorMirror = []
     } else if (payload && typeof payload === 'object') {

@@ -63,9 +63,14 @@ export function requestConfirm(
       if (done) return
       done = true
       bus.removeListener(replyChannel, onReply)
+      // Fail-closed teardown: a window torn down WHILE the modal is open (no human can
+      // reply) must deny, not hang the awaiting tool forever — remove these on resolve.
+      wc.removeListener('destroyed', onGone)
+      wc.removeListener('render-process-gone', onGone)
       if (timer) clearTimeout(timer)
       resolve(decision)
     }
+    const onGone = (): void => finish(DENIED)
     const onReply = (e: IpcMainEvent, decision: unknown): void => {
       if (isForeignSender(e, getWin)) return // a foreign frame can't decide — ignore
       // Fail-closed: ONLY an explicit `approved === true` approves; anything else denies.
@@ -78,6 +83,10 @@ export function requestConfirm(
     // Optional safety timeout (deny). Off by default — a human is allowed to take time.
     const timer = timeoutMs === undefined ? null : setTimeout(() => finish(DENIED), timeoutMs)
     bus.once(replyChannel, onReply)
+    // If the window/render-process dies after the modal is shown but before a reply,
+    // `bus.once` never fires — deny so the awaiting MCP tool call can't hang forever.
+    wc.once('destroyed', onGone)
+    wc.once('render-process-gone', onGone)
     try {
       wc.send('mcp:confirm', { request, replyChannel })
     } catch {

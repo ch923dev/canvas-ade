@@ -40,7 +40,11 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       if (typeof id !== 'string' || id.length === 0 || !SPAWNABLE.includes(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
-      useCanvasStore.getState().addBoard(type, SPAWN_ANCHOR, { id })
+      // Idempotent by id (mirrors removeBoard): a board with this id already exists →
+      // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
+      const store = useCanvasStore.getState()
+      if (store.boards.some((b) => b.id === id)) return { ok: true, type: 'addBoard' }
+      store.addBoard(type, SPAWN_ANCHOR, { id })
       return { ok: true, type: 'addBoard' }
     }
     case 'removeBoard': {
