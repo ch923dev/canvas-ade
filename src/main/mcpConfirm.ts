@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
-import { isForeignSender } from './preview'
+import { isForeignSender } from './ipcGuard'
 
 /**
  * 🔒 Human-confirm gate (T4.2). The reusable "are you sure?" used by every dangerous

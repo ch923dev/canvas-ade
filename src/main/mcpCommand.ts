@@ -1,5 +1,5 @@
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
-import { isForeignSender } from './preview'
+import { isForeignSender } from './ipcGuard'
 
 /**
  * Control-plane command envelope, MAIN → renderer — the inverse of the `mcp:boards`

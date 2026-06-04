@@ -6,6 +6,7 @@
 import path from 'node:path'
 import { dialog } from 'electron'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
+import { isForeignSender } from './ipcGuard'
 import writeFileAtomic from 'write-file-atomic'
 import {
   readProject,
@@ -24,25 +25,6 @@ import {
 import { scaffoldProjectMemory, createCanvasMemory } from './canvasMemory'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
 import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
-
-/**
- * True when an IPC sender is NOT the main window's main frame (foreign → deny).
- * BUG-M6: the old guard returned `false` (allowed) when `getWin()` was null (window
- * destroyed), letting a real-but-unresolved sender through. Now: a synthetic call
- * (no `senderFrame`) is internal → allow; a real sender against an unresolved window
- * is treated as foreign → deny; otherwise compare against the live main frame.
- *
- * Exported (with an injectable main-frame getter) so it is unit-testable.
- */
-export function isForeignSender(
-  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
-  getMainFrame: () => BrowserWindow['webContents']['mainFrame'] | null | undefined
-): boolean {
-  const main = getMainFrame()
-  if (!e.senderFrame) return false // synthetic/internal call — allow
-  if (!main) return true // real sender but window unresolved — treat as foreign, DENY
-  return e.senderFrame !== main
-}
 
 /**
  * True when a renderer-supplied project dir must be REJECTED before any fs touch
@@ -117,8 +99,7 @@ export function registerProjectHandlers(
   // the SAME budgeted/passive summarize the detector does (no new egress). Default = no-op.
   onRefresh: (boardId: string) => Promise<void> = async () => {}
 ): void {
-  const guard = (e: IpcMainInvokeEvent): boolean =>
-    isForeignSender(e, () => getWin()?.webContents.mainFrame)
+  const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
   // BUG-027: memory:readBoards built a fresh CanvasMemory on EVERY IPC call. Memoize one per
   // project dir and reuse it across calls (re-create only when the open project changes), so a

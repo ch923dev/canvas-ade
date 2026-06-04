@@ -6,6 +6,7 @@
  * returned; no key/secret is logged or surfaced.
  */
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
+import { isForeignSender } from './ipcGuard'
 import type { ProviderName, LlmConfig } from './llmConfig'
 import { readLlmConfig, writeLlmConfig, DEFAULT_MODELS, isLoopbackBaseUrl } from './llmConfig'
 import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
@@ -18,21 +19,6 @@ import {
   type SummarizeInput,
   type SummarizeResult
 } from './llmService'
-
-/**
- * True when an IPC sender is NOT the main window's main frame (foreign → deny). Matches
- * the pty/preview/project convention (a per-module copy is intentional; consolidating the
- * copies is a separate refactor, out of scope here).
- */
-export function isForeignSender(
-  e: Pick<IpcMainInvokeEvent, 'senderFrame'>,
-  getMainFrame: () => BrowserWindow['webContents']['mainFrame'] | null | undefined
-): boolean {
-  const main = getMainFrame()
-  if (!e.senderFrame) return false // synthetic/internal call — allow
-  if (!main) return true // real sender but window unresolved — DENY
-  return e.senderFrame !== main
-}
 
 /** Status surfaced to the renderer — provider/model + key presence, never key material. */
 export interface LlmStatus {
@@ -103,8 +89,7 @@ export function registerLlmHandlers(
     keyStore,
     budget
   }
-  const guard = (e: IpcMainInvokeEvent): boolean =>
-    isForeignSender(e, () => getWin()?.webContents.mainFrame)
+  const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
   ipcMain.handle('llm:summarize', async (e, input: SummarizeInput): Promise<SummarizeResult> => {
     if (guard(e)) return { ok: false, reason: 'provider-error', message: 'forbidden sender' }

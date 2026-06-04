@@ -5,10 +5,8 @@ import {
   isAllowedPreviewUrl,
   isAllowedExternal,
   registerPreviewNavGuards,
-  registerLoadLatch,
-  isForeignSender
+  registerLoadLatch
 } from './preview'
-import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 
 // Bug #5: a dead/refused URL loads a Chromium error page whose did-finish-load must
 // not flip the board back to "connected". The httpResponseCode from did-navigate is
@@ -261,48 +259,5 @@ describe('registerLoadLatch (failed-latch lifecycle)', () => {
   })
 })
 
-// Bug M6: the frame guard must DENY when the window is unresolved but the sender is a
-// real frame (a destroyed/reloading window must not let a foreign frame slip through),
-// allow a synthetic/internal call (no senderFrame), allow the genuine main frame, and
-// block any other frame.
-describe('isForeignSender', () => {
-  const mainFrame = { name: 'main' } as unknown as IpcMainInvokeEvent['senderFrame']
-  const foreignFrame = { name: 'foreign' } as unknown as IpcMainInvokeEvent['senderFrame']
-  const winWithMain = (): BrowserWindow =>
-    ({
-      isDestroyed: () => false,
-      webContents: { mainFrame, isDestroyed: () => false }
-    }) as unknown as BrowserWindow
-
-  it('allows a synthetic/internal call with no senderFrame', () => {
-    expect(isForeignSender({ senderFrame: null }, () => winWithMain())).toBe(false)
-  })
-
-  it('blocks a real foreign frame', () => {
-    expect(isForeignSender({ senderFrame: foreignFrame }, () => winWithMain())).toBe(true)
-  })
-
-  it('allows the genuine main frame', () => {
-    expect(isForeignSender({ senderFrame: mainFrame }, () => winWithMain())).toBe(false)
-  })
-
-  it('blocks a real sender when the window is unresolved (null)', () => {
-    expect(isForeignSender({ senderFrame: mainFrame }, () => null)).toBe(true)
-  })
-
-  it('denies (never throws) when the webContents is destroyed mid-teardown', () => {
-    // A late invoke can arrive after the WebContents is destroyed but while the
-    // BrowserWindow still resolves; reading `.mainFrame` then throws. We must
-    // short-circuit on isDestroyed() and DENY, never touch mainFrame.
-    const destroyed = {
-      isDestroyed: () => false,
-      webContents: {
-        isDestroyed: () => true,
-        get mainFrame(): never {
-          throw new Error('Object has been destroyed')
-        }
-      }
-    } as unknown as BrowserWindow
-    expect(isForeignSender({ senderFrame: mainFrame }, () => destroyed)).toBe(true)
-  })
-})
+// Bug M6: the frame guard is now the shared ./ipcGuard — its branches (incl. the
+// destroyed-window / destroyed-webContents cases this file used to own) live in ipcGuard.test.ts.

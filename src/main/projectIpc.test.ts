@@ -3,32 +3,10 @@ import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { mkdtempSync, writeFileSync, rmSync } from 'fs'
 import { join, sep, basename } from 'path'
 import { tmpdir } from 'os'
-import { isForeignSender, isUnsafeProjectDir, registerProjectHandlers } from './projectIpc'
+import { isUnsafeProjectDir, registerProjectHandlers } from './projectIpc'
 import { touchRecent } from './recentProjects'
 
-describe('isForeignSender (BUG-M6)', () => {
-  const sameFrame = { id: 'main' }
-
-  it('allows a synthetic/internal call (no senderFrame)', () => {
-    const e = { senderFrame: undefined } as unknown as IpcMainInvokeEvent
-    expect(isForeignSender(e, () => sameFrame as never)).toBe(false)
-  })
-
-  it('blocks a foreign frame', () => {
-    const e = { senderFrame: { id: 'other' } } as unknown as IpcMainInvokeEvent
-    expect(isForeignSender(e, () => sameFrame as never)).toBe(true)
-  })
-
-  it('allows the same main frame', () => {
-    const e = { senderFrame: sameFrame } as unknown as IpcMainInvokeEvent
-    expect(isForeignSender(e, () => sameFrame as never)).toBe(false)
-  })
-
-  it('blocks a real sender when the window is unresolved (getMainFrame → null)', () => {
-    const e = { senderFrame: { id: 'real' } } as unknown as IpcMainInvokeEvent
-    expect(isForeignSender(e, () => null)).toBe(true)
-  })
-})
+// isForeignSender is now the shared guard — its branches live in ipcGuard.test.ts.
 
 describe('isUnsafeProjectDir (M-6)', () => {
   it('accepts a normal absolute path (Windows + POSIX)', () => {

@@ -12,6 +12,10 @@ import { isAllowedExternal } from './preview'
  * Security-critical webPreferences for the main window: contextIsolation +
  * sandbox ON, nodeIntegration + webviewTag OFF (#3/#4). The `preload` path is
  * runtime-specific (built from __dirname) so the caller supplies it.
+ *
+ * webSecurity / allowRunningInsecureContent / experimentalFeatures are pinned to their
+ * safe defaults EXPLICITLY (implicit-secure-defaults-not-pinned): the same-origin policy
+ * and insecure/experimental web surfaces must not be silently flippable by a later edit.
  */
 export function buildMainWindowWebPreferences(preloadPath: string): {
   preload: string
@@ -19,13 +23,19 @@ export function buildMainWindowWebPreferences(preloadPath: string): {
   contextIsolation: true
   nodeIntegration: false
   webviewTag: false
+  webSecurity: true
+  allowRunningInsecureContent: false
+  experimentalFeatures: false
 } {
   return {
     preload: preloadPath,
     sandbox: true,
     contextIsolation: true,
     nodeIntegration: false,
-    webviewTag: false
+    webviewTag: false,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    experimentalFeatures: false
   }
 }
 

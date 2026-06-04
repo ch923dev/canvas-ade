@@ -1,5 +1,5 @@
 import type { IpcMain, BrowserWindow, IpcMainInvokeEvent } from 'electron'
-import { isForeignSender } from './preview'
+import { isForeignSender } from './ipcGuard'
 import type { AuditEntry, AuditLog } from './auditLog'
 
 /**
