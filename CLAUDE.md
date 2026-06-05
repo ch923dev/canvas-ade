@@ -161,13 +161,16 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 
 ## Status
 
-> **✅ E2E IS A LOCAL PRE-COMMIT GATE (2026-06-03, T5).** The brittle `CANVAS_SMOKE=e2e` harness is
-> gone (replaced by Playwright `_electron`, T4). **e2e does NOT run in GitHub Actions** — it was
-> billing-blocked there, and the native/Docker e2e is cheaper + faster on the dev box. Instead the
-> full **Windows-native + Linux-Docker matrix** runs **locally as a `pre-commit` hook**
-> (`.githooks/pre-commit` → `pnpm test:e2e:matrix`; enabled by the `prepare` script via
-> `core.hooksPath`). Flake policy: `retries:2` in CI/pre-commit (`E2E_PRECOMMIT`), `workers:1`.
-> Bypass a WIP commit with `git commit --no-verify`. **CI gate = the Actions `check` job only**
+> **✅ E2E IS A LOCAL PRE-PUSH GATE (2026-06-03, T5; moved commit→push 2026-06-06).** The brittle
+> `CANVAS_SMOKE=e2e` harness is gone (replaced by Playwright `_electron`, T4). **e2e does NOT run in
+> GitHub Actions** — it was billing-blocked there, and the native/Docker e2e is cheaper + faster on
+> the dev box. The full **Windows-native + Linux-Docker matrix** now runs **locally as a `pre-push`
+> hook** (`.githooks/pre-push` → `pnpm test:e2e:matrix`, origin-only, skips docs-only pushes), NOT
+> pre-commit: `git commit` carries no push-intent signal, so gating "work that reaches origin" is a
+> push concern — local commits stay fast. **`pre-commit` is now the cheap trio only** (`typecheck ·
+> lint · format:check`). Both enabled by the `prepare` script via `core.hooksPath`. Flake policy:
+> `retries:2` under `E2E_PRECOMMIT`, `workers:1`. Bypass with `git commit --no-verify` (cheap gate) /
+> `git push --no-verify` (e2e). **CI gate = the Actions `check` job only**
 > (typecheck · lint · format:check · unit + integration); the `smoke` job was removed from `pr.yml`
 > + `staging.yml`. This **supersedes** the 2026-06-03 freeze. Both legs proven green: Windows on the
 > dev machine (21/21), the Linux leg ×2 via Docker (`Dockerfile.e2e`). The matrix already caught +

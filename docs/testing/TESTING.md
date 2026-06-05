@@ -129,7 +129,7 @@ every `api.*` method is asserted to invoke the right `ipcRenderer.invoke` channe
 
 The e2e tier is `@playwright/test` `_electron`, driving the BUILT app (`out/main/index.js`).
 Run with `pnpm test:e2e` (the `pretest:e2e` hook builds first). It is **separate** from the
-Vitest `check` gate (`pnpm test` stays unit + integration only). It runs as a local pre-commit
+Vitest `check` gate (`pnpm test` stays unit + integration only). It runs as a local pre-push
 gate (see below) rather than in GitHub Actions.
 
 **Boot mode:** launched with `CANVAS_E2E=1`, which loads the renderer with `?e2e=1` (installs the
@@ -152,10 +152,12 @@ self-running or auto-quitting — Playwright drives and closes the app.
 `nodeIntegration:true`, which violates the locked sandbox. We use `electronApp.evaluate` + the MAIN
 registry exclusively. Never flip the sandbox to make a test pass.
 
-**The e2e gate (T5) — LOCAL pre-commit, not GitHub Actions.** e2e was billing-blocked in Actions and
-the native/Docker e2e is cheaper + faster on the dev box, so e2e runs as a **`pre-commit` hook** that
-executes the full **Windows-native + Linux-Docker matrix** (`.githooks/pre-commit` →
-`pnpm test:e2e:matrix`). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
+**The e2e gate (T5) — LOCAL pre-push, not GitHub Actions.** e2e was billing-blocked in Actions and
+the native/Docker e2e is cheaper + faster on the dev box, so e2e runs as a **`pre-push` hook** that
+executes the full **Windows-native + Linux-Docker matrix** (`.githooks/pre-push` →
+`pnpm test:e2e:matrix`). It moved commit→push on 2026-06-06 so local commits stay fast — `git commit`
+has no push-intent signal, so gating "work that reaches origin" belongs on push (the hook is
+origin-only and skips docs-only pushes). The Actions `smoke` job was **removed** from `pr.yml` + `staging.yml`; the
 Actions CI gate is now the `check` job only (typecheck · lint · format · unit + integration).
 Process-tree-kill is covered by `killTreeCommand` (unit, both platforms — Windows `taskkill /T /F`,
 POSIX negative-pgid) + `e2e/processTree.e2e.ts` (a real spawned child prints its pid; the probe asserts
@@ -164,13 +166,21 @@ proven green: Windows on the dev machine, the Linux leg ×2 via Docker. The spik
 capturePage is non-blank on both with `--no-sandbox` + `--disable-dev-shm-usage` (Linux) — **no GL flag
 needed**; the app sandbox is untouched.
 
-### The pre-commit hook + the local e2e matrix
+### The git hooks + the local e2e matrix
 
-The hook (`.githooks/pre-commit`) is enabled per-clone by the `package.json` `prepare` script
-(`git config core.hooksPath .githooks`, run on install). On commit it runs the full matrix; bypass a
-WIP commit with `git commit --no-verify`. It checks Docker is up first (the Linux leg needs it) and
-sets `E2E_PRECOMMIT=1` so Playwright uses `retries:2` (the documented browser-trio env flake can't
-false-block a commit). Run the legs directly:
+Both hooks are enabled per-clone by the `package.json` `prepare` script (`git config core.hooksPath
+.githooks`, run on install).
+
+- **`.githooks/pre-commit` — cheap trio, every commit.** Runs `typecheck · lint · format:check`
+  (~seconds; docs-only commits run `format:check` alone). Bypass a WIP commit with
+  `git commit --no-verify`.
+- **`.githooks/pre-push` — the e2e matrix, origin pushes only.** Runs the full matrix on `git push`
+  to `origin`; skips non-origin remotes, no-op pushes, and docs-only pushes (the changed set is
+  diffed across the pushed ref range). It checks Docker is up first (the Linux leg needs it) and sets
+  `E2E_PRECOMMIT=1` so Playwright uses `retries:2` (the documented browser-trio env flake can't
+  false-block a push). Bypass a WIP push with `git push --no-verify`.
+
+Run the legs directly:
 
 | Command | Leg | How |
 |---|---|---|
