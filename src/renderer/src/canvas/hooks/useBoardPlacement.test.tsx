@@ -26,7 +26,8 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
-// jsdom-safe: dispatch window move/up as MouseEvents (the hook reads only clientX/clientY).
+// Dispatch window move/up as MouseEvents — the hook reads only clientX/clientY, and a
+// MouseEvent on the 'pointermove'/'pointerup' type is caught by the window listeners.
 const down = (el: Element, x: number, y: number): void =>
   void fireEvent.pointerDown(el, { clientX: x, clientY: y })
 const move = (x: number, y: number): void =>
@@ -66,5 +67,23 @@ describe('useBoardPlacement', () => {
     act(() => void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
     expect(useCanvasStore.getState().boards).toHaveLength(0)
     expect(useCanvasStore.getState().tool).toBe('select')
+  })
+
+  it('Escape DURING a drag aborts it — no phantom board on the later pointerup', () => {
+    const { getByTestId } = render(<Harness />)
+    down(getByTestId('cap'), 100, 100)
+    move(400, 300)
+    act(() => void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    up(400, 300) // the mouseup that arrives after cancelling must NOT create a board
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+    expect(useCanvasStore.getState().tool).toBe('select')
+  })
+
+  it('updates the ghost while dragging', () => {
+    const { getByTestId } = render(<Harness />)
+    expect(getByTestId('cap').getAttribute('data-ghost')).toBe('none')
+    down(getByTestId('cap'), 100, 100)
+    move(250, 220)
+    expect(getByTestId('cap').getAttribute('data-ghost')).toBe('150x120')
   })
 })
