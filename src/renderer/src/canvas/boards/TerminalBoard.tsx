@@ -13,7 +13,7 @@
  * Lifecycle (spawning → running → awaiting-input → exited / spawn-failed) is
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { TerminalConfig } from './TerminalConfig'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -107,12 +107,13 @@ function releaseWebglSlot(id: string): void {
  */
 async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
   const path = await window.api.stageClipboardImage(boardId)
+  if (term.element === undefined) return // disposed during the await
   if (path) {
     term.paste(`"${path}" `)
     return
   }
   const text = await window.api.clipboard.readText()
-  if (text) term.paste(text)
+  if (text && term.element !== undefined) term.paste(text)
 }
 
 export function TerminalBoard({
@@ -349,6 +350,8 @@ export function TerminalBoard({
         if (sel) {
           void window.api.clipboard.writeText(sel)
           term.clearSelection()
+        } else {
+          return true // selection vanished — fall through to xterm's Ctrl+C (SIGINT)
         }
       } else if (action.kind === 'paste') {
         void pasteIntoTerminal(term, board.id)
@@ -672,7 +675,7 @@ export function TerminalBoard({
     setMenu({ x: e.clientX, y: e.clientY, hasSel: term.hasSelection() })
   }, [])
 
-  const menuEntries: MenuEntry[] = menu
+  const menuEntries: MenuEntry[] = useMemo(() => menu
     ? [
         {
           kind: 'action',
@@ -710,7 +713,7 @@ export function TerminalBoard({
           onSelect: () => termRef.current?.clear()
         }
       ]
-    : []
+    : [], [menu, board.id])
 
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
   // session survives zoom-out — see BoardNode. At LOD we hide the xterm well and

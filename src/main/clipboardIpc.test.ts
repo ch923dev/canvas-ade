@@ -66,4 +66,35 @@ describe('clipboardIpc', () => {
     expect(stage).toHaveBeenCalledWith('/proj', 'b', Buffer.from([1, 2]))
     expect(p).toBe('/proj/.canvas/tmp/paste-b-1.png')
   })
+
+  describe('foreign-sender rejection', () => {
+    const foreign = { senderFrame: {} } // truthy senderFrame + getWin()=null → isForeignSender true
+
+    it('every handler denies a foreign sender with a safe value', async () => {
+      const ipc = fakeIpc()
+      const d = deps({ readImagePng: () => Buffer.from([1]) })
+      registerClipboardHandlers(ipc as never, () => null, d)
+      expect(await ipc.handlers['clipboard:writeText'](foreign, 'x')).toBe(false)
+      expect(d.writeText).not.toHaveBeenCalled()
+      expect(await ipc.handlers['clipboard:readText'](foreign)).toBe('')
+      expect(await ipc.handlers['clipboard:hasImage'](foreign)).toBe(false)
+      expect(await ipc.handlers['terminal:stageClipboardImage'](foreign, 'b')).toBeNull()
+      expect(d.stage).not.toHaveBeenCalled()
+      expect(await ipc.handlers['terminal:cleanupStagedImages'](foreign, 'b')).toBe(false)
+    })
+  })
+
+  describe('untested handlers', () => {
+    it('clipboard:hasImage returns the deps value', async () => {
+      const ipc = fakeIpc()
+      registerClipboardHandlers(ipc as never, () => null, deps({ hasImage: () => true }))
+      expect(await ipc.handlers['clipboard:hasImage'](internal)).toBe(true)
+    })
+
+    it('terminal:cleanupStagedImages returns true (no-op) when no project is open', async () => {
+      const ipc = fakeIpc()
+      registerClipboardHandlers(ipc as never, () => null, deps({ currentDir: () => null }))
+      expect(await ipc.handlers['terminal:cleanupStagedImages'](internal, 'b')).toBe(true)
+    })
+  })
 })
