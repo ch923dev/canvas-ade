@@ -95,7 +95,11 @@ export interface CanvasState {
    * injects a caller-minted id (the MCP `spawn_board` path mints the id in MAIN so
    * the tool can return it to the agent); omitted → the store mints one.
    */
-  addBoard: (type: BoardType, at: { x: number; y: number }, opts?: { id?: string }) => string
+  addBoard: (
+    type: BoardType,
+    at: { x: number; y: number },
+    opts?: { id?: string; size?: { w: number; h: number }; exact?: boolean }
+  ) => string
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
@@ -336,8 +340,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addBoard: (type, at, opts) => {
     const id = opts?.id ?? newId()
-    const pos = freeSlot(get().boards, at, DEFAULT_BOARD_SIZE[type])
-    const board = createBoard(type, { id, x: pos.x, y: pos.y })
+    const size = opts?.size ?? DEFAULT_BOARD_SIZE[type]
+    // exact:true honours a deliberately-drawn rectangle (drag-create) verbatim; otherwise
+    // nudge off any overlap (click-spawn / the MCP spawn path).
+    const pos = opts?.exact ? at : freeSlot(get().boards, at, size)
+    const board = createBoard(type, { id, x: pos.x, y: pos.y, w: size.w, h: size.h })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
     set((s) =>

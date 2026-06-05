@@ -95,6 +95,26 @@ describe('addBoard', () => {
     const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
     expect(overlap).toBe(false)
   })
+
+  it('uses an explicit size when provided', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 }, { size: { w: 333, h: 222 } })
+    const b = get().boards.find((x) => x.id === id)!
+    expect(b).toMatchObject({ w: 333, h: 222 })
+  })
+
+  it('places exactly (skips freeSlot) when exact:true, even over an existing board', () => {
+    get().addBoard('terminal', { x: 100, y: 100 }) // occupies the slot
+    const id = get().addBoard('browser', { x: 100, y: 100 }, { size: { w: 240, h: 160 }, exact: true })
+    const b = get().boards.find((x) => x.id === id)!
+    expect(b).toMatchObject({ x: 100, y: 100 }) // verbatim, NOT nudged off the overlap
+  })
+
+  it('still nudges off an overlap when exact is falsy (default click-spawn)', () => {
+    get().addBoard('terminal', { x: 100, y: 100 })
+    const id = get().addBoard('terminal', { x: 100, y: 100 })
+    const b = get().boards.find((x) => x.id === id)!
+    expect(b.x === 100 && b.y === 100).toBe(false) // freeSlot moved it
+  })
 })
 
 describe('idle-on-mount registry (M-1: restored terminals stay idle)', () => {
