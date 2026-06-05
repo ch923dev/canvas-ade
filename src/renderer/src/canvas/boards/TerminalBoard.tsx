@@ -29,7 +29,8 @@ import {
   type TerminalState
 } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
-import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
+import { isE2E, e2eTerminals, appendTerminalInput } from '../../smoke/e2eRegistry'
+import { resolveTerminalKey } from './terminal/terminalKeymap'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
@@ -300,10 +301,37 @@ export function TerminalBoard({
     // (not inside onWinMsg) so a restart — which delivers a fresh port through the
     // same persistent message listener — doesn't stack duplicate xterm listeners;
     // the disposables are released on teardown.
-    const dataDisp = term.onData((d) => portRef.current?.postMessage({ t: 'input', d }))
+
+    // All PTY-bound input flows through one seam so the e2e harness can observe it and
+    // so the key handler (newline) and term.paste both share the same path.
+    const sendInput = (d: string): void => {
+      if (isE2E()) appendTerminalInput(board.id, d)
+      portRef.current?.postMessage({ t: 'input', d })
+    }
+    const dataDisp = term.onData((d) => sendInput(d))
     const resizeDisp = term.onResize(({ cols, rows }) =>
       portRef.current?.postMessage({ t: 'resize', cols, rows })
     )
+
+    // Custom key handling (returns false to suppress xterm's default for keys we own):
+    //  - Shift+Enter inserts a newline (\x1b\r — CC-recognized, tmux-safe; NOT raw \n).
+    //  - Ctrl/Cmd+C copies when a selection exists (then clears); else falls through to
+    //    xterm's SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there.
+    //  - Ctrl/Cmd+V smart-pastes (image → staged path, else text), via term.paste so
+    //    multiline content gets bracketed-paste markers.
+    const isMac = navigator.platform.toLowerCase().includes('mac')
+    term.attachCustomKeyEventHandler((e) => {
+      const action = resolveTerminalKey(e, { hasSelection: term.hasSelection(), isMac })
+      if (!action) return true
+      if (action.kind === 'newline') {
+        sendInput('\x1b\r')
+      } else if (action.kind === 'copy') {
+        /* wired in Slice 2 (Task 2.4) */
+      } else if (action.kind === 'paste') {
+        /* wired in Slice 2 (Task 2.4) */
+      }
+      return false
+    })
 
     // Let xterm handle the key FIRST (Backspace/Enter/arrows/Ctrl-C are keydown-
     // driven on xterm's textarea), THEN stop it bubbling to the canvas / React Flow
