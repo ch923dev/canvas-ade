@@ -26,7 +26,7 @@ import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
-import { e2eTerminals } from './e2eRegistry'
+import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
@@ -44,6 +44,22 @@ export interface CanvasE2E {
   getRuntime: (id: string) => RuntimeProbe | null
   /** Whole xterm framebuffer for a terminal board id, or null if not registered. */
   readTerminal: (id: string) => string | null
+  /** Concatenated bytes the terminal posted to its PTY since the last clear (e2e). */
+  readTerminalInput: (id: string) => string
+  /** Drop a terminal's recorded input log (call before driving a key probe). */
+  clearTerminalInput: (id: string) => void
+  /** Focus a terminal's xterm so real key input lands on it. */
+  focusTerminal: (id: string) => void
+  /**
+   * Dispatch a synthetic keydown on a terminal's xterm helper-textarea, with explicit
+   * modifier flags. xterm's customKeyEventHandler does not check isTrusted, so this
+   * reliably drives chord probes (Shift+Enter / Ctrl+C / Ctrl+V) — unlike sendInputEvent
+   * keyboard modifiers, which are flaky for chords (memory e2e-modifier-keys-synthetic).
+   */
+  dispatchTerminalKey: (
+    id: string,
+    init: { key: string; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean }
+  ) => boolean
   /** Append a checklist element (one starter item) to a planning board. */
   addChecklist: (id: string) => void
   /** Patch durable props on any board — e.g. change a terminal's launchCommand to force a respawn. */
@@ -217,6 +233,23 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         out += (buf.getLine(i)?.translateToString(true) ?? '') + '\n'
       }
       return out
+    },
+    readTerminalInput(id) {
+      return (e2eTerminalInput.get(id) ?? []).join('')
+    },
+    clearTerminalInput(id) {
+      e2eTerminalInput.delete(id)
+    },
+    focusTerminal(id) {
+      e2eTerminals.get(id)?.focus()
+    },
+    dispatchTerminalKey(id, init) {
+      const ta = document.querySelector(
+        `.react-flow__node[data-id="${id}"] .xterm-helper-textarea`
+      )
+      if (!ta) return false
+      ta.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
+      return true
     },
     addChecklist(id) {
       const store = useCanvasStore.getState()
