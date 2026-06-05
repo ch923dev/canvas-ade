@@ -15,7 +15,7 @@
 ### ⛔ The blocker that gates EVERYTHING
 **GitHub Actions is billing-blocked** — every PR `check` job fails in ~2s (*"recent account payments have failed or your spending limit needs to be increased"*). So **no PR (incl. #53) can CI-verify or merge** until the user either:
 1. fixes Actions billing, OR
-2. runs the gate in a **token'd local checkout** (where `pnpm install` resolves the private `@ch923dev/canvas-ade-mcp` GitHub-Packages dep via `NODE_AUTH_TOKEN`), then `pnpm typecheck && pnpm build && pnpm test:e2e:matrix`.
+2. runs the gate in a **token'd local checkout** (where `pnpm install` resolves the private `@expanse-ade/mcp` GitHub-Packages dep via `NODE_AUTH_TOKEN`), then `pnpm typecheck && pnpm build && pnpm test:e2e:matrix`.
 
 Until then: local junctioned worktrees can run **vitest + lint + web/preload typecheck** (real), but **NOT** full `typecheck` (node leg), `build`, or the e2e matrix (the junctioned `node_modules` lacks the private MCP dep → `mcpSmoke.ts` won't resolve). Commit with `--no-verify` (the pre-commit e2e matrix can't build). This is an env limit, not a regression. See memory `ci-green-2026-06-02` (updated with the billing note) + `mcp-publish-gating`.
 

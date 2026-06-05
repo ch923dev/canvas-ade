@@ -1,7 +1,7 @@
 # Canvas ADE × MCP — Integration Roadmap
 
 > **Umbrella branch:** `feat/mcp-integration`. **Goal:** close the gap between the shipped MCP package
-> (`@ch923dev/canvas-ade-mcp`, Phases 0–1) and a full AI-orchestrated swarm on the canvas — plus the
+> (`@expanse-ade/mcp`, Phases 0–1) and a full AI-orchestrated swarm on the canvas — plus the
 > **spatial UI** (connectors, on-canvas attention, audit viewer) that makes it Canvas ADE's
 > differentiator. Builds out package Phases **2–9** + a **Feature Workspaces** (worktrees) enabler.
 >
@@ -54,7 +54,7 @@ are all explicitly deferred).
   unless cards are explicitly file-disjoint (declare zones on `ACTIVE-WORK.md` first).
 - **The package repo** (`Z:\canvas-ade-mcp`) gets a matching branch + commit per task that needs a
   new tool/resource; bump its version and the app's dependency together (the app consumes the
-  published `@ch923dev/canvas-ade-mcp`).
+  published `@expanse-ade/mcp`).
 - **A handoff doc is written after EVERY task** → `docs/superpowers/handoffs/<YYYY-MM-DD>-mcp-<task-id>.md`.
 
 ### Per-task card template (mandatory fields)
@@ -135,7 +135,7 @@ channel that every write-tool milestone needs. **Dep:** none.
 
 ### T0.1 — Land PR #32 + CI green (package read-access)
 - **Repos:** ops only (GitHub package settings + `.github/workflows/build.yml` already wired).
-- **Build:** grant the `canvas-ade` repo **read** access to the `@ch923dev/canvas-ade-mcp` package
+- **Build:** grant the `canvas-ade` repo **read** access to the `@expanse-ade/mcp` package
   so CI's `GITHUB_TOKEN` resolves the scoped dep; confirm all CI jobs go green.
 - **🧪 e2e:** the CI `smoke` job runs `CANVAS_SMOKE=mcp` (already added) — must pass on the runner.
 - **Manual:** open the PR #32 checks tab, confirm `check` + `smoke` green; pull the branch on a clean

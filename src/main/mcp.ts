@@ -1,5 +1,5 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
-import type { TokenStore } from '@ch923dev/canvas-ade-mcp'
+import type { TokenStore } from '@expanse-ade/mcp'
 
 /**
  * Parse a positive-millisecond env override, falling back to `fallback` when the value
@@ -38,8 +38,7 @@ export interface RunningMcp {
  */
 export async function startMcpServer(registry: BoardRegistry): Promise<RunningMcp | null> {
   try {
-    const { createMcpHttpServer, TokenStore, mintBoardToken } =
-      await import('@ch923dev/canvas-ade-mcp')
+    const { createMcpHttpServer, TokenStore, mintBoardToken } = await import('@expanse-ade/mcp')
     const tokens = new TokenStore()
     const { token: orchestratorToken } = mintBoardToken(tokens, {
       boardId: 'app',

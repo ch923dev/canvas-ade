@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type {
-  BoardOutput,
-  BoardResult,
-  BoardStatusChange,
-  MemoryDoc
-} from '@ch923dev/canvas-ade-mcp'
+import type { BoardOutput, BoardResult, BoardStatusChange, MemoryDoc } from '@expanse-ade/mcp'
 import {
   buildOrchestrator,
   MCP_SPAWN_CAP,

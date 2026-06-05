@@ -1,7 +1,7 @@
 # canvas-ade-mcp — status & risk audit (2026-06-03)
 
 **Method:** read both app-side MCP branches (`feat/mcp-main-wiring`, `feat/mcp-board-listing`) and the
-sibling package repo `Z:\canvas-ade-mcp` (`@ch923dev/canvas-ade-mcp` v0.2.0) in full. Cross-checked
+sibling package repo `Z:\canvas-ade-mcp` (`@expanse-ade/mcp` v0.2.0) in full. Cross-checked
 against memories `canvas-ade-mcp`, `mcp-spec-state-2026-06`, the two design specs, and current `main`.
 **Read-only — no code changed.** Audit requested by the user ("deep-audit first").
 
@@ -26,10 +26,10 @@ against memories `canvas-ade-mcp`, `mcp-spec-state-2026-06`, the two design spec
 
 | Repo | Role | State |
 |---|---|---|
-| `Z:\canvas-ade-mcp` (sibling) | The MCP server **package** `@ch923dev/canvas-ade-mcp`. ESM-only library exporting `createMcpHttpServer(deps)` + auth helpers. Published to GitHub Packages. | v0.2.0; Phases 0–1 done |
+| `Z:\canvas-ade-mcp` (sibling) | The MCP server **package** `@expanse-ade/mcp`. ESM-only library exporting `createMcpHttpServer(deps)` + auth helpers. Published to GitHub Packages. | v0.2.0; Phases 0–1 done |
 | `Z:\Canvas ADE` (this repo) | **Consumer** — hosts the server in Electron MAIN, feeds it a board registry. | code on 2 stale branches, unmerged |
 
-The app consumes the package as `@ch923dev/canvas-ade-mcp` from **GitHub Packages** (`^0.2.0`).
+The app consumes the package as `@expanse-ade/mcp` from **GitHub Packages** (`^0.2.0`).
 > ⚠️ Memory `canvas-ade-mcp` says "consumed as a local `file:` / path dependency." **Outdated** — the
 > branches switched to the published GitHub-Packages dep (commit `f0aa561`: "no sibling repo on CI
 > runner"). Memory should be updated.

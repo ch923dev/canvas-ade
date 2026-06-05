@@ -31,8 +31,8 @@ jobs:
           queries: security-extended
 
       # No build step: javascript-typescript uses CodeQL's none/auto build mode,
-      # so we skip `pnpm install`/`build` (avoids the private @ch923dev scope auth
-      # and the node-pty native rebuild). Analyze the source as-is.
+      # so we skip `pnpm install`/`build` (avoids the node-pty native rebuild).
+      # Analyze the source as-is.
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:

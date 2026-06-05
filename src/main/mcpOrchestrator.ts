@@ -8,7 +8,7 @@ import type {
   BoardSummary,
   MemoryDoc,
   Orchestrator
-} from '@ch923dev/canvas-ade-mcp'
+} from '@expanse-ade/mcp'
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
 import { createDispatchGuard, type DispatchGuard } from './dispatchGuard'
