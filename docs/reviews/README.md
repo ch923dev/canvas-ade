@@ -6,12 +6,18 @@ cards were collapsed here on 2026-06-01 during the docs centralization). To reco
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
-**Current open findings:** none — Round-3 (2026-06-01) cleared all 12 findings; see the
-table below. When the next review run happens, a new dated file will appear here and this
-line should be updated to point to it.
+**Current open findings:** none — the 2026-06-04/05 main + MCP/Context audit cycle is fully
+remediated (Waves 0–5 shipped: #45/#47/#48/#53/#59/#60/#61–67, MCP review LOWs APP-N1/N2/N3 → #68);
+the 2026-06-05 MCP in-depth review came back healthy (no open Crit/High/Med). When the next review
+run happens, a new dated file will appear here and this line should be updated to point to it.
 
 | # | File / status |
 |---|---|
+| In-depth — MCP layer (2026-06-05) | [`2026-06-05-mcp-indepth-review.md`](2026-06-05-mcp-indepth-review.md) — healthy, no open Crit/High/Med; all 2026-06-04 MCP fixes verified real + merged; Host-header gap closed; 3 new LOW/INFO (APP-N1/N2/N3 → #68). |
+| Consolidated backlog (2026-06-04) | [`2026-06-04-CONSOLIDATED-backlog.md`](2026-06-04-CONSOLIDATED-backlog.md) — merges Audit A + Hunt B into one ordered Wave 0–5 tackle plan. **All waves shipped.** |
+| Audit A — full main audit (2026-06-04) | [`2026-06-04-main-branch-full-audit.md`](2026-06-04-main-branch-full-audit.md) — 12-dimension broad sweep, 58 confirmed (4H · 8M · 34L · 12I), 0 Critical. All actioned via the consolidated waves. |
+| Hunt B — MCP+Context bug hunt (2026-06-04) | [`2026-06-04-mcp-context-bughunt/`](2026-06-04-mcp-context-bughunt/) — deep+narrow Context/MCP hunt, 28 cards (2H · 8M · 18L), 0 Critical. INDEX · FIX-REPORT · findings/. All shipped. |
+| Kickoffs (2026-06-05, historical) | [`post-t9`](2026-06-05-post-t9-backlog-kickoff.md) · [`remaining`](2026-06-05-remaining-backlog-kickoff.md) · [`wave5-b4-b5`](2026-06-05-wave5-b4-b5-kickoff.md) — point-in-time tackle plans; **now superseded** (their Tasks A/B + Wave-4/5 all shipped #60/#61–67). Kept as audit trail. |
 | Round 3 — in-depth (2026-06-01) | [`2026-06-01-round3.md`](2026-06-01-round3.md) — **ALL CLEARED** (`fix/round3-backlog` 9 fixed + `fix/round3-lows-remainder` final 3: PREV-A was already fixed by PR #14, PERSIST-B + PERSIST-C fixed). No open findings. |
 
 ---

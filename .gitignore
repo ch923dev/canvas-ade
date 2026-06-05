@@ -31,9 +31,12 @@ Thumbs.db
 # harness runtime artifacts
 .claude/scheduled_tasks.lock
 .claude/skills/
+# harness scratch (screenshots, audit parses, PR drafts) — never tracked
+.claude/tmp/
 # parallel-session coordination: track the tooling (hook + ps1), ignore the live shared state
 .claude/coordination/ACTIVE-WORK.md
 .claude/coordination/edit-log.jsonl
+.claude/coordination/archive/
 # agent tooling — workflow scripts + skills lockfile (NOT project source)
 .agents/
 skills-lock.json
