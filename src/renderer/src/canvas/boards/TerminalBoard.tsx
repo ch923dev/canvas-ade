@@ -36,6 +36,7 @@ import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
 import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPreview'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
+import { quotePathsForPaste } from './terminal/terminalDrop'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -487,6 +488,7 @@ export function TerminalBoard({
       resizeDisp.dispose()
       ro.disconnect()
       void window.api.killTerminal(board.id)
+      void window.api.cleanupStagedImages(board.id)
       try {
         portRef.current?.close()
       } catch {
@@ -853,6 +855,22 @@ export function TerminalBoard({
               termRef.current?.focus()
             }}
             onContextMenu={openMenu}
+            onDragOver={(e) => {
+              if (e.dataTransfer?.types?.includes('Files')) {
+                e.preventDefault() // required for onDrop to fire
+                e.stopPropagation()
+              }
+            }}
+            onDrop={(e) => {
+              const files = e.dataTransfer?.files
+              if (!files || files.length === 0) return
+              // stopPropagation beats App.tsx's window-level drop-cancel (anti-navigation).
+              e.preventDefault()
+              e.stopPropagation()
+              const paths = Array.from(files).map((f) => window.api.pathForFile(f))
+              const payload = quotePathsForPaste(paths)
+              if (payload) termRef.current?.paste(payload)
+            }}
           >
             <div ref={screenRef} style={screen} />
           </div>
