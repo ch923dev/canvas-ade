@@ -5,7 +5,14 @@ import { Dock } from './AppChrome'
 import { useCanvasStore } from '../store/canvasStore'
 
 beforeEach(() => {
-  useCanvasStore.setState({ boards: [], connectors: [], selectedId: null, tool: 'select', past: [], future: [] })
+  useCanvasStore.setState({
+    boards: [],
+    connectors: [],
+    selectedId: null,
+    tool: 'select',
+    past: [],
+    future: []
+  })
 })
 afterEach(() => cleanup())
 

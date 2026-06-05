@@ -22,7 +22,14 @@ function Harness(): ReactElement {
 }
 
 beforeEach(() => {
-  useCanvasStore.setState({ boards: [], connectors: [], selectedId: null, tool: 'terminal', past: [], future: [] })
+  useCanvasStore.setState({
+    boards: [],
+    connectors: [],
+    selectedId: null,
+    tool: 'terminal',
+    past: [],
+    future: []
+  })
 })
 afterEach(() => cleanup())
 

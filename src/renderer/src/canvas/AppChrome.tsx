@@ -440,7 +440,11 @@ function DockBtn({
         border: 'none',
         borderRadius: 6,
         cursor: 'pointer',
-        background: active ? 'var(--accent-wash)' : hover ? 'var(--surface-overlay)' : 'transparent',
+        background: active
+          ? 'var(--accent-wash)'
+          : hover
+            ? 'var(--surface-overlay)'
+            : 'transparent',
         color: active ? 'var(--accent)' : hover ? 'var(--text)' : 'var(--text-2)',
         fontSize: 12.5,
         fontWeight: 500,

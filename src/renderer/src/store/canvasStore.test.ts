@@ -104,7 +104,11 @@ describe('addBoard', () => {
 
   it('places exactly (skips freeSlot) when exact:true, even over an existing board', () => {
     get().addBoard('terminal', { x: 100, y: 100 }) // occupies the slot
-    const id = get().addBoard('browser', { x: 100, y: 100 }, { size: { w: 240, h: 160 }, exact: true })
+    const id = get().addBoard(
+      'browser',
+      { x: 100, y: 100 },
+      { size: { w: 240, h: 160 }, exact: true }
+    )
     const b = get().boards.find((x) => x.id === id)!
     expect(b).toMatchObject({ x: 100, y: 100 }) // verbatim, NOT nudged off the overlap
   })
