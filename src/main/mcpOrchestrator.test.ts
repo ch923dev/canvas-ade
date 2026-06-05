@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { BoardOutput, BoardResult, MemoryDoc } from '@ch923dev/canvas-ade-mcp'
-import { buildOrchestrator, MCP_SPAWN_CAP, type BoardRegistry } from './mcpOrchestrator'
+import {
+  buildOrchestrator,
+  MCP_SPAWN_CAP,
+  type BoardRegistry,
+  type LifecycleOrchestrator
+} from './mcpOrchestrator'
 import { createDispatchGuard } from './dispatchGuard'
 import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
@@ -205,6 +210,15 @@ describe('buildOrchestrator', () => {
       }
       await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
     })
+
+    it('🔒 APP-N3: rejects an off-type spawn at the adapter (defense-in-depth) — no command sent', async () => {
+      // The renderer's applyMcpCommand already rejects an off-type board, but the adapter is
+      // the trust boundary — an unknown type must NOT be forwarded to the renderer at all.
+      const { sendCommand, seen } = okCommands()
+      const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand))
+      await expect(orch.spawnBoard({ type: 'evil' })).rejects.toThrow(/type|spawnable/i)
+      expect(seen).toEqual([]) // nothing reached the renderer / mint path
+    })
   })
 
   describe('closeBoard (T3.2, lifecycle write)', () => {
@@ -398,6 +412,24 @@ describe('buildOrchestrator', () => {
       expect(seen).toEqual([
         { type: 'configureBoard', id: 'board-5', patch: { launchCommand: '', shell: 'pwsh' } }
       ])
+    })
+
+    // 🔒 APP-N1: an approved launchCommand whose apply ack fails must still leave an audit
+    // trail — every other dispatch path audits a `failed` write, so this one's silence was a
+    // forensic gap on the exact path BUG-002 hardened.
+    it('🔒 APP-N1: an approved launchCommand whose apply ack FAILS audits `failed` then throws', async () => {
+      const { registry, audits, confirms } = configReg({ ack: { ok: false, error: 'no-window' } })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.configureBoard('board-5', { launchCommand: 'claude' })).rejects.toThrow(
+        /no-window/
+      )
+      expect(confirms).toHaveLength(1) // the human DID approve — the failure is the apply, not the gate
+      const failed = audits.find((a) => a.status === 'failed')
+      expect(failed).toMatchObject({
+        type: 'configure_board',
+        targetId: 'board-5',
+        prompt: 'claude'
+      })
     })
   })
 
@@ -1321,6 +1353,57 @@ describe('buildOrchestrator', () => {
       clock = 1700
       setStatus(id, 'idle')
       expect(await orch.reapIdle()).toEqual([]) // idleSince re-armed at 1700, not yet past TTL
+    })
+
+    it('🔒 APP-N2: a reapIdle fired while a sweep is in flight no-ops (no double close)', async () => {
+      // The periodic reaper interval and an explicit reapIdle() (the smoke) can overlap; each
+      // close awaits drainPty + a renderer round-trip, so two sweeps could read the same id and
+      // closeBoard it twice (re-arming idleSince on an already-deleted record). The fix skips a
+      // sweep that starts while another is in flight. We re-enter mid-drain to prove it.
+      let clock = 0
+      const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
+      const removed: string[] = []
+      let drainCalls = 0
+      let reentrant: string[] | null = null
+      const registry: BoardRegistry = {
+        listBoards: () => boards,
+        listSessions: () => [],
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => {
+          if (cmd.type === 'addBoard')
+            boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T', status: 'running' })
+          if (cmd.type === 'removeBoard') {
+            const i = boards.findIndex((b) => b.id === cmd.id)
+            if (i >= 0) {
+              boards.splice(i, 1)
+              removed.push(cmd.id)
+            }
+          }
+          return { ok: true, type: cmd.type }
+        },
+        drainPty: async () => {
+          drainCalls++
+          // Mid-close in the FIRST sweep — fire a concurrent sweep. The re-entrancy guard
+          // must return [] without starting a second close of the same board.
+          if (drainCalls === 1) reentrant = await orch.reapIdle()
+        },
+        ...DISPATCH_DEFAULTS
+      }
+      const orch: LifecycleOrchestrator = buildOrchestrator(registry, {
+        now: () => clock,
+        idleTtlMs: 1000
+      })
+      const { id } = await orch.spawnBoard({ type: 'terminal' })
+      boards[0].status = 'idle'
+      await orch.reapIdle() // sweep 0: arm idleSince (no close → no drain)
+      clock = 1500
+      expect(await orch.reapIdle()).toEqual([id]) // sweep 1 reaps; mid-drain it re-enters
+      expect(reentrant).toEqual([]) // the concurrent sweep no-oped (guard), not a 2nd close
+      expect(drainCalls).toBe(1) // the board was closed exactly once despite two reapIdle calls
+      expect(removed).toEqual([id]) // removed once
     })
   })
 })
