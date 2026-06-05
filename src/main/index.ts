@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, safeStorage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
@@ -160,6 +160,11 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.canvasade.app')
+  // F10: drop Electron's default menu (File/Edit/View/…). On Windows its Alt
+  // mnemonics (Alt+V = View) swallow Alt+V before xterm sees it, breaking Claude
+  // Code's clipboard-image paste. The app's chrome lives in AppChrome, not a menu;
+  // optimizer.watchWindowShortcuts (below) still provides DevTools/reload in dev.
+  Menu.setApplicationMenu(null)
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
