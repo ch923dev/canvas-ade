@@ -44,6 +44,18 @@ const SENTINEL = '__caScaledMouse'
  * carries the sentinel so this same shim skips it (no re-capture / loop). No-op at z = 1
  * (and for non-finite/≤0 zoom), so the unscaled copy/paste/focus paths are untouched.
  *
+ * The shim only acts during an active LEFT-BUTTON selection drag (button 0). Right-click
+ * and middle-click pass through untouched so xterm's context-menu and paste-on-middle-click
+ * (DECSET 1003 / OSC-8 link hover) are not disrupted. Idle mousemove events — xterm link
+ * hover, DECSET 1003 mouse-motion reporting — are never intercepted; only moves/ups that
+ * belong to an in-progress left-button drag are corrected.
+ *
+ * Note: move/up listeners are bound to `window` (not `screenWrap`) deliberately, to keep
+ * correcting a drag that leaves the terminal well — matching xterm's own `document`-bound
+ * drag listeners.
+ *
+ * Note: pointer/touch selection is out of scope — xterm 5.5 selection is mouse-event based.
+ *
  * Returns a disposer that removes every listener.
  */
 export function installSelectionShim(
@@ -51,6 +63,8 @@ export function installSelectionShim(
   screenEl: HTMLElement,
   getZoom: () => number
 ): () => void {
+  let dragging = false
+
   const clone = (e: MouseEvent): MouseEvent | null => {
     if ((e as unknown as Record<string, unknown>)[SENTINEL]) return null // our own re-dispatch
     const z = getZoom()
@@ -80,9 +94,15 @@ export function installSelectionShim(
     return ev
   }
 
+  // Selection is left-button only. Start correcting on a button-0 mousedown (when the
+  // zoom actually needs correction); set `dragging` so we only rewrite the moves/ups that
+  // belong to THIS drag — leaving idle/button-less motion (xterm link hover, DECSET 1003
+  // mouse reporting) untouched at z≠1.
   const onDown = (e: MouseEvent): void => {
+    if (e.button !== 0) return // right/middle: let xterm + the React onContextMenu handle it
     const ev = clone(e)
-    if (!ev) return
+    if (!ev) return // z===1 or invalid → native flow (focus + native selection)
+    dragging = true
     e.stopImmediatePropagation()
     e.preventDefault()
     // Dispatch to the screen element; the clone bubbles up to `.xterm` where xterm's
@@ -90,13 +110,18 @@ export function installSelectionShim(
     // click-to-focus still fires via the clone).
     screenEl.dispatchEvent(ev)
   }
+
   const onMove = (e: MouseEvent): void => {
+    if (!dragging) return
     const ev = clone(e)
-    if (!ev) return
+    if (!ev) return // zoom flipped to 1 mid-drag → let native moves through
     e.stopImmediatePropagation()
     document.dispatchEvent(ev)
   }
+
   const onUp = (e: MouseEvent): void => {
+    if (!dragging) return
+    dragging = false
     const ev = clone(e)
     if (!ev) return
     e.stopImmediatePropagation()
