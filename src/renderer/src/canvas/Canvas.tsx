@@ -77,6 +77,8 @@ import { installE2EHooks } from '../smoke/e2eHooks'
 import { useCanvasKeybindings } from './hooks/useCanvasKeybindings'
 import { useTidyTile } from './hooks/useTidyTile'
 import { useFullView } from './hooks/useFullView'
+import { useBoardPlacement } from './hooks/useBoardPlacement'
+import { TypeGlyph } from './TypeGlyph'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
@@ -119,6 +121,7 @@ function CanvasInner(): ReactElement {
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
   const viewport = useCanvasStore((s) => s.viewport)
+  const tool = useCanvasStore((s) => s.tool)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -426,6 +429,11 @@ function CanvasInner(): ReactElement {
   // responsive-retile ResizeObserver) live in useTidyTile (Wave-5 B5 #2). Only tidyAndFit is
   // surfaced — the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button.
   const { tidyAndFit } = useTidyTile({ paneRef, rf, setActiveTile, setFocusedId, activeTileRef })
+
+  // Drag-to-create placement gesture (redesign 2026-06-06): while a board type is armed via
+  // the dock, a capture overlay intercepts pointer events; startPlacement begins the drag that
+  // draws the ghost rect and commits addBoard on release.
+  const { armed, ghost, startPlacement } = useBoardPlacement(rf)
 
   // Double-click = focus: fit the camera to the board and dim the others. Distinct
   // from Full view (Phase 3), which is a modal layer that doesn't move the camera.
@@ -738,6 +746,26 @@ function CanvasInner(): ReactElement {
 
           <AlignmentGuides guides={guides} overlaps={overlaps} />
 
+          {/* Drag-to-create (redesign 2026-06-06): while a dock button is armed, a transparent
+              overlay owns the pointer — boards go non-interactive and React Flow can't pan, so a
+              press→drag draws a new board. The ghost is a screen-space rect; world conversion +
+              addBoard happen on release (useBoardPlacement). Chrome (z-50) stays above this (z-40),
+              so the Select button / dock buttons remain clickable to re-arm or cancel. */}
+          {armed && (
+            <div className="placement-capture" onPointerDown={startPlacement}>
+              {ghost && (
+                <div
+                  className="placement-ghost"
+                  style={{ left: ghost.x, top: ghost.y, width: ghost.w, height: ghost.h }}
+                >
+                  <span className="placement-ghost-chip">
+                    <TypeGlyph type={tool as BoardType} /> {tool}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* M2 connector rubber-band: a calm dashed line from the source board's center to
               the live pointer while a connector drag is in flight (ephemeral — drawn only,
               the actual link is resolved on release). Positioned `fixed` so it shares the
@@ -774,7 +802,7 @@ function CanvasInner(): ReactElement {
             })()}
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
-          <AppChrome onAdd={addCentered} onTidy={tidyAndFit} />
+          <AppChrome onTidy={tidyAndFit} />
           <DigestPanel
             digest={digest}
             prose={prose}
