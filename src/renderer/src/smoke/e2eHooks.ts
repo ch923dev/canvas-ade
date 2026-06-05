@@ -58,7 +58,13 @@ export interface CanvasE2E {
    */
   dispatchTerminalKey: (
     id: string,
-    init: { key: string; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean }
+    init: {
+      key: string
+      ctrlKey?: boolean
+      shiftKey?: boolean
+      altKey?: boolean
+      metaKey?: boolean
+    }
   ) => boolean
   /** Programmatically select `length` cells from (col,row) in a terminal (copy sliver). */
   selectTerminal: (id: string, col: number, row: number, length: number) => void
@@ -263,9 +269,7 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       e2eTerminals.get(id)?.focus()
     },
     dispatchTerminalKey(id, init) {
-      const ta = document.querySelector(
-        `.react-flow__node[data-id="${id}"] .xterm-helper-textarea`
-      )
+      const ta = document.querySelector(`.react-flow__node[data-id="${id}"] .xterm-helper-textarea`)
       if (!ta) return false
       ta.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
       return true

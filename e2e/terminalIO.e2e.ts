@@ -33,7 +33,10 @@ test.describe('terminal I/O', () => {
     )
     // Select 5 cells on the first row and copy.
     await evalIn(page, `window.__canvasE2E.selectTerminal(${JSON.stringify(id)}, 0, 0, 5)`)
-    const sel = await evalIn<string>(page, `window.__canvasE2E.terminalSelection(${JSON.stringify(id)})`)
+    const sel = await evalIn<string>(
+      page,
+      `window.__canvasE2E.terminalSelection(${JSON.stringify(id)})`
+    )
     await evalIn(
       page,
       `window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(id)}, { key: 'c', ctrlKey: true })`
@@ -64,7 +67,12 @@ test.describe('terminal I/O', () => {
     electronApp
   }) => {
     // Needs a project dir so .canvas/tmp has a home.
-    const proj = await mainCall<string>(electronApp, 'createTempProject', 'canvas-e2e-img-', 'imgproj')
+    const proj = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'canvas-e2e-img-',
+      'imgproj'
+    )
     try {
       const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
       await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)

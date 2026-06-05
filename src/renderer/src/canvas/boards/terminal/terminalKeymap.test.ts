@@ -42,7 +42,9 @@ describe('resolveTerminalKey', () => {
     expect(
       resolveTerminalKey(chord('c', { ctrlKey: true }), { hasSelection: true, isMac: true })
     ).toBeNull()
-    expect(resolveTerminalKey(chord('v', { metaKey: true }), { hasSelection: false, isMac: true })).toEqual({
+    expect(
+      resolveTerminalKey(chord('v', { metaKey: true }), { hasSelection: false, isMac: true })
+    ).toEqual({
       kind: 'paste'
     })
   })

@@ -70,7 +70,11 @@ export function installSelectionShim(
     const z = getZoom()
     if (!Number.isFinite(z) || z === 1 || z <= 0) return null // no correction needed
     const rect = screenEl.getBoundingClientRect()
-    const p = correctClientPoint({ x: e.clientX, y: e.clientY }, { left: rect.left, top: rect.top }, z)
+    const p = correctClientPoint(
+      { x: e.clientX, y: e.clientY },
+      { left: rect.left, top: rect.top },
+      z
+    )
     const ev = new MouseEvent(e.type, {
       bubbles: true,
       cancelable: true,

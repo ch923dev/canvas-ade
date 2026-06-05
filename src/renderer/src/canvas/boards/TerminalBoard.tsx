@@ -698,45 +698,49 @@ export function TerminalBoard({
     setMenu({ x: e.clientX, y: e.clientY, hasSel: term.hasSelection() })
   }, [])
 
-  const menuEntries: MenuEntry[] = useMemo(() => menu
-    ? [
-        {
-          kind: 'action',
-          id: 'copy',
-          label: 'Copy',
-          disabled: !menu.hasSel,
-          onSelect: () => {
-            const t = termRef.current
-            const sel = t?.getSelection()
-            if (t && sel) {
-              void window.api.clipboard.writeText(sel)
-              t.clearSelection()
+  const menuEntries: MenuEntry[] = useMemo(
+    () =>
+      menu
+        ? [
+            {
+              kind: 'action',
+              id: 'copy',
+              label: 'Copy',
+              disabled: !menu.hasSel,
+              onSelect: () => {
+                const t = termRef.current
+                const sel = t?.getSelection()
+                if (t && sel) {
+                  void window.api.clipboard.writeText(sel)
+                  t.clearSelection()
+                }
+              }
+            },
+            {
+              kind: 'action',
+              id: 'paste',
+              label: 'Paste',
+              onSelect: () => {
+                const t = termRef.current
+                if (t) void pasteIntoTerminal(t, board.id)
+              }
+            },
+            {
+              kind: 'action',
+              id: 'selectall',
+              label: 'Select all',
+              onSelect: () => termRef.current?.selectAll()
+            },
+            {
+              kind: 'action',
+              id: 'clear',
+              label: 'Clear',
+              onSelect: () => termRef.current?.clear()
             }
-          }
-        },
-        {
-          kind: 'action',
-          id: 'paste',
-          label: 'Paste',
-          onSelect: () => {
-            const t = termRef.current
-            if (t) void pasteIntoTerminal(t, board.id)
-          }
-        },
-        {
-          kind: 'action',
-          id: 'selectall',
-          label: 'Select all',
-          onSelect: () => termRef.current?.selectAll()
-        },
-        {
-          kind: 'action',
-          id: 'clear',
-          label: 'Clear',
-          onSelect: () => termRef.current?.clear()
-        }
-      ]
-    : [], [menu, board.id])
+          ]
+        : [],
+    [menu, board.id]
+  )
 
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
   // session survives zoom-out — see BoardNode. At LOD we hide the xterm well and
