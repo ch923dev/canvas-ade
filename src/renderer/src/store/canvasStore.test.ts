@@ -113,7 +113,13 @@ describe('addBoard', () => {
     get().addBoard('terminal', { x: 100, y: 100 })
     const id = get().addBoard('terminal', { x: 100, y: 100 })
     const b = get().boards.find((x) => x.id === id)!
-    expect(b.x === 100 && b.y === 100).toBe(false) // freeSlot moved it
+    expect(b).not.toMatchObject({ x: 100, y: 100 }) // freeSlot moved it
+  })
+
+  it('honours an injected id and exact placement together (MCP spawn path)', () => {
+    const id = get().addBoard('terminal', { x: 50, y: 50 }, { id: 'my-id', exact: true })
+    expect(id).toBe('my-id')
+    expect(get().boards.find((x) => x.id === 'my-id')).toMatchObject({ x: 50, y: 50 })
   })
 })
 
