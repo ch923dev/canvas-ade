@@ -13,7 +13,6 @@ import { getCurrentDir } from './projectStore'
 export interface ClipboardDeps {
   writeText(text: string): void
   readText(): string
-  hasImage(): boolean
   /** The clipboard image as PNG bytes, or null when the clipboard holds no image. */
   readImagePng(): Buffer | null
   /** The current project dir, or null when no project is open. */
@@ -25,7 +24,6 @@ function realDeps(): ClipboardDeps {
   return {
     writeText: (t) => clipboard.writeText(t),
     readText: () => clipboard.readText(),
-    hasImage: () => !clipboard.readImage().isEmpty(),
     readImagePng: () => {
       const img = clipboard.readImage()
       return img.isEmpty() ? null : img.toPNG()
@@ -49,11 +47,6 @@ export function registerClipboardHandlers(
   ipc.handle('clipboard:readText', (e) => {
     if (isForeignSender(e, getWin)) return ''
     return deps.readText()
-  })
-
-  ipc.handle('clipboard:hasImage', (e) => {
-    if (isForeignSender(e, getWin)) return false
-    return deps.hasImage()
   })
 
   ipc.handle('terminal:stageClipboardImage', (e, boardId: string) => {

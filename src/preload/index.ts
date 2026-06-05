@@ -125,7 +125,6 @@ const api = {
   // (null = no image / no project). The renderer injects the path into the PTY.
   stageClipboardImage: (boardId: string): Promise<string | null> =>
     ipcRenderer.invoke('terminal:stageClipboardImage', boardId),
-  clipboardHasImage: (): Promise<boolean> => ipcRenderer.invoke('clipboard:hasImage'),
   cleanupStagedImages: (boardId: string): Promise<boolean> =>
     ipcRenderer.invoke('terminal:cleanupStagedImages', boardId),
   // webUtils.getPathForFile replaces the removed File.path (Electron 32+). Called from

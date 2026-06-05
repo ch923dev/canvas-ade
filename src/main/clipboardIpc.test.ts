@@ -14,7 +14,6 @@ function deps(over: Partial<ClipboardDeps> = {}): ClipboardDeps {
   return {
     writeText: vi.fn(),
     readText: vi.fn(() => 'hello'),
-    hasImage: vi.fn(() => false),
     readImagePng: vi.fn(() => null),
     currentDir: vi.fn(() => '/proj'),
     stage: vi.fn(() => '/proj/.canvas/tmp/paste-b-1.png'),
@@ -77,7 +76,6 @@ describe('clipboardIpc', () => {
       expect(await ipc.handlers['clipboard:writeText'](foreign, 'x')).toBe(false)
       expect(d.writeText).not.toHaveBeenCalled()
       expect(await ipc.handlers['clipboard:readText'](foreign)).toBe('')
-      expect(await ipc.handlers['clipboard:hasImage'](foreign)).toBe(false)
       expect(await ipc.handlers['terminal:stageClipboardImage'](foreign, 'b')).toBeNull()
       expect(d.stage).not.toHaveBeenCalled()
       expect(await ipc.handlers['terminal:cleanupStagedImages'](foreign, 'b')).toBe(false)
@@ -85,12 +83,6 @@ describe('clipboardIpc', () => {
   })
 
   describe('untested handlers', () => {
-    it('clipboard:hasImage returns the deps value', async () => {
-      const ipc = fakeIpc()
-      registerClipboardHandlers(ipc as never, () => null, deps({ hasImage: () => true }))
-      expect(await ipc.handlers['clipboard:hasImage'](internal)).toBe(true)
-    })
-
     it('terminal:cleanupStagedImages returns true (no-op) when no project is open', async () => {
       const ipc = fakeIpc()
       registerClipboardHandlers(ipc as never, () => null, deps({ currentDir: () => null }))

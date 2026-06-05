@@ -288,9 +288,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalCellPoint(id, col, row, fx = 0.5, fy = 0.5) {
       const t = e2eTerminals.get(id)
-      if (!t) return null
-      const host = document.querySelector(`.react-flow__node[data-id="${id}"] .xterm-screen`)
-      if (!host) return null
+      // Resolve the screen via the LIVE xterm's own element, not a node-scoped DOM query:
+      // in full view the content is portaled to the modal, so `.react-flow__node[...]` no
+      // longer contains it. `t.element` is the xterm host wherever it currently lives.
+      const host = t?.element?.querySelector('.xterm-screen') as HTMLElement | null | undefined
+      if (!t || !host) return null
       const r = host.getBoundingClientRect()
       // The screen element width/height map exactly to cols/rows (no padding here), so
       // a scaled cell is r.width/cols × r.height/rows. Place the point at the requested

@@ -13,7 +13,15 @@
  * Lifecycle (spawning → running → awaiting-input → exited / spawn-failed) is
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement
+} from 'react'
 import { useStoreApi } from '@xyflow/react'
 import { TerminalConfig } from './TerminalConfig'
 import { Terminal } from '@xterm/xterm'
@@ -39,6 +47,7 @@ import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPrevie
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { installSelectionShim } from './terminal/terminalSelection'
+import { BoardFullViewContext } from '../fullViewContext'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -150,7 +159,20 @@ export function TerminalBoard({
   // d3-zoom-driven gestures — so it would leave the shim reading a stale z=1. The store
   // transform is the canonical live zoom (the same source BoardNode/Canvas read for LOD).
   const rfStore = useStoreApi()
-  const getZoom = useCallback((): number => rfStore.getState().transform[2], [rfStore])
+  // In full view the board is portaled OUTSIDE ReactFlow into the modal at visual
+  // scale 1, but the camera zoom (transform[2]) is unchanged — so the selection shim
+  // would mis-correct. Mirror the full-view flag into a ref (not a closure dep) so
+  // `getZoom`'s identity stays stable: toggling full view must NOT re-run the spawn
+  // effect / respawn the PTY.
+  const isFullView = useContext(BoardFullViewContext)
+  const fullViewRef = useRef(isFullView)
+  useEffect(() => {
+    fullViewRef.current = isFullView
+  }, [isFullView])
+  const getZoom = useCallback(
+    (): number => (fullViewRef.current ? 1 : rfStore.getState().transform[2]),
+    [rfStore]
+  )
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)

@@ -178,4 +178,78 @@ test.describe('terminal I/O', () => {
     // Without it, the zoom-0.6 mapping would land ~6 cells short (wrong prefix/length).
     expect(sel.startsWith('ABCDEFGHIJ'), `selection was "${sel}"`).toBe(true)
   })
+
+  test('drag-select is correct in FULL VIEW while the camera is zoomed (shim defers to z=1)', async ({
+    page,
+    electronApp
+  }) => {
+    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    await pollEval(
+      page,
+      `(window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? '').includes('ready')`,
+      8000
+    )
+    await evalIn(page, `window.__canvasE2E.setZoom(0.6)`)
+    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
+    await page.waitForTimeout(300)
+    await evalIn(
+      page,
+      `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, 'ABCDEFGHIJKLMNOPQRST')`
+    )
+    await pollEval(
+      page,
+      `(window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? '').includes('ABCDEFGHIJ')`,
+      4000
+    )
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    const p0 = await evalIn<{ x: number; y: number }>(
+      page,
+      `window.__canvasE2E.terminalCellPoint(${JSON.stringify(id)}, 0, 0, 0.25, 0.5)`
+    )
+    const p1 = await evalIn<{ x: number; y: number }>(
+      page,
+      `window.__canvasE2E.terminalCellPoint(${JSON.stringify(id)}, 10, 0, 0.75, 0.5)`
+    )
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseDown',
+      x: Math.round(p0.x),
+      y: Math.round(p0.y),
+      button: 'left',
+      clickCount: 1
+    })
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseMove',
+      x: Math.round((p0.x + p1.x) / 2),
+      y: Math.round(p0.y),
+      button: 'left'
+    })
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseMove',
+      x: Math.round(p1.x),
+      y: Math.round(p1.y),
+      button: 'left'
+    })
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseUp',
+      x: Math.round(p1.x),
+      y: Math.round(p1.y),
+      button: 'left',
+      clickCount: 1
+    })
+    await page.waitForTimeout(100)
+    const sel = await evalIn<string>(
+      page,
+      `window.__canvasE2E.terminalSelection(${JSON.stringify(id)})`
+    )
+    expect(sel.startsWith('ABCDEFGHIJ'), `full-view selection was "${sel}"`).toBe(true)
+    await evalIn(page, `window.__canvasE2E.setFullView(null)`)
+  })
+
+  test('F10: no application menu on Windows/Linux (Alt+V reaches xterm)', async ({
+    electronApp
+  }) => {
+    const isNull = await mainCall<boolean>(electronApp, 'applicationMenuIsNull')
+    expect(isNull, 'app menu is null on non-darwin so Alt+V is free').toBe(true)
+  })
 })

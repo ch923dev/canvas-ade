@@ -161,11 +161,16 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.canvasade.app')
-  // F10: drop Electron's default menu (File/Edit/View/…). On Windows its Alt
-  // mnemonics (Alt+V = View) swallow Alt+V before xterm sees it, breaking Claude
-  // Code's clipboard-image paste. The app's chrome lives in AppChrome, not a menu;
-  // optimizer.watchWindowShortcuts (below) still provides DevTools/reload in dev.
-  Menu.setApplicationMenu(null)
+  // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
+  // Linux the default menu's Alt mnemonics (Alt+V = View) eat it, and Chromium handles
+  // Ctrl+C/V natively in inputs there, so dropping the menu is safe. On macOS the Edit
+  // menu ROLES are what wire Cmd+C/V/X/A in inputs, and CC uses Cmd+V (not Alt+V) anyway,
+  // so keep a minimal Edit/app/window-role menu there.
+  Menu.setApplicationMenu(
+    process.platform === 'darwin'
+      ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }])
+      : null
+  )
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
