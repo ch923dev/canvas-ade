@@ -120,20 +120,20 @@ export interface PaneBox {
  * a native view must never paint over (#21). Derived from the measured pane so they
  * track window resizes. Two targeted rects (NOT full-width strips) so a non-overlapping
  * live preview is never needlessly demoted:
- *  • dock — bottom-centre island (AppChrome `bottom:18`, ~380×40 pill).
+ *  • dock — top-centre island (AppChrome `top:14`, ~440×40 pill).
  *  • topRight — camera cluster (`top:14 right:16`, ~220×40) + the DiagOverlay below it
  *    (`top:12 right:12`, ~116×80 in dev/diag mode); one rect covers both.
  * Margins are padded for shadow/safety so the band fully clears the chrome.
  */
 export function chromeExclusionZones(pane: PaneBox): Box[] {
   const right = pane.x + pane.w
-  const bottom = pane.y + pane.h
-  // Dock: centred horizontally, reserves the bottom band where the pill sits.
+  // Dock: centred horizontally, reserves the top band where the pill sits (moved from
+  // bottom→top with the dock relocation, redesign 2026-06-06).
   const dockW = 440
   const dockH = 64
   const dock: Box = {
     x: pane.x + pane.w / 2 - dockW / 2,
-    y: bottom - dockH,
+    y: pane.y,
     width: dockW,
     height: dockH
   }

@@ -456,7 +456,14 @@ function DockBtn({
       >
         <TypeGlyph type={type} />
       </span>
-      <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>+</span>
+      <span
+        style={{
+          color: active || hover ? 'var(--accent)' : 'var(--text-faint)',
+          fontFamily: 'var(--mono)'
+        }}
+      >
+        +
+      </span>
       {label}
     </button>
   )

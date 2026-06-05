@@ -169,12 +169,12 @@ describe('chromeExclusionZones', () => {
   it('returns a dock zone and a top-right zone', () => {
     expect(zones).toHaveLength(2)
   })
-  it('pins the dock to the bottom-centre band', () => {
+  it('pins the dock to the top-centre band', () => {
     const [dock] = zones
-    // centred horizontally, flush to the pane bottom.
+    // centred horizontally, flush to the pane top (dock moved bottom→top).
     expect(dock.x + dock.width / 2).toBe(pane.x + pane.w / 2)
-    expect(dock.y + dock.height).toBe(pane.h)
-    expect(dock.y).toBeGreaterThan(700) // bottom band only, not the whole pane
+    expect(dock.y).toBe(pane.y)
+    expect(dock.height).toBeLessThan(pane.h / 2) // a band, not the whole pane
   })
   it('pins the top-right zone to the top-right corner', () => {
     const [, topRight] = zones
@@ -185,7 +185,7 @@ describe('chromeExclusionZones', () => {
   it('tracks paneOffset (non-zero origin / inset pane)', () => {
     const offset = chromeExclusionZones({ x: 100, y: 40, w: 800, h: 600 })
     const [dock, topRight] = offset
-    expect(dock.y + dock.height).toBe(40 + 600) // bottom = offset.y + h
+    expect(dock.y).toBe(40) // top = offset.y
     expect(topRight.x + topRight.width).toBe(100 + 800) // right = offset.x + w
   })
   it('leaves a centred mid-pane stage clear of both zones', () => {
@@ -244,7 +244,8 @@ describe('shouldDemoteForOcclusion', () => {
 
   // #21 — overlaps a fixed chrome zone.
   it('demotes when the stage overlaps the dock zone', () => {
-    expect(shouldDemoteForOcclusion(baseInput({ stage: box(500, 780, 200, 40) }))).toBe(true)
+    // Dock is now at the top-centre (y=0, h=64). Stage centred horizontally, overlapping the top band.
+    expect(shouldDemoteForOcclusion(baseInput({ stage: box(500, 0, 200, 40) }))).toBe(true)
   })
   it('demotes when the stage overlaps the top-right camera/diag zone', () => {
     expect(shouldDemoteForOcclusion(baseInput({ stage: box(1100, 10, 150, 60) }))).toBe(true)
@@ -252,7 +253,7 @@ describe('shouldDemoteForOcclusion', () => {
   it('demotes for a chrome overlap even with no selection', () => {
     expect(
       shouldDemoteForOcclusion(
-        baseInput({ selectedId: null, selectedRect: null, stage: box(500, 790, 100, 30) })
+        baseInput({ selectedId: null, selectedRect: null, stage: box(500, 10, 100, 30) })
       )
     ).toBe(true)
   })
