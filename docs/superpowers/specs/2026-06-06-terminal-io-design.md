@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-06
 **Branch:** `fix/terminal-io` (off `main`)
-**Status:** approved (brainstorm complete) → next: implementation plan
+**Status:** implemented (2026-06-06) — all 4 slices landed on `fix/terminal-io`; gate green (1283 unit + 7 terminalIO e2e); per-slice + holistic review passed. Selection slice's spike resolved GREEN (no full-view fallback needed). Awaiting rebase onto current `main` + PR.
 **Owner zone:** `src/renderer/src/canvas/boards/TerminalBoard.tsx` + new terminal hooks · `src/main/{index.ts, clipboardIpc.ts}` · `src/preload/index.ts`
 
 ## 1. Problem
