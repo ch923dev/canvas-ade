@@ -754,6 +754,7 @@ function CanvasInner(): ReactElement {
               fullViewHost={fullViewHost}
               fullViewMotion={fullViewMotion}
               onRequestCloseFullView={closeFullView}
+              digestOpen={digestOpen}
             />
           </ReactFlow>
 

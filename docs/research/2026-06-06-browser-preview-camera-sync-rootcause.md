@@ -5,6 +5,12 @@ re-verify** (re-run the diagnostic, prove the fix hypothesis with a minimal chan
 **Branch:** `fix/preview-camera-sync` (worktree `Z:\canvas-ade-preview-camera-sync`).
 **Date:** 2026-06-06.
 
+> **⚠️ A SECOND, DISTINCT BUG was found during manual verification (2026-06-06)** — see
+> §"Bug 2: out-of-bounds over the Project-context panel" near the end. The camera-sync clobber (this
+> doc's main subject) is one cause of "the browser bugs when I move"; the digest-panel occlusion gap is
+> another. Both are fixed on this branch. A THIRD report ("Something went wrong" canvas crash) is NOT yet
+> reproduced — open.
+
 > Companion doc on this branch: `2026-06-06-browser-preview-layer-alignment.md` — the earlier
 > multi-agent workflow research. It was **inconclusive** (chased full-view edge cases off the
 > screenshot) and is superseded by THIS doc. Keep it for the trail; trust this one.
@@ -251,3 +257,40 @@ cause.** (Temp edit was reverted immediately; tree is clean.)
 additively via `useStoreApi().subscribe`), leaving `usePreviewManager` the sole `useOnViewportChange`
 owner. Lowest-risk, surgical, restores camera sync. Full step-by-step in
 `docs/superpowers/plans/2026-06-06-preview-camera-sync-fix.md`.
+
+---
+
+## Bug 2: out-of-bounds over the Project-context (digest) panel — FIXED 2026-06-06
+
+**Symptom (user screenshot):** With the "Project context" panel open (a fixed 300px LEFT overlay,
+`.digest-panel`, `z-index:70`), panning a Browser board LEFT so it travels under the panel makes the live
+native page **paint over the panel** — the white page bleeds out of bounds across the panel area. Distinct
+from the camera-sync clobber (which is about the native not *tracking* the frame); here the native tracks
+fine but is never *demoted* where it overlaps left-edge chrome.
+
+**Root cause:** `chromeExclusionZones` (`src/renderer/src/lib/previewPlan.ts:128`) returned only
+`[dock, topRight]`. A native `WebContentsView` paints above ALL HTML (ADR 0002), so the occlusion mitigation
+demotes a live view to its (clippable, z-ordered) HTML snapshot when it overlaps protected chrome — but the
+**digest panel was never a protected zone**, so an overlapping live view stayed live and covered it.
+
+**Reproduced (probe):** digest open, real `sendInput` panOnScroll left → board native stays `attached=true`
+with `native.x` going `307→187→67→-53→-173→-293`, overlapping the panel's `x:0..300` the whole way.
+
+**Fix:** thread `digestOpen` into `usePreviewManager` (new `LayerProps.digestOpen`, passed from
+`Canvas.tsx`). In `occludesProtected`, when the panel is open, push its live DOM rect
+(`[data-test=digest-panel]` `getBoundingClientRect`, skipped when off-screen) onto the chrome zones so
+`shouldDemoteForOcclusion` demotes any overlapping live view. The focus effect syncs `digestOpenRef` and
+re-runs `applyLiveness` on a digest toggle (so opening the panel over an already-live board demotes it; closing
+re-attaches). **Post-fix probe:** the board now reports `attached=false` at every overlapping step; a board
+clear of the panel stays live. Regression test: `e2e/preview-align.e2e.ts` › "Browser native demotes to
+snapshot when panned under the open digest panel" (real panOnScroll; asserts demote while overlapping +
+re-attach on close).
+
+## Bug 3 (OPEN): "Something went wrong" canvas crash
+
+The screenshot also shows the canvas ErrorBoundary card ("The canvas hit an unexpected error. Your last save
+is on disk. Reload"). **Not reproduced** by panning (20+ real-input steps across two directions, digest open:
+`errorBoundary:false`, renderer alive throughout; no error in the dev main-process log). Likely either a
+separate/transient crash with the orphaned out-of-bounds native view (Bug 2) painting over the error card, or
+a different trigger (zoom-to-47%, AUDIT click, a specific board/URL). **Needs exact repro steps before a
+root-cause hunt** — do not guess-fix.

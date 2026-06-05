@@ -106,4 +106,63 @@ test.describe('preview camera-sync regression', () => {
       )
       .toBeLessThanOrEqual(TOLERANCE)
   })
+
+  // A native WebContentsView paints above ALL HTML, so a Browser board whose live stage
+  // overlaps the fixed "Project context" digest panel (a 300px left overlay) would cover it
+  // — the page bleeds out of bounds over the panel when you pan the board under it. The fix
+  // adds the open panel's rect to the occlusion zones so an overlapping live view demotes to
+  // its (clippable, z-ordered) HTML snapshot. This guards that demote.
+  test('Browser native demotes to snapshot when panned under the open digest panel', async ({
+    page,
+    electronApp
+  }) => {
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const id = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000)).toBe(true)
+    await pollEval(page, runtimeLive(id), 8000)
+    await page.waitForTimeout(400)
+
+    const attached = async (): Promise<boolean | null> => {
+      const nb = await mainCall<NativeBounds | null>(electronApp, 'viewBounds', id)
+      return nb ? nb.attached : null
+    }
+
+    // Open the panel; the board (centered by fitView) starts clear of the 300px panel → live.
+    await evalIn(page, 'window.__canvasE2E.openDigest()')
+    await page.waitForTimeout(400)
+    expect(await attached(), 'board is live before it overlaps the panel').toBe(true)
+
+    // Real panOnScroll LEFT (deltaX < 0 moves the board left) until its stage sits under the
+    // panel. Then it must DEMOTE — a live native view here would paint over the panel.
+    for (let step = 0; step < 5; step++) {
+      await mainCall(electronApp, 'sendInput', {
+        type: 'mouseWheel',
+        x: 600,
+        y: 400,
+        deltaX: -120,
+        deltaY: 0
+      })
+      await page.waitForTimeout(120)
+    }
+    await expect
+      .poll(attached, {
+        message: 'native demotes to snapshot while overlapping the open digest panel',
+        timeout: 6000,
+        intervals: [200, 200, 300, 500]
+      })
+      .toBe(false)
+
+    // Closing the panel removes the occlusion → the board re-attaches (proves the demote is
+    // panel-specific, not merely a side effect of the leftward pan).
+    await evalIn(page, 'window.__canvasE2E.closeDigest()')
+    await expect
+      .poll(attached, {
+        message: 'native re-attaches once the digest panel closes',
+        timeout: 6000,
+        intervals: [200, 200, 300, 500]
+      })
+      .toBe(true)
+  })
 })
