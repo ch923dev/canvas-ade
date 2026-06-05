@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { MemoryDoc } from '@ch923dev/canvas-ade-mcp'
+import type { MemoryDoc } from '@expanse-ade/mcp'
 import { getCurrentDir } from './projectStore'
 
 /**

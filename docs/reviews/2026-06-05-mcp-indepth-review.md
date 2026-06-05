@@ -1,7 +1,7 @@
 # In-depth review — MCP layer (2026-06-05)
 
 **Scope:** the MCP integration end-to-end — app-side (`main`) + the server package
-`@ch923dev/canvas-ade-mcp` v0.8.2 (`Z:\canvas-ade-mcp`).
+`@expanse-ade/mcp` v0.8.2 (`Z:\canvas-ade-mcp`).
 **Method:** read the meta-review backlog (status audit, bug-hunt cards, fix-report, consolidated
 backlog) to establish claimed state, then **two independent adversarial code-reads** (app-side on a
 read-only `main` worktree; server pkg with deps installed) that re-derived every claimed fix from
@@ -35,10 +35,10 @@ ground truth:
 | #49 | adopt canvas-ade-mcp **0.8.2** + bind relay to command board | ✅ merged (`8a41a5d`) |
 | #53 | Waves 0/2/4 (data-loss · SCA/runtime · reliability) | ✅ merged |
 
-App pins `@ch923dev/canvas-ade-mcp ^0.8.2`, SDK `^1.29.0`. `mcp.ts:52` passes `commandBoardId:'app'`
+App pins `@expanse-ade/mcp ^0.8.2`, SDK `^1.29.0`. `mcp.ts:52` passes `commandBoardId:'app'`
 (BUG-021 pt2 adopted). CI billing-block cleared; `NODE_AUTH_TOKEN` wired into CI workflows.
 
-Server pkg `@ch923dev/canvas-ade-mcp` is at **0.8.2** (`027f528`; BUG-021 pt2 relay caller-binding
+Server pkg `@expanse-ade/mcp` is at **0.8.2** (`027f528`; BUG-021 pt2 relay caller-binding
 merged via pkg PR #2).
 
 ## 2. Verification — the bug-hunt fixes are real

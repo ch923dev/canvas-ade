@@ -25,7 +25,7 @@ the provisioned token'd recipe — a junctioned worktree can only run vitest + l
 A junctioned worktree shares the main dir's `node_modules`, which is currently **pre-T9** (vitest 2 / electron
 33 — the main dir sits on `feat/expanse-site`). So locally you get vitest 2 (the v4 `test.projects` config is
 ignored → `.tsx` tests need a `// @vitest-environment jsdom` first line) + node-typecheck fails on the private
-`@ch923dev/canvas-ade-mcp` dep. To run the FULL `typecheck`/`build`/`test:e2e:matrix`:
+`@expanse-ade/mcp` dep. To run the FULL `typecheck`/`build`/`test:e2e:matrix`:
 
 ```
 # in the worktree:

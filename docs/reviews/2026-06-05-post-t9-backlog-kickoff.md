@@ -26,7 +26,7 @@ tree; `pnpm audit --audit-level=high` = exit 0 (1 moderate PostCSS, below the ga
 ## Environment / CI facts (NOT blockers anymore — but know them)
 
 - **GitHub Actions billing is UNBLOCKED** and CI is **token-wired** (`3f0bc7b` added `NODE_AUTH_TOKEN` +
-  `packages: read` to `pr.yml`/`staging.yml` so CI resolves the private `@ch923dev/canvas-ade-mcp` dep).
+  `packages: read` to `pr.yml`/`staging.yml` so CI resolves the private `@expanse-ade/mcp` dep).
   PRs CI-verify + merge normally now. The CI `check` job runs on **ubuntu-latest**.
 - **Provisioned local gate recipe** (when you need the FULL `typecheck`/`build`/`test:e2e:matrix`, which a
   junctioned worktree can't run): in the worktree, drop the junction (`rm node_modules` — it's a symlink),
@@ -87,7 +87,7 @@ God-file splits **need e2e** (now runnable via the provisioned recipe). Sub-area
 
 ### Task D — Dependabot npm-registry creds (follow-up from T9)
 `dependabot.yml` (Wave-2) → the **npm** ecosystem Dependabot runs FAIL on `main` (no creds for the private
-`@ch923dev/canvas-ade-mcp` GH-Packages registry). Add a `registries:` block + a `DEPENDABOT_*` PAT secret
+`@expanse-ade/mcp` GH-Packages registry). Add a `registries:` block + a `DEPENDABOT_*` PAT secret
 (read:packages) referenced from the npm `updates` entry, OR scope dependabot to non-private deps. The
 github-actions ecosystem works (PRs #54–58 are its open bumps — review/merge separately). NOT a code
 regression. Memory `dependabot-private-registry-fail`.

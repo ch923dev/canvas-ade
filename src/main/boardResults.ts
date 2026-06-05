@@ -1,4 +1,4 @@
-import type { BoardResult } from '@ch923dev/canvas-ade-mcp'
+import type { BoardResult } from '@expanse-ade/mcp'
 
 /**
  * MAIN-owned, in-memory store of each board's STRUCTURED last result (T1.5) — a

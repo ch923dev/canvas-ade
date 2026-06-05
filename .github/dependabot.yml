@@ -9,11 +9,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # NOTE: the private @ch923dev/canvas-ade-mcp dep (GitHub Packages, see .npmrc
-    # `@ch923dev:registry=https://npm.pkg.github.com`) is NOT tracked here. To have
-    # dependabot bump it too, add a top-level `registries:` block authenticated with
-    # a PAT secret (read:packages) and reference it via `registries:` on this update.
-    # Left as a documented follow-up — we don't wire the secret here.
+    # @expanse-ade/mcp is a PUBLIC npmjs package — tracked automatically as a normal
+    # npm dep (no registries: block / PAT needed, unlike the old GitHub Packages dep).
 
   # GitHub Actions used in .github/workflows/*.yml.
   - package-ecosystem: github-actions

@@ -1,6 +1,6 @@
 # MCP packaging & serving model
 
-> How the `@ch923dev/canvas-ade-mcp` library gets into the app during **dev** and **release**, and how
+> How the `@expanse-ade/mcp` library gets into the app during **dev** and **release**, and how
 > it is **served** at runtime. Decided 2026-06-03 after the publish→reinstall dev loop proved too heavy
 > (it forced a node_modules de-junction to consume a new version — see memory `mcp-publish-gating`).
 
@@ -20,14 +20,14 @@ ever a pain:
 
 ## Current state (2026-06-03)
 
-- Package lives in a **separate sibling repo** `Z:\canvas-ade-mcp` (`@ch923dev/canvas-ade-mcp`), with
+- Package lives in a **separate sibling repo** `Z:\canvas-ade-mcp` (`@expanse-ade/mcp`), with
   its own contract + live tests and a `v*`-tag publish workflow.
 - App consumes it as a **published GitHub Packages dep** `^0.2.4` (committed `package.json` + lockfile).
 - For **dev**, the app worktree is **`pnpm link`ed** to the sibling so edits flow without publishing.
 
 ## Dev workflow — `pnpm link` (no publish)
 
-The app's `node_modules/@ch923dev/canvas-ade-mcp` is a **symlink → the sibling working tree**, so
+The app's `node_modules/@expanse-ade/mcp` is a **symlink → the sibling working tree**, so
 whatever the sibling has built in `dist/` is what the app runs. `package.json`/lockfile stay on the
 **published** `^0.2.4` so **CI is unaffected** (CI has no sibling checkout — that's why a raw `file:`
 dep was abandoned, pkg commit `f0aa561`).
@@ -69,7 +69,7 @@ Rules:
 2. **Per release — tag + publish + consume.** Bump the pkg, `v*` tag → CI publishes; bump the app's
    `^0.2.x` floor + regen lockfile (in a worktree with its own `node_modules`, not a junction).
 3. **Verify bundling before the first signed release (Phase 5).** Confirm electron-vite actually inlines
-   `@ch923dev/canvas-ade-mcp` into `out/main` (it's a `dependencies` dep, dynamic-`import()`ed) and the
+   `@expanse-ade/mcp` into `out/main` (it's a `dependencies` dep, dynamic-`import()`ed) and the
    packaged app has **no runtime registry dependency**. Add a packaged-app smoke if needed.
 4. **Optional clean-up — monorepo / pnpm workspace.** Because *every* MCP task spans both repos (they
    always change together), co-locating the package as `packages/canvas-ade-mcp` with `workspace:*`

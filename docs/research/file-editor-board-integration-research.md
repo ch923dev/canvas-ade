@@ -183,7 +183,7 @@ Debug Adapter Protocol — JSON-based (header+content over stdio, *similar to bu
 | "Server" is | The tool provider (`canvas-ade-mcp`) | The agent responds; the editor is the client |
 | Filesystem | Agent calls an `fs` *tool* you expose | Agent calls `fs/write_text_file` **on the client** |
 | Maturity (2026) | Large — thousands of servers | Newer (Aug 2025), growing fast, Apache-2.0 |
-| Expanse asset | `@ch923dev/canvas-ade-mcp` 0.8.0 (M0–M4) | Not yet — the proposed keystone |
+| Expanse asset | `@expanse-ade/mcp` 0.8.0 (M0–M4) | Not yet — the proposed keystone |
 
 **Best architecture = do both, layered:** Expanse-as-ACP-client for the human-facing per-agent session UX (richest with ACP-native CLIs — diffs/follow-along/plans/permissions for free); `canvas-ade-mcp` tools (extended with `read_file`/`write_file`/`apply_patch`/`list_diff` scoped via `isUnsafeProjectDir`) as the agent-facing, canvas-aware capability set passed in via `session/new`'s `mcpServers` — the channel for *any* agent (including non-ACP/headless/swarm) and for canvas-specific affordances. (Naming caution: Zed's *Agent Client* Protocol ≠ IBM's *Agent Communication* Protocol, folded into A2A Aug 2025 — document the distinction in an ADR.)
 

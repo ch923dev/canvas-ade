@@ -1,6 +1,6 @@
 # T9 — Electron 33 → 42 (EOL bump) Implementation Plan
 
-> **Status: PREPARED, NOT EXECUTED.** This task CANNOT run in a junctioned worktree (it needs a token'd `pnpm install`, a node-pty native ABI rebuild, a full `electron-vite` build, and the Win+Linux e2e matrix). Execute it in a **provisioned checkout** — either CI with `NODE_AUTH_TOKEN`, or a local checkout where `pnpm install` resolves the private `@ch923dev/canvas-ade-mcp` GitHub-Packages dep. Do a **fresh worktree off `main`** (`fix/electron-bump`), AFTER the Wave 2 hardening PR (SCA) lands so the new `pnpm audit` step gates the result.
+> **Status: PREPARED, NOT EXECUTED.** This task CANNOT run in a junctioned worktree (it needs a token'd `pnpm install`, a node-pty native ABI rebuild, a full `electron-vite` build, and the Win+Linux e2e matrix). Execute it in a **provisioned checkout** — either CI with `NODE_AUTH_TOKEN`, or a local checkout where `pnpm install` resolves the private `@expanse-ade/mcp` GitHub-Packages dep. Do a **fresh worktree off `main`** (`fix/electron-bump`), AFTER the Wave 2 hardening PR (SCA) lands so the new `pnpm audit` step gates the result.
 
 **Goal:** Get Electron off EOL (project is on 33; only 40/41/42 are supported as of June 2026, 39 and earlier are EOL) and clear the audit's CVE findings, without breaking the terminal (node-pty) or the native preview (`WebContentsView`).
 

@@ -6,6 +6,16 @@
 #     git commit --no-verify
 set -e
 
+# Docs-only commits touch no runtime/build/test surface — skip the e2e matrix
+# entirely (no Docker, no install, no ~2-min Electron build). The filter passes
+# only when EVERY staged path is under docs/ or ends in .md; one code/config file
+# staged → run the full gate.
+STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -n "$STAGED" ] && ! printf '%s\n' "$STAGED" | grep -qvE '(^docs/|\.md$)'; then
+  echo "[pre-commit] docs-only commit — skipping e2e matrix."
+  exit 0
+fi
+
 echo "[pre-commit] e2e matrix (Windows native + Linux Docker) — this takes ~2-3 min."
 
 if ! command -v pnpm >/dev/null 2>&1; then

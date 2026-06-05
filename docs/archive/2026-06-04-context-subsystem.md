@@ -41,7 +41,7 @@ memoryEngine.ts (Tier-2 loop — M-memory)     canvasMemory.ts (.canvas/ atomic 
 ```
 
 - **One-way:** MCP imports memory (read resource only). Memory never imports MCP.
-- Lives in app `src/main/` + `src/renderer/`, **not** the `@ch923dev/canvas-ade-mcp` package.
+- Lives in app `src/main/` + `src/renderer/`, **not** the `@expanse-ade/mcp` package.
 - **The only new egress** is MAIN→LLM endpoint — opt-in, ADR-gated (ADR 0003).
 
 ## 3. Cross-cutting rules (durable)

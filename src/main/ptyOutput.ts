@@ -13,7 +13,7 @@
 
 /**
  * Hard cap on chars returned by one page. MUST equal the package's `MAX_OUTPUT_PAGE`
- * (`@ch923dev/canvas-ade-mcp` constants) so the tail-anchored cursor math lines up
+ * (`@expanse-ade/mcp` constants) so the tail-anchored cursor math lines up
  * across the two repos. Unit = UTF-16 code units (JS `String.length`).
  */
 export const MAX_OUTPUT_PAGE = 25_000

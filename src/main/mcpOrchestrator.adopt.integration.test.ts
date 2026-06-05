@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { BoardResult, BoardStatusChange } from '@ch923dev/canvas-ade-mcp'
+import type { BoardResult, BoardStatusChange } from '@expanse-ade/mcp'
 import { buildOrchestrator, type BoardRegistry } from './mcpOrchestrator'
 import {
   subscribeBoardStatus,
