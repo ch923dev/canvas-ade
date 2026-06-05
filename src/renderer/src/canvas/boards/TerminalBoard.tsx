@@ -14,6 +14,7 @@
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useOnViewportChange } from '@xyflow/react'
 import { TerminalConfig } from './TerminalConfig'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -37,6 +38,7 @@ import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTar
 import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPreview'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
+import { installSelectionShim } from './terminal/terminalSelection'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -142,6 +144,10 @@ export function TerminalBoard({
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
+  // Live camera zoom for the selection shim, read at mouse-event time (not a render dep).
+  // Kept current by React Flow's viewport-change subscription below.
+  const zoomRef = useRef(1)
+  useOnViewportChange({ onChange: (vp) => (zoomRef.current = vp.zoom) })
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
@@ -319,6 +325,16 @@ export function TerminalBoard({
     fitRef.current = fit
     if (isE2E()) e2eTerminals.set(board.id, term)
 
+    // Scale-correct selection (F2a): the board renders inside React Flow's scaled
+    // viewport, so xterm's native cell math is off by the camera zoom. The capture-phase
+    // shim feeds xterm coordinates corrected for the live zoom (no-op at z = 1). The
+    // `.xterm-screen` element exists once `term.open(el)` ran; `el.parentElement` is the
+    // nodrag/nowheel screenWrap that owns the mouse surface.
+    const screenEl = el.querySelector('.xterm-screen') as HTMLElement | null
+    const wrapEl = el.parentElement
+    const selectionDisp =
+      screenEl && wrapEl ? installSelectionShim(wrapEl, screenEl, () => zoomRef.current) : null
+
     // Forward keystrokes + resizes to whatever port is CURRENT. Registered ONCE
     // (not inside onWinMsg) so a restart — which delivers a fresh port through the
     // same persistent message listener — doesn't stack duplicate xterm listeners;
@@ -484,6 +500,7 @@ export function TerminalBoard({
       disposed = true
       window.removeEventListener('message', onWinMsg)
       el.removeEventListener('keydown', stopKeys)
+      selectionDisp?.()
       dataDisp.dispose()
       resizeDisp.dispose()
       ro.disconnect()

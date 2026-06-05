@@ -20,3 +20,95 @@ export function correctClientPoint(
     y: rect.top + (client.y - rect.top) / z
   }
 }
+
+const SENTINEL = '__caScaledMouse'
+
+/**
+ * Install a capture-phase mouse shim that makes xterm's NATIVE text selection land on
+ * the right cell while the board is scaled by the React Flow camera.
+ *
+ * xterm 5.5's selection event model (verified against its source):
+ *  - `mousedown` → a BUBBLE-phase listener on the `.xterm` root element (the element
+ *    passed to `term.open(el)`) calls `SelectionService.handleMouseDown(event)`.
+ *  - During a drag, `mousemove`/`mouseup` → BUBBLE-phase listeners on `document`.
+ *  - The buffer cell is `(clientX − rect.left − padding) / cellWidth`, where `rect` is
+ *    the `.xterm-screen` rect (already scaled) but `cellWidth` is NOT — hence the off-by-z
+ *    bug. `handleMouseDown` also branches on `event.detail` (1/2/3 → single/double/triple
+ *    click), so the re-dispatched clone MUST carry `detail` or no selection starts.
+ *
+ * The shim intercepts each selection mouse event in the CAPTURE phase (so it runs before
+ * xterm's bubble listeners), rewrites its coordinate by the live zoom, and re-dispatches a
+ * sentinel-tagged clone to the element xterm listens on (mousedown → the screen element,
+ * which bubbles to `.xterm`; move/up → `document`). The original is
+ * `stopImmediatePropagation`'d so xterm never sees the uncorrected coordinate; the clone
+ * carries the sentinel so this same shim skips it (no re-capture / loop). No-op at z = 1
+ * (and for non-finite/≤0 zoom), so the unscaled copy/paste/focus paths are untouched.
+ *
+ * Returns a disposer that removes every listener.
+ */
+export function installSelectionShim(
+  wrap: HTMLElement,
+  screenEl: HTMLElement,
+  getZoom: () => number
+): () => void {
+  const clone = (e: MouseEvent): MouseEvent | null => {
+    if ((e as unknown as Record<string, unknown>)[SENTINEL]) return null // our own re-dispatch
+    const z = getZoom()
+    if (!Number.isFinite(z) || z === 1 || z <= 0) return null // no correction needed
+    const rect = screenEl.getBoundingClientRect()
+    const p = correctClientPoint({ x: e.clientX, y: e.clientY }, { left: rect.left, top: rect.top }, z)
+    const ev = new MouseEvent(e.type, {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      // `detail` is the click count — xterm's handleMouseDown branches on detail === 1/2/3
+      // to pick single/double/triple-click selection; a clone without it (detail 0) starts
+      // no selection at all.
+      detail: e.detail,
+      button: e.button,
+      buttons: e.buttons,
+      clientX: p.x,
+      clientY: p.y,
+      screenX: e.screenX,
+      screenY: e.screenY,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey
+    })
+    ;(ev as unknown as Record<string, unknown>)[SENTINEL] = true
+    return ev
+  }
+
+  const onDown = (e: MouseEvent): void => {
+    const ev = clone(e)
+    if (!ev) return
+    e.stopImmediatePropagation()
+    e.preventDefault()
+    // Dispatch to the screen element; the clone bubbles up to `.xterm` where xterm's
+    // mousedown selection listener lives (and on to the React `screenWrap` handler, so
+    // click-to-focus still fires via the clone).
+    screenEl.dispatchEvent(ev)
+  }
+  const onMove = (e: MouseEvent): void => {
+    const ev = clone(e)
+    if (!ev) return
+    e.stopImmediatePropagation()
+    document.dispatchEvent(ev)
+  }
+  const onUp = (e: MouseEvent): void => {
+    const ev = clone(e)
+    if (!ev) return
+    e.stopImmediatePropagation()
+    document.dispatchEvent(ev)
+  }
+
+  wrap.addEventListener('mousedown', onDown, true)
+  window.addEventListener('mousemove', onMove, true)
+  window.addEventListener('mouseup', onUp, true)
+  return () => {
+    wrap.removeEventListener('mousedown', onDown, true)
+    window.removeEventListener('mousemove', onMove, true)
+    window.removeEventListener('mouseup', onUp, true)
+  }
+}
