@@ -209,7 +209,14 @@ channel that every write-tool milestone needs. **Dep:** none.
 - **🧪 e2e:** existing board-chrome probe asserts the pill matches the bucket. **Manual:** eyeball a
   running vs blocked board on the canvas.
 
-### T1.7 — Expose the Brain/Memory to agents (the MCP side of the §3 connection)
+### T1.7 — Expose the Brain/Memory to agents (the MCP side of the §3 connection) — ✅ SHIPPED
+> **SHIPPED** with MCP M0–M4. Pkg 0.8.2/0.9.0 register both resources (`dist/index.js`); the app injects
+> `src/main/boardMemory.ts` (`readProjectMemory`/`readBoardSummary`) into `startMcpServer` → wired through
+> `mcpOrchestrator.projectMemory()`/`boardSummary()`. Path-guarded id (≤64, `[A-Za-z0-9_-]`), 100k-char cap,
+> graceful-empty. Covered: `boardMemory.test.ts` + the write→MCP-read join `boardMemory.join.integration.test.ts`
+> + smoke `MCP_MEMORY_OK`. ⚠️ **Residual:** the served summary is LLM-generated (untrusted) → a consuming
+> agent can be prompt-injected by it; passive on the desktop, but the consuming agent's safety is the new
+> surface (ADR 0003 › M-expose residual). `project.md` rollup is written but not exposed (scope call).
 - **Build:** **pkg** — read-only resources `canvas://memory` (project memory index) and
   `canvas://board/{id}/summary` (per-board summary). **app** — the Orchestrator adapter reads the
   sibling **memory engine's** `.canvas/memory/` (T6/sibling roadmap) and serves it; if the brain/memory
