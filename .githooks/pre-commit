@@ -20,6 +20,23 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+# The Linux leg's Docker build installs the private @ch923dev/canvas-ade-mcp from
+# GitHub Packages. Its npm registry needs a token EVEN FOR PUBLIC packages (anon →
+# 401), fed to the BuildKit secret via $NODE_AUTH_TOKEN. If it is unset, derive it
+# from the logged-in gh CLI so `pnpm install --frozen-lockfile` doesn't 401 — no PAT
+# lands in any file (|| true keeps `set -e` happy when gh is absent/logged-out).
+if [ -z "$NODE_AUTH_TOKEN" ] && command -v gh >/dev/null 2>&1; then
+  NODE_AUTH_TOKEN="$(gh auth token 2>/dev/null || true)"
+  export NODE_AUTH_TOKEN
+fi
+if [ -z "$NODE_AUTH_TOKEN" ]; then
+  echo "[pre-commit] WARN: NODE_AUTH_TOKEN unset and no gh token — the Linux e2e leg will"
+  echo "             401 on the private @ch923dev/canvas-ade-mcp install. Fix one of:"
+  echo "               - gh auth login   (a read:packages token; the hook auto-derives it)"
+  echo "               - set NODE_AUTH_TOKEN to a read:packages PAT"
+  echo "               - bypass this commit: git commit --no-verify"
+fi
+
 # E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
 # documented browser-trio env flake doesn't false-block a commit.
 E2E_PRECOMMIT=1 pnpm test:e2e:matrix
