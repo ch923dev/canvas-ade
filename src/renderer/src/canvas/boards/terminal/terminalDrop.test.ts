@@ -15,4 +15,8 @@ describe('quotePathsForPaste', () => {
   it('returns empty string for no usable paths', () => {
     expect(quotePathsForPaste(['', ''])).toBe('')
   })
+
+  it('returns empty string for a single blank path', () => {
+    expect(quotePathsForPaste([' '])).toBe('')
+  })
 })

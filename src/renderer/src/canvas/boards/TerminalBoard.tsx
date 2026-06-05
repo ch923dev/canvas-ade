@@ -864,7 +864,9 @@ export function TerminalBoard({
             onDrop={(e) => {
               const files = e.dataTransfer?.files
               if (!files || files.length === 0) return
-              // stopPropagation beats App.tsx's window-level drop-cancel (anti-navigation).
+              // preventDefault guards against browser nav (alongside App.tsx's window
+              // handler); stopPropagation keeps any outer React drop listener from also
+              // handling this drop.
               e.preventDefault()
               e.stopPropagation()
               const paths = Array.from(files).map((f) => window.api.pathForFile(f))
