@@ -29,7 +29,7 @@ import {
   type TerminalState
 } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
-import { isE2E, e2eTerminals, appendTerminalInput } from '../../smoke/e2eRegistry'
+import { isE2E, e2eTerminals, e2eTerminalInput, appendTerminalInput } from '../../smoke/e2eRegistry'
 import { resolveTerminalKey } from './terminal/terminalKeymap'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
@@ -62,6 +62,9 @@ interface PortMessage {
   code?: number
   state?: TerminalState
 }
+
+/** Platform check for the terminal key resolver's primary modifier (Cmd on macOS). */
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
 // ── Renderer-wide WebGL context budget (#12/#29) ──────────────────────────────
 // Chromium caps live WebGL2 contexts per renderer (~16, shared across all terminal
@@ -319,9 +322,8 @@ export function TerminalBoard({
     //    xterm's SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there.
     //  - Ctrl/Cmd+V smart-pastes (image → staged path, else text), via term.paste so
     //    multiline content gets bracketed-paste markers.
-    const isMac = navigator.platform.toLowerCase().includes('mac')
     term.attachCustomKeyEventHandler((e) => {
-      const action = resolveTerminalKey(e, { hasSelection: term.hasSelection(), isMac })
+      const action = resolveTerminalKey(e, { hasSelection: term.hasSelection(), isMac: IS_MAC })
       if (!action) return true
       if (action.kind === 'newline') {
         sendInput('\x1b\r')
@@ -468,6 +470,7 @@ export function TerminalBoard({
       }
       portRef.current = null
       if (isE2E()) e2eTerminals.delete(board.id)
+      if (isE2E()) e2eTerminalInput.delete(board.id)
       // Free the WebGL context before disposing the terminal (no-op if a prior
       // context-loss or LOD detach already disposed it and nulled the ref).
       detachWebgl()

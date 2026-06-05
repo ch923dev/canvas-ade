@@ -54,4 +54,13 @@ describe('resolveTerminalKey', () => {
   it('Alt+V is NOT our paste (reserved for Claude Code native image paste)', () => {
     expect(resolveTerminalKey(chord('v', { altKey: true }), WIN)).toBeNull()
   })
+
+  it('Ctrl+Shift+C does not copy (shiftKey guard holds; uppercase key)', () => {
+    expect(
+      resolveTerminalKey(chord('C', { ctrlKey: true, shiftKey: true }), {
+        hasSelection: true,
+        isMac: false
+      })
+    ).toBeNull()
+  })
 })

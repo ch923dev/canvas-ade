@@ -1,6 +1,6 @@
 // e2e/terminalIO.e2e.ts
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { evalIn, pollEval, seed } from './helpers'
 
 const readInput = (id: string) => `window.__canvasE2E.readTerminalInput(${JSON.stringify(id)})`
 
