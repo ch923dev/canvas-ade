@@ -6,13 +6,15 @@ import { getCurrentDir } from './projectStore'
 /**
  * Read-only access to the project's persistent memory for the MCP layer (T1.7 🔒).
  *
- * The sibling Brain/Memory engine writes `<project>/.canvas/memory/` —
- * `MEMORY.md` (project index) + `board-<id>.md` (per-board summaries). That engine
- * ships on a separate track (its write side is deferred), so these files are usually
- * ABSENT; every read GRACEFULLY EMPTIES to `{ present: false, text: '' }` — never an
- * error. 🔒 PASSIVE context only: read-only, no write path, exposes no action; and the
- * board id (agent-controlled, arriving via the `canvas://board/{id}/summary` URI) is
- * validated against a strict charset so it can NEVER traverse out of the memory dir.
+ * The sibling Brain/Memory engine (Context subsystem, SHIPPED on `main`) writes
+ * `<project>/.canvas/memory/` — `MEMORY.md` (project index) + `board-<id>.md` (per-board
+ * summaries) via the Tier-2 summaryLoop. The files are present once a board has been
+ * summarized, but every read still GRACEFULLY EMPTIES to `{ present: false, text: '' }` when
+ * a file is absent (no key / not yet summarized / no project open) — never an error. 🔒 PASSIVE
+ * context only: read-only, no write path, exposes no action; and the board id (agent-controlled,
+ * arriving via the `canvas://board/{id}/summary` URI) is validated against a strict charset so it
+ * can NEVER traverse out of the memory dir. ⚠️ The served summary is LLM-GENERATED → untrusted:
+ * an agent consuming it can be prompt-injected by its content (see ADR 0003 › M-expose residual).
  */
 
 /** Cap a single memory doc so a huge file can't be dumped in one read (defense-in-depth). */
