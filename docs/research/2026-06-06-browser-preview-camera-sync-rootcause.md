@@ -172,3 +172,82 @@ Then convert the diagnostic into a hard-asserting regression test.
 5. **Regression-test shape:** the spec should assert native-vs-`.bb-frame` ≤2px after a REAL panOnScroll
    (use `sendInput`, not programmatic `panBy` which doesn't fire the path). Mind the
    `e2e-browser-trio-flake` (assert on deterministic `viewBounds`, not `capturePage`).
+
+---
+
+## ✅ INDEPENDENT RE-VERIFICATION (2026-06-06, session 2) — ROOT CAUSE CONFIRMED
+
+A second session re-derived this from scratch (static read + live decisive test). **Verdict: the
+suspected root cause is correct — the single-slot `useOnViewportChange` collision is THE cause.** No
+correction needed. Details below.
+
+### Static confirmation (code re-read, not trusted from above)
+
+- **RF source verbatim** (installed `@xyflow/react@12.10.2`, `node_modules/.../dist/esm/index.js:3988`):
+  three separate `useEffect`s each `store.setState({ onViewportChange* : … })` — a **single slot per
+  field, last-writer-wins, NOT additive.** Quote in the root-cause section above matches the shipped file.
+- **Both call sites present and exactly as described:** `Canvas.tsx:674` (`onChange` only → autosave
+  `setViewport`) and `usePreviewManager.ts:671` (`onStart:beginMotion, onChange:startPump,
+  onEnd:endMotion`).
+- **Tree / effect order is structural, not coincidental:** `Canvas` (owns the autosave hook) renders
+  `<ReactFlow>` → `<BrowserPreviewLayer>` (`Canvas.tsx:737`) → `usePreviewManager` (the camera-sync hook),
+  all under ONE `ReactFlowProvider` (`Canvas.tsx:832`) ⇒ one shared store. React **commits child effects
+  before parent effects**, so the preview manager registers its three callbacks first and `Canvas`
+  overwrites all three last (`onStart`/`onEnd` → `undefined`, `onChange` → autosave). Deterministic.
+- **Only two production callers** (re-grepped): Canvas + usePreviewManager. `FlowSmoke.tsx:357` also calls
+  it but `FlowSmoke` is **never imported/mounted anywhere** (dead Phase-1 spike) — confirmed by grep.
+
+### Decisive live test (built app, real `sendInput` panOnScroll)
+
+`pnpm build` → `pnpm exec playwright test e2e/preview-align.e2e.ts -g "CLEAN"`, run twice:
+
+| Metric (per panOnScroll step) | **BUG** (as shipped) | **FIX-PROBE** (autosave `useOnViewportChange` removed) |
+|---|---|---|
+| baseline `maxAbs` (native vs frame) | **282.59px** (frozen) | **0.59px** (tracks) |
+| `pumps` | `0` every step | `8 → 12 → 16 → 20 → 24` |
+| `beginMotions` | `0` every step | `2 → 3 → 3 → 4 → 4` |
+| `endMotions` | `0` every step | `2 → 2 → 3 → 3 → 4` |
+| native rect | frozen `{x:25,y:79}` while frame.y 220→175→130→85→40 | moves `220→130`, tracks frame at settled rest |
+
+Removing **only** `Canvas.tsx:674` flips the bug → the preview manager's begin/pump/end fire again and the
+native rect tracks the `.bb-frame` to **0.59px** at settled rest. **The collision is proven to be the
+cause.** (Temp edit was reverted immediately; tree is clean.)
+
+> ⚠️ **Measurement nuance for the regression test:** during/right-after a pan the diagnostic sometimes
+> caught the view **`attached=false`** (steps 0/2/3, `maxAbs` 44/89px). That is **expected** — `beginMotion`
+> detaches the live view to an HTML snapshot for the motion (the CLAUDE.md detach+snapshot LOD strategy);
+> the snapshot moves with the camera and the native **re-attaches at rest** (step 1 showed `attached=true`
+> @ 0.59px). The regression test must therefore assert congruence **only at settled rest** (poll until
+> `attached===true` after the pan), not mid-motion.
+
+### Open questions — answered
+
+1. **Effect-order deterministic?** ✅ Yes. Structural (parent commits after child), and the decisive test
+   confirms the direction (removing Canvas's call restores the preview callbacks).
+2. **Other callers?** ✅ Only Canvas + usePreviewManager in production; `FlowSmoke` is dead/unmounted.
+3. **Fix keeps autosave correct?** ✅ Achievable. `setViewport` is the canvasStore action (unit-tested
+   directly: untracked/no-undo + the Bug-L2 equal-value identity guard). Rewriting the *writer* (RF-store
+   `transform` subscription instead of `useOnViewportChange.onChange`) writes the same values at the same
+   rAF cadence ⇒ persistence + restore unchanged; existing `setViewport`/persistence tests call the store
+   action directly and are unaffected. Plan adds an explicit pan→autosave→reopen→restore check.
+4. **Programmatic-camera path (`rf.fitView`/focus/tidy)?** ✅ Resolved. **Animated** fits — focus, tidy
+   (animate), keybinding `1`, AppChrome fit button — wrap `FIT_FRAME` in `cameraAnim` (a duration tween)
+   ⇒ d3 transition fires `onViewportChangeStart/Change/End` ⇒ once the preview owns the slot (post-fix)
+   they **pump correctly**. **Instant** sets (`duration:0`: viewport restore `Canvas.tsx:687`, fit-on-load
+   `Canvas.tsx:688`, `useTidyTile.ts:83`) don't fire `onChange`, BUT each is followed by a **store-path
+   reconcile** (board-mutation subscription `usePreviewManager.ts:908`, or live-attach/focus reconcile)
+   that repositions the native at the current camera. Residual edge: an instant programmatic camera move
+   with NO following store mutation/focus would stay un-pumped until the next real gesture (rare). **Option
+   3** (drive the pump from a store-`transform` subscription) closes even that — recommended as a
+   **follow-up hardening**, not the first fix.
+5. **Regression-test shape:** ✅ Decided — see the plan. Real `sendInput` panOnScroll (programmatic
+   `panBy`/`setZoom` use `duration:0` and do **not** fire the camera path), assert on deterministic
+   `viewBounds` (main getter) vs `.bb-frame` (≤2px) **at settled rest**, never `capturePage`
+   (`e2e-browser-trio-flake`).
+
+### Recommendation (unchanged from "Proposed fix" above)
+
+**Option 1** — move Canvas's autosave OFF `useOnViewportChange` (subscribe to the RF store `transform`
+additively via `useStoreApi().subscribe`), leaving `usePreviewManager` the sole `useOnViewportChange`
+owner. Lowest-risk, surgical, restores camera sync. Full step-by-step in
+`docs/superpowers/plans/2026-06-06-preview-camera-sync-fix.md`.
