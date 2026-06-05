@@ -21,6 +21,7 @@ import {
   type Connector,
   type ConnectorKind
 } from '../lib/boardSchema'
+import type { Tool } from '../store/canvasStore'
 import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
@@ -61,6 +62,10 @@ export interface CanvasE2E {
   boardBucket: (id: string) => string | null
   /** T1.6 — the pill dot colour token for a bucket (the `bucketToPill` dot, or null). */
   bucketPillDot: (bucket: string) => string | null
+  /** Set the active dock tool (arms a board type or returns to 'select'). */
+  setTool: (tool: Tool) => void
+  /** Get the active dock tool. */
+  getTool: () => Tool
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
   /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
@@ -245,6 +250,8 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // Cast: the harness passes a string; bucketToPill only reads known keys (others → null).
       return bucketToPill(bucket as Parameters<typeof bucketToPill>[0])?.dot ?? null
     },
+    setTool: (tool) => useCanvasStore.getState().setTool(tool),
+    getTool: () => useCanvasStore.getState().tool,
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })
     },
