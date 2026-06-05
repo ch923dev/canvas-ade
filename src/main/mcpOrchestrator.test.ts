@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { BoardOutput, BoardResult, MemoryDoc } from '@ch923dev/canvas-ade-mcp'
+import type {
+  BoardOutput,
+  BoardResult,
+  BoardStatusChange,
+  MemoryDoc
+} from '@ch923dev/canvas-ade-mcp'
 import {
   buildOrchestrator,
   MCP_SPAWN_CAP,
@@ -1407,5 +1412,63 @@ describe('buildOrchestrator', () => {
       expect(drainCalls).toBe(1) // the board was closed exactly once despite two reapIdle calls
       expect(removed).toEqual([id]) // removed once
     })
+  })
+})
+
+describe('buildOrchestrator.subscribeStatus (M5 app-adopt)', () => {
+  /** A registry that captures the forwarded status listener + seeds readResult for t1. */
+  function capturingReg(): {
+    registry: BoardRegistry
+    emit: (c: { id: string; status: string }) => void
+    subscribed: () => boolean
+  } {
+    let listener: ((c: { id: string; status: string }) => void) | null = null
+    const base = reg(
+      [{ id: 't1', type: 'terminal', title: 'T', status: 'idle' }],
+      [],
+      {},
+      { t1: { present: true, status: 'success', summary: 'done' } } // readResult(t1)
+    )
+    const registry: BoardRegistry = {
+      ...base,
+      subscribeStatus: (l) => {
+        listener = l
+        return () => {
+          listener = null
+        }
+      }
+    }
+    return { registry, emit: (c) => listener?.(c), subscribed: () => listener !== null }
+  }
+
+  it('forwards changes and attaches the last result ONLY when idle + present', () => {
+    const { registry, emit } = capturingReg()
+    const orch = buildOrchestrator(registry)
+    const seen: BoardStatusChange[] = []
+    orch.subscribeStatus((c) => seen.push(c))
+
+    emit({ id: 't1', status: 'running' }) // not idle → no result
+    emit({ id: 't1', status: 'idle' }) // idle + present → result attached
+    emit({ id: 't2', status: 'idle' }) // idle but no recorded result → omitted
+    emit({ id: 't1', status: 'gone' }) // non-idle presence signal → no result
+
+    expect(seen).toEqual([
+      { id: 't1', status: 'running' },
+      { id: 't1', status: 'idle', result: { present: true, status: 'success', summary: 'done' } },
+      { id: 't2', status: 'idle' },
+      { id: 't1', status: 'gone' }
+    ])
+  })
+
+  it('returns an unsubscribe that detaches from the registry stream', () => {
+    const { registry, emit, subscribed } = capturingReg()
+    const orch = buildOrchestrator(registry)
+    const seen: BoardStatusChange[] = []
+    const unsub = orch.subscribeStatus((c) => seen.push(c))
+    expect(subscribed()).toBe(true)
+    unsub()
+    expect(subscribed()).toBe(false)
+    emit({ id: 't1', status: 'running' }) // listener detached → ignored
+    expect(seen).toEqual([])
   })
 })
