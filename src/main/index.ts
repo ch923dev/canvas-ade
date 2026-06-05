@@ -36,7 +36,12 @@ import { performGuardedQuit, makeCrashHandler } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
 import { startMcpServer, type RunningMcp } from './mcp'
 import { runMcpSmoke } from './mcpSmoke'
-import { listBoardMirror, listConnectors, registerBoardRegistryHandler, subscribeBoardStatus } from './boardRegistry'
+import {
+  listBoardMirror,
+  listConnectors,
+  registerBoardRegistryHandler,
+  subscribeBoardStatus
+} from './boardRegistry'
 import { sendMcpCommand } from './mcpCommand'
 import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
