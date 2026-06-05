@@ -74,6 +74,54 @@ export function diffStatus(prev: BoardMirror[], next: BoardMirror[]): BoardStatu
 let mirror: BoardMirror[] = []
 let connectorMirror: ConnectorMirror[] = []
 
+/** Listeners notified on each per-board status change (M5 event-driven attention). */
+const statusListeners = new Set<(change: BoardStatusChange) => void>()
+
+function emitStatus(change: BoardStatusChange): void {
+  for (const cb of statusListeners) {
+    try {
+      cb(change)
+    } catch {
+      // 🔒 Isolate a throwing listener so one bad subscriber can't break the push fan-out.
+    }
+  }
+}
+
+/** Replace the stored snapshot and emit the per-board status diffs (M5). */
+function applySnapshot(nextBoards: BoardMirror[], nextConnectors: ConnectorMirror[]): void {
+  const changes = diffStatus(mirror, nextBoards)
+  mirror = nextBoards
+  connectorMirror = nextConnectors
+  for (const c of changes) emitStatus(c)
+}
+
+/**
+ * Subscribe to per-board status changes (M5). Returns an unsubscribe fn. The MCP adapter forwards
+ * these so the handoff await-idle (and, in PR2, the barriers + canvas://attention notifier) wakes
+ * on real board state instead of polling.
+ * Note: a `'gone'` change is emitted for ANY board that left the canvas, including one that never
+ * carried a known status bucket — treat `'gone'` as a presence signal, not a bucket transition.
+ */
+export function subscribeBoardStatus(listener: (change: BoardStatusChange) => void): () => void {
+  statusListeners.add(listener)
+  return () => {
+    statusListeners.delete(listener)
+  }
+}
+
+/** Test seam — apply a snapshot through the diff/emit path (unit tests only). */
+export function __applySnapshotForTest(
+  boards: BoardMirror[],
+  connectors: ConnectorMirror[] = []
+): void {
+  applySnapshot(boards, connectors)
+}
+
+/** Test seam — clear all status listeners between tests (unit tests only). */
+export function __clearStatusListenersForTest(): void {
+  statusListeners.clear()
+}
+
 /** Bound the snapshot so a forged/oversized push on mcp:boards can't grow MAIN memory. */
 const MAX_BOARDS = 500
 const MAX_CONNECTORS = 1000
@@ -188,14 +236,11 @@ export function registerBoardRegistryHandler(
     const main = getWin()?.webContents.mainFrame
     if (main && e.senderFrame && e.senderFrame !== main) return // foreign frame
     if (Array.isArray(payload)) {
-      // Legacy / version-skew only: a renderer that predates T4.6 sends a bare boards
-      // array (no connectors). The current renderer always sends `{ boards, connectors }`.
-      mirror = sanitizeSnapshot(payload)
-      connectorMirror = []
+      // Legacy / version-skew only: a renderer predating T4.6 sends a bare boards array.
+      applySnapshot(sanitizeSnapshot(payload), [])
     } else if (payload && typeof payload === 'object') {
       const { boards, connectors } = payload as { boards?: unknown; connectors?: unknown }
-      mirror = sanitizeSnapshot(boards)
-      connectorMirror = sanitizeConnectors(connectors)
+      applySnapshot(sanitizeSnapshot(boards), sanitizeConnectors(connectors))
     }
   })
 }

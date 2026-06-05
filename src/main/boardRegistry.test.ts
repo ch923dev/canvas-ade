@@ -1,12 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   __setMirrorForTest,
   __setConnectorsForTest,
+  __applySnapshotForTest,
+  __clearStatusListenersForTest,
   listBoardMirror,
   listConnectors,
   sanitizeSnapshot,
   sanitizeConnectors,
   diffStatus,
+  subscribeBoardStatus,
   type BoardStatusChange
 } from './boardRegistry'
 
@@ -110,5 +113,48 @@ describe('diffStatus', () => {
   it('exports BoardStatusChange with an { id, status } shape', () => {
     const change: BoardStatusChange = { id: 'x', status: 'idle' }
     expect(change).toEqual({ id: 'x', status: 'idle' })
+  })
+})
+
+describe('subscribeBoardStatus', () => {
+  beforeEach(() => {
+    __clearStatusListenersForTest()
+  })
+
+  it('emits per-board changes on each snapshot apply, including gone; unsub stops delivery', () => {
+    __setMirrorForTest([]) // reset the module baseline
+    const seen: BoardStatusChange[] = []
+    const unsub = subscribeBoardStatus((c) => seen.push(c))
+
+    __applySnapshotForTest([
+      { id: 'a', type: 'terminal', title: 'A', status: 'running' },
+      { id: 'b', type: 'browser', title: 'B', status: 'idle' }
+    ])
+    __applySnapshotForTest([{ id: 'a', type: 'terminal', title: 'A', status: 'idle' }]) // a changed; b gone
+
+    unsub()
+    __applySnapshotForTest([{ id: 'a', type: 'terminal', title: 'A', status: 'running' }]) // ignored
+
+    expect(seen).toEqual([
+      { id: 'a', status: 'running' },
+      { id: 'b', status: 'idle' },
+      { id: 'a', status: 'idle' },
+      { id: 'b', status: 'gone' }
+    ])
+  })
+
+  it('isolates a throwing listener from the others', () => {
+    __setMirrorForTest([])
+    const seen: BoardStatusChange[] = []
+    const unsubBad = subscribeBoardStatus(() => {
+      throw new Error('boom')
+    })
+    const unsubGood = subscribeBoardStatus((c) => seen.push(c))
+    expect(() =>
+      __applySnapshotForTest([{ id: 'a', type: 'terminal', title: 'A', status: 'idle' }])
+    ).not.toThrow()
+    expect(seen).toEqual([{ id: 'a', status: 'idle' }])
+    unsubBad()
+    unsubGood()
   })
 })
