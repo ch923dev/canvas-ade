@@ -99,6 +99,21 @@ function releaseWebglSlot(id: string): void {
   }
 }
 
+/**
+ * Smart paste: if the clipboard holds an image, stage it to a temp file and inject the
+ * quoted path; otherwise inject the clipboard text. Uses `term.paste` so multiline
+ * content gets bracketed-paste markers when the agent enabled them (no per-line submit).
+ */
+async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
+  const path = await window.api.stageClipboardImage(boardId)
+  if (path) {
+    term.paste(`"${path}" `)
+    return
+  }
+  const text = await window.api.clipboard.readText()
+  if (text) term.paste(text)
+}
+
 export function TerminalBoard({
   board,
   selected,
@@ -328,9 +343,13 @@ export function TerminalBoard({
       if (action.kind === 'newline') {
         sendInput('\x1b\r')
       } else if (action.kind === 'copy') {
-        /* wired in Slice 2 (Task 2.4) */
+        const sel = term.getSelection()
+        if (sel) {
+          void window.api.clipboard.writeText(sel)
+          term.clearSelection()
+        }
       } else if (action.kind === 'paste') {
-        /* wired in Slice 2 (Task 2.4) */
+        void pasteIntoTerminal(term, board.id)
       }
       return false
     })
