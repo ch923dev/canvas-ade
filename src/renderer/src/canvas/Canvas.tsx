@@ -42,7 +42,7 @@ import {
   SCHEMA_VERSION,
   type BoardType
 } from '../lib/boardSchema'
-import { FIT_FRAME, GRID_GAP, RESET_FRAME, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
+import { FIT_FRAME, GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
 import {
   computeAlignment,
@@ -77,7 +77,7 @@ import { buildDigest } from '../lib/digest'
 import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
-import { shouldFireCameraShortcut } from './cameraShortcut'
+import { useCanvasKeybindings } from './hooks/useCanvasKeybindings'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
@@ -790,122 +790,25 @@ function CanvasInner(): ReactElement {
     }
   }, [connectFromId, rf, addConnector])
 
-  // M2: while an orchestration connector is selected, Delete/Backspace removes it. Selecting
-  // a connector clears the board selection, so React Flow's deleteKeyCode finds no selected
-  // node → no double-fire (board deletion). Guarded against firing while typing.
-  useEffect(() => {
-    if (!selectedConnectorId) return
-    const onKey = (e: KeyboardEvent): void => {
-      const t = e.target as HTMLElement | null
-      const typing =
-        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !typing) {
-        e.preventDefault()
-        removeConnector(selectedConnectorId)
-        setSelectedConnectorId(null)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [selectedConnectorId, removeConnector])
-
-  // Keys: Esc clears, 1 fits, 0 resets zoom, Ctrl/⌘+Shift+D toggles diagnostics.
-  // Backspace/Delete deletes the selected board via React Flow's deleteKeyCode.
-  // Ctrl/⌘+Z → undo; Ctrl/⌘+Shift+Z → redo (guarded: no-op while typing).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      const t = e.target as HTMLElement | null
-      const typing =
-        !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-      const mod = (e.ctrlKey || e.metaKey) && !e.altKey
-      if (mod && e.key.toLowerCase() === 'z' && !typing) {
-        e.preventDefault()
-        if (e.shiftKey) doRedo()
-        else doUndo()
-        return
-      }
-      if (mod && e.key.toLowerCase() === 'y' && !e.shiftKey && !typing) {
-        e.preventDefault()
-        doRedo()
-        return
-      }
-      if (e.key === 'Escape' && !typing) {
-        // Full-view Esc is handled in the capture-phase listener below (it must beat
-        // xterm, which stopPropagation()s keydown so a bubble-phase listener never sees
-        // Esc from a focused terminal). Here, bubble phase, only the non-full-view case.
-        clearSelection()
-      } else if (e.key.toLowerCase() === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) {
-        e.preventDefault()
-        setDiag((v) => !v)
-      } else if (e.key === '1' && shouldFireCameraShortcut(t, typing)) {
-        void rf.fitView(cameraAnim(FIT_FRAME))
-      } else if (e.key === '0' && shouldFireCameraShortcut(t, typing)) {
-        // Recenter content at 100% rather than zoomTo(1)-in-place, which can
-        // strand every board off-screen after a far pan/zoom (#41).
-        void rf.fitView(cameraAnim(RESET_FRAME))
-      } else if (
-        e.key.toLowerCase() === 't' &&
-        !typing &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        // Don't fire while focus is INSIDE a board — e.g. the Planning pen well is a
-        // focusable <div> (not an input/textarea), so a `t` right after drawing a stroke
-        // would otherwise repack the whole canvas. The `typing` guard misses non-text
-        // focusable surfaces; this covers them. Tidy is destructive, so be conservative.
-        !t?.closest('.react-flow__node')
-      ) {
-        // Auto-tidy + fit: repack scattered boards and frame them filling the pane.
-        tidyAndFit()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, doUndo, doRedo, tidyAndFit])
-
-  // Esc ALWAYS exits full view — even when a board's own input owns focus. Must run in the
-  // CAPTURE phase (window → target): xterm calls stopPropagation() on keydown, so a
-  // bubble-phase listener never sees Esc from a focused full-view terminal. Capturing here
-  // beats both xterm and any note editor; preventDefault + stopPropagation keep the same
-  // Esc from also reaching them (the keystroke only exits full view). Browser boards can't
-  // deliver keydown to the renderer at all (focused native web content) — main forwards an
-  // `escape` preview event handled in BrowserPreviewLayer. No-op when not in full view.
-  useEffect(() => {
-    const onEscapeCapture = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && (fullViewId || cameraFullViewId)) {
-        e.preventDefault()
-        e.stopPropagation()
-        if (cameraFullViewId) exitCameraFullView()
-        else closeFullView()
-      }
-    }
-    window.addEventListener('keydown', onEscapeCapture, true)
-    return () => window.removeEventListener('keydown', onEscapeCapture, true)
-  }, [fullViewId, closeFullView, cameraFullViewId, exitCameraFullView])
-
-  // Track Ctrl/⌘ for the snap-suppress escape hatch. keydown AND keyup both read the live
-  // modifier state so holding/releasing mid-drag toggles snapping without a stale latch.
-  // blur + visibilitychange reset the ref when the window loses focus (e.g. alt-tab while
-  // holding Ctrl): the OS swallows the keyup so without this the ref stays latched true and
-  // snapping stays suppressed for the rest of the session.
-  useEffect(() => {
-    const update = (e: KeyboardEvent): void => {
-      snapSuppressRef.current = e.ctrlKey || e.metaKey
-    }
-    const reset = (): void => {
-      snapSuppressRef.current = false
-    }
-    window.addEventListener('keydown', update)
-    window.addEventListener('keyup', update)
-    window.addEventListener('blur', reset)
-    document.addEventListener('visibilitychange', reset)
-    return () => {
-      window.removeEventListener('keydown', update)
-      window.removeEventListener('keyup', update)
-      window.removeEventListener('blur', reset)
-      document.removeEventListener('visibilitychange', reset)
-    }
-  }, [])
+  // Canvas keyboard bindings (Wave-5 B5): selected-connector Delete/Backspace · the main keymap
+  // (undo/redo · Esc-clear · diag toggle · 1 fit / 0 reset · t tidy) · the capture-phase
+  // Esc-always-exits-full-view · Ctrl/⌘ snap-suppress tracking — all in useCanvasKeybindings.
+  useCanvasKeybindings({
+    rf,
+    clearSelection,
+    doUndo,
+    doRedo,
+    tidyAndFit,
+    setDiag,
+    selectedConnectorId,
+    removeConnector,
+    setSelectedConnectorId,
+    fullViewId,
+    cameraFullViewId,
+    closeFullView,
+    exitCameraFullView,
+    snapSuppressRef
+  })
 
   // E2E (CANVAS_E2E): expose the imperative test hook once the canvas (and its
   // React Flow instance) is live. No-op in every normal run (guarded by isE2E()).
