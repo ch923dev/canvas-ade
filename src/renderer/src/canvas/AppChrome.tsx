@@ -28,20 +28,18 @@ import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
 
 export interface AppChromeProps {
-  /** Add a board of `type` centered in the current view (shared with EmptyState). */
-  onAdd: (type: BoardType) => void
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
    *  templates) and the `t` key (Smart). */
   onTidy: (preset: LayoutPreset) => void
 }
 
-export function AppChrome({ onAdd, onTidy }: AppChromeProps): ReactElement {
+export function AppChrome({ onTidy }: AppChromeProps): ReactElement {
   const [showSettings, setShowSettings] = useState(false)
   return (
     <>
       <ProjectSwitcher />
       <CameraCluster onTidy={onTidy} onSettings={() => setShowSettings(true)} />
-      <Dock onAdd={onAdd} />
+      <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </>
   )
@@ -348,8 +346,11 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
   )
 }
 
-// ── Bottom-center: board dock ─────────────────────────────────────────────────
-function Dock({ onAdd }: { onAdd: (type: BoardType) => void }): ReactElement {
+// ── Top-center: board dock ────────────────────────────────────────────────────
+// Clicking a board button ARMS that type (sets the store `tool`); the canvas then
+// turns a click into a default-size board and a drag into a sized one
+// (useBoardPlacement). Select disarms. Exported for the dock arming integration test.
+export function Dock(): ReactElement {
   const tool = useCanvasStore((s) => s.tool)
   const setTool = useCanvasStore((s) => s.setTool)
   return (
@@ -364,7 +365,7 @@ function Dock({ onAdd }: { onAdd: (type: BoardType) => void }): ReactElement {
         />
         <span style={styles.divider} />
         {(['terminal', 'browser', 'planning'] as const).map((type) => (
-          <DockBtn key={type} type={type} onClick={() => onAdd(type)} />
+          <DockBtn key={type} type={type} active={tool === type} onClick={() => setTool(type)} />
         ))}
       </div>
     </div>
@@ -414,7 +415,15 @@ function ToolBtn({
   )
 }
 
-function DockBtn({ type, onClick }: { type: BoardType; onClick: () => void }): ReactElement {
+function DockBtn({
+  type,
+  active = false,
+  onClick
+}: {
+  type: BoardType
+  active?: boolean
+  onClick: () => void
+}): ReactElement {
   const [hover, setHover] = useState(false)
   const label = type[0].toUpperCase() + type.slice(1)
   return (
@@ -431,15 +440,20 @@ function DockBtn({ type, onClick }: { type: BoardType; onClick: () => void }): R
         border: 'none',
         borderRadius: 6,
         cursor: 'pointer',
-        background: hover ? 'var(--surface-overlay)' : 'transparent',
-        color: hover ? 'var(--text)' : 'var(--text-2)',
+        background: active ? 'var(--accent-wash)' : hover ? 'var(--surface-overlay)' : 'transparent',
+        color: active ? 'var(--accent)' : hover ? 'var(--text)' : 'var(--text-2)',
         fontSize: 12.5,
         fontWeight: 500,
         fontFamily: 'var(--ui)',
         transition: 'color .1s, background .1s'
       }}
     >
-      <span style={{ color: hover ? 'var(--accent)' : 'var(--text-3)', display: 'inline-flex' }}>
+      <span
+        style={{
+          color: active || hover ? 'var(--accent)' : 'var(--text-3)',
+          display: 'inline-flex'
+        }}
+      >
         <TypeGlyph type={type} />
       </span>
       <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>+</span>
@@ -461,7 +475,7 @@ const styles: Record<string, CSSProperties> = {
   tr: { position: 'absolute', top: 14, right: 16, zIndex: 50 },
   dock: {
     position: 'absolute',
-    bottom: 18,
+    top: 14,
     left: '50%',
     transform: 'translateX(-50%)',
     zIndex: 50

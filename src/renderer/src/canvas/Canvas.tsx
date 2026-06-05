@@ -774,7 +774,7 @@ function CanvasInner(): ReactElement {
             })()}
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
-          <AppChrome onAdd={addCentered} onTidy={tidyAndFit} />
+          <AppChrome onTidy={tidyAndFit} />
           <DigestPanel
             digest={digest}
             prose={prose}
