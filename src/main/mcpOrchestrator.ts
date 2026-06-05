@@ -46,11 +46,9 @@ export interface OrchestratorOpts {
   spawnGraceMs?: number
   /** 🔒 Single-use-nonce authority for dispatch (T4.3); a fresh guard per orchestrator by default. */
   guard?: DispatchGuard
-  /** Sleep seam for the handoff await-idle poll (injected by tests to avoid real timers). */
+  /** Backstop timer seam for the handoff await-idle deadline (injected by tests to avoid real timers). */
   sleep?: (ms: number) => Promise<void>
-  /** Poll interval while waiting for a dispatched terminal to leave `running` (T4.3). */
-  handoffPollMs?: number
-  /** Bound on the handoff await-idle wait — M5 replaces this with real attention. */
+  /** Backstop deadline for the handoff await-idle (M5: the await is event-driven via subscribeStatus). */
   handoffTimeoutMs?: number
 }
 
@@ -78,6 +76,13 @@ export interface BoardRegistry {
    */
   listConnectors(): ConnectorMirrorEntry[]
   listSessions(): Array<{ id: string; status: string }>
+  /**
+   * Subscribe to per-board coarse status changes (M5 event-driven attention). MAIN injects
+   * `boardRegistry.ts`'s `subscribeBoardStatus`. Emits `{ id, status }` on each change
+   * (`status: 'gone'` when a board leaves the canvas); returns an unsubscribe fn. The handoff
+   * await-idle wakes on these instead of polling.
+   */
+  subscribeStatus(listener: (change: { id: string; status: string }) => void): () => void
   /**
    * Drive the canvas via the MAIN → renderer control-plane command channel (T3.1+).
    * MAIN injects a frame-guarded `sendMcpCommand`; the renderer applies the command
@@ -175,8 +180,13 @@ export function buildOrchestrator(
   const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
   // 🔒 One single-use-nonce authority per orchestrator (T4.3 dispatch).
   const guard = opts.guard ?? createDispatchGuard()
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
-  const handoffPollMs = opts.handoffPollMs ?? 250
+  const sleep =
+    opts.sleep ??
+    ((ms: number) =>
+      new Promise<void>((r) => {
+        const t = setTimeout(r, ms)
+        t.unref?.()
+      }))
   const handoffTimeoutMs = opts.handoffTimeoutMs ?? MCP_IDLE_TTL_MS
   const sessionMap = (): Map<string, string> =>
     new Map(registry.listSessions().map((s) => [s.id, s.status]))
@@ -196,6 +206,39 @@ export function buildOrchestrator(
     for (const [id, rec] of tracked) {
       if (!live.has(id) && t - rec.spawnedAt > spawnGraceMs) tracked.delete(id)
     }
+  }
+
+  /**
+   * Await the dispatched board leaving `running`, event-driven off the status stream (M5 — replaces
+   * the old busy-poll). Resolves 'idle' when it settles, 'closed' when it leaves the canvas, or
+   * 'timed_out' at the backstop deadline. Re-resolves the LIVE derived status on each wake so a stale
+   * pre-write 'running' snapshot can't stall it (BUG-008 discipline).
+   */
+  const awaitHandoffSettled = (boardId: string): Promise<'idle' | 'closed' | 'timed_out'> => {
+    const check = (): 'idle' | 'closed' | null => {
+      const live = registry.listBoards().find((b) => b.id === boardId)
+      if (!live) return 'closed'
+      return deriveStatus(live, sessionMap()) !== 'running' ? 'idle' : null
+    }
+    const immediate = check()
+    if (immediate) return Promise.resolve(immediate)
+    return new Promise<'idle' | 'closed' | 'timed_out'>((resolve) => {
+      let settled = false
+      let unsub = (): void => {}
+      const finish = (exit: 'idle' | 'closed' | 'timed_out'): void => {
+        if (settled) return
+        settled = true
+        unsub()
+        resolve(exit)
+      }
+      unsub = registry.subscribeStatus((change) => {
+        if (change.id !== boardId) return
+        const c = check()
+        if (c) finish(c)
+      })
+      // One-shot backstop (NOT a poll): a single deadline timer via the injected `sleep` seam.
+      void sleep(handoffTimeoutMs).then(() => finish('timed_out'))
+    })
   }
 
   return {
@@ -528,26 +571,10 @@ export function buildOrchestrator(
         detail: `seq=${seq}`
       })
 
-      // (7) Await idle: poll the board's status until it leaves `running`, bounded by a
-      // timeout (M5 replaces this interim poll with real attention signalling). RE-RESOLVE
-      // the live board every tick — a board closed mid-wait must NOT fall back to the stale
-      // pre-write snapshot (BUG-008): the snapshot's `status: 'running'` short-circuits
-      // `deriveStatus` and stalls the loop to the full deadline. Absent from the mirror =
-      // the board is gone (user-closed / reaped) → stop waiting and record `closed`.
-      const deadline = now() + handoffTimeoutMs
-      let exit: 'idle' | 'closed' | 'timed_out' = 'timed_out'
-      while (now() < deadline) {
-        const live = registry.listBoards().find((b) => b.id === boardId)
-        if (!live) {
-          exit = 'closed'
-          break
-        }
-        if (deriveStatus(live, sessionMap()) !== 'running') {
-          exit = 'idle'
-          break
-        }
-        await sleep(handoffPollMs)
-      }
+      // (7) Await idle — event-driven off the status stream (M5). No busy-poll: park on the first
+      // status change for this board (re-resolving the live derived status on wake), bounded by a
+      // one-shot backstop deadline.
+      const exit = await awaitHandoffSettled(boardId)
       const result = registry.readResult(boardId)
 
       // (8) Record the dispatch outcome (target + full prompt + nonce + seq + outputs). The

@@ -16,7 +16,8 @@ const DISPATCH_DEFAULTS = {
   confirm: async (): Promise<{ approved: boolean }> => ({ approved: true }),
   audit: async (): Promise<void> => {},
   recordResult: (): void => {},
-  listConnectors: () => []
+  listConnectors: () => [],
+  subscribeStatus: () => () => {}
 }
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
@@ -446,14 +447,23 @@ describe('buildOrchestrator', () => {
       audits: AuditInput[]
       writes: Array<{ id: string; text: string }>
       confirms: Array<{ title: string; body: string }>
+      emitStatus: (change: { id: string; status: string }) => void
+      hasListener: () => boolean
     } {
       const audits: AuditInput[] = []
       const writes: Array<{ id: string; text: string }> = []
       const confirms: Array<{ title: string; body: string }> = []
+      let statusListener: ((c: { id: string; status: string }) => void) | null = null
       const registry: BoardRegistry = {
         listBoards: () => opts.boards,
         listConnectors: () => [],
         listSessions: () => opts.sessions ?? [],
+        subscribeStatus: (l) => {
+          statusListener = l
+          return () => {
+            statusListener = null
+          }
+        },
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => opts.result ?? EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -473,7 +483,14 @@ describe('buildOrchestrator', () => {
         },
         recordResult: () => {}
       }
-      return { registry, audits, writes, confirms }
+      return {
+        registry,
+        audits,
+        writes,
+        confirms,
+        emitStatus: (change) => statusListener?.(change),
+        hasListener: () => statusListener !== null
+      }
     }
 
     it('🔒 rejects an unknown target id — audits rejected, NO confirm, NO write', async () => {
@@ -563,21 +580,28 @@ describe('buildOrchestrator', () => {
       expect(done!.nonce.length).toBeGreaterThan(0)
     })
 
+    const waitForListener = async (hasListener: () => boolean): Promise<void> => {
+      for (let i = 0; i < 1000; i++) {
+        if (hasListener()) return
+        await Promise.resolve()
+      }
+      throw new Error('awaitHandoffSettled never subscribed (hasListener stayed false)')
+    }
+
     it('🔒 audits `dispatched` at write time — BEFORE await-idle resolves (crash-durable trail)', async () => {
       const board: Board = { id: 't1', type: 'terminal', title: 'Term', status: 'running' }
-      const { registry, audits } = dispatchReg({ boards: [board], result: { present: true } })
-      let dispatchedBeforeWait = false
-      const orch = buildOrchestrator(registry, {
-        sleep: async () => {
-          // The await-idle loop is now waiting; the write already happened, so a
-          // `dispatched` audit entry MUST already exist (a crash here keeps the trail).
-          dispatchedBeforeWait = audits.some((a) => a.status === 'dispatched')
-          board.status = 'idle'
-        },
-        handoffPollMs: 1,
-        handoffTimeoutMs: 10_000
+      const { registry, audits, emitStatus, hasListener } = dispatchReg({
+        boards: [board],
+        result: { present: true }
       })
-      await orch.handoffPrompt('t1', 'x')
+      // Backstop sleep never resolves → the ONLY way to settle is the status event.
+      const orch = buildOrchestrator(registry, { sleep: () => new Promise<void>(() => {}) })
+      const p = orch.handoffPrompt('t1', 'x')
+      await waitForListener(hasListener) // the await-idle has parked on the stream
+      const dispatchedBeforeWait = audits.some((a) => a.status === 'dispatched')
+      board.status = 'idle'
+      emitStatus({ id: 't1', status: 'idle' })
+      await p
       expect(dispatchedBeforeWait).toBe(true)
       expect(audits.some((a) => a.status === 'completed')).toBe(true)
     })
@@ -592,66 +616,40 @@ describe('buildOrchestrator', () => {
       expect(audits.some((a) => a.status === 'failed')).toBe(true)
     })
 
-    it('await-idle: waits while the target is running, then reads the result once idle', async () => {
+    it('await-idle: parks on the status stream while running, resolves on the idle event', async () => {
       const result: BoardResult = { present: true, status: 'success', summary: 'ok' }
       const board: Board = { id: 't1', type: 'terminal', title: 'Term', status: 'running' }
-      const { registry, writes } = dispatchReg({ boards: [board], result })
-      let slept = 0
-      const orch = buildOrchestrator(registry, {
-        sleep: async () => {
-          slept++
-          board.status = 'idle' // the dispatched command finished
-        },
-        handoffPollMs: 1,
-        handoffTimeoutMs: 10_000
-      })
-      const res = await orch.handoffPrompt('t1', 'x')
-      expect(slept).toBeGreaterThanOrEqual(1) // it actually waited while running
+      const { registry, writes, emitStatus, hasListener } = dispatchReg({ boards: [board], result })
+      // No poll, no backstop: a never-resolving sleep proves resolution is event-driven.
+      const orch = buildOrchestrator(registry, { sleep: () => new Promise<void>(() => {}) })
+      const p = orch.handoffPrompt('t1', 'x')
+      await waitForListener(hasListener)
+      board.status = 'idle'
+      emitStatus({ id: 't1', status: 'idle' })
+      const res = await p
+      expect(hasListener()).toBe(false)
       expect(writes).toEqual([{ id: 't1', text: 'x\r' }])
       expect(res).toEqual(result)
     })
 
-    it('BUG-008: a board closed mid await-idle breaks the loop (no stale-snapshot stall) and audits `closed`', async () => {
-      // The board is `running` at write time, then disappears from the mirror during the
-      // wait (user-closed / reaped). The OLD code fell back to the stale `board` snapshot
-      // whose `status: 'running'` short-circuits deriveStatus → the loop stalled to the
-      // full deadline and audited `completed`. The fix treats "gone from the mirror" as a
-      // stop condition and records `closed`.
+    it('BUG-008: a board that vanishes mid await-idle resolves `closed` (no stale-snapshot stall)', async () => {
       const boards: Board[] = [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
-      const { registry, audits } = dispatchReg({ boards })
-      let slept = 0
-      const orch = buildOrchestrator(registry, {
-        sleep: async () => {
-          slept++
-          // First poll iteration ran with the board running; now the board closes.
-          boards.splice(0, boards.length)
-        },
-        handoffPollMs: 1,
-        // A LARGE deadline: if the loop stalled on the stale snapshot it would spin here
-        // (slept would climb without bound) rather than break on the first vanish.
-        handoffTimeoutMs: 1_000_000
-      })
-      await orch.handoffPrompt('t1', 'x')
-      expect(slept).toBe(1) // broke out the iteration after the board vanished — no stall
-      // The outcome is recorded as `closed`, NOT a false `completed`.
+      const { registry, audits, emitStatus, hasListener } = dispatchReg({ boards })
+      const orch = buildOrchestrator(registry, { sleep: () => new Promise<void>(() => {}) })
+      const p = orch.handoffPrompt('t1', 'x')
+      await waitForListener(hasListener)
+      boards.splice(0, boards.length) // user-closed / reaped
+      emitStatus({ id: 't1', status: 'gone' })
+      await p
       expect(audits.some((a) => a.status === 'closed')).toBe(true)
       expect(audits.some((a) => a.status === 'completed')).toBe(false)
     })
 
-    it('BUG-008: a board stuck `running` past the deadline audits `timed_out`, not `completed`', async () => {
-      // The agent never goes idle. The loop must exit on the deadline and record a
-      // distinct `timed_out` status so a stuck board is not silently logged `completed`.
+    it('BUG-008: a board stuck `running` past the deadline resolves `timed_out`, not `completed`', async () => {
       const board: Board = { id: 't1', type: 'terminal', title: 'Term', status: 'running' }
       const { registry, audits } = dispatchReg({ boards: [board] })
-      let clock = 0
-      const orch = buildOrchestrator(registry, {
-        now: () => clock,
-        sleep: async () => {
-          clock += 5 // advance the clock but never leave `running`
-        },
-        handoffPollMs: 5,
-        handoffTimeoutMs: 20
-      })
+      // Backstop fires immediately and no idle event ever arrives → timed_out.
+      const orch = buildOrchestrator(registry, { sleep: async () => {} })
       await orch.handoffPrompt('t1', 'x')
       expect(audits.some((a) => a.status === 'timed_out')).toBe(true)
       expect(audits.some((a) => a.status === 'completed')).toBe(false)
@@ -724,6 +722,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => opts.boards,
         listConnectors: () => [],
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -907,6 +906,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => opts.boards,
         listConnectors: () => [],
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -1034,6 +1034,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => opts.boards,
         listConnectors: () => opts.connectors ?? [],
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -1174,6 +1175,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => twoTerminals,
         listConnectors: () => connectors, // reads the live (mutable) mirror each call
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,

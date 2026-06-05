@@ -1,11 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   __setMirrorForTest,
   __setConnectorsForTest,
+  __applySnapshotForTest,
+  __clearStatusListenersForTest,
   listBoardMirror,
   listConnectors,
   sanitizeSnapshot,
-  sanitizeConnectors
+  sanitizeConnectors,
+  diffStatus,
+  subscribeBoardStatus,
+  type BoardStatusChange
 } from './boardRegistry'
 
 describe('boardRegistry', () => {
@@ -67,5 +72,89 @@ describe('boardRegistry', () => {
     ])
     __setConnectorsForTest([])
     expect(listConnectors()).toEqual([])
+  })
+})
+
+describe('diffStatus', () => {
+  it('emits changed + new-with-bucket, skips unchanged + bucketless-new, emits gone for any vanished id', () => {
+    const prev = [
+      { id: 'a', type: 'terminal', title: 'A', status: 'running' },
+      { id: 'b', type: 'browser', title: 'B', status: 'idle' },
+      { id: 'c', type: 'planning', title: 'C' } // bucketless
+    ]
+    const next = [
+      { id: 'a', type: 'terminal', title: 'A', status: 'idle' }, // changed
+      { id: 'b', type: 'browser', title: 'B', status: 'idle' }, // unchanged
+      { id: 'd', type: 'terminal', title: 'D', status: 'running' } // new, bucketed
+      // c vanished
+    ]
+    expect(diffStatus(prev, next)).toEqual([
+      { id: 'a', status: 'idle' },
+      { id: 'd', status: 'running' },
+      { id: 'c', status: 'gone' }
+    ])
+  })
+
+  it('emits nothing for an identical snapshot', () => {
+    const s = [{ id: 'a', type: 'terminal', title: 'A', status: 'running' }]
+    expect(diffStatus(s, s)).toEqual([])
+  })
+
+  it('skips a board that newly appears WITHOUT a bucket', () => {
+    expect(diffStatus([], [{ id: 'x', type: 'planning', title: 'X' }])).toEqual([])
+  })
+
+  it('emits gone even when the vanished board had no bucket', () => {
+    expect(diffStatus([{ id: 'x', type: 'planning', title: 'X' }], [])).toEqual([
+      { id: 'x', status: 'gone' }
+    ])
+  })
+
+  it('exports BoardStatusChange with an { id, status } shape', () => {
+    const change: BoardStatusChange = { id: 'x', status: 'idle' }
+    expect(change).toEqual({ id: 'x', status: 'idle' })
+  })
+})
+
+describe('subscribeBoardStatus', () => {
+  beforeEach(() => {
+    __clearStatusListenersForTest()
+  })
+
+  it('emits per-board changes on each snapshot apply, including gone; unsub stops delivery', () => {
+    __setMirrorForTest([]) // reset the module baseline
+    const seen: BoardStatusChange[] = []
+    const unsub = subscribeBoardStatus((c) => seen.push(c))
+
+    __applySnapshotForTest([
+      { id: 'a', type: 'terminal', title: 'A', status: 'running' },
+      { id: 'b', type: 'browser', title: 'B', status: 'idle' }
+    ])
+    __applySnapshotForTest([{ id: 'a', type: 'terminal', title: 'A', status: 'idle' }]) // a changed; b gone
+
+    unsub()
+    __applySnapshotForTest([{ id: 'a', type: 'terminal', title: 'A', status: 'running' }]) // ignored
+
+    expect(seen).toEqual([
+      { id: 'a', status: 'running' },
+      { id: 'b', status: 'idle' },
+      { id: 'a', status: 'idle' },
+      { id: 'b', status: 'gone' }
+    ])
+  })
+
+  it('isolates a throwing listener from the others', () => {
+    __setMirrorForTest([])
+    const seen: BoardStatusChange[] = []
+    const unsubBad = subscribeBoardStatus(() => {
+      throw new Error('boom')
+    })
+    const unsubGood = subscribeBoardStatus((c) => seen.push(c))
+    expect(() =>
+      __applySnapshotForTest([{ id: 'a', type: 'terminal', title: 'A', status: 'idle' }])
+    ).not.toThrow()
+    expect(seen).toEqual([{ id: 'a', status: 'idle' }])
+    unsubBad()
+    unsubGood()
   })
 })

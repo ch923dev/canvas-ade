@@ -42,8 +42,85 @@ const STATUS_BUCKETS: ReadonlySet<string> = new Set([
   'static'
 ])
 
+/** A coarse per-board status change (M5). `status` is a STATUS_BUCKETS value, or 'gone'. */
+export interface BoardStatusChange {
+  id: string
+  status: string
+}
+
+/**
+ * Pure differ: the per-board status changes between two snapshots (M5 event-driven attention).
+ * Emits a change for any board whose known bucket changed or first appeared WITH a bucket, and a
+ * `{ status: 'gone' }` for any id present before and now absent. A board newly appearing WITHOUT a
+ * bucket is skipped (the renderer always buckets now; the bucketless fallback is legacy).
+ * Inputs are sanitized mirrors (`sanitizeSnapshot` already dropped unknown buckets), so this does
+ * no bucket re-validation — it just diffs.
+ */
+export function diffStatus(prev: BoardMirror[], next: BoardMirror[]): BoardStatusChange[] {
+  const prevById = new Map(prev.map((b) => [b.id, b.status]))
+  const nextIds = new Set(next.map((b) => b.id))
+  const changes: BoardStatusChange[] = []
+  for (const b of next) {
+    if (b.status !== undefined && b.status !== prevById.get(b.id)) {
+      changes.push({ id: b.id, status: b.status })
+    }
+  }
+  for (const b of prev) {
+    if (!nextIds.has(b.id)) changes.push({ id: b.id, status: 'gone' })
+  }
+  return changes
+}
+
 let mirror: BoardMirror[] = []
 let connectorMirror: ConnectorMirror[] = []
+
+/** Listeners notified on each per-board status change (M5 event-driven attention). */
+const statusListeners = new Set<(change: BoardStatusChange) => void>()
+
+function emitStatus(change: BoardStatusChange): void {
+  for (const cb of statusListeners) {
+    try {
+      cb(change)
+    } catch {
+      // 🔒 Isolate a throwing listener so one bad subscriber can't break the push fan-out.
+    }
+  }
+}
+
+/** Replace the stored snapshot and emit the per-board status diffs (M5). */
+function applySnapshot(nextBoards: BoardMirror[], nextConnectors: ConnectorMirror[]): void {
+  const changes = diffStatus(mirror, nextBoards)
+  mirror = nextBoards
+  connectorMirror = nextConnectors
+  for (const c of changes) emitStatus(c)
+}
+
+/**
+ * Subscribe to per-board status changes (M5). Returns an unsubscribe fn. The MCP adapter forwards
+ * these so the handoff await-idle (and, in PR2, the barriers + canvas://attention notifier) wakes
+ * on real board state instead of polling.
+ * Note: a `'gone'` change is emitted for ANY board that left the canvas, including one that never
+ * carried a known status bucket — treat `'gone'` as a presence signal, not a bucket transition.
+ */
+export function subscribeBoardStatus(listener: (change: BoardStatusChange) => void): () => void {
+  statusListeners.add(listener)
+  return () => {
+    statusListeners.delete(listener)
+  }
+}
+
+/** Test seam — apply a snapshot through the diff/emit path (unit tests only). */
+export function __applySnapshotForTest(
+  boards: BoardMirror[],
+  connectors: ConnectorMirror[] = []
+): void {
+  applySnapshot(boards, connectors)
+}
+
+/** Test seam — clear all status listeners between tests (unit tests only). */
+export function __clearStatusListenersForTest(): void {
+  statusListeners.clear()
+}
 
 /** Bound the snapshot so a forged/oversized push on mcp:boards can't grow MAIN memory. */
 const MAX_BOARDS = 500
@@ -159,14 +236,11 @@ export function registerBoardRegistryHandler(
     const main = getWin()?.webContents.mainFrame
     if (main && e.senderFrame && e.senderFrame !== main) return // foreign frame
     if (Array.isArray(payload)) {
-      // Legacy / version-skew only: a renderer that predates T4.6 sends a bare boards
-      // array (no connectors). The current renderer always sends `{ boards, connectors }`.
-      mirror = sanitizeSnapshot(payload)
-      connectorMirror = []
+      // Legacy / version-skew only: a renderer predating T4.6 sends a bare boards array.
+      applySnapshot(sanitizeSnapshot(payload), [])
     } else if (payload && typeof payload === 'object') {
       const { boards, connectors } = payload as { boards?: unknown; connectors?: unknown }
-      mirror = sanitizeSnapshot(boards)
-      connectorMirror = sanitizeConnectors(connectors)
+      applySnapshot(sanitizeSnapshot(boards), sanitizeConnectors(connectors))
     }
   })
 }
