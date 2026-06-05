@@ -178,6 +178,14 @@ groups?: NamedGroup[]   // optional so pre-migration v5 docs still parse
 Each slice ends runnable + committed. Built on this worktree; promoted to `main` via the sequential
 merge gate once green.
 
+- **S0 — Real multi-select (prerequisite, discovered during planning).** The canvas is
+  **single-select today** (`selectedId`; `buildBoardNodes` marks one node; `onNodesChange` collapses
+  multi-selection to the last id). "Select 2+ boards → Ctrl+G" needs a real multi-selection. Add
+  `selectedIds: string[]` to the store **alongside** the kept `selectedId` (= primary/last, which
+  `usePreviewManager`/`previewPlan`/full-view + ~40 tests still read); `buildBoardNodes` marks every
+  `selectedIds` member; `onNodesChange` folds all select/deselect deltas via `setSelection`. Delete
+  now removes ALL selected (park every selected terminal). **Checkpoint:** shift-click + Shift+drag
+  marquee select multiple boards.
 - **S1 — Data + store + migration + undo (no UI).** `NamedGroup`, `CanvasDoc.groups?`, `SCHEMA_VERSION`
   5→6 + claim comment, migration `5→6`, `assertGroup`, dangling-id sweep, `structuredClone` in
   `toObject`, store slice + CRUD + `removeBoard` consistency, widened `CanvasSnapshot` + `sameSnapshot`
@@ -194,7 +202,8 @@ merge gate once green.
   rename / add-selected / remove group) + member edit. **Checkpoint:** full CRUD + navigation from the
   canvas.
 
-S1 + S2 are independently shippable (S2 against seeded data). S3 depends on S1. S4 needs S1.
+S0 is the foundation (selection). S1 + S2 are independently shippable (S2 against seeded data). S3
+depends on S0 + S1. S4 needs S1.
 
 ---
 
@@ -238,11 +247,12 @@ S1 + S2 are independently shippable (S2 against seeded data). S3 depends on S1. 
   MCP tool that targets a zone by name sees nothing. **Document this gap** (ADR/roadmap note) so a
   future FW dev doesn't assume groups are MCP-visible. Surfacing membership later (`groupId?` on the
   published `BoardSummary`) is a package semver bump + app-adopt PR — explicitly out of scope now.
-- **`deleteKeyCode` with real multi-select.** RF deletes all selected nodes on Backspace/Delete; today
-  the store collapses multi-select to one id. The trimmed feature reads RF selection only at create
-  time and **does not widen the store** to true multi-select, so this stays masked. If a future slice
-  widens it, the park-terminal-before-remove path (`Canvas.tsx:403`) must loop over every selected
-  node.
+- **`deleteKeyCode` with real multi-select (now in scope — S0).** Planning revealed the canvas is
+  single-select, so the feature **does** widen the store to true multi-select (S0). Consequence: RF's
+  `deleteKeyCode` now removes EVERY selected node, so the park-terminal-before-remove path
+  (`Canvas.tsx:403`) loops over the whole selection (S0 Task 0.3). `selectedId` is kept as the primary
+  so single-select consumers (`usePreviewManager`/`previewPlan`/full-view) and the existing test
+  suite are unchanged; invariant `selectedId === selectedIds[selectedIds.length-1] ?? null`.
 
 ---
 
