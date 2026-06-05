@@ -24,6 +24,14 @@ export const MCP_SPAWN_CAP = 4
 export const MCP_IDLE_TTL_MS = 5 * 60 * 1000
 
 /**
+ * 🔒 Board types the MCP layer may spawn — mirrors the renderer's SPAWNABLE allowlist
+ * (`useMcpCommands.ts`). The renderer's `applyMcpCommand` already rejects an off-type
+ * spawn, but the adapter is the trust boundary, so it rejects an unknown type HERE too
+ * (defense-in-depth, APP-N3) rather than forwarding it to the renderer.
+ */
+const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
+
+/**
  * Grace after a spawn during which a tracked board is NOT reconciled away even if it
  * is absent from the mirror — the renderer publishes the new board asynchronously
  * (~150ms debounce), so a just-spawned id legitimately isn't in `listBoards()` yet.
@@ -177,6 +185,9 @@ export function buildOrchestrator(
   // spawn grace, so a just-spawned not-yet-published board isn't pruned. `idleSince`
   // tracks how long the board has been idle for the reaper.
   const tracked = new Map<string, { spawnedAt: number; idleSince: number | null }>()
+  // 🔒 Re-entrancy latch for reapIdle (APP-N2): true while a sweep is in flight so an
+  // overlapping sweep (periodic interval vs an explicit call) can't double-close a board.
+  let sweeping = false
 
   /** Drop tracked boards the user has since closed (gone from the mirror past the grace). */
   const reconcile = (): void => {
@@ -219,6 +230,11 @@ export function buildOrchestrator(
     async spawnBoard(input: { type: string; prompt?: string; cwd?: string }): Promise<{
       id: BoardId
     }> {
+      // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
+      // side effect — rather than relying on the renderer's allowlist as the only gate.
+      if (!SPAWNABLE.has(input.type)) {
+        throw new Error(`spawn_board: unsupported board type "${input.type}"`)
+      }
       // 🔒 Runaway-swarm guard: reconcile away user-closed boards first (so a real
       // slot can be reused), then reject BEFORE minting/sending so a capped spawn has
       // no side effects.
@@ -254,43 +270,54 @@ export function buildOrchestrator(
       }
     },
     async reapIdle(): Promise<string[]> {
-      // 🔒 Idle-reaping (T3.4): close MCP-spawned boards that have stayed idle past the
-      // TTL — the swarm doesn't accrete dormant boards. `idleSince` is sweep-tracked:
-      // first idle sighting arms the clock; a return to running clears it; an idle span
-      // ≥ TTL reaps. Reconcile first so a user-closed board isn't reaped twice.
-      reconcile()
-      const statuses = new Map((await this.listBoards()).map((b) => [b.id, b.status] as const))
-      const t = now()
-      const reapable: string[] = []
-      for (const [id, rec] of tracked) {
-        const status = statuses.get(id)
-        const idle = status === undefined || status === 'idle'
-        if (!idle) {
-          rec.idleSince = null
-          continue
+      // 🔒 Re-entrancy guard (APP-N2): the periodic reaper interval and an explicit
+      // reapIdle() (e.g. the smoke) can overlap — each close awaits drainPty + a renderer
+      // round-trip — so two sweeps could read the same id and closeBoard it twice (and
+      // re-arm idleSince on an already-deleted record). Skip a sweep that starts while
+      // another is still in flight; the in-flight one already covers the idle set.
+      if (sweeping) return []
+      sweeping = true
+      try {
+        // 🔒 Idle-reaping (T3.4): close MCP-spawned boards that have stayed idle past the
+        // TTL — the swarm doesn't accrete dormant boards. `idleSince` is sweep-tracked:
+        // first idle sighting arms the clock; a return to running clears it; an idle span
+        // ≥ TTL reaps. Reconcile first so a user-closed board isn't reaped twice.
+        reconcile()
+        const statuses = new Map((await this.listBoards()).map((b) => [b.id, b.status] as const))
+        const t = now()
+        const reapable: string[] = []
+        for (const [id, rec] of tracked) {
+          const status = statuses.get(id)
+          const idle = status === undefined || status === 'idle'
+          if (!idle) {
+            rec.idleSince = null
+            continue
+          }
+          if (rec.idleSince === null) {
+            rec.idleSince = t
+            continue
+          }
+          if (t - rec.idleSince >= idleTtlMs) reapable.push(id)
         }
-        if (rec.idleSince === null) {
-          rec.idleSince = t
-          continue
+        // Close each reapable board independently: a single failed close (e.g. the renderer
+        // never acks removeBoard) must NOT abort the whole sweep and leave the rest of the
+        // idle boards un-reaped (BUG-009). Swallow per-id so the loop continues, and return
+        // only the ids that actually closed.
+        const reaped: string[] = []
+        for (const id of reapable) {
+          try {
+            await this.closeBoard(id)
+            reaped.push(id)
+          } catch {
+            // best-effort: skip a board that failed to close and continue the sweep. Its
+            // cap slot is already freed (closeBoard's finally), so it won't re-enter the
+            // budget; the next sweep re-evaluates it from the live mirror.
+          }
         }
-        if (t - rec.idleSince >= idleTtlMs) reapable.push(id)
+        return reaped
+      } finally {
+        sweeping = false
       }
-      // Close each reapable board independently: a single failed close (e.g. the renderer
-      // never acks removeBoard) must NOT abort the whole sweep and leave the rest of the
-      // idle boards un-reaped (BUG-009). Swallow per-id so the loop continues, and return
-      // only the ids that actually closed.
-      const reaped: string[] = []
-      for (const id of reapable) {
-        try {
-          await this.closeBoard(id)
-          reaped.push(id)
-        } catch {
-          // best-effort: skip a board that failed to close and continue the sweep. Its
-          // cap slot is already freed (closeBoard's finally), so it won't re-enter the
-          // budget; the next sweep re-evaluates it from the live mirror.
-        }
-      }
-      return reaped
     },
     async configureBoard(
       boardId: BoardId,
@@ -347,7 +374,21 @@ export function buildOrchestrator(
           id: boardId,
           patch: { ...config, launchCommand: safeLaunch }
         })
-        if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
+        if (!ack.ok) {
+          // APP-N1: the human approved but the apply failed — record `failed` BEFORE the
+          // throw so the audit trail is symmetric with the dispatch paths (every other write
+          // path audits a failure). Without this the exact path BUG-002 hardened had a
+          // forensic gap: an approved-then-failed configure left no trace.
+          await registry.audit({
+            type: 'configure_board',
+            targetId: boardId,
+            prompt: safeLaunch,
+            nonce: '',
+            status: 'failed',
+            detail: `configure_board apply failed: ${ack.error}`
+          })
+          throw new Error(`configure_board failed: ${ack.error}`)
+        }
 
         // Record the approved configure (target board id + the new launchCommand) AFTER it
         // lands so the audit trail reflects a write that actually persisted.
