@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { Rectangle, IpcRendererEvent } from 'electron'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
@@ -121,6 +121,22 @@ const api = {
   // Slice C′: parse the dev-server URL(s) out of a board's PTY output (read-only).
   detectPorts: (id: string): Promise<DetectedUrl[]> =>
     ipcRenderer.invoke('terminal:detectPorts', id),
+  // Stage the clipboard image to <project>/.canvas/tmp and return its absolute path
+  // (null = no image / no project). The renderer injects the path into the PTY.
+  stageClipboardImage: (boardId: string): Promise<string | null> =>
+    ipcRenderer.invoke('terminal:stageClipboardImage', boardId),
+  clipboardHasImage: (): Promise<boolean> => ipcRenderer.invoke('clipboard:hasImage'),
+  cleanupStagedImages: (boardId: string): Promise<boolean> =>
+    ipcRenderer.invoke('terminal:cleanupStagedImages', boardId),
+  // webUtils.getPathForFile replaces the removed File.path (Electron 32+). Called from
+  // the terminal drop handler to get a dropped file's real OS path for injection.
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
+
+  // ── Clipboard (MAIN-owned; sandbox-clean) ──
+  clipboard: {
+    writeText: (text: string): Promise<boolean> => ipcRenderer.invoke('clipboard:writeText', text),
+    readText: (): Promise<string> => ipcRenderer.invoke('clipboard:readText')
+  },
 
   // ── Browser preview (WebContentsView, keyed by board id — 1-E) ──
   openPreview: (args: {
