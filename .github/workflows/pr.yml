@@ -22,13 +22,13 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       # node-gyp (rebuilds node-pty in postinstall) imports distutils, removed from
       # the Python 3.12 stdlib that GitHub runners now ship — pin 3.11 (has distutils).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - run: corepack enable
