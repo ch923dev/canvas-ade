@@ -35,6 +35,7 @@ import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/can
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
 import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPreview'
+import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -142,6 +143,7 @@ export function TerminalBoard({
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -655,6 +657,61 @@ export function TerminalBoard({
     </>
   )
 
+  // Right-click context menu over the well. Reuses the planning menu component. When the
+  // running TUI has mouse reporting on (term.modes.mouseTrackingMode !== 'none'), plain
+  // right-click passes through to the app; Shift+right-click forces our menu.
+  // hasSel is captured at open-time so the Copy entry's disabled state is stable for the
+  // menu's lifetime (avoids reading the ref during render).
+  const openMenu = useCallback((e: React.MouseEvent) => {
+    const term = termRef.current
+    if (!term) return
+    const mouseMode = term.modes.mouseTrackingMode !== 'none'
+    if (mouseMode && !e.shiftKey) return // let the TUI have the right-click
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, hasSel: term.hasSelection() })
+  }, [])
+
+  const menuEntries: MenuEntry[] = menu
+    ? [
+        {
+          kind: 'action',
+          id: 'copy',
+          label: 'Copy',
+          disabled: !menu.hasSel,
+          onSelect: () => {
+            const t = termRef.current
+            const sel = t?.getSelection()
+            if (t && sel) {
+              void window.api.clipboard.writeText(sel)
+              t.clearSelection()
+            }
+          }
+        },
+        {
+          kind: 'action',
+          id: 'paste',
+          label: 'Paste',
+          onSelect: () => {
+            const t = termRef.current
+            if (t) void pasteIntoTerminal(t, board.id)
+          }
+        },
+        {
+          kind: 'action',
+          id: 'selectall',
+          label: 'Select all',
+          onSelect: () => termRef.current?.selectAll()
+        },
+        {
+          kind: 'action',
+          id: 'clear',
+          label: 'Clear',
+          onSelect: () => termRef.current?.clear()
+        }
+      ]
+    : []
+
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
   // session survives zoom-out — see BoardNode. At LOD we hide the xterm well and
   // overlay the opaque LOD card on top (it fully covers the chrome beneath it),
@@ -792,9 +849,18 @@ export function TerminalBoard({
               e.stopPropagation()
               termRef.current?.focus()
             }}
+            onContextMenu={openMenu}
           >
             <div ref={screenRef} style={screen} />
           </div>
+          {menu && (
+            <ElementContextMenu
+              x={menu.x}
+              y={menu.y}
+              entries={menuEntries}
+              onClose={() => setMenu(null)}
+            />
+          )}
         </div>
       </BoardFrame>
       {lod && (

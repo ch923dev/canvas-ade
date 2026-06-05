@@ -1,6 +1,6 @@
 // src/main/terminalImageStaging.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, utimesSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { stagedDir, stageClipboardImage, cleanupStaged } from './terminalImageStaging'
@@ -50,7 +50,7 @@ describe('terminalImageStaging', () => {
     const old = stageClipboardImage(proj, 'old', Buffer.from([0]))
     // Force the file's mtime into the past.
     const past = new Date(Date.now() - 2 * 60 * 60 * 1000)
-    require('fs').utimesSync(old, past, past)
+    utimesSync(old, past, past)
     stageClipboardImage(proj, 'new', Buffer.from([0]), 60 * 60 * 1000) // 1h max age
     expect(existsSync(old)).toBe(false)
     expect(readdirSync(stagedDir(proj)).some((n) => n.includes('new'))).toBe(true)
