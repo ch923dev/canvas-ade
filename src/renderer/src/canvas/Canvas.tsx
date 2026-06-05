@@ -30,8 +30,7 @@ import {
   useStore,
   type EdgeTypes,
   type NodeChange,
-  type NodeTypes,
-  type Viewport
+  type NodeTypes
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore, selectLiveCount } from '../store/previewStore'
@@ -77,6 +76,7 @@ import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
 import { useCanvasKeybindings } from './hooks/useCanvasKeybindings'
 import { useTidyTile } from './hooks/useTidyTile'
+import { useFullView } from './hooks/useFullView'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
@@ -85,11 +85,6 @@ const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: Orchestratio
 // fit-on-load & initial mount; user-triggered fit/reset wrap them in `cameraAnim`.
 /** Single-board focus framing (DESIGN.md §5/§9: ~70px pad). Animated via `cameraAnim`. */
 const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX } as const
-/** Planning "full view" fits TIGHTER than focus (fills more of the viewport). It's a
- *  CAMERA fit (Option A), not the portal modal — see
- *  docs/research/2026-06-02-infinite-canvas-coordinate-model.md. Vector content
- *  (notes/pen) re-rasterises crisp at any zoom, so Z_MAX is fine. */
-const FULLVIEW_OPTIONS = { padding: 0.1, maxZoom: Z_MAX } as const
 
 /** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5). */
 function FadingDots(): ReactElement {
@@ -150,18 +145,27 @@ function CanvasInner(): ReactElement {
   useEffect(() => {
     activeTileRef.current = activeTile
   }, [activeTile])
-  // Board shown in the full-view modal (Task 5 feeds this to node data; Task 6 renders
-  // the modal). Tracked here so the ⋯ menu's Full view can set it immediately. It must
-  // NOT clear until the exit fade completes (Slice 5) — clearing it earlier relocates the
-  // live subtree back to canvas mid-fade and tears the session.
-  const [fullViewId, setFullViewId] = useState<string | null>(null)
-  // The modal's portal host element — the full-view BoardNode portals its live subtree
-  // into this so the board is relocated (not remounted) and its session survives.
-  const [fullViewHost, setFullViewHost] = useState<HTMLElement | null>(null)
-  // Slice 5 motion flags. `entering`: from open until the enter tween settles. `closing`:
-  // from a close request until the exit tween settles (fullViewId stays set throughout).
-  const [fullViewEntering, setFullViewEntering] = useState(false)
-  const [fullViewClosing, setFullViewClosing] = useState(false)
+  // Full-view state machine — portal mode (browser/terminal) + camera mode (planning), their
+  // motion flags, and the open/close/enter/exit toggles — lives in useFullView (Wave-5 B5 #3).
+  const {
+    fullViewId,
+    fullViewHost,
+    fullViewClosing,
+    fullViewMotion,
+    cameraFullViewId,
+    setFullViewId,
+    setFullViewHost,
+    setCameraFullViewId,
+    fullViewIdRef,
+    cameraFullViewIdRef,
+    openFullView,
+    closeFullView,
+    hardCloseFullView,
+    handleFullViewEntered,
+    handleFullViewExited,
+    enterCameraFullView,
+    exitCameraFullView
+  } = useFullView({ rf, selectBoard })
   // Active alignment guide lines (ephemeral drag UI — never persisted). Set by the snap
   // pass in onNodesChange, cleared on drag stop.
   const [guides, setGuides] = useState<Guide[]>([])
@@ -178,49 +182,6 @@ function CanvasInner(): ReactElement {
   // when its gesture ends so the next gesture recomputes against the current layout.
   const dragOthersRef = useRef<{ id: string; rects: Rect[] } | null>(null)
   const resizeOthersRef = useRef<{ id: string; rects: Rect[] } | null>(null)
-  // The native WebContentsView can't be CSS-animated and a frame scale() pollutes the
-  // rect it binds to, so the full-view Browser view is HELD detached while the frame is
-  // mid-transform (enter OR exit) and snaps in at settle.
-  const fullViewMotion = fullViewEntering || fullViewClosing
-  // Read the live full-view id inside the (stable) boardActions/Esc toggles without
-  // re-memoizing them on every open/close. Synced in an effect (no ref writes in render).
-  const fullViewIdRef = useRef<string | null>(fullViewId)
-  useEffect(() => {
-    fullViewIdRef.current = fullViewId
-  }, [fullViewId])
-
-  // Planning "full view" is a CAMERA fit (Option A), NOT the portal modal — it keeps the
-  // board in the canvas under the single parent camera so toBoard/add/drag stay correct
-  // (research: nesting a second transform was the add-note bug). Separate id so it never
-  // collides with the portal `fullViewId` (browser/terminal). The prior viewport is saved
-  // on enter and restored on exit so leaving full view returns the user where they were.
-  const [cameraFullViewId, setCameraFullViewId] = useState<string | null>(null)
-  const cameraFullViewIdRef = useRef<string | null>(null)
-  useEffect(() => {
-    cameraFullViewIdRef.current = cameraFullViewId
-  }, [cameraFullViewId])
-  const priorViewportRef = useRef<Viewport | null>(null)
-
-  // Open full view on a board: start the enter tween, mark it as the relocated board.
-  const openFullView = useCallback((id: string) => {
-    setFullViewClosing(false)
-    setFullViewEntering(true)
-    setFullViewId(id)
-  }, [])
-  // Request the exit tween; keep fullViewId set so the board stays relocated in the modal
-  // host until the fade completes (the modal fires onExited → clears it). Idempotent.
-  const closeFullView = useCallback(() => {
-    if (fullViewIdRef.current) setFullViewClosing(true)
-  }, [])
-  // Clear full view instantly with no exit tween — for paths where the board is gone or
-  // changing under it (delete / duplicate / push-preview).
-  const hardCloseFullView = useCallback(() => {
-    setFullViewId(null)
-    setFullViewClosing(false)
-    setFullViewEntering(false)
-  }, [])
-  const handleFullViewEntered = useCallback(() => setFullViewEntering(false), [])
-  const handleFullViewExited = useCallback(() => hardCloseFullView(), [hardCloseFullView])
   const [digestOpen, setDigestOpen] = useState(false)
   // Auto-open the digest once per project open/switch — the React "adjust state during
   // render when a key changes" pattern (avoids setState-in-effect). Closing it stays
@@ -278,31 +239,6 @@ function CanvasInner(): ReactElement {
       // from surfacing as an unhandled promise. The card simply stops its "updating…" state.
     }
   }, [])
-
-  // Enter camera full view on a (Planning) board: save the viewport, fit the camera to
-  // the board, select it. Portal + camera full views are mutually exclusive.
-  const enterCameraFullView = useCallback(
-    (id: string) => {
-      hardCloseFullView()
-      // Only capture the user's real viewport on a fresh entry — if we're already in
-      // camera full view (switching board A → board B), the ref already holds the
-      // pre-full-view position; overwriting it with board A's fitted viewport would
-      // restore to A's fit instead of the user's original position on exit.
-      if (!cameraFullViewIdRef.current) priorViewportRef.current = rf.getViewport()
-      setCameraFullViewId(id)
-      selectBoard(id)
-      void rf.fitView(cameraAnim({ ...FULLVIEW_OPTIONS, nodes: [{ id }] }))
-    },
-    [rf, selectBoard, hardCloseFullView]
-  )
-  // Exit camera full view: restore the saved viewport. Idempotent.
-  const exitCameraFullView = useCallback(() => {
-    if (!cameraFullViewIdRef.current) return
-    setCameraFullViewId(null)
-    const vp = priorViewportRef.current
-    priorViewportRef.current = null
-    if (vp) void rf.setViewport(vp, cameraAnim({}))
-  }, [rf])
 
   const [diag, setDiag] = useState(import.meta.env.DEV)
 
@@ -616,7 +552,9 @@ function CanvasInner(): ReactElement {
     closeFullView,
     hardCloseFullView,
     enterCameraFullView,
-    exitCameraFullView
+    exitCameraFullView,
+    fullViewIdRef,
+    cameraFullViewIdRef
   ])
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
@@ -653,7 +591,7 @@ function CanvasInner(): ReactElement {
     setFullViewId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
     setCameraFullViewId((c) => (c !== null && !boards.some((b) => b.id === c) ? null : c))
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [boards])
+  }, [boards, setFullViewId, setCameraFullViewId])
 
   // M2 connector drag: while a source board is armed (title-bar connector handle pressed),
   // track the pointer for the rubber-band and, on release, resolve the drop target from
@@ -711,7 +649,16 @@ function CanvasInner(): ReactElement {
         exitCameraFullView,
         selectConnector: setSelectedConnectorId
       })
-  }, [rf, openFullView, closeFullView, setDigestOpen, enterCameraFullView, exitCameraFullView])
+  }, [
+    rf,
+    openFullView,
+    closeFullView,
+    setDigestOpen,
+    enterCameraFullView,
+    exitCameraFullView,
+    setFullViewId,
+    setCameraFullViewId
+  ])
 
   // Capture the live camera into the (untracked) store so autosave persists it.
   // onChange fires on the rAF-coalesced camera updates React Flow emits — no new
