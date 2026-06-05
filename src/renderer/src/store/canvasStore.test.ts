@@ -1175,6 +1175,42 @@ describe('canvasStore — connectors (M2)', () => {
   })
 })
 
+describe('multi-select', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null, selectedIds: [] })
+  })
+
+  it('selectBoard sets a single-element selectedIds and the primary', () => {
+    const { selectBoard } = useCanvasStore.getState()
+    selectBoard('a')
+    expect(useCanvasStore.getState().selectedIds).toEqual(['a'])
+    expect(useCanvasStore.getState().selectedId).toBe('a')
+    selectBoard(null)
+    expect(useCanvasStore.getState().selectedIds).toEqual([])
+    expect(useCanvasStore.getState().selectedId).toBeNull()
+  })
+
+  it('toggleSelect adds then removes, keeping selectedId as the last', () => {
+    const { toggleSelect } = useCanvasStore.getState()
+    toggleSelect('a')
+    toggleSelect('b')
+    expect(useCanvasStore.getState().selectedIds).toEqual(['a', 'b'])
+    expect(useCanvasStore.getState().selectedId).toBe('b')
+    toggleSelect('b')
+    expect(useCanvasStore.getState().selectedIds).toEqual(['a'])
+    expect(useCanvasStore.getState().selectedId).toBe('a')
+  })
+
+  it('setSelection replaces the set and derives the primary from the last id', () => {
+    const { setSelection } = useCanvasStore.getState()
+    setSelection(['a', 'b', 'c'])
+    expect(useCanvasStore.getState().selectedIds).toEqual(['a', 'b', 'c'])
+    expect(useCanvasStore.getState().selectedId).toBe('c')
+    setSelection([])
+    expect(useCanvasStore.getState().selectedId).toBeNull()
+  })
+})
+
 describe('planning board — addChecklist + schema round-trip (migrated from e2e planning)', () => {
   it('appends a checklist element and the whole canvas still round-trips', () => {
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })

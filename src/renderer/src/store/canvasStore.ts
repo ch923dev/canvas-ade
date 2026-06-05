@@ -72,6 +72,13 @@ export interface CanvasState {
    */
   connectors: Connector[]
   selectedId: string | null
+  /**
+   * Full multi-selection set (marquee / shift-click). `selectedId` is the PRIMARY —
+   * the last id added — kept in sync as `selectedIds[selectedIds.length - 1] ?? null`
+   * so single-select consumers (preview liveness, full view) are unchanged. Ephemeral:
+   * never serialized (scene/session split), reset to [] on load/undo like selectedId.
+   */
+  selectedIds: string[]
   tool: Tool
   /** Undo/redo rails (internal — drive via beginChange/undo/redo, don't read directly). */
   past: CanvasSnapshot[]
@@ -143,6 +150,10 @@ export interface CanvasState {
   /** Set the camera transform. UNTRACKED — never touches undo/redo (like growBoardHeight). */
   setViewport: (vp: CanvasViewport) => void
   selectBoard: (id: string | null) => void
+  /** Toggle one board in/out of the multi-selection (shift-click). Primary = last id. */
+  toggleSelect: (id: string) => void
+  /** Replace the whole multi-selection (marquee). Primary = last id, or null when empty. */
+  setSelection: (ids: string[]) => void
   setTool: (tool: Tool) => void
   /** Snapshot the current boards for undo (call at the start of a discrete edit). */
   beginChange: () => void
@@ -332,6 +343,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   boards: [],
   connectors: [],
   selectedId: null,
+  selectedIds: [],
   tool: 'select',
   past: [],
   future: [],
@@ -577,7 +589,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return { viewport: vp }
     }),
 
-  selectBoard: (id) => set({ selectedId: id }),
+  selectBoard: (id) => set({ selectedId: id, selectedIds: id ? [id] : [] }),
+  toggleSelect: (id) =>
+    set((s) => {
+      const has = s.selectedIds.includes(id)
+      const selectedIds = has ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]
+      return { selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null }
+    }),
+  setSelection: (ids) =>
+    set({ selectedIds: ids, selectedId: ids[ids.length - 1] ?? null }),
   setTool: (tool) => set({ tool }),
   beginChange: () =>
     set((s) => {
