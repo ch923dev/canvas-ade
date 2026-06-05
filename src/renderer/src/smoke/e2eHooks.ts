@@ -60,6 +60,10 @@ export interface CanvasE2E {
     id: string,
     init: { key: string; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean }
   ) => boolean
+  /** Programmatically select `length` cells from (col,row) in a terminal (copy sliver). */
+  selectTerminal: (id: string, col: number, row: number, length: number) => void
+  /** The terminal's current selection text (assert against the clipboard). */
+  terminalSelection: (id: string) => string
   /** Append a checklist element (one starter item) to a planning board. */
   addChecklist: (id: string) => void
   /** Patch durable props on any board — e.g. change a terminal's launchCommand to force a respawn. */
@@ -250,6 +254,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       if (!ta) return false
       ta.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
       return true
+    },
+    selectTerminal(id, col, row, length) {
+      e2eTerminals.get(id)?.select(col, row, length)
+    },
+    terminalSelection(id) {
+      return e2eTerminals.get(id)?.getSelection() ?? ''
     },
     addChecklist(id) {
       const store = useCanvasStore.getState()

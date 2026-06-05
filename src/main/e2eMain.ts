@@ -52,6 +52,10 @@ export interface E2EMain {
   pidsAlive(pids: number[]): number[]
   /** Tear down EVERY pty session (live + parked) — the real MAIN kill path. */
   disposeAllPtys(): Promise<void>
+  /** Put plain text on the system clipboard (paste-text sliver). */
+  putTextOnClipboard(text: string): void
+  /** Read the system clipboard text (assert a copy landed). */
+  readClipboardText(): string
 }
 
 /**
@@ -130,6 +134,12 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
       }
       clipboard.clear()
       clipboard.writeImage(nativeImage.createFromBitmap(buf, { width: w, height: h }))
+    },
+    putTextOnClipboard(text) {
+      clipboard.writeText(text)
+    },
+    readClipboardText() {
+      return clipboard.readText()
     },
     fileExists(absPath) {
       return existsSync(absPath)
