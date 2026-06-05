@@ -410,6 +410,10 @@ function CanvasInner(): ReactElement {
           const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
           if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id)
           removeBoard(intent.id)
+          // Keep the fold set authoritative: drop the removed id so the trailing
+          // setSelection can't write a ghost id back into selectedIds (multi-delete).
+          selSet.delete(intent.id)
+          selChanged = true
           setFocusedId((f) => (f === intent.id ? null : f))
         }
       }

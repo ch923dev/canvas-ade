@@ -36,6 +36,7 @@ export function buildBoardNodes(
   cache: NodeCache
 ): BoardFlowNode[] {
   const { selectedIds, focusedId, fullViewId, cameraFullViewId } = flags
+  const selectedSet = new Set(selectedIds)
   const live = new Set<string>()
   const nodes = boards.map((b) => {
     live.add(b.id)
@@ -43,7 +44,7 @@ export function buildBoardNodes(
       (focusedId !== null && focusedId !== b.id) ||
       (cameraFullViewId !== null && cameraFullViewId !== b.id)
     const fullView = fullViewId === b.id || cameraFullViewId === b.id
-    const selected = selectedIds.includes(b.id)
+    const selected = selectedSet.has(b.id)
     const prev = cache.get(b.id)
     if (
       prev &&
