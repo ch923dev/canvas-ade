@@ -55,6 +55,22 @@ import type { BrowserBoard, BrowserViewport } from '../../lib/boardSchema'
 /** Cap concurrent live renderers (ADR 0002); over-cap boards fall back to snapshot. */
 const MAX_LIVE = 4
 
+// TEMP DIAGNOSTIC (preview-align hunt) — counts camera-pump activity + the last viewport
+// the pump computed bounds against, exposed for the alignment e2e probe. REMOVE after fix.
+const previewDebug = {
+  flushes: 0,
+  pumps: 0,
+  beginMotions: 0,
+  endMotions: 0,
+  lastVpX: 0,
+  lastVpY: 0,
+  lastVpZoom: 1,
+  lastItems: 0
+}
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __previewDebug?: typeof previewDebug }).__previewDebug = previewDebug
+}
+
 interface PaneOffset {
   x: number
   y: number
@@ -454,6 +470,11 @@ export function usePreviewManager(props: LayerProps): void {
 
   // One coalesced batch per frame for every attached board, diff-skipped.
   const flushBatch = useCallback((): boolean => {
+    const _dbgVp = getViewport()
+    previewDebug.flushes++
+    previewDebug.lastVpX = _dbgVp.x
+    previewDebug.lastVpY = _dbgVp.y
+    previewDebug.lastVpZoom = _dbgVp.zoom
     const items: Array<{ id: string; bounds: Rect; zoomFactor: number }> = []
     for (const g of geomRef.current.values()) {
       const r = recs.current.get(g.id)
@@ -472,15 +493,17 @@ export function usePreviewManager(props: LayerProps): void {
       r.lastZoom = zoomFactor
       items.push({ id: g.id, bounds, zoomFactor })
     }
+    previewDebug.lastItems = items.length
     if (!items.length) return false
     void window.api.setPreviewBoundsBatch(items)
     return true
-  }, [boundsFor, zoomFor, fullViewBoundsFor, preset])
+  }, [boundsFor, zoomFor, fullViewBoundsFor, preset, getViewport])
 
   const startPump = useCallback((): void => {
     if (rafRef.current) return
     idleRef.current = 0
     const step = (): void => {
+      previewDebug.pumps++
       idleRef.current = flushBatch() ? 0 : idleRef.current + 1
       // Self-stopping: a few idle frames after movement settles, the loop ends.
       rafRef.current = idleRef.current < 4 ? requestAnimationFrame(step) : 0
@@ -491,6 +514,7 @@ export function usePreviewManager(props: LayerProps): void {
   // onMoveStart: keep tracking (pump) AND capture every live board → snapshot →
   // detach, so HTML images carry the motion (no trailing native layers).
   const beginMotion = useCallback((): void => {
+    previewDebug.beginMotions++
     startPump()
     if (gestureRef.current) return
     const live = [...geomRef.current.values()].filter((g) => recs.current.get(g.id)?.attached)
@@ -631,6 +655,7 @@ export function usePreviewManager(props: LayerProps): void {
 
   // onMoveEnd: clear the gesture flag, then reconcile liveness at the rest position.
   const endMotion = useCallback((): void => {
+    previewDebug.endMotions++
     // Bug #2: endMotion is driven by BOTH the camera path (useOnViewportChange.onEnd)
     // and the node-gesture effect below. React Flow auto-pans the camera when a node is
     // dragged to a pane edge; that programmatic pan fires onEnd → endMotion WHILE the

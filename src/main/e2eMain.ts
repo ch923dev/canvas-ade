@@ -12,7 +12,7 @@ import { execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { debugCaptureView, debugViewIds, debugViewWebContentsId } from './preview'
+import { debugCaptureView, debugViewBounds, debugViewIds, debugViewWebContentsId } from './preview'
 import { debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, setCurrentDir } from './projectStore'
 
@@ -22,6 +22,10 @@ export interface E2EMain {
   captureView(id: string): Promise<{ attached: boolean; empty: boolean }>
   viewIds(): string[]
   viewWebContentsId(id: string): number | null
+  /** The native view's live bounds + attached flag, for the alignment probe (native vs .bb-frame). */
+  viewBounds(
+    id: string
+  ): { attached: boolean; bounds: { x: number; y: number; width: number; height: number } } | null
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
@@ -98,6 +102,7 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     captureView: debugCaptureView,
     viewIds: debugViewIds,
     viewWebContentsId: debugViewWebContentsId,
+    viewBounds: debugViewBounds,
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)
     },

@@ -616,3 +616,20 @@ export function debugViewWebContentsId(id: string): number | null {
     return null
   }
 }
+
+/**
+ * E2E ONLY — the native view's CURRENT bounds (the rect last applied via `setBounds`,
+ * i.e. where the OS compositor paints it) plus whether it is attached. Lets an alignment
+ * probe compare the native rect to the HTML `.bb-frame` `getBoundingClientRect` and prove
+ * the native layer stays congruent with its frame at rest / after pan / zoom / resize.
+ * Exposes nothing the preview IPC handlers don't already (read-only over the live Map).
+ */
+export function debugViewBounds(id: string): { attached: boolean; bounds: Rectangle } | null {
+  const e = views.get(id)
+  if (!e) return null
+  try {
+    return { attached: e.attached, bounds: e.view.getBounds() }
+  } catch {
+    return null
+  }
+}
