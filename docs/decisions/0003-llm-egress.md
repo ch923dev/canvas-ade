@@ -50,14 +50,25 @@ the model's output is treated as untrusted passive context that never drives an 
 
 ## Accepted residual risk
 
-- **Renderer-set `local` `baseUrl` is an unvalidated egress target.** The `local` provider needs no
-  key, and its `baseUrl` is set by the (trusted) renderer via `llm:setConfig`. A renderer-side
-  foothold could therefore point summaries at an arbitrary `http(s)` endpoint and exfiltrate board
-  content (the summarize input) there with no key and no user gesture. We accept this: the renderer
-  is the trusted frame (a renderer compromise already implies broader access), egress stays
-  budget-capped, and `local` is *designed* for arbitrary local/LAN endpoints (LM Studio, Ollama,
-  a dev box) — restricting it to loopback would break legitimate use. Revisit if the renderer ever
-  hosts untrusted content. (Found in the 2026-06-04 pre-merge hunt; SEC-Low.)
+- **Renderer-set `local` `baseUrl` — RESOLVED (no longer an open residual).** Originally accepted as a
+  renderer-trusted egress target. **Closed by BUG-001 (2026-06-04 hunt):** `isLoopbackBaseUrl` now hard-
+  restricts the `local` `baseUrl` to an `http(s)` loopback host (`localhost`/`127.0.0.1`/`::1`) at all
+  three layers — write (`llm:setConfig` rejects), read (`readLlmConfig` drops a poisoned on-disk value),
+  and use (`buildRequest` throws). A renderer foothold can no longer point summaries at `file://`, the
+  cloud IMDS (`169.254.169.254`), or an internal host. **Deliberate tradeoff:** a `local` endpoint on a
+  *different* LAN box (not loopback) is no longer reachable — acceptable for the LM Studio / Ollama / dev-box
+  case (all loopback). Revisit only if a real non-loopback local endpoint is needed (would need an explicit
+  allowlist, not a blanket open).
+
+- **M-expose: an LLM-generated summary served to agents is an untrusted-context / prompt-injection vector.**
+  The Context subsystem's Tier-2 summaries (`board-<id>.md`) are model output, hence untrusted. M-expose
+  serves them read-only over `canvas://memory` + `canvas://board/{id}/summary` (`boardMemory.ts`). On the
+  desktop they stay passive (written + displayed + MCP-read, never action-triggering — `sanitizeSummary`
+  also strips control chars + forged headings at write). But an **agent that consumes** a summary as context
+  can be **prompt-injected** by its content. We accept this: it is inherent to exposing generated memory to
+  agents, the desktop never acts on it, and the consuming agent's prompt-safety is that agent's
+  responsibility (out of this app's trust boundary). Revisit if MCP ever gains a write/action path keyed off
+  memory content. (M-expose closeout, 2026-06-05.)
 
 ## Out of scope (not decided here)
 

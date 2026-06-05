@@ -197,9 +197,11 @@ persistent `.canvas/` project memory (M-digest + M-brain + M-memory): instant pe
 `safeStorage`, per-day budget, ADR `0003-llm-egress.md`). New units `src/main/{llmService,llmIpc,llmConfig,
 llmKeyStore,llmBudget,canvasMemory,memoryEngine,summaryLoop}.ts` + `digest.ts`/`DigestPanel`/`SettingsModal`.
 Generated memory is untrusted passive context (never drives an action). Build log `docs/archive/2026-06-04-context-subsystem.md`.
-**M-expose** (`canvas://memory` MCP read resource — lets agents read the memory) remains DEFERRED, gated on
-the MCP package landing on `main`. Post-merge gate green (852 unit+integration; e2e matrix green on the
-identical pre-merge tree).
+**M-expose** (`canvas://memory` + `canvas://board/{id}/summary` MCP read resources — lets agents read the
+memory) **SHIPPED** (T1.7, landed with MCP M0–M4; pkg 0.8.2/0.9.0 register the resources, `boardMemory.ts`
+is injected into `startMcpServer`). Generated summaries are untrusted passive context — a consuming agent
+can be prompt-injected by them (ADR `0003-llm-egress.md` › M-expose residual). Post-merge gate green (852
+unit+integration; e2e matrix green on the identical pre-merge tree).
 
 **In flight (parallel worktree streams + open PRs — `main` is integration-only):**
 - **PR #32 `feat/mcp-integration`** — re-port of the MCP integration onto current `main` (rescues the

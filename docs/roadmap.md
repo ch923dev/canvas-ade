@@ -231,9 +231,11 @@ multiplayer/collaboration · hand-drawn (roughjs) whiteboard aesthetic.
   The single missing primitive that gates sloppiness, bound-arrow reflow, and Mermaid/AI-diagram. Kept
   out of the shipped W1–W5 track deliberately; rationale + the blocked-feature table are in
   `archive/2026-06-03-whiteboard-epic.md` › Deferred and `research/drawio-feature-borrowing.md`.
-- **Context M-expose** — `canvas://memory` MCP read-only resource exposing `.canvas/memory/` to agents.
-  Gated on the MCP package landing on `main`; then build the resource that reads the files the shipped
-  Context subsystem already writes. See `archive/2026-06-04-context-subsystem.md`.
+- **Context M-expose — ✅ SHIPPED (T1.7), no longer deferred.** `canvas://memory` + `canvas://board/{id}/summary`
+  MCP read-only resources expose `.canvas/memory/` to agents. Landed with MCP M0–M4: the pkg (0.8.2/0.9.0)
+  registers the resources, the app injects `boardMemory.ts` (read-only, path-guarded, capped) into
+  `startMcpServer`. Generated summaries are untrusted passive context — a consuming agent can be
+  prompt-injected by them (ADR `decisions/0003-llm-egress.md` › M-expose residual). See `roadmap-mcp.md` › T1.7.
 
 > 🌳 **Feature Workspaces — worktree-backed board zones (post-MCP phase, deferred 2026-05-30).**
 > The deferred home for git worktrees, re-modelled. A project's infinite canvas hosts multiple
