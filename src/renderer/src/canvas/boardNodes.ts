@@ -13,7 +13,7 @@ import type { BoardFlowNode } from './BoardNode'
 
 /** Selection / focus / full-view flags that drive per-node dim + full-view state. */
 export interface NodeFlags {
-  selectedId: string | null
+  selectedIds: readonly string[]
   focusedId: string | null
   fullViewId: string | null
   cameraFullViewId: string | null
@@ -35,7 +35,7 @@ export function buildBoardNodes(
   flags: NodeFlags,
   cache: NodeCache
 ): BoardFlowNode[] {
-  const { selectedId, focusedId, fullViewId, cameraFullViewId } = flags
+  const { selectedIds, focusedId, fullViewId, cameraFullViewId } = flags
   const live = new Set<string>()
   const nodes = boards.map((b) => {
     live.add(b.id)
@@ -43,7 +43,7 @@ export function buildBoardNodes(
       (focusedId !== null && focusedId !== b.id) ||
       (cameraFullViewId !== null && cameraFullViewId !== b.id)
     const fullView = fullViewId === b.id || cameraFullViewId === b.id
-    const selected = b.id === selectedId
+    const selected = selectedIds.includes(b.id)
     const prev = cache.get(b.id)
     if (
       prev &&

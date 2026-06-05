@@ -105,11 +105,12 @@ function FadingDots(): ReactElement {
 
 function CanvasInner(): ReactElement {
   const boards = useCanvasStore((s) => s.boards)
-  const selectedId = useCanvasStore((s) => s.selectedId)
+  const selectedIds = useCanvasStore((s) => s.selectedIds)
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const resizeBoard = useCanvasStore((s) => s.resizeBoard)
   const removeBoard = useCanvasStore((s) => s.removeBoard)
   const selectBoard = useCanvasStore((s) => s.selectBoard)
+  const setSelection = useCanvasStore((s) => s.setSelection)
   const beginChange = useCanvasStore((s) => s.beginChange)
   const undo = useCanvasStore((s) => s.undo)
   const redo = useCanvasStore((s) => s.redo)
@@ -257,8 +258,8 @@ function CanvasInner(): ReactElement {
   const [nodeCache] = useState<NodeCache>(() => new Map())
   const nodes = useMemo<BoardFlowNode[]>(
     () =>
-      buildBoardNodes(boards, { selectedId, focusedId, fullViewId, cameraFullViewId }, nodeCache),
-    [boards, selectedId, focusedId, fullViewId, cameraFullViewId, nodeCache]
+      buildBoardNodes(boards, { selectedIds, focusedId, fullViewId, cameraFullViewId }, nodeCache),
+    [boards, selectedIds, focusedId, fullViewId, cameraFullViewId, nodeCache]
   )
 
   // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
@@ -388,26 +389,33 @@ function CanvasInner(): ReactElement {
         setGuides((g) => (g.length ? [] : g))
       }
 
-      let nextSel: string | null | undefined
+      // Fold React Flow's select/deselect deltas onto the current multi-selection. RF emits
+      // select:false for the previously-selected on a plain click and select:true for each box
+      // member on a marquee/shift gesture, so applying the deltas to the live set yields the
+      // correct single OR multi selection (the prior single-id fold collapsed multi-select).
+      let selChanged = false
+      const selSet = new Set(useCanvasStore.getState().selectedIds)
       for (const intent of nodeChangesToIntents(changes)) {
         if (intent.kind === 'move') updateBoard(intent.id, { x: intent.x, y: intent.y })
         else if (intent.kind === 'resize') resizeBoard(intent.id, intent.w, intent.h)
-        else if (intent.kind === 'select') nextSel = intent.id
-        else if (intent.kind === 'deselect') {
-          if (nextSel === undefined) nextSel = null
+        else if (intent.kind === 'select') {
+          selSet.add(intent.id)
+          selChanged = true
+        } else if (intent.kind === 'deselect') {
+          selSet.delete(intent.id)
+          selChanged = true
         } else if (intent.kind === 'remove') {
-          // #15: parking a terminal's live session BEFORE removal lets undo adopt it.
-          // Sent before removeBoard → main parks before the unmount's kill arrives
-          // (a single renderer's IPC is delivered in send order).
+          // #15: park a terminal's live session BEFORE removal so undo can adopt it. RF's
+          // deleteKeyCode removes EVERY selected node, so this now loops over the whole selection.
           const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
           if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id)
           removeBoard(intent.id)
           setFocusedId((f) => (f === intent.id ? null : f))
         }
       }
-      if (nextSel !== undefined) selectBoard(nextSel)
+      if (selChanged) setSelection([...selSet])
     },
-    [updateBoard, resizeBoard, removeBoard, selectBoard, boards, rf]
+    [updateBoard, resizeBoard, removeBoard, setSelection, boards, rf]
   )
 
   // Add a board centered in the current view, then select it (store auto-selects).

@@ -3,7 +3,7 @@ import { createBoard, type Board } from '../lib/boardSchema'
 import { buildBoardNodes, type NodeFlags, type NodeCache } from './boardNodes'
 
 const NO_FLAGS: NodeFlags = {
-  selectedId: null,
+  selectedIds: [],
   focusedId: null,
   fullViewId: null,
   cameraFullViewId: null
@@ -53,10 +53,21 @@ describe('buildBoardNodes', () => {
     const b = board('b')
     const cache: NodeCache = new Map()
     const first = buildBoardNodes([a, b], NO_FLAGS, cache)
-    const second = buildBoardNodes([a, b], { ...NO_FLAGS, selectedId: 'a' }, cache)
+    const second = buildBoardNodes([a, b], { ...NO_FLAGS, selectedIds: ['a'] }, cache)
     expect(second[0]).not.toBe(first[0])
     expect(second[0].selected).toBe(true)
     expect(second[1]).toBe(first[1])
+  })
+
+  it('marks every board in selectedIds as selected', () => {
+    const a = board('a')
+    const b = board('b')
+    const c = board('c')
+    const cache: NodeCache = new Map()
+    const nodes = buildBoardNodes([a, b, c], { ...NO_FLAGS, selectedIds: ['a', 'c'] }, cache)
+    expect(nodes.find((n) => n.id === 'a')?.selected).toBe(true)
+    expect(nodes.find((n) => n.id === 'b')?.selected).toBe(false)
+    expect(nodes.find((n) => n.id === 'c')?.selected).toBe(true)
   })
 
   it('dims every board except the focused one', () => {
