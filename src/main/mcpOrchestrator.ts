@@ -4,6 +4,7 @@ import type {
   BoardOutput,
   BoardResult,
   BoardResultInput,
+  BoardStatusChange,
   BoardSummary,
   MemoryDoc,
   Orchestrator
@@ -261,6 +262,22 @@ export function buildOrchestrator(
     async boardResult(boardId: BoardId): Promise<BoardResult> {
       // Read-only structured last result (T1.5). No result recorded → empty shell.
       return registry.readResult(boardId)
+    },
+    subscribeStatus(listener: (change: BoardStatusChange) => void): () => void {
+      // M5 app-adopt: forward MAIN's per-board status stream (PR1's subscribeBoardStatus)
+      // as the package's BoardStatusChange, attaching the board's recorded result when it
+      // settles to idle so a barrier can return it. readResult is sync; the result is
+      // omitted unless one was actually recorded (present), and only on idle.
+      return registry.subscribeStatus((change) => {
+        if (change.status === 'idle') {
+          const result = registry.readResult(change.id)
+          if (result.present) {
+            listener({ id: change.id, status: change.status, result })
+            return
+          }
+        }
+        listener({ id: change.id, status: change.status })
+      })
     },
     async projectMemory(): Promise<MemoryDoc> {
       // 🔒 read-only passive context (T1.7). Absent memory engine → empty shell.
