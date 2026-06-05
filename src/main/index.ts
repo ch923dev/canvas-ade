@@ -46,6 +46,7 @@ import { sendMcpCommand } from './mcpCommand'
 import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
+import { registerClipboardHandlers } from './clipboardIpc'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -184,6 +185,7 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  registerClipboardHandlers(ipcMain, () => mainWindow)
   registerBoardRegistryHandler(ipcMain, () => mainWindow)
   // 🔒 MCP dispatch audit trail (T4.1) — wired BEFORE startMcpServer (BUG-025) so the
   // getAuditLog() seam the dispatch tools append through is already non-null the instant
