@@ -58,4 +58,39 @@ test.describe('terminal I/O', () => {
     const pasted = await pollEval(page, `${readInput(id)}.includes('HELLO_PASTE_123')`, 3000)
     expect(pasted, 'pasted text reached the PTY input').toBe(true)
   })
+
+  test('Ctrl+V with a clipboard image stages a PNG and injects its path', async ({
+    page,
+    electronApp
+  }) => {
+    // Needs a project dir so .canvas/tmp has a home.
+    const proj = await mainCall<string>(electronApp, 'createTempProject', 'canvas-e2e-img-', 'imgproj')
+    try {
+      const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+      await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+      await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+      await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+      await evalIn(page, `window.__canvasE2E.clearTerminalInput(${JSON.stringify(id)})`)
+      await mainCall(electronApp, 'putRedBitmapOnClipboard', 4, 4)
+      await evalIn(
+        page,
+        `window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(id)}, { key: 'v', ctrlKey: true })`
+      )
+      // The injected payload is a quoted path ending in .png inside .canvas/tmp.
+      const injected = await pollEval(
+        page,
+        `${readInput(id)}.includes('.canvas') && ${readInput(id)}.includes('paste-') && ${readInput(id)}.includes('.png')`,
+        4000
+      )
+      expect(injected, 'a staged .png path was injected').toBe(true)
+      // And the staged file actually exists on disk.
+      const raw = await evalIn<string>(page, readInput(id))
+      const m = raw.match(/"([^"]+\.png)"/)
+      expect(m, 'path is quoted in the input').not.toBeNull()
+      const exists = await mainCall<boolean>(electronApp, 'fileExists', m![1])
+      expect(exists, 'staged file exists on disk').toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', proj)
+    }
+  })
 })
