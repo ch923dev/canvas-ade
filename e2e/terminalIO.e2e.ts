@@ -93,4 +93,81 @@ test.describe('terminal I/O', () => {
       await mainCall(electronApp, 'teardownProject', proj)
     }
   })
+
+  test('drag-select tracks the cursor at zoom ≠ 1 (scale-correct selection)', async ({
+    page,
+    electronApp
+  }) => {
+    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    // Let the launchCommand's PTY output settle FIRST, then frame + zoom out so the camera
+    // scale would otherwise break selection.
+    await pollEval(
+      page,
+      `(window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? '').includes('ready')`,
+      8000
+    )
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await evalIn(page, `window.__canvasE2E.setZoom(0.6)`)
+    await page.waitForTimeout(150)
+    // Known content on row 0 — written AFTER the PTY settled so a late shell chunk can't
+    // overwrite/scroll it. Poll until xterm has actually rendered it onto row 0 before
+    // measuring cells (the write + render is async).
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    await evalIn(
+      page,
+      `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, 'ABCDEFGHIJKLMNOPQRST')`
+    )
+    await pollEval(
+      page,
+      `(window.__canvasE2E.readTerminal(${JSON.stringify(id)}) ?? '').startsWith('ABCDEFGHIJ')`,
+      3000
+    )
+    // Drag from clearly INSIDE cell 0 to clearly inside cell 10 (real OS mouse input).
+    // Use non-center intra-cell fractions: xterm rounds at the exact half-cell boundary
+    // (ceil), so a cell-CENTER anchor can resolve to either neighbour (off-by-one). 0.25
+    // is unambiguously in cell 0 → the selection anchors deterministically at 'A'.
+    const p0 = await evalIn<{ x: number; y: number }>(
+      page,
+      `window.__canvasE2E.terminalCellPoint(${JSON.stringify(id)}, 0, 0, 0.25)`
+    )
+    const p1 = await evalIn<{ x: number; y: number }>(
+      page,
+      `window.__canvasE2E.terminalCellPoint(${JSON.stringify(id)}, 10, 0, 0.75)`
+    )
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseDown',
+      x: Math.round(p0.x),
+      y: Math.round(p0.y),
+      button: 'left',
+      clickCount: 1
+    })
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseMove',
+      x: Math.round((p0.x + p1.x) / 2),
+      y: Math.round(p0.y),
+      button: 'left'
+    })
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseMove',
+      x: Math.round(p1.x),
+      y: Math.round(p1.y),
+      button: 'left'
+    })
+    await mainCall(electronApp, 'sendInput', {
+      type: 'mouseUp',
+      x: Math.round(p1.x),
+      y: Math.round(p1.y),
+      button: 'left',
+      clickCount: 1
+    })
+    await page.waitForTimeout(100)
+    const sel = await evalIn<string>(
+      page,
+      `window.__canvasE2E.terminalSelection(${JSON.stringify(id)})`
+    )
+    // With the shim, the selection starts at A and spans roughly the first ~10 cells.
+    // Without it, the zoom-0.6 mapping would land ~6 cells short (wrong prefix/length).
+    expect(sel.startsWith('ABCDEFGHIJ'), `selection was "${sel}"`).toBe(true)
+  })
 })

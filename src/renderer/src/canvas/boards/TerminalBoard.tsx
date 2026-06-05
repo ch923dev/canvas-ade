@@ -14,7 +14,7 @@
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { useOnViewportChange } from '@xyflow/react'
+import { useStoreApi } from '@xyflow/react'
 import { TerminalConfig } from './TerminalConfig'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -144,10 +144,13 @@ export function TerminalBoard({
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
-  // Live camera zoom for the selection shim, read at mouse-event time (not a render dep).
-  // Kept current by React Flow's viewport-change subscription below.
-  const zoomRef = useRef(1)
-  useOnViewportChange({ onChange: (vp) => (zoomRef.current = vp.zoom) })
+  // Live camera zoom source for the selection shim. We read it from the React Flow store
+  // AT MOUSE-EVENT TIME (transform[2]) rather than via useOnViewportChange: the latter's
+  // onChange does not fire for programmatic, zero-duration zoom (e.g. rf.zoomTo) — only for
+  // d3-zoom-driven gestures — so it would leave the shim reading a stale z=1. The store
+  // transform is the canonical live zoom (the same source BoardNode/Canvas read for LOD).
+  const rfStore = useStoreApi()
+  const getZoom = useCallback((): number => rfStore.getState().transform[2], [rfStore])
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
@@ -333,7 +336,7 @@ export function TerminalBoard({
     const screenEl = el.querySelector('.xterm-screen') as HTMLElement | null
     const wrapEl = el.parentElement
     const selectionDisp =
-      screenEl && wrapEl ? installSelectionShim(wrapEl, screenEl, () => zoomRef.current) : null
+      screenEl && wrapEl ? installSelectionShim(wrapEl, screenEl, getZoom) : null
 
     // Forward keystrokes + resizes to whatever port is CURRENT. Registered ONCE
     // (not inside onWinMsg) so a restart — which delivers a fresh port through the
@@ -530,7 +533,8 @@ export function TerminalBoard({
     projectDir,
     attachWebgl,
     detachWebgl,
-    respawn
+    respawn,
+    getZoom
   ])
 
   useEffect(() => spawn(), [spawn])

@@ -64,6 +64,21 @@ export interface CanvasE2E {
   selectTerminal: (id: string, col: number, row: number, length: number) => void
   /** The terminal's current selection text (assert against the clipboard). */
   terminalSelection: (id: string) => string
+  /** Reset a terminal's buffer and write known text (selection-shim sliver). */
+  resetTerminalWrite: (id: string, text: string) => void
+  /**
+   * Screen-pixel point inside cell (col,row) for a terminal, from the SCALED screen rect.
+   * `fx`/`fy` are the intra-cell fractions (0..1, default 0.5 = center). Use a non-center
+   * fraction to land UNAMBIGUOUSLY inside a cell — xterm rounds at the exact half-cell
+   * boundary (ceil), so a cell-center start can resolve to either neighbouring cell.
+   */
+  terminalCellPoint: (
+    id: string,
+    col: number,
+    row: number,
+    fx?: number,
+    fy?: number
+  ) => { x: number; y: number } | null
   /** Append a checklist element (one starter item) to a planning board. */
   addChecklist: (id: string) => void
   /** Patch durable props on any board — e.g. change a terminal's launchCommand to force a respawn. */
@@ -260,6 +275,25 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalSelection(id) {
       return e2eTerminals.get(id)?.getSelection() ?? ''
+    },
+    resetTerminalWrite(id, text) {
+      const t = e2eTerminals.get(id)
+      if (!t) return
+      t.reset()
+      t.write(text)
+    },
+    terminalCellPoint(id, col, row, fx = 0.5, fy = 0.5) {
+      const t = e2eTerminals.get(id)
+      if (!t) return null
+      const host = document.querySelector(`.react-flow__node[data-id="${id}"] .xterm-screen`)
+      if (!host) return null
+      const r = host.getBoundingClientRect()
+      // The screen element width/height map exactly to cols/rows (no padding here), so
+      // a scaled cell is r.width/cols × r.height/rows. Place the point at the requested
+      // intra-cell fraction (default center).
+      const cw = r.width / t.cols
+      const ch = r.height / t.rows
+      return { x: r.left + (col + fx) * cw, y: r.top + (row + fy) * ch }
     },
     addChecklist(id) {
       const store = useCanvasStore.getState()
