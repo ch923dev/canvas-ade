@@ -25,7 +25,6 @@ import {
   MarkerType,
   ReactFlow,
   ReactFlowProvider,
-  getViewportForBounds,
   useOnViewportChange,
   useReactFlow,
   useStore,
@@ -51,10 +50,9 @@ import {
   type Guide,
   type Rect
 } from '../lib/alignmentGuides'
-import { boardsBounds, snapOthers } from '../lib/boardGeometry'
+import { snapOthers } from '../lib/boardGeometry'
 import { AlignmentGuides } from './AlignmentGuides'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
-import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
 import type { TileTemplate } from '../lib/tileLayout'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { buildBoardNodes, type NodeCache } from './boardNodes'
@@ -78,6 +76,7 @@ import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
 import { useCanvasKeybindings } from './hooks/useCanvasKeybindings'
+import { useTidyTile } from './hooks/useTidyTile'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
@@ -91,11 +90,6 @@ const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX } as const
  *  docs/research/2026-06-02-infinite-canvas-coordinate-model.md. Vector content
  *  (notes/pen) re-rasterises crisp at any zoom, so Z_MAX is fine. */
 const FULLVIEW_OPTIONS = { padding: 0.1, maxZoom: Z_MAX } as const
-/** Default preset for the `t` key / direct Tidy click — the semantic "smart" auto-tidy. */
-const SMART_PRESET = LAYOUT_PRESETS[0]
-/** Base width (world px) of the pane-aspect block a tile preset fills before the camera fits
- *  to it — absolute size is irrelevant (the fit normalizes it); only the aspect + zones matter. */
-const TILE_AREA_BASE_W = 2400
 
 /** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5). */
 function FadingDots(): ReactElement {
@@ -127,8 +121,6 @@ function CanvasInner(): ReactElement {
   const connectors = useCanvasStore((s) => s.connectors)
   const addConnector = useCanvasStore((s) => s.addConnector)
   const removeConnector = useCanvasStore((s) => s.removeConnector)
-  const tidyBoards = useCanvasStore((s) => s.tidyBoards)
-  const tileBoards = useCanvasStore((s) => s.tileBoards)
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
   const viewport = useCanvasStore((s) => s.viewport)
@@ -494,115 +486,10 @@ function CanvasInner(): ReactElement {
     [rf]
   )
 
-  // Apply a layout preset then frame it ("auto-fit"). Two paradigms share one entry point:
-  //  • tidy  — reposition-only semantic grouping (keeps board sizes), via tidyBoards.
-  //  • tile  — window-manager resize-to-fill: carve a pane-aspect block into zones and resize
-  //            every board to fill its zone, via tileBoards.
-  // Either way the camera then frames the result. The fit transform is computed from the
-  // POST-arrange board rects read straight back from the store, NOT via rf.fitView: the
-  // controlled React Flow nodes have not re-synced inside this same tick, so fitView would
-  // frame the stale pre-arrange positions. getViewportForBounds is pure → race-free.
-  // Pane (visible canvas) dimensions in screen px, from the absolute-inset pane element.
-  const paneSize = useCallback((): { w: number; h: number } => {
-    const el = paneRef.current
-    return { w: el?.clientWidth ?? 0, h: el?.clientHeight ?? 0 }
-  }, [])
-
-  // Frame the camera to the CURRENT store boards, computed from their post-arrange rects (not
-  // rf.fitView) so it's race-free against React Flow's not-yet-synced controlled nodes.
-  // `animate=false` (instant) is used for resize reflow so the layout doesn't tween every frame.
-  const fitToBoards = useCallback(
-    (animate = true) => {
-      const { w, h } = paneSize()
-      const boards = useCanvasStore.getState().boards
-      // Single linear pass for the extremes (boardsBounds) instead of four Math.min/max
-      // spreads; null ⇒ no boards ⇒ fall back to the default frame (#perf —
-      // fittoboards-repeated-minmax-spread).
-      const bb = boardsBounds(boards)
-      if (!bb || w <= 0 || h <= 0) {
-        void rf.fitView(animate ? cameraAnim(FIT_FRAME) : { ...FIT_FRAME, duration: 0 })
-        return
-      }
-      const bounds = { x: bb.minX, y: bb.minY, width: bb.maxX - bb.minX, height: bb.maxY - bb.minY }
-      const vp = getViewportForBounds(
-        bounds,
-        w,
-        h,
-        FIT_FRAME.minZoom ?? Z_MIN,
-        FIT_FRAME.maxZoom ?? Z_MAX,
-        FIT_FRAME.padding ?? 0.1
-      )
-      void rf.setViewport(vp, animate ? cameraAnim({}) : { duration: 0 })
-    },
-    [rf, paneSize]
-  )
-
-  // Tile every board into a pane-ASPECT block then frame it → fills the window like a WM.
-  // `record` distinguishes a user-initiated apply (one undo step) from a live resize reflow
-  // (untracked). The block's absolute size is irrelevant (the fit normalizes it); only its
-  // aspect + the zone proportions matter.
-  const applyTile = useCallback(
-    (template: TileTemplate, record: boolean, animate: boolean) => {
-      const { w, h } = paneSize()
-      const aspect = w > 0 && h > 0 ? w / h : 16 / 10
-      const cur = useCanvasStore.getState().boards
-      if (cur.length > 0) {
-        const ox = Math.min(...cur.map((b) => b.x))
-        const oy = Math.min(...cur.map((b) => b.y))
-        tileBoards(
-          template,
-          { x: ox, y: oy, w: TILE_AREA_BASE_W, h: TILE_AREA_BASE_W / aspect },
-          record
-        )
-      }
-      fitToBoards(animate)
-    },
-    [paneSize, tileBoards, fitToBoards]
-  )
-
-  // Apply a layout preset then frame it ("auto-fit"). Tile presets ALSO enter live "tiled mode"
-  // (re-tile on window resize until released); Smart is a one-shot that releases tiling.
-  const tidyAndFit = useCallback(
-    (preset: LayoutPreset = SMART_PRESET) => {
-      // Arranging must not leave others dimmed behind a stale focus (mirrors addCentered, #14).
-      setFocusedId(null)
-      if (preset.kind === 'tile') {
-        setActiveTile(preset.template)
-        applyTile(preset.template, true, true)
-      } else {
-        setActiveTile(null) // Smart releases any live tiling
-        tidyBoards(preset.tidyMode, paneSize().w / Math.max(1, paneSize().h))
-        fitToBoards(true)
-      }
-    },
-    [applyTile, tidyBoards, fitToBoards, paneSize]
-  )
-
-  // Responsive tiling: while a tile preset owns the layout, re-tile to the new window aspect on
-  // every pane resize (minimize / restore / fullscreen). rAF-coalesced so a drag-resize storm
-  // collapses to one reflow per frame; untracked so it never floods undo history.
-  useEffect(() => {
-    const el = paneRef.current
-    if (!el) return
-    let raf = 0
-    let first = true
-    const ro = new ResizeObserver(() => {
-      if (first) {
-        first = false // ResizeObserver fires once on observe; ignore that initial callback
-        return
-      }
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        const t = activeTileRef.current
-        if (t) applyTile(t, false, false)
-      })
-    })
-    ro.observe(el)
-    return () => {
-      ro.disconnect()
-      cancelAnimationFrame(raf)
-    }
-  }, [applyTile])
+  // Tidy / tile layout actions (paneSize · fitToBoards · applyTile · tidyAndFit + the
+  // responsive-retile ResizeObserver) live in useTidyTile (Wave-5 B5 #2). Only tidyAndFit is
+  // surfaced — the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button.
+  const { tidyAndFit } = useTidyTile({ paneRef, rf, setActiveTile, setFocusedId, activeTileRef })
 
   // Double-click = focus: fit the camera to the board and dim the others. Distinct
   // from Full view (Phase 3), which is a modal layer that doesn't move the camera.
