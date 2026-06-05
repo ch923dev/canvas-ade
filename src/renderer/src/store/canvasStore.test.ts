@@ -1209,6 +1209,33 @@ describe('multi-select', () => {
     setSelection([])
     expect(useCanvasStore.getState().selectedId).toBeNull()
   })
+
+  it('undo clears selectedIds (invariant holds after undo)', () => {
+    // add two boards then undo → selection must be empty, not stale
+    const { addBoard, undo } = useCanvasStore.getState()
+    addBoard('terminal', { x: 0, y: 0 })
+    addBoard('terminal', { x: 400, y: 0 })
+    undo()
+    expect(useCanvasStore.getState().selectedIds).toEqual([])
+    expect(useCanvasStore.getState().selectedId).toBeNull()
+  })
+
+  it('setSelection dedupes and clears to [] on empty', () => {
+    const { setSelection } = useCanvasStore.getState()
+    setSelection(['a', 'a', 'b'])
+    expect(useCanvasStore.getState().selectedIds).toEqual(['a', 'b'])
+    setSelection([])
+    expect(useCanvasStore.getState().selectedIds).toEqual([])
+    expect(useCanvasStore.getState().selectedId).toBeNull()
+  })
+
+  it('addBoard collapses any prior multi-selection to the new board', () => {
+    const { setSelection, addBoard } = useCanvasStore.getState()
+    setSelection(['x', 'y'])
+    const id = addBoard('terminal', { x: 0, y: 0 })
+    expect(useCanvasStore.getState().selectedIds).toEqual([id])
+    expect(useCanvasStore.getState().selectedId).toBe(id)
+  })
 })
 
 describe('planning board — addChecklist + schema round-trip (migrated from e2e planning)', () => {

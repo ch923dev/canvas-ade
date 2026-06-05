@@ -239,7 +239,15 @@ function trackedChange(
     boards: nextBoards,
     connectors: nextConnectors
   }
-  return opts.selectedId === undefined ? base : { ...base, selectedId: opts.selectedId }
+  if (opts.selectedId === undefined) return base
+  return {
+    ...base,
+    selectedId: opts.selectedId,
+    // Keep the multi-selection consistent with the new primary: an add/duplicate selects
+    // just the new board; a clear (null) empties it. (removeBoard's richer multi-id case is
+    // refined in a later task.)
+    selectedIds: opts.selectedId != null ? [opts.selectedId] : []
+  }
 }
 
 /**
@@ -596,8 +604,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const selectedIds = has ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]
       return { selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null }
     }),
-  setSelection: (ids) =>
-    set({ selectedIds: ids, selectedId: ids[ids.length - 1] ?? null }),
+  setSelection: (ids) => {
+    const selectedIds = [...new Set(ids)]
+    set({ selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null })
+  },
   setTool: (tool) => set({ tool }),
   beginChange: () =>
     set((s) => {
@@ -631,7 +641,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         connectors: r.present.connectors,
         past: r.past,
         future: r.future,
-        selectedId: null
+        selectedId: null,
+        selectedIds: []
       }
     }),
   redo: () =>
@@ -644,7 +655,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         connectors: r.present.connectors,
         past: r.past,
         future: r.future,
-        selectedId: null
+        selectedId: null,
+        selectedIds: []
       }
     }),
 
@@ -680,6 +692,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       connectors: d.connectors,
       viewport: d.viewport,
       selectedId: null,
+      selectedIds: [],
       past: [],
       future: []
     })
@@ -713,6 +726,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
             connectors: d2.connectors,
             viewport: d2.viewport,
             selectedId: null,
+            selectedIds: [],
             past: [],
             future: [],
             project: { dir: r.dir, name: r.name, status: 'open' }
@@ -739,6 +753,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       connectors: d.connectors,
       viewport: d.viewport,
       selectedId: null,
+      selectedIds: [],
       past: [],
       future: [],
       project: { dir: r.dir, name: r.name, status: 'open' }
