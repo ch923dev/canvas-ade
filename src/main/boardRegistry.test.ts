@@ -5,7 +5,9 @@ import {
   listBoardMirror,
   listConnectors,
   sanitizeSnapshot,
-  sanitizeConnectors
+  sanitizeConnectors,
+  diffStatus,
+  type BoardStatusChange
 } from './boardRegistry'
 
 describe('boardRegistry', () => {
@@ -67,5 +69,46 @@ describe('boardRegistry', () => {
     ])
     __setConnectorsForTest([])
     expect(listConnectors()).toEqual([])
+  })
+})
+
+describe('diffStatus', () => {
+  it('emits changed + new-with-bucket, skips unchanged + bucketless-new, emits gone for any vanished id', () => {
+    const prev = [
+      { id: 'a', type: 'terminal', title: 'A', status: 'running' },
+      { id: 'b', type: 'browser', title: 'B', status: 'idle' },
+      { id: 'c', type: 'planning', title: 'C' } // bucketless
+    ]
+    const next = [
+      { id: 'a', type: 'terminal', title: 'A', status: 'idle' }, // changed
+      { id: 'b', type: 'browser', title: 'B', status: 'idle' }, // unchanged
+      { id: 'd', type: 'terminal', title: 'D', status: 'running' } // new, bucketed
+      // c vanished
+    ]
+    expect(diffStatus(prev, next)).toEqual([
+      { id: 'a', status: 'idle' },
+      { id: 'd', status: 'running' },
+      { id: 'c', status: 'gone' }
+    ])
+  })
+
+  it('emits nothing for an identical snapshot', () => {
+    const s = [{ id: 'a', type: 'terminal', title: 'A', status: 'running' }]
+    expect(diffStatus(s, s)).toEqual([])
+  })
+
+  it('skips a board that newly appears WITHOUT a bucket', () => {
+    expect(diffStatus([], [{ id: 'x', type: 'planning', title: 'X' }])).toEqual([])
+  })
+
+  it('emits gone even when the vanished board had no bucket', () => {
+    expect(diffStatus([{ id: 'x', type: 'planning', title: 'X' }], [])).toEqual([
+      { id: 'x', status: 'gone' }
+    ])
+  })
+
+  it('exports BoardStatusChange with an { id, status } shape', () => {
+    const change: BoardStatusChange = { id: 'x', status: 'idle' }
+    expect(change).toEqual({ id: 'x', status: 'idle' })
   })
 })

@@ -42,6 +42,35 @@ const STATUS_BUCKETS: ReadonlySet<string> = new Set([
   'static'
 ])
 
+/** A coarse per-board status change (M5). `status` is a STATUS_BUCKETS value, or 'gone'. */
+export interface BoardStatusChange {
+  id: string
+  status: string
+}
+
+/**
+ * Pure differ: the per-board status changes between two snapshots (M5 event-driven attention).
+ * Emits a change for any board whose known bucket changed or first appeared WITH a bucket, and a
+ * `{ status: 'gone' }` for any id present before and now absent. A board newly appearing WITHOUT a
+ * bucket is skipped (the renderer always buckets now; the bucketless fallback is legacy).
+ * Inputs are sanitized mirrors (`sanitizeSnapshot` already dropped unknown buckets), so this does
+ * no bucket re-validation — it just diffs.
+ */
+export function diffStatus(prev: BoardMirror[], next: BoardMirror[]): BoardStatusChange[] {
+  const prevById = new Map(prev.map((b) => [b.id, b.status]))
+  const nextIds = new Set(next.map((b) => b.id))
+  const changes: BoardStatusChange[] = []
+  for (const b of next) {
+    if (b.status !== undefined && b.status !== prevById.get(b.id)) {
+      changes.push({ id: b.id, status: b.status })
+    }
+  }
+  for (const b of prev) {
+    if (!nextIds.has(b.id)) changes.push({ id: b.id, status: 'gone' })
+  }
+  return changes
+}
+
 let mirror: BoardMirror[] = []
 let connectorMirror: ConnectorMirror[] = []
 
