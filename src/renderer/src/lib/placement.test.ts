@@ -7,6 +7,10 @@ describe('normalizeBox', () => {
     expect(normalizeBox(100, 80, 40, 20)).toEqual({ x: 40, y: 20, w: 60, h: 60 })
     expect(normalizeBox(40, 20, 100, 80)).toEqual({ x: 40, y: 20, w: 60, h: 60 })
   })
+  it('normalizes the off-diagonal drag directions too', () => {
+    expect(normalizeBox(40, 80, 100, 20)).toEqual({ x: 40, y: 20, w: 60, h: 60 })
+    expect(normalizeBox(100, 20, 40, 80)).toEqual({ x: 40, y: 20, w: 60, h: 60 })
+  })
 })
 
 describe('isClickGesture', () => {
@@ -17,6 +21,9 @@ describe('isClickGesture', () => {
   it('is a drag once either axis reaches the threshold', () => {
     expect(isClickGesture(5, 0)).toBe(false)
     expect(isClickGesture(0, -6)).toBe(false)
+  })
+  it('treats both axes exactly at the threshold as a drag', () => {
+    expect(isClickGesture(5, 5)).toBe(false)
   })
 })
 
@@ -32,5 +39,8 @@ describe('placementRect', () => {
   it('clamps a sub-minimum drag up to MIN_BOARD_SIZE, anchored at the top-left', () => {
     const r = placementRect({ x: 10, y: 10 }, { x: 30, y: 25 })
     expect(r).toEqual({ x: 10, y: 10, w: MIN_BOARD_SIZE.w, h: MIN_BOARD_SIZE.h })
+  })
+  it('clamps only the sub-minimum axis (wide, short drag keeps its width)', () => {
+    expect(placementRect({ x: 0, y: 0 }, { x: 300, y: 50 })).toEqual({ x: 0, y: 0, w: 300, h: 160 })
   })
 })
