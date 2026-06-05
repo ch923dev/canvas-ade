@@ -79,6 +79,13 @@ export interface BoardRegistry {
   listConnectors(): ConnectorMirrorEntry[]
   listSessions(): Array<{ id: string; status: string }>
   /**
+   * Subscribe to per-board coarse status changes (M5 event-driven attention). MAIN injects
+   * `boardRegistry.ts`'s `subscribeBoardStatus`. Emits `{ id, status }` on each change
+   * (`status: 'gone'` when a board leaves the canvas); returns an unsubscribe fn. The handoff
+   * await-idle wakes on these instead of polling.
+   */
+  subscribeStatus(listener: (change: { id: string; status: string }) => void): () => void
+  /**
    * Drive the canvas via the MAIN → renderer control-plane command channel (T3.1+).
    * MAIN injects a frame-guarded `sendMcpCommand`; the renderer applies the command
    * to `canvasStore` and acks. The ONLY write path from the MCP layer to the canvas.

@@ -16,7 +16,8 @@ const DISPATCH_DEFAULTS = {
   confirm: async (): Promise<{ approved: boolean }> => ({ approved: true }),
   audit: async (): Promise<void> => {},
   recordResult: (): void => {},
-  listConnectors: () => []
+  listConnectors: () => [],
+  subscribeStatus: () => () => {}
 }
 
 const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
@@ -454,6 +455,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => opts.boards,
         listConnectors: () => [],
         listSessions: () => opts.sessions ?? [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => opts.result ?? EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -724,6 +726,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => opts.boards,
         listConnectors: () => [],
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -907,6 +910,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => opts.boards,
         listConnectors: () => [],
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -1034,6 +1038,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => opts.boards,
         listConnectors: () => opts.connectors ?? [],
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
@@ -1174,6 +1179,7 @@ describe('buildOrchestrator', () => {
         listBoards: () => twoTerminals,
         listConnectors: () => connectors, // reads the live (mutable) mirror each call
         listSessions: () => [],
+        subscribeStatus: () => () => {},
         readOutput: () => EMPTY_OUTPUT,
         readResult: () => EMPTY_RESULT,
         readMemory: () => EMPTY_MEMORY,
