@@ -180,7 +180,11 @@ is summarized in **`docs/archive/build-history.md`** (originals in git history).
 history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
 file = open findings).
 
-**Current state (2026-06-04):** **Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
+**Current state (2026-06-06):** `main` @ `375c26c`. Since Phase 4: **MCP M0–M5 · Context subsystem ·
+Whiteboard W1–W5 · Testing T0–T5 · Electron 33→42 (T9) · review Waves 0–5 hardening · the drag-to-create
++ dock-to-top redesign (#75, `375c26c`) — all SHIPPED.** Gate green on this tree: typecheck · lint (0 err)
+· format · **1273 unit+integration / 95 files**. Historical Phase-4 recap follows.
+**Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
 Phase 4 design pass = `abd7fa2` (PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified
 bugs) · `94baab9` (4 open-medium) · `1a0c615` (7 round-2 review findings). The full-view preview-reset
 fix landed (PR #14 / fullview-reset refactor — full-view DETACHes every board, never `close()`, so a
@@ -203,13 +207,18 @@ is injected into `startMcpServer`). Generated summaries are untrusted passive co
 can be prompt-injected by them (ADR `0003-llm-egress.md` › M-expose residual). Post-merge gate green (852
 unit+integration; e2e matrix green on the identical pre-merge tree).
 
-**In flight (parallel worktree streams + open PRs — `main` is integration-only):**
-- **PR #32 `feat/mcp-integration`** — re-port of the MCP integration onto current `main` (rescues the
-  closed #7/#8; large, ~101 files). Gates the swarm layer + Feature Workspaces. **NEXT to merge** — rebase
-  onto current `main` first (Context-brain landed; additively-shared `index.ts`/`preload`/`App.tsx`).
+**MCP layer SHIPPED to `main` (2026-06-05/06).** The `feat/mcp-integration` work landed via **PR #43**
+(`2100022`, M0–M4) + follow-ups: **M5** board-status event source + event-driven handoff await-idle
+(#70 `3824afc`), **M5 app-adopt** `Orchestrator.subscribeStatus` (#73 `c440251`), M-expose write→read
+proof (#74 `97d356a`). App pins **`@expanse-ade/mcp ^0.9.0`** — now on **public npmjs** (no token; was
+GitHub-Packages `@ch923dev/canvas-ade-mcp`, migrated `63cf10c`). The swarm layer is done; **Feature
+Workspaces is unblocked.** (The old "PR #32 re-port" was superseded by #43 — do not look for it.)
+
+**In flight (open PRs — `main` is integration-only):**
 - **PR #17 `chore/rebrand-expanse`** — Canvas ADE → **Expanse** rename (code + build IDs + docs).
   **Merges LAST** (2 cross-zone one-liners), memory `rebrand-expanse`.
-- Research-only PRs: #29 (Maestri teardown) · #27 (demo-video playbook) · #25 (SaaS strategy).
+- **5 dependabot bumps** (#76–80): write-file-atomic 5→8 · @types/node 22→25 · eslint 9→10 · react · @electron-toolkit/utils 3→4.
+- Research-only PRs: #72 (visual-spec Diagram) · #71 (orchestrator harness) · #29 (Maestri teardown) · #27 (demo-video playbook) · #25 (SaaS strategy).
 
 **Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:
 **healthy, no Critical/High** (the prior-round High MBC-1 did not reproduce). All 12 residual
@@ -218,9 +227,9 @@ already fixed by PR #14). See `docs/reviews/2026-06-01-round3.md` (two Resolutio
 findings; reviews are stale-clear — heavy new code (MCP/Context) has landed on branches since, so a
 fresh hunt against the post-merge tree is warranted before release.
 
-**Start here next:** Open candidates (see `docs/roadmap.md`): land the in-flight PRs sequentially
-(full gate + e2e after EACH merge; **~~Context #39~~ ✅ merged `4c321c2` → MCP #32 NEXT → … → rebrand #17 last**) · **Phase 5 —
-packaging/signing** (CI matrix unsigned until Phase 5) · the **`canvas-ade-mcp` swarm layer** (memory
-`canvas-ade-mcp`) · the post-MCP **Feature Workspaces / worktrees** model (FW-1). Deferred: **agentic
-session resume** (roadmap note) · auto-update e2e coverage (Phase 5, needs packaging/electron-updater).
+**Start here next:** Open candidates (see `docs/roadmap.md`): **Phase 5 — packaging/signing** (CI matrix
+unsigned until Phase 5; the de-facto release blocker — Electron 42 bump already done in T9) · the post-MCP
+**Feature Workspaces / worktrees** model (FW-1) — **now unblocked** (the `canvas-ade-mcp` swarm layer
+shipped) · land **rebrand #17** (last) + triage **dependabot #76–80**. Deferred: **agentic session resume**
+(roadmap note) · auto-update e2e coverage (Phase 5, needs packaging/electron-updater).
 

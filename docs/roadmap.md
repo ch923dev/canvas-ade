@@ -194,10 +194,15 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
 - **Context subsystem** (PR #39, `4c321c2`) — desktop LLM brain + `.canvas/` memory; ADR 0003;
   build-log `archive/2026-06-04-context-subsystem.md`.
 
-**Queued (in-flight branches, merge order Context ✅ → MCP → … → rebrand last):**
-- **MCP integration** (PR #32, `feat/mcp-integration`) — the `canvas-ade-mcp` swarm layer; gates
-  Feature Workspaces. Carries its own per-task handoff docs (to be compiled on merge).
+**Shipped since (2026-06-05/06):**
+- **MCP integration M0–M5** (`canvas-ade-mcp` swarm layer) — landed via **PR #43** (`2100022`, M0–M4)
+  + #70/#73/#74 (M5 + app-adopt + M-expose proof). App pins `@expanse-ade/mcp ^0.9.0` on public npmjs
+  (`63cf10c`). **Feature Workspaces is now unblocked.** (The earlier "PR #32 re-port" was superseded by #43.)
+- **Drag-to-create board + dock→top-center** redesign (PR #75, `375c26c`).
+
+**Queued (open PRs):**
 - **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last.
+- 5 dependabot bumps (#76–80) + research-only docs (#25/27/29/71/72).
 
 ---
 
