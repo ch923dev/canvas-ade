@@ -34,6 +34,8 @@ export type CanvasKeyAction =
   | { kind: 'fit' }
   | { kind: 'reset' }
   | { kind: 'tidy' }
+  | { kind: 'group' }
+  | { kind: 'focusGroup' }
 
 /**
  * Pure: map a bubble-phase keydown to its canvas action, preserving the EXACT precedence of
@@ -53,12 +55,17 @@ export function resolveCanvasKeyAction(
   // Undo/redo first (early-return in the original, so they win over the Esc/d/1/0/t chain).
   if (mod && k === 'z' && !typing) return { kind: e.shiftKey ? 'redo' : 'undo' }
   if (mod && k === 'y' && !e.shiftKey && !typing) return { kind: 'redo' }
+  // Ctrl/⌘+G groups the current selection (no Alt — different chord). Wins over the bare-key
+  // chain like undo/redo. Guarded against firing while typing in a field.
+  if (mod && k === 'g' && !e.shiftKey && !typing) return { kind: 'group' }
   // Then the mutually-exclusive chain.
   if (e.key === 'Escape' && !typing) return { kind: 'clearSelection' }
   if (k === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) return { kind: 'toggleDiag' }
   if (e.key === '1' && bareKeyAllowed) return { kind: 'fit' }
   if (e.key === '0' && bareKeyAllowed) return { kind: 'reset' }
   if (k === 't' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey) return { kind: 'tidy' }
+  if (k === 'f' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey)
+    return { kind: 'focusGroup' }
   return null
 }
 
@@ -77,6 +84,10 @@ export interface CanvasKeybindingDeps {
   closeFullView: () => void
   exitCameraFullView: () => void
   snapSuppressRef: MutableRefObject<boolean>
+  /** Group the current multi-selection (Ctrl/⌘+G). Optional: wired by Canvas in S3. */
+  groupSelection?: () => void
+  /** Focus a group (bare `f`). Optional: real impl wired by Canvas in S4. */
+  focusGroup?: () => void
 }
 
 export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
@@ -94,7 +105,9 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     cameraFullViewId,
     closeFullView,
     exitCameraFullView,
-    snapSuppressRef
+    snapSuppressRef,
+    groupSelection,
+    focusGroup
   } = deps
 
   // 1. While an orchestration connector is selected, Delete/Backspace removes it. Selecting a
@@ -159,11 +172,18 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
           // Auto-tidy + fit: repack scattered boards and frame them filling the pane.
           tidyAndFit()
           break
+        case 'group':
+          e.preventDefault()
+          groupSelection?.()
+          break
+        case 'focusGroup':
+          focusGroup?.()
+          break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, doUndo, doRedo, tidyAndFit, setDiag])
+  }, [rf, clearSelection, doUndo, doRedo, tidyAndFit, setDiag, groupSelection, focusGroup])
 
   // 3. Esc ALWAYS exits full view — even when a board's own input owns focus. Must run in the
   // CAPTURE phase (window → target): xterm calls stopPropagation() on keydown, so a bubble-phase
