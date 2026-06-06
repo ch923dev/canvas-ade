@@ -425,10 +425,14 @@ export function buildOrchestrator(
         }
 
         // (b) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
-        // carries the target board + the EXACT (sanitized) command the human is authorizing.
+        // carries the target board TITLE (resolved from the live mirror, with UUID fallback)
+        // + the EXACT (sanitized) command the human is authorizing.  Mirroring handoffPrompt:
+        // the human gate is more effective when the user can identify the board by name.
+        const boardEntry = registry.listBoards().find((b) => b.id === boardId)
+        const boardLabel = boardEntry?.title ?? boardId
         const { approved } = await registry.confirm({
-          title: `Configure launch command for board ${boardId}`,
-          body: `Set this command to run on terminal "${boardId}" the next time it spawns?\n\n${safeLaunch}`
+          title: `Configure launch command for "${boardLabel}"`,
+          body: `Set this command to run on terminal "${boardLabel}" the next time it spawns?\n\n${safeLaunch}`
         })
         if (!approved) {
           await registry.audit({

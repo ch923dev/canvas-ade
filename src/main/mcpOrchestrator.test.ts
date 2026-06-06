@@ -329,6 +329,7 @@ describe('buildOrchestrator', () => {
     function configReg(opts: {
       confirm?: (req: { title: string; body: string }) => Promise<{ approved: boolean }>
       ack?: McpCommandAck
+      boards?: Array<{ id: string; type: string; title: string; status?: string }>
     }): {
       registry: BoardRegistry
       seen: McpCommand[]
@@ -339,7 +340,7 @@ describe('buildOrchestrator', () => {
       const audits: AuditInput[] = []
       const confirms: Array<{ title: string; body: string }> = []
       const registry: BoardRegistry = {
-        ...reg([]),
+        ...reg(opts.boards ?? []),
         sendCommand: async (cmd) => {
           seen.push(cmd)
           return opts.ack ?? { ok: true, type: cmd.type }
@@ -461,6 +462,22 @@ describe('buildOrchestrator', () => {
         targetId: 'board-5',
         prompt: 'claude'
       })
+    })
+
+    // 🔒 BUG-042: the confirm dialog must show the human-readable board title, not the raw UUID.
+    // When multiple terminal boards exist a user cannot identify WHICH board they are authorizing
+    // from a UUID alone — the security gate is present but its clarity is impaired.
+    it('🔒 BUG-042: confirm title and body show the board title, not the raw UUID', async () => {
+      const boardId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+      const { registry, confirms } = configReg({
+        boards: [{ id: boardId, type: 'terminal', title: 'My Claude Agent' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await orch.configureBoard(boardId, { launchCommand: 'claude' })
+      expect(confirms).toHaveLength(1)
+      // The confirm title and body must contain the human-readable title, not just the raw UUID.
+      expect(confirms[0].title).toContain('My Claude Agent')
+      expect(confirms[0].body).toContain('My Claude Agent')
     })
   })
 
