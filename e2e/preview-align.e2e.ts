@@ -25,12 +25,20 @@ interface FrameRect {
   height: number
 }
 
+// These helpers build strings evaluated in the renderer (evalIn). The interpolated values are
+// the app's own seed() board id + our status literals — never external input — but allowlist
+// them so the eval-string construction is provably sanitized (CodeQL js/code-injection) and a
+// malformed token fails loudly instead of silently.
+const safe = (v: string): string => {
+  if (!/^[\w-]+$/.test(v)) throw new Error(`unsafe e2e token: ${JSON.stringify(v)}`)
+  return v
+}
 const runtimeStatus = (id: string, status: string): string =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(safe(id))}); return !!r && r.status === ${JSON.stringify(safe(status))}; })()`
 const runtimeLive = (id: string): string =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.live === true; })()`
+  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(safe(id))}); return !!r && r.live === true; })()`
 const frameRectExpr = (id: string): string =>
-  `(() => { const el = document.querySelector('[data-bb-frame="${id}"]'); if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; })()`
+  `(() => { const el = document.querySelector('[data-bb-frame="${safe(id)}"]'); if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; })()`
 
 const BORDER = 1
 const TOLERANCE = 2 // px — native vs frame-inset at settled rest
@@ -43,7 +51,7 @@ test.describe('preview camera-sync regression', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(safe(id))})`)
     expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000)).toBe(true)
     await pollEval(page, runtimeLive(id), 8000)
     await page.waitForTimeout(600)
@@ -119,7 +127,7 @@ test.describe('preview camera-sync regression', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(safe(id))})`)
     expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000)).toBe(true)
     await pollEval(page, runtimeLive(id), 8000)
     await page.waitForTimeout(400)
