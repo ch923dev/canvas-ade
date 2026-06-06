@@ -406,10 +406,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const nextConnectors = incident
         ? s.connectors.filter((c) => c.sourceId !== id && c.targetId !== id)
         : s.connectors
+      // Sweep the deleted board from all group memberships in the SAME step (mirrors the
+      // connector sweep above), so one undo restores board + cables + memberships together.
+      // Only mints a new groups array when a membership actually changes — keep ref for no-op.
+      const inGroups = s.groups.some((g) => g.boardIds.includes(id))
+      const nextGroups = inGroups
+        ? s.groups.map((g) =>
+            g.boardIds.includes(id) ? { ...g, boardIds: g.boardIds.filter((b) => b !== id) } : g
+          )
+        : s.groups
       const nextSelIds = s.selectedIds.filter((x) => x !== id)
       return trackedChange(
         s,
-        { boards: next, connectors: nextConnectors },
+        { boards: next, connectors: nextConnectors, groups: nextGroups },
         {
           selection: { selectedIds: nextSelIds, selectedId: nextSelIds[nextSelIds.length - 1] ?? null },
           reflectPresent: false

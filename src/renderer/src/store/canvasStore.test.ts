@@ -1299,6 +1299,20 @@ describe('group CRUD', () => {
   })
 })
 
+describe('removeBoard sweeps groups', () => {
+  it('removeBoard removes the deleted id from every group in one undo step', () => {
+    useCanvasStore.setState({
+      boards: [], connectors: [], groups: [], past: [], future: [], selectedId: null, selectedIds: []
+    })
+    const id = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    const gid = useCanvasStore.getState().addGroup('Auth', [id])
+    useCanvasStore.getState().removeBoard(id)
+    expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([])
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([id])
+  })
+})
+
 describe('planning board — addChecklist + schema round-trip (migrated from e2e planning)', () => {
   it('appends a checklist element and the whole canvas still round-trips', () => {
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
