@@ -1251,3 +1251,25 @@ body {
   color: var(--accent);
   border-color: var(--accent-wash);
 }
+.group-name-pop {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+}
+.group-name-input {
+  width: 180px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-family: var(--ui);
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  outline: none;
+}
+.group-name-input:focus {
+  border-color: var(--accent);
+}
