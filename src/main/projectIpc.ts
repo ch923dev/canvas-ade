@@ -22,7 +22,7 @@ import {
   gcAssets,
   type ProjectResult
 } from './projectStore'
-import { scaffoldProjectMemory, createCanvasMemory } from './canvasMemory'
+import { scaffoldProjectMemory, createCanvasMemory, safeBoardId } from './canvasMemory'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
 import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
 
@@ -134,7 +134,17 @@ export function registerProjectHandlers(
     const r = readProject(dir)
     remember(r)
     if (r.ok) {
-      gcAssets(r.dir, collectAssetIds(r.doc))
+      // BUG-016: collect asset ids from BOTH the primary AND the backup before sweeping.
+      // If the primary is envelope-valid but deep-corrupt, the renderer triggers T5 recovery
+      // (project:reopenFromBak). Without this union, assets referenced only by the backup
+      // are quarantined here before the deep-validation failure is detected — leaving the
+      // T5 recovery path with broken/missing images.
+      // The union is best-effort: a missing/corrupt backup simply contributes an empty set.
+      const primaryIds = collectAssetIds(r.doc)
+      const bakResult = readBak(r.dir)
+      const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
+      const allReferencedIds = new Set<string>([...primaryIds, ...bakIds])
+      gcAssets(r.dir, allReferencedIds)
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
       try {
         memoryEngine.reset() // T-M2: a project switch drops stale fingerprints/timers
@@ -221,7 +231,11 @@ export function registerProjectHandlers(
     if (r.ok) {
       setCurrentDir(r.dir)
       touchRecent(userDataDir, r.dir, projectName(r.dir), now())
-      gcAssets(r.dir, collectAssetIds(r.doc))
+      // BUG-016: union primary + backup asset ids before sweeping (same fix as project:open).
+      const primaryIds = collectAssetIds(r.doc)
+      const bakResult = readBak(r.dir)
+      const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
+      gcAssets(r.dir, new Set([...primaryIds, ...bakIds]))
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
       try {
         memoryEngine.reset() // T-M2: re-baseline on reopen/switch
@@ -292,7 +306,10 @@ export function registerProjectHandlers(
   // {ok:true} means the refresh ran (the renderer re-reads prose via memory:readBoards either way).
   ipcMain.handle('memory:refresh', async (e, boardId: unknown): Promise<{ ok: boolean }> => {
     if (guard(e)) return { ok: false }
-    if (typeof boardId !== 'string' || boardId.length === 0) return { ok: false }
+    // BUG-032: enforce safeBoardId (MAX_ID_LEN=64, charset [A-Za-z0-9_-]) at IPC ingress.
+    // The original check only rejected non-string / empty — a 1 MB or invalid-charset id
+    // passed through to onRefresh, causing a transient allocation + O(n) board scan.
+    if (typeof boardId !== 'string' || !safeBoardId(boardId)) return { ok: false }
     if (!getCurrentDir()) return { ok: false }
     await onRefresh(boardId)
     return { ok: true }

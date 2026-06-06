@@ -30,7 +30,13 @@ const { store, recents, electronDialog, canvasMemory } = vi.hoisted(() => ({
   },
   canvasMemory: {
     scaffoldProjectMemory: vi.fn(),
-    createCanvasMemory: vi.fn()
+    createCanvasMemory: vi.fn(),
+    // BUG-032: safeBoardId is imported by projectIpc.ts after the fix; provide a real
+    // implementation in the mock so the guard works in integration tests.
+    safeBoardId: vi.fn(
+      (id: string) =>
+        typeof id === 'string' && id.length > 0 && id.length <= 64 && /^[A-Za-z0-9_-]+$/.test(id)
+    )
   }
 }))
 
@@ -49,6 +55,9 @@ import type { MemoryEngine } from './memoryEngine'
 beforeEach(() => {
   vi.clearAllMocks()
   store.projectName.mockImplementation((dir: string) => dir.split(/[/\\]/).pop() ?? dir)
+  // BUG-016: project:open and project:current now call readBak to collect backup asset ids
+  // before gcAssets. Default to { ok: false } (no backup) so existing tests are unaffected.
+  store.readBak.mockReturnValue({ ok: false, error: 'no bak' })
 })
 
 describe('registerProjectHandlers (T4)', () => {
@@ -149,6 +158,40 @@ describe('registerProjectHandlers (T4)', () => {
     const result = await cap.invoke('project:reopenFromBak', '../../etc')
     expect(result).toEqual({ ok: false, error: 'invalid path' })
     expect(store.readBak).not.toHaveBeenCalled()
+  })
+
+  // BUG-016: project:open must call gcAssets with the UNION of primary + backup asset ids.
+  // Pre-fix: gcAssets was called with only the primary doc's ids — a backup-only asset
+  // was quarantined before the renderer's deep-validation failure could trigger T5 recovery.
+  it('BUG-016: project:open unions primary + backup asset ids before gcAssets — backup-only assets are protected', () => {
+    // Primary doc references asset A only.
+    const primaryDoc = {
+      schemaVersion: 5,
+      viewport: null,
+      boards: [{ id: 'p1', elements: [{ kind: 'image', assetId: 'assets/aaaa.png' }] }]
+    }
+    // Backup doc references asset B (backup-only — not in the primary).
+    const bakDoc = {
+      schemaVersion: 5,
+      viewport: null,
+      boards: [{ id: 'p1', elements: [{ kind: 'image', assetId: 'assets/bbbb.png' }] }]
+    }
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: primaryDoc })
+    store.readBak.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: bakDoc })
+    store.collectAssetIds
+      .mockReturnValueOnce(new Set(['assets/aaaa.png'])) // primary
+      .mockReturnValueOnce(new Set(['assets/bbbb.png'])) // backup
+
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    cap.invoke('project:open', '/proj')
+
+    // gcAssets must have been called with BOTH asset ids (the union).
+    expect(store.gcAssets).toHaveBeenCalledTimes(1)
+    const gcArg = store.gcAssets.mock.calls[0][1] as Set<string>
+    expect(gcArg.has('assets/aaaa.png')).toBe(true) // primary asset retained
+    expect(gcArg.has('assets/bbbb.png')).toBe(true) // backup-only asset also retained (BUG-016 fix)
   })
 })
 
@@ -491,6 +534,41 @@ describe('memory:refresh (T-F4 manual re-summary bridge)', () => {
     expect(await cap.invoke('memory:refresh', 123)).toEqual({ ok: false })
     expect(await cap.invoke('memory:refresh', '')).toEqual({ ok: false })
     expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  // BUG-032: memory:refresh only checks `typeof boardId !== 'string' || boardId.length === 0`
+  // — a 1 MB string (or invalid charset) passes the guard and reaches onRefresh.
+  // The fix adds a safeBoardId() check (MAX_ID_LEN=64, charset [A-Za-z0-9_-]) at IPC ingress.
+  it('BUG-032: rejects an over-long boardId (>64 chars) before calling onRefresh', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const onRefresh = vi.fn(async () => {})
+    const cap = withRefresh(onRefresh)
+
+    // 65-char id (one over the MAX_ID_LEN=64 limit).
+    const longId = 'a'.repeat(65)
+    expect(await cap.invoke('memory:refresh', longId)).toEqual({ ok: false })
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  it('BUG-032: rejects a boardId with invalid charset (non-nanoid chars) before calling onRefresh', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const onRefresh = vi.fn(async () => {})
+    const cap = withRefresh(onRefresh)
+
+    // Space and slash are outside the [A-Za-z0-9_-] safe charset.
+    expect(await cap.invoke('memory:refresh', 'board id with spaces')).toEqual({ ok: false })
+    expect(await cap.invoke('memory:refresh', '../traversal')).toEqual({ ok: false })
+    expect(onRefresh).not.toHaveBeenCalled()
+  })
+
+  it('BUG-032: still accepts a valid nanoid-style boardId (regression guard)', async () => {
+    store.getCurrentDir.mockReturnValue('/proj')
+    const onRefresh = vi.fn(async () => {})
+    const cap = withRefresh(onRefresh)
+
+    // Valid nanoid: alphanumeric + _ + - within 64 chars.
+    expect(await cap.invoke('memory:refresh', 'abc-123_XYZ')).toEqual({ ok: true })
+    expect(onRefresh).toHaveBeenCalledWith('abc-123_XYZ')
   })
 
   it('rejects a foreign sender and never refreshes (#17)', async () => {
