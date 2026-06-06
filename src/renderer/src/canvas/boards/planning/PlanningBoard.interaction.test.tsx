@@ -309,4 +309,38 @@ describe('PlanningBoard interaction — group / align (migrated from W3 menu pro
     clickMenuItem('w3-menu-align-left')
     expect(noteX(id, 'w2-a')).toBe(noteX(id, 'w2-b')) // both moved, not just the clicked one
   })
+
+  it('BUG-013: empty-space right-click with partial group selection must NOT delete the un-selected sibling', () => {
+    // 1. Create two notes (A=w2-a, B=w2-b) and group them.
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150)
+    openContextMenuAt(120, 80, grip(0))
+    clickMenuItem('w3-menu-group')
+
+    // 2. Clear selection, then Shift-click only note A (partial group selection).
+    tap(560, 300) // clear to empty selection
+    act(() => {
+      ev(grip(0), 'pointerdown', 60, 60, { shift: true })
+      ev(well(), 'pointerup', 60, 60, { shift: true })
+    })
+
+    // 3. Right-click on empty whiteboard space — no element under the cursor.
+    //    Bug: expandGroups fires on base=selectedIds={A}, silently adds B → effective={A,B}.
+    //    The context menu then opens with effective={A,B}; Delete removes BOTH.
+    openContextMenuAt(560, 300, well()) // far from any note; targetId will be null
+
+    // 4. If the bug is present the context menu opened with the expanded set.
+    //    Click Delete — with the bug this removes both A and B (count drops to 0).
+    //    With the fix, either the menu never opened (empty-space right-click, no target)
+    //    or it opened with only A; either way B must survive.
+    const deleteItem = document.querySelector('[data-testid="w3-menu-delete"]') as HTMLElement | null
+    if (deleteItem) {
+      act(() => deleteItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    }
+    // B (w2-b) must survive: it was never in the user's explicit selection.
+    const remaining = els(id)
+    const bSurvives = remaining.some((e) => e.id === 'w2-b')
+    expect(bSurvives).toBe(true)
+  })
 })
