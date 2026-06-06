@@ -84,11 +84,25 @@ export function ChecklistCard({
   const lastInputRef = useRef<HTMLInputElement>(null)
   const prevTotal = useRef(total)
   const cardRef = useRef<HTMLDivElement>(null)
+  // Per-item input refs (keyed by item id) so Backspace-delete can restore focus
+  // to the adjacent row after the keyed input unmounts (BUG-014).
+  const itemRefs = useRef<Map<string, HTMLInputElement>>(new Map())
+  // Item id to focus after a remove commits + re-renders (the adjacent row).
+  const focusAfterRemove = useRef<string | null>(null)
 
   // After appending an item, focus the new (last) row.
   useEffect(() => {
     if (total > prevTotal.current) lastInputRef.current?.focus()
     prevTotal.current = total
+  }, [total])
+
+  // After a Backspace-remove re-renders without the deleted row, restore keyboard
+  // focus to the adjacent row instead of letting it fall to document.body (BUG-014).
+  useEffect(() => {
+    const targetId = focusAfterRemove.current
+    if (targetId === null) return
+    focusAfterRemove.current = null
+    itemRefs.current.get(targetId)?.focus()
   }, [total])
 
   // Report the card's bottom edge (board-local) on any size change so the board
@@ -238,7 +252,12 @@ export function ChecklistCard({
               <Checkbox done={item.done} />
             </button>
             <input
-              ref={idx === element.items.length - 1 ? lastInputRef : undefined}
+              ref={(node) => {
+                if (idx === element.items.length - 1)
+                  (lastInputRef as React.MutableRefObject<HTMLInputElement | null>).current = node
+                if (node) itemRefs.current.set(item.id, node)
+                else itemRefs.current.delete(item.id)
+              }}
               value={item.label}
               readOnly={!interactive}
               placeholder="Item…"
@@ -256,6 +275,10 @@ export function ChecklistCard({
                   onAddItem(element.id)
                 } else if (e.key === 'Backspace' && item.label.length === 0 && total > 1) {
                   e.preventDefault()
+                  // Restore focus to the adjacent row after the keyed input unmounts:
+                  // the next item, or the previous one when deleting the last (BUG-014).
+                  const next = element.items[idx + 1] ?? element.items[idx - 1]
+                  focusAfterRemove.current = next ? next.id : null
                   onRemoveItem(element.id, item.id)
                 } else if (e.key === 'Backspace' && item.label.length === 0) {
                   // Keep the non-zero floor (never a zero-item card), but make
