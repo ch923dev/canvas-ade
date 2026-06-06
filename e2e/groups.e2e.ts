@@ -83,4 +83,42 @@ test.describe('named board groups — Ctrl+G create flow', () => {
     expect(await pollEval(page, `window.__canvasE2E.getGroups().length === 1`, 2000)).toBe(true)
     expect(await evalIn<string>(page, `window.__canvasE2E.getGroups()[0].name`)).toBe('Group 1')
   })
+
+  test('focus fits one group directly (no picker) and opens the picker for many', async ({
+    page
+  }) => {
+    // Seed 4 boards, mint ONE group → bare `f` fits it directly, no picker.
+    const ids = await evalIn<string[]>(
+      page,
+      `(() => {
+        const t = window.__canvasE2E
+        const a = t.seedBoard('planning'), b = t.seedBoard('planning')
+        const c = t.seedBoard('planning'), d = t.seedBoard('planning')
+        t.addGroup('Auth', [a, b])
+        return [a, b, c, d]
+      })()`
+    )
+    expect(ids).toHaveLength(4)
+    expect(await evalIn<number>(page, `window.__canvasE2E.getGroups().length`)).toBe(1)
+
+    await page.keyboard.press('f')
+    // One group → fit directly, the picker must NOT appear.
+    await expect(page.locator('.group-pick-pop')).toHaveCount(0)
+
+    // Mint a SECOND group → bare `f` now opens the which-group picker.
+    await evalIn(
+      page,
+      `window.__canvasE2E.addGroup('API', [${JSON.stringify(ids[2])}, ${JSON.stringify(ids[3])}])`
+    )
+    expect(await pollEval(page, `window.__canvasE2E.getGroups().length === 2`, 2000)).toBe(true)
+
+    await page.keyboard.press('f')
+    await expect(page.locator('.group-pick-pop')).toHaveCount(1)
+    // The picker lists one row per group.
+    await expect(page.locator('.group-pick-row')).toHaveCount(2)
+
+    // Picking a row closes the picker (and fits that group).
+    await page.locator('.group-pick-row').first().click()
+    await expect(page.locator('.group-pick-pop')).toHaveCount(0)
+  })
 })

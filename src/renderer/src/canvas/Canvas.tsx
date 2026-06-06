@@ -69,7 +69,9 @@ import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { GroupBoxLayer } from './GroupBoxLayer'
 import { GroupNamePopover } from './GroupNamePopover'
+import { GroupFocusPicker } from './GroupFocusPicker'
 import { nextGroupName } from '../lib/groupName'
+import { groupFitMaxZoom } from '../lib/groupBoxes'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
@@ -125,6 +127,9 @@ function CanvasInner(): ReactElement {
   // groupSelection mints groups via useCanvasStore.getState().addGroup (it reads selectedIds +
   // groups off the live snapshot in the same call), so only renameGroup needs a reactive binding.
   const renameGroup = useCanvasStore((s) => s.renameGroup)
+  // Reactive groups read for the focus picker (it lists one row per group; needs to re-render
+  // when groups change). The fit/select helpers read off getState() so they don't depend on it.
+  const groups = useCanvasStore((s) => s.groups)
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
   const viewport = useCanvasStore((s) => s.viewport)
@@ -143,6 +148,9 @@ function CanvasInner(): ReactElement {
   // name it is editing (null = closed). Ephemeral — never persisted.
   const [namingGroupId, setNamingGroupId] = useState<string | null>(null)
   const [namePopAt, setNamePopAt] = useState<{ x: number; y: number } | null>(null)
+  // Grouped focus: when >1 group exists the focus action opens this picker (anchored top-center
+  // of the pane); null = closed. The camera fit itself is in `fitGroup`.
+  const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null)
   // M2 connector gesture (EPHEMERAL — never persisted): the source board of an in-flight
   // connector drag + the live pointer (client coords) for the rubber-band overlay; the
   // currently-selected orchestration connector (for the ✕ / Delete-key affordances).
@@ -465,8 +473,46 @@ function CanvasInner(): ReactElement {
     }
   }, [rf])
 
-  // S3 placeholder — the real grouped-focus impl lands in S4. Keeps the keybinding dep satisfied.
-  const focusGroup = useCallback(() => {}, [])
+  // Fit the camera to one group's member boards (raster-capped). Mirrors focusBoard but over the
+  // whole member set; exits dim-focus first so the others aren't left dimmed (#14 parity).
+  const fitGroup = useCallback(
+    (groupId: string) => {
+      const st = useCanvasStore.getState()
+      const g = st.groups.find((x) => x.id === groupId)
+      if (!g) return
+      const members = st.boards.filter((b) => g.boardIds.includes(b.id))
+      if (members.length === 0) return
+      setFocusedId(null)
+      const maxZoom = groupFitMaxZoom(members, Z_MAX)
+      void rf.fitView(
+        cameraAnim({ ...FOCUS_OPTIONS, maxZoom, nodes: members.map((b) => ({ id: b.id })) })
+      )
+    },
+    [rf]
+  )
+
+  // Tab single-click selects all of a group's members (also reused by S5).
+  const selectGroupMembers = useCallback((groupId: string) => {
+    const st = useCanvasStore.getState()
+    const g = st.groups.find((x) => x.id === groupId)
+    if (g) st.setSelection(g.boardIds)
+  }, [])
+
+  // Focus action (key `f` + camera-cluster button + tab double-click): 0 groups → no-op,
+  // 1 group → fit it directly, >1 → open the picker anchored at the pane's top-center.
+  const focusGroup = useCallback(() => {
+    const st = useCanvasStore.getState()
+    if (st.groups.length === 0) return
+    if (st.groups.length === 1) {
+      fitGroup(st.groups[0].id)
+      return
+    }
+    const r = paneRef.current?.getBoundingClientRect()
+    setPickerAt({
+      x: r ? r.left + r.width / 2 : window.innerWidth / 2,
+      y: (r?.top ?? 0) + 56
+    })
+  }, [fitGroup])
 
   // Tidy / tile layout actions (paneSize · fitToBoards · applyTile · tidyAndFit + the
   // responsive-retile ResizeObserver) live in useTidyTile (Wave-5 B5 #2). Only tidyAndFit is
@@ -777,7 +823,7 @@ function CanvasInner(): ReactElement {
             style={{ width: '100%', height: '100%' }}
           >
             <FadingDots />
-            <GroupBoxLayer />
+            <GroupBoxLayer onTabClick={selectGroupMembers} onTabDoubleClick={fitGroup} />
             {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
             <ReactFlow> so it can read the live camera (useReactFlow /
             useOnViewportChange) and sync every Browser board's native
@@ -879,7 +925,18 @@ function CanvasInner(): ReactElement {
               }}
             />
           )}
-          <AppChrome onTidy={tidyAndFit} />
+          {pickerAt && (
+            <GroupFocusPicker
+              groups={groups}
+              at={pickerAt}
+              onPick={(id) => {
+                setPickerAt(null)
+                fitGroup(id)
+              }}
+              onClose={() => setPickerAt(null)}
+            />
+          )}
+          <AppChrome onTidy={tidyAndFit} onFocusGroup={focusGroup} />
           <DigestPanel
             digest={digest}
             prose={prose}
