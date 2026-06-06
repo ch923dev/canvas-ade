@@ -194,4 +194,12 @@ test.describe('named board groups — Ctrl+G create flow', () => {
     )
     expect(afterC.x !== beforeC.x || afterC.y !== beforeC.y).toBe(true)
   })
+
+  // NOTE: the drag-ONTO-box trigger (onNodeDrag hit-test → onNodeDragStop absorb) has no e2e:
+  // XYFlow's node drag (d3-drag, pointer-capture) does not engage from either e2e input seam
+  // (MAIN `sendInputEvent` or CDP `page.mouse`) in the _electron harness — a real-input drag of
+  // an existing node never moves it (verified: world x unchanged, no pan), and there's no repo
+  // precedent for programmatic node-drag. Its logic is covered at lower tiers instead: the box
+  // hit-test by `groupReflow.groupBoxAt` (unit) and the absorb itself by the `addToGroupReflowed`
+  // store-path test above. The thin onNodeDrag/onNodeDragStop glue is verified manually.
 })
