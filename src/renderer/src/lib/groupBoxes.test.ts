@@ -42,4 +42,19 @@ describe('computeGroupBoxes', () => {
     expect(inner.depth).toBe(1)
     expect(inner.x).toBeGreaterThan(outer.x)
   })
+
+  it('nests two identical-bounds groups concentrically (tie-break by id, not exact overlap)', () => {
+    // Same member set → identical bounds → mutually contained. Without a tie-break both
+    // would land at depth 1 and draw on top of each other; the lower id stays outer.
+    const groups: NamedGroup[] = [
+      { id: 'zeta', name: 'Zeta', boardIds: ['a', 'b'] },
+      { id: 'alpha', name: 'Alpha', boardIds: ['a', 'b'] }
+    ]
+    const boxes = computeGroupBoxes(groups, boards, { pad: 16, insetStep: 8 })
+    const alpha = boxes.find((x) => x.id === 'alpha')!
+    const zeta = boxes.find((x) => x.id === 'zeta')!
+    expect(alpha.depth).toBe(0) // 'alpha' < 'zeta' → outer
+    expect(zeta.depth).toBe(1) // nests inside
+    expect(zeta.x).toBeGreaterThan(alpha.x)
+  })
 })

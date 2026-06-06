@@ -33,6 +33,28 @@ function contains(b: Bounds, a: Bounds): boolean {
   return a.minX >= b.minX && a.minY >= b.minY && a.maxX <= b.maxX && a.maxY <= b.maxY
 }
 
+function area(b: Bounds): number {
+  return (b.maxX - b.minX) * (b.maxY - b.minY)
+}
+
+/**
+ * Is `o` an OUTER box relative to `self` (so `self` nests one level deeper)?
+ * `o` must geometrically contain `self`. Identical bounds mutually contain — that would
+ * make both boxes depth-1 and overlap exactly instead of nesting, so break the tie by id:
+ * the lexicographically-smaller id stays the outer box, the other nests inside it.
+ */
+function isOuter(
+  o: { group: NamedGroup; bounds: Bounds },
+  self: { group: NamedGroup; bounds: Bounds }
+): boolean {
+  if (o.group.id === self.group.id) return false
+  if (!contains(o.bounds, self.bounds)) return false
+  const ao = area(o.bounds)
+  const as = area(self.bounds)
+  // Strict containment implies ao > as; equal area + containment ⟺ identical bounds → tie-break.
+  return ao > as || (ao === as && o.group.id < self.group.id)
+}
+
 export function computeGroupBoxes(
   groups: NamedGroup[],
   boards: BoardRect[],
@@ -47,10 +69,9 @@ export function computeGroupBoxes(
     })
     .filter((r): r is { group: NamedGroup; bounds: Bounds } => !!r)
 
-  return resolved.map(({ group, bounds }) => {
-    const depth = resolved.filter(
-      (o) => o.group.id !== group.id && contains(o.bounds, bounds)
-    ).length
+  return resolved.map((self) => {
+    const { group, bounds } = self
+    const depth = resolved.filter((o) => isOuter(o, self)).length
     const pad = Math.max(0, opts.pad - depth * opts.insetStep)
     return {
       id: group.id,
