@@ -1,0 +1,60 @@
+/**
+ * REPRO SCRATCHPAD TEMPLATE — copy to `e2e/_repro.e2e.ts` (gitignored) to reproduce a
+ * reported bug with evidence, then DELETE it and promote a proven assertion into the
+ * matching committed spec (terminal/browser/whiteboard/…). This file is NOT run by the
+ * suite (`.template` doesn't match `**/*.e2e.ts`).
+ *
+ * The agentic bug → repro → evidence → fix → verify loop:
+ *   1. Copy:   cp e2e/_repro.e2e.ts.template e2e/_repro.e2e.ts
+ *   2. Edit:   encode the EXPECTED (correct) behavior as a concrete assertion below.
+ *   3. Repro:  pnpm build && E2E_VIDEO=1 pnpm exec playwright test _repro
+ *              → fails (the bug). Evidence lands in test-results/ (trace.zip on failure,
+ *                failure.png, + a .webm with E2E_VIDEO=1). Browse: pnpm exec playwright show-report
+ *   4. Fix:    change app source; rebuild (pnpm build) so the booted app picks it up.
+ *   5. Verify: pnpm exec playwright test _repro → green = fix proven (fresh trace/video).
+ *   6. Promote the assertion into the real spec; delete e2e/_repro.e2e.ts.
+ *
+ * Assert a CONCRETE outcome (text/state/file-on-disk/absence-of-error), never a bare
+ * toBeVisible — a weak assertion "verifies" nothing.
+ */
+import { test, expect } from './fixtures'
+import { evalIn, mainCall, pollEval, seed } from './helpers'
+
+test.describe('REPRO (scratch — do not commit)', () => {
+  test('describe the bug in the expected/actual sense here', async ({ page, electronApp }) => {
+    // --- arrange: seed the board(s) the repro needs --------------------------------
+    // Terminal: const id = await seed(page, 'terminal', { launchCommand: 'echo HELLO' })
+    // Browser:  const url = await mainCall<string>(electronApp, 'localUrl')
+    //           const id = await seed(page, 'browser', { url })
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const id = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+
+    // --- act: drive the exact reported steps ---------------------------------------
+    // Real OS input (preserves the camera transform / hit-testing):
+    //   await mainCall(electronApp, 'sendInput', { type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+    // Renderer state:           await evalIn(page, 'window.__canvasE2E.<hook>(...)')
+    // Read board/runtime/term:  window.__canvasE2E.getBoards() / getRuntime(id) / readTerminal(id)
+
+    // --- native-view evidence (Browser boards) -------------------------------------
+    // A WebContentsView paints ABOVE all HTML, so page.screenshot() is BLANK there. The
+    // only way to SEE browser-board content is a MAIN-side capturePage → disk:
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'repro-', 'repro')
+    try {
+      const png = await mainCall<string>(electronApp, 'joinPath', tmp, 'evidence.png')
+      const ok = await mainCall<boolean>(electronApp, 'captureViewToFile', id, png)
+      console.log('[repro] native-view PNG written:', ok, png)
+
+      // --- assert: the EXPECTED (correct) behavior — fails before the fix ------------
+      const connected = await pollEval(
+        page,
+        `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === 'connected'; })()`,
+        10_000
+      )
+      expect(connected, 'REPLACE THIS with the real expected outcome of the bug').toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+})

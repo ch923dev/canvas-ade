@@ -449,13 +449,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       host.setDigestOpen(false)
       // 2. Empty the store + history (renderer stops referencing the old boards).
       //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
-      //    connector survives reset() and pollutes the next test.
+      //    connector survives reset() and pollutes the next test. ALSO restore the
+      //    open-project state: with workers:1 ONE app is reused across all spec files,
+      //    so a spec that drove the app to status:'error' (recovery.e2e.ts) leaves the
+      //    canvas UNMOUNTED — without this the next spec's seeded board never renders.
+      //    Mirrors the e2e boot in App.tsx (CANVAS_E2E ⇒ project open). reset-isolation.e2e.ts.
       useCanvasStore.setState({
         boards: [],
         connectors: [],
         past: [],
         future: [],
-        selectedId: null
+        selectedId: null,
+        project: { dir: null, name: 'e2e', status: 'open' }
       })
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.

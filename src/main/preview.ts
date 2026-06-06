@@ -595,6 +595,27 @@ export async function debugCaptureView(id: string): Promise<{ attached: boolean;
   }
 }
 
+/**
+ * E2E ONLY — capture the live on-screen pixels of a board's view as PNG bytes, or null
+ * if the view is missing / detached / off-screen / blank / un-composited. A native
+ * WebContentsView paints ABOVE all HTML, so Playwright's `page.screenshot()` is blank
+ * where the browser board is — this is the ONLY path to visual evidence of native-view
+ * content. Same `capturePage()` constraint as `debugCaptureView`: must be attached + on
+ * screen or the capture is blank. The caller (e2eMain `captureViewToFile`) owns disk I/O.
+ */
+export async function debugCaptureViewPng(id: string): Promise<Buffer | null> {
+  const e = views.get(id)
+  if (!e || !e.attached) return null
+  try {
+    const img = await e.view.webContents.capturePage()
+    return img.isEmpty() ? null : img.toPNG()
+  } catch {
+    // No composited display surface (headless / GPU-contended host): capturePage
+    // rejects. Treat as "no evidence available" rather than aborting the run.
+    return null
+  }
+}
+
 /** E2E ONLY — ids of every native preview view currently created. */
 export function debugViewIds(): string[] {
   return [...views.keys()]
