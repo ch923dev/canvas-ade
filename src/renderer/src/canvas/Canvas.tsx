@@ -67,12 +67,13 @@ import { BoardActionsContext, type BoardActions } from './boardActions'
 import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
-import { GroupBoxLayer } from './GroupBoxLayer'
+import { GroupBoxLayer, GROUP_BOX_PAD, GROUP_BOX_INSET_STEP } from './GroupBoxLayer'
 import { GroupNamePopover } from './GroupNamePopover'
 import { GroupFocusPicker } from './GroupFocusPicker'
 import { GroupContextMenu } from './GroupContextMenu'
 import { nextGroupName } from '../lib/groupName'
-import { groupFitMaxZoom } from '../lib/groupBoxes'
+import { groupFitMaxZoom, computeGroupBoxes } from '../lib/groupBoxes'
+import { packGroupMembers, groupBoxAt } from '../lib/groupReflow'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
@@ -130,6 +131,8 @@ function CanvasInner(): ReactElement {
   const renameGroup = useCanvasStore((s) => s.renameGroup)
   const removeGroup = useCanvasStore((s) => s.removeGroup)
   const addBoardsToGroup = useCanvasStore((s) => s.addBoardsToGroup)
+  const addBoardsToGroupReflowed = useCanvasStore((s) => s.addBoardsToGroupReflowed)
+  const removeBoardFromGroup = useCanvasStore((s) => s.removeBoardFromGroup)
   // Reactive groups read for the focus picker (it lists one row per group; needs to re-render
   // when groups change). The fit/select helpers read off getState() so they don't depend on it.
   const groups = useCanvasStore((s) => s.groups)
@@ -158,6 +161,13 @@ function CanvasInner(): ReactElement {
   const [groupMenu, setGroupMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(
     null
   )
+  // S6 "absorb" reflow: while true, a `.reflowing` class arms the board-node + group-box
+  // CSS transition so members glide into the re-packed cluster. EPHEMERAL — never persisted.
+  const [reflowing, setReflowing] = useState(false)
+  const reflowTimerRef = useRef<number | null>(null)
+  // S6 drag-onto-box: the group box under the dragged board's center (a non-member drop
+  // target), glowing accent; null = no target. EPHEMERAL — never persisted.
+  const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null)
   // M2 connector gesture (EPHEMERAL — never persisted): the source board of an in-flight
   // connector drag + the live pointer (client coords) for the rubber-band overlay; the
   // currently-selected orchestration connector (for the ✕ / Delete-key affordances).
@@ -521,6 +531,36 @@ function CanvasInner(): ReactElement {
     })
   }, [fitGroup])
 
+  // S6 "absorb": add board(s) to a group and animate the cluster re-packing to absorb them.
+  // Arms the .reflowing transition for one window, commits membership + the packed member
+  // positions in ONE tracked step, then disarms. Honors reduced motion (the CSS no-ops the
+  // transition); the membership/position commit happens regardless.
+  const reflowAddToGroup = useCallback(
+    (groupId: string, boardIds: string[]) => {
+      const st = useCanvasStore.getState()
+      const g = st.groups.find((x) => x.id === groupId)
+      if (!g) return
+      const memberIds = new Set([...g.boardIds, ...boardIds])
+      const members = st.boards.filter((b) => memberIds.has(b.id))
+      const placements = packGroupMembers(members)
+      setReflowing(true)
+      addBoardsToGroupReflowed(groupId, boardIds, placements)
+      if (reflowTimerRef.current != null) clearTimeout(reflowTimerRef.current)
+      reflowTimerRef.current = window.setTimeout(() => {
+        setReflowing(false)
+        reflowTimerRef.current = null
+      }, 340)
+    },
+    [addBoardsToGroupReflowed]
+  )
+  // Clear the reflow disarm timer on unmount so a pending setState can't fire post-teardown.
+  useEffect(
+    () => () => {
+      if (reflowTimerRef.current != null) clearTimeout(reflowTimerRef.current)
+    },
+    []
+  )
+
   // Tidy / tile layout actions (paneSize · fitToBoards · applyTile · tidyAndFit + the
   // responsive-retile ResizeObserver) live in useTidyTile (Wave-5 B5 #2). Only tidyAndFit is
   // surfaced — the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button.
@@ -560,11 +600,38 @@ function CanvasInner(): ReactElement {
     // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
     void window.api.detachAllPreviews?.()
   }, [beginChange, setNodeGesture])
-  const onNodeDragStop = useCallback(() => {
-    setNodeGesture(false)
-    setGuides((g) => (g.length ? [] : g))
-    setOverlaps((o) => (o.length ? [] : o))
-  }, [setNodeGesture])
+  // S6 drag-onto-box: while a board is dragged, hit-test its CENTER against every group box
+  // (excluding the groups it already belongs to) and light the hovered box as a drop target.
+  const onNodeDrag = useCallback((_e: MouseEvent, node: BoardFlowNode) => {
+    const st = useCanvasStore.getState()
+    const boxes = computeGroupBoxes(st.groups, st.boards, {
+      pad: GROUP_BOX_PAD,
+      insetStep: GROUP_BOX_INSET_STEP
+    })
+    // Exclude groups the dragged board is already in (can't "add" to its own group).
+    const inGroups = new Set(st.groups.filter((g) => g.boardIds.includes(node.id)).map((g) => g.id))
+    // node.position is the live world position; size comes from the store board (the RF
+    // node carries w/h on `style`, not the measured `width`/`height` during a drag).
+    const b = st.boards.find((x) => x.id === node.id)
+    const w = b?.w ?? 0
+    const h = b?.h ?? 0
+    const center = { x: node.position.x + w / 2, y: node.position.y + h / 2 }
+    const target = groupBoxAt(boxes, center, inGroups)
+    setDropTargetGroupId((prev) => (prev === target ? prev : target))
+  }, [])
+
+  const onNodeDragStop = useCallback(
+    (_e: MouseEvent, node: BoardFlowNode) => {
+      setNodeGesture(false)
+      setGuides((g) => (g.length ? [] : g))
+      setOverlaps((o) => (o.length ? [] : o))
+      const target = dropTargetGroupId
+      setDropTargetGroupId(null)
+      // Dropped a non-member board inside a group box → absorb it (membership + re-pack).
+      if (target && node) reflowAddToGroup(target, [node.id])
+    },
+    [setNodeGesture, dropTargetGroupId, reflowAddToGroup]
+  )
 
   const clearSelection = useCallback(() => {
     selectBoard(null)
@@ -647,6 +714,15 @@ function CanvasInner(): ReactElement {
         setSelectedConnectorId(null)
         setConnectPointer(null)
         setConnectFromId(fromBoardId)
+      },
+      // S6: ⋯ menu → add this board to a group, animating the cluster re-pack.
+      addToGroup: (boardId, groupId) => reflowAddToGroup(groupId, [boardId]),
+      // S6: ⋯ menu → remove this board from every group it belongs to.
+      removeFromGroup: (boardId) => {
+        const st = useCanvasStore.getState()
+        st.groups
+          .filter((g) => g.boardIds.includes(boardId))
+          .forEach((g) => removeBoardFromGroup(g.id, boardId))
       }
     }
   }, [
@@ -658,7 +734,9 @@ function CanvasInner(): ReactElement {
     enterCameraFullView,
     exitCameraFullView,
     fullViewIdRef,
-    cameraFullViewIdRef
+    cameraFullViewIdRef,
+    reflowAddToGroup,
+    removeBoardFromGroup
   ])
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
@@ -812,7 +890,7 @@ function CanvasInner(): ReactElement {
   return (
     <BoardActionsContext.Provider value={boardActions}>
       <FullViewContext.Provider value={fullViewHost}>
-        <div ref={paneRef} style={paneStyle}>
+        <div ref={paneRef} className={reflowing ? 'reflowing' : undefined} style={paneStyle}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -833,6 +911,7 @@ function CanvasInner(): ReactElement {
             }}
             onNodeDoubleClick={focusBoard}
             onNodeDragStart={onNodeDragStart}
+            onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
             minZoom={Z_MIN}
             maxZoom={Z_MAX}
@@ -846,6 +925,7 @@ function CanvasInner(): ReactElement {
           >
             <FadingDots />
             <GroupBoxLayer
+              dropTargetId={dropTargetGroupId}
               onTabClick={selectGroupMembers}
               onTabDoubleClick={fitGroup}
               onTabContextMenu={(id, at) => setGroupMenu({ id, at })}

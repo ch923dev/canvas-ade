@@ -116,6 +116,8 @@ export function BrowserBoard({
   onFull,
   onDuplicate,
   onDelete,
+  onAddToGroup,
+  onRemoveFromGroup,
   onStartConnect
 }: BoardViewProps<BrowserBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
@@ -167,6 +169,7 @@ export function BrowserBoard({
   return (
     <BoardFrame
       type="browser"
+      boardId={board.id}
       title={board.title}
       selected={selected}
       hovered={hovered}
@@ -177,6 +180,8 @@ export function BrowserBoard({
       onFull={onFull}
       onDuplicate={onDuplicate}
       onDelete={onDelete}
+      onAddToGroup={onAddToGroup}
+      onRemoveFromGroup={onRemoveFromGroup}
       onStartConnect={onStartConnect}
     >
       {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}

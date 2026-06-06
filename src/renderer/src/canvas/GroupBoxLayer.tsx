@@ -20,12 +20,15 @@ export interface GroupBoxLayerProps {
   onTabDoubleClick?: (groupId: string) => void
   /** Right-click a tab = open the manage context menu at the click point (S5). */
   onTabContextMenu?: (groupId: string, at: { x: number; y: number }) => void
+  /** The group box currently under a dragged board (S6 drop target) — glows accent. */
+  dropTargetId?: string | null
 }
 
 export function GroupBoxLayer({
   onTabClick,
   onTabDoubleClick,
-  onTabContextMenu
+  onTabContextMenu,
+  dropTargetId
 }: GroupBoxLayerProps): ReactElement {
   const groups = useCanvasStore((s) => s.groups)
   const boards = useCanvasStore((s) => s.boards)
@@ -61,7 +64,7 @@ export function GroupBoxLayer({
       {boxes.map((b) => (
         <div
           key={b.id}
-          className="group-box"
+          className={`group-box${b.id === dropTargetId ? ' group-box--drop-target' : ''}`}
           style={{ position: 'absolute', left: b.x, top: b.y, width: b.w, height: b.h }}
         >
           <button

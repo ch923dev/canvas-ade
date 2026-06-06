@@ -10,6 +10,7 @@ import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 
 import { createPortal } from 'react-dom'
 import type { BoardType } from '../lib/boardSchema'
 import { prefersReducedMotion } from '../lib/motion'
+import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { BoardFullViewContext } from './fullViewContext'
 import { Icon, type IconName } from './Icon'
@@ -152,16 +153,30 @@ export function IconBtn({
   )
 }
 
-/** ⋯ overflow popover: Full view · Duplicate · Delete (DESIGN §6.1). */
+/** ⋯ overflow popover: Full view · Duplicate · Add/Remove group · Delete (DESIGN §6.1; S6). */
 export function BoardMenu({
+  boardId,
   onFull,
   onDuplicate,
-  onDelete
+  onDelete,
+  onAddToGroup,
+  onRemoveFromGroup
 }: {
+  /** This board's id — used to compute eligible groups (not already a member) + membership. */
+  boardId?: string
   onFull?: (e: MouseEvent) => void
   onDuplicate?: () => void
   onDelete?: () => void
+  /** S6: add this board to a group (the absorb re-pack). One item per eligible group. */
+  onAddToGroup?: (groupId: string) => void
+  /** S6: remove this board from every group it belongs to. Shown only when it is in one. */
+  onRemoveFromGroup?: () => void
 }): ReactElement {
+  // S6: read groups live so the eligible-list / membership reflect the current state.
+  const groups = useCanvasStore((s) => s.groups)
+  const eligibleGroups =
+    boardId && onAddToGroup ? groups.filter((g) => !g.boardIds.includes(boardId)) : []
+  const inAnyGroup = !!boardId && groups.some((g) => g.boardIds.includes(boardId))
   const [open, setOpen] = useState(false)
   // Start off-screen; the layout effect below measures the real menu and clamps it
   // into the viewport before paint (bug 14 — no flash at the stale corner).
@@ -264,6 +279,15 @@ export function BoardMenu({
           >
             {onFull && item('Full view', false, onFull)}
             {onDuplicate && item('Duplicate', false, () => onDuplicate())}
+            {/* S6: one "Add to {name}" row per group this board is NOT already in. */}
+            {onAddToGroup &&
+              eligibleGroups.map((g) => (
+                <span key={g.id} style={{ display: 'contents' }}>
+                  {item(`Add to ${g.name}`, false, () => onAddToGroup(g.id))}
+                </span>
+              ))}
+            {/* S6: remove from every group the board belongs to (shown only when in one). */}
+            {onRemoveFromGroup && inAnyGroup && item('Remove from group', false, onRemoveFromGroup)}
             {onDelete && item('Delete', true, () => onDelete())}
           </div>,
           document.body
@@ -274,6 +298,8 @@ export function BoardMenu({
 
 export interface BoardFrameProps {
   type: BoardType
+  /** This board's id — threaded to the ⋯ menu for the S6 add/remove-group items. */
+  boardId?: string
   title: string
   selected?: boolean
   hovered?: boolean
@@ -295,6 +321,10 @@ export interface BoardFrameProps {
   onDuplicate?: () => void
   /** ⋯ menu → Delete (danger). */
   onDelete?: () => void
+  /** S6 ⋯ menu → add this board to a group (the absorb re-pack). */
+  onAddToGroup?: (groupId: string) => void
+  /** S6 ⋯ menu → remove this board from every group it belongs to. */
+  onRemoveFromGroup?: () => void
   /** M2: begin a connector drag from this board (renders the title-bar connector handle). */
   onStartConnect?: () => void
   children?: ReactNode
@@ -302,6 +332,7 @@ export interface BoardFrameProps {
 
 export function BoardFrame({
   type,
+  boardId,
   title,
   selected = false,
   hovered = false,
@@ -315,6 +346,8 @@ export function BoardFrame({
   onFull,
   onDuplicate,
   onDelete,
+  onAddToGroup,
+  onRemoveFromGroup,
   onStartConnect,
   children
 }: BoardFrameProps): ReactElement {
@@ -549,8 +582,15 @@ export function BoardFrame({
               onClick={onFull}
             />
           )}
-          {(onFull || onDuplicate || onDelete) && (
-            <BoardMenu onFull={onFull} onDuplicate={onDuplicate} onDelete={onDelete} />
+          {(onFull || onDuplicate || onDelete || onAddToGroup || onRemoveFromGroup) && (
+            <BoardMenu
+              boardId={boardId}
+              onFull={onFull}
+              onDuplicate={onDuplicate}
+              onDelete={onDelete}
+              onAddToGroup={onAddToGroup}
+              onRemoveFromGroup={onRemoveFromGroup}
+            />
           )}
         </div>
       </div>

@@ -137,6 +137,8 @@ export function TerminalBoard({
   onFull,
   onDuplicate,
   onDelete,
+  onAddToGroup,
+  onRemoveFromGroup,
   onPushPreviewTo,
   onStartConnect
 }: BoardViewProps<TerminalBoardData>): ReactElement {
@@ -773,6 +775,7 @@ export function TerminalBoard({
     <>
       <BoardFrame
         type="terminal"
+        boardId={board.id}
         title={board.title}
         selected={selected}
         hovered={hovered}
@@ -784,6 +787,8 @@ export function TerminalBoard({
         onFull={onFull}
         onDuplicate={onDuplicate}
         onDelete={onDelete}
+        onAddToGroup={onAddToGroup}
+        onRemoveFromGroup={onRemoveFromGroup}
         onStartConnect={onStartConnect}
       >
         <div style={lod ? shellHidden : shell}>

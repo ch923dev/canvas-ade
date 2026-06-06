@@ -1256,6 +1256,33 @@ body {
   color: var(--accent);
   border-color: var(--accent-wash);
 }
+/* Group "absorb" reflow (S6): a transient class on the canvas pane arms a transition on
+   board nodes + the group box so members glide into the re-packed cluster and the border
+   tightens to enclose a newly-added board. Only while .reflowing is set (never during a
+   live drag). */
+.reflowing .react-flow__node {
+  transition: transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.reflowing .group-box {
+  transition:
+    left 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    top 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    width 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    height 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .reflowing .react-flow__node,
+  .reflowing .group-box {
+    transition: none;
+  }
+}
+/* Drag-onto-group drop target (S6): the hovered group box glows accent while a non-member
+   board is dragged inside it. */
+.group-box--drop-target {
+  border-color: var(--accent);
+  border-width: 2px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
 .group-name-pop {
   background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
