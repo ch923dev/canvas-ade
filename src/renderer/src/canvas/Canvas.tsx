@@ -593,6 +593,14 @@ function CanvasInner(): ReactElement {
   const onNodeDragStart = useCallback(() => {
     beginChange()
     setNodeGesture(true)
+    // Disarm any in-flight reflow: if a drag starts inside the ~340ms absorb window the dragged
+    // node would otherwise inherit `.reflowing .react-flow__node`'s transform transition and trail
+    // the cursor. Clear the timer + class so the drag is direct.
+    if (reflowTimerRef.current != null) {
+      clearTimeout(reflowTimerRef.current)
+      reflowTimerRef.current = null
+    }
+    setReflowing(false)
     // Manually moving a board releases live tiled mode (like un-snapping a tiled window).
     setActiveTile(null)
     // Pull every live native view out IMMEDIATELY (before RF starts moving the node) so a

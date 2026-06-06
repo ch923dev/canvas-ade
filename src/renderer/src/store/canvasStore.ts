@@ -565,7 +565,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (!g) return s
       const mergedIds = [...new Set([...g.boardIds, ...boardIds])]
       const membershipChanged = mergedIds.length !== g.boardIds.length
-      const pos = new Map(placements.map((p) => [p.id, p]))
+      // Only ever reposition the group's OWN members in this step — guard against a caller
+      // passing a placement for a non-member (the re-pack must not move unrelated boards).
+      const memberSet = new Set(mergedIds)
+      const pos = new Map(placements.filter((p) => memberSet.has(p.id)).map((p) => [p.id, p]))
       let movedAny = false
       const nextBoards = s.boards.map((b) => {
         const p = pos.get(b.id)
