@@ -700,7 +700,11 @@ function CanvasInner(): ReactElement {
         setDigestOpen,
         enterCameraFullView,
         exitCameraFullView,
-        selectConnector: setSelectedConnectorId
+        selectConnector: setSelectedConnectorId,
+        closeGroupNaming: () => {
+          setNamingGroupId(null)
+          setNamePopAt(null)
+        }
       })
   }, [
     rf,
@@ -849,7 +853,12 @@ function CanvasInner(): ReactElement {
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
           {selectedIds.length >= 2 && (
-            <button className="group-fab" onClick={groupSelection} title="Group selection (Ctrl+G)">
+            <button
+              className="group-fab"
+              onClick={groupSelection}
+              title="Group selection (Ctrl+G)"
+              aria-label={`Group ${selectedIds.length} selected boards`}
+            >
               <span style={{ fontFamily: 'var(--mono)' }}>⌘G</span> Group {selectedIds.length}
             </button>
           )}

@@ -25,6 +25,11 @@ export function GroupNamePopover({
 }: GroupNamePopoverProps): ReactElement {
   const [value, setValue] = useState(initial)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Latches on the first commit/cancel so the two close paths fire exactly once. Critically, an
+  // Esc-cancel sets this, so the unmount's trailing blur can't re-fire commit() and undo the
+  // cancel (today React skips blur on an unmounting node, but this stops a future deferred-unmount
+  // — e.g. an exit animation — from leaking a stray rename).
+  const doneRef = useRef(false)
   const token = useId()
   const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
 
@@ -39,9 +44,20 @@ export function GroupNamePopover({
   }, [])
 
   const commit = (): void => {
-    const name = value.trim()
+    if (doneRef.current) return
+    doneRef.current = true
+    // Read the LIVE DOM value (state fallback), not the closed-over `value`: a fast type-then-Enter
+    // can fire the keydown before React flushes the last onChange, so the handler's `value` closure
+    // is stale. The input element always holds the current text.
+    const name = (inputRef.current?.value ?? value).trim()
     if (name) onCommit(name)
     else onCancel()
+  }
+
+  const cancel = (): void => {
+    if (doneRef.current) return
+    doneRef.current = true
+    onCancel()
   }
 
   return createPortal(
@@ -58,10 +74,11 @@ export function GroupNamePopover({
         onKeyDown={(e) => {
           e.stopPropagation()
           if (e.key === 'Enter') commit()
-          else if (e.key === 'Escape') onCancel()
+          else if (e.key === 'Escape') cancel()
         }}
         onBlur={commit}
         placeholder="Group name"
+        aria-label="Group name"
       />
     </div>,
     document.body

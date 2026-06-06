@@ -185,6 +185,8 @@ export interface E2EHostHooks {
   exitCameraFullView: () => void
   /** M2: select an orchestration connector (CanvasInner state) for the ✕/Delete path. */
   selectConnector: (id: string | null) => void
+  /** Close the group name popover (CanvasInner state) — an ephemeral UI mode reset() must clear. */
+  closeGroupNaming: () => void
 }
 
 declare global {
@@ -379,6 +381,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // The digest panel (feat/context) is a per-project UI mode too — close it so an
       // open panel from one test can't leak into the next.
       host.setDigestOpen(false)
+      // The group name popover (feat/named-board-groups) is the same: a test that fired Ctrl+G
+      // leaves it open + focused, where it swallows the next test's Ctrl+G — close it too.
+      host.closeGroupNaming()
       // 2. Empty the store + history (renderer stops referencing the old boards).
       //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
       //    connector survives reset() and pollutes the next test.

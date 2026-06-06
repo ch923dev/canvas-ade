@@ -40,4 +40,47 @@ test.describe('named board groups — Ctrl+G create flow', () => {
     // 7. The S2 GroupBoxLayer rendered exactly one box tab for the new group.
     await expect(page.locator('.group-box-tab')).toHaveCount(1)
   })
+
+  test('typing a name + Enter commits the rename; the box tab shows it', async ({ page }) => {
+    // Seed two, select, Ctrl+G → the name popover opens auto-focused over the selection.
+    const ids = await evalIn<[string, string]>(
+      page,
+      `(() => [window.__canvasE2E.seedBoard('terminal'), window.__canvasE2E.seedBoard('planning')])()`
+    )
+    await evalIn(page, `window.__canvasE2E.setSelection(${JSON.stringify(ids)})`)
+    await page.keyboard.press('Control+g')
+
+    const input = page.locator('.group-name-input')
+    await expect(input).toBeVisible()
+    await input.fill('Auth')
+    await expect(input).toHaveValue('Auth')
+    await input.press('Enter')
+
+    // Popover closes; the group's name is the typed value (renameGroup committed).
+    await expect(input).toHaveCount(0)
+    expect(await pollEval(page, `window.__canvasE2E.getGroups()[0]?.name === 'Auth'`, 2000)).toBe(
+      true
+    )
+    await expect(page.locator('.group-box-tab')).toHaveText('Auth')
+  })
+
+  test('Esc in the popover cancels the rename and keeps the auto-name', async ({ page }) => {
+    const ids = await evalIn<[string, string]>(
+      page,
+      `(() => [window.__canvasE2E.seedBoard('terminal'), window.__canvasE2E.seedBoard('planning')])()`
+    )
+    await evalIn(page, `window.__canvasE2E.setSelection(${JSON.stringify(ids)})`)
+    await page.keyboard.press('Control+g')
+
+    const input = page.locator('.group-name-input')
+    await expect(input).toBeVisible()
+    // Type a throwaway name, then Esc — the doneRef guard must stop the unmount blur from
+    // committing it, so the group keeps the auto-name minted at create time.
+    await input.fill('Throwaway')
+    await page.keyboard.press('Escape')
+
+    await expect(input).toHaveCount(0)
+    expect(await pollEval(page, `window.__canvasE2E.getGroups().length === 1`, 2000)).toBe(true)
+    expect(await evalIn<string>(page, `window.__canvasE2E.getGroups()[0].name`)).toBe('Group 1')
+  })
 })
