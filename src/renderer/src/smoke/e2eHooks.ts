@@ -189,6 +189,8 @@ export interface E2EHostHooks {
   closeGroupNaming: () => void
   /** Close the which-group focus picker (CanvasInner state) — same ephemeral-mode reset() parity. */
   closeGroupPicker: () => void
+  /** Close the group right-click context menu (CanvasInner state) — ephemeral-mode reset() parity. */
+  closeGroupMenu: () => void
 }
 
 declare global {
@@ -389,6 +391,8 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // Likewise the which-group focus picker (a fixed overlay) — close it so a test that left it
       // open can't steal the next test's outside-pointerdown / Escape.
       host.closeGroupPicker()
+      // And the tab right-click context menu (a fixed overlay) — same ephemeral-mode parity.
+      host.closeGroupMenu()
       // 2. Empty the store + history (renderer stops referencing the old boards).
       //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
       //    connector survives reset() and pollutes the next test.

@@ -1335,3 +1335,39 @@ body {
   font-size: 11px;
   color: var(--text-3);
 }
+.group-ctx {
+  min-width: 170px;
+  padding: 5px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+}
+.group-ctx-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: var(--ui);
+  cursor: pointer;
+}
+.group-ctx-row:hover:not(:disabled) {
+  background: var(--accent-wash);
+}
+.group-ctx-row:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.group-ctx-danger:hover:not(:disabled) {
+  color: var(--err);
+}
+.group-ctx-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-subtle);
+}

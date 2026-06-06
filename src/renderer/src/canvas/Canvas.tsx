@@ -70,6 +70,7 @@ import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { GroupBoxLayer } from './GroupBoxLayer'
 import { GroupNamePopover } from './GroupNamePopover'
 import { GroupFocusPicker } from './GroupFocusPicker'
+import { GroupContextMenu } from './GroupContextMenu'
 import { nextGroupName } from '../lib/groupName'
 import { groupFitMaxZoom } from '../lib/groupBoxes'
 import { AppChrome } from './AppChrome'
@@ -127,6 +128,8 @@ function CanvasInner(): ReactElement {
   // groupSelection mints groups via useCanvasStore.getState().addGroup (it reads selectedIds +
   // groups off the live snapshot in the same call), so only renameGroup needs a reactive binding.
   const renameGroup = useCanvasStore((s) => s.renameGroup)
+  const removeGroup = useCanvasStore((s) => s.removeGroup)
+  const addBoardsToGroup = useCanvasStore((s) => s.addBoardsToGroup)
   // Reactive groups read for the focus picker (it lists one row per group; needs to re-render
   // when groups change). The fit/select helpers read off getState() so they don't depend on it.
   const groups = useCanvasStore((s) => s.groups)
@@ -151,6 +154,10 @@ function CanvasInner(): ReactElement {
   // Grouped focus: when >1 group exists the focus action opens this picker (anchored top-center
   // of the pane); null = closed. The camera fit itself is in `fitGroup`.
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null)
+  // Right-click-a-tab context menu (manage a group): null = closed. Anchored at the click point.
+  const [groupMenu, setGroupMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(
+    null
+  )
   // M2 connector gesture (EPHEMERAL — never persisted): the source board of an in-flight
   // connector drag + the live pointer (client coords) for the rubber-band overlay; the
   // currently-selected orchestration connector (for the ✕ / Delete-key affordances).
@@ -751,7 +758,8 @@ function CanvasInner(): ReactElement {
           setNamingGroupId(null)
           setNamePopAt(null)
         },
-        closeGroupPicker: () => setPickerAt(null)
+        closeGroupPicker: () => setPickerAt(null),
+        closeGroupMenu: () => setGroupMenu(null)
       })
   }, [
     rf,
@@ -824,7 +832,11 @@ function CanvasInner(): ReactElement {
             style={{ width: '100%', height: '100%' }}
           >
             <FadingDots />
-            <GroupBoxLayer onTabClick={selectGroupMembers} onTabDoubleClick={fitGroup} />
+            <GroupBoxLayer
+              onTabClick={selectGroupMembers}
+              onTabDoubleClick={fitGroup}
+              onTabContextMenu={(id, at) => setGroupMenu({ id, at })}
+            />
             {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
             <ReactFlow> so it can read the live camera (useReactFlow /
             useOnViewportChange) and sync every Browser board's native
@@ -935,6 +947,33 @@ function CanvasInner(): ReactElement {
                 fitGroup(id)
               }}
               onClose={() => setPickerAt(null)}
+            />
+          )}
+          {groupMenu && (
+            <GroupContextMenu
+              at={groupMenu.at}
+              hasSelection={selectedIds.length > 0}
+              onRename={() => {
+                const g = useCanvasStore.getState().groups.find((x) => x.id === groupMenu.id)
+                if (g) {
+                  setNamePopAt(groupMenu.at)
+                  setNamingGroupId(groupMenu.id)
+                }
+                setGroupMenu(null)
+              }}
+              onFocus={() => {
+                fitGroup(groupMenu.id)
+                setGroupMenu(null)
+              }}
+              onAddSelected={() => {
+                addBoardsToGroup(groupMenu.id, useCanvasStore.getState().selectedIds)
+                setGroupMenu(null)
+              }}
+              onRemove={() => {
+                removeGroup(groupMenu.id)
+                setGroupMenu(null)
+              }}
+              onClose={() => setGroupMenu(null)}
             />
           )}
           <AppChrome onTidy={tidyAndFit} onFocusGroup={focusGroup} />

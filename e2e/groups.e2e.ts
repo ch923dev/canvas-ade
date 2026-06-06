@@ -121,4 +121,46 @@ test.describe('named board groups — Ctrl+G create flow', () => {
     await page.locator('.group-pick-row').first().click()
     await expect(page.locator('.group-pick-pop')).toHaveCount(0)
   })
+
+  test('right-click tab menu manages the group (add selected, remove)', async ({ page }) => {
+    const ids = await evalIn<string[]>(
+      page,
+      `(() => {
+        const t = window.__canvasE2E
+        const a = t.seedBoard('planning'), b = t.seedBoard('planning'), c = t.seedBoard('planning')
+        t.addGroup('Auth', [a, b])
+        return [a, b, c]
+      })()`
+    )
+    expect(ids).toHaveLength(3)
+
+    // Seeding a board auto-selects it, so clear the selection first to exercise the
+    // disabled-with-no-selection state of "Add selected boards".
+    await evalIn(page, `window.__canvasE2E.setSelection([])`)
+
+    // Right-click the group's tab → the context menu opens.
+    await page.locator('.group-box-tab').first().click({ button: 'right' })
+    await expect(page.locator('.group-ctx')).toHaveCount(1)
+
+    // "Add selected boards" is disabled with no selection.
+    const addRow = page.locator('.group-ctx-row', { hasText: 'Add selected boards' })
+    await expect(addRow).toBeDisabled()
+    // Close, select the 3rd board, reopen → now enabled → click adds it to the group.
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.group-ctx')).toHaveCount(0)
+    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(ids[2])}])`)
+    await page.locator('.group-box-tab').first().click({ button: 'right' })
+    await page.locator('.group-ctx-row', { hasText: 'Add selected boards' }).click()
+    await expect(page.locator('.group-ctx')).toHaveCount(0)
+    expect(
+      await pollEval(page, `window.__canvasE2E.getGroups()[0].boardIds.length === 3`, 2000)
+    ).toBe(true)
+
+    // Reopen → Remove group → the group (and its box) are gone; boards remain.
+    await page.locator('.group-box-tab').first().click({ button: 'right' })
+    await page.locator('.group-ctx-row', { hasText: 'Remove group' }).click()
+    expect(await pollEval(page, `window.__canvasE2E.getGroups().length === 0`, 2000)).toBe(true)
+    await expect(page.locator('.group-box-tab')).toHaveCount(0)
+    expect(await evalIn<number>(page, `window.__canvasE2E.getBoards().length`)).toBe(3)
+  })
 })
