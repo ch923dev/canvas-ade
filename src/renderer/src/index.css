@@ -1223,3 +1223,31 @@ body {
   font-weight: 500;
   text-transform: capitalize;
 }
+
+/* Named board groups — outline box + name tab (S2). Outline only; one accent. */
+.group-box {
+  border: 1.5px solid var(--accent-wash);
+  border-radius: var(--r-ctl);
+  pointer-events: none;
+}
+.group-box-tab {
+  position: absolute;
+  top: -11px;
+  left: 10px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-family: var(--ui);
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.group-box-tab:hover {
+  color: var(--accent);
+  border-color: var(--accent-wash);
+}

@@ -67,6 +67,7 @@ import { BoardActionsContext, type BoardActions } from './boardActions'
 import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
+import { GroupBoxLayer } from './GroupBoxLayer'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
@@ -740,6 +741,7 @@ function CanvasInner(): ReactElement {
             style={{ width: '100%', height: '100%' }}
           >
             <FadingDots />
+            <GroupBoxLayer />
             {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
             <ReactFlow> so it can read the live camera (useReactFlow /
             useOnViewportChange) and sync every Browser board's native
