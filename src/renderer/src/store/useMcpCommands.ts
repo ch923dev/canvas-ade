@@ -57,7 +57,13 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       // updateBoard filters to PATCHABLE_KEYS per board type, so an off-type/identity/
       // ephemeral key (e.g. id, a browser `url` on a terminal) is dropped — the patch
       // can never forge a cross-type hybrid or change identity. No-ops on an unknown id.
-      useCanvasStore.getState().updateBoard(command.id, command.patch)
+      // beginChange() FIRST (mirroring every user-gesture call site, e.g. TerminalConfig)
+      // so the agent's config edit is checkpointed onto `past` and is undoable; without it
+      // the change is non-undoable and a no-op edit would still clear an armed redo branch.
+      // beginChange dedups (a genuine no-op reconfigure pushes no phantom snapshot).
+      const store = useCanvasStore.getState()
+      store.beginChange()
+      store.updateBoard(command.id, command.patch)
       return { ok: true, type: 'configureBoard' }
     }
     default:
