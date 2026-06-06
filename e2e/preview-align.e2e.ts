@@ -30,31 +30,32 @@ interface FrameRect {
 // interpolated into an eval'd code string (which CodeQL flags as js/bad-code-sanitization: a
 // JSON.stringify'd value embedded in code can still break out via U+2028/U+2029). Each
 // evaluated function is self-contained — page.evaluate serializes only the function + its arg,
-// so it cannot close over module scope; the untyped window hook is cast through `any` inline
-// (no-explicit-any is off for e2e/).
+// so it cannot close over module scope. tsconfig.node includes e2e/ but has no DOM lib, so the
+// browser globals are reached via `globalThis` (known to tsc) cast through `any` (no-explicit-any
+// is off for e2e/) — that is also why the rest of the suite probes through eval strings.
 const callHook = (page: Page, method: string, ...args: unknown[]): Promise<void> =>
-  page.evaluate(({ method, args }) => (window as any).__canvasE2E[method](...args), {
+  page.evaluate(({ method, args }) => (globalThis as any).__canvasE2E[method](...args), {
     method,
     args
   })
 const runtimeStatus = (page: Page, id: string, status: string): Promise<boolean> =>
   page.evaluate(
     (a) => {
-      const r = (window as any).__canvasE2E.getRuntime(a.id)
+      const r = (globalThis as any).__canvasE2E.getRuntime(a.id)
       return !!r && r.status === a.status
     },
     { id, status }
   )
 const runtimeLive = (page: Page, id: string): Promise<boolean> =>
   page.evaluate((id) => {
-    const r = (window as any).__canvasE2E.getRuntime(id)
+    const r = (globalThis as any).__canvasE2E.getRuntime(id)
     return !!r && r.live === true
   }, id)
 const frameRect = (page: Page, id: string): Promise<FrameRect | null> =>
   page.evaluate((id) => {
-    const el = Array.from(document.querySelectorAll('[data-bb-frame]')).find(
-      (e) => e.getAttribute('data-bb-frame') === id
-    )
+    const el: any = Array.from(
+      (globalThis as any).document.querySelectorAll('[data-bb-frame]')
+    ).find((e: any) => e.getAttribute('data-bb-frame') === id)
     if (!el) return null
     const r = el.getBoundingClientRect()
     return { left: r.left, top: r.top, width: r.width, height: r.height }
