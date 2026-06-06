@@ -514,6 +514,33 @@ function assertConnector(c: unknown): void {
   }
 }
 
+/** Validate one group (id/name strings + a string[] boardIds); throws on mismatch. */
+function assertGroup(g: unknown): void {
+  if (!isRecord(g)) fail('group is not an object')
+  if (typeof g.id !== 'string') fail('group has a non-string id')
+  if (typeof g.name !== 'string') fail('group has a non-string name')
+  if (!Array.isArray(g.boardIds)) fail('group boardIds is not an array')
+  for (const bid of g.boardIds as unknown[]) {
+    if (typeof bid !== 'string') fail('group boardIds contains a non-string entry')
+  }
+}
+
+/**
+ * Reconcile a migrated doc's groups: validates each group, then prunes dangling
+ * boardIds (pointing at boards that no longer exist). Named-empty groups survive —
+ * a group whose boards were all deleted is kept so the user does not lose the name.
+ * Missing `groups` field (pre-migration or stripped) defaults to `[]`.
+ */
+function reconcileGroups(doc: CanvasDoc): NamedGroup[] {
+  const raw = Array.isArray(doc.groups) ? doc.groups : []
+  raw.forEach(assertGroup)
+  const ids = new Set(doc.boards.map((b) => b.id))
+  return (raw as NamedGroup[]).map((g) => ({
+    ...g,
+    boardIds: g.boardIds.filter((bid) => ids.has(bid))
+  }))
+}
+
 /**
  * Reconcile a migrated doc's connectors into the in-memory shape (Decision B,
  * dual-source). Validates every connector, drops danglers (an endpoint board is gone),
@@ -571,6 +598,9 @@ export function fromObject(doc: unknown): CanvasDoc {
   // keep orchestration only in memory (Decision B). Runs post-migrate so a v4 doc's
   // freshly-folded preview connectors are reconciled the same as a v5 doc's.
   migrated.connectors = reconcileConnectors(migrated)
+  // Reconcile groups (v6): validate, prune dangling boardIds, keep named-empty groups.
+  // Runs post-migrate so a v5 doc's freshly-backfilled `[]` is handled like a v6 doc's.
+  migrated.groups = reconcileGroups(migrated)
   // A corrupt camera shouldn't fail the whole load — drop to fit-on-load.
   if (!isValidViewport(migrated.viewport)) migrated.viewport = null
   return migrated

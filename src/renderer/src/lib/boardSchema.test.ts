@@ -732,6 +732,41 @@ describe('schema v6 — board groups', () => {
   })
 })
 
+describe('fromObject — groups validation + reconciliation', () => {
+  const base = (groups: unknown): unknown => ({
+    schemaVersion: 6,
+    viewport: null,
+    boards: [
+      { id: 'b1', type: 'terminal', x: 0, y: 0, w: 300, h: 200, title: 'T' },
+      { id: 'b2', type: 'terminal', x: 0, y: 0, w: 300, h: 200, title: 'T' }
+    ],
+    connectors: [],
+    groups
+  })
+
+  it('keeps a valid group and prunes boardIds that point at missing boards', () => {
+    const doc = fromObject(base([{ id: 'g1', name: 'Auth', boardIds: ['b1', 'ghost'] }]))
+    expect(doc.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: ['b1'] }])
+  })
+
+  it('keeps a group whose boards were all pruned (named-empty survives)', () => {
+    const doc = fromObject(base([{ id: 'g1', name: 'Auth', boardIds: ['ghost'] }]))
+    expect(doc.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: [] }])
+  })
+
+  it('throws on a malformed group (non-string-array boardIds)', () => {
+    expect(() => fromObject(base([{ id: 'g1', name: 'Auth', boardIds: [5] }]))).toThrow(
+      /fromObject/
+    )
+  })
+
+  it('defaults a v6 doc with no groups field to an empty array', () => {
+    const { groups: _omit, ...noGroups } = base([]) as Record<string, unknown>
+    const doc = fromObject(noGroups)
+    expect(doc.groups).toEqual([])
+  })
+})
+
 // ── M2 spatial connectors (schema v5) ──────────────────────────────────────────
 // Connector {id,sourceId,targetId,kind} on CanvasDoc. The v4→v5 migration folds each
 // linked Browser's previewSourceId into a `preview` connector with the STABLE id
