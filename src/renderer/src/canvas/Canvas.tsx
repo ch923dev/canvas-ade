@@ -750,7 +750,8 @@ function CanvasInner(): ReactElement {
         closeGroupNaming: () => {
           setNamingGroupId(null)
           setNamePopAt(null)
-        }
+        },
+        closeGroupPicker: () => setPickerAt(null)
       })
   }, [
     rf,
