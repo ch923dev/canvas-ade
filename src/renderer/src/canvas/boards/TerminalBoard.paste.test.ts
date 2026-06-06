@@ -58,8 +58,8 @@ async function pasteIntoTerminalUnfixed(
 }
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
-function makePasteFn(): ReturnType<typeof vi.fn> {
-  return vi.fn()
+function makePasteFn() {
+  return vi.fn<(text: string) => void>()
 }
 
 function apiWith({
@@ -100,9 +100,7 @@ describe('BUG-025: pasteIntoTerminal — stageClipboardImage failure handling', 
     const paste = makePasteFn()
     const api = apiWith({ stageBehavior: 'throw-enospc', clipboardText: 'hello' })
     // The unfixed version propagates the throw — pasteFn never called, text ignored
-    await expect(
-      pasteIntoTerminalUnfixed(paste, 'board-1', api)
-    ).rejects.toThrow('ENOSPC')
+    await expect(pasteIntoTerminalUnfixed(paste, 'board-1', api)).rejects.toThrow('ENOSPC')
     expect(paste).not.toHaveBeenCalled() // silent drop confirmed
   })
 

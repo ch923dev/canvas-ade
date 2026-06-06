@@ -51,9 +51,6 @@ function useAssetUrl(assetId: string): string | null {
     const cached = assetUrlCache.get(assetId)
     if (cached) {
       cached.refs++
-      // Mirror into state so that if the cache entry is evicted between this layout
-      // effect and the passive effect, the render still returns a valid (non-null) URL.
-      setLoadedUrl(cached.url)
     }
     // No cleanup here: the useEffect cleanup below owns ref decrement + revocation.
     // Keeping cleanup in useEffect (not here) is intentional: it ensures that a newly
@@ -64,14 +61,12 @@ function useAssetUrl(assetId: string): string | null {
   useEffect(() => {
     let cancelled = false
     const cached = assetUrlCache.get(assetId)
-    if (cached) {
-      // useLayoutEffect already incremented refs and set loadedUrl for the cache-hit
-      // path. Nothing more to do here except keep cancelled in scope for cleanup.
-      setLoadedUrl(cached.url)
-    } else {
+    if (!cached) {
       // Cache miss: either first mount (no prior holder) or the entry was evicted
       // before the layout effect ran (possible if no prior card existed at layout time).
       // Start an async read to populate the cache and establish our ref.
+      // (Cache-hit needs nothing here: useLayoutEffect already claimed the ref and the
+      // render reads the live cache entry directly, so no synchronous setState is needed.)
       void window.api.asset
         .read(assetId)
         .then((bytes) => {

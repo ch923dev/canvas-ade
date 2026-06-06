@@ -106,7 +106,10 @@ describe('useBoardPlacement', () => {
     }
     window.addEventListener('keydown', captureListener, true)
     try {
-      act(() => void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+      act(
+        () =>
+          void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      )
       // After ONE Esc press the tool must have reverted to 'select' and no board was created.
       expect(useCanvasStore.getState().tool).toBe('select')
       expect(useCanvasStore.getState().boards).toHaveLength(0)
@@ -123,20 +126,14 @@ describe('useBoardPlacement', () => {
     const { getByTestId } = render(<Harness />)
     const cap = getByTestId('cap')
 
-    // Track how many active pointermove listeners survive across the two pointerdowns.
-    let moveFirings = 0
     // Start first drag
     down(cap, 100, 100)
     // Move to confirm first drag listeners are active
     move(200, 200)
     // Now fire a second pointerdown (e.g. second touch point) — should abort first drag cleanly
     down(cap, 300, 300)
-    // Count how many times pointermove fires after the second pointerdown; only ONE drag should
-    // be active — if first listeners leaked, move events would fire twice.
-    const spy = (): void => { moveFirings++ }
-    // Replace the real store listener with a count spy by dispatching a move:
-    // We check indirectly: after second pointerdown, a pointerup should only create ONE board
-    // (the second drag's board), not two — and the first drag's onUp must be gone.
+    // After the second pointerdown, a pointerup should create exactly ONE board (the second
+    // drag's), not two — and the first drag's onUp must be gone if its listeners were torn down.
     up(350, 350) // resolve second drag via click (small move)
     const boards = useCanvasStore.getState().boards
     // Exactly one board created (from the second drag/click), not two phantom boards
@@ -145,8 +142,9 @@ describe('useBoardPlacement', () => {
     expect(useCanvasStore.getState().tool).toBe('select')
     // Subsequent pointer events after completion must not fire orphaned listeners
     // (if they did, a third pointerup would add a second board)
-    act(() => void window.dispatchEvent(new MouseEvent('pointerup', { clientX: 400, clientY: 400 })))
+    act(
+      () => void window.dispatchEvent(new MouseEvent('pointerup', { clientX: 400, clientY: 400 }))
+    )
     expect(useCanvasStore.getState().boards).toHaveLength(1)
-    void spy // suppress unused warning
   })
 })

@@ -334,9 +334,13 @@ describe('PlanningBoard interaction — group / align (migrated from W3 menu pro
     //    Click Delete — with the bug this removes both A and B (count drops to 0).
     //    With the fix, either the menu never opened (empty-space right-click, no target)
     //    or it opened with only A; either way B must survive.
-    const deleteItem = document.querySelector('[data-testid="w3-menu-delete"]') as HTMLElement | null
+    const deleteItem = document.querySelector(
+      '[data-testid="w3-menu-delete"]'
+    ) as HTMLElement | null
     if (deleteItem) {
-      act(() => deleteItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+      act(() =>
+        deleteItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      )
     }
     // B (w2-b) must survive: it was never in the user's explicit selection.
     const remaining = els(id)
