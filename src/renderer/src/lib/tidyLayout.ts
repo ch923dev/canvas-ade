@@ -198,7 +198,9 @@ function gridLayout(
 ): TidyPlacement[] {
   const sorted = [...boards].sort((a, b) => a.y - b.y || a.x - b.x || byId(a, b))
   const totalArea = boards.reduce((sum, b) => sum + b.w * b.h, 0)
-  const maxW = Math.max(...boards.map((b) => b.w))
+  // Linear scan instead of Math.max(...spread) — avoids V8's argument-count ceiling on large sets.
+  let maxW = 0
+  for (const board of boards) if (board.w > maxW) maxW = board.w
   const targetW = Math.max(maxW, Math.sqrt(totalArea * aspect))
 
   const out: TidyPlacement[] = []
@@ -236,8 +238,14 @@ export function tidyLayout(boards: readonly TidyBoard[], opts: TidyOptions = {})
   if (boards.length < 2) return boards.map((b) => ({ id: b.id, x: b.x, y: b.y }))
 
   // Anchor at the cluster's current top-left so tidy nudges, not teleports.
-  const originX = Math.min(...boards.map((b) => b.x))
-  const originY = Math.min(...boards.map((b) => b.y))
+  // Linear scan instead of Math.min(...spread) — avoids V8's argument-count ceiling on large sets
+  // (same hazard documented in boardGeometry.ts › boardsBounds).
+  let originX = Infinity
+  let originY = Infinity
+  for (const board of boards) {
+    if (board.x < originX) originX = board.x
+    if (board.y < originY) originY = board.y
+  }
   const list = [...boards]
 
   switch (mode) {
