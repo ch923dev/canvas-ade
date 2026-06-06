@@ -25,9 +25,9 @@ import {
   MarkerType,
   ReactFlow,
   ReactFlowProvider,
-  useOnViewportChange,
   useReactFlow,
   useStore,
+  useStoreApi,
   type EdgeTypes,
   type NodeChange,
   type NodeTypes
@@ -669,11 +669,24 @@ function CanvasInner(): ReactElement {
   ])
 
   // Capture the live camera into the (untracked) store so autosave persists it.
-  // onChange fires on the rAF-coalesced camera updates React Flow emits — no new
-  // pump, and writing setViewport won't pollute undo history.
-  useOnViewportChange({
-    onChange: (vp) => setViewport({ x: vp.x, y: vp.y, zoom: vp.zoom })
-  })
+  // NOT useOnViewportChange: that is a SINGLE-SLOT store field (last writer wins), and
+  // usePreviewManager owns it for the native Browser-preview camera sync (onStart/onChange/
+  // onEnd). A second useOnViewportChange here (Canvas is the parent → its effect commits
+  // last) clobbered the preview's onStart/onEnd with undefined and froze every Browser
+  // board's WebContentsView on pan/zoom. The RF store `transform` subscription is additive
+  // (any number of subscribers) and fires at the same rAF-coalesced cadence; setViewport is
+  // untracked (no undo) and L2-guards equal values (no autosave spam).
+  // See docs/research/2026-06-06-browser-preview-camera-sync-rootcause.md.
+  const storeApi = useStoreApi()
+  useEffect(() => {
+    let prev: readonly [number, number, number] | null = null
+    return storeApi.subscribe((s) => {
+      const t = s.transform
+      if (prev && t[0] === prev[0] && t[1] === prev[1] && t[2] === prev[2]) return
+      prev = t
+      setViewport({ x: t[0], y: t[1], zoom: t[2] })
+    })
+  }, [storeApi, setViewport])
 
   // Apply the stored camera when a project becomes `open` (restore on load/switch);
   // fall back to fitView when there's no persisted viewport (fit-on-load).
@@ -741,6 +754,7 @@ function CanvasInner(): ReactElement {
               fullViewHost={fullViewHost}
               fullViewMotion={fullViewMotion}
               onRequestCloseFullView={closeFullView}
+              digestOpen={digestOpen}
             />
           </ReactFlow>
 
