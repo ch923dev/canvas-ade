@@ -47,6 +47,7 @@ import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
 import { registerClipboardHandlers } from './clipboardIpc'
+import { makeFlushChannel, makeFlushFinish } from './flushChannel'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -350,21 +351,23 @@ function flushRenderer(timeoutMs = 1500): Promise<void> {
   const wc = win?.webContents
   if (!win || !wc || wc.isDestroyed()) return Promise.resolve()
   return new Promise<void>((resolve) => {
-    const replyChannel = `project:flush:done:${Date.now()}:${Math.random().toString(36).slice(2)}`
-    let done = false
-    const finish = (): void => {
-      if (done) return
-      done = true
-      ipcMain.removeAllListeners(replyChannel)
-      clearTimeout(timer)
-      resolve()
-    }
-    const timer = setTimeout(finish, timeoutMs)
+    // 🔒 BUG-038: use CSPRNG randomUUID() (not predictable Date.now()/Math.random).
+    const replyChannel = makeFlushChannel()
+    const { finish, forceFinish } = makeFlushFinish({
+      getWin: () => mainWindow,
+      onCleanup: () => {
+        ipcMain.removeAllListeners(replyChannel)
+        clearTimeout(timer)
+      },
+      onResolve: resolve
+    })
+    // 🔒 BUG-038: `finish` accepts IpcMainEvent and guards against foreign-frame senders.
+    const timer = setTimeout(forceFinish, timeoutMs)
     ipcMain.once(replyChannel, finish)
     try {
       wc.send('project:flush', replyChannel)
     } catch {
-      finish() // renderer gone — nothing to flush
+      forceFinish() // renderer gone — nothing to flush
     }
   })
 }
