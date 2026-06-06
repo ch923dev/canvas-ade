@@ -1249,6 +1249,198 @@ describe('buildOrchestrator', () => {
     })
   })
 
+  // ─── BUG-019: audit entries must carry safeText, not raw text ───────────────
+  // sanitizeDispatchText strips C0 controls (ESC, BEL, NUL …) without throwing.
+  // After sanitization, the human confirm modal and the PTY both see safeText, so
+  // every post-sanitization audit entry must record safeText too. Recording raw
+  // `text` creates a forensic audit/reality mismatch (what was shown ≠ what was
+  // logged). Pre-sanitization rejections (board-not-found, non-terminal, unsafe
+  // payload) correctly use `text` since safeText doesn't exist yet.
+  describe('🔒 BUG-019: post-sanitization audit entries record safeText, not raw text', () => {
+    // A text with a strippable C0 control: ESC + "clear" (ESC is stripped, "clear" stays).
+    const rawText = '\x1b[2Jclear'
+    const safeExpected = '[2Jclear' // sanitizeDispatchText strips 0x1b
+
+    const twoTerminals = [
+      { id: 'A', type: 'terminal', title: 'Alpha', status: 'running' },
+      { id: 'B', type: 'terminal', title: 'Beta', status: 'running' }
+    ]
+    const cableAB = [{ id: 'c1', sourceId: 'A', targetId: 'B', kind: 'orchestration' }]
+
+    function auditCapture(opts: {
+      boards: Array<{ id: string; type: string; title: string; status?: string }>
+      connectors?: Array<{ id: string; sourceId: string; targetId: string; kind: string }>
+      confirm?: () => Promise<{ approved: boolean }>
+      result?: BoardResult
+    }): {
+      registry: BoardRegistry
+      audits: AuditInput[]
+      emitStatus: (c: { id: string; status: string }) => void
+      hasListener: () => boolean
+    } {
+      const audits: AuditInput[] = []
+      let statusListener: ((c: { id: string; status: string }) => void) | null = null
+      const registry: BoardRegistry = {
+        listBoards: () => opts.boards,
+        listConnectors: () => opts.connectors ?? [],
+        listSessions: () => [],
+        subscribeStatus: (l) => {
+          statusListener = l
+          return () => {
+            statusListener = null
+          }
+        },
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => opts.result ?? EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: () => true,
+        confirm: async (_req) => {
+          return opts.confirm ? opts.confirm() : { approved: true }
+        },
+        audit: async (input) => {
+          audits.push(input)
+        },
+        recordResult: () => {}
+      }
+      return {
+        registry,
+        audits,
+        emitStatus: (c) => statusListener?.(c),
+        hasListener: () => statusListener !== null
+      }
+    }
+
+    it('handoffPrompt denied path: audit.prompt carries safeText (no raw ESC)', async () => {
+      const { registry, audits } = auditCapture({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term' }],
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.handoffPrompt('t1', rawText)).rejects.toThrow(/deni|declin/i)
+      const denied = audits.find((a) => a.status === 'denied')
+      expect(denied).toBeTruthy()
+      // BUG-019: this fails pre-fix because denied.prompt === rawText (has ESC)
+      expect(denied!.prompt).toBe(safeExpected)
+      expect(denied!.prompt).not.toContain('\x1b')
+    })
+
+    it('handoffPrompt dispatched path: audit.prompt carries safeText', async () => {
+      const { registry, audits } = auditCapture({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await orch.handoffPrompt('t1', rawText)
+      const dispatched = audits.find((a) => a.status === 'dispatched')
+      expect(dispatched).toBeTruthy()
+      // BUG-019: pre-fix this is rawText (contains ESC)
+      expect(dispatched!.prompt).toBe(safeExpected)
+      expect(dispatched!.prompt).not.toContain('\x1b')
+    })
+
+    it('handoffPrompt completed path: audit.prompt carries safeText', async () => {
+      const { registry, audits } = auditCapture({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }],
+        result: { present: true, status: 'success', summary: 'ok' }
+      })
+      const orch = buildOrchestrator(registry)
+      await orch.handoffPrompt('t1', rawText)
+      const completed = audits.find((a) => a.status === 'completed')
+      expect(completed).toBeTruthy()
+      // BUG-019: pre-fix this is rawText (contains ESC)
+      expect(completed!.prompt).toBe(safeExpected)
+      expect(completed!.prompt).not.toContain('\x1b')
+    })
+
+    it('handoffPrompt failed-pty-write path: audit.prompt carries safeText', async () => {
+      const audits: AuditInput[] = []
+      const registry: BoardRegistry = {
+        listBoards: () => [{ id: 't1', type: 'terminal', title: 'Term', status: 'idle' }],
+        listConnectors: () => [],
+        listSessions: () => [],
+        subscribeStatus: () => () => {},
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: () => false, // simulate PTY write failure
+        confirm: async () => ({ approved: true }),
+        audit: async (input) => {
+          audits.push(input)
+        },
+        recordResult: () => {}
+      }
+      const orch = buildOrchestrator(registry)
+      await expect(orch.handoffPrompt('t1', rawText)).rejects.toThrow(/write|failed/i)
+      const failed = audits.find((a) => a.status === 'failed')
+      expect(failed).toBeTruthy()
+      // BUG-019: pre-fix this is rawText (contains ESC)
+      expect(failed!.prompt).toBe(safeExpected)
+      expect(failed!.prompt).not.toContain('\x1b')
+    })
+
+    it('dispatchPrompt denied path: audit.prompt carries safeText', async () => {
+      const { registry, audits } = auditCapture({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term' }],
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.dispatchPrompt('t1', rawText)).rejects.toThrow(/deni|declin/i)
+      const denied = audits.find((a) => a.status === 'denied')
+      expect(denied).toBeTruthy()
+      // BUG-019: pre-fix this is rawText (contains ESC)
+      expect(denied!.prompt).toBe(safeExpected)
+      expect(denied!.prompt).not.toContain('\x1b')
+    })
+
+    it('dispatchPrompt dispatched path: audit.prompt carries safeText', async () => {
+      const { registry, audits } = auditCapture({
+        boards: [{ id: 't1', type: 'terminal', title: 'Term', status: 'running' }]
+      })
+      const orch = buildOrchestrator(registry)
+      await orch.dispatchPrompt('t1', rawText)
+      const dispatched = audits.find((a) => a.status === 'dispatched')
+      expect(dispatched).toBeTruthy()
+      // BUG-019: pre-fix this is rawText (contains ESC)
+      expect(dispatched!.prompt).toBe(safeExpected)
+      expect(dispatched!.prompt).not.toContain('\x1b')
+    })
+
+    it('relayPrompt denied path: audit.prompt carries safeText', async () => {
+      const { registry, audits } = auditCapture({
+        boards: twoTerminals,
+        connectors: cableAB,
+        confirm: async () => ({ approved: false })
+      })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.relayPrompt('A', 'B', rawText)).rejects.toThrow(/deni|declin/i)
+      const denied = audits.find((a) => a.status === 'denied')
+      expect(denied).toBeTruthy()
+      // BUG-019: pre-fix this is rawText (contains ESC)
+      expect(denied!.prompt).toBe(safeExpected)
+      expect(denied!.prompt).not.toContain('\x1b')
+    })
+
+    it('relayPrompt dispatched path: audit.prompt carries safeText', async () => {
+      const { registry, audits } = auditCapture({
+        boards: twoTerminals,
+        connectors: cableAB
+      })
+      const orch = buildOrchestrator(registry)
+      await orch.relayPrompt('A', 'B', rawText)
+      const dispatched = audits.find((a) => a.status === 'dispatched')
+      expect(dispatched).toBeTruthy()
+      // BUG-019: pre-fix this is rawText (contains ESC)
+      expect(dispatched!.prompt).toBe(safeExpected)
+      expect(dispatched!.prompt).not.toContain('\x1b')
+    })
+  })
+  // ─────────────────────────────────────────────────────────────────────────────
+
   describe('🔒 cap reconciliation + idle-reaping (T3.4, the M3 gate)', () => {
     // A registry whose mirror is mutated by the commands the adapter issues (so the
     // adapter's own spawns/closes show up in listBoards, like the real renderer).

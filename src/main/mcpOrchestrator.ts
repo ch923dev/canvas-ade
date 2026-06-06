@@ -553,7 +553,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'denied',
           detail: `seq=${seq}`
@@ -567,7 +567,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `replayed/forged nonce; seq=${seq}`
@@ -581,7 +581,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'failed',
           detail: `pty write failed; seq=${seq}`
@@ -596,7 +596,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'handoff_prompt',
         targetId: boardId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: 'dispatched',
         detail: `seq=${seq}`
@@ -616,7 +616,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'handoff_prompt',
         targetId: boardId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: exit === 'idle' ? 'completed' : exit,
         outputs: JSON.stringify(result),
@@ -692,7 +692,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'denied',
           detail: `seq=${seq}`
@@ -705,7 +705,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `replayed/forged nonce; seq=${seq}`
@@ -719,7 +719,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'failed',
           detail: `pty write failed; seq=${seq}`
@@ -733,7 +733,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'assign_prompt',
         targetId: boardId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: 'dispatched',
         detail: `seq=${seq}`
@@ -824,7 +824,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'denied',
           detail: `${sourceId}->${targetId}; seq=${seq}`
@@ -848,7 +848,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `authorization cable removed during confirm; ${sourceId}->${targetId}; seq=${seq}`
@@ -863,7 +863,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `replayed/forged nonce; ${sourceId}->${targetId}; seq=${seq}`
@@ -876,7 +876,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'failed',
           detail: `pty write failed; ${sourceId}->${targetId}; seq=${seq}`
@@ -888,7 +888,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'relay_prompt',
         targetId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: 'dispatched',
         detail: `${sourceId}->${targetId}; seq=${seq}`
