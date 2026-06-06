@@ -1312,6 +1312,67 @@ describe('group CRUD', () => {
     useCanvasStore.getState().undo()
     expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.name).toBe('Auth')
   })
+
+  it('removeGroup / addBoardsToGroup / removeBoardFromGroup are each one undo step', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1', 'b2'])
+    const lenAfterAdd = useCanvasStore.getState().past.length
+
+    // removeGroup — one step
+    useCanvasStore.getState().removeGroup(id)
+    expect(useCanvasStore.getState().groups).toHaveLength(0)
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)).toBeDefined()
+    expect(useCanvasStore.getState().past.length).toBe(lenAfterAdd)
+
+    // addBoardsToGroup — one step
+    useCanvasStore.getState().addBoardsToGroup(id, ['b3'])
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual([
+      'b1',
+      'b2',
+      'b3'
+    ])
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual([
+      'b1',
+      'b2'
+    ])
+
+    // removeBoardFromGroup — one step
+    useCanvasStore.getState().removeBoardFromGroup(id, 'b1')
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual(['b2'])
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual([
+      'b1',
+      'b2'
+    ])
+  })
+
+  it('renameGroup to the same name does not push an undo step', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', [])
+    const len = useCanvasStore.getState().past.length
+    useCanvasStore.getState().renameGroup(id, 'Auth')
+    expect(useCanvasStore.getState().past.length).toBe(len)
+  })
+
+  it('removeGroup on an unknown id does not push an undo step', () => {
+    const len = useCanvasStore.getState().past.length
+    useCanvasStore.getState().removeGroup('nope')
+    expect(useCanvasStore.getState().past.length).toBe(len)
+  })
+
+  it('addBoardsToGroup with only already-present ids does not push an undo step', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1', 'b2'])
+    const len = useCanvasStore.getState().past.length
+    useCanvasStore.getState().addBoardsToGroup(id, ['b1'])
+    expect(useCanvasStore.getState().past.length).toBe(len)
+  })
+
+  it('removeBoardFromGroup on a non-member does not push an undo step', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
+    const len = useCanvasStore.getState().past.length
+    useCanvasStore.getState().removeBoardFromGroup(id, 'zzz')
+    expect(useCanvasStore.getState().past.length).toBe(len)
+  })
 })
 
 describe('removeBoard sweeps groups', () => {
@@ -1331,6 +1392,24 @@ describe('removeBoard sweeps groups', () => {
     expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([])
     useCanvasStore.getState().undo()
     expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([id])
+  })
+
+  it('removeBoard on a board in no group leaves groups ref-stable (no extra undo step)', () => {
+    useCanvasStore.setState({
+      boards: [],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    const a = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    const b = useCanvasStore.getState().addBoard('terminal', { x: 400, y: 0 })
+    useCanvasStore.getState().addGroup('Auth', [a]) // group does NOT contain b
+    const groupsRef = useCanvasStore.getState().groups
+    useCanvasStore.getState().removeBoard(b)
+    expect(useCanvasStore.getState().groups).toBe(groupsRef) // same ref — sweep no-op'd
   })
 })
 
