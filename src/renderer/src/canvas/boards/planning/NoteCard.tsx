@@ -42,6 +42,10 @@ export function NoteCard({
   // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
   // the grip is pressed) does NOT prune an empty note mid-drag (#29 guard).
   const dragging = useRef(false)
+  // AbortController for the in-flight document pointer listeners. Stored in a ref
+  // so the useEffect cleanup can abort it (= removeEventListener all three) if the
+  // component unmounts while a grip drag is in progress (BUG-037).
+  const dragAbort = useRef<AbortController | null>(null)
 
   // Auto-size the textarea to its content so the note grows with the text.
   useEffect(() => {
@@ -57,6 +61,16 @@ export function NoteCard({
   useEffect(() => {
     if (interactive && note.text === '') ref.current?.focus()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Cleanup: if the component unmounts while a grip drag is in flight (e.g. the
+  // element was deleted via keyboard while the pointer was held), abort the
+  // AbortController which removes the three document pointer listeners (BUG-037).
+  useEffect(() => {
+    return () => {
+      dragAbort.current?.abort()
+      dragAbort.current = null
+    }
   }, [])
 
   return (
@@ -112,13 +126,18 @@ export function NoteCard({
           const startX = e.clientX
           const startY = e.clientY
           let moved = false
+          // AbortController ties all three doc listeners to a single abort signal so
+          // they are cleaned up atomically — either via onUp (normal end) or via the
+          // useEffect cleanup (unmount-during-drag, BUG-037).
+          const ac = new AbortController()
+          dragAbort.current = ac
+          const { signal } = ac
           const onMove = (ev: PointerEvent): void => {
             if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) moved = true
           }
           const onUp = (): void => {
-            document.removeEventListener('pointermove', onMove)
-            document.removeEventListener('pointerup', onUp)
-            document.removeEventListener('pointercancel', onUp)
+            ac.abort()
+            dragAbort.current = null
             dragging.current = false
             // Read the live DOM value (controlled → current store text) so a note
             // that gained content during the gesture is never pruned.
@@ -127,9 +146,9 @@ export function NoteCard({
               onDelete(note.id)
             }
           }
-          document.addEventListener('pointermove', onMove)
-          document.addEventListener('pointerup', onUp)
-          document.addEventListener('pointercancel', onUp)
+          document.addEventListener('pointermove', onMove, { signal })
+          document.addEventListener('pointerup', onUp, { signal })
+          document.addEventListener('pointercancel', onUp, { signal })
         }}
         style={{ position: 'relative', padding: '9px 11px' }}
       >
