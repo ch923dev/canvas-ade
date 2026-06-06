@@ -158,9 +158,23 @@ export function PlanningBoard({
     measuredRef.current.set(id, { w, h })
   }, [])
 
-  /** Commit a new elements array to the store. */
+  /** Commit elements to the store. Pass a new array OUTRIGHT, or — for ops that must
+   *  survive a sibling op landing in the same scheduling window — a transform
+   *  `(current) => next`. `updateBoard` REPLACES `elements` (no merge), so a callback
+   *  that pre-computes `next` from the render-time `elements` closure silently drops a
+   *  mutation that committed before React refreshed the closure (BUG-023 lost update).
+   *  The transform form re-reads the LIVE elements at commit time, so two rapid ops
+   *  chain instead of clobbering. Mirrors addImageFromBlob's getState() discipline. */
   const commit = useCallback(
-    (next: PlanningElement[]) => updateBoard(board.id, { elements: next }),
+    (next: PlanningElement[] | ((current: PlanningElement[]) => PlanningElement[])) => {
+      if (typeof next === 'function') {
+        const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
+        const cur = live?.type === 'planning' ? live.elements : []
+        updateBoard(board.id, { elements: next(cur) })
+      } else {
+        updateBoard(board.id, { elements: next })
+      }
+    },
     [board.id, updateBoard]
   )
 
@@ -357,12 +371,15 @@ export function PlanningBoard({
     [beginChange, commit, elements]
   )
 
+  // Checklist mutators commit via the live-read transform (not the render-time
+  // `elements` closure) so two rapid toggles/appends/removes — key-repeat, a fast
+  // double-click — chain instead of the second clobbering the first (BUG-023).
   const toggle = useCallback(
     (elId: string, itemId: string) => {
       beginChange()
-      commit(toggleItem(elements, elId, itemId))
+      commit((cur) => toggleItem(cur, elId, itemId))
     },
-    [beginChange, commit, elements]
+    [beginChange, commit]
   )
   const setTitle = useCallback(
     (elId: string, title: string) =>
@@ -377,16 +394,16 @@ export function PlanningBoard({
   const appendItem = useCallback(
     (elId: string) => {
       beginChange()
-      commit(addItem(elements, elId, newId()))
+      commit((cur) => addItem(cur, elId, newId()))
     },
-    [beginChange, commit, elements]
+    [beginChange, commit]
   )
   const dropItem = useCallback(
     (elId: string, itemId: string) => {
       beginChange()
-      commit(removeItem(elements, elId, itemId))
+      commit((cur) => removeItem(cur, elId, itemId))
     },
-    [beginChange, commit, elements]
+    [beginChange, commit]
   )
 
   // Auto-grow the board so a tall checklist (its rows + "Add item" button) is
