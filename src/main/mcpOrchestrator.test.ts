@@ -212,6 +212,36 @@ describe('buildOrchestrator', () => {
       await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
     })
 
+    it('🔒 BUG-003: two concurrent spawns at cap-1 never exceed the cap (TOCTOU on the await)', async () => {
+      // The cap check is synchronous but the slot is taken AFTER `await sendCommand`. If the
+      // reservation is made after the await, two spawns fired near the cap both pass the
+      // `tracked.size >= cap` check (the event loop yields between them) and both add → cap+1.
+      // sendCommand resolves on a later microtask so both calls are in-flight across the yield.
+      const sendCommand: BoardRegistry['sendCommand'] = async (cmd) => {
+        await Promise.resolve() // yield: both concurrent spawns interleave past the cap check
+        return { ok: true, type: cmd.type }
+      }
+      const orch = buildOrchestrator(reg([], [], {}, {}, {}, sendCommand))
+      // Fill to cap-1 sequentially (3 of 4 slots used).
+      for (let i = 0; i < MCP_SPAWN_CAP - 1; i++) {
+        await orch.spawnBoard({ type: 'terminal' })
+      }
+      // Fire two concurrently into the single remaining slot: exactly one may win.
+      const results = await Promise.allSettled([
+        orch.spawnBoard({ type: 'terminal' }),
+        orch.spawnBoard({ type: 'terminal' })
+      ])
+      const fulfilled = results.filter((r) => r.status === 'fulfilled').length
+      const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]
+      // The cap is hard: only ONE of the two racing spawns gets the last slot.
+      expect(fulfilled).toBe(1)
+      expect(rejected).toHaveLength(1)
+      expect(rejected[0].reason).toMatchObject({ message: expect.stringMatching(/cap/i) })
+      // The live budget is now exactly at the cap — a further spawn is rejected, proving the
+      // race did not push it to cap+1.
+      await expect(orch.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+    })
+
     it('🔒 APP-N3: rejects an off-type spawn at the adapter (defense-in-depth) — no command sent', async () => {
       // The renderer's applyMcpCommand already rejects an off-type board, but the adapter is
       // the trust boundary — an unknown type must NOT be forwarded to the renderer at all.

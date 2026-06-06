@@ -309,9 +309,23 @@ export function buildOrchestrator(
       // renderer builds the full board (free-slot placement, per-type defaults).
       // `prompt`/`cwd` are accepted now but applied in T3.3 (configure_board).
       const id = randomUUID()
-      const ack = await registry.sendCommand({ type: 'addBoard', board: { id, type: input.type } })
-      if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
+      // 🔒 Optimistic reservation (BUG-003): the cap check above is synchronous but
+      // `sendCommand` yields the event loop. Reserve the slot in `tracked` NOW — BEFORE the
+      // await — so a second concurrent spawn near the cap sees the reservation and is rejected
+      // by the check rather than both passing it and adding → cap+1. Release the reservation on
+      // a failed ack so a rejected spawn doesn't permanently burn the slot (mirrors closeBoard's
+      // finally-guarded delete).
       tracked.set(id, { spawnedAt: now(), idleSince: null })
+      try {
+        const ack = await registry.sendCommand({
+          type: 'addBoard',
+          board: { id, type: input.type }
+        })
+        if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
+      } catch (err) {
+        tracked.delete(id)
+        throw err
+      }
       return { id }
     },
     async closeBoard(boardId: BoardId): Promise<void> {
