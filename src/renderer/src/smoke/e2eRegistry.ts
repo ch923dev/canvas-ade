@@ -21,3 +21,18 @@ export function isE2E(): boolean {
  * PTY → MessagePort → renderer → xterm bridge without scraping the DOM.
  */
 export const e2eTerminals = new Map<string, Terminal>()
+
+/**
+ * Per-board log of bytes the terminal posted to its PTY (input direction), populated
+ * by TerminalBoard ONLY in e2e mode so the harness can assert Shift+Enter / paste
+ * produced the right sequence without depending on agent-specific echo behavior.
+ */
+export const e2eTerminalInput = new Map<string, string[]>()
+
+/** Append one posted input chunk for `id` (no-op outside e2e). */
+export function appendTerminalInput(id: string, d: string): void {
+  if (!isE2E()) return
+  const arr = e2eTerminalInput.get(id) ?? []
+  arr.push(d)
+  e2eTerminalInput.set(id, arr)
+}
