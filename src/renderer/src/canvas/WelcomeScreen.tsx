@@ -11,15 +11,31 @@ export default function WelcomeScreen(): React.ReactElement {
   const setProjectLoading = useCanvasStore((s) => s.setProjectLoading)
   const error = useCanvasStore((s) => s.project.error)
   const [recents, setRecents] = useState<RecentProject[]>([])
+  // BUG-008: busy guard — blocks concurrent openDir/onCreate calls while a project IPC is
+  // in-flight. Without this, a double-click or two rapid distinct clicks fire two concurrent
+  // `project:open` calls; both call applyOpenResult and the last to resolve overwrites state.
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     void window.api.project.recents().then(setRecents)
   }, [])
 
   const openDir = async (dir: string): Promise<void> => {
+    // BUG-008: return early if an IPC call is already in-flight.
+    if (busy) return
+    setBusy(true)
     setProjectLoading()
-    // applyOpenResult is async (it may retry canvas.json.bak on a deep-validation failure).
-    await applyOpenResult(await window.api.project.open(dir))
+    try {
+      // applyOpenResult is async (it may retry canvas.json.bak on a deep-validation failure).
+      await applyOpenResult(await window.api.project.open(dir))
+    } catch (err) {
+      // BUG-030: if the IPC call rejects (e.g. disk-full in touchRecent / userData), settle
+      // to status:'error' so the user can retry. Without this, status stays stuck at 'loading'.
+      const msg = err instanceof Error ? err.message : 'failed to open project'
+      await applyOpenResult({ ok: false, error: msg })
+    } finally {
+      setBusy(false)
+    }
   }
 
   const onOpen = async (): Promise<void> => {
@@ -28,15 +44,26 @@ export default function WelcomeScreen(): React.ReactElement {
   }
 
   const onCreate = async (): Promise<void> => {
+    // BUG-008: return early if an IPC call is already in-flight.
+    if (busy) return
     const dir = await window.api.dialog.openFolder()
     if (!dir) return
+    setBusy(true)
     setProjectLoading()
     const name =
       dir
         .replace(/[/\\]+$/, '')
         .split(/[/\\]/)
         .pop() || dir
-    await applyOpenResult(await window.api.project.create(dir, name, {}))
+    try {
+      await applyOpenResult(await window.api.project.create(dir, name, {}))
+    } catch (err) {
+      // BUG-030: if the IPC call rejects, settle to status:'error' so the user can recover.
+      const msg = err instanceof Error ? err.message : 'failed to create project'
+      await applyOpenResult({ ok: false, error: msg })
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -44,14 +71,19 @@ export default function WelcomeScreen(): React.ReactElement {
       <h1>Canvas ADE</h1>
       {error && <p className="welcome-error">Could not open project: {error}</p>}
       <div className="welcome-actions">
-        <button onClick={onCreate}>Create project…</button>
-        <button onClick={onOpen}>Open folder…</button>
+        {/* BUG-008: disable all action buttons while a project IPC is in-flight */}
+        <button onClick={onCreate} disabled={busy}>
+          Create project…
+        </button>
+        <button onClick={onOpen} disabled={busy}>
+          Open folder…
+        </button>
       </div>
       {recents.length > 0 && (
         <ul className="welcome-recents">
           {recents.map((r) => (
             <li key={r.path}>
-              <button onClick={() => openDir(r.path)} title={r.path}>
+              <button onClick={() => openDir(r.path)} title={r.path} disabled={busy}>
                 <span className="recent-name">{r.name}</span>
                 <span className="recent-path">{r.path}</span>
               </button>
