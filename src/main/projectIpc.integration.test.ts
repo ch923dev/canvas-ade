@@ -163,7 +163,7 @@ describe('registerProjectHandlers (T4)', () => {
   // BUG-016: project:open must call gcAssets with the UNION of primary + backup asset ids.
   // Pre-fix: gcAssets was called with only the primary doc's ids — a backup-only asset
   // was quarantined before the renderer's deep-validation failure could trigger T5 recovery.
-  it('BUG-016: project:open unions primary + backup asset ids before gcAssets — backup-only assets are protected', () => {
+  it('BUG-016: project:open unions primary + backup asset ids before gcAssets — backup-only assets are protected', async () => {
     // Primary doc references asset A only.
     const primaryDoc = {
       schemaVersion: 5,
@@ -185,7 +185,8 @@ describe('registerProjectHandlers (T4)', () => {
     const cap = createIpcCapture()
     registerProjectHandlers(cap.ipcMain, getWin, '/userData')
 
-    cap.invoke('project:open', '/proj')
+    // project:open is now async (BUG-010 / BUG-026): await so gcAssets has been called.
+    await cap.invoke('project:open', '/proj')
 
     // gcAssets must have been called with BOTH asset ids (the union).
     expect(store.gcAssets).toHaveBeenCalledTimes(1)
@@ -368,7 +369,7 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     expect(ok).toBe(true) // save still succeeds despite the detector throwing
   })
 
-  it('resets THEN baselines the engine with the loaded doc when a project is opened (switch)', () => {
+  it('resets THEN baselines the engine with the loaded doc when a project is opened (switch)', async () => {
     const doc = { schemaVersion: 4, viewport: null, boards: [] }
     store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc })
     const reset = vi.fn()
@@ -376,7 +377,8 @@ describe('registerProjectHandlers — memory-engine wiring (T-M2)', () => {
     const engine: MemoryEngine = { observe, reset, rehydrate: vi.fn() }
     const cap = harness(engine)
 
-    const r = cap.invoke('project:open', '/proj') as { ok: boolean }
+    // project:open is now async (BUG-010 / BUG-026): await to ensure engine calls have run.
+    const r = (await cap.invoke('project:open', '/proj')) as { ok: boolean }
     expect(r.ok).toBe(true)
     expect(reset).toHaveBeenCalled()
     // F1: baseline from the loaded doc so the first post-open edit emits (not swallowed).

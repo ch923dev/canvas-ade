@@ -121,18 +121,25 @@ export function registerProjectHandlers(
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
   })
 
-  const remember = (r: ProjectResult): void => {
+  const remember = async (r: ProjectResult): Promise<void> => {
     if (r.ok) {
       setCurrentDir(r.dir)
-      touchRecent(userDataDir, r.dir, r.name, now())
+      // BUG-026: touchRecent writes to the userData dir. An EPERM/ENOSPC there must NOT
+      // propagate out of the IPC handler — a recents-write failure is non-fatal. The project
+      // opened successfully; the renderer must see ok:true even if the MRU list can't update.
+      try {
+        await touchRecent(userDataDir, r.dir, r.name, now())
+      } catch (err) {
+        console.warn('[recentProjects] touchRecent failed (non-fatal, MRU list not updated)', err)
+      }
     }
   }
 
-  ipcMain.handle('project:open', (e, dir: string): ProjectResult => {
+  ipcMain.handle('project:open', async (e, dir: string): Promise<ProjectResult> => {
     if (guard(e)) return { ok: false, error: 'forbidden' }
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     const r = readProject(dir)
-    remember(r)
+    await remember(r)
     if (r.ok) {
       // BUG-016: collect asset ids from BOTH the primary AND the backup before sweeping.
       // If the primary is envelope-valid but deep-corrupt, the renderer triggers T5 recovery
@@ -184,7 +191,7 @@ export function registerProjectHandlers(
       if (guard(e)) return { ok: false, error: 'forbidden' }
       if (isUnsafeProjectDir(args.dir)) return { ok: false, error: 'invalid path' }
       const r = await createProject(args.dir, args.name, args.opts ?? {})
-      remember(r)
+      await remember(r)
       return r
     }
   )
@@ -211,14 +218,14 @@ export function registerProjectHandlers(
     }
   })
 
-  ipcMain.handle('project:recents', (e): RecentProject[] => {
+  ipcMain.handle('project:recents', async (e): Promise<RecentProject[]> => {
     if (guard(e)) return []
     return listRecents(userDataDir)
   })
 
-  ipcMain.handle('project:current', (e): ProjectResult | null => {
+  ipcMain.handle('project:current', async (e): Promise<ProjectResult | null> => {
     if (guard(e)) return null
-    const recents = listRecents(userDataDir)
+    const recents = await listRecents(userDataDir)
     if (recents.length === 0) return null
     const dir = recents[0].path
     // project-current-skips-unsafe-dir-guard: vet the persisted recents path before any fs
@@ -230,7 +237,13 @@ export function registerProjectHandlers(
     const r = readProject(dir)
     if (r.ok) {
       setCurrentDir(r.dir)
-      touchRecent(userDataDir, r.dir, projectName(r.dir), now())
+      // BUG-026: a write failure on the userData dir must not abort the open or corrupt the
+      // renderer's view of the operation — a recents-write failure is non-fatal.
+      try {
+        await touchRecent(userDataDir, r.dir, projectName(r.dir), now())
+      } catch (err) {
+        console.warn('[recentProjects] touchRecent failed in project:current (non-fatal)', err)
+      }
       // BUG-016: union primary + backup asset ids before sweeping (same fix as project:open).
       const primaryIds = collectAssetIds(r.doc)
       const bakResult = readBak(r.dir)
