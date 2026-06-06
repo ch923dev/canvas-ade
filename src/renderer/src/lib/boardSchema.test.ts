@@ -830,4 +830,66 @@ describe('M2 connectors (schema v5)', () => {
     expect(doc.connectors).toEqual([orch])
     expect(doc.connectors[0]).not.toBe(orch) // owns its data
   })
+
+  // BUG-022: non-terminal previewSourceId must be pruned on load
+  describe('BUG-022 — non-terminal previewSourceId pruning', () => {
+    const planningBoard = (): Board => createBoard('planning', { id: 'p1', x: 0, y: 0 })
+    const browserBoard = (id: string, srcId?: string): Board => ({
+      ...createBoard('browser', { id, x: 800, y: 0 }),
+      ...(srcId ? { previewSourceId: srcId } : {})
+    })
+
+    it('fromObject prunes previewSourceId when it points to a planning board (BUG-022)', () => {
+      // planning board 'p1' EXISTS in the board set — the old code only pruned absent IDs
+      const doc = {
+        schemaVersion: SCHEMA_VERSION,
+        viewport: null,
+        boards: [planningBoard(), browserBoard('b1', 'p1')],
+        connectors: []
+      }
+      const out = fromObject(doc)
+      const b = out.boards.find((x) => x.id === 'b1')
+      // After fix: previewSourceId pointing to a non-terminal must be cleared
+      expect(b && b.type === 'browser' ? b.previewSourceId : 'X').toBeUndefined()
+    })
+
+    it('fromObject prunes previewSourceId when it points to another browser board (BUG-022)', () => {
+      const doc = {
+        schemaVersion: SCHEMA_VERSION,
+        viewport: null,
+        boards: [browserBoard('b2'), browserBoard('b1', 'b2')],
+        connectors: []
+      }
+      const out = fromObject(doc)
+      const b = out.boards.find((x) => x.id === 'b1')
+      expect(b && b.type === 'browser' ? b.previewSourceId : 'X').toBeUndefined()
+    })
+
+    it('reconcileConnectors does NOT fold a preview connector whose sourceId is a planning board (BUG-022)', () => {
+      // A preview connector with a planning board as source should be dropped
+      const doc = {
+        schemaVersion: SCHEMA_VERSION,
+        viewport: null,
+        boards: [planningBoard(), browserBoard('b1')],
+        connectors: [{ id: 'preview-b1', sourceId: 'p1', targetId: 'b1', kind: 'preview' }]
+      }
+      const out = fromObject(doc)
+      const b = out.boards.find((x) => x.id === 'b1')
+      // The fold-back must NOT set previewSourceId because the source is not a terminal
+      expect(b && b.type === 'browser' ? b.previewSourceId : 'X').toBeUndefined()
+    })
+
+    it('still round-trips a valid terminal→browser previewSourceId after the fix (BUG-022 regression guard)', () => {
+      const doc = {
+        schemaVersion: SCHEMA_VERSION,
+        viewport: null,
+        boards: [term(), browser('t1')],
+        connectors: []
+      }
+      const out = fromObject(doc)
+      const b = out.boards.find((x) => x.id === 'b1')
+      // The valid terminal source must still be preserved
+      expect(b && b.type === 'browser' ? b.previewSourceId : 'MISSING').toBe('t1')
+    })
+  })
 })

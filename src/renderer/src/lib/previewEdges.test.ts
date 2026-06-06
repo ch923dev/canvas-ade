@@ -7,6 +7,7 @@ const linkedBrowser = (id: string, src?: string): Board => ({
   ...createBoard('browser', { id, x: 0, y: 0 }),
   ...(src ? { previewSourceId: src } : {})
 })
+const planning = (id: string): Board => createBoard('planning', { id, x: 0, y: 0 })
 
 describe('previewEdges', () => {
   it('emits one edge per linked browser with a present source', () => {
@@ -33,5 +34,19 @@ describe('previewEdges', () => {
     expect(live[0].data?.stale).toBe(false)
     const down = previewEdges(boards, new Set())
     expect(down[0].data?.stale).toBe(true)
+  })
+
+  // BUG-022: previewSourceId pointing to a non-terminal board must NOT emit an edge
+  it('does NOT emit an edge when previewSourceId points to a planning board (BUG-022)', () => {
+    // planning board 'p1' exists in the set — ids.has('p1') is true — but it is NOT a terminal
+    const boards: Board[] = [planning('p1'), linkedBrowser('b1', 'p1')]
+    // Before the fix, previewEdges emits an edge here (wrong) and stale is permanently true
+    expect(previewEdges(boards)).toEqual([])
+  })
+
+  it('does NOT emit an edge when previewSourceId points to another browser board (BUG-022)', () => {
+    // browser board 'b2' exists in the set but is not a terminal
+    const boards: Board[] = [linkedBrowser('b2'), linkedBrowser('b1', 'b2')]
+    expect(previewEdges(boards)).toEqual([])
   })
 })
