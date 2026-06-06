@@ -764,20 +764,57 @@ export function getTerminalRuntime(id: string): TerminalRuntime | undefined {
  * best-effort). The board-unmount `pty:kill` that follows the removal then no-ops.
  */
 export async function drainPty(id: string, graceMs = 600): Promise<void> {
-  const s = sessions.get(id)
+  return drainPtyCore(id, sessions, drainPtyDeps, graceMs)
+}
+
+/** Injectable dependencies for `drainPtyCore` (real ones bind module state). */
+interface DrainDeps {
+  /** Identity-aware teardown — pins the OLD proc so a respawn under the same id survives. */
+  cleanup: (id: string, proc?: pty.IPty) => Promise<void>
+  /** Grace-window poll. Injectable so the respawn race is deterministically testable. */
+  sleep: (ms: number) => Promise<void>
+}
+
+const drainPtyDeps: DrainDeps = {
+  cleanup: (id, proc) => cleanup(id, proc),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms))
+}
+
+/**
+ * Core of `drainPty` (T3.2): graceful close then a hard tree-kill if the proc
+ * outlives the grace window. Pure of module state so the respawn race is
+ * unit-testable. PINS the original proc (BUG-001): if a `pty:spawn` replaces the
+ * session under the SAME id during the grace window, (1) the poll's early-return
+ * is gated on process IDENTITY — `sessions.has(id)` would stay true and never
+ * bail — and (2) the final hard-kill passes the pinned OLD proc to the
+ * identity-aware `cleanup`, so a respawned NEW session is never reaped (mirrors
+ * the `onExit` pattern that passes its own `proc` to `cleanup`).
+ */
+export async function drainPtyCore(
+  id: string,
+  sessionsMap: Map<string, SessionLike>,
+  deps: DrainDeps,
+  graceMs: number
+): Promise<void> {
+  const s = sessionsMap.get(id)
   if (!s) return
+  // Pin our own proc: a respawn under the same id within the grace window must
+  // NOT cause us to tear down the replacement.
+  const proc = s.proc
   try {
-    s.proc.write('\x03') // Ctrl-C — interrupt a running foreground agent/command
-    s.proc.write('exit\r') // then ask the shell itself to exit cleanly
+    proc.write('\x03') // Ctrl-C — interrupt a running foreground agent/command
+    proc.write('exit\r') // then ask the shell itself to exit cleanly
   } catch {
     /* proc already gone — fall through to the hard kill */
   }
   const deadline = Date.now() + graceMs
   while (Date.now() < deadline) {
-    if (!sessions.has(id)) return // exited cleanly within the grace window
-    await new Promise((r) => setTimeout(r, 60))
+    // Identity, not mere presence: bail only when OUR proc has left the map
+    // (exited cleanly OR was replaced by a respawn — either way nothing for us to kill).
+    if (sessionsMap.get(id)?.proc !== proc) return
+    await deps.sleep(60)
   }
-  await cleanup(id) // still alive → hard tree-kill
+  await deps.cleanup(id, proc) // still alive → hard tree-kill OUR proc (identity-guarded)
 }
 
 /**

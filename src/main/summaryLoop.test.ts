@@ -11,6 +11,7 @@ import {
   MAX_INPUT_CHARS,
   MAX_OUTPUT_CHARS,
   sanitizeSummary,
+  sanitizeTitle,
   createSummaryLoop,
   type TerminalRuntime
 } from './summaryLoop'
@@ -187,6 +188,38 @@ describe('buildMemoryIndex — one line per board, ✓ when summarized', () => {
     expect(() => buildMemoryIndex(null, () => false)).not.toThrow()
     expect(buildMemoryIndex({ boards: 'nope' }, () => false)).toMatch(/^# Memory/m)
   })
+
+  // BUG-017: a board title with embedded newlines must not break the Markdown list-item structure
+  it('BUG-017: strips newlines from board titles in the memory index', () => {
+    const doc = { boards: [{ id: 'x1', type: 'terminal', title: 'My Board\n\n## Injected' }] }
+    const md = buildMemoryIndex(doc, () => false)
+    // The list item must be a single line — no injected ## heading
+    expect(md).not.toMatch(/^## Injected/m)
+    // The title content should still appear (collapsed to a single line)
+    expect(md).toContain('My Board')
+  })
+})
+
+describe('sanitizeTitle — BUG-017 collapse newlines in board titles', () => {
+  it('collapses embedded newlines to spaces, preventing # heading injection', () => {
+    // A title with \n would end the ATX heading early: "# My Board\n\n## Injected\n\n<body>"
+    // /[\r\n]+/ collapses consecutive newlines to a single space
+    expect(sanitizeTitle('My Board\n\n## Injected')).toBe('My Board ## Injected')
+  })
+  it('collapses lone CR and CRLF to spaces', () => {
+    expect(sanitizeTitle('Line1\rLine2')).toBe('Line1 Line2')
+    expect(sanitizeTitle('Line1\r\nLine2')).toBe('Line1 Line2')
+  })
+  it('escapes a leading # so the title cannot itself start a Markdown heading', () => {
+    expect(sanitizeTitle('# Title')).toBe('\\# Title')
+    expect(sanitizeTitle('  # Title')).toBe('\\# Title')
+  })
+  it('trims surrounding whitespace', () => {
+    expect(sanitizeTitle('  hello  ')).toBe('hello')
+  })
+  it('normal title passes through unchanged', () => {
+    expect(sanitizeTitle('Dev Server')).toBe('Dev Server')
+  })
 })
 
 describe('buildProjectRollup — small project-level header', () => {
@@ -224,6 +257,52 @@ describe('sanitizeSummary — BUG-016 bound + clean untrusted LLM output', () =>
   it('a non-string yields an empty string (never throws)', () => {
     expect(sanitizeSummary(undefined)).toBe('')
     expect(sanitizeSummary(12345 as unknown)).toBe('')
+  })
+
+  // BUG-018: heading-escape regex must preserve leading whitespace before #
+  it('BUG-018: preserves leading whitespace when escaping indented # lines', () => {
+    // Pre-fix: /^[ \t]*#/gm consumed the spaces, yielding "\\# shell comment" (spaces dropped)
+    // Post-fix: capture group preserves them: "  \\# shell comment"
+    const out = sanitizeSummary('  # shell comment\n\t# python comment')
+    expect(out).toBe('  \\# shell comment\n\t\\# python comment')
+  })
+
+  // BUG-041: Unicode bidi override characters must be stripped
+  it('BUG-041: strips Unicode bidi override/isolate characters (Trojan Source class)', () => {
+    // U+202E RIGHT-TO-LEFT OVERRIDE, U+200F RIGHT-TO-LEFT MARK, U+2069 POP DIRECTIONAL ISOLATE
+    const bidiStr = `hello‮world‏!⁩end‪mid`
+    const out = sanitizeSummary(bidiStr)
+    expect(out).not.toContain('‮')
+    expect(out).not.toContain('‏')
+    expect(out).not.toContain('⁩')
+    expect(out).not.toContain('‪')
+    expect(out).toBe('helloworld!endmid')
+  })
+})
+
+describe('createSummaryLoop — BUG-017 sanitizes board title in the # heading of board-<id>.md', () => {
+  it('BUG-017: a newline-laced board title does not inject a second heading into board-<id>.md', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))
+    const { loop, llmDataDir } = makeLoop({
+      getDir: () => proj,
+      // title contains an embedded newline + a forged ## heading
+      doc: docWith([{ id: 'p1', type: 'planning', title: 'My Board\n\n## Injected', elements: [] }])
+    })
+    try {
+      await loop.onIntent({ boardId: 'p1' })
+      const md = createCanvasMemory(proj).readBoard('p1')
+      expect(md).toBeDefined()
+      // Pre-fix: the file would contain "# My Board\n\n## Injected\n\n<summary>\n"
+      // Post-fix: the title newlines are collapsed so only one heading exists
+      expect(md).not.toMatch(/^## Injected/m)
+      // The file must start with exactly one # heading
+      const lines = md!.split('\n')
+      const headings = lines.filter((l) => /^#/.test(l))
+      expect(headings).toHaveLength(1)
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
   })
 })
 
@@ -562,6 +641,76 @@ describe('createSummaryLoop — BUG-015 in-flight guard is per (project,board)',
       await new Promise((r) => setTimeout(r, 10))
       expect(createCanvasMemory(projA).readBoard('shared')).toContain('sum')
       expect(createCanvasMemory(projB).readBoard('shared')).toContain('sum')
+    } finally {
+      rmSync(projA, { recursive: true, force: true })
+      rmSync(projB, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('BUG-007: a pending retry parked under projA does NOT re-fire against projB after a project switch', async () => {
+    const projA = mkdtempSync(join(tmpdir(), 'm3-projA-'))
+    const projB = mkdtempSync(join(tmpdir(), 'm3-projB-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    // Scenario the BUG-015 test does NOT cover: intent #2 parks under the projA key (current is
+    // still projA when it is fired), THEN the project switches to projB before intent #1's finally
+    // re-fires the pending retry. Pre-fix the bare-boardId re-fire snapshots projB, builds a fresh
+    // "projB\0shared" key, the TOCTOU guard never trips (projB === projB), and projB — which holds
+    // a same-id board — is summarized + written OUTSIDE the 45s debounce/fingerprint flow (an
+    // uninstructed spend). Post-fix the retry sees current (projB) ≠ the parked key's dir (projA)
+    // and skips, so projB is never written.
+    let current = projA
+    let fetchCalls = 0
+    let releaseFirst: () => void = () => {}
+    const firstStarted = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let unblock: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      unblock = resolve
+    })
+    const fetchImpl = (async () => {
+      const n = ++fetchCalls
+      const reply = {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: 'sum' } }] }),
+        text: async () => ''
+      }
+      if (n === 1) {
+        releaseFirst()
+        await gate // hold call #1 in flight until the test has parked #2 + switched projects
+        return reply
+      }
+      return reply
+    }) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => current,
+      readProject: (dir) => ({
+        ok: true,
+        dir,
+        name: 'proj',
+        doc: docWith([planNote('shared', 'hello world')])
+      }),
+      now: () => new Date(),
+      fetch: fetchImpl,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      const first = loop.onIntent({ boardId: 'shared' }) // captures projA, in flight
+      await firstStarted
+      // intent #2 fired while current is STILL projA → parks pending under "projA\0shared"
+      await loop.onIntent({ boardId: 'shared' })
+      current = projB // user switched to project B AFTER #2 parked
+      unblock() // let call #1 finish → its TOCTOU guard trips, finally re-fires the pending retry
+      await first
+      await new Promise((r) => setTimeout(r, 20)) // drain the re-fired retry's microtasks
+      // Pre-fix: projB got an uninstructed board-shared.md from the stale-key re-fire.
+      expect(existsSync(join(projB, '.canvas', 'memory', 'board-shared.md'))).toBe(false)
+      // Only one summarize ran (intent #1, dropped by its own guard); the retry must not spend.
+      expect(fetchCalls).toBe(1)
     } finally {
       rmSync(projA, { recursive: true, force: true })
       rmSync(projB, { recursive: true, force: true })

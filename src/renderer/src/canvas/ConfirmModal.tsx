@@ -62,6 +62,10 @@ export default function ConfirmModal(): React.ReactElement | null {
   return (
     <div
       data-testid="confirm-backdrop"
+      // Marks an active human-confirm gate so other window-level Esc handlers (e.g. the
+      // full-view capture-phase listener in useCanvasKeybindings) can detect it and refrain
+      // from stealing Esc — Esc must reach this modal's bubble listener to DENY first (BUG-005).
+      data-confirm-active=""
       onClick={() => answer(false)}
       style={{
         position: 'fixed',

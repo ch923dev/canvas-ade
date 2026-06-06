@@ -193,6 +193,12 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
   useEffect(() => {
     const onEscapeCapture = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && (fullViewId || cameraFullViewId)) {
+        // SECURITY (BUG-005): an active human-confirm gate (ConfirmModal, marked with
+        // `[data-confirm-active]`) owns Esc — it must DENY the pending dangerous MCP action.
+        // Stealing Esc here (preventDefault + stopPropagation) would close full-view but
+        // leave the confirm unanswered (fail-open). Bail so Esc reaches the modal's bubble
+        // listener; a second Esc then exits full-view.
+        if (document.querySelector('[data-confirm-active]')) return
         e.preventDefault()
         e.stopPropagation()
         if (cameraFullViewId) exitCameraFullView()

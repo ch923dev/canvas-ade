@@ -79,6 +79,9 @@ export function IconBtn({
       timerRef.current = null
     }
   }
+  // Cancel the long-press timer when the component unmounts (BUG-034): if the board is
+  // removed while the 500ms timer is in flight, the callback must not fire on the dead tree.
+  useEffect(() => () => clearTimer(), [])
   const handlePointerDown = (): void => {
     if (!onLongPress) return
     heldRef.current = false

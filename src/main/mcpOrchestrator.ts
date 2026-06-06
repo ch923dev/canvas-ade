@@ -309,9 +309,23 @@ export function buildOrchestrator(
       // renderer builds the full board (free-slot placement, per-type defaults).
       // `prompt`/`cwd` are accepted now but applied in T3.3 (configure_board).
       const id = randomUUID()
-      const ack = await registry.sendCommand({ type: 'addBoard', board: { id, type: input.type } })
-      if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
+      // 🔒 Optimistic reservation (BUG-003): the cap check above is synchronous but
+      // `sendCommand` yields the event loop. Reserve the slot in `tracked` NOW — BEFORE the
+      // await — so a second concurrent spawn near the cap sees the reservation and is rejected
+      // by the check rather than both passing it and adding → cap+1. Release the reservation on
+      // a failed ack so a rejected spawn doesn't permanently burn the slot (mirrors closeBoard's
+      // finally-guarded delete).
       tracked.set(id, { spawnedAt: now(), idleSince: null })
+      try {
+        const ack = await registry.sendCommand({
+          type: 'addBoard',
+          board: { id, type: input.type }
+        })
+        if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
+      } catch (err) {
+        tracked.delete(id)
+        throw err
+      }
       return { id }
     },
     async closeBoard(boardId: BoardId): Promise<void> {
@@ -411,10 +425,14 @@ export function buildOrchestrator(
         }
 
         // (b) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
-        // carries the target board + the EXACT (sanitized) command the human is authorizing.
+        // carries the target board TITLE (resolved from the live mirror, with UUID fallback)
+        // + the EXACT (sanitized) command the human is authorizing.  Mirroring handoffPrompt:
+        // the human gate is more effective when the user can identify the board by name.
+        const boardEntry = registry.listBoards().find((b) => b.id === boardId)
+        const boardLabel = boardEntry?.title ?? boardId
         const { approved } = await registry.confirm({
-          title: `Configure launch command for board ${boardId}`,
-          body: `Set this command to run on terminal "${boardId}" the next time it spawns?\n\n${safeLaunch}`
+          title: `Configure launch command for "${boardLabel}"`,
+          body: `Set this command to run on terminal "${boardLabel}" the next time it spawns?\n\n${safeLaunch}`
         })
         if (!approved) {
           await registry.audit({
@@ -539,7 +557,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'denied',
           detail: `seq=${seq}`
@@ -553,7 +571,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `replayed/forged nonce; seq=${seq}`
@@ -567,7 +585,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'handoff_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'failed',
           detail: `pty write failed; seq=${seq}`
@@ -582,7 +600,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'handoff_prompt',
         targetId: boardId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: 'dispatched',
         detail: `seq=${seq}`
@@ -602,7 +620,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'handoff_prompt',
         targetId: boardId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: exit === 'idle' ? 'completed' : exit,
         outputs: JSON.stringify(result),
@@ -678,7 +696,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'denied',
           detail: `seq=${seq}`
@@ -691,7 +709,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `replayed/forged nonce; seq=${seq}`
@@ -705,7 +723,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'assign_prompt',
           targetId: boardId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'failed',
           detail: `pty write failed; seq=${seq}`
@@ -719,7 +737,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'assign_prompt',
         targetId: boardId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: 'dispatched',
         detail: `seq=${seq}`
@@ -810,7 +828,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'denied',
           detail: `${sourceId}->${targetId}; seq=${seq}`
@@ -834,7 +852,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `authorization cable removed during confirm; ${sourceId}->${targetId}; seq=${seq}`
@@ -849,7 +867,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'rejected',
           detail: `replayed/forged nonce; ${sourceId}->${targetId}; seq=${seq}`
@@ -862,7 +880,7 @@ export function buildOrchestrator(
         await registry.audit({
           type: 'relay_prompt',
           targetId,
-          prompt: text,
+          prompt: safeText,
           nonce,
           status: 'failed',
           detail: `pty write failed; ${sourceId}->${targetId}; seq=${seq}`
@@ -874,7 +892,7 @@ export function buildOrchestrator(
       await registry.audit({
         type: 'relay_prompt',
         targetId,
-        prompt: text,
+        prompt: safeText,
         nonce,
         status: 'dispatched',
         detail: `${sourceId}->${targetId}; seq=${seq}`

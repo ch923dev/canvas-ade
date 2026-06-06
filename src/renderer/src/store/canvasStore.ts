@@ -772,6 +772,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // The present after undo IS the history-reflected state — record it so a following
       // no-op beginChange recognizes it and doesn't push a phantom snapshot (#BUG M3).
       lastRecorded = r.present
+      // BUG-033: boards that vanish from the present snapshot (e.g. a duplicated terminal
+      // clone that was just undone) must be reclaimed from idleOnMountIds, or the Set
+      // accumulates dead UUIDs across duplicate+undo cycles (session-lifetime memory leak).
+      const survivingIds = new Set(r.present.boards.map((b) => b.id))
+      for (const b of s.boards) {
+        if (!survivingIds.has(b.id)) clearIdleOnMount(b.id)
+      }
       return {
         boards: r.present.boards,
         connectors: r.present.connectors,

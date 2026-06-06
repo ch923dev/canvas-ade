@@ -15,7 +15,11 @@ export default defineConfig({
   // CI and in the pre-commit hook (E2E_PRECOMMIT) so the flake can't false-block a
   // commit; 0 for a plain local run so a real failure is loud. workers:1 stays.
   retries: process.env.CI || process.env.E2E_PRECOMMIT ? 2 : 0,
-  reporter: [['list']],
+  // `list` streams to the console; `html` (never auto-open) collects the per-test
+  // evidence wired in e2e/fixtures.ts — a trace zip + failure screenshot attached on
+  // failure, browsable with `pnpm exec playwright show-report`. The Linux Docker leg
+  // overrides the reporter to `line` (Dockerfile.e2e) so a non-TTY pipe doesn't block.
+  reporter: [['list'], ['html', { open: 'never' }]],
   timeout: 60_000,
   expect: { timeout: 15_000 }
 })

@@ -48,6 +48,10 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
   }, [])
 
   // Esc cancels while armed: abort any in-flight drag (so a late pointerup can't commit) + disarm.
+  // Uses CAPTURE phase so it fires even when another capture-phase listener (e.g. the full-view
+  // exit in useCanvasKeybindings) calls stopPropagation() — both capture listeners on the same
+  // target (window) run regardless of each other's stopPropagation (only stopImmediatePropagation
+  // would suppress a sibling; stopPropagation only prevents descent/bubbling).
   useEffect(() => {
     if (!armed) return
     const onKey = (e: KeyboardEvent): void => {
@@ -56,8 +60,8 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
         setTool('select')
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [armed, setTool, abortDrag])
 
   // Safety net: tear down a live drag if the hook unmounts mid-gesture.
@@ -66,6 +70,10 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
   const startPlacement = useCallback(
     (e: ReactPointerEvent): void => {
       if (tool === 'select') return
+      // BUG-035: If a drag is already in flight (e.g. two-finger touch producing two concurrent
+      // pointerdown events), abort the previous drag before starting a new one so its window
+      // listeners are not orphaned.
+      if (dragCleanupRef.current) abortDrag()
       const type = tool as BoardType
       const sx = e.clientX
       const sy = e.clientY

@@ -47,14 +47,21 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
     // already edited the provider/model silently clobbers their input back to the persisted values.
     // Mirror the prose-fetch guard pattern: skip the overwrite if the effect was cleaned up.
     let cancelled = false
-    void window.api.llm.status().then((s) => {
-      if (cancelled) return
-      setProvider(s.provider)
-      setModel(s.model)
-      setHasKey(s.hasKey)
-      setEncryptionAvailable(s.encryptionAvailable !== false) // tolerate an older no-field status
-      if (s.baseUrl) setBaseUrl(s.baseUrl)
-    })
+    void window.api.llm
+      .status()
+      .then((s) => {
+        if (cancelled) return
+        setProvider(s.provider)
+        setModel(s.model)
+        setHasKey(s.hasKey)
+        setEncryptionAvailable(s.encryptionAvailable !== false) // tolerate an older no-field status
+        if (s.baseUrl) setBaseUrl(s.baseUrl)
+      })
+      .catch(() => {
+        // BUG-031: IPC rejection (channel unavailable, teardown race) must not produce an
+        // unhandledRejection. Fall to the safe default: assume no key is set for this session.
+        if (!cancelled) setHasKey(false)
+      })
     return () => {
       cancelled = true
     }
@@ -74,9 +81,15 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
     // BUG-007(3): hasKey tracked the load-time provider only, so after a dropdown change the
     // "· set" indicator (and a Clear-key target) stayed stale. Re-fetch the key presence for the
     // newly-selected provider. Guarded against an out-of-order resolve by re-reading current state.
-    void window.api.llm.status().then((s) => {
-      setHasKey(s.provider === p ? s.hasKey : false)
-    })
+    void window.api.llm
+      .status()
+      .then((s) => {
+        setHasKey(s.provider === p ? s.hasKey : false)
+      })
+      .catch(() => {
+        // BUG-031: IPC rejection must not produce an unhandledRejection. Safe default: no key.
+        setHasKey(false)
+      })
   }
 
   const save = async (): Promise<void> => {
@@ -124,7 +137,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
     setBusy(true)
     setError(null)
     try {
-      await window.api.llm.clearKey({ provider })
+      // BUG-029: guard on the returned {ok} before clearing UI state, mirroring save()'s pattern.
+      // A non-throwing {ok:false} (e.g. frame-guard 'forbidden') must NOT clear hasKey — the key
+      // is still in the keyring and the UI would show a false-cleared state until the next open.
+      const r = await window.api.llm.clearKey({ provider })
+      if (!r.ok) {
+        setError('Could not clear the key — please try again.')
+        return
+      }
       setHasKey(false)
       setKey('')
     } catch {

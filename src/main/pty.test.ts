@@ -11,6 +11,7 @@ import {
   reapParkedCore,
   cleanupCore,
   disposeAllPtysCore,
+  drainPtyCore,
   killTreeCommand,
   safeCwd,
   writeToPtyCore,
@@ -375,6 +376,100 @@ describe('cleanupCore (T1)', () => {
     expect(sessions.has('k')).toBe(true)
     expect(killTree).not.toHaveBeenCalled()
     expect(port.closed).toBe(false)
+  })
+})
+
+// ── BUG-001: drainPty must PIN its own proc across the grace window ─────────
+// drainPty graceful-closes a session, then waits a grace window for a natural
+// exit before a hard tree-kill. If a `pty:spawn` REPLACES the session under the
+// same id during that window, the drain must NOT reap the replacement: the early
+// return must be gated on process IDENTITY (not mere `sessions.has(id)`), and the
+// final hard-kill must pass the PINNED old proc to the identity-aware cleanup
+// (cleanupCore's isStaleExit no-ops when the stored proc differs). The injected
+// `cleanup` is the REAL cleanupCore so the identity guard under test is genuine.
+describe('drainPtyCore (BUG-001 — pin proc across the grace window)', () => {
+  it('does NOT kill a session that respawned under the same id during the grace window', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const oldPort = makePort()
+    const newPort = makePort()
+    const { proc: oldProc } = makeProc(100)
+    const { proc: newProc } = makeProc(200)
+    const sessions = new Map<string, any>([
+      ['t', { proc: oldProc, port: oldPort, buf: { data: '' }, state: 'running' }]
+    ])
+
+    // First grace-poll `sleep`: simulate a `pty:spawn` replacing the session
+    // under the SAME id (old proc exited + a fresh one took over). The drain must
+    // notice its OWN proc has left and bail — without killing the replacement.
+    let replaced = false
+    const sleep = vi.fn(async () => {
+      if (!replaced) {
+        replaced = true
+        sessions.set('t', { proc: newProc, port: newPort, buf: { data: '' }, state: 'running' })
+      }
+    })
+
+    await drainPtyCore(
+      't',
+      sessions,
+      { cleanup: (id, proc) => cleanupCore(id, sessions, { killTree } as any, proc), sleep },
+      600
+    )
+
+    // The replacement survives — never torn down, never killed.
+    expect(sessions.get('t').proc).toBe(newProc)
+    expect(killTree).not.toHaveBeenCalled()
+    expect(newPort.closed).toBe(false)
+  })
+
+  it('hard tree-kills the ORIGINAL proc when it outlives the grace window (no respawn)', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const port = makePort()
+    const { proc } = makeProc(300)
+    const sessions = new Map<string, any>([
+      ['t', { proc, port, buf: { data: '' }, state: 'running' }]
+    ])
+    // graceMs=0 → no grace poll; goes straight to the hard kill of OUR proc.
+    await drainPtyCore(
+      't',
+      sessions,
+      { cleanup: (id, p) => cleanupCore(id, sessions, { killTree } as any, p), sleep: vi.fn() },
+      0
+    )
+
+    expect(sessions.has('t')).toBe(false)
+    expect(killTree).toHaveBeenCalledWith(proc)
+    expect(port.closed).toBe(true)
+  })
+
+  it('sends Ctrl-C + exit to the proc, then returns early if it exits within the window (no kill)', async () => {
+    const killTree = vi.fn(() => Promise.resolve())
+    const port = makePort()
+    const { proc } = makeProc(400)
+    const sessions = new Map<string, any>([
+      ['t', { proc, port, buf: { data: '' }, state: 'running' }]
+    ])
+    // First poll: the proc exits cleanly → drops out of the map (onExit/cleanup).
+    const sleep = vi.fn(async () => {
+      sessions.delete('t')
+    })
+
+    await drainPtyCore(
+      't',
+      sessions,
+      { cleanup: (id, p) => cleanupCore(id, sessions, { killTree } as any, p), sleep },
+      600
+    )
+
+    expect(proc.write).toHaveBeenCalledWith('\x03')
+    expect(proc.write).toHaveBeenCalledWith('exit\r')
+    expect(killTree).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op for an id with no live session', async () => {
+    const cleanup = vi.fn(() => Promise.resolve())
+    await drainPtyCore('ghost', new Map(), { cleanup, sleep: vi.fn() }, 600)
+    expect(cleanup).not.toHaveBeenCalled()
   })
 })
 

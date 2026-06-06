@@ -427,9 +427,20 @@ export function usePreviewManager(props: LayerProps): void {
       // (LOT F) can call attachBoard on an already-correct live board, so this keeps
       // that a true no-op — mirrors the reconcile Bug #44 diff-skip. A genuine
       // move / re-attach (detached, or bounds/zoom changed) still falls through.
+      // BUG-002: but NOT while beginMotion is mid-demote of this board (id in
+      // `demoting` from before its capture/detach await until the finally drains it).
+      // `r.attached` is still true then (beginMotion clears it only AFTER its detach IPC
+      // resolves), so without this guard an endMotion→applyLiveness→attachBoard during
+      // the await takes this no-op path: patches live:true but issues NO attachPreview
+      // and does NOT bump attachSeq. beginMotion then detaches the view on main, while
+      // its post-await write is skipped (seq unchanged, gestureRef now false) — leaving
+      // the renderer state detached-but-live (frozen/blank board). Falling through here
+      // issues a real attachPreview (re-attaching on main) AND bumps attachSeq, which
+      // beginMotion's seq guard detects so it yields liveness to this re-attach.
       if (
         r.exists &&
         r.attached &&
+        !demoting.current.has(g.id) &&
         r.lastSent &&
         rectsEqual(r.lastSent, bounds) &&
         r.lastZoom === zoomFactor

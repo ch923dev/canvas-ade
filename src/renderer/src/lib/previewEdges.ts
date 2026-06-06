@@ -17,12 +17,14 @@ export function previewEdges(
   boards: Board[],
   runningIds: Set<string> = new Set()
 ): PreviewEdgeDesc[] {
-  const ids = new Set(boards.map((b) => b.id))
+  // Build a set of IDs that belong to terminal boards only — a browser's
+  // previewSourceId must reference a terminal, not another board type.
+  const terminalIds = new Set(boards.filter((b) => b.type === 'terminal').map((b) => b.id))
   const edges: PreviewEdgeDesc[] = []
   for (const b of boards) {
     if (b.type !== 'browser') continue
     const src = b.previewSourceId
-    if (src && ids.has(src)) {
+    if (src && terminalIds.has(src)) {
       edges.push({
         id: `preview-${b.id}`,
         source: src,

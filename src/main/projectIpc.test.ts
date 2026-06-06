@@ -61,19 +61,19 @@ describe('project:current handler', () => {
   // A synthetic event has no senderFrame → the foreign-sender guard allows it.
   const synthetic = {} as IpcMainInvokeEvent
 
-  it('surfaces (does not silently swallow) a read failure of the most-recent project', () => {
+  it('surfaces (does not silently swallow) a read failure of the most-recent project', async () => {
     const userDataDir = mkTmp('canvas-ud-')
     const projDir = mkTmp('canvas-proj-') // exists, but has NO canvas.json → readProject fails
-    touchRecent(userDataDir, projDir, 'proj', 1)
+    await touchRecent(userDataDir, projDir, 'proj', 1)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    const result = register(userDataDir).get('project:current')!(synthetic)
+    const result = await register(userDataDir).get('project:current')!(synthetic)
 
     expect(result).toBeNull()
     expect(warn).toHaveBeenCalled() // project-current-readproject-swallow: the error is logged, not dropped
   })
 
-  it('rejects an unsafe most-recent path (traversal) before touching the filesystem', () => {
+  it('rejects an unsafe most-recent path (traversal) before touching the filesystem', async () => {
     const userDataDir = mkTmp('canvas-ud-')
     const projDir = mkTmp('canvas-proj-')
     writeFileSync(
@@ -83,24 +83,26 @@ describe('project:current handler', () => {
     // An un-normalized path with a `..` segment that the OS would still resolve to the real
     // project — without the guard, readProject would happily load it.
     const unsafe = `${projDir}${sep}..${sep}${basename(projDir)}`
-    touchRecent(userDataDir, unsafe, 'proj', 1)
+    await touchRecent(userDataDir, unsafe, 'proj', 1)
 
-    const result = register(userDataDir).get('project:current')!(synthetic)
+    const result = await register(userDataDir).get('project:current')!(synthetic)
 
     // project-current-skips-unsafe-dir-guard: guarded like project:open → not loaded.
     expect(result).toBeNull()
   })
 
-  it('loads a valid most-recent project on reopen', () => {
+  it('loads a valid most-recent project on reopen', async () => {
     const userDataDir = mkTmp('canvas-ud-')
     const projDir = mkTmp('canvas-proj-')
     writeFileSync(
       join(projDir, 'canvas.json'),
       JSON.stringify({ schemaVersion: 2, viewport: null, boards: [] })
     )
-    touchRecent(userDataDir, projDir, 'proj', 1)
+    await touchRecent(userDataDir, projDir, 'proj', 1)
 
-    const result = register(userDataDir).get('project:current')!(synthetic) as { ok: boolean }
+    const result = (await register(userDataDir).get('project:current')!(synthetic)) as {
+      ok: boolean
+    }
 
     expect(result).not.toBeNull()
     expect(result.ok).toBe(true)

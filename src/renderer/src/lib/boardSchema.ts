@@ -561,8 +561,13 @@ function reconcileConnectors(doc: CanvasDoc): Connector[] {
     if (c.kind === 'preview') {
       // Fold back: ensure the target Browser carries the previewSourceId, then drop the
       // connector — previewSourceId is the SoT, the connector is derived on next save.
+      // Guard: only fold if the source board is a terminal (BUG-022) — a non-terminal
+      // source would produce a permanently-stale edge that can never be live.
+      const src = doc.boards.find((b) => b.id === c.sourceId)
       const tgt = doc.boards.find((b) => b.id === c.targetId)
-      if (tgt && tgt.type === 'browser' && !tgt.previewSourceId) tgt.previewSourceId = c.sourceId
+      if (src && src.type === 'terminal' && tgt && tgt.type === 'browser' && !tgt.previewSourceId) {
+        tgt.previewSourceId = c.sourceId
+      }
       continue
     }
     kept.push(c)
@@ -590,9 +595,12 @@ export function fromObject(doc: unknown): CanvasDoc {
   }
   // Drop a preview link whose source board is no longer present (Slice C′) — a
   // dangling link must not render a half-edge; clear it rather than fail the load.
-  const ids = new Set(owned.boards.map((b) => b.id))
+  // Also drop a link whose source board exists but is not a terminal (BUG-022):
+  // a non-terminal source can never appear in terminalRuntimeStore, so its edge
+  // would be permanently stale and misleading.
+  const terminalIdSet = new Set(owned.boards.filter((b) => b.type === 'terminal').map((b) => b.id))
   for (const b of owned.boards) {
-    if (b.type === 'browser' && b.previewSourceId && !ids.has(b.previewSourceId)) {
+    if (b.type === 'browser' && b.previewSourceId && !terminalIdSet.has(b.previewSourceId)) {
       delete b.previewSourceId
     }
   }

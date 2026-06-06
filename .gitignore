@@ -53,3 +53,5 @@ canvas.json.bak
 /test-results/
 /playwright-report/
 /e2e/.cache/
+# repro scratchpad (copy of _repro.e2e.ts.template) — never committed; promote to a real spec
+/e2e/_repro.e2e.ts
