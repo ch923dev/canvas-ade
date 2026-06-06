@@ -373,7 +373,15 @@ ${sanitizeSummary(result.text)}
         // its fingerprint already advanced in memoryEngine, so no future observe() would re-arm
         // it). Re-fire it now that the slot is free — whether this call succeeded OR failed — so a
         // warranted re-summarize is not silently lost on a slow first-call failure.
-        if (pending.delete(key)) void loop.onIntent({ boardId })
+        //
+        // BUG-007: but ONLY if the project hasn't switched out from under the parked intent. The
+        // re-fire carries the bare boardId, so a fresh doIntent would re-snapshot getCurrentDir()
+        // — if the user opened project B while this projA intent was parked, the retry would
+        // summarize + write B's same-id board OUTSIDE the debounce/fingerprint flow (an
+        // uninstructed spend; pending is keyed on the OLD projA dir and reset() never clears it).
+        // `dir` is this invocation's captured project dir, so skip the re-fire when the live dir
+        // no longer matches — the parked intent was for a now-closed project.
+        if (pending.delete(key) && deps.getCurrentDir() === dir) void loop.onIntent({ boardId })
       }
     }
   }

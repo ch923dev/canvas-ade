@@ -648,6 +648,76 @@ describe('createSummaryLoop — BUG-015 in-flight guard is per (project,board)',
     }
   })
 
+  it('BUG-007: a pending retry parked under projA does NOT re-fire against projB after a project switch', async () => {
+    const projA = mkdtempSync(join(tmpdir(), 'm3-projA-'))
+    const projB = mkdtempSync(join(tmpdir(), 'm3-projB-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    // Scenario the BUG-015 test does NOT cover: intent #2 parks under the projA key (current is
+    // still projA when it is fired), THEN the project switches to projB before intent #1's finally
+    // re-fires the pending retry. Pre-fix the bare-boardId re-fire snapshots projB, builds a fresh
+    // "projB\0shared" key, the TOCTOU guard never trips (projB === projB), and projB — which holds
+    // a same-id board — is summarized + written OUTSIDE the 45s debounce/fingerprint flow (an
+    // uninstructed spend). Post-fix the retry sees current (projB) ≠ the parked key's dir (projA)
+    // and skips, so projB is never written.
+    let current = projA
+    let fetchCalls = 0
+    let releaseFirst: () => void = () => {}
+    const firstStarted = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let unblock: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      unblock = resolve
+    })
+    const fetchImpl = (async () => {
+      const n = ++fetchCalls
+      const reply = {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: 'sum' } }] }),
+        text: async () => ''
+      }
+      if (n === 1) {
+        releaseFirst()
+        await gate // hold call #1 in flight until the test has parked #2 + switched projects
+        return reply
+      }
+      return reply
+    }) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => current,
+      readProject: (dir) => ({
+        ok: true,
+        dir,
+        name: 'proj',
+        doc: docWith([planNote('shared', 'hello world')])
+      }),
+      now: () => new Date(),
+      fetch: fetchImpl,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      const first = loop.onIntent({ boardId: 'shared' }) // captures projA, in flight
+      await firstStarted
+      // intent #2 fired while current is STILL projA → parks pending under "projA\0shared"
+      await loop.onIntent({ boardId: 'shared' })
+      current = projB // user switched to project B AFTER #2 parked
+      unblock() // let call #1 finish → its TOCTOU guard trips, finally re-fires the pending retry
+      await first
+      await new Promise((r) => setTimeout(r, 20)) // drain the re-fired retry's microtasks
+      // Pre-fix: projB got an uninstructed board-shared.md from the stale-key re-fire.
+      expect(existsSync(join(projB, '.canvas', 'memory', 'board-shared.md'))).toBe(false)
+      // Only one summarize ran (intent #1, dropped by its own guard); the retry must not spend.
+      expect(fetchCalls).toBe(1)
+    } finally {
+      rmSync(projA, { recursive: true, force: true })
+      rmSync(projB, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
   it('a dropped second intent (same project+board) is re-fired after the first call FAILS', async () => {
     const proj = mkdtempSync(join(tmpdir(), 'm3-proj-'))
     const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
