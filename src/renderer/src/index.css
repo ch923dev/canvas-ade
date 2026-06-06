@@ -1232,19 +1232,24 @@ body {
 }
 .group-box-tab {
   position: absolute;
-  top: -11px;
-  left: 10px;
-  max-width: 220px;
+  /* Centered headline straddling the top edge (fieldset-legend style) so the group
+     name reads as a title for the whole cluster, not a tiny corner chip. */
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 1px 8px;
-  font-size: 11px;
+  padding: 4px 16px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   font-family: var(--ui);
-  color: var(--text-2);
+  color: var(--text);
   background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: 8px;
   cursor: pointer;
 }
 .group-box-tab:hover {
