@@ -11,12 +11,55 @@ export interface DetectedUrl {
 
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g
-const URL_RE = /(https?):\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::(\d{1,5}))?/gi
+// Matches localhost, IPv4 loopback/any-addr, and bracket-enclosed IPv6 forms
+// (short forms like [::], [::1] plus expanded forms like [0:0:0:0:0:0:0:1]).
+// browsableHost() below filters non-loopback bracket forms.
+const IPV6_BRACKET = /\[[0-9a-fA-F:]+(?:\.\d{1,3}){0,3}\]/
+const URL_RE = new RegExp(
+  `(https?):\\/\\/(localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|${IPV6_BRACKET.source})(?::(\\d{1,5}))?`,
+  'gi'
+)
+
+/** Returns true for IPv6 addresses that resolve to loopback or any-address. */
+function isLoopbackOrWildcardIPv6(h: string): boolean {
+  // Normalise: strip brackets, lowercase
+  const inner = h.slice(1, -1).toLowerCase()
+  // IPv4-mapped loopback forms — check before expandIPv6 which bails on IPv4 suffixes
+  if (inner === '::ffff:127.0.0.1' || inner === '::ffff:7f00:1') return true
+  // Expand :: shorthand to full 8-group decimal representation for uniform comparison
+  const expanded = expandIPv6(inner)
+  if (expanded === null) return false
+  const allZeros = '0:0:0:0:0:0:0:0'
+  const loopback = '0:0:0:0:0:0:0:1'
+  return expanded === allZeros || expanded === loopback
+}
+
+/** Expands an IPv6 address string (already lowercased, no brackets) to 8 colon-separated decimal groups. */
+function expandIPv6(addr: string): string | null {
+  // Handle IPv4-mapped suffix — not a pure hex address, pass through as-is for
+  // the special-case check in isLoopbackOrWildcardIPv6.
+  if (/\d+\.\d+\.\d+\.\d+$/.test(addr)) return null
+  const sides = addr.split('::')
+  if (sides.length > 2) return null
+  const left = sides[0] ? sides[0].split(':') : []
+  const right = sides.length === 2 ? (sides[1] ? sides[1].split(':') : []) : []
+  const missing = 8 - left.length - right.length
+  if (missing < 0) return null
+  const groups = [...left, ...Array(missing).fill('0'), ...right]
+  if (groups.length !== 8) return null
+  // Normalise each group: strip leading zeros, keep as decimal-equivalent
+  return groups.map((g) => String(parseInt(g, 16))).join(':')
+}
 
 /** A host you can actually point a browser at — wildcard/any-address → localhost. */
 function browsableHost(host: string): string {
   const h = host.toLowerCase()
-  if (h === '0.0.0.0' || h === '[::]' || h === '[::1]') return 'localhost'
+  if (h === '0.0.0.0') return 'localhost'
+  if (h.startsWith('[') && h.endsWith(']')) {
+    if (isLoopbackOrWildcardIPv6(h)) return 'localhost'
+    // Non-loopback IPv6: return as-is (callers dedupe by host:port)
+    return h
+  }
   return h
 }
 

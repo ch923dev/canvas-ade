@@ -64,4 +64,26 @@ describe('parsePortsFromOutput', () => {
         .sort()
     ).toEqual([3000, 8080])
   })
+
+  // BUG-009: expanded IPv6 loopback forms not matched by URL_RE
+  it('detects expanded full-form IPv6 loopback [0:0:0:0:0:0:0:1] (Go net/http)', () => {
+    const raw = 'Listening on http://[0:0:0:0:0:0:0:1]:8080'
+    const out = parsePortsFromOutput(raw)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toEqual({ url: 'http://localhost:8080', host: 'localhost', port: 8080 })
+  })
+
+  it('detects IPv4-mapped IPv6 loopback [::ffff:127.0.0.1]', () => {
+    const raw = 'Server running at http://[::ffff:127.0.0.1]:3000'
+    const out = parsePortsFromOutput(raw)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toEqual({ url: 'http://localhost:3000', host: 'localhost', port: 3000 })
+  })
+
+  it('detects zero-padded short-form IPv6 loopback [::0001]', () => {
+    const raw = 'Listening on http://[::0001]:9000'
+    const out = parsePortsFromOutput(raw)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toEqual({ url: 'http://localhost:9000', host: 'localhost', port: 9000 })
+  })
 })
