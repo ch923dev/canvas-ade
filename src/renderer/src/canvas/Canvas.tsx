@@ -837,7 +837,8 @@ function CanvasInner(): ReactElement {
           setNamePopAt(null)
         },
         closeGroupPicker: () => setPickerAt(null),
-        closeGroupMenu: () => setGroupMenu(null)
+        closeGroupMenu: () => setGroupMenu(null),
+        addToGroupReflowed: (gid, bid) => reflowAddToGroup(gid, [bid])
       })
   }, [
     rf,
@@ -847,7 +848,8 @@ function CanvasInner(): ReactElement {
     enterCameraFullView,
     exitCameraFullView,
     setFullViewId,
-    setCameraFullViewId
+    setCameraFullViewId,
+    reflowAddToGroup
   ])
 
   // Capture the live camera into the (untracked) store so autosave persists it.

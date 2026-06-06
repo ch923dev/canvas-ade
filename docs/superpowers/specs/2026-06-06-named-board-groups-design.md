@@ -296,3 +296,13 @@ format · 1315 unit+integration; `e2e/groups.e2e.ts` 5/5). Each criterion below 
   Remove deletes only the group record (boards untouched). Also fixed a latent S2/S4 z-order bug where
   the tab rendered under the React Flow renderer and the pane swallowed all tab clicks — the layer now
   sits above the renderer so the tab is a real handle. Commit `fc0a978`.
+- **S6 — Add board to group + reflow (shipped).** Two triggers add a board to an existing group:
+  drag-onto-box (dropping a non-member board inside a group box — `onNodeDrag` center hit-tests via the
+  pure `groupBoxAt`, lighting a `.group-box--drop-target` glow; `onNodeDragStop` absorbs it) and the
+  board ⋯ menu ("Add to {name}" per eligible group · "Remove from group" when a member). Both run the
+  "absorb" re-pack: `packGroupMembers` (thin `tidyLayout('smart')` wrapper) computes a tight cluster and
+  the new store action `addBoardsToGroupReflowed` commits membership + member reposition in ONE undo
+  step; a transient `.reflowing` class on the pane arms a 280ms board-node + group-box CSS transition so
+  members glide into place and the border tightens (gated behind `prefers-reduced-motion: reduce` →
+  instant). One accent only. Pure `lib/groupReflow.ts` (+ test); store action (+ test); e2e
+  `addToGroupReflowed` hook + the membership-grows-and-re-packs probe.

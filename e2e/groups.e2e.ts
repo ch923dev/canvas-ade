@@ -163,4 +163,35 @@ test.describe('named board groups — Ctrl+G create flow', () => {
     await expect(page.locator('.group-box-tab')).toHaveCount(0)
     expect(await evalIn<number>(page, `window.__canvasE2E.getBoards().length`)).toBe(3)
   })
+
+  test('adding a board to a group grows membership and re-packs (absorb)', async ({ page }) => {
+    const ids = await evalIn<string[]>(
+      page,
+      `(() => {
+        const t = window.__canvasE2E
+        const a = t.seedBoard('planning'), b = t.seedBoard('planning'), c = t.seedBoard('planning')
+        t.addGroup('Auth', [a, b])
+        return [a, b, c]
+      })()`
+    )
+    const gid = await evalIn<string>(page, `window.__canvasE2E.getGroups()[0].id`)
+    const beforeC = await evalIn<{ x: number; y: number }>(
+      page,
+      `(() => { const b = window.__canvasE2E.getBoards().find(x => x.id === ${JSON.stringify(ids[2])}); return { x: b.x, y: b.y } })()`
+    )
+    await evalIn(
+      page,
+      `window.__canvasE2E.addToGroupReflowed(${JSON.stringify(gid)}, ${JSON.stringify(ids[2])})`
+    )
+    // membership grew to 3
+    expect(
+      await pollEval(page, `window.__canvasE2E.getGroups()[0].boardIds.length === 3`, 2000)
+    ).toBe(true)
+    // the added board was re-packed (its position changed from the seed spot)
+    const afterC = await evalIn<{ x: number; y: number }>(
+      page,
+      `(() => { const b = window.__canvasE2E.getBoards().find(x => x.id === ${JSON.stringify(ids[2])}); return { x: b.x, y: b.y } })()`
+    )
+    expect(afterC.x !== beforeC.x || afterC.y !== beforeC.y).toBe(true)
+  })
 })

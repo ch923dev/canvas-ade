@@ -46,6 +46,8 @@ export interface CanvasE2E {
   getGroups: () => { id: string; name: string; boardIds: string[] }[]
   /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
   addGroup: (name: string, ids: string[]) => string
+  /** S6: add a board to a group via the real reflow path (membership + re-pack); for e2e. */
+  addToGroupReflowed: (groupId: string, boardId: string) => void
   /** Browser preview runtime for a board id, or null if none yet. */
   getRuntime: (id: string) => RuntimeProbe | null
   /** Whole xterm framebuffer for a terminal board id, or null if not registered. */
@@ -232,6 +234,8 @@ export interface E2EHostHooks {
   closeGroupPicker: () => void
   /** Close the group right-click context menu (CanvasInner state) — ephemeral-mode reset() parity. */
   closeGroupMenu: () => void
+  /** S6: run the real add-to-group reflow (membership + re-pack) — CanvasInner's reflowAddToGroup. */
+  addToGroupReflowed: (groupId: string, boardId: string) => void
 }
 
 declare global {
@@ -265,6 +269,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     addGroup(name, ids) {
       return useCanvasStore.getState().addGroup(name, ids)
+    },
+    addToGroupReflowed(groupId, boardId) {
+      host.addToGroupReflowed(groupId, boardId)
     },
     getRuntime(id) {
       const r = usePreviewStore.getState().byId[id]
