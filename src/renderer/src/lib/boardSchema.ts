@@ -283,7 +283,7 @@ export function previewConnectorsFor(boards: Board[]): Connector[] {
  * tests still produce a valid current-version doc.
  *
  * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion,
- * viewport, boards, connectors}. Ephemeral session state (selected tool, selected
+ * viewport, boards, connectors, groups}. Ephemeral session state (selected tool, selected
  * element, in-flight draft/erase, hover, the in-flight "connecting" gesture) lives in
  * React/Zustand and MUST NEVER be routed into `board.elements[]`, a board patch key,
  * or `connectors[]`, or it bloats every autosave and resurrects stale state on reload.
@@ -528,9 +528,11 @@ function assertGroup(g: unknown): void {
 
 /**
  * Reconcile a migrated doc's groups: validates each group, then prunes dangling
- * boardIds (pointing at boards that no longer exist). Named-empty groups survive —
- * a group whose boards were all deleted is kept so the user does not lose the name.
- * Missing `groups` field (pre-migration or stripped) defaults to `[]`.
+ * boardIds (pointing at boards that no longer exist) AND de-duplicates — `boardIds`
+ * is set-semantic (a board either belongs or it doesn't), matching the store's
+ * `addBoardsToGroup` write-path dedup. Named-empty groups survive — a group whose
+ * boards were all deleted is kept so the user does not lose the name. Missing `groups`
+ * field (pre-migration or stripped) defaults to `[]`.
  */
 function reconcileGroups(doc: CanvasDoc): NamedGroup[] {
   const raw = Array.isArray(doc.groups) ? doc.groups : []
@@ -538,7 +540,7 @@ function reconcileGroups(doc: CanvasDoc): NamedGroup[] {
   const ids = new Set(doc.boards.map((b) => b.id))
   return (raw as NamedGroup[]).map((g) => ({
     ...g,
-    boardIds: g.boardIds.filter((bid) => ids.has(bid))
+    boardIds: [...new Set(g.boardIds.filter((bid) => ids.has(bid)))]
   }))
 }
 
