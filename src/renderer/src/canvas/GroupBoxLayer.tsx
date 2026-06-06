@@ -46,11 +46,12 @@ export function GroupBoxLayer({
         pointerEvents: 'none',
         transform: `translate(${tx}px, ${ty}px) scale(${zoom})`,
         transformOrigin: '0 0',
-        // This layer renders as a SIBLING of `.react-flow__renderer` (z-index 4), so it must
-        // sit ABOVE z-index 4 or the renderer's `.react-flow__pane` (z-index 1 within it) paints
-        // over the tab and eats its clicks — the tab's pointer-events:auto never wins the
+        // RF v12 renders <ReactFlow>'s children INSIDE `.react-flow__renderer`, so this layer
+        // competes within the renderer's stacking context against the inner `.react-flow__pane`
+        // (z-index 1) and `.react-flow__viewport` (boards, z-index 2). At z-index 0 the pane
+        // painted over the tab and ate its clicks — the tab's pointer-events:auto never won the
         // hit-test (S5 right-click / S4 single+double-click were all swallowed by the pane).
-        // z-index 5 (above the renderer, below RF's selection layer at 6) makes the tab a real
+        // z-index 5 (above pane/viewport, below RF's selection layer at 6) makes the tab a real
         // handle. The box BODY keeps pointer-events:none so only the tab is interactive; the
         // faint 1.5px accent-wash outline now paints just over board edges (negligible) instead
         // of behind them — an accepted trade for a functioning handle.
