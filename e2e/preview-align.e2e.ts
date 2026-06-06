@@ -11,8 +11,9 @@
  * capturePage (memory: e2e-browser-trio-flake).
  *   pnpm build; pnpm exec playwright test e2e/preview-align.e2e.ts
  */
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { mainCall, seed } from './helpers'
 
 interface NativeBounds {
   attached: boolean
@@ -25,20 +26,48 @@ interface FrameRect {
   height: number
 }
 
-// These helpers build strings evaluated in the renderer (evalIn). The interpolated values are
-// the app's own seed() board id + our status literals — never external input — but allowlist
-// them so the eval-string construction is provably sanitized (CodeQL js/code-injection) and a
-// malformed token fails loudly instead of silently.
-const safe = (v: string): string => {
-  if (!/^[\w-]+$/.test(v)) throw new Error(`unsafe e2e token: ${JSON.stringify(v)}`)
-  return v
+// Read renderer state via structured-arg page.evaluate — the board id flows as DATA, never
+// interpolated into an eval'd code string (which CodeQL flags as js/bad-code-sanitization: a
+// JSON.stringify'd value embedded in code can still break out via U+2028/U+2029). Each
+// evaluated function is self-contained — page.evaluate serializes only the function + its arg,
+// so it cannot close over module scope; the untyped window hook is cast through `any` inline
+// (no-explicit-any is off for e2e/).
+const callHook = (page: Page, method: string, ...args: unknown[]): Promise<void> =>
+  page.evaluate(({ method, args }) => (window as any).__canvasE2E[method](...args), {
+    method,
+    args
+  })
+const runtimeStatus = (page: Page, id: string, status: string): Promise<boolean> =>
+  page.evaluate(
+    (a) => {
+      const r = (window as any).__canvasE2E.getRuntime(a.id)
+      return !!r && r.status === a.status
+    },
+    { id, status }
+  )
+const runtimeLive = (page: Page, id: string): Promise<boolean> =>
+  page.evaluate((id) => {
+    const r = (window as any).__canvasE2E.getRuntime(id)
+    return !!r && r.live === true
+  }, id)
+const frameRect = (page: Page, id: string): Promise<FrameRect | null> =>
+  page.evaluate((id) => {
+    const el = Array.from(document.querySelectorAll('[data-bb-frame]')).find(
+      (e) => e.getAttribute('data-bb-frame') === id
+    )
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { left: r.left, top: r.top, width: r.width, height: r.height }
+  }, id)
+
+const pollTrue = async (fn: () => Promise<boolean>, timeout: number): Promise<boolean> => {
+  try {
+    await expect.poll(fn, { timeout }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
 }
-const runtimeStatus = (id: string, status: string): string =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(safe(id))}); return !!r && r.status === ${JSON.stringify(safe(status))}; })()`
-const runtimeLive = (id: string): string =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(safe(id))}); return !!r && r.live === true; })()`
-const frameRectExpr = (id: string): string =>
-  `(() => { const el = document.querySelector('[data-bb-frame="${safe(id)}"]'); if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; })()`
 
 const BORDER = 1
 const TOLERANCE = 2 // px — native vs frame-inset at settled rest
@@ -51,15 +80,15 @@ test.describe('preview camera-sync regression', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(safe(id))})`)
-    expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000)).toBe(true)
-    await pollEval(page, runtimeLive(id), 8000)
+    await callHook(page, 'fitView', id)
+    expect(await pollTrue(() => runtimeStatus(page, id, 'connected'), 12_000)).toBe(true)
+    await pollTrue(() => runtimeLive(page, id), 8000)
     await page.waitForTimeout(600)
 
     // native (main) + frame-inset (renderer) divergence, plus the attached flag.
     async function divergence(): Promise<{ attached: boolean; maxAbs: number } | null> {
       const nb = await mainCall<NativeBounds | null>(electronApp, 'viewBounds', id)
-      const fr = await evalIn<FrameRect | null>(page, frameRectExpr(id))
+      const fr = await frameRect(page, id)
       if (!nb || !fr) return null
       const ex = {
         x: fr.left + BORDER,
@@ -127,9 +156,9 @@ test.describe('preview camera-sync regression', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(safe(id))})`)
-    expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000)).toBe(true)
-    await pollEval(page, runtimeLive(id), 8000)
+    await callHook(page, 'fitView', id)
+    expect(await pollTrue(() => runtimeStatus(page, id, 'connected'), 12_000)).toBe(true)
+    await pollTrue(() => runtimeLive(page, id), 8000)
     await page.waitForTimeout(400)
 
     const attached = async (): Promise<boolean | null> => {
@@ -138,7 +167,7 @@ test.describe('preview camera-sync regression', () => {
     }
 
     // Open the panel; the board (centered by fitView) starts clear of the 300px panel → live.
-    await evalIn(page, 'window.__canvasE2E.openDigest()')
+    await callHook(page, 'openDigest')
     await page.waitForTimeout(400)
     expect(await attached(), 'board is live before it overlaps the panel').toBe(true)
 
@@ -164,7 +193,7 @@ test.describe('preview camera-sync regression', () => {
 
     // Closing the panel removes the occlusion → the board re-attaches (proves the demote is
     // panel-specific, not merely a side effect of the leftward pan).
-    await evalIn(page, 'window.__canvasE2E.closeDigest()')
+    await callHook(page, 'closeDigest')
     await expect
       .poll(attached, {
         message: 'native re-attaches once the digest panel closes',
