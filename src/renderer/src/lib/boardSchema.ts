@@ -292,14 +292,15 @@ export function previewConnectorsFor(boards: Board[]): Connector[] {
 export function toObject(
   boards: Board[],
   viewport: CanvasViewport | null,
-  connectors: Connector[] = []
+  connectors: Connector[] = [],
+  groups: NamedGroup[] = []
 ): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,
     viewport: viewport ? { ...viewport } : null,
     boards: structuredClone(boards),
     connectors: structuredClone(connectors),
-    groups: []
+    groups: structuredClone(groups)
   }
 }
 

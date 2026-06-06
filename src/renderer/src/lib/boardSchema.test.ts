@@ -165,6 +165,15 @@ describe('toObject', () => {
     doc.boards[0].x = 9999
     expect(boards[0].x).toBe(0)
   })
+
+  it('toObject round-trips groups (deep-cloned)', () => {
+    const groups = [{ id: 'g1', name: 'Auth', boardIds: ['b1'] }]
+    const doc = toObject([], null, [], groups)
+    expect(doc.groups).toEqual(groups)
+    // deep clone: mutating the input must not change the doc
+    groups[0].name = 'changed'
+    expect(doc.groups?.[0].name).toBe('Auth')
+  })
 })
 
 describe('round-trip', () => {
