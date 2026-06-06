@@ -1373,6 +1373,54 @@ describe('group CRUD', () => {
     useCanvasStore.getState().removeBoardFromGroup(id, 'zzz')
     expect(useCanvasStore.getState().past.length).toBe(len)
   })
+
+  it('addBoardsToGroupReflowed adds membership AND moves members in ONE undo step', () => {
+    const s = useCanvasStore.getState()
+    // Two real boards (the reflow moves positions, so they must exist in the store).
+    const a = s.addBoard('planning', { x: 0, y: 0 }, { exact: true })
+    const b = s.addBoard('planning', { x: 1000, y: 0 }, { exact: true })
+    const gid = s.addGroup('Auth', [a])
+    const oldB = useCanvasStore.getState().boards.find((x) => x.id === b)!
+    const pastLen = useCanvasStore.getState().past.length
+
+    // Add b to the group AND move BOTH members to a packed cluster.
+    useCanvasStore.getState().addBoardsToGroupReflowed(
+      gid,
+      [b],
+      [
+        { id: a, x: 0, y: 0 },
+        { id: b, x: 140, y: 0 }
+      ]
+    )
+
+    // Exactly one checkpoint for membership + reposition together.
+    expect(useCanvasStore.getState().past.length).toBe(pastLen + 1)
+    expect(useCanvasStore.getState().groups.find((x) => x.id === gid)?.boardIds).toEqual([a, b])
+    expect(useCanvasStore.getState().boards.find((x) => x.id === b)?.x).toBe(140)
+
+    // One undo restores BOTH the old membership AND the old position.
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((x) => x.id === gid)?.boardIds).toEqual([a])
+    expect(useCanvasStore.getState().boards.find((x) => x.id === b)?.x).toBe(oldB.x)
+  })
+
+  it('addBoardsToGroupReflowed is a no-op (no undo step) when membership + positions are unchanged', () => {
+    const s = useCanvasStore.getState()
+    const a = s.addBoard('planning', { x: 0, y: 0 }, { exact: true })
+    const b = s.addBoard('planning', { x: 200, y: 0 }, { exact: true })
+    const gid = s.addGroup('Auth', [a, b])
+    const len = useCanvasStore.getState().past.length
+    // Already members, identical positions → nothing changes.
+    useCanvasStore.getState().addBoardsToGroupReflowed(
+      gid,
+      [a, b],
+      [
+        { id: a, x: 0, y: 0 },
+        { id: b, x: 200, y: 0 }
+      ]
+    )
+    expect(useCanvasStore.getState().past.length).toBe(len)
+  })
 })
 
 describe('removeBoard sweeps groups', () => {

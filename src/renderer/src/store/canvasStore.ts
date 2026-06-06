@@ -132,6 +132,13 @@ export interface CanvasState {
   renameGroup: (id: string, name: string) => void
   /** Union boards into a group (dedup). One tracked step; no-op if nothing new. */
   addBoardsToGroup: (id: string, boardIds: string[]) => void
+  /** Add boards to a group AND move every member to `placements` in one tracked step (the
+   *  "absorb" reflow). No-op when membership and positions are both unchanged. */
+  addBoardsToGroupReflowed: (
+    id: string,
+    boardIds: string[],
+    placements: { id: string; x: number; y: number }[]
+  ) => void
   /** Remove one board from a group. One tracked step; no-op if not a member. */
   removeBoardFromGroup: (id: string, boardId: string) => void
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
@@ -551,6 +558,33 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         { groups: s.groups.map((x) => (x.id === id ? { ...x, boardIds: merged } : x)) },
         { reflectPresent: false }
       )
+    }),
+  addBoardsToGroupReflowed: (id, boardIds, placements) =>
+    set((s) => {
+      const g = s.groups.find((x) => x.id === id)
+      if (!g) return s
+      const mergedIds = [...new Set([...g.boardIds, ...boardIds])]
+      const membershipChanged = mergedIds.length !== g.boardIds.length
+      const pos = new Map(placements.map((p) => [p.id, p]))
+      let movedAny = false
+      const nextBoards = s.boards.map((b) => {
+        const p = pos.get(b.id)
+        if (p && (p.x !== b.x || p.y !== b.y)) {
+          movedAny = true
+          return { ...b, x: p.x, y: p.y }
+        }
+        return b
+      })
+      // No-op guard (mirrors addBoardsToGroup): if neither membership nor any position
+      // changed, push nothing — keep refs stable so trackedChange's no-op path holds.
+      if (!membershipChanged && !movedAny) return s
+      const nextGroups = membershipChanged
+        ? s.groups.map((x) => (x.id === id ? { ...x, boardIds: mergedIds } : x))
+        : s.groups
+      // One tracked step covers membership + the re-pack so a single undo restores both.
+      // reflectPresent:false matches the other group ops — the absorb stays granularly
+      // undoable; its post-no-op phantom is the same tolerated edge (#BUG M3).
+      return trackedChange(s, { boards: nextBoards, groups: nextGroups }, { reflectPresent: false })
     }),
   removeBoardFromGroup: (id, boardId) =>
     set((s) => {
