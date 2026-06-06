@@ -8,8 +8,9 @@ re-verify** (re-run the diagnostic, prove the fix hypothesis with a minimal chan
 > **⚠️ A SECOND, DISTINCT BUG was found during manual verification (2026-06-06)** — see
 > §"Bug 2: out-of-bounds over the Project-context panel" near the end. The camera-sync clobber (this
 > doc's main subject) is one cause of "the browser bugs when I move"; the digest-panel occlusion gap is
-> another. Both are fixed on this branch. A THIRD report ("Something went wrong" canvas crash) is NOT yet
-> reproduced — open.
+> another. Both are fixed on this branch. A THIRD report ("Something went wrong" canvas crash) was a
+> **symptom of Bug 2, not a separate defect** — once Bug 2 landed, the user re-tested on a fresh build
+> and the crash card is **gone (confirmed 2026-06-06)**. See §Bug 3.
 
 > Companion doc on this branch: `2026-06-06-browser-preview-layer-alignment.md` — the earlier
 > multi-agent workflow research. It was **inconclusive** (chased full-view edge cases off the
@@ -286,11 +287,11 @@ clear of the panel stays live. Regression test: `e2e/preview-align.e2e.ts` › "
 snapshot when panned under the open digest panel" (real panOnScroll; asserts demote while overlapping +
 re-attach on close).
 
-## Bug 3 (OPEN): "Something went wrong" canvas crash
+## Bug 3 (RESOLVED — was Bug 2): "Something went wrong" canvas crash
 
-The screenshot also shows the canvas ErrorBoundary card ("The canvas hit an unexpected error. Your last save
-is on disk. Reload"). **Not reproduced** by panning (20+ real-input steps across two directions, digest open:
-`errorBoundary:false`, renderer alive throughout; no error in the dev main-process log). Likely either a
-separate/transient crash with the orphaned out-of-bounds native view (Bug 2) painting over the error card, or
-a different trigger (zoom-to-47%, AUDIT click, a specific board/URL). **Needs exact repro steps before a
-root-cause hunt** — do not guess-fix.
+The screenshot also showed the canvas ErrorBoundary card ("The canvas hit an unexpected error. Your last save
+is on disk. Reload"). It was **never reproduced** by panning (20+ real-input steps across two directions,
+digest open: `errorBoundary:false`, renderer alive throughout; no error in the dev main-process log). The
+working hypothesis held: it was **not a separate defect** but the orphaned out-of-bounds native `WebContentsView`
+(Bug 2) painting over the canvas / its error card. **After Bug 2's fix (`70cff5a`) the user re-tested on a
+fresh build and the crash card is gone (confirmed 2026-06-06).** No standalone crash to hunt; closed.
