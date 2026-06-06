@@ -766,10 +766,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // Re-derive preview connectors from board state (previewSourceId = runtime SoT) and
   // concat the in-memory orchestration connectors → the full persisted set (Decision B).
   toObject: () =>
-    toObject(get().boards, get().viewport, [
-      ...previewConnectorsFor(get().boards),
-      ...get().connectors
-    ]),
+    toObject(
+      get().boards,
+      get().viewport,
+      [...previewConnectorsFor(get().boards), ...get().connectors],
+      get().groups
+    ),
   loadObject: (doc) => {
     // Guard the deep-validation throw (corrupt board/element or too-new schemaVersion):
     // a raw-doc load with no dir can't do a .bak retry, so on a throw set status:'error'
@@ -793,6 +795,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({
       boards: d.boards,
       connectors: d.connectors,
+      groups: d.groups ?? [],
       viewport: d.viewport,
       selectedId: null,
       selectedIds: [],
@@ -827,6 +830,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           set({
             boards: d2.boards,
             connectors: d2.connectors,
+            groups: d2.groups ?? [],
             viewport: d2.viewport,
             selectedId: null,
             selectedIds: [],
@@ -854,6 +858,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({
       boards: d.boards,
       connectors: d.connectors,
+      groups: d.groups ?? [],
       viewport: d.viewport,
       selectedId: null,
       selectedIds: [],

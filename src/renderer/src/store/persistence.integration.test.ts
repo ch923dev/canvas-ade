@@ -59,6 +59,7 @@ describe('persistence — full reopen fidelity', () => {
     useCanvasStore.setState({
       boards: [],
       connectors: [],
+      groups: [],
       viewport: null,
       selectedId: null,
       past: [],
@@ -87,6 +88,28 @@ describe('persistence — full reopen fidelity', () => {
     const onDisk = useCanvasStore.getState().toObject()
     useCanvasStore.getState().loadObject(onDisk)
     expect(useCanvasStore.getState().boards).not.toBe(onDisk.boards)
+  })
+
+  it('round-trips groups through toObject -> loadObject and prunes deleted boards', () => {
+    useCanvasStore.setState({
+      boards: [],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    const b1 = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    const b2 = useCanvasStore.getState().addBoard('terminal', { x: 400, y: 0 })
+    const gid = useCanvasStore.getState().addGroup('Auth', [b1, b2])
+    const doc = useCanvasStore.getState().toObject()
+    expect(doc.groups?.find((g) => g.id === gid)?.boardIds).toEqual([b1, b2])
+
+    // Reload a doc whose group references a now-missing board → pruned on load.
+    const pruned = { ...doc, boards: doc.boards.filter((b) => b.id === b1) }
+    useCanvasStore.getState().loadObject(pruned)
+    expect(useCanvasStore.getState().groups.find((g) => g.id === gid)?.boardIds).toEqual([b1])
   })
 
   it('orchestration connectors survive a reopen; preview links fold via previewSourceId (M2)', () => {
