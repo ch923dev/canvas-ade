@@ -1241,7 +1241,13 @@ describe('multi-select', () => {
 describe('groups — undo snapshot', () => {
   beforeEach(() => {
     useCanvasStore.setState({
-      boards: [], connectors: [], groups: [], past: [], future: [], selectedId: null, selectedIds: []
+      boards: [],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
     })
   })
 
@@ -1261,7 +1267,13 @@ describe('groups — undo snapshot', () => {
 describe('group CRUD', () => {
   beforeEach(() => {
     useCanvasStore.setState({
-      boards: [], connectors: [], groups: [], past: [], future: [], selectedId: null, selectedIds: []
+      boards: [],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
     })
   })
 
@@ -1286,7 +1298,10 @@ describe('group CRUD', () => {
   it('addBoardsToGroup unions ids (no duplicates); removeBoardFromGroup removes one', () => {
     const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
     useCanvasStore.getState().addBoardsToGroup(id, ['b1', 'b2'])
-    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual(['b1', 'b2'])
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual([
+      'b1',
+      'b2'
+    ])
     useCanvasStore.getState().removeBoardFromGroup(id, 'b1')
     expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual(['b2'])
   })
@@ -1302,7 +1317,13 @@ describe('group CRUD', () => {
 describe('removeBoard sweeps groups', () => {
   it('removeBoard removes the deleted id from every group in one undo step', () => {
     useCanvasStore.setState({
-      boards: [], connectors: [], groups: [], past: [], future: [], selectedId: null, selectedIds: []
+      boards: [],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
     })
     const id = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
     const gid = useCanvasStore.getState().addGroup('Auth', [id])

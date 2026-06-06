@@ -203,7 +203,12 @@ let lastRecorded: CanvasSnapshot | null = null
  * boards alone would wrongly treat it as "unchanged" — all three refs must match.
  */
 function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): boolean {
-  return !!snap && snap.boards === s.boards && snap.connectors === s.connectors && snap.groups === s.groups
+  return (
+    !!snap &&
+    snap.boards === s.boards &&
+    snap.connectors === s.connectors &&
+    snap.groups === s.groups
+  )
 }
 
 /**
@@ -238,7 +243,10 @@ function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): 
 function trackedChange(
   s: CanvasState,
   next: { boards?: Board[]; connectors?: Connector[]; groups?: NamedGroup[] } | null,
-  opts: { selection?: { selectedId: string | null; selectedIds: string[] }; reflectPresent: boolean }
+  opts: {
+    selection?: { selectedId: string | null; selectedIds: string[] }
+    reflectPresent: boolean
+  }
 ): Partial<CanvasState> | CanvasState {
   if (next == null) return s
   const nextBoards = next.boards ?? s.boards
@@ -246,7 +254,8 @@ function trackedChange(
   const nextGroups = next.groups ?? s.groups
   // No-op when nothing actually changed (same refs) — push nothing, leave undo
   // untouched (the `next === s.boards` guard, generalized to the snapshot).
-  if (nextBoards === s.boards && nextConnectors === s.connectors && nextGroups === s.groups) return s
+  if (nextBoards === s.boards && nextConnectors === s.connectors && nextGroups === s.groups)
+    return s
   if (opts.reflectPresent) {
     lastRecorded = { boards: nextBoards, connectors: nextConnectors, groups: nextGroups }
   }
@@ -380,7 +389,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
     set((s) =>
-      trackedChange(s, { boards: [...s.boards, board] }, { selection: { selectedId: id, selectedIds: [id] }, reflectPresent: false })
+      trackedChange(
+        s,
+        { boards: [...s.boards, board] },
+        { selection: { selectedId: id, selectedIds: [id] }, reflectPresent: false }
+      )
     )
     return id
   },
@@ -420,7 +433,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         s,
         { boards: next, connectors: nextConnectors, groups: nextGroups },
         {
-          selection: { selectedIds: nextSelIds, selectedId: nextSelIds[nextSelIds.length - 1] ?? null },
+          selection: {
+            selectedIds: nextSelIds,
+            selectedId: nextSelIds[nextSelIds.length - 1] ?? null
+          },
           reflectPresent: false
         }
       )
@@ -507,7 +523,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   removeGroup: (id) =>
     set((s) => {
       if (!s.groups.some((g) => g.id === id)) return s
-      return trackedChange(s, { groups: s.groups.filter((g) => g.id !== id) }, { reflectPresent: false })
+      return trackedChange(
+        s,
+        { groups: s.groups.filter((g) => g.id !== id) },
+        { reflectPresent: false }
+      )
     }),
   renameGroup: (id, name) =>
     set((s) => {
@@ -704,7 +724,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
   undo: () =>
     set((s) => {
-      const r = applyUndo(s.past, { boards: s.boards, connectors: s.connectors, groups: s.groups }, s.future)
+      const r = applyUndo(
+        s.past,
+        { boards: s.boards, connectors: s.connectors, groups: s.groups },
+        s.future
+      )
       if (!r) return s
       // The present after undo IS the history-reflected state — record it so a following
       // no-op beginChange recognizes it and doesn't push a phantom snapshot (#BUG M3).
@@ -721,7 +745,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
   redo: () =>
     set((s) => {
-      const r = applyRedo(s.past, { boards: s.boards, connectors: s.connectors, groups: s.groups }, s.future)
+      const r = applyRedo(
+        s.past,
+        { boards: s.boards, connectors: s.connectors, groups: s.groups },
+        s.future
+      )
       if (!r) return s
       lastRecorded = r.present
       return {
