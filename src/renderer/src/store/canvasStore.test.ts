@@ -171,6 +171,35 @@ describe('idle-on-mount registry (M-1: restored terminals stay idle)', () => {
     clearIdleOnMount(id)
     expect(isIdleOnMount(id)).toBe(false)
   })
+
+  // BUG-033: undo() must reclaim the idle flag for any board id that disappears from
+  // the present snapshot, or idleOnMountIds grows with dead UUIDs across
+  // duplicate+undo cycles.
+  it('undo of duplicateBoard removes the clone UUID from idleOnMountIds (BUG-033)', () => {
+    const src = get().addBoard('terminal', { x: 0, y: 0 })
+    const cloneId = get().duplicateBoard(src)!
+    // After duplicate: clone is in boards AND flagged idle.
+    expect(get().boards.some((b) => b.id === cloneId)).toBe(true)
+    expect(isIdleOnMount(cloneId)).toBe(true)
+    // Undo removes the clone from boards — it MUST also remove it from idleOnMountIds.
+    get().undo()
+    expect(get().boards.some((b) => b.id === cloneId)).toBe(false)
+    expect(isIdleOnMount(cloneId)).toBe(false) // was leaking before BUG-033 fix
+  })
+
+  it('repeated duplicate+undo cycles leave no stale UUIDs in idleOnMountIds (BUG-033)', () => {
+    const src = get().addBoard('terminal', { x: 0, y: 0 })
+    const cloneIds: string[] = []
+    for (let i = 0; i < 5; i++) {
+      const id = get().duplicateBoard(src)!
+      cloneIds.push(id)
+      get().undo()
+    }
+    // Every cloned UUID that was undone must be reclaimed — no session-lifetime leak.
+    for (const id of cloneIds) {
+      expect(isIdleOnMount(id)).toBe(false)
+    }
+  })
 })
 
 describe('removeBoard', () => {
