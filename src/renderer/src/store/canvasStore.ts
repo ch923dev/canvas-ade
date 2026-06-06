@@ -185,14 +185,14 @@ const newId = (): string => crypto.randomUUID()
 
 /**
  * The snapshot the undo stack already reflects — either the value last pushed onto
- * `past`, or the present {boards,connectors} after an undo/redo. `beginChange` skips
- * recording when the current present matches this (by boards AND connectors ref), so a
- * no-op gesture never pushes a duplicate snapshot. This is what the in-store
- * `past[last] === present` guard MISSES after an undo: undo pops the tail and sets the
- * present to it, so the new past tail is the entry *before* it (≠ present) even though
- * the present is unchanged — without this ref a post-undo no-op beginChange would push a
- * phantom snapshot (#BUG M3). Widened from `Board[]` to a snapshot when M2 added
- * connectors (memory `undo-lastrecorded-phantom`).
+ * `past`, or the present {boards,connectors,groups} after an undo/redo. `beginChange`
+ * skips recording when the current present matches this (by boards AND connectors AND
+ * groups ref), so a no-op gesture never pushes a duplicate snapshot. This is what the
+ * in-store `past[last] === present` guard MISSES after an undo: undo pops the tail and
+ * sets the present to it, so the new past tail is the entry *before* it (≠ present) even
+ * though the present is unchanged — without this ref a post-undo no-op beginChange would
+ * push a phantom snapshot (#BUG M3). Widened from `Board[]` to a snapshot when M2 added
+ * connectors (memory `undo-lastrecorded-phantom`); widened again to include groups (v6).
  */
 let lastRecorded: CanvasSnapshot | null = null
 
@@ -212,11 +212,11 @@ function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): 
 }
 
 /**
- * Apply a self-contained board mutation as ONE tracked undo step. `next` is the
- * already-computed next boards array, or the SAME reference / null to signal "no change"
- * (push nothing, leave undo/redo untouched). Centralizes the `recordPast` + future-clear
- * the five tracked actions each hand-rolled. Pure: takes state, returns a partial — side
- * values (a new id) are computed by the caller.
+ * Apply a self-contained canvas mutation as ONE tracked undo step. `next` is the
+ * already-computed next snapshot object `{ boards?, connectors?, groups? }`, or null to
+ * signal "no change" (push nothing, leave undo/redo untouched). Centralizes the
+ * `recordPast` + future-clear the tracked actions each hand-rolled. Pure: takes state,
+ * returns a partial — side values (a new id) are computed by the caller.
  *
  * `opts.reflectPresent` is REQUIRED (not optional) — every caller must make the layout-vs-
  * mutation decision explicitly so a future tracked action can't silently inherit the wrong
@@ -232,9 +232,9 @@ function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): 
  *
  * Returns a `Partial<CanvasState>` patch on a real change, or the full `s` (a same-ref no-op
  * merge) when `next` is null / unchanged — hence the `| CanvasState` in the return type.
- * `selectedId` is conditionally spread: callers that OMIT it (tidy/tile) must leave the
- * current selection untouched, so it must NOT be written as `selectedId: undefined` (Zustand's
- * shallow merge would clobber the selection). add/remove/duplicate pass it (string | null).
+ * Callers that OMIT `opts.selection` (tidy/tile, connector ops, group ops) leave the current
+ * selection untouched — do NOT write `selectedId: undefined` (Zustand's shallow merge would
+ * clobber it); add/remove/duplicate pass a full `{ selectedId, selectedIds }`.
  *
  * NOTE: the gesture-driven path (`beginChange` + `updateBoard`/`resizeBoard`) and the
  * untracked paths (`tileBoards(record:false)`, `growBoardHeight`, `setViewport`, `undo`/
@@ -544,6 +544,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const g = s.groups.find((x) => x.id === id)
       if (!g) return s
       const merged = [...new Set([...g.boardIds, ...boardIds])]
+      // Same length after Set-union ↔ all boardIds were already members — nothing to do.
       if (merged.length === g.boardIds.length) return s
       return trackedChange(
         s,
@@ -710,7 +711,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // undo/redo. The past-tail check alone MISSES the post-undo case (#BUG M3): undo
       // pops the tail, so the present (the popped value) ≠ the new past tail even though
       // it's unchanged → a no-op beginChange would push a phantom snapshot. Compared by
-      // BOTH boards and connectors refs (a connector-only edit changes connectors only).
+      // boards, connectors, AND groups refs (a connector-only or groups-only edit changes
+      // connectors or groups only).
       if (sameSnapshot(s.past[s.past.length - 1], s) || sameSnapshot(lastRecorded, s)) return s
       // Take the pre-edit snapshot but do NOT clear the redo branch here (Bug #7).
       // beginChange fires at GESTURE START, before we know whether the gesture will
