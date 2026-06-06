@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-06
 **Branch:** `feat/named-board-groups` (worktree `Z:\canvas-ade-named-board-groups`)
-**Status:** Design approved — pending implementation plan.
+**Status:** Shipped — S0–S5 implemented on this branch (see §8 Implementation status).
 
 A trimmed-down first slice of the deferred **Feature Workspaces** vision (FW-1 / M6). This ships the
 *grouping primitive* — select boards, name them, navigate to them — **without** the worktree/branch
@@ -261,3 +261,38 @@ depends on S0 + S1. S4 needs S1.
 - Focus key = `F` (canvas-focused only).
 - Auto-name = `"Group N"`.
 - "Which group?" picker = TidyMenu-style popover.
+
+---
+
+## 8. Implementation status (2026-06-07)
+
+All slices S0–S5 from §4 are implemented on `feat/named-board-groups` (gate green: typecheck · lint ·
+format · 1315 unit+integration; `e2e/groups.e2e.ts` 5/5). Each criterion below is **shipped**.
+
+- **S0 — Real multi-select (shipped).** `selectedIds: string[]` added alongside the kept `selectedId`
+  primary; `buildBoardNodes` marks every member; `onNodesChange` folds all select/deselect deltas;
+  Delete removes ALL selected (parks every selected terminal). Commits `0a6a393`, `aa2785a`, `9a8ea3e`,
+  `dc1f07f`.
+- **S1 — Data + store + migration + undo (shipped).** `NamedGroup` type + `CanvasDoc.groups?`;
+  `SCHEMA_VERSION` 5→6 + claim comment; `5→6` migration backfill; `assertGroup` (strict) +
+  dangling-`boardId` sweep in `fromObject`; `structuredClone` in `toObject`; store slice + CRUD
+  (`addGroup`/`removeGroup`/`renameGroup`/`addBoardsToGroup`/`removeBoardFromGroup`); `removeBoard`
+  sweeps all groups in one tracked step; `CanvasSnapshot`/`sameSnapshot`/`lastRecorded` widened to
+  include `groups` (no phantom step, #BUG M3). Persists + survives reload + undo. Commits `d5d7f2f`,
+  `7d20720`, `ce490f4`, `c74bdac`, `2743d7a`, `9eab1be`, `ecca17b`, `7f07554`, `7315f88`.
+- **S2 — Group box render (shipped).** Pure `computeGroupBoxes` nesting/inset geometry + `GroupBoxLayer`
+  (outline + name tab, camera-tracked, recompute on member move, nested-inset overlaps with id
+  tie-break). Commits `dc2fcd5`, `a16ac7f`, `9ff8a65`.
+- **S3 — Create + inline name (shipped).** `Ctrl/Cmd+G` (and the floating "Group" button on ≥2
+  selected) mint a group from the live selection at commit; `GroupNamePopover` inline editor (Enter
+  commits, Esc keeps the auto-name); `nextGroupName` lowest-free "Group N". Commits `f1c8416`,
+  `fc630ac`, `c578703`, `7103b8e`, `ae46204`.
+- **S4 — Grouped focus (shipped).** `focusGroup` action via key `f` + camera-cluster button + tab
+  double-click; 0/1/>1 branch (`GroupFocusPicker` "which group?" popover for >1); `groupFitMaxZoom`
+  raster cap for mixed-member groups; e2e reset() picker-isolation parity. Commits `fc630ac`, `6c8541f`,
+  `adb1290`, `70f9a8e`, `401f1ba`.
+- **S5 — Tab interactions + manage (shipped).** Name-tab single-click = select members · double-click =
+  focus group · right-click = context menu (Rename / Focus / Add selected boards / Remove group);
+  Remove deletes only the group record (boards untouched). Also fixed a latent S2/S4 z-order bug where
+  the tab rendered under the React Flow renderer and the pane swallowed all tab clicks — the layer now
+  sits above the renderer so the tab is a real handle. Commit `fc0a978`.
