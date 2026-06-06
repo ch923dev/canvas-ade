@@ -57,9 +57,27 @@ export function sanitizeSummary(text: unknown): string {
       // strip C0/C1 control chars except \n (\u000a) and \t (\u0009)
       // eslint-disable-next-line no-control-regex
       .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '')
-      .replace(/^[ \t]*#/gm, '\\#') // neutralize a forged Markdown heading at line start
+      // BUG-041: strip Unicode bidi override and isolate characters (Trojan Source class):
+      // U+200B-U+200F (zero-width/LRM/RLM), U+202A-U+202E (LRE/RLE/PDF/LRO/RLO), U+2066-U+2069
+      .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+      // BUG-018: preserve leading whitespace when escaping a forged Markdown heading at line start
+      .replace(/^([ \t]*)#/gm, '$1\\#')
       .slice(0, MAX_OUTPUT_CHARS)
   )
+}
+
+/**
+ * BUG-017: sanitize a board title before interpolation into the `# <title>` heading of a
+ * Markdown memory file or into a list-item in MEMORY.md. A title with embedded newlines would
+ * terminate the ATX heading early and inject additional Markdown structure. Collapses any
+ * newline sequences to a space, trims, and escapes a leading `#`.
+ * Pure + total: never throws.
+ */
+export function sanitizeTitle(t: string): string {
+  return t
+    .replace(/[\r\n]+/g, ' ') // collapse any newlines to a single space
+    .replace(/^[ \t]*#/, '\\#') // escape a leading # that would open a new heading context
+    .trim()
 }
 
 type RawBoard = { id?: unknown; type?: unknown; title?: unknown; [k: string]: unknown }
@@ -208,7 +226,8 @@ export function buildMemoryIndex(doc: unknown, hasSummary: (id: string) => boole
     if (!id) continue
     const mark = hasSummary(id) ? ' ✓' : ''
     lines.push(
-      `- ${str(b.title) || '(untitled)'} (${str(b.type) || 'unknown'}) — board-${id}.md${mark}`
+      // BUG-017: sanitize the title to prevent newlines from breaking the list-item structure
+      `- ${sanitizeTitle(str(b.title)) || '(untitled)'} (${str(b.type) || 'unknown'}) — board-${id}.md${mark}`
     )
   }
   return lines.join('\n') + '\n'
@@ -330,7 +349,11 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         // no server-side token cap could return a giant or control-char-laced blob written verbatim.
         mem.writeBoard(
           boardId,
-          `# ${str((board as RawBoard).title) || boardId}\n\n${sanitizeSummary(result.text)}\n`
+          // BUG-017: sanitize the title to prevent newlines from breaking the # heading
+          `# ${sanitizeTitle(str((board as RawBoard).title)) || boardId}
+
+${sanitizeSummary(result.text)}
+`
         )
         // BUG-014: the index + rollup enumerate the WHOLE board list, so they must reflect any
         // boards added/removed during the (up to 30 s) await — not the `r.doc` snapshot taken
@@ -350,7 +373,15 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         // its fingerprint already advanced in memoryEngine, so no future observe() would re-arm
         // it). Re-fire it now that the slot is free — whether this call succeeded OR failed — so a
         // warranted re-summarize is not silently lost on a slow first-call failure.
-        if (pending.delete(key)) void loop.onIntent({ boardId })
+        //
+        // BUG-007: but ONLY if the project hasn't switched out from under the parked intent. The
+        // re-fire carries the bare boardId, so a fresh doIntent would re-snapshot getCurrentDir()
+        // — if the user opened project B while this projA intent was parked, the retry would
+        // summarize + write B's same-id board OUTSIDE the debounce/fingerprint flow (an
+        // uninstructed spend; pending is keyed on the OLD projA dir and reset() never clears it).
+        // `dir` is this invocation's captured project dir, so skip the re-fire when the live dir
+        // no longer matches — the parked intent was for a now-closed project.
+        if (pending.delete(key) && deps.getCurrentDir() === dir) void loop.onIntent({ boardId })
       }
     }
   }

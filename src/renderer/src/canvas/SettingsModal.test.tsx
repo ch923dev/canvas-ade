@@ -228,3 +228,71 @@ it('BUG-007(5): the scrim shows a wait cursor while a save is in flight', async 
   await waitFor(() => expect(scrim.style.cursor).toBe('wait')) // busy
   resolveConfig({ ok: true })
 })
+
+// ── BUG-029 ──────────────────────────────────────────────────────────────────────────────────
+
+it('BUG-029: clear() with {ok:false} from clearKey must NOT clear hasKey state or key field', async () => {
+  // Arrange: hasKey is true (key is set), clearKey returns {ok:false} (frame-guard rejection path)
+  llm.status.mockResolvedValue({
+    hasProvider: true,
+    provider: 'openrouter',
+    model: 'google/gemini-2.5-flash',
+    hasKey: true,
+    encryptionAvailable: true
+  })
+  llm.clearKey.mockResolvedValue({ ok: false, reason: 'forbidden' })
+  render(<SettingsModal onClose={() => {}} />)
+  // Wait for the "· set" indicator to confirm hasKey=true was loaded
+  await waitFor(() => expect(screen.getByText('· set')).toBeTruthy())
+  // Act: click Clear key
+  fireEvent.click(screen.getByRole('button', { name: /clear key/i }))
+  await waitFor(() => expect(llm.clearKey).toHaveBeenCalledWith({ provider: 'openrouter' }))
+  // Assert: "· set" is still visible — hasKey must NOT have been cleared
+  expect(screen.getByText('· set')).toBeTruthy()
+  // Assert: an error message is displayed to the user
+  expect(screen.getByRole('alert').textContent).toMatch(/could not clear/i)
+})
+
+// ── BUG-031 ──────────────────────────────────────────────────────────────────────────────────
+
+it('BUG-031: onProvider() status() rejection must not produce unhandledRejection, hasKey falls to false', async () => {
+  // Arrange: initial load sets hasKey=true for openrouter
+  llm.status
+    .mockResolvedValueOnce({
+      hasProvider: true,
+      provider: 'openrouter',
+      model: 'google/gemini-2.5-flash',
+      hasKey: true,
+      encryptionAvailable: true
+    })
+    // Second call (from onProvider) rejects — simulates IPC channel gone
+    .mockRejectedValueOnce(new Error('IPC channel gone'))
+  const unhandled = vi.fn()
+  // In jsdom, unhandled promise rejections surface on window
+  window.addEventListener('unhandledrejection', unhandled)
+  render(<SettingsModal onClose={() => {}} />)
+  const provider = (await screen.findByLabelText(/provider/i)) as HTMLSelectElement
+  await waitFor(() => expect(screen.getByText('· set')).toBeTruthy()) // openrouter hasKey=true loaded
+  // Act: change provider — triggers the second status() call which rejects
+  fireEvent.change(provider, { target: { value: 'anthropic' } })
+  // Wait a tick for the rejection to propagate
+  await new Promise((r) => setTimeout(r, 10))
+  // Assert: no unhandled rejection fired
+  expect(unhandled).not.toHaveBeenCalled()
+  // Assert: hasKey fell to false (safe default on IPC failure)
+  expect(screen.queryByText('· set')).toBeNull()
+  window.removeEventListener('unhandledrejection', unhandled)
+})
+
+it('BUG-031: mount effect status() rejection must not produce unhandledRejection', async () => {
+  // The mount effect (line ~50) also calls status() without .catch()
+  llm.status.mockRejectedValue(new Error('IPC channel gone on mount'))
+  const unhandled = vi.fn()
+  window.addEventListener('unhandledrejection', unhandled)
+  render(<SettingsModal onClose={() => {}} />)
+  // Wait for the rejection to propagate
+  await new Promise((r) => setTimeout(r, 10))
+  // Assert: no unhandled rejection
+  expect(unhandled).not.toHaveBeenCalled()
+  window.removeEventListener('unhandledrejection', unhandled)
+})

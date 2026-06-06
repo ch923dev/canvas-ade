@@ -22,7 +22,7 @@ import {
   gcAssets,
   type ProjectResult
 } from './projectStore'
-import { scaffoldProjectMemory, createCanvasMemory } from './canvasMemory'
+import { scaffoldProjectMemory, createCanvasMemory, safeBoardId } from './canvasMemory'
 import { listRecents, touchRecent, type RecentProject } from './recentProjects'
 import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
 
@@ -121,20 +121,37 @@ export function registerProjectHandlers(
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
   })
 
-  const remember = (r: ProjectResult): void => {
+  const remember = async (r: ProjectResult): Promise<void> => {
     if (r.ok) {
       setCurrentDir(r.dir)
-      touchRecent(userDataDir, r.dir, r.name, now())
+      // BUG-026: touchRecent writes to the userData dir. An EPERM/ENOSPC there must NOT
+      // propagate out of the IPC handler — a recents-write failure is non-fatal. The project
+      // opened successfully; the renderer must see ok:true even if the MRU list can't update.
+      try {
+        await touchRecent(userDataDir, r.dir, r.name, now())
+      } catch (err) {
+        console.warn('[recentProjects] touchRecent failed (non-fatal, MRU list not updated)', err)
+      }
     }
   }
 
-  ipcMain.handle('project:open', (e, dir: string): ProjectResult => {
+  ipcMain.handle('project:open', async (e, dir: string): Promise<ProjectResult> => {
     if (guard(e)) return { ok: false, error: 'forbidden' }
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
     const r = readProject(dir)
-    remember(r)
+    await remember(r)
     if (r.ok) {
-      gcAssets(r.dir, collectAssetIds(r.doc))
+      // BUG-016: collect asset ids from BOTH the primary AND the backup before sweeping.
+      // If the primary is envelope-valid but deep-corrupt, the renderer triggers T5 recovery
+      // (project:reopenFromBak). Without this union, assets referenced only by the backup
+      // are quarantined here before the deep-validation failure is detected — leaving the
+      // T5 recovery path with broken/missing images.
+      // The union is best-effort: a missing/corrupt backup simply contributes an empty set.
+      const primaryIds = collectAssetIds(r.doc)
+      const bakResult = readBak(r.dir)
+      const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
+      const allReferencedIds = new Set<string>([...primaryIds, ...bakIds])
+      gcAssets(r.dir, allReferencedIds)
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
       try {
         memoryEngine.reset() // T-M2: a project switch drops stale fingerprints/timers
@@ -174,7 +191,7 @@ export function registerProjectHandlers(
       if (guard(e)) return { ok: false, error: 'forbidden' }
       if (isUnsafeProjectDir(args.dir)) return { ok: false, error: 'invalid path' }
       const r = await createProject(args.dir, args.name, args.opts ?? {})
-      remember(r)
+      await remember(r)
       return r
     }
   )
@@ -201,14 +218,14 @@ export function registerProjectHandlers(
     }
   })
 
-  ipcMain.handle('project:recents', (e): RecentProject[] => {
+  ipcMain.handle('project:recents', async (e): Promise<RecentProject[]> => {
     if (guard(e)) return []
     return listRecents(userDataDir)
   })
 
-  ipcMain.handle('project:current', (e): ProjectResult | null => {
+  ipcMain.handle('project:current', async (e): Promise<ProjectResult | null> => {
     if (guard(e)) return null
-    const recents = listRecents(userDataDir)
+    const recents = await listRecents(userDataDir)
     if (recents.length === 0) return null
     const dir = recents[0].path
     // project-current-skips-unsafe-dir-guard: vet the persisted recents path before any fs
@@ -220,8 +237,18 @@ export function registerProjectHandlers(
     const r = readProject(dir)
     if (r.ok) {
       setCurrentDir(r.dir)
-      touchRecent(userDataDir, r.dir, projectName(r.dir), now())
-      gcAssets(r.dir, collectAssetIds(r.doc))
+      // BUG-026: a write failure on the userData dir must not abort the open or corrupt the
+      // renderer's view of the operation — a recents-write failure is non-fatal.
+      try {
+        await touchRecent(userDataDir, r.dir, projectName(r.dir), now())
+      } catch (err) {
+        console.warn('[recentProjects] touchRecent failed in project:current (non-fatal)', err)
+      }
+      // BUG-016: union primary + backup asset ids before sweeping (same fix as project:open).
+      const primaryIds = collectAssetIds(r.doc)
+      const bakResult = readBak(r.dir)
+      const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
+      gcAssets(r.dir, new Set([...primaryIds, ...bakIds]))
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
       try {
         memoryEngine.reset() // T-M2: re-baseline on reopen/switch
@@ -292,7 +319,10 @@ export function registerProjectHandlers(
   // {ok:true} means the refresh ran (the renderer re-reads prose via memory:readBoards either way).
   ipcMain.handle('memory:refresh', async (e, boardId: unknown): Promise<{ ok: boolean }> => {
     if (guard(e)) return { ok: false }
-    if (typeof boardId !== 'string' || boardId.length === 0) return { ok: false }
+    // BUG-032: enforce safeBoardId (MAX_ID_LEN=64, charset [A-Za-z0-9_-]) at IPC ingress.
+    // The original check only rejected non-string / empty — a 1 MB or invalid-charset id
+    // passed through to onRefresh, causing a transient allocation + O(n) board scan.
+    if (typeof boardId !== 'string' || !safeBoardId(boardId)) return { ok: false }
     if (!getCurrentDir()) return { ok: false }
     await onRefresh(boardId)
     return { ok: true }

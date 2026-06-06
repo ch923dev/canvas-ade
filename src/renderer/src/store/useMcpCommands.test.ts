@@ -73,6 +73,69 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(board.cwd).toBe('/repo')
   })
 
+  it('configureBoard pushes ONE undo checkpoint and undo reverts the config fields (BUG-020)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    // Start the config change from a clean history so we assert on the checkpoint the
+    // MCP path itself takes (addBoard's own snapshot is out of scope here).
+    useCanvasStore.setState({ past: [], future: [] })
+
+    applyMcpCommand({
+      type: 'configureBoard',
+      id: 'srv-1',
+      patch: { launchCommand: 'claude', cwd: '/repo' }
+    })
+
+    // The config change must be checkpointed: exactly one pre-change snapshot on `past`.
+    expect(useCanvasStore.getState().past).toHaveLength(1)
+    const afterConfig = useCanvasStore.getState().boards.find((b) => b.id === 'srv-1') as {
+      launchCommand?: string
+      cwd?: string
+    }
+    expect(afterConfig.launchCommand).toBe('claude')
+
+    // Ctrl+Z must revert the agent's config change.
+    useCanvasStore.getState().undo()
+    const afterUndo = useCanvasStore.getState().boards.find((b) => b.id === 'srv-1') as {
+      launchCommand?: string
+      cwd?: string
+    }
+    expect(afterUndo.launchCommand).toBeUndefined()
+    expect(afterUndo.cwd).toBeUndefined()
+  })
+
+  it('a no-op configureBoard does NOT destroy an armed redo branch (BUG-020)', () => {
+    const store = useCanvasStore.getState()
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    useCanvasStore.setState({ past: [], future: [] })
+
+    // Build a real redo branch: an MCP config edit, then undo it.
+    applyMcpCommand({ type: 'configureBoard', id: 'srv-1', patch: { launchCommand: 'orig' } })
+    store.undo()
+    // Sanity: present is back to no launchCommand, with one entry armed for redo.
+    expect(useCanvasStore.getState().future).toHaveLength(1)
+    expect(
+      (useCanvasStore.getState().boards.find((b) => b.id === 'srv-1') as { launchCommand?: string })
+        .launchCommand
+    ).toBeUndefined()
+
+    // A reconfigure re-applying the CURRENT value is a no-op: it must NOT clear `future`
+    // (the redo branch) nor push a phantom checkpoint.
+    applyMcpCommand({
+      type: 'configureBoard',
+      id: 'srv-1',
+      patch: { launchCommand: undefined }
+    })
+    expect(useCanvasStore.getState().future).toHaveLength(1)
+    expect(useCanvasStore.getState().past).toHaveLength(0)
+
+    // The redo branch is intact — redo re-applies the config change.
+    store.redo()
+    expect(
+      (useCanvasStore.getState().boards.find((b) => b.id === 'srv-1') as { launchCommand?: string })
+        .launchCommand
+    ).toBe('orig')
+  })
+
   it('configureBoard drops a non-patchable / ephemeral key (defense in depth)', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
     const ack = applyMcpCommand({

@@ -104,7 +104,18 @@ export function ProjectSwitcher(): ReactElement {
     await disposeLiveResources()
     // 3. Load the new project. applyOpenResult is async (it may retry canvas.json.bak on a
     //    deep-validation failure) — await so the switch completes (or settles error) here.
-    await applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
+    //    BUG-006: load() can REJECT — createNew's project:create → MAIN createProject can
+    //    throw on a disk error (mkdirSync / writeFileAtomic; project:open's readProject
+    //    absorbs its errors, but create does not). Callers `void switchTo`, so an unhandled
+    //    rejection here would leave status stuck at 'loading' with all native resources
+    //    already disposed: unrecoverable. Route any throw through the existing error path so
+    //    the app settles to 'error' (carrying the message) and stays recoverable.
+    try {
+      await applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'failed to load project'
+      await applyOpenResult({ ok: false, error: msg })
+    }
   }
 
   const openRecent = (dir: string): Promise<void> => switchTo(() => window.api.project.open(dir))

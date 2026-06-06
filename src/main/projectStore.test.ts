@@ -53,9 +53,24 @@ describe('projectStore', () => {
     await createProject(dir, 'My Proj', {})
     // The created file must be re-readable through the same guard project:save writes
     // by — locking the fresh-doc shape to the single validated write path.
+    // BUG-024: fresh doc uses SCHEMA_VERSION (5) + connectors field, not the old hardcoded 2.
     const r = readProject(dir)
     expect(r.ok).toBe(true)
-    if (r.ok) expect(r.doc).toEqual({ schemaVersion: 2, viewport: null, boards: [] })
+    if (r.ok)
+      expect(r.doc).toEqual({ schemaVersion: 5, viewport: null, boards: [], connectors: [] })
+  })
+
+  // BUG-024: createProject hardcodes schemaVersion 2 instead of SCHEMA_VERSION (5).
+  // A fresh canvas.json must carry the current schema version so external tooling (MCP,
+  // user scripts) and the backup never see a stale/old version marker on disk.
+  it('BUG-024: createProject writes schemaVersion === SCHEMA_VERSION (5), not the hardcoded 2', async () => {
+    const r = await createProject(dir, 'My Proj', {})
+    expect(r.ok).toBe(true)
+    const onDisk = JSON.parse(readFileSync(join(dir, 'canvas.json'), 'utf8'))
+    // Before the fix this asserts 2; after the fix it must be 5 (SCHEMA_VERSION).
+    expect(onDisk.schemaVersion).toBe(5)
+    // The fresh doc must also carry the connectors field added at v4→v5 migration.
+    expect(onDisk).toHaveProperty('connectors')
   })
 
   it('createProject scaffolds the .canvas memory tree', async () => {
@@ -257,6 +272,55 @@ describe('W4 assets pipeline', () => {
       expect(existsSync(join(dir, orphan.assetId))).toBe(false) // removed from the live assets dir
       const orphanFile = orphan.assetId.split('/')[1] // 'assets/<sha1>.png' → '<sha1>.png'
       expect(existsSync(join(dir, 'assets', '.trash', orphanFile))).toBe(true) // recoverable in quarantine
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // BUG-016: gcAssets is called in project:open against the PRIMARY doc's asset ids.
+  // If the primary is envelope-valid but deep-corrupt, the renderer triggers T5 recovery
+  // (reopenFromBak). But gcAssets already ran and may have quarantined assets that are
+  // referenced ONLY by the backup — leaving the recovery path with broken/missing images.
+  //
+  // The fix: before calling gcAssets, union the backup doc's asset ids with the primary's
+  // so any asset referenced by EITHER doc is retained. This test verifies that an asset
+  // referenced exclusively by the backup doc is NOT quarantined when gcAssets is called
+  // with the combined id set (as the fix will arrange).
+  //
+  // PRE-FIX CONFIRMATION: calling gcAssets with ONLY the primary asset ids (empty set)
+  // quarantines a backup-only asset.
+  it('BUG-016 (pre-fix confirmation): gcAssets sweeps a backup-only asset when called with only primary ids', async () => {
+    const dir = tmp()
+    try {
+      // Write an asset referenced only by the backup (not in the deep-corrupt primary).
+      const backupOnly = await writeAsset(dir, bytes('backup-only-image'), 'png')
+      // Simulate: primary has NO image references (deep-corrupt, boards=[]),
+      // so collectAssetIds(primary) = empty set.
+      const primaryIds = new Set<string>() // empty — the corrupt primary has no images
+      gcAssets(dir, primaryIds)
+      // Pre-fix: the backup-only asset is quarantined — readAsset can no longer reach it.
+      // After the fix this asset must survive (the fix unions backup ids before sweeping).
+      expect(existsSync(join(dir, backupOnly.assetId))).toBe(false) // quarantined pre-fix
+      const assetFile = backupOnly.assetId.split('/')[1]
+      expect(existsSync(join(dir, 'assets', '.trash', assetFile))).toBe(true) // in trash
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // BUG-016 (post-fix verification): gcAssets called with UNION of primary + backup ids
+  // must retain assets referenced by the backup, even when absent from the primary.
+  it('BUG-016 (fix): gcAssets with union of primary+backup ids does not quarantine backup-only assets', async () => {
+    const dir = tmp()
+    try {
+      const backupOnly = await writeAsset(dir, bytes('backup-only-image-2'), 'png')
+      const primaryOnly = await writeAsset(dir, bytes('primary-only-image'), 'png')
+      // Union: protect both primary AND backup assets.
+      const unionIds = new Set<string>([backupOnly.assetId, primaryOnly.assetId])
+      gcAssets(dir, unionIds)
+      // Both assets must survive when the union is used.
+      expect(existsSync(join(dir, backupOnly.assetId))).toBe(true)
+      expect(existsSync(join(dir, primaryOnly.assetId))).toBe(true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

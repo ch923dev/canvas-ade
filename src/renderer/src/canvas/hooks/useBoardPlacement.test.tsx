@@ -93,4 +93,58 @@ describe('useBoardPlacement', () => {
     move(250, 220)
     expect(getByTestId('cap').getAttribute('data-ghost')).toBe('150x120')
   })
+
+  // BUG-011 regression: a capture-phase listener calling stopPropagation() on window must NOT
+  // prevent useBoardPlacement's Esc handler from firing. Before the fix, useBoardPlacement
+  // registered its listener in bubble phase so a capture-phase stopPropagation() on window
+  // silenced it — requiring a second Esc to disarm the placement tool.
+  it('BUG-011: single Esc disarms placement even when a capture-phase listener calls stopPropagation()', () => {
+    render(<Harness />)
+    // Simulate what useCanvasKeybindings does: a capture-phase listener that calls stopPropagation.
+    const captureListener = (e: Event): void => {
+      if ((e as KeyboardEvent).key === 'Escape') e.stopPropagation()
+    }
+    window.addEventListener('keydown', captureListener, true)
+    try {
+      act(
+        () =>
+          void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      )
+      // After ONE Esc press the tool must have reverted to 'select' and no board was created.
+      expect(useCanvasStore.getState().tool).toBe('select')
+      expect(useCanvasStore.getState().boards).toHaveLength(0)
+    } finally {
+      window.removeEventListener('keydown', captureListener, true)
+    }
+  })
+
+  // BUG-035 regression: a second pointerdown while a drag is already in flight (e.g. two-finger
+  // touch on a touchscreen) must NOT orphan the first drag's window listeners. Before the fix,
+  // dragCleanupRef was overwritten without calling the prior cleanup, leaking pointermove +
+  // pointerup listeners for the rest of the component's lifetime.
+  it('BUG-035: second pointerdown while drag is in flight cleans up the first drag listeners', () => {
+    const { getByTestId } = render(<Harness />)
+    const cap = getByTestId('cap')
+
+    // Start first drag
+    down(cap, 100, 100)
+    // Move to confirm first drag listeners are active
+    move(200, 200)
+    // Now fire a second pointerdown (e.g. second touch point) — should abort first drag cleanly
+    down(cap, 300, 300)
+    // After the second pointerdown, a pointerup should create exactly ONE board (the second
+    // drag's), not two — and the first drag's onUp must be gone if its listeners were torn down.
+    up(350, 350) // resolve second drag via click (small move)
+    const boards = useCanvasStore.getState().boards
+    // Exactly one board created (from the second drag/click), not two phantom boards
+    expect(boards).toHaveLength(1)
+    // Tool returns to select
+    expect(useCanvasStore.getState().tool).toBe('select')
+    // Subsequent pointer events after completion must not fire orphaned listeners
+    // (if they did, a third pointerup would add a second board)
+    act(
+      () => void window.dispatchEvent(new MouseEvent('pointerup', { clientX: 400, clientY: 400 }))
+    )
+    expect(useCanvasStore.getState().boards).toHaveLength(1)
+  })
 })

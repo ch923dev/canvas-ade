@@ -89,4 +89,41 @@ describe('clipboardIpc', () => {
       expect(await ipc.handlers['terminal:cleanupStagedImages'](internal, 'b')).toBe(true)
     })
   })
+
+  describe('BUG-025: stageClipboardImage write failure silently drops image paste', () => {
+    it('returns null (not throws) when stage throws ENOSPC — IPC handler must not propagate filesystem errors', async () => {
+      // Reproduce: stage() throws (e.g. disk full / NTFS permission denied)
+      const ipc = fakeIpc()
+      const stageFails = vi.fn(() => {
+        throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+      })
+      registerClipboardHandlers(
+        ipc as never,
+        () => null,
+        deps({ readImagePng: () => Buffer.from([1, 2]), stage: stageFails })
+      )
+      // BUG: before the fix, stage() throws out of the ipc.handle callback → rejected invoke
+      // → pasteIntoTerminal rejects → void discard → silent failure.
+      // AFTER FIX: handler catches the throw and returns null, so invoke resolves to null
+      // and pasteIntoTerminal falls through to the text-paste branch.
+      const result = await ipc.handlers['terminal:stageClipboardImage'](internal, 'b')
+      expect(stageFails).toHaveBeenCalled()
+      expect(result).toBeNull()
+    })
+
+    it('returns null (not throws) when stage throws EPERM — antivirus / read-only path', async () => {
+      const ipc = fakeIpc()
+      const stageEperm = vi.fn(() => {
+        throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' })
+      })
+      registerClipboardHandlers(
+        ipc as never,
+        () => null,
+        deps({ readImagePng: () => Buffer.from([255, 216]), stage: stageEperm })
+      )
+      const result = await ipc.handlers['terminal:stageClipboardImage'](internal, 'b')
+      expect(stageEperm).toHaveBeenCalled()
+      expect(result).toBeNull()
+    })
+  })
 })

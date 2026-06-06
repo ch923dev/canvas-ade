@@ -333,4 +333,78 @@ describe('registerLlmHandlers — key channels', () => {
       await cap.invokeAs(foreignEvent, 'llm:setConfig', { provider: 'openai', model: 'm' })
     ).toEqual({ ok: false, reason: 'forbidden' })
   })
+
+  // BUG-027: clearKey with null/missing arg must return a typed error, not throw TypeError
+  it('clearKey returns typed error instead of throwing when arg is null/missing (BUG-027)', async () => {
+    const { cap } = setupKeyed(fakeEncryptor())
+    // null arg — must not throw, must return a typed LlmWriteResult
+    const r1 = await cap.invoke('llm:clearKey', null as never)
+    expect(r1).toMatchObject({ ok: false })
+    expect(typeof (r1 as { reason?: string }).reason).toBe('string')
+    // undefined / no arg — same requirement
+    const r2 = await cap.invoke('llm:clearKey', undefined as never)
+    expect(r2).toMatchObject({ ok: false })
+    expect(typeof (r2 as { reason?: string }).reason).toBe('string')
+  })
+
+  // BUG-028: setConfig with null/missing arg must return a typed error, not throw TypeError
+  it('setConfig returns typed error instead of throwing when arg is null/missing (BUG-028)', async () => {
+    const { cap } = setupKeyed(fakeEncryptor())
+    const r1 = await cap.invoke('llm:setConfig', null as never)
+    expect(r1).toMatchObject({ ok: false })
+    expect(typeof (r1 as { reason?: string }).reason).toBe('string')
+    const r2 = await cap.invoke('llm:setConfig', undefined as never)
+    expect(r2).toMatchObject({ ok: false })
+    expect(typeof (r2 as { reason?: string }).reason).toBe('string')
+  })
+
+  // BUG-039: clearKey must validate provider against VALID_PROVIDERS; '__proto__' must be rejected
+  // before reaching keyStore (no spurious I/O)
+  it('clearKey rejects unknown/proto-poisoned provider before keyStore (BUG-039)', async () => {
+    const { cap } = setupKeyed(fakeEncryptor())
+    // First set a real key so a spurious clearKey would be detectable via status
+    await cap.invoke('llm:setKey', { provider: 'openrouter', key: 'sk-real' })
+    expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(true)
+
+    // __proto__ must be rejected (invalid-provider), not forwarded to keyStore
+    const rProto = await cap.invoke('llm:clearKey', { provider: '__proto__' } as never)
+    expect(rProto).toEqual({ ok: false, reason: 'invalid-provider' })
+    // Unknown provider string also rejected
+    const rBad = await cap.invoke('llm:clearKey', { provider: 'notareal' } as never)
+    expect(rBad).toEqual({ ok: false, reason: 'invalid-provider' })
+    // The real key was NOT affected
+    expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(true)
+  })
+
+  // BUG-040: setConfig must validate provider against VALID_PROVIDERS and cap model string length
+  it('setConfig rejects unknown provider and over-long model string (BUG-040)', async () => {
+    const { cap, dir } = setupKeyed(fakeEncryptor())
+    writeLlmConfig(dir, { provider: 'openrouter', model: 'original-model', maxCallsPerDay: 5 })
+
+    // Unknown provider must be rejected
+    const rBadProvider = (await cap.invoke('llm:setConfig', {
+      provider: '__proto__',
+      model: 'some-model'
+    } as never)) as { ok: boolean; reason?: string }
+    expect(rBadProvider).toEqual({ ok: false, reason: 'invalid-provider' })
+    // Config on disk must be unchanged
+    expect(readLlmConfig(dir).provider).toBe('openrouter')
+
+    // Over-long model string must be rejected (> 256 chars)
+    const rLongModel = (await cap.invoke('llm:setConfig', {
+      provider: 'openrouter',
+      model: 'x'.repeat(10_000_000)
+    } as never)) as { ok: boolean; reason?: string }
+    expect(rLongModel).toEqual({ ok: false, reason: 'invalid-model' })
+    // Config on disk must still be unchanged
+    expect(readLlmConfig(dir).model).toBe('original-model')
+
+    // A valid provider+model still persists normally
+    const rOk = await cap.invoke('llm:setConfig', {
+      provider: 'anthropic',
+      model: 'claude-3-5-haiku-latest'
+    })
+    expect(rOk).toEqual({ ok: true })
+    expect(readLlmConfig(dir).provider).toBe('anthropic')
+  })
 })

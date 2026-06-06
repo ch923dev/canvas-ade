@@ -331,8 +331,16 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       // Expand through groups so right-clicking a GROUPED element acts on (and selects)
       // the whole group — otherwise a one-element selection greys out Align/Distribute/
       // Group even though the element belongs to a multi-element group (the W3 bug).
+      // When targetId is null (right-click on empty space) we must NOT expand through
+      // groups: the user's partial group selection (e.g. only A of grouped {A,B}) must
+      // stay partial. Expanding on an empty-space right-click silently pulls in the
+      // un-selected sibling B, and the context menu Delete then removes it even though
+      // the user never explicitly selected B (BUG-013). The element context menu is only
+      // meaningful when a concrete element was targeted; skip it entirely on empty-space
+      // clicks so the existing selection state is left unchanged.
+      if (targetId === null) return
       const effective = expandGroups(elements, base)
-      if (effective.size !== selectedIds.size || (targetId && !selectedIds.has(targetId))) {
+      if (effective.size !== selectedIds.size || !selectedIds.has(targetId)) {
         setSelectedIds(effective)
       }
       // Open only if there will be something to act on.

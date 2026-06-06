@@ -55,6 +55,13 @@ const VALID_PROVIDERS = new Set<string>(Object.keys(DEFAULT_MODELS))
  */
 const MAX_KEY_LEN = 1024
 
+/**
+ * BUG-040: upper bound for a model string written over IPC. Real model IDs are well under this
+ * (longest known: ~64 chars); an unbounded string would be synchronously written to disk in MAIN
+ * (event-loop stall / DoS surface). 256 chars covers all real provider model IDs with headroom.
+ */
+const MAX_MODEL_LEN = 256
+
 const NOOP_KEY_STORE: KeyStore = {
   getKey: () => undefined,
   setKey: () => {
@@ -144,6 +151,12 @@ export function registerLlmHandlers(
 
   ipcMain.handle('llm:clearKey', (e, a: { provider: ProviderName }): LlmWriteResult => {
     if (guard(e)) return { ok: false, reason: 'forbidden' }
+    // BUG-027 + BUG-039: validate `a` and `a.provider` before touching the keyStore.
+    // Without this guard, a null/missing arg throws TypeError (BUG-027), and an unknown provider
+    // such as '__proto__' would reach keyStore.clearKey() causing spurious I/O (BUG-039).
+    // Mirrors the VALID_PROVIDERS guard already present on llm:setKey (BUG-012).
+    if (!VALID_PROVIDERS.has(a?.provider as string))
+      return { ok: false, reason: 'invalid-provider' }
     keyStore.clearKey(a.provider)
     return { ok: true }
   })
@@ -155,6 +168,18 @@ export function registerLlmHandlers(
       a: { provider: ProviderName; model: string; baseUrl?: string; maxCallsPerDay?: number }
     ): LlmWriteResult => {
       if (guard(e)) return { ok: false, reason: 'forbidden' }
+      // BUG-028: guard against null/missing arg before any property access. Without this, a null
+      // arg throws TypeError at the a.baseUrl access below instead of returning a typed error.
+      if (!a || typeof a !== 'object') return { ok: false, reason: 'invalid-args' }
+      // BUG-040: validate provider against the known set BEFORE persisting. Without this, an
+      // unknown provider such as '__proto__' would be written to the config file. readLlmConfig
+      // repairs it on read, but the dirty write still occurs. Mirrors the BUG-012 guard on setKey.
+      if (!VALID_PROVIDERS.has(a.provider as string))
+        return { ok: false, reason: 'invalid-provider' }
+      // BUG-040: cap model string length — an unbounded model string would reach writeFileAtomic.sync
+      // synchronously in MAIN (event-loop stall / DoS surface), mirroring MAX_KEY_LEN on setKey.
+      if (typeof a.model !== 'string' || a.model.length === 0 || a.model.length > MAX_MODEL_LEN)
+        return { ok: false, reason: 'invalid-model' }
       // BUG-001 (SSRF): reject a non-loopback baseUrl BEFORE it is persisted, so a renderer
       // caller can't point LLM egress at file://, IMDS (169.254.169.254), or internal hosts.
       // An empty/omitted baseUrl is fine (non-local providers ignore it).

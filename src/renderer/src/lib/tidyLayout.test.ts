@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { tidyLayout, TIDY_GAP, type TidyBoard, type TidyPlacement } from './tidyLayout'
 
 const b = (id: string, x: number, y: number, w = 100, h = 100): TidyBoard => ({ id, x, y, w, h })
@@ -220,5 +220,69 @@ describe('tidyLayout — default mode is smart', () => {
     expect(at('bd').y).toBe(at('bm').y) // browsers on one row
     expect(at('t').y).toBeGreaterThan(at('bd').y) // terminal below
     expect(noOverlaps(placed, set)).toBe(true)
+  })
+})
+
+// ── RangeError guard: spread-based Math.min/max must not be used ─────────────
+describe('tidyLayout — large board count (BUG-015 regression)', () => {
+  /** Simulate V8's argument-count ceiling by patching Math.min/Math.max to throw
+   *  a RangeError when invoked with more than `limit` arguments (matching V8's
+   *  ~65536 cap in spirit). The actual threshold is impractical in a unit test,
+   *  so we lower the sentinel to 10 — if the implementation spreads the boards
+   *  array into Math.min/max it will be caught; a linear scan is unaffected. */
+  const SENTINEL_LIMIT = 10
+
+  let originalMin: typeof Math.min
+  let originalMax: typeof Math.max
+
+  beforeEach(() => {
+    originalMin = Math.min
+    originalMax = Math.max
+    Math.min = (...args: number[]) => {
+      if (args.length > SENTINEL_LIMIT) throw new RangeError('Maximum call stack size exceeded')
+      return originalMin(...args)
+    }
+    Math.max = (...args: number[]) => {
+      if (args.length > SENTINEL_LIMIT) throw new RangeError('Maximum call stack size exceeded')
+      return originalMax(...args)
+    }
+  })
+
+  afterEach(() => {
+    Math.min = originalMin
+    Math.max = originalMax
+  })
+
+  const manyBoards = (n: number): TidyBoard[] =>
+    Array.from({ length: n }, (_, i) => b(`x${i}`, i * 200, i * 50))
+
+  test('smart mode does not throw RangeError for board counts exceeding sentinel', () => {
+    const boards = manyBoards(SENTINEL_LIMIT + 5)
+    expect(() => tidyLayout(boards, { mode: 'smart' })).not.toThrow()
+  })
+
+  test('by-type mode does not throw RangeError for board counts exceeding sentinel', () => {
+    const boards = manyBoards(SENTINEL_LIMIT + 5).map((board, i) => ({
+      ...board,
+      type: (['terminal', 'browser', 'planning'] as const)[i % 3]
+    }))
+    expect(() => tidyLayout(boards, { mode: 'by-type' })).not.toThrow()
+  })
+
+  test('grid mode does not throw RangeError for board counts exceeding sentinel', () => {
+    const boards = manyBoards(SENTINEL_LIMIT + 5)
+    expect(() => tidyLayout(boards, { mode: 'grid' })).not.toThrow()
+  })
+
+  test('correct origin is still anchored at cluster top-left despite large count', () => {
+    const boards = manyBoards(SENTINEL_LIMIT + 5)
+    const placed = tidyLayout(boards, { mode: 'grid' })
+    // originX/originY must equal the min x/y from input boards — linear scan gives same result
+    const minX = boards.reduce((m, b) => Math.min(m, b.x), Infinity)
+    const minY = boards.reduce((m, b) => Math.min(m, b.y), Infinity)
+    const placedMinX = placed.reduce((m, p) => Math.min(m, p.x), Infinity)
+    const placedMinY = placed.reduce((m, p) => Math.min(m, p.y), Infinity)
+    expect(placedMinX).toBe(minX)
+    expect(placedMinY).toBe(minY)
   })
 })
