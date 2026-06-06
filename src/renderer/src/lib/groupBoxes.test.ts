@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { computeGroupBoxes } from './groupBoxes'
-import type { NamedGroup } from './boardSchema'
+import { computeGroupBoxes, groupFitMaxZoom } from './groupBoxes'
+import type { Board, NamedGroup } from './boardSchema'
 import type { BoardRect } from './boardGeometry'
 
 const boards: BoardRect[] = [
@@ -56,5 +56,18 @@ describe('computeGroupBoxes', () => {
     expect(alpha.depth).toBe(0) // 'alpha' < 'zeta' → outer
     expect(zeta.depth).toBe(1) // nests inside
     expect(zeta.x).toBeGreaterThan(alpha.x)
+  })
+})
+
+describe('groupFitMaxZoom', () => {
+  const mk = (id: string, type: Board['type']): Board =>
+    ({ id, type, x: 0, y: 0, w: 300, h: 200, title: 't' }) as Board
+
+  it('caps at 1 when any member is terminal or browser (raster)', () => {
+    expect(groupFitMaxZoom([mk('a', 'planning'), mk('b', 'terminal')], 2.5)).toBe(1)
+    expect(groupFitMaxZoom([mk('a', 'browser')], 2.5)).toBe(1)
+  })
+  it('returns the vector cap when all members are planning', () => {
+    expect(groupFitMaxZoom([mk('a', 'planning'), mk('b', 'planning')], 2.5)).toBe(2.5)
   })
 })

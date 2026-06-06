@@ -7,7 +7,7 @@
  *
  * Unit-tested in isolation; the GroupBoxLayer just renders what this returns.
  */
-import type { NamedGroup } from './boardSchema'
+import type { Board, NamedGroup } from './boardSchema'
 import { boardsBounds, type BoardRect, type Bounds } from './boardGeometry'
 
 export interface GroupBox {
@@ -83,4 +83,14 @@ export function computeGroupBoxes(
       depth
     }
   })
+}
+
+/**
+ * The fitView maxZoom for a group: capped at 1 when ANY member is a raster board
+ * (terminal/browser bitmap content blurs when upscaled past 100%), else the vector cap.
+ * Generalizes the single-board focus rule in Canvas.focusBoard.
+ */
+export function groupFitMaxZoom(members: Board[], vectorMax: number): number {
+  const anyRaster = members.some((b) => b.type === 'terminal' || b.type === 'browser')
+  return anyRaster ? 1 : vectorMax
 }
