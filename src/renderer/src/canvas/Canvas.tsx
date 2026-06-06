@@ -49,7 +49,7 @@ import {
   type Guide,
   type Rect
 } from '../lib/alignmentGuides'
-import { snapOthers } from '../lib/boardGeometry'
+import { snapOthers, boardsBounds } from '../lib/boardGeometry'
 import { AlignmentGuides } from './AlignmentGuides'
 import { nodeChangesToIntents } from '../lib/nodeChanges'
 import type { TileTemplate } from '../lib/tileLayout'
@@ -68,6 +68,8 @@ import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { GroupBoxLayer } from './GroupBoxLayer'
+import { GroupNamePopover } from './GroupNamePopover'
+import { nextGroupName } from '../lib/groupName'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
@@ -120,6 +122,9 @@ function CanvasInner(): ReactElement {
   const connectors = useCanvasStore((s) => s.connectors)
   const addConnector = useCanvasStore((s) => s.addConnector)
   const removeConnector = useCanvasStore((s) => s.removeConnector)
+  // groupSelection mints groups via useCanvasStore.getState().addGroup (it reads selectedIds +
+  // groups off the live snapshot in the same call), so only renameGroup needs a reactive binding.
+  const renameGroup = useCanvasStore((s) => s.renameGroup)
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
   const viewport = useCanvasStore((s) => s.viewport)
@@ -134,6 +139,10 @@ function CanvasInner(): ReactElement {
   const setNodeGesture = usePreviewStore((s) => s.setNodeGesture)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
+  // Group create/rename: the inline name popover (anchored in client space) + the group whose
+  // name it is editing (null = closed). Ephemeral — never persisted.
+  const [namingGroupId, setNamingGroupId] = useState<string | null>(null)
+  const [namePopAt, setNamePopAt] = useState<{ x: number; y: number } | null>(null)
   // M2 connector gesture (EPHEMERAL — never persisted): the source board of an in-flight
   // connector drag + the live pointer (client coords) for the rubber-band overlay; the
   // currently-selected orchestration connector (for the ✕ / Delete-key affordances).
@@ -438,6 +447,27 @@ function CanvasInner(): ReactElement {
     [rf]
   )
 
+  // Create a group from the current multi-selection (>=2 boards). Mints the group with an
+  // auto-name, then opens the inline name popover over the selection's top-left so the user can
+  // rename immediately (Esc keeps the auto-name). No-op for <2 selected.
+  const groupSelection = useCallback(() => {
+    const st = useCanvasStore.getState()
+    const ids = st.selectedIds
+    if (ids.length < 2) return
+    const name = nextGroupName(st.groups)
+    const gid = st.addGroup(name, ids)
+    const sel = st.boards.filter((b) => ids.includes(b.id))
+    const bb = boardsBounds(sel)
+    if (bb) {
+      const p = rf.flowToScreenPosition({ x: bb.minX, y: bb.minY })
+      setNamePopAt({ x: p.x, y: Math.max(8, p.y - 40) })
+      setNamingGroupId(gid)
+    }
+  }, [rf])
+
+  // S3 placeholder — the real grouped-focus impl lands in S4. Keeps the keybinding dep satisfied.
+  const focusGroup = useCallback(() => {}, [])
+
   // Tidy / tile layout actions (paneSize · fitToBoards · applyTile · tidyAndFit + the
   // responsive-retile ResizeObserver) live in useTidyTile (Wave-5 B5 #2). Only tidyAndFit is
   // surfaced — the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button.
@@ -653,7 +683,9 @@ function CanvasInner(): ReactElement {
     cameraFullViewId,
     closeFullView,
     exitCameraFullView,
-    snapSuppressRef
+    snapSuppressRef,
+    groupSelection,
+    focusGroup
   })
 
   // E2E (CANVAS_E2E): expose the imperative test hook once the canvas (and its
@@ -816,6 +848,28 @@ function CanvasInner(): ReactElement {
             })()}
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
+          {selectedIds.length >= 2 && (
+            <button className="group-fab" onClick={groupSelection} title="Group selection (Ctrl+G)">
+              <span style={{ fontFamily: 'var(--mono)' }}>⌘G</span> Group {selectedIds.length}
+            </button>
+          )}
+          {namingGroupId && namePopAt && (
+            <GroupNamePopover
+              initial={
+                useCanvasStore.getState().groups.find((g) => g.id === namingGroupId)?.name ?? ''
+              }
+              at={namePopAt}
+              onCommit={(name) => {
+                renameGroup(namingGroupId, name)
+                setNamingGroupId(null)
+                setNamePopAt(null)
+              }}
+              onCancel={() => {
+                setNamingGroupId(null)
+                setNamePopAt(null)
+              }}
+            />
+          )}
           <AppChrome onTidy={tidyAndFit} />
           <DigestPanel
             digest={digest}

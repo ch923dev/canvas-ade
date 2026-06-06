@@ -40,6 +40,12 @@ export interface CanvasE2E {
   seedBoard: (type: BoardType, patch?: Partial<Board>) => string
   /** Current boards (plain data — serializable). */
   getBoards: () => Board[]
+  /** Set the multi-selection (group create path). */
+  setSelection: (ids: string[]) => void
+  /** Named groups (plain data — serializable). */
+  getGroups: () => { id: string; name: string; boardIds: string[] }[]
+  /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
+  addGroup: (name: string, ids: string[]) => string
   /** Browser preview runtime for a board id, or null if none yet. */
   getRuntime: (id: string) => RuntimeProbe | null
   /** Whole xterm framebuffer for a terminal board id, or null if not registered. */
@@ -203,6 +209,15 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getBoards() {
       return useCanvasStore.getState().boards
+    },
+    setSelection(ids) {
+      useCanvasStore.getState().setSelection(ids)
+    },
+    getGroups() {
+      return useCanvasStore.getState().groups
+    },
+    addGroup(name, ids) {
+      return useCanvasStore.getState().addGroup(name, ids)
     },
     getRuntime(id) {
       const r = usePreviewStore.getState().byId[id]
@@ -370,9 +385,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       useCanvasStore.setState({
         boards: [],
         connectors: [],
+        groups: [],
         past: [],
         future: [],
-        selectedId: null
+        selectedId: null,
+        selectedIds: []
       })
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
