@@ -1,8 +1,32 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { mainCall, seed } from './helpers'
+import type { Page } from '@playwright/test'
 
-const runtimeStatus = (id: string, status: string): string =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+// Probe the renderer by passing values as ARGS to page.evaluate (function + arg are
+// serialized separately) rather than interpolating them into an eval'd code string —
+// the latter is flagged js/bad-code-sanitization (a JSON.stringify'd value embedded in
+// code can still break out via U+2028/U+2029). Mirrors preview-align.e2e.ts (#82).
+const callHook = (page: Page, method: string, ...args: unknown[]): Promise<void> =>
+  page.evaluate(({ method, args }) => (globalThis as any).__canvasE2E[method](...args), {
+    method,
+    args
+  })
+const runtimeStatus = (page: Page, id: string, status: string): Promise<boolean> =>
+  page.evaluate(
+    (a) => {
+      const r = (globalThis as any).__canvasE2E.getRuntime(a.id)
+      return !!r && r.status === a.status
+    },
+    { id, status }
+  )
+const pollTrue = async (fn: () => Promise<boolean>, timeout: number): Promise<boolean> => {
+  try {
+    await expect.poll(fn, { timeout }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * E2 (evidence capture): a Browser board is a native WebContentsView that paints ABOVE
@@ -17,9 +41,9 @@ test.describe('e2e evidence — native-view PNG to disk (captureViewToFile)', ()
       const url = await mainCall<string>(electronApp, 'localUrl')
       const id = await seed(page, 'browser', { url })
       await page.waitForTimeout(150)
-      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      await callHook(page, 'fitView', id)
       expect(
-        await pollEval(page, runtimeStatus(id, 'connected'), 10_000),
+        await pollTrue(() => runtimeStatus(page, id, 'connected'), 10_000),
         'browser connected'
       ).toBe(true)
       await page.waitForTimeout(300) // one paint before capture
