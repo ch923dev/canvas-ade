@@ -1238,6 +1238,18 @@ describe('multi-select', () => {
   })
 })
 
+describe('groups — undo snapshot', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({
+      boards: [], connectors: [], groups: [], past: [], future: [], selectedId: null, selectedIds: []
+    })
+  })
+
+  it('initializes groups to an empty array', () => {
+    expect(useCanvasStore.getState().groups).toEqual([])
+  })
+})
+
 describe('planning board — addChecklist + schema round-trip (migrated from e2e planning)', () => {
   it('appends a checklist element and the whole canvas still round-trips', () => {
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
