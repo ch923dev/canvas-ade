@@ -1248,6 +1248,55 @@ describe('groups — undo snapshot', () => {
   it('initializes groups to an empty array', () => {
     expect(useCanvasStore.getState().groups).toEqual([])
   })
+
+  it('captures groups in the undo snapshot (undo restores prior groups)', () => {
+    const { addGroup, undo } = useCanvasStore.getState()
+    const gid = addGroup('Auth', [])
+    expect(useCanvasStore.getState().groups.map((g) => g.id)).toContain(gid)
+    undo()
+    expect(useCanvasStore.getState().groups).toEqual([])
+  })
+})
+
+describe('group CRUD', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({
+      boards: [], connectors: [], groups: [], past: [], future: [], selectedId: null, selectedIds: []
+    })
+  })
+
+  it('addGroup mints an id, stores name + boardIds, returns the id', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1', 'b2'])
+    const g = useCanvasStore.getState().groups.find((x) => x.id === id)
+    expect(g).toEqual({ id, name: 'Auth', boardIds: ['b1', 'b2'] })
+  })
+
+  it('renameGroup changes the name only', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
+    useCanvasStore.getState().renameGroup(id, 'API')
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.name).toBe('API')
+  })
+
+  it('removeGroup drops the record (boards untouched)', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
+    useCanvasStore.getState().removeGroup(id)
+    expect(useCanvasStore.getState().groups).toEqual([])
+  })
+
+  it('addBoardsToGroup unions ids (no duplicates); removeBoardFromGroup removes one', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
+    useCanvasStore.getState().addBoardsToGroup(id, ['b1', 'b2'])
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual(['b1', 'b2'])
+    useCanvasStore.getState().removeBoardFromGroup(id, 'b1')
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.boardIds).toEqual(['b2'])
+  })
+
+  it('each CRUD op is one undo step', () => {
+    const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
+    useCanvasStore.getState().renameGroup(id, 'API')
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((x) => x.id === id)?.name).toBe('Auth')
+  })
 })
 
 describe('planning board — addChecklist + schema round-trip (migrated from e2e planning)', () => {
