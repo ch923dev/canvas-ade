@@ -12,7 +12,13 @@ import { execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { debugCaptureView, debugViewBounds, debugViewIds, debugViewWebContentsId } from './preview'
+import {
+  debugCaptureView,
+  debugCaptureViewPng,
+  debugViewBounds,
+  debugViewIds,
+  debugViewWebContentsId
+} from './preview'
 import { debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, setCurrentDir } from './projectStore'
 
@@ -20,6 +26,13 @@ export interface E2EMain {
   terminalPid(id: string): number | null
   writeTerminal(id: string, data: string): boolean
   captureView(id: string): Promise<{ attached: boolean; empty: boolean }>
+  /**
+   * Capture a board's live native-view pixels and write them as a PNG to `absPath`.
+   * Returns true if a non-blank image was written, false otherwise (missing/detached/
+   * off-screen/un-composited). This is the only evidence path for browser-board content
+   * — a WebContentsView paints above all HTML, so Playwright screenshots can't see it.
+   */
+  captureViewToFile(id: string, absPath: string): Promise<boolean>
   viewIds(): string[]
   viewWebContentsId(id: string): number | null
   /** The native view's live bounds + attached flag, for the alignment probe (native vs .bb-frame). */
@@ -106,6 +119,12 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     terminalPid: debugTerminalPid,
     writeTerminal: debugWriteTerminal,
     captureView: debugCaptureView,
+    async captureViewToFile(id, absPath) {
+      const png = await debugCaptureViewPng(id)
+      if (!png) return false
+      writeFileSync(absPath, png)
+      return true
+    },
     viewIds: debugViewIds,
     viewWebContentsId: debugViewWebContentsId,
     viewBounds: debugViewBounds,

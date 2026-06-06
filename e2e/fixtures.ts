@@ -9,10 +9,26 @@ import {
 type TestFixtures = { page: Page }
 type WorkerFixtures = { electronApp: ElectronApplication }
 
+// Whether `tracing.start` succeeded for the current worker's app context. workers:1 +
+// one app per worker ⇒ this module-level flag is per-worker-process safe. If the Electron
+// context ever refuses tracing, we degrade to "no trace" rather than failing every test.
+let tracingStarted = false
+
 /**
- * Per-spec Electron instance. `electronApp` is worker-scoped → launched once per spec
- * file (workers:1 + one spec per worker run), so a spec's native-view/PTY churn can't
- * bleed into another spec. `page` resets the canvas before EACH test.
+ * Worker-scoped Electron instance. With workers:1 Playwright runs ALL spec files in ONE
+ * worker and REUSES this app across them (it discards + relaunches the worker only after
+ * a test FAILS). So state can leak between specs within a worker — the per-test `reset()`
+ * (page fixture, below) is what guarantees each test a clean slate, including re-mounting
+ * the canvas if a prior spec drove the app to the error WelcomeScreen (reset-isolation.e2e.ts).
+ *
+ * Evidence capture (E1): every test runs inside a Playwright trace chunk. On FAILURE the
+ * chunk + a renderer screenshot are written to the test's output dir and attached to the
+ * HTML report (`pnpm exec playwright show-report`); on success the chunk is discarded so
+ * green runs stay cheap. Set `E2E_VIDEO=1` to also record a `.webm` per spec into
+ * `test-results/videos` (best-effort — video under xvfb on the Linux leg is unreliable,
+ * Playwright #8936, so trace is the canonical artifact). The renderer screenshot shows
+ * HTML chrome only; native WebContentsView content is captured separately via the MAIN
+ * `captureViewToFile` helper (a native view paints above all HTML).
  */
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   electronApp: [
@@ -30,7 +46,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
       const app = await _electron.launch({
         args: launchArgs,
-        env: { ...process.env, CANVAS_E2E: '1' }
+        env: { ...process.env, CANVAS_E2E: '1' },
+        // Opt-in full-session video (one .webm per spec). Off by default so green runs
+        // stay fast; turn on for a repro session with `E2E_VIDEO=1`.
+        ...(process.env.E2E_VIDEO ? { recordVideo: { dir: 'test-results/videos' } } : {})
       })
       const pg = await app.firstWindow()
       // The hook installs after React mounts — wait for it (mirrors runE2ESmoke's 8s gate).
@@ -44,13 +63,24 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           { timeout: 10_000 }
         )
         .toBe(true)
+      // Start one trace recording on the context; per-test chunks (below) carve out one
+      // trace per test. Guarded: if the Electron context refuses tracing, degrade
+      // gracefully (run the tests, just without traces) rather than red-screen the suite.
+      tracingStarted = false
+      try {
+        await app.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
+        tracingStarted = true
+      } catch {
+        /* tracing unavailable on this context — continue without it */
+      }
       await use(app)
       await app.close()
     },
     { scope: 'worker' }
   ],
-  // Override the built-in `page` fixture to reset canvas state before each test.
-  page: async ({ electronApp }, use) => {
+  // Override the built-in `page` fixture to reset canvas state before each test and to
+  // capture evidence (trace chunk + screenshot) when the test fails.
+  page: async ({ electronApp }, use, testInfo) => {
     const page = await electronApp.firstWindow()
     await page.bringToFront() // sendInputEvent needs the window focused
     await page.evaluate(() => {
@@ -59,7 +89,36 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
       return g.__canvasE2E.reset()
     })
+    const context = electronApp.context()
+    if (tracingStarted) {
+      await context.tracing.startChunk({ title: testInfo.title }).catch(() => {})
+    }
+
     await use(page)
+
+    const failed = testInfo.status !== testInfo.expectedStatus
+    if (tracingStarted) {
+      if (failed) {
+        const tracePath = testInfo.outputPath('trace.zip')
+        await context.tracing.stopChunk({ path: tracePath }).catch(() => {})
+        await testInfo
+          .attach('trace', { path: tracePath, contentType: 'application/zip' })
+          .catch(() => {})
+      } else {
+        await context.tracing.stopChunk().catch(() => {}) // discard on success
+      }
+    }
+    if (failed) {
+      // Renderer DOM only — native WebContentsView content is blank here by design;
+      // use the MAIN captureViewToFile helper for native-view evidence.
+      const shotPath = testInfo.outputPath('failure.png')
+      try {
+        await page.screenshot({ path: shotPath })
+        await testInfo.attach('failure-screenshot', { path: shotPath, contentType: 'image/png' })
+      } catch {
+        /* page may already be gone */
+      }
+    }
   }
 })
 

@@ -195,3 +195,35 @@ container forces `line`.)
 
 **Still owed (deferred to Phase 5):** an **auto-update** e2e — electron-updater / packaging / signing
 don't exist yet, so the update flow can't be e2e-tested. It is the one remaining e2e-only surface.
+
+### Evidence capture (E1/E2) — for confirming bugs + verifying fixes
+
+Every e2e test runs inside a Playwright **trace** chunk (`e2e/fixtures.ts`). The capture is
+**retain-on-failure**, so green runs stay cheap and a red test leaves replayable evidence:
+
+| Artifact | When | Where |
+|---|---|---|
+| **trace.zip** (canonical) | on failure | attached to the test + `test-results/<test>/` — open with `pnpm exec playwright show-trace <zip>` |
+| **failure.png** (renderer DOM) | on failure | same dir — HTML chrome only; native `WebContentsView` content is BLANK here by design |
+| **`<board>.png` (native view)** | on demand | `mainCall(app, 'captureViewToFile', id, absPath)` — the ONLY way to capture Browser-board pixels (a native view paints above all HTML, so Playwright screenshots can't see it) |
+| **`.webm` video** (best-effort) | `E2E_VIDEO=1` | `test-results/videos/` — one per spec; video under xvfb on the Linux leg is unreliable (Playwright #8936), so trace is canonical |
+
+Browse everything from a run with `pnpm exec playwright show-report` (the `html` reporter; the
+Docker leg overrides to `line` so a non-TTY pipe doesn't block).
+
+**Confirm a bug vs a flake:** when a test fails, read its `failure.png` / trace BEFORE assuming
+contention — the screenshot tells you whether the app was in the expected state. (This is how the
+`reset()` isolation leak was found: a "terminal spawn flake" was actually the recovery WelcomeScreen
+leaking across specs, masked by `retries:2`.) Re-run the single test in isolation
+(`pnpm exec playwright test <name>`) — passes alone + fails in-suite = an isolation/ordering bug, not
+the app.
+
+### Agentic repro → verify loop (`_repro.e2e.ts.template`)
+
+To reproduce a freshly-reported bug before a committed spec exists, copy
+`e2e/_repro.e2e.ts.template` → `e2e/_repro.e2e.ts` (gitignored), encode the EXPECTED behavior as a
+concrete assertion, then `E2E_VIDEO=1 pnpm exec playwright test _repro`. A failing run + its trace/
+video/screenshot IS the reproduction package; a green re-run after the fix IS the verification.
+Promote the proven assertion into the real spec and delete the scratchpad. Assert a concrete outcome
+(text/state/file-on-disk/absence-of-error), never a bare `toBeVisible` — a weak assertion proves
+nothing.
