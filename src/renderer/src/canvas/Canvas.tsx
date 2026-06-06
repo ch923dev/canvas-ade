@@ -88,6 +88,38 @@ const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: Orchestratio
 /** Single-board focus framing (DESIGN.md §5/§9: ~70px pad). Animated via `cameraAnim`. */
 const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX } as const
 
+/** One step of the full-view decision (consumed in order by `requestFullView`). */
+export type FullViewAction =
+  | 'exitCameraFullView'
+  | 'enterCameraFullView'
+  | 'closeFullView'
+  | 'openFullView'
+
+/**
+ * Pure decision for the maximize (⤢) toggle — what `requestFullView` should do for a
+ * board given the two mutually-exclusive full-view modes currently active. Returned as an
+ * ORDERED list so the caller runs them in sequence (order matters: a stale camera-FV must
+ * be exited BEFORE opening the portal modal). Portal full view (browser/terminal) and
+ * camera full view (planning) must never both be live — `enterCameraFullView` already
+ * `hardCloseFullView`s the portal on the way in; this is the symmetric guard for the
+ * portal path so maximizing a Terminal/Browser while a Planning board is in camera-FV
+ * doesn't leave BOTH set (the double-mode that needed two Esc — #BUG-004).
+ */
+export function planFullViewAction(
+  type: BoardType | undefined,
+  id: string,
+  currentFullViewId: string | null,
+  currentCameraFullViewId: string | null
+): FullViewAction[] {
+  if (type === 'planning') {
+    return currentCameraFullViewId === id ? ['exitCameraFullView'] : ['enterCameraFullView']
+  }
+  if (currentFullViewId === id) return ['closeFullView']
+  // Opening the portal modal: first leave any active Planning camera-FV so the two modes
+  // are never simultaneously live (#BUG-004).
+  return currentCameraFullViewId ? ['exitCameraFullView', 'openFullView'] : ['openFullView']
+}
+
 /** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5). */
 function FadingDots(): ReactElement {
   const zoom = useStore((s) => s.transform[2])
@@ -515,13 +547,17 @@ function CanvasInner(): ReactElement {
       // use the portal modal (they need it to keep live native content alive).
       requestFullView: (id) => {
         const type = useCanvasStore.getState().boards.find((b) => b.id === id)?.type
-        if (type === 'planning') {
-          if (cameraFullViewIdRef.current === id) exitCameraFullView()
-          else enterCameraFullView(id)
-        } else if (fullViewIdRef.current === id) {
-          closeFullView()
-        } else {
-          openFullView(id)
+        const steps = planFullViewAction(
+          type,
+          id,
+          fullViewIdRef.current,
+          cameraFullViewIdRef.current
+        )
+        for (const step of steps) {
+          if (step === 'exitCameraFullView') exitCameraFullView()
+          else if (step === 'enterCameraFullView') enterCameraFullView(id)
+          else if (step === 'closeFullView') closeFullView()
+          else openFullView(id)
         }
       },
       duplicate: (id) => {
