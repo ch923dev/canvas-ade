@@ -118,7 +118,16 @@ function releaseWebglSlot(id: string): void {
  * content gets bracketed-paste markers when the agent enabled them (no per-line submit).
  */
 async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
-  const path = await window.api.stageClipboardImage(boardId)
+  // Staging can fail (ENOSPC disk full, EPERM antivirus lock, read-only .canvas/tmp).
+  // The IPC handler now returns null on those errors, but guard the await itself too
+  // so any unexpected rejection falls through to the text-paste branch rather than
+  // propagating to the `void` call site and silently dropping the paste entirely.
+  let path: string | null = null
+  try {
+    path = await window.api.stageClipboardImage(boardId)
+  } catch {
+    path = null
+  }
   if (term.element === undefined) return // disposed during the await
   if (path) {
     term.paste(`"${path}" `)

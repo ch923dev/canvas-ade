@@ -55,7 +55,14 @@ export function registerClipboardHandlers(
     if (!dir) return null
     const png = deps.readImagePng()
     if (!png) return null
-    return deps.stage(dir, String(boardId), png)
+    try {
+      return deps.stage(dir, String(boardId), png)
+    } catch {
+      // Filesystem error (ENOSPC disk full, EPERM antivirus lock, read-only path, …).
+      // Return null so the renderer falls through to the text-paste branch rather than
+      // receiving a rejected ipcRenderer.invoke promise that void-discards silently.
+      return null
+    }
   })
 
   ipc.handle('terminal:cleanupStagedImages', (e, boardId: string) => {
