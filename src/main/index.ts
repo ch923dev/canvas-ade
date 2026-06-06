@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, safeStorage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
@@ -46,6 +46,7 @@ import { sendMcpCommand } from './mcpCommand'
 import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
+import { registerClipboardHandlers } from './clipboardIpc'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -160,6 +161,16 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.canvasade.app')
+  // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
+  // Linux the default menu's Alt mnemonics (Alt+V = View) eat it, and Chromium handles
+  // Ctrl+C/V natively in inputs there, so dropping the menu is safe. On macOS the Edit
+  // menu ROLES are what wire Cmd+C/V/X/A in inputs, and CC uses Cmd+V (not Alt+V) anyway,
+  // so keep a minimal Edit/app/window-role menu there.
+  Menu.setApplicationMenu(
+    process.platform === 'darwin'
+      ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }])
+      : null
+  )
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
@@ -179,6 +190,7 @@ app.whenReady().then(async () => {
     )
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
+  registerClipboardHandlers(ipcMain, () => mainWindow)
   registerBoardRegistryHandler(ipcMain, () => mainWindow)
   // 🔒 MCP dispatch audit trail (T4.1) — wired BEFORE startMcpServer (BUG-025) so the
   // getAuditLog() seam the dispatch tools append through is already non-null the instant

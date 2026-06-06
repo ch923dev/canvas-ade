@@ -133,11 +133,26 @@ export interface LayerProps {
    * to exit, matching the Esc-exits-full-view behaviour terminals/notes already get.
    */
   onRequestCloseFullView: () => void
+  /**
+   * The "Project context" digest panel is open — a fixed full-height LEFT overlay
+   * (`.digest-panel`, 300px). A native WebContentsView paints above ALL HTML, so a
+   * Browser board whose stage overlaps the panel would cover it (the out-of-bounds bug).
+   * While open, the panel's rect joins `chromeExclusionZones` so any overlapping live
+   * view demotes to its (clippable, z-ordered) HTML snapshot. ADR 0002.
+   */
+  digestOpen: boolean
 }
 
 export function usePreviewManager(props: LayerProps): void {
-  const { paneRef, focusedId, fullViewId, fullViewHost, fullViewMotion, onRequestCloseFullView } =
-    props
+  const {
+    paneRef,
+    focusedId,
+    fullViewId,
+    fullViewHost,
+    fullViewMotion,
+    onRequestCloseFullView,
+    digestOpen
+  } = props
   const { getViewport } = useReactFlow()
   const patchRuntime = usePreviewStore((s) => s.patch)
   // Patch ONLY an existing entry — for main-driven lifecycle events that may arrive
@@ -196,6 +211,9 @@ export function usePreviewManager(props: LayerProps): void {
   // and receives input. Null when nothing — or a Browser board itself — is selected.
   const selectedIdRef = useRef<string | null>(null)
   const selectedRectRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
+  // Latest "Project context" digest-panel open state, read in occludesProtected (the
+  // panel is a left overlay a native view must not paint over). Synced in the focus effect.
+  const digestOpenRef = useRef<boolean>(digestOpen)
 
   const preset = useCallback((vp: BrowserViewport): ViewportPreset => VIEWPORT_PRESETS[vp], [])
 
@@ -312,6 +330,21 @@ export function usePreviewManager(props: LayerProps): void {
         w: paneSize.current.w,
         h: paneSize.current.h
       })
+      // The "Project context" digest panel is a fixed LEFT overlay (z-index above the
+      // canvas) that a native view would paint over. While open, add its live DOM rect as
+      // a chrome zone so an overlapping Browser view demotes to its HTML snapshot (the
+      // out-of-bounds bug: the page bleeds left over the panel on pan). Read the rect (not
+      // a hard-coded width) so it tracks the CSS; skip when off-screen (closed → the
+      // translateX(-100%) rect sits at right<=pane left).
+      if (digestOpenRef.current) {
+        const el = document.querySelector('[data-test=digest-panel]')
+        if (el) {
+          const r = el.getBoundingClientRect()
+          if (r.width > 0 && r.right > paneOffset.current.x) {
+            chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
+          }
+        }
+      }
       return shouldDemoteForOcclusion({
         id: g.id,
         stage: stageBox,
@@ -673,6 +706,9 @@ export function usePreviewManager(props: LayerProps): void {
     fullViewIdRef.current = fullViewId
     fullViewHostRef.current = fullViewHost
     fullViewMotionRef.current = fullViewMotion
+    // Opening/closing the Project-context panel changes which boards it occludes, so
+    // re-reconcile liveness (demote a now-covered live view; restore it on close).
+    digestOpenRef.current = digestOpen
     if (!focusMounted.current) {
       focusMounted.current = true
       return
@@ -680,7 +716,7 @@ export function usePreviewManager(props: LayerProps): void {
     // A motion flip (enter settled / exit started) re-reconciles: detach the full-view
     // view while the frame transforms, attach it once settled (Slice 5 hold-then-snap).
     applyLiveness()
-  }, [focusedId, fullViewId, fullViewHost, fullViewMotion, applyLiveness])
+  }, [focusedId, fullViewId, fullViewHost, fullViewMotion, digestOpen, applyLiveness])
 
   // Full view: the camera never moves, so the camera-driven rAF pump (startPump, fired
   // by useOnViewportChange) never runs — yet the full-view board's native bounds must

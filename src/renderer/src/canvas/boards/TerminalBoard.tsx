@@ -13,7 +13,16 @@
  * Lifecycle (spawning → running → awaiting-input → exited / spawn-failed) is
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement
+} from 'react'
+import { useStoreApi } from '@xyflow/react'
 import { TerminalConfig } from './TerminalConfig'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -29,11 +38,16 @@ import {
   type TerminalState
 } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
-import { isE2E, e2eTerminals } from '../../smoke/e2eRegistry'
+import { isE2E, e2eTerminals, e2eTerminalInput, appendTerminalInput } from '../../smoke/e2eRegistry'
+import { resolveTerminalKey } from './terminal/terminalKeymap'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
 import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPreview'
+import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
+import { quotePathsForPaste } from './terminal/terminalDrop'
+import { installSelectionShim } from './terminal/terminalSelection'
+import { BoardFullViewContext } from '../fullViewContext'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -61,6 +75,9 @@ interface PortMessage {
   code?: number
   state?: TerminalState
 }
+
+/** Platform check for the terminal key resolver's primary modifier (Cmd on macOS). */
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
 // ── Renderer-wide WebGL context budget (#12/#29) ──────────────────────────────
 // Chromium caps live WebGL2 contexts per renderer (~16, shared across all terminal
@@ -95,6 +112,22 @@ function releaseWebglSlot(id: string): void {
   }
 }
 
+/**
+ * Smart paste: if the clipboard holds an image, stage it to a temp file and inject the
+ * quoted path; otherwise inject the clipboard text. Uses `term.paste` so multiline
+ * content gets bracketed-paste markers when the agent enabled them (no per-line submit).
+ */
+async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
+  const path = await window.api.stageClipboardImage(boardId)
+  if (term.element === undefined) return // disposed during the await
+  if (path) {
+    term.paste(`"${path}" `)
+    return
+  }
+  const text = await window.api.clipboard.readText()
+  if (text && term.element !== undefined) term.paste(text)
+}
+
 export function TerminalBoard({
   board,
   selected,
@@ -120,9 +153,30 @@ export function TerminalBoard({
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
+  // Live camera zoom source for the selection shim. We read it from the React Flow store
+  // AT MOUSE-EVENT TIME (transform[2]) rather than via useOnViewportChange: the latter's
+  // onChange does not fire for programmatic, zero-duration zoom (e.g. rf.zoomTo) — only for
+  // d3-zoom-driven gestures — so it would leave the shim reading a stale z=1. The store
+  // transform is the canonical live zoom (the same source BoardNode/Canvas read for LOD).
+  const rfStore = useStoreApi()
+  // In full view the board is portaled OUTSIDE ReactFlow into the modal at visual
+  // scale 1, but the camera zoom (transform[2]) is unchanged — so the selection shim
+  // would mis-correct. Mirror the full-view flag into a ref (not a closure dep) so
+  // `getZoom`'s identity stays stable: toggling full view must NOT re-run the spawn
+  // effect / respawn the PTY.
+  const isFullView = useContext(BoardFullViewContext)
+  const fullViewRef = useRef(isFullView)
+  useEffect(() => {
+    fullViewRef.current = isFullView
+  }, [isFullView])
+  const getZoom = useCallback(
+    (): number => (fullViewRef.current ? 1 : rfStore.getState().transform[2]),
+    [rfStore]
+  )
 
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
+  const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -296,14 +350,56 @@ export function TerminalBoard({
     fitRef.current = fit
     if (isE2E()) e2eTerminals.set(board.id, term)
 
+    // Scale-correct selection (F2a): the board renders inside React Flow's scaled
+    // viewport, so xterm's native cell math is off by the camera zoom. The capture-phase
+    // shim feeds xterm coordinates corrected for the live zoom (no-op at z = 1). The
+    // `.xterm-screen` element exists once `term.open(el)` ran; `el.parentElement` is the
+    // nodrag/nowheel screenWrap that owns the mouse surface.
+    const screenEl = el.querySelector('.xterm-screen') as HTMLElement | null
+    const wrapEl = el.parentElement
+    const selectionDisp =
+      screenEl && wrapEl ? installSelectionShim(wrapEl, screenEl, getZoom) : null
+
     // Forward keystrokes + resizes to whatever port is CURRENT. Registered ONCE
     // (not inside onWinMsg) so a restart — which delivers a fresh port through the
     // same persistent message listener — doesn't stack duplicate xterm listeners;
     // the disposables are released on teardown.
-    const dataDisp = term.onData((d) => portRef.current?.postMessage({ t: 'input', d }))
+
+    // All PTY-bound input flows through one seam so the e2e harness can observe it and
+    // so the key handler (newline) and term.paste both share the same path.
+    const sendInput = (d: string): void => {
+      if (isE2E()) appendTerminalInput(board.id, d)
+      portRef.current?.postMessage({ t: 'input', d })
+    }
+    const dataDisp = term.onData((d) => sendInput(d))
     const resizeDisp = term.onResize(({ cols, rows }) =>
       portRef.current?.postMessage({ t: 'resize', cols, rows })
     )
+
+    // Custom key handling (returns false to suppress xterm's default for keys we own):
+    //  - Shift+Enter inserts a newline (\x1b\r — CC-recognized, tmux-safe; NOT raw \n).
+    //  - Ctrl/Cmd+C copies when a selection exists (then clears); else falls through to
+    //    xterm's SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there.
+    //  - Ctrl/Cmd+V smart-pastes (image → staged path, else text), via term.paste so
+    //    multiline content gets bracketed-paste markers.
+    term.attachCustomKeyEventHandler((e) => {
+      const action = resolveTerminalKey(e, { hasSelection: term.hasSelection(), isMac: IS_MAC })
+      if (!action) return true
+      if (action.kind === 'newline') {
+        sendInput('\x1b\r')
+      } else if (action.kind === 'copy') {
+        const sel = term.getSelection()
+        if (sel) {
+          void window.api.clipboard.writeText(sel)
+          term.clearSelection()
+        } else {
+          return true // selection vanished — fall through to xterm's Ctrl+C (SIGINT)
+        }
+      } else if (action.kind === 'paste') {
+        void pasteIntoTerminal(term, board.id)
+      }
+      return false
+    })
 
     // Let xterm handle the key FIRST (Backspace/Enter/arrows/Ctrl-C are keydown-
     // driven on xterm's textarea), THEN stop it bubbling to the canvas / React Flow
@@ -429,10 +525,12 @@ export function TerminalBoard({
       disposed = true
       window.removeEventListener('message', onWinMsg)
       el.removeEventListener('keydown', stopKeys)
+      selectionDisp?.()
       dataDisp.dispose()
       resizeDisp.dispose()
       ro.disconnect()
       void window.api.killTerminal(board.id)
+      void window.api.cleanupStagedImages(board.id)
       try {
         portRef.current?.close()
       } catch {
@@ -440,6 +538,7 @@ export function TerminalBoard({
       }
       portRef.current = null
       if (isE2E()) e2eTerminals.delete(board.id)
+      if (isE2E()) e2eTerminalInput.delete(board.id)
       // Free the WebGL context before disposing the terminal (no-op if a prior
       // context-loss or LOD detach already disposed it and nulled the ref).
       detachWebgl()
@@ -456,7 +555,8 @@ export function TerminalBoard({
     projectDir,
     attachWebgl,
     detachWebgl,
-    respawn
+    respawn,
+    getZoom
   ])
 
   useEffect(() => spawn(), [spawn])
@@ -605,6 +705,65 @@ export function TerminalBoard({
     </>
   )
 
+  // Right-click context menu over the well. Reuses the planning menu component. When the
+  // running TUI has mouse reporting on (term.modes.mouseTrackingMode !== 'none'), plain
+  // right-click passes through to the app; Shift+right-click forces our menu.
+  // hasSel is captured at open-time so the Copy entry's disabled state is stable for the
+  // menu's lifetime (avoids reading the ref during render).
+  const openMenu = useCallback((e: React.MouseEvent) => {
+    const term = termRef.current
+    if (!term) return
+    const mouseMode = term.modes.mouseTrackingMode !== 'none'
+    if (mouseMode && !e.shiftKey) return // let the TUI have the right-click
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, hasSel: term.hasSelection() })
+  }, [])
+
+  const menuEntries: MenuEntry[] = useMemo(
+    () =>
+      menu
+        ? [
+            {
+              kind: 'action',
+              id: 'copy',
+              label: 'Copy',
+              disabled: !menu.hasSel,
+              onSelect: () => {
+                const t = termRef.current
+                const sel = t?.getSelection()
+                if (t && sel) {
+                  void window.api.clipboard.writeText(sel)
+                  t.clearSelection()
+                }
+              }
+            },
+            {
+              kind: 'action',
+              id: 'paste',
+              label: 'Paste',
+              onSelect: () => {
+                const t = termRef.current
+                if (t) void pasteIntoTerminal(t, board.id)
+              }
+            },
+            {
+              kind: 'action',
+              id: 'selectall',
+              label: 'Select all',
+              onSelect: () => termRef.current?.selectAll()
+            },
+            {
+              kind: 'action',
+              id: 'clear',
+              label: 'Clear',
+              onSelect: () => termRef.current?.clear()
+            }
+          ]
+        : [],
+    [menu, board.id]
+  )
+
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
   // session survives zoom-out — see BoardNode. At LOD we hide the xterm well and
   // overlay the opaque LOD card on top (it fully covers the chrome beneath it),
@@ -742,9 +901,36 @@ export function TerminalBoard({
               e.stopPropagation()
               termRef.current?.focus()
             }}
+            onContextMenu={openMenu}
+            onDragOver={(e) => {
+              if (e.dataTransfer?.types?.includes('Files')) {
+                e.preventDefault() // required for onDrop to fire
+                e.stopPropagation()
+              }
+            }}
+            onDrop={(e) => {
+              const files = e.dataTransfer?.files
+              if (!files || files.length === 0) return
+              // preventDefault guards against browser nav (alongside App.tsx's window
+              // handler); stopPropagation keeps any outer React drop listener from also
+              // handling this drop.
+              e.preventDefault()
+              e.stopPropagation()
+              const paths = Array.from(files).map((f) => window.api.pathForFile(f))
+              const payload = quotePathsForPaste(paths)
+              if (payload) termRef.current?.paste(payload)
+            }}
           >
             <div ref={screenRef} style={screen} />
           </div>
+          {menu && (
+            <ElementContextMenu
+              x={menu.x}
+              y={menu.y}
+              entries={menuEntries}
+              onClose={() => setMenu(null)}
+            />
+          )}
         </div>
       </BoardFrame>
       {lod && (

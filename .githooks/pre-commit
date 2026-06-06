@@ -1,35 +1,29 @@
 #!/bin/sh
-# Pre-commit e2e gate. e2e (Playwright _electron) was moved OFF GitHub Actions
-# (Actions billing) and runs HERE instead: the full Windows-native + Linux-Docker
-# matrix via `pnpm test:e2e:matrix`. Enabled by `core.hooksPath=.githooks` (set by
-# the package.json `prepare` script on install). Bypass a WIP commit with:
-#     git commit --no-verify
+# Pre-commit CHEAP gate (fast static checks only). The slow e2e matrix moved to
+# `.githooks/pre-push` (2026-06-06) so local commits stay fast — e2e now runs only
+# when you push to origin. Rationale: `git commit` carries no push-intent signal,
+# so "only gate when going to origin" is a PRE-PUSH concern, not pre-commit.
+# This hook keeps the fast trio (typecheck · lint · format:check) for instant local
+# feedback. Bypass a WIP commit with:  git commit --no-verify
+# Enabled by `core.hooksPath=.githooks` (set by the package.json `prepare` script).
 set -e
-
-# Docs-only commits touch no runtime/build/test surface — skip the e2e matrix
-# entirely (no Docker, no install, no ~2-min Electron build). The filter passes
-# only when EVERY staged path is under docs/ or ends in .md; one code/config file
-# staged → run the full gate.
-STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
-if [ -n "$STAGED" ] && ! printf '%s\n' "$STAGED" | grep -qvE '(^docs/|\.md$)'; then
-  echo "[pre-commit] docs-only commit — skipping e2e matrix."
-  exit 0
-fi
-
-echo "[pre-commit] e2e matrix (Windows native + Linux Docker) — this takes ~2-3 min."
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "[pre-commit] ERROR: pnpm not on PATH. Run 'corepack enable' first."
   exit 1
 fi
 
-# The Linux leg runs in Docker — fail early with a clear message if it is not up.
-if ! docker info >/dev/null 2>&1; then
-  echo "[pre-commit] ERROR: Docker daemon not running — the Linux e2e leg needs it."
-  echo "             Start Docker Desktop, or bypass this commit with: git commit --no-verify"
-  exit 1
+# Docs-only commits can't break types/lint — skip typecheck (the slow leg, tsc ×3)
+# but still run format:check so stray .md prettier drift is caught. The filter
+# passes only when EVERY staged path is under docs/ or ends in .md.
+STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -n "$STAGED" ] && ! printf '%s\n' "$STAGED" | grep -qvE '(^docs/|\.md$)'; then
+  echo "[pre-commit] docs-only commit — format:check only."
+  pnpm format:check
+  exit 0
 fi
 
-# E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
-# documented browser-trio env flake doesn't false-block a commit.
-E2E_PRECOMMIT=1 pnpm test:e2e:matrix
+echo "[pre-commit] cheap gate: typecheck · lint · format:check (~seconds)."
+pnpm typecheck
+pnpm lint
+pnpm format:check

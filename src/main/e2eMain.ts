@@ -7,12 +7,12 @@
  * This is a registry + an env flag — NOT a security change. sandbox / contextIsolation /
  * nodeIntegration are untouched; nothing here is reachable in a normal run.
  */
-import { clipboard, nativeImage, type BrowserWindow } from 'electron'
+import { clipboard, Menu, nativeImage, type BrowserWindow } from 'electron'
 import { execFileSync } from 'child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { debugCaptureView, debugViewIds, debugViewWebContentsId } from './preview'
+import { debugCaptureView, debugViewBounds, debugViewIds, debugViewWebContentsId } from './preview'
 import { debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, setCurrentDir } from './projectStore'
 
@@ -22,6 +22,10 @@ export interface E2EMain {
   captureView(id: string): Promise<{ attached: boolean; empty: boolean }>
   viewIds(): string[]
   viewWebContentsId(id: string): number | null
+  /** The native view's live bounds + attached flag, for the alignment probe (native vs .bb-frame). */
+  viewBounds(
+    id: string
+  ): { attached: boolean; bounds: { x: number; y: number; width: number; height: number } } | null
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
@@ -52,6 +56,12 @@ export interface E2EMain {
   pidsAlive(pids: number[]): number[]
   /** Tear down EVERY pty session (live + parked) — the real MAIN kill path. */
   disposeAllPtys(): Promise<void>
+  /** Put plain text on the system clipboard (paste-text sliver). */
+  putTextOnClipboard(text: string): void
+  /** Read the system clipboard text (assert a copy landed). */
+  readClipboardText(): string
+  /** True when no application menu is set (F10: Alt+V reaches xterm on Windows/Linux). */
+  applicationMenuIsNull(): boolean
 }
 
 /**
@@ -98,6 +108,7 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     captureView: debugCaptureView,
     viewIds: debugViewIds,
     viewWebContentsId: debugViewWebContentsId,
+    viewBounds: debugViewBounds,
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)
     },
@@ -131,6 +142,12 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
       clipboard.clear()
       clipboard.writeImage(nativeImage.createFromBitmap(buf, { width: w, height: h }))
     },
+    putTextOnClipboard(text) {
+      clipboard.writeText(text)
+    },
+    readClipboardText() {
+      return clipboard.readText()
+    },
     fileExists(absPath) {
       return existsSync(absPath)
     },
@@ -146,6 +163,9 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     },
     disposeAllPtys() {
       return disposeAllPtys()
+    },
+    applicationMenuIsNull() {
+      return Menu.getApplicationMenu() === null
     }
   }
 }
