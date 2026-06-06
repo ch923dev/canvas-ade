@@ -14,11 +14,13 @@
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
  *
- * SCHEMA-VERSION CLAIM (2026-06-03): **v5 is MCP M2 — spatial connectors.** The
- * draw.io (D2/D3) and any future whiteboard track also plan a bump; first-to-land
- * takes v5, the others rebase to v6+. Do not silently reuse v5 for a different shape.
+ * SCHEMA-VERSION CLAIM:
+ * - v5 = MCP M2 — spatial connectors.
+ * - **v6 = board groups** (named board clusters, this feature). The Diagram element
+ *   (PR #72 research) also eyed v6 — whichever lands first takes v6, the other
+ *   rebases to v7. Do not silently reuse a version for a different shape.
  */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -150,6 +152,19 @@ export interface Connector {
   kind: ConnectorKind
 }
 
+/**
+ * A user-named set of boards for durable navigation/grouping purposes. A board may
+ * belong to MANY groups (multi-membership is intentional). Named-empty groups survive
+ * — a group whose boards were all deleted is kept so the user doesn't lose the name.
+ * Forward-compatible with the deferred Feature Workspaces phase, which will add an
+ * optional `worktreePath` to back the group with a git worktree.
+ */
+export interface NamedGroup {
+  id: string
+  name: string
+  boardIds: string[]
+}
+
 /** Persisted camera transform. `null` in a doc means "fit on load". */
 export interface CanvasViewport {
   x: number
@@ -168,6 +183,11 @@ export interface CanvasDoc {
    * folded back on load — only `orchestration` connectors are carried in memory.
    */
   connectors: Connector[]
+  /**
+   * Named board groups (schema v6). Optional so a pre-migration v5 doc still parses;
+   * the v5→v6 migration backfills `[]` and `fromObject` always returns a present array.
+   */
+  groups?: NamedGroup[]
 }
 
 // ── Sizes ─────────────────────────────────────────────────────────────────────
@@ -278,7 +298,8 @@ export function toObject(
     schemaVersion: SCHEMA_VERSION,
     viewport: viewport ? { ...viewport } : null,
     boards: structuredClone(boards),
-    connectors: structuredClone(connectors)
+    connectors: structuredClone(connectors),
+    groups: []
   }
 }
 
@@ -298,7 +319,10 @@ const MIGRATIONS: Record<number, Migration> = {
   // previewSourceId into a `preview` connector (the stable preview-<id>), so an older
   // project's preview links survive into the connector model. `previewSourceId` is left
   // on the board untouched (it stays the runtime source of truth — Decision B).
-  4: (doc) => ({ ...doc, schemaVersion: 5, connectors: previewConnectorsFor(doc.boards) })
+  4: (doc) => ({ ...doc, schemaVersion: 5, connectors: previewConnectorsFor(doc.boards) }),
+  // v6 adds `groups` (named board clusters). Backfill an empty array — older projects
+  // have no groups. Boards/connectors are untouched.
+  5: (doc) => ({ ...doc, schemaVersion: 6, groups: (doc as CanvasDoc).groups ?? [] })
 }
 
 /**
