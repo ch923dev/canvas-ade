@@ -20,11 +20,17 @@ export type TextColorToken = (typeof TEXT_COLOR_TOKENS)[number]
 
 /** Defaults chosen so a v5 text element (no tokens) renders byte-identical to pre-v6. */
 export const TEXT_DEFAULTS = {
-  fontFamily: 'sans' as FontFamilyToken,
-  fontSize: 'M' as FontSizeToken,
-  align: 'left' as TextAlignToken,
-  color: 'default' as TextColorToken,
+  fontFamily: 'sans',
+  fontSize: 'M',
+  align: 'left',
+  color: 'default',
   bold: false
+} satisfies {
+  fontFamily: FontFamilyToken
+  fontSize: FontSizeToken
+  align: TextAlignToken
+  color: TextColorToken
+  bold: boolean
 }
 
 /** Live family stack (CSS custom prop). */
