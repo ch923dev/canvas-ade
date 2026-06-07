@@ -376,7 +376,8 @@ app.whenReady().then(async () => {
   stopRecapWatch = watchRecapMap(recapMapPath, (m) => {
     recapMap = m
     const patches = [...m.entries()].map(([boardId, e]) => ({ boardId, ...e }))
-    mainWindow?.webContents.send('recap:learned', patches)
+    const wc = mainWindow?.webContents
+    if (wc && !wc.isDestroyed()) wc.send('recap:learned', patches)
   })
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
