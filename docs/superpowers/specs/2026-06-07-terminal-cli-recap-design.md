@@ -104,8 +104,12 @@ claudeProjectSlug(cwd: string): string
 // every non-alphanumeric char → '-'.  'Z:\Canvas ADE' -> 'Z--Canvas-ADE'
 // (verified against this repo's own ~/.claude/projects dir)
 
-locateClaudeTranscript(home, cwd, fs): string | undefined
-// newest *.jsonl (by mtime) in ~/.claude/projects/<slug>/. undefined if none.
+locateClaudeTranscript(home, cwd, fs, sessionId?): string | undefined
+// PRIMARY: when sessionId is known (app-assigned, see §4.3), the file is exactly
+//   ~/.claude/projects/<slug>/<sessionId>.jsonl  — verified: the transcript filename IS the
+//   session id (Claude Code docs, cli-reference + sessions). If the slug path misses, glob
+//   ~/.claude/projects/**/<sessionId>.jsonl (we own the uuid → find it regardless of slug).
+// FALLBACK (no sessionId — user supplied own claude flags, or non-claude): newest *.jsonl by mtime.
 
 interface Milestone { ts: number; role: 'user' | 'agent'; text: string }
 extractMilestones(jsonl, opts): Milestone[]
@@ -115,8 +119,10 @@ extractMilestones(jsonl, opts): Milestone[]
 // Skip malformed lines. Cap to last N milestones (e.g. 12) + per-text char cap.
 ```
 
-- **Newest-by-mtime** disambiguates a cwd holding several sessions. Known limitation: two `claude`
-  boards in the *same* cwd are ambiguous → documented; distinct board cwds avoid it.
+- **App-assigned session id is the disambiguator.** Because the app mints the uuid and the transcript
+  filename equals the session id, N concurrent `claude` boards in the *same* cwd each resolve to their
+  own `<uuid>.jsonl` — no ambiguity. Newest-by-mtime is now only the fallback for boards where we did
+  not inject a session id.
 - Excluding tool records is what keeps the input small/cheap AND keeps the recap noise-free.
 
 ### 4.2 `src/main/summaryLoop.ts` (EXTEND — terminal recap path)
@@ -148,12 +154,31 @@ LLM returns:  { now: string, notes: string[] }   // notes[i] ↔ milestone i (by
 - Output is written via the existing `canvasMemory.writeBoard` → `.canvas/memory/board-{id}.md`. One
   artifact, rendered by both surfaces.
 
-### 4.3 `src/main/index.ts` (WIRE — minimal, shared file)
+### 4.3 Session-id assignment at spawn (NEW — the disambiguator)
+
+To pinpoint a board's transcript even with N concurrent same-cwd `claude` sessions, the **app assigns
+the session id** instead of guessing:
+
+- Add `agentSessionId?: string` to `TerminalBoard` (`src/renderer/.../boardSchema.ts`). Persisted so
+  the recap survives an app reopen (the transcript lives under `~/.claude`, which persists).
+  **⚠️ cross-zone:** `boardSchema.ts` is currently owned by the `feat/text-font-toolbar` worktree
+  (TextElement + schema v6). Coordinate the field add + any `schemaVersion` bump on the board before
+  editing (note in `ACTIVE-WORK.md`).
+- At spawn, when `detectAgentCli(launchCommand) === 'claude'` **and** the command has no
+  `--session-id` / `--resume` / `--continue`, mint a UUID v4, store it on the board, and append
+  `--session-id <uuid>` to the command **written to the PTY** (`src/main/pty.ts:552-553`). The *stored*
+  launchCommand text is unchanged (the user still sees `claude`); only the effective launch carries the
+  flag. If the user already supplied those flags, do not inject (respect their intent) → that board
+  falls back to newest-by-mtime.
+- Restart (the ⟳/restart control) mints a fresh uuid → fresh session/transcript. Reopen reuses the
+  persisted uuid → re-finds the same transcript.
+
+### 4.3b `src/main/index.ts` (WIRE — minimal, shared file)
 
 Provide `getAgentMilestones` when constructing the summary loop (near the existing `getTerminalRuntime`
-wiring at `:264`): read board (type/launchCommand/cwd) → `detectAgentCli` → if `claude`,
-`locateClaudeTranscript` + `extractMilestones`. cwd from the board's `cwd`, fallback to the open
-project dir.
+wiring at `:264`): read board (type/launchCommand/cwd/**agentSessionId**) → `detectAgentCli` → if
+`claude`, `locateClaudeTranscript(home, cwd, fs, agentSessionId)` + `extractMilestones`. cwd from the
+board's `cwd`, fallback to the open project dir.
 
 ### 4.4 `src/main/agentRecapWatcher.ts` (NEW — slice B, hands-free)
 
@@ -276,7 +301,10 @@ Gate per CLAUDE.md: `pnpm typecheck · lint · format:check · vitest`, then the
 
 1. **Surface:** board **flip** (primary) + DigestPanel (project overview). Not ⟳-only.
 2. **Slice-B debounce:** 20–30s.
-3. **Same-cwd ambiguity:** accept newest-by-mtime + document; distinct board cwds avoid it.
+3. **Same-cwd ambiguity → SOLVED by app-assigned session id.** App mints the uuid + injects
+   `claude --session-id <uuid>`; transcript filename = the uuid, so N concurrent same-cwd sessions each
+   resolve to their own file. Newest-by-mtime is only the fallback (user-supplied claude flags /
+   non-claude). Verified against Claude Code docs.
 4. **Ship A + B together.**
 5. **Recap content:** NOW + timestamped meaningful-moment notes; drop tool-call noise; real timestamps
    by code, notes by one LLM call.
@@ -287,11 +315,13 @@ Gate per CLAUDE.md: `pnpm typecheck · lint · format:check · vitest`, then the
 
 | File | Change |
 |---|---|
-| `src/main/agentTranscript.ts` | NEW — detect / locate / extractMilestones (pure) |
+| `src/main/agentTranscript.ts` | NEW — detect / locate-by-sessionId / extractMilestones (pure) |
 | `src/main/agentTranscript.test.ts` | NEW — unit |
 | `src/main/summaryLoop.ts` | EXTEND — terminal recap: milestone prompt, one structured call, code-assembled timeline; `getAgentMilestones` dep |
+| `src/main/pty.ts` | inject `--session-id <uuid>` at spawn for claude (guarded); surface the minted id back to the board |
 | `src/main/index.ts` | WIRE — provide `getAgentMilestones` (minimal) |
 | `src/main/agentRecapWatcher.ts` | NEW (slice B) — debounced mtime watcher |
+| `src/renderer/.../boardSchema.ts` | `agentSessionId?: string` on TerminalBoard (**cross-zone: text-font-toolbar owns this file + schema version**) |
 | `src/renderer/.../TerminalBoard.tsx` | flip control + flipped state (xterm stays mounted) |
 | `src/renderer/.../RecapView.tsx` | NEW — back-face NOW + timeline + ⟳ |
 | `e2e/*recap*.e2e.ts` + fake-claude fixture | NEW — live-chain proof |
