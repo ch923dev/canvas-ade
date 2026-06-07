@@ -57,7 +57,7 @@ import {
   type RecapMapEntry
 } from './agentRecapMap'
 import { registerRecapHandlers, readConsent } from './recapConsent'
-import { detectAgentCli, extractMilestones } from './agentTranscript'
+import { extractMilestones } from './agentTranscript'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 
 let mainWindow: BrowserWindow | null = null
@@ -200,16 +200,18 @@ app.whenReady().then(async () => {
   const recordScript = join(__dirname, 'hooks', 'recordSession.js')
   let recapMap = new Map<string, RecapMapEntry>()
 
-  // ── Recap env provider (Task 10 Step 2): consent-gated, claude-only ─────────────────
+  // ── Recap env provider (Task 10 Step 2): consent-gated ──────────────────────────────
   // pty.ts calls this LAST when building a spawn's env (inside its own try/catch). We inject
-  // CANVAS_RECAP_BOARD ONLY when (a) a project is open, (b) the user has CONSENTED for it, and
-  // (c) the board's launchCommand actually runs `claude`. The map path is baked into the hook's
-  // install args, so the spawn env carries only the invisible board id. `cwd` is unused here.
-  setRecapEnvProvider(({ id, launchCommand }) => {
+  // CANVAS_RECAP_BOARD for EVERY terminal spawn in a CONSENTED project — NOT only boards whose
+  // launchCommand is literally `claude`, because a user commonly opens a shell board and types
+  // `claude` by hand; gating on launchCommand left those sessions with an empty board id in the
+  // map (the hook fired but never saw the var). The env var is just a harmless board id and is
+  // only ever read by a consented-project claude SessionStart hook, so injecting it on a shell
+  // that never runs claude is a no-op. The map path is baked into the hook's install args.
+  setRecapEnvProvider(({ id }) => {
     const dir = getCurrentDir()
     if (!dir) return undefined
     if (readConsent(userData, dir) !== 'enabled') return undefined
-    if (detectAgentCli(launchCommand) !== 'claude') return undefined
     return { CANVAS_RECAP_BOARD: id }
   })
 

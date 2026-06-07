@@ -22,7 +22,7 @@ import { createBudgetStore } from './llmBudget'
 import { createCanvasMemory } from './canvasMemory'
 import { projectName, type ProjectResult } from './projectStore'
 import type { SummarizeIntent } from './memoryEngine'
-import { detectAgentCli, type Milestone } from './agentTranscript'
+import { type Milestone } from './agentTranscript'
 
 /** Cap the board-content text fed to the model (canvas.json has no live scrollback). */
 export const MAX_INPUT_CHARS = 4000
@@ -254,26 +254,70 @@ export function buildSummarizeInput(
 // (the model is told NOT to emit timestamps) so the timeline is trustworthy even if the prose
 // drifts. Egress is secret-scrubbed (redactSecrets) per the consent contract.
 
-/** The recap system prompt — JSON-only {now, notes[]}; the app, not the model, adds timestamps. */
+/**
+ * The recap system prompt. The model receives NUMBERED milestones and returns JSON-only
+ * {now, notes:[{i,text}]}, where `i` is the milestone number a note summarizes — the app (not the
+ * model) stamps the real time from that milestone. CURATION is the point: a recap is a glance, not a
+ * log, so the model keeps only the few resume-relevant beats and drops routine churn.
+ */
 export const RECAP_SYSTEM =
-  'You are summarizing an AI coding agent session for a developer who wants to resume it. ' +
-  'Return ONLY JSON: {"now": "<1-2 sentences: what the agent is doing now + the resume point>", ' +
-  '"notes": ["<one short note per numbered milestone, in order>"]}. ' +
-  'Be factual; do not invent. Do not include timestamps (the app adds them).'
+  'You summarize an AI coding agent session for a developer who wants to resume it. You are given ' +
+  'NUMBERED milestones (the user and agent turns). Return ONLY JSON: ' +
+  '{"now": "<ONE sentence: what the agent is doing right now + where to resume>", ' +
+  '"notes": [{"i": <the milestone number this note summarizes>, "text": "<short, resume-relevant>"}]}. ' +
+  'Keep ONLY the 3-5 MOST resume-relevant moments — merge granular steps into one, and SKIP routine ' +
+  'chatter, self-corrections, mode/setup lines, and internal status. Prefer concrete decisions, ' +
+  'scope, and findings. Be factual; never invent. Do NOT write timestamps — the app adds them from `i`.'
 
 /** Cap how many distilled milestones go into one recap (matches agentTranscript's default). */
 export const MAX_MILESTONES = 12
+
+/** Hard ceiling on rendered timeline lines (a recap is a glance, not a log). */
+export const MAX_RECAP_NOTES = 5
+
+/** One curated recap note: `i` (1-based milestone number, for the timestamp) + the short text. */
+export interface RecapNote {
+  i?: number
+  text: string
+}
+/** Parsed recap payload: the NOW headline + curated, milestone-referencing notes. */
+export interface RecapPayload {
+  now: string
+  notes: RecapNote[]
+}
+
+/** Coerce one model-supplied note into a RecapNote (tolerates a bare string for back-compat). */
+function normalizeNote(n: unknown): RecapNote | null {
+  if (typeof n === 'string') return { text: n }
+  if (n && typeof n === 'object') {
+    const o = n as { i?: unknown; text?: unknown }
+    if (typeof o.text === 'string') {
+      const i = typeof o.i === 'number' && Number.isFinite(o.i) ? o.i : undefined
+      return { i, text: o.text }
+    }
+  }
+  return null
+}
 
 /**
  * Pure: parse the model's recap completion. A well-formed `{now, notes}` object → that shape; any
  * non-JSON / malformed payload degrades gracefully to NOW-only (the whole text as `now`, no notes).
  * Never throws.
+ *
+ * Robust to the common LLM habit of wrapping JSON in a markdown ```json fence (or prefacing it with
+ * prose) despite "return ONLY JSON": we slice from the first `{` to the last `}` before parsing, so
+ * a fenced/prefixed object still parses into a real NOW + timeline instead of dumping the raw blob.
  */
-export function parseRecapPayload(text: string): { now: string; notes: string[] } {
+export function parseRecapPayload(text: string): RecapPayload {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  const candidate = start >= 0 && end > start ? text.slice(start, end + 1) : text
   try {
-    const o = JSON.parse(text) as { now?: unknown; notes?: unknown }
+    const o = JSON.parse(candidate) as { now?: unknown; notes?: unknown }
     if (typeof o?.now === 'string') {
-      const notes = Array.isArray(o.notes) ? o.notes.map((n) => String(n)) : []
+      const notes = Array.isArray(o.notes)
+        ? o.notes.map(normalizeNote).filter((n): n is RecapNote => n !== null)
+        : []
       return { now: o.now, notes }
     }
   } catch {
@@ -290,24 +334,29 @@ function hhmm(ts: number): string {
 }
 
 /**
- * CODE assembles the recap markdown — real timestamps from the milestones, the NOW + per-line notes
- * from the (sanitized) model payload. Pairs notes to milestones positionally and stops at the
- * shorter of the two, so a model that returns too few/many notes never mis-times a line. Both the
- * NOW line and each note are run through sanitizeSummary (untrusted LLM output → markdown file).
+ * CODE assembles the recap markdown — real timestamps from the milestones, the NOW + curated notes
+ * from the (sanitized) model payload. Each note's timestamp comes from the milestone it references
+ * (`note.i`, 1-based); if the model omitted/over-ranged `i` we fall back to the note's positional
+ * milestone, so a stale index never mis-times or drops a line. Capped at MAX_RECAP_NOTES (a recap is
+ * a glance). Both the NOW line and each note run through sanitizeSummary (untrusted LLM → md file).
  */
 export function buildRecapMarkdown(
   title: string,
-  payload: { now: string; notes: string[] },
+  payload: RecapPayload,
   milestones: Milestone[]
 ): string {
   const head = `# ${sanitizeTitle(title) || 'Recap'}\n\n**Now:** ${sanitizeSummary(payload.now).trim()}\n`
-  const n = Math.min(payload.notes.length, milestones.length)
-  if (n === 0) return head + '\n'
+  const notes = payload.notes.slice(0, MAX_RECAP_NOTES)
+  if (notes.length === 0) return head + '\n'
   const lines: string[] = ['']
-  for (let i = 0; i < n; i++) {
-    const note = sanitizeSummary(payload.notes[i]).replace(/\n/g, ' ').trim()
-    lines.push(`- ${hhmm(milestones[i].ts)} — ${note}`)
-  }
+  notes.forEach((note, idx) => {
+    const ref =
+      note.i && note.i >= 1 && note.i <= milestones.length
+        ? milestones[note.i - 1]
+        : milestones[idx]
+    const text = sanitizeSummary(note.text).replace(/\n/g, ' ').trim()
+    lines.push(`- ${hhmm(ref ? ref.ts : 0)} — ${text}`)
+  })
   return head + lines.join('\n') + '\n'
 }
 
@@ -431,17 +480,16 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
           runtime = undefined
         }
 
-        // Task 9 (terminal recap): ADDITIVE branch. Only for a terminal board whose launchCommand
-        // is `claude` AND when the injected getAgentMilestones returns >= 1 milestone. Defensive
-        // (mirrors getTerminalRuntime): a throwing/absent getter, a non-claude/non-terminal board,
-        // or an empty milestone list → milestones stays undefined → the existing config+runtime
-        // path runs unchanged.
+        // Task 9 (terminal recap): ADDITIVE branch. Taken for ANY terminal board once the injected
+        // getAgentMilestones returns >= 1 milestone. We do NOT gate on launchCommand==='claude' here:
+        // a transcript is only ever learned (via the SessionStart hook) for a real claude session, so
+        // the presence of milestones IS the claude signal — and gating on launchCommand wrongly
+        // excluded shell boards where the user typed `claude` by hand. Defensive (mirrors
+        // getTerminalRuntime): a throwing/absent getter, a non-terminal board, or an empty milestone
+        // list → milestones stays undefined → the existing config+runtime path runs unchanged.
         let milestones: Milestone[] | undefined
         try {
-          if (
-            (board as RawBoard)?.type === 'terminal' &&
-            detectAgentCli(str((board as RawBoard).launchCommand)) === 'claude'
-          ) {
+          if ((board as RawBoard)?.type === 'terminal') {
             milestones = deps.getAgentMilestones?.(boardId, board)
           }
         } catch {
