@@ -20,7 +20,8 @@ import {
   debugViewWebContentsId
 } from './preview'
 import { debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
-import { createProject, setCurrentDir } from './projectStore'
+import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
+import { createCanvasMemory } from './canvasMemory'
 
 export interface E2EMain {
   terminalPid(id: string): number | null
@@ -75,6 +76,30 @@ export interface E2EMain {
   readClipboardText(): string
   /** True when no application menu is set (F10: Alt+V reaches xterm on Windows/Linux). */
   applicationMenuIsNull(): boolean
+  /**
+   * Terminal-recap T16: persist a canned `board-<id>.md` into the CURRENT project's
+   * `.canvas/memory/` so the renderer's `window.api.memory.readBoards([id])` (RecapView's
+   * loader) returns it on flip. e2e never opens a project (App boots dir:null), so if no
+   * dir is current this mints + sets a throwaway temp project first (mirrors
+   * createTempProject). Returns false if the write was rejected (e.g. unsafe board id).
+   */
+  writeRecapMd(boardId: string, md: string): Promise<boolean>
+}
+
+/**
+ * T16: write a canned recap md for `boardId` into the current project's `.canvas/memory/`,
+ * via the canonical writer (`createCanvasMemory(dir).writeBoard`). e2e never opens a project
+ * (App boots dir:null → MAIN's getCurrentDir() is null → memory:readBoards returns {}), so
+ * mint + set a throwaway temp project dir first if none is current (mirrors createTempProject).
+ */
+async function writeRecapMdToCurrentProject(boardId: string, md: string): Promise<boolean> {
+  let dir = getCurrentDir()
+  if (!dir) {
+    dir = mkdtempSync(join(tmpdir(), 'canvas-e2e-recap-'))
+    await createProject(dir, 'recap-e2e', {})
+    setCurrentDir(dir)
+  }
+  return createCanvasMemory(dir).writeBoard(boardId, md)
 }
 
 /**
@@ -185,6 +210,9 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     },
     applicationMenuIsNull() {
       return Menu.getApplicationMenu() === null
+    },
+    writeRecapMd(boardId, md) {
+      return writeRecapMdToCurrentProject(boardId, md)
     }
   }
 }

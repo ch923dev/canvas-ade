@@ -161,6 +161,16 @@ export default tseslint.config(
     }
   },
 
+  // e2e fixture scripts (`.mjs`) run standalone under Node (e.g. as a launchCommand
+  // child) — plain ESM modules with Node globals (process/setInterval/fs).
+  {
+    files: ['e2e/**/*.mjs'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: { ...globals.node }
+    }
+  },
+
   // Disable all formatting rules that would conflict with Prettier. MUST be last.
   eslintConfigPrettier
 )
