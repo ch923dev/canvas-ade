@@ -5,7 +5,7 @@
  * Privacy copy is a hard requirement — keep accurate (no false "nothing ever leaves" claim).
  */
 import { createPortal } from 'react-dom'
-import { useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 
 export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactElement {
   const [busy, setBusy] = useState(false)
@@ -21,11 +21,20 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
     }
   }
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && !busy) onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose, busy])
+
   return createPortal(
     <div style={scrim} data-test="recap-consent-scrim" onPointerDown={() => !busy && onClose()}>
       <div
         style={card}
         role="dialog"
+        aria-modal="true"
         aria-label="Agent recaps"
         data-test="recap-consent-modal"
         onPointerDown={(e) => e.stopPropagation()}

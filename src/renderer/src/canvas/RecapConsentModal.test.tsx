@@ -37,4 +37,11 @@ describe('RecapConsentModal', () => {
     const dialog = screen.getByRole('dialog', { name: /agent recaps/i })
     expect(dialog.textContent).toMatch(/nothing is ever sent to us/i)
   })
+
+  it('Escape key calls onClose when not busy', () => {
+    const onClose = vi.fn()
+    render(<RecapConsentModal onClose={onClose} />)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
 })
