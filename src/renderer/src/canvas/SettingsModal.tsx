@@ -7,6 +7,7 @@
 import { useEffect, useId, useState, type CSSProperties, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { DEFAULT_MODELS } from '../lib/llmModels'
+import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 
 const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
@@ -34,6 +35,27 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
   const [encryptionAvailable, setEncryptionAvailable] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const projectDir = useCanvasStore((s) => s.project.dir)
+  const [recapConsent, setRecapConsent] = useState<'enabled' | 'declined' | 'undecided'>(
+    'undecided'
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    void window.api.recap
+      .getConsent()
+      .then((c) => {
+        if (cancelled) return
+        setRecapConsent(c)
+      })
+      .catch(() => {
+        if (!cancelled) setRecapConsent('undecided')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const menuToken = useId()
   const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
@@ -239,6 +261,45 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
           </div>
         )}
 
+        <div style={styles.divider} />
+
+        <div style={styles.head}>Terminal</div>
+
+        <label style={{ ...styles.field, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+          <input
+            type="checkbox"
+            data-test="settings-recap-toggle"
+            checked={recapConsent === 'enabled'}
+            disabled={projectDir === null}
+            aria-label="Agent recaps (this project)"
+            onChange={(e) => {
+              const next = e.target.checked ? 'enabled' : 'declined'
+              setRecapConsent(next)
+              void window.api.recap.setConsent(next)
+            }}
+            style={{
+              marginTop: 2,
+              accentColor: 'var(--accent)',
+              cursor: projectDir === null ? 'not-allowed' : 'pointer'
+            }}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <span style={styles.label}>
+              Agent recaps (this project)
+              {projectDir === null && (
+                <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>
+                  {' '}
+                  — open a project to enable
+                </span>
+              )}
+            </span>
+            <span style={styles.hint}>
+              Flip a terminal to a recap of what its agent is doing. Reads the session transcript
+              locally; only a scrubbed slice is sent to your chosen LLM.
+            </span>
+          </div>
+        </label>
+
         <div style={styles.row}>
           <button style={styles.ghost} disabled={busy} onClick={() => void clear()}>
             Clear key
@@ -308,6 +369,8 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 6,
     padding: '7px 9px'
   },
+  divider: { height: 1, background: 'var(--border-subtle)', margin: '2px 0' },
+  hint: { fontSize: 11, lineHeight: '15px', color: 'var(--text-3)' },
   row: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 },
   ghost: {
     height: 30,
