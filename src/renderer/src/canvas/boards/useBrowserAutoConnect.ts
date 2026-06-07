@@ -15,7 +15,12 @@ import { useEffect, useRef } from 'react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
 import type { BrowserBoard } from '../../lib/boardSchema'
-import { planAutoConnect, backoffTicks, type PreviewStatusLike } from '../../lib/autoConnect'
+import {
+  planAutoConnect,
+  backoffTicks,
+  isHttpUrl,
+  type PreviewStatusLike
+} from '../../lib/autoConnect'
 
 const TICK_MS = 1000
 
@@ -23,15 +28,6 @@ interface Attempt {
   attempts: number
   waitTicks: number
   lastUrl: string
-}
-
-function isHttpUrl(u: string): boolean {
-  try {
-    const x = new URL(u)
-    return x.protocol === 'http:' || x.protocol === 'https:'
-  } catch {
-    return false
-  }
 }
 
 export function useBrowserAutoConnect(): void {

@@ -104,9 +104,15 @@ export function isAllowedExternal(rawUrl: string): boolean {
   return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:'
 }
 
-/** Open a URL in the OS browser ONLY if its scheme is allowlisted (Bug #23). */
-function openExternalSafe(rawUrl: string): void {
-  if (isAllowedExternal(rawUrl)) void shell.openExternal(rawUrl)
+/**
+ * Open a URL in the OS browser ONLY if its scheme is allowlisted (Bug #23). Returns
+ * whether it was actually opened (false = scheme blocked / unparseable) so callers can
+ * surface feedback; the setWindowOpenHandler caller ignores the result.
+ */
+function openExternalSafe(rawUrl: string): boolean {
+  if (!isAllowedExternal(rawUrl)) return false
+  void shell.openExternal(rawUrl)
+  return true
 }
 
 /** A cancellable navigation event (the `event` arg of will-navigate/will-redirect). */
@@ -572,8 +578,9 @@ export function registerPreviewHandlers(
   // that window.open couldn't already. Frame-guarded (Bug #33).
   ipcMain.handle('preview:openExternal', (ev, url: string) => {
     if (isForeignSender(ev, getWin)) return false
-    openExternalSafe(String(url))
-    return true
+    // Returns whether the URL was actually opened — false when the scheme is blocked
+    // (openExternalSafe allowlist, Bug #23) so the renderer can surface feedback.
+    return openExternalSafe(String(url))
   })
 }
 

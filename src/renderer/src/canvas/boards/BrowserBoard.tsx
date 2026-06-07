@@ -29,15 +29,7 @@ import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
 import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
-
-function isHttpUrl(u: string): boolean {
-  try {
-    const x = new URL(u)
-    return x.protocol === 'http:' || x.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
+import { isHttpUrl } from '../../lib/autoConnect'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {

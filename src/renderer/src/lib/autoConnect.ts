@@ -37,3 +37,13 @@ export function planAutoConnect(i: AutoConnectInput): AutoConnectPlan {
 export function backoffTicks(attempts: number): number {
   return Math.min(2 ** Math.max(0, attempts - 1), 4)
 }
+
+/** True when `u` parses as an http(s) URL — the Browser board's reconnect-eligible scheme. */
+export function isHttpUrl(u: string): boolean {
+  try {
+    const x = new URL(u)
+    return x.protocol === 'http:' || x.protocol === 'https:'
+  } catch {
+    return false
+  }
+}

@@ -144,12 +144,12 @@ describe('preview:openExternal', () => {
     expect(cap.invokeAs(internalEvent, 'preview:openExternal', 'http://localhost:3000/')).toBe(true)
   })
 
-  it('returns true but does NOT call shell.openExternal for a blocked scheme (file:)', () => {
+  it('returns false and does NOT call shell.openExternal for a blocked scheme (file:)', () => {
     const cap = createIpcCapture()
     registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
     vi.mocked(shell.openExternal).mockClear()
     const result = cap.invokeAs(internalEvent, 'preview:openExternal', 'file:///etc/passwd')
-    expect(result).toBe(true)
+    expect(result).toBe(false)
     expect(shell.openExternal).not.toHaveBeenCalled()
   })
 })

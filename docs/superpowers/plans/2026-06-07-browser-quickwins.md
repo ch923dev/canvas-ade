@@ -14,6 +14,7 @@
 - Screenshot file uses the existing content-addressed `writeAsset` (`assets/<sha1>.png`, dedup + traversal-safe + already tested) instead of a timestamped filename. The IPC returns the relative `assetId`.
 - Auto-reconnect acts only on `status === 'load-failed'` (not on in-flight `connecting`), so a slow legitimate load is never interrupted. `detect` fires when a linked board has no usable URL yet.
 - The engine keeps one always-on 1s interval (cost negligible; early-continues when idle) rather than start/stop bookkeeping (YAGNI).
+- **As-built note (supersedes Task 2's code):** the per-board `Attempt` tracks `lastUrl: string` (not the `lastStatus` shown in Task 2), and resets backoff on a URL change or on `connected` — NOT on every status transition. This avoids a fast-failing server (load-failed↔connecting flips) resetting the ramp on each retry. Also `isHttpUrl` lives in `autoConnect.ts` (imported by the hook + `BrowserBoard.tsx`), and the reload path calls `window.api.navigatePreview` directly (the `requestReload` nonce is never consumed without a `boards` mutation — see the hook comment).
 
 ---
 
