@@ -175,10 +175,18 @@ test.describe('named board groups — Ctrl+G create flow', () => {
       })()`
     )
     const gid = await evalIn<string>(page, `window.__canvasE2E.getGroups()[0].id`)
-    const beforeC = await evalIn<{ x: number; y: number }>(
-      page,
-      `(() => { const b = window.__canvasE2E.getBoards().find(x => x.id === ${JSON.stringify(ids[2])}); return { x: b.x, y: b.y } })()`
-    )
+    // Read a board's position by fetching the (arg-free) board list and finding it Node-side —
+    // NOT by interpolating the id into the in-page eval string (that builds code from a value →
+    // CodeQL js/bad-code-sanitization). getBoards() takes no args, so there is no sink.
+    const posOf = async (id: string): Promise<{ x: number; y: number }> => {
+      const boards = await evalIn<{ id: string; x: number; y: number }[]>(
+        page,
+        `window.__canvasE2E.getBoards()`
+      )
+      const b = boards.find((x) => x.id === id)!
+      return { x: b.x, y: b.y }
+    }
+    const beforeC = await posOf(ids[2])
     await evalIn(
       page,
       `window.__canvasE2E.addToGroupReflowed(${JSON.stringify(gid)}, ${JSON.stringify(ids[2])})`
@@ -188,10 +196,7 @@ test.describe('named board groups — Ctrl+G create flow', () => {
       await pollEval(page, `window.__canvasE2E.getGroups()[0].boardIds.length === 3`, 2000)
     ).toBe(true)
     // the added board was re-packed (its position changed from the seed spot)
-    const afterC = await evalIn<{ x: number; y: number }>(
-      page,
-      `(() => { const b = window.__canvasE2E.getBoards().find(x => x.id === ${JSON.stringify(ids[2])}); return { x: b.x, y: b.y } })()`
-    )
+    const afterC = await posOf(ids[2])
     expect(afterC.x !== beforeC.x || afterC.y !== beforeC.y).toBe(true)
   })
 
