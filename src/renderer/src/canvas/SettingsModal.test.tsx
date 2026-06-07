@@ -371,6 +371,24 @@ describe('Agent recaps toggle', () => {
     await waitFor(() => expect(toggle.checked).toBe(false))
   })
 
+  it('re-reads consent when the open project changes (projectDir dep)', async () => {
+    // Start with no project (dir:null) — getConsent is called once on mount.
+    recap.getConsent.mockResolvedValue('declined')
+    render(<SettingsModal onClose={() => {}} />)
+    await waitFor(() => expect(recap.getConsent).toHaveBeenCalledTimes(1))
+
+    // Simulate the user opening a project while the modal stays mounted.
+    recap.getConsent.mockResolvedValue('enabled')
+    useCanvasStore.setState({
+      project: { dir: '/new/project', name: 'new-project', status: 'open' }
+    })
+
+    // The effect must re-run, calling getConsent again and reflecting the new value.
+    await waitFor(() => expect(recap.getConsent).toHaveBeenCalledTimes(2))
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.checked).toBe(true))
+  })
+
   it('loads consent with a cancellation guard (post-unmount resolve is a no-op)', async () => {
     useCanvasStore.setState({
       project: { dir: '/some/project', name: 'my-project', status: 'open' }

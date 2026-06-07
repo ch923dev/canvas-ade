@@ -25,11 +25,6 @@ export function detectAgentCli(launchCommand?: string): AgentCli {
   return 'unknown'
 }
 
-/** Claude Code transcript dir slug: every non-alphanumeric char -> '-'. */
-export function claudeProjectSlug(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, '-')
-}
-
 export interface Milestone {
   ts: number
   role: 'user' | 'agent'

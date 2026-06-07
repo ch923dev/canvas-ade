@@ -55,7 +55,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [projectDir])
 
   const menuToken = useId()
   const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
