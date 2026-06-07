@@ -354,18 +354,29 @@ it fails, switch to the cwd+spawn-order fallback before building on it.
 > `transcript_path` · `cwd` · `source`. **Install (Task 4) uses exec form `command:"node", args:[script,
 > map]` — not the shell-form command string the spike used.**
 
-> **Implementation status 2026-06-08: COMPLETE (pending live sign-off).** All plan tasks T0–T16 built
-> via subagent-driven TDD (each task: implementer + 2-stage spec/quality review, all green). Local gate
-> green at branch tip `18c16f1`: `typecheck` clean · `lint` 0 errors · `format:check` clean · `vitest`
-> **1480 passed / 120 files**; the deterministic flip-to-recap e2e (`recap.e2e.ts`) passes on the Windows
-> leg. A final whole-implementation review returned **SHIP** — end-to-end flow connected, the privacy
-> guarantee verified at the egress boundary (a test captures the real fetch body and asserts raw
-> `sk-…`/`ghp_…` tokens are absent / `[redacted]`), cross-zone changes additive + clean. **STILL OPEN
-> (the bar): Step 3 — real-`claude` live verification** (run a real agent in a terminal board, flip,
-> confirm an accurate NOW + timestamped timeline, edit → watcher refreshes ≤~25s, screenshot). That step
-> is a manual GUI gate and is NOT yet done; this banner records the gate/review state only, not the live
-> sign-off. (`claudeProjectSlug` slug-dir fallback dropped as dead code — the spike passed, so it was
-> never wired.)
+> **Implementation status 2026-06-08: COMPLETE + LIVE-VERIFIED.** All plan tasks T0–T16 built via
+> subagent-driven TDD (each task: implementer + 2-stage spec/quality review, all green). A final
+> whole-implementation review returned **SHIP** — end-to-end flow connected, the privacy guarantee
+> verified at the egress boundary (a test captures the real fetch body and asserts raw `sk-…`/`ghp_…`
+> tokens are absent / `[redacted]`), cross-zone changes additive + clean.
+>
+> **✅ Live-verified by the user (real `claude`, 2026-06-08):** ran a real agent doing a PR review in a
+> terminal board → flipped → the recap showed an accurate NOW + a real-timestamped timeline of the
+> resume-relevant moments. Four issues found + fixed during the live pass (all gate-green): (1) the
+> recap was unclickable — the 3-D flip mis-mapped pointer hit-testing → replaced with an opaque overlay;
+> (2) a hand-typed `claude` left an empty boardId in the map — the env var was gated on
+> `launchCommand==='claude'` → now injected for any terminal in a consented project (summaryLoop likewise
+> keys on the learned transcript, not the launch string); (3) the model wrapped its JSON in a ```json
+> fence → `parseRecapPayload` now slices the `{…}` out before parsing; (4) the timeline was a verbose
+> per-turn log → the model now curates the 3-5 most resume-relevant beats (`{now, notes:[{i,text}]}`),
+> code stamps real times via the milestone index, capped at `MAX_RECAP_NOTES`.
+>
+> **Resume shipped in-branch (was §12 fast-follow):** the Restart control now offers Resume / New on a
+> board with a learned `agentSessionId`; Resume respawns `claude --resume <id>`. Live-confirmed.
+>
+> Gate green at tip `f0bd4cd`: `typecheck` clean · `lint` 0 errors · `format:check` clean · `vitest`
+> **1486 passed / 120 files**; deterministic flip-to-recap e2e passes. (`claudeProjectSlug` slug-dir
+> fallback dropped as dead code — the spike passed, so it was never wired.)
 
 **Unit (vitest, pure — `agentTranscript.test.ts`):**
 - `detectAgentCli`: `claude`, `claude --resume x`, `npx claude`, `pwsh -c claude`, `aider`, empty.
@@ -433,10 +444,11 @@ Gate per CLAUDE.md: `pnpm typecheck · lint · format:check · vitest`, then the
 
 ## 12. Deferred follow-ups (not this feature)
 
-1. **Resume agent (fast-follow).** Storing `agentSessionId` already lays the groundwork. Add a
-   "Resume agent" affordance that relaunches `claude --resume <sessionId>` in the board to continue the
-   real conversation. Small; intentionally out of this feature to keep the first ship focused on the
-   verified recap.
+1. **Resume agent — ✅ SHIPPED in-branch (2026-06-08, was a deferred fast-follow).** The Restart control
+   on a board with a learned `agentSessionId` opens a Resume / New menu; Resume respawns
+   `claude --resume <sessionId>` to continue the real conversation (one-shot `launchOverride` consumed by
+   `respawn`). Live-verified. Remaining follow-up: an e2e for the menu/spawn-command (currently covered
+   only by the live pass) + handling multiple past sessions per board (a picker) if needed.
 
 2. **MCP self-report enrichment + swarm wiring.** Evaluated and deferred (2026-06-07). Verification
    showed MCP **cannot replace the hook** for recaps:
