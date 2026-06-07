@@ -35,6 +35,7 @@ describe('FreeText typography', () => {
       base({ fontFamily: 'mono', fontSize: 'XL', align: 'center', color: 'accent', bold: true })
     )
     expect(ta.style.fontSize).toBe('26px')
+    expect(ta.style.lineHeight).toBe('36px')
     expect(ta.style.fontFamily).toBe('var(--term-mono)')
     expect(ta.style.textAlign).toBe('center')
     expect(ta.style.color).toBe('var(--accent)')

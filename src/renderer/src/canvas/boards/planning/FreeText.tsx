@@ -55,7 +55,10 @@ export function FreeText({
       const host = el.parentElement // the .pl-text flex row
       if (host) onMeasure(element.id, host.offsetWidth, host.offsetHeight)
     }
-  }, [element.text, onMeasure, element.id])
+    // Re-measure when a size-affecting typography token changes (not just text): a
+    // toolbar fontSize/family/bold change resizes the textarea, so the selection/snap
+    // bbox must be recomputed too. align/color don't affect the measured box.
+  }, [element.text, element.fontSize, element.fontFamily, element.bold, onMeasure, element.id])
 
   // Focus a freshly-dropped empty text element so the user can type immediately,
   // AND so leaving it untouched blurs → prunes it instead of leaving an orphan
