@@ -6,8 +6,10 @@
  */
 import type { ReactElement } from 'react'
 import { usePreviewManager, type LayerProps } from './usePreviewManager'
+import { useBrowserAutoConnect } from './useBrowserAutoConnect'
 
 export function BrowserPreviewLayer(props: LayerProps): ReactElement | null {
   usePreviewManager(props)
+  useBrowserAutoConnect()
   return null
 }
