@@ -61,7 +61,10 @@ export interface DetectedUrl {
 }
 
 /** Mirrors main `ScreenshotResult` (preview:screenshot). assetId is the relative
- *  `assets/<sha1>.png` path, or null when copied to clipboard but not saved. */
+ *  `assets/<sha1>.png` path, or null when copied to clipboard but not saved.
+ *  `ok:false` with reason `not-live` means the view is detached or off-screen so
+ *  `capturePage()` would return a blank image; reason `forbidden` means the sender
+ *  was not the trusted app renderer (should never occur from normal app flow). */
 export type PreviewScreenshotResult =
   | { ok: true; assetId: string | null }
   | { ok: false; reason: 'not-live' | 'forbidden' }

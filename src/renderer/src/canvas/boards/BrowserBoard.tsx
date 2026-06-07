@@ -20,7 +20,7 @@
  * Security: this never touches the PTY. URL edits + nav go through the additive
  * `preview:*` control channel to the view's OWN webContents only.
  */
-import { useState, type ReactElement } from 'react'
+import { useState, useRef, useEffect, type ReactElement } from 'react'
 import type { BrowserBoard as BrowserBoardData, BrowserViewport } from '../../lib/boardSchema'
 import { VIEWPORT_PRESETS, deviceFrameRect, TITLEBAR_H, URLBAR_H } from '../../lib/browserLayout'
 import { BoardFrame } from '../BoardFrame'
@@ -139,10 +139,19 @@ export function BrowserBoard({
   const [draftUrl, setDraftUrl] = useState(board.url)
   const [lastUrl, setLastUrl] = useState(board.url)
   const [note, setNote] = useState<string | null>(null)
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   if (board.url !== lastUrl) {
     setLastUrl(board.url)
     setDraftUrl(board.url)
   }
+
+  // Clear the note timer on unmount to prevent setState-after-unmount.
+  useEffect(
+    () => () => {
+      if (noteTimer.current) clearTimeout(noteTimer.current)
+    },
+    []
+  )
 
   const commitUrl = (): void => {
     const next = draftUrl.trim()
@@ -163,12 +172,15 @@ export function BrowserBoard({
   }
 
   const openExternal = (): void => {
-    void window.api.openExternalPreview(runtime.liveUrl ?? board.url)
+    void window.api.openExternalPreview(runtime.liveUrl ?? board.url).then((ok) => {
+      if (!ok) showNote('Cannot open that URL in a browser')
+    })
   }
 
   const showNote = (msg: string): void => {
+    if (noteTimer.current) clearTimeout(noteTimer.current)
     setNote(msg)
-    window.setTimeout(() => setNote((n) => (n === msg ? null : n)), 2500)
+    noteTimer.current = setTimeout(() => setNote(null), 2500)
   }
 
   const takeScreenshot = (): void => {
@@ -310,15 +322,21 @@ export function BrowserBoard({
           {preset.notch && <div className="bb-notch" />}
           <DeviceContent runtime={runtime} url={board.url} willRetry={willRetry} />
         </div>
-        {note && (
-          <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
-            {note}
-            <button className="ca-preview-dismiss" onClick={() => setNote(null)}>
-              Dismiss
-            </button>
-          </div>
-        )}
       </div>
+      {/* Screenshot / open-external feedback toast. Rendered OUTSIDE .bb-stage so the
+          native WebContentsView (which paints above all HTML inside .bb-stage) does not
+          occlude it. The .ca-preview-note CSS (position:absolute; top:8px; z-index:4)
+          anchors this relative to the BoardFrame content div, placing it in the
+          URL-bar / title-bar zone that is pure HTML and never overlaid by a native view.
+          ADR 0002. */}
+      {note && (
+        <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
+          {note}
+          <button className="ca-preview-dismiss" onClick={() => setNote(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
     </BoardFrame>
   )
 }
