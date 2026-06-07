@@ -14,13 +14,13 @@ const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
 
 /**
- * BUG-024: must mirror boardSchema.SCHEMA_VERSION (5). MAIN cannot import the renderer
+ * BUG-024: must mirror boardSchema.SCHEMA_VERSION (6). MAIN cannot import the renderer
  * module, so this constant is duplicated here. It is tested (see projectStore.test.ts)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation.
  */
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }

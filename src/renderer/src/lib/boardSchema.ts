@@ -11,14 +11,27 @@
  * `cameraBounds.Rect`, which is screen-geometry math, not persisted board data.
  */
 
+import {
+  FONT_FAMILY_TOKENS,
+  FONT_SIZE_TOKENS,
+  TEXT_ALIGN_TOKENS,
+  TEXT_COLOR_TOKENS,
+  type FontFamilyToken,
+  type FontSizeToken,
+  type TextAlignToken,
+  type TextColorToken
+} from '../canvas/boards/planning/textStyle'
+
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
  *
  * SCHEMA-VERSION CLAIM (2026-06-03): **v5 is MCP M2 — spatial connectors.** The
  * draw.io (D2/D3) and any future whiteboard track also plan a bump; first-to-land
  * takes v5, the others rebase to v6+. Do not silently reuse v5 for a different shape.
+ * v6: free-text typography tokens (fontFamily / fontSize / align / color / bold — all
+ * optional on TextElement; defaulted at render time). Identity migration (no backfill).
  */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -82,6 +95,11 @@ export interface NoteElement extends ElementCommon {
 export interface TextElement extends ElementCommon {
   kind: 'text'
   text: string
+  fontFamily?: FontFamilyToken
+  fontSize?: FontSizeToken
+  align?: TextAlignToken
+  color?: TextColorToken
+  bold?: boolean
 }
 
 export interface ArrowElement extends ElementCommon {
@@ -298,7 +316,9 @@ const MIGRATIONS: Record<number, Migration> = {
   // previewSourceId into a `preview` connector (the stable preview-<id>), so an older
   // project's preview links survive into the connector model. `previewSourceId` is left
   // on the board untouched (it stays the runtime source of truth — Decision B).
-  4: (doc) => ({ ...doc, schemaVersion: 5, connectors: previewConnectorsFor(doc.boards) })
+  4: (doc) => ({ ...doc, schemaVersion: 5, connectors: previewConnectorsFor(doc.boards) }),
+  // v6: free-text typography tokens (all optional → identity bump; defaulted at render).
+  5: (doc) => ({ ...doc, schemaVersion: 6 })
 }
 
 /**
@@ -396,6 +416,19 @@ function assertPlanningElement(el: unknown): void {
       return
     case 'text':
       if (typeof el.text !== 'string') fail('text element is missing string text')
+      if (
+        el.fontFamily !== undefined &&
+        !FONT_FAMILY_TOKENS.includes(el.fontFamily as FontFamilyToken)
+      )
+        fail(`text element has invalid fontFamily ${String(el.fontFamily)}`)
+      if (el.fontSize !== undefined && !FONT_SIZE_TOKENS.includes(el.fontSize as FontSizeToken))
+        fail(`text element has invalid fontSize ${String(el.fontSize)}`)
+      if (el.align !== undefined && !TEXT_ALIGN_TOKENS.includes(el.align as TextAlignToken))
+        fail(`text element has invalid align ${String(el.align)}`)
+      if (el.color !== undefined && !TEXT_COLOR_TOKENS.includes(el.color as TextColorToken))
+        fail(`text element has invalid color ${String(el.color)}`)
+      if (el.bold !== undefined && typeof el.bold !== 'boolean')
+        fail('text element has non-boolean bold')
       return
     case 'arrow':
       if (!isFiniteNum(el.x2) || !isFiniteNum(el.y2)) fail('arrow element has non-finite x2/y2')
