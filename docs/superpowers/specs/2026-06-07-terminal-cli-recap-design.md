@@ -345,6 +345,15 @@ Best-effort throughout; never throws into save/summarize:
 `CANVAS_RECAP_BOARD` set + a `SessionStart` hook that writes `env` → confirm the hook sees the var. If
 it fails, switch to the cwd+spawn-order fallback before building on it.
 
+> **Spike result 2026-06-07: PASS.** Real `claude` 2.1.162 launched headless (`claude -p "say hi"
+> --dangerously-skip-permissions`) from a shell with `CANVAS_RECAP_BOARD=spike-123` exported, in a temp
+> project carrying a `SessionStart` hook → the hook's `hook-saw.txt` recorded `BOARD=spike-123`. Env IS
+> inherited by SessionStart hooks; the env-var bridge is validated. **Fallback (cwd+spawn-order) NOT
+> needed.** Also confirmed (Claude Code docs, hook schema): the hook object supports an `args: []` array
+> (exec form — no shell, safe for the spaced repo path), and stdin carries `session_id` ·
+> `transcript_path` · `cwd` · `source`. **Install (Task 4) uses exec form `command:"node", args:[script,
+> map]` — not the shell-form command string the spike used.**
+
 **Unit (vitest, pure — `agentTranscript.test.ts`):**
 - `detectAgentCli`: `claude`, `claude --resume x`, `npx claude`, `pwsh -c claude`, `aider`, empty.
 - `extractMilestones`: keeps user + assistant text turns w/ real timestamps; **drops tool_use/
