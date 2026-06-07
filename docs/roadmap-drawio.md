@@ -104,7 +104,7 @@ Same "authored as text, rendered visually, source canonical" pattern the design 
 checklists. Covers ~80% of "I need a real diagram on my canvas" WITHOUT reopening ADR 0001.
 
 - **How:** add `MermaidElement {kind:'mermaid'; x;y;w;h; source:string}` to the `PlanningElement`
-  union (`boardSchema.ts`); bump `SCHEMA_VERSION` + no-op `MIGRATIONS` entry; new `assertPlanningElement`
+  union (`boardSchema.ts`); bump `SCHEMA_VERSION` **6→7** (after the v6 text-typography slice; see ADR 0004) + no-op `MIGRATIONS` entry; new `assertPlanningElement`
   case (string source, finite positive w/h). Add a `'mermaid'` tool to `PlanTool` + the `TOOLS`
   cluster. Render via the MIT `mermaid` npm lib (**lazy-loaded** so non-mermaid boards don't pay the
   d3+dagre bundle) into a new `MermaidCard` sibling to `NoteCard`/`FreeText`/`ChecklistCard`;

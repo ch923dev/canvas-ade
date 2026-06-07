@@ -72,10 +72,9 @@ Grounded in current code + the existing draw.io/Excalidraw research + external b
 tldraw, draw.io internals; FigJam/Miro/Linear/Maestri feature landscape).
 
 ### Quick wins (S, do first)
-- **#13 Resolve the v6 schema-version owner** (S, **P1**). v6 is **triple-contested** — draw.io D2 Mermaid,
-  file-editor "editor" board, PR #72 Diagram each assume they own the next bump. Every research doc's bump
-  numbers are **stale** (written at v2/v3/v4). Pick one owner (or sequence v6/v7/v8), update the four docs to
-  bump from **5**. Pure coordination that de-risks every downstream element slice.
+- **#13 ✅ Schema-version owner resolved** — v6 is owned by the **text-font-toolbar slice** (ADR 0004,
+  2026-06-07). draw.io D2 Mermaid takes **v7**; file-editor and PR #72 Diagram rebase their bump numbers
+  accordingly. All four research-doc bump numbers updated to reflect the v6→v7 sequence.
 - **#1 User-visible failure toast** for image-write + export (S, **P1**). Closes the known W5 follow-up; the
   error returns + cancel-vs-error distinction already exist and are tested — only the surface is missing.
 - **#16 Derive export colors from the single `tints.ts`/CSS source** + parity test (S, P3). Kills R7.
@@ -123,7 +122,7 @@ is read-only**, so the loop isn't wired yet.
 - **#12 Element-anchored connectors** (L, P2) — arrows that bind to note/checklist anchors and re-route on
   move (Excalidraw **focus+gap** math, resolved at render time). Restrict targets to note+checklist to hold
   the line against the full shapes epic. The de-risking prerequisite for any text→diagram generator. Needs
-  the coordinated v6 bump.
+  the coordinated v7 bump (after the v6 text-typography slice; see ADR 0004).
 - **#17 Dependency-aware checklist + kanban/sections + dispatch-aware templates** (XL, P3) — blocked-by gating
   for safe parallel fan-out, status-driven kanban columns (To-Plan/Dispatched/In-Progress/Verified automated
   from M5), and "Feature build"/"Bug triage"/"Architecture map" starter templates. The durable differentiator
@@ -131,7 +130,7 @@ is read-only**, so the loop isn't wired yet.
 
 ### Lower priority
 - **#14 Resize/rotate handle layer** keyed off `elementBBox` + optional per-element `z` (tldraw IndexKey
-  fractional-index style) — needs v6 (L, P3).
+  fractional-index style) — needs v7 (after the v6 text-typography slice; see ADR 0004) (L, P3).
 - **#15 Keyboard nudge + element copy/paste** via JSON clipboard (M, P3; `Ctrl+V` fires at `document` — use
   a focus-gated document listener, Excalidraw pattern).
 
@@ -143,7 +142,7 @@ is read-only**, so the loop isn't wired yet.
 |---|---|---|
 | **focus+gap binding** (arrow holds `{elementId,focus,gap}` + reciprocal `boundElements`; `updateBoundPoint` projects onto perimeter) | Excalidraw `binding.ts` | #12 anchored connectors. MEDIUM. |
 | **RBush R-tree** spatial index (O(log n) marquee/erase/cull) | tldraw | #3. Pure-JS, sandbox-safe, no node imports. |
-| **IndexKey fractional z-order** (reorder = one element, not array splice) | tldraw | #14. Needs v6. |
+| **IndexKey fractional z-order** (reorder = one element, not array splice) | tldraw | #14. Needs v7 (after the v6 text-typography slice; see ADR 0004). |
 | **mark + ignore-ephemeral undo** (squash gesture → one step; no-op → zero diff by construction) | tldraw `HistoryManager` | #5 — formalizes our Bug #7 ad-hoc guards. |
 | **inverse-transform hit-test** (screen→world→local, slop ÷ zoom) | tldraw `getPointInShapeSpace` | hardens selection under `scale(z)`. Inverse math already exists in preview-sync. |
 | **canonical freehand pipeline** (memoize `getStroke`, single filled `<path>` via `getSvgPathFromStroke`, `last:true`, real pressure) | perfect-freehand | #2. |
@@ -160,7 +159,7 @@ interchange means a Mermaid element doubles as the agent read/write contract.
 1. **No tldraw/Excalidraw as a dependency** (ADR 0001). Borrow *patterns/math*, not libs. The geometric
    **shapes epic** reverses ADR 0001 → stays DEFERRED behind a **new ADR + the Mermaid demand-gate**. Never a
    silent build.
-2. **Schema bumps from v5** + an in-order migration. Never silently reuse v5. Sequence the triple-contested v6.
+2. **Schema bumps from v6** (text-font-toolbar, ADR 0004) + an in-order migration. Never silently reuse v6. Next bump is v7 (draw.io D2 Mermaid / PR #72 Diagram).
 3. **Preserve the scene/session split absolutely** — never add ephemeral keys (tool/draft/marquee/hover/
    dispatch-status/measured sizes) to `PATCHABLE_KEYS` or route them into `elements[]` (`canvasStore.ts:320-323`).
 4. **Respect the undo invariants** (Bug #7/#11/#24/#28/#29/#37) — lazy `beginChange` at commit; no phantom
@@ -196,4 +195,4 @@ interchange means a Mermaid element doubles as the agent read/write contract.
 **One-line thesis:** the planning board is a mature, well-tested whiteboard with a clean data model and a
 couple of real perf/feedback gaps to close — but its *strategic* upside isn't more whiteboard parity, it's
 wiring the checklist into the agent boards already on the canvas (dispatch + MCP-write + status-sync), which
-no competitor can match. Fix R1/R2 + decide the v6 owner first; then build the closed loop.
+no competitor can match. Fix R1/R2 (v6 owner resolved — ADR 0004); then build the closed loop.
