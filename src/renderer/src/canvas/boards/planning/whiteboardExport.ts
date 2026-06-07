@@ -35,7 +35,9 @@ export const ARROW_COLOR = EXPORT_COLORS.borderStrong
 const STROKE_FILL = EXPORT_COLORS.text2
 const ARROW_MARKER_ID = 'wb-export-arrow'
 
-const FONT = 'system-ui, -apple-system, Segoe UI, sans-serif'
+// The default export font = the canonical sans stack (single source; checklist inline
+// <text> nodes + textBlock's default both use it → no R7-class drift).
+const FONT = FAMILY_EXPORT.sans
 const R_INNER = 6
 const R_BOARD = 8
 
