@@ -956,11 +956,11 @@ describe('schema v6 — text typography fields', () => {
       connectors: [],
       boards: [planBoard([{ id: 't', kind: 'text', x: 0, y: 0, text: 'x', [field]: value }])]
     })
-    expect(() => fromObject(bad('fontSize', 'XXL'))).toThrow()
-    expect(() => fromObject(bad('fontFamily', 'comic'))).toThrow()
-    expect(() => fromObject(bad('align', 'justify'))).toThrow()
-    expect(() => fromObject(bad('color', '#fff'))).toThrow()
-    expect(() => fromObject(bad('bold', 'yes'))).toThrow()
+    expect(() => fromObject(bad('fontSize', 'XXL'))).toThrow(/fontSize/)
+    expect(() => fromObject(bad('fontFamily', 'comic'))).toThrow(/fontFamily/)
+    expect(() => fromObject(bad('align', 'justify'))).toThrow(/align/)
+    expect(() => fromObject(bad('color', '#fff'))).toThrow(/color/)
+    expect(() => fromObject(bad('bold', 'yes'))).toThrow(/bold/)
   })
 
   it('round-trips the typography fields through toObject/fromObject', () => {
