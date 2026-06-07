@@ -1,7 +1,8 @@
 # ADR 0004 — Text font controls (narrow reversal of "Tweaks panel cut")
 
 **Status:** Accepted · **Date:** 2026-06-07 · **Supersedes (narrowly):** the "Tweaks panel cut entirely"
-line in CLAUDE.md › Locked decisions, and the ADR 0001 AVOID entry "Font/size/align props panel · Excalifont".
+line in CLAUDE.md › Locked decisions, and the whiteboard-epic AVOID entry "Font/size/align props panel ·
+Excalifont" (`docs/archive/2026-06-03-whiteboard-epic.md`).
 
 ## Context
 The Planning board's free-`text` element had a single fixed font/size/color. Developers asked for basic
