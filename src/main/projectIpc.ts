@@ -97,7 +97,11 @@ export function registerProjectHandlers(
   memoryEngine: MemoryEngine = createMemoryEngine({ onIntent: logSummarizeIntent }),
   // T-F4: the manual-refresh sink. index.ts wires this to summaryLoop.onIntent so a user ⟳ runs
   // the SAME budgeted/passive summarize the detector does (no new egress). Default = no-op.
-  onRefresh: (boardId: string) => Promise<void> = async () => {}
+  onRefresh: (boardId: string) => Promise<void> = async () => {},
+  // Terminal recap (Task 10): fired with the project dir whenever a project is opened/reopened
+  // (project:open + project:current). index.ts wires this to re-ensure the recap SessionStart hook
+  // for an already-consented project. Default = no-op. Best-effort (never aborts the open).
+  onProjectOpen: (dir: string) => void = () => {}
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
@@ -153,6 +157,13 @@ export function registerProjectHandlers(
       const allReferencedIds = new Set<string>([...primaryIds, ...bakIds])
       gcAssets(r.dir, allReferencedIds)
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
+      // Terminal recap (Task 10): re-ensure the recap SessionStart hook for an already-consented
+      // project. Best-effort — a hook-install failure must NEVER abort the open.
+      try {
+        onProjectOpen(r.dir)
+      } catch (err) {
+        console.warn('[recap] onProjectOpen failed on project:open (non-fatal)', err)
+      }
       try {
         memoryEngine.reset() // T-M2: a project switch drops stale fingerprints/timers
         // Baseline from the LOADED doc so the FIRST meaningful post-open edit emits an intent.
@@ -250,6 +261,13 @@ export function registerProjectHandlers(
       const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
       gcAssets(r.dir, new Set([...primaryIds, ...bakIds]))
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
+      // Terminal recap (Task 10): re-ensure the recap SessionStart hook for an already-consented
+      // project on auto-reopen. Best-effort — never abort the reopen.
+      try {
+        onProjectOpen(r.dir)
+      } catch (err) {
+        console.warn('[recap] onProjectOpen failed on project:current (non-fatal)', err)
+      }
       try {
         memoryEngine.reset() // T-M2: re-baseline on reopen/switch
         // Baseline from the loaded doc (see project:open) so the first post-reopen edit emits.

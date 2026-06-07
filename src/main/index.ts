@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
-import { writeFileSync, mkdtempSync } from 'fs'
+import { writeFileSync, mkdtempSync, readFileSync, existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
   registerPtyHandlers,
@@ -11,7 +11,8 @@ import {
   readPtyOutput,
   drainPty,
   writeToPty,
-  getTerminalRuntime
+  getTerminalRuntime,
+  setRecapEnvProvider
 } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { readBoardResult, recordBoardResult } from './boardResults'
@@ -48,10 +49,21 @@ import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
 import { registerClipboardHandlers } from './clipboardIpc'
 import { makeFlushChannel, makeFlushFinish } from './flushChannel'
+// Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
+import {
+  watchRecapMap,
+  installRecapHook,
+  removeRecapHook,
+  type RecapMapEntry
+} from './agentRecapMap'
+import { registerRecapHandlers, readConsent } from './recapConsent'
+import { detectAgentCli, extractMilestones } from './agentTranscript'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
+// Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
+let stopRecapWatch: (() => void) | null = null
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "mcp"=MCP tier smoke+quit
 
@@ -174,6 +186,30 @@ app.whenReady().then(async () => {
   )
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
 
+  // ── Terminal/agent-CLI session recap: app-owned constants (Task 10 Step 1) ──────────
+  // The session map (boardId → {sessionId, transcriptPath}) and the SessionStart hook script
+  // are app-owned and live in userData / the bundled main dir — NEVER in a project folder.
+  // `recordScript` resolves relative to the bundled main output (out/main); a build-time copy
+  // step lands recordSession.js at out/main/hooks/ and electron-builder asarUnpacks it so the
+  // external `node <path>` Claude hook has a real on-disk file at runtime (see Step 6).
+  const userData = app.getPath('userData')
+  const recapMapPath = join(userData, 'recap', 'session-map.jsonl')
+  const recordScript = join(__dirname, 'hooks', 'recordSession.js')
+  let recapMap = new Map<string, RecapMapEntry>()
+
+  // ── Recap env provider (Task 10 Step 2): consent-gated, claude-only ─────────────────
+  // pty.ts calls this LAST when building a spawn's env (inside its own try/catch). We inject
+  // CANVAS_RECAP_BOARD ONLY when (a) a project is open, (b) the user has CONSENTED for it, and
+  // (c) the board's launchCommand actually runs `claude`. The map path is baked into the hook's
+  // install args, so the spawn env carries only the invisible board id. `cwd` is unused here.
+  setRecapEnvProvider(({ id, launchCommand }) => {
+    const dir = getCurrentDir()
+    if (!dir) return undefined
+    if (readConsent(userData, dir) !== 'enabled') return undefined
+    if (detectAgentCli(launchCommand) !== 'claude') return undefined
+    return { CANVAS_RECAP_BOARD: id }
+  })
+
   // The local preview server is a convenience (dev/preview fallback URL), not a hard
   // boot dependency. If listen() fails (EACCES from AV/firewall loopback denial,
   // EMFILE/ENFILE under fd exhaustion, ENETDOWN), surface a clear diagnostic and
@@ -199,7 +235,7 @@ app.whenReady().then(async () => {
   // in that boot window had its audit entry silently dropped (getAuditLog() → null → the
   // `?? Promise.resolve()` short-circuit), leaving an invisible gap in the forensic trail.
   // Append-only JSONL under userData (NEVER the project folder — must outlive any project).
-  registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: app.getPath('userData') }))
+  registerAuditHandler(ipcMain, () => mainWindow, createAuditLog({ dir: userData }))
   mcp = await startMcpServer({
     listBoards: listBoardMirror,
     // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
@@ -245,9 +281,7 @@ app.whenReady().then(async () => {
   // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the
   // retired CANVAS_SMOKE=e2e), so gate on both — the old SMOKE-only guard was dead (F-A).
   const llmIsolated = !!process.env.CANVAS_E2E || SMOKE === 'e2e'
-  const llmDataDir = llmIsolated
-    ? mkdtempSync(join(tmpdir(), 'canvas-e2e-llm-'))
-    : app.getPath('userData')
+  const llmDataDir = llmIsolated ? mkdtempSync(join(tmpdir(), 'canvas-e2e-llm-')) : userData
   if (llmIsolated) process.env.CANVAS_E2E_LLM_DIR = llmDataDir
 
   // T-M3: the Tier-2 autonomous summary loop. The detector (T-M2) emits a {boardId} intent;
@@ -261,7 +295,26 @@ app.whenReady().then(async () => {
     getCurrentDir,
     readProject,
     // T-F1: fold each terminal board's live runtime (running/idle/exited) into its summary.
-    getTerminalRuntime
+    getTerminalRuntime,
+    // Terminal recap (Task 10 Step 4): distil a claude board's transcript into milestones. The
+    // loop only invokes this for a claude terminal board (it gates on type + detectAgentCli). We
+    // prefer an explicit per-board transcript path on the doc, else the learned recap-map entry.
+    // Defensive + read-only: a missing path / read error / parse failure → undefined, and the loop
+    // falls back to its config+runtime summary (no action surface, never throws past this).
+    getAgentMilestones: (boardId, board) => {
+      const path =
+        (board as { agentTranscriptPath?: string })?.agentTranscriptPath ??
+        recapMap.get(boardId)?.transcriptPath
+      if (!path || !existsSync(path)) return undefined
+      try {
+        return extractMilestones(readFileSync(path, 'utf8'), {
+          maxMilestones: 12,
+          maxTextChars: 600
+        })
+      } catch {
+        return undefined
+      }
+    }
   })
   const memoryEngine = createMemoryEngine({
     onIntent: (intent) => void summaryLoop.onIntent(intent)
@@ -269,14 +322,62 @@ app.whenReady().then(async () => {
   registerProjectHandlers(
     ipcMain,
     () => mainWindow,
-    app.getPath('userData'),
+    userData,
     undefined,
     memoryEngine,
     // T-F4: manual ⟳ refresh → the SAME budgeted/passive summarize the detector drives (awaited so
     // the renderer can flip its "updating…" state off once the prose is rewritten).
-    (boardId) => summaryLoop.onIntent({ boardId })
+    (boardId) => summaryLoop.onIntent({ boardId }),
+    // Terminal recap (Task 10 Step 5): on opening an already-consented project, re-ensure the recap
+    // SessionStart hook so a project consented in a prior session keeps recording. Idempotent
+    // (installRecapHook no-ops when present). Best-effort — projectIpc wraps this in try/catch.
+    (dir) => {
+      if (readConsent(userData, dir) === 'enabled') {
+        installRecapHook({
+          projectDir: dir,
+          nodePath: process.execPath,
+          scriptPath: recordScript,
+          mapPath: recapMapPath
+        })
+      }
+    }
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
+
+  // ── Recap consent IPC + hook-install policy (Task 10 Step 5) ────────────────────────
+  // recap:getConsent / recap:setConsent (frame-guarded inside recapConsent.ts). The decision
+  // callback is the SINGLE place that mutates the project's .claude/settings.local.json hook:
+  // 'enabled' → install (idempotent), anything else → remove only OUR entry. The map path is
+  // baked into the hook args here so the external Claude process appends to the app-owned map.
+  registerRecapHandlers(
+    ipcMain,
+    () => mainWindow,
+    userData,
+    getCurrentDir,
+    (projectPath, decision) => {
+      if (decision === 'enabled') {
+        installRecapHook({
+          projectDir: projectPath,
+          nodePath: process.execPath,
+          scriptPath: recordScript,
+          mapPath: recapMapPath
+        })
+      } else {
+        removeRecapHook(projectPath, recordScript)
+      }
+    }
+  )
+
+  // ── Recap map watcher (Task 10 Step 3): learned transcript paths → renderer ──────────
+  // The external hook appends {boardId, sessionId, transcriptPath} to the app-owned map as
+  // Claude sessions start. Watch it (debounced), keep the in-memory `recapMap` fresh (read by
+  // getAgentMilestones above), and push the learned per-board paths to the renderer so a board
+  // can show its recap. Disposed on quit alongside the other native resources (see shutdown()).
+  stopRecapWatch = watchRecapMap(recapMapPath, (m) => {
+    recapMap = m
+    const patches = [...m.entries()].map(([boardId, e]) => ({ boardId, ...e }))
+    mainWindow?.webContents.send('recap:learned', patches)
+  })
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls
   // summarize once and logs the provider's reply to MAIN stdout. With no key set this
@@ -335,6 +436,11 @@ function shutdown(): Promise<void> {
   mcp = null
   localServer?.close()
   localServer = null
+  // Terminal recap (Task 10): stop the session-map fs.watch so it can't fire after teardown.
+  // Idempotent — watchRecapMap's disposer is safe to call once; null it so a second shutdown()
+  // (this fn is shared by before-quit + the crash sinks) is a no-op.
+  stopRecapWatch?.()
+  stopRecapWatch = null
   return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 

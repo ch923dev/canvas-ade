@@ -12,9 +12,15 @@ files:
 
 # node-pty ships a native .node binary + helper executables that must NOT be
 # packed inside app.asar, or they fail only in the packaged build.
+#
+# The terminal-recap SessionStart hook (recordSession.js) is run by an EXTERNAL process
+# (Claude, via `node <path>`), so it needs a REAL on-disk path — a path inside app.asar
+# can't be executed by node. Unpack it (alongside the native binaries) so it is extracted
+# to app.asar.unpacked and the `recordScript` path computed in main resolves to a real file.
 asarUnpack:
   - '**/*.node'
   - 'node_modules/node-pty/**'
+  - '**/hooks/recordSession.js'
 
 npmRebuild: true
 
