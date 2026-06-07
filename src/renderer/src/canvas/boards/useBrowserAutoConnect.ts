@@ -80,7 +80,11 @@ export function useBrowserAutoConnect(): void {
         a.waitTicks = backoffTicks(a.attempts)
 
         if (plan.kind === 'reload') {
-          usePreviewStore.getState().requestReload(board.id)
+          // Navigate directly to the board URL: requestReload only bumps a nonce that
+          // reconcile reads on the NEXT canvasStore.boards mutation — with an unchanged
+          // URL there is no boards mutation, so the nonce is never consumed. Direct IPC
+          // (navigatePreview → loadURL) bypasses the diff-skip and re-navigates immediately.
+          void window.api.navigatePreview(board.id, board.url)
         } else if (plan.kind === 'detect') {
           const sourceId = board.previewSourceId
           // type-narrow: previewSourceId is optional in the schema, though detect implies it is set
