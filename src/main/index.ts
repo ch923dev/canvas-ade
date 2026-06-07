@@ -58,12 +58,15 @@ import {
 } from './agentRecapMap'
 import { registerRecapHandlers, readConsent } from './recapConsent'
 import { detectAgentCli, extractMilestones } from './agentTranscript'
+import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
 let stopRecapWatch: (() => void) | null = null
+// Terminal recap (Task 11 — Slice B): hands-free mtime watcher; one per app lifetime.
+let recapWatcher: RecapWatcher | null = null
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "mcp"=MCP tier smoke+quit
 
@@ -316,6 +319,13 @@ app.whenReady().then(async () => {
       }
     }
   })
+  // Terminal recap (Task 11 — Slice B): create the ONE mtime watcher for this app lifetime.
+  // Each learned transcript path (from the recap:learned flow below) is registered here so
+  // any write to the transcript file debounce-fires summaryLoop.onIntent → auto-refreshed recap.
+  recapWatcher = createRecapWatcher({
+    debounceMs: 25_000,
+    onIntent: (id) => void summaryLoop.onIntent({ boardId: id })
+  })
   const memoryEngine = createMemoryEngine({
     onIntent: (intent) => void summaryLoop.onIntent(intent)
   })
@@ -376,6 +386,12 @@ app.whenReady().then(async () => {
   stopRecapWatch = watchRecapMap(recapMapPath, (m) => {
     recapMap = m
     const patches = [...m.entries()].map(([boardId, e]) => ({ boardId, ...e }))
+    // Task 11 (Slice B): register each learned transcript path with the mtime watcher so
+    // writes to the file auto-debounce into a summaryLoop.onIntent call. track() is idempotent
+    // for already-watched boards (it disposes + re-arms), so re-reads of the map are safe.
+    for (const [boardId, entry] of m.entries()) {
+      recapWatcher?.track(boardId, entry.transcriptPath)
+    }
     const wc = mainWindow?.webContents
     if (wc && !wc.isDestroyed()) wc.send('recap:learned', patches)
   })
@@ -442,6 +458,10 @@ function shutdown(): Promise<void> {
   // (this fn is shared by before-quit + the crash sinks) is a no-op.
   stopRecapWatch?.()
   stopRecapWatch = null
+  // Terminal recap (Task 11 — Slice B): dispose the mtime watcher (clears all fs.watch handles
+  // and pending debounce timers) so nothing fires post-teardown.
+  recapWatcher?.dispose()
+  recapWatcher = null
   return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 
