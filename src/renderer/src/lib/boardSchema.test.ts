@@ -165,6 +165,15 @@ describe('toObject', () => {
     doc.boards[0].x = 9999
     expect(boards[0].x).toBe(0)
   })
+
+  it('toObject round-trips groups (deep-cloned)', () => {
+    const groups = [{ id: 'g1', name: 'Auth', boardIds: ['b1'] }]
+    const doc = toObject([], null, [], groups)
+    expect(doc.groups).toEqual(groups)
+    // deep clone: mutating the input must not change the doc
+    groups[0].name = 'changed'
+    expect(doc.groups?.[0].name).toBe('Auth')
+  })
 })
 
 describe('round-trip', () => {
@@ -468,23 +477,23 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 6', () => {
-    expect(SCHEMA_VERSION).toBe(6)
+  it('SCHEMA_VERSION is 7', () => {
+    expect(SCHEMA_VERSION).toBe(7)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 6, viewport: vp, boards: [], connectors: [] })
+    expect(doc).toEqual({ schemaVersion: 7, viewport: vp, boards: [], connectors: [], groups: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
     expect(toObject([], null).viewport).toBeNull()
   })
 
-  it('migrates a v1 doc (no viewport) to v6 (via v2–v5) with viewport=null', () => {
+  it('migrates a v1 doc (no viewport) to v7 (via v2–v6) with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(6)
+    expect(out.schemaVersion).toBe(7)
     expect(out.viewport).toBeNull()
   })
 
@@ -654,8 +663,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 6', () => {
-    expect(SCHEMA_VERSION).toBe(6)
+  it('SCHEMA_VERSION is 7', () => {
+    expect(SCHEMA_VERSION).toBe(7)
   })
 
   it('round-trips a valid image element', () => {
@@ -677,7 +686,7 @@ describe('W4 image element', () => {
     expect(() => fromObject(imageBoard('assets/x.png', { w: 0 }))).toThrow(/non-positive/)
   })
 
-  it('migrates a v3 doc (with an image element) to current version', () => {
+  it('migrates a v3 doc (with an image element) to the current version', () => {
     const v3 = {
       schemaVersion: 3,
       viewport: null,
@@ -695,7 +704,7 @@ describe('W4 image element', () => {
       ]
     }
     const doc = fromObject(v3)
-    expect(doc.schemaVersion).toBe(6)
+    expect(doc.schemaVersion).toBe(7)
     const el = (doc.boards[0] as { elements: Array<{ assetId: string; w: number }> }).elements[0]
     expect(el.assetId).toBe('assets/y.png')
     expect(el.w).toBe(50)
@@ -703,6 +712,68 @@ describe('W4 image element', () => {
 
   it('rejects a negative h', () => {
     expect(() => fromObject(imageBoard('assets/x.png', { h: -1 }))).toThrow(/non-positive/)
+  })
+})
+
+// ── Named Board Groups (schema v6) ────────────────────────────────────────────
+describe('schema v6 — board groups', () => {
+  it('SCHEMA_VERSION is 7', () => {
+    expect(SCHEMA_VERSION).toBe(7)
+  })
+
+  it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
+    const v5 = { schemaVersion: 5, viewport: null, boards: [], connectors: [] }
+    const migrated = migrate(v5 as never)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.groups).toEqual([])
+  })
+
+  it('preserves existing groups when migrating a v6 doc forward (6→7)', () => {
+    const v6 = {
+      schemaVersion: 6,
+      viewport: null,
+      boards: [],
+      connectors: [],
+      groups: [{ id: 'g1', name: 'Auth', boardIds: [] }]
+    }
+    const migrated = migrate(v6 as never)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: [] }])
+  })
+})
+
+describe('fromObject — groups validation + reconciliation', () => {
+  const base = (groups: unknown): unknown => ({
+    schemaVersion: 6,
+    viewport: null,
+    boards: [
+      { id: 'b1', type: 'terminal', x: 0, y: 0, w: 300, h: 200, title: 'T' },
+      { id: 'b2', type: 'terminal', x: 0, y: 0, w: 300, h: 200, title: 'T' }
+    ],
+    connectors: [],
+    groups
+  })
+
+  it('keeps a valid group and prunes boardIds that point at missing boards', () => {
+    const doc = fromObject(base([{ id: 'g1', name: 'Auth', boardIds: ['b1', 'ghost'] }]))
+    expect(doc.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: ['b1'] }])
+  })
+
+  it('keeps a group whose boards were all pruned (named-empty survives)', () => {
+    const doc = fromObject(base([{ id: 'g1', name: 'Auth', boardIds: ['ghost'] }]))
+    expect(doc.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: [] }])
+  })
+
+  it('throws on a malformed group (non-string-array boardIds)', () => {
+    expect(() => fromObject(base([{ id: 'g1', name: 'Auth', boardIds: [5] }]))).toThrow(
+      /fromObject/
+    )
+  })
+
+  it('defaults a v6 doc with no groups field to an empty array', () => {
+    const { groups: _omit, ...noGroups } = base([]) as Record<string, unknown>
+    const doc = fromObject(noGroups)
+    expect(doc.groups).toEqual([])
   })
 })
 
@@ -736,7 +807,7 @@ describe('M2 connectors (schema v5)', () => {
     })
   })
 
-  describe('migration 4→5', () => {
+  describe('migration 4→5→6', () => {
     it('backfills an empty connectors array on a doc with no preview links', () => {
       const v4 = { schemaVersion: 4, viewport: null, boards: [term()] } as unknown as CanvasDoc
       const out = migrate(structuredClone(v4))
@@ -894,7 +965,7 @@ describe('M2 connectors (schema v5)', () => {
   })
 })
 
-describe('schema v6 — text typography fields', () => {
+describe('schema v7 — text typography fields', () => {
   const planBoard = (els: unknown[]): unknown => ({
     id: 'p',
     type: 'planning',
@@ -906,7 +977,7 @@ describe('schema v6 — text typography fields', () => {
     elements: els
   })
 
-  it('migrates a v5 doc to v6 leaving text elements untouched', () => {
+  it('migrates a v5 doc to current leaving text elements untouched', () => {
     const v5 = {
       schemaVersion: 5,
       viewport: null,
@@ -914,7 +985,7 @@ describe('schema v6 — text typography fields', () => {
       boards: [planBoard([{ id: 't', kind: 'text', x: 1, y: 2, text: 'hi' }])]
     }
     const out = migrate(structuredClone(v5) as never)
-    expect(out.schemaVersion).toBe(6)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect((out.boards[0] as { elements: unknown[] }).elements[0]).toEqual({
       id: 't',
       kind: 'text',

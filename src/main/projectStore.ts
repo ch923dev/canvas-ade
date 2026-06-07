@@ -14,13 +14,13 @@ const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
 
 /**
- * BUG-024: must mirror boardSchema.SCHEMA_VERSION (6). MAIN cannot import the renderer
+ * BUG-024: must mirror boardSchema.SCHEMA_VERSION (7). MAIN cannot import the renderer
  * module, so this constant is duplicated here. It is tested (see projectStore.test.ts)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation.
  */
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
@@ -131,7 +131,7 @@ export async function createProject(
   // created via the one envelope-guarded + atomic path (the same guard project:save uses)
   // — a future change to the fresh-doc shape can't silently bypass it. There is no prior
   // file here (reuse-if-exists returned above), so the .bak rotation is a no-op.
-  // BUG-024: use SCHEMA_VERSION (6) so fresh docs match the current schema contract;
+  // BUG-024: use SCHEMA_VERSION (7) so fresh docs match the current schema contract;
   // include connectors:[] (added at v4→v5) so external tooling never sees a stale marker.
   const fresh = { schemaVersion: SCHEMA_VERSION, viewport: null, boards: [], connectors: [] }
   await writeProject(dir, fresh)

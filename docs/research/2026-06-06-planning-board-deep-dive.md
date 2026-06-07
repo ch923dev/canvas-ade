@@ -72,9 +72,10 @@ Grounded in current code + the existing draw.io/Excalidraw research + external b
 tldraw, draw.io internals; FigJam/Miro/Linear/Maestri feature landscape).
 
 ### Quick wins (S, do first)
-- **#13 ✅ Schema-version owner resolved** — v6 is owned by the **text-font-toolbar slice** (ADR 0004,
-  2026-06-07). draw.io D2 Mermaid takes **v7**; file-editor and PR #72 Diagram rebase their bump numbers
-  accordingly. All four research-doc bump numbers updated to reflect the v6→v7 sequence.
+- **#13 ✅ Schema-version owner resolved** — **v7** is owned by the **text-font-toolbar slice** (ADR 0004,
+  2026-06-07; rebased from v6 → v7 at merge because Named Board Groups #84 landed v6 = `groups` first).
+  draw.io D2 Mermaid now takes **v8**; file-editor and PR #72 Diagram rebase their bump numbers
+  accordingly.
 - **#1 User-visible failure toast** for image-write + export (S, **P1**). Closes the known W5 follow-up; the
   error returns + cancel-vs-error distinction already exist and are tested — only the surface is missing.
 - **#16 Derive export colors from the single `tints.ts`/CSS source** + parity test (S, P3). Kills R7.

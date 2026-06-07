@@ -68,6 +68,23 @@ describe('resolveCanvasKeyAction', () => {
     expect(resolveCanvasKeyAction(chord('t'), { typing: false, bareKeyAllowed: false })).toBeNull()
   })
 
+  it('Ctrl/Cmd+G resolves to group (not while typing)', () => {
+    expect(resolveCanvasKeyAction(chord('g', { ctrlKey: true }), FREE)).toEqual({ kind: 'group' })
+    expect(resolveCanvasKeyAction(chord('g', { metaKey: true }), FREE)).toEqual({ kind: 'group' })
+    expect(
+      resolveCanvasKeyAction(chord('g', { ctrlKey: true }), { typing: true, bareKeyAllowed: false })
+    ).toBeNull()
+    // Alt+Ctrl+G is a different chord — not group.
+    expect(resolveCanvasKeyAction(chord('g', { ctrlKey: true, altKey: true }), FREE)).toBeNull()
+  })
+
+  it('bare f resolves to focusGroup only when bare keys are allowed', () => {
+    expect(resolveCanvasKeyAction(chord('f'), FREE)).toEqual({ kind: 'focusGroup' })
+    expect(resolveCanvasKeyAction(chord('f'), { typing: false, bareKeyAllowed: false })).toBeNull()
+    // Modified f is not the bare focus key.
+    expect(resolveCanvasKeyAction(chord('f', { ctrlKey: true }), FREE)).toBeNull()
+  })
+
   it('returns null for unbound keys', () => {
     expect(resolveCanvasKeyAction(chord('a'), FREE)).toBeNull()
     expect(resolveCanvasKeyAction(chord('Enter'), FREE)).toBeNull()

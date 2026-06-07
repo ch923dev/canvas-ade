@@ -49,9 +49,9 @@ import {
   type Guide,
   type Rect
 } from '../lib/alignmentGuides'
-import { snapOthers } from '../lib/boardGeometry'
+import { snapOthers, boardsBounds } from '../lib/boardGeometry'
 import { AlignmentGuides } from './AlignmentGuides'
-import { nodeChangesToIntents } from '../lib/nodeChanges'
+import { nodeChangesToIntents, foldSelectionIntents } from '../lib/nodeChanges'
 import type { TileTemplate } from '../lib/tileLayout'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { buildBoardNodes, type NodeCache } from './boardNodes'
@@ -67,6 +67,13 @@ import { BoardActionsContext, type BoardActions } from './boardActions'
 import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
+import { GroupBoxLayer, GROUP_BOX_PAD, GROUP_BOX_INSET_STEP } from './GroupBoxLayer'
+import { GroupNamePopover } from './GroupNamePopover'
+import { GroupFocusPicker } from './GroupFocusPicker'
+import { GroupContextMenu } from './GroupContextMenu'
+import { nextGroupName } from '../lib/groupName'
+import { groupFitMaxZoom, computeGroupBoxes } from '../lib/groupBoxes'
+import { packGroupMembers, groupBoxAt } from '../lib/groupReflow'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
@@ -206,13 +213,18 @@ function FadingDots(): ReactElement {
   )
 }
 
+// Group-create chord glyph: ⌘G on macOS, Ctrl+G elsewhere (the keybinding fires on either
+// Ctrl or ⌘). Mirrors TerminalBoard's IS_MAC detection so the FAB label matches the real key.
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
+
 function CanvasInner(): ReactElement {
   const boards = useCanvasStore((s) => s.boards)
-  const selectedId = useCanvasStore((s) => s.selectedId)
+  const selectedIds = useCanvasStore((s) => s.selectedIds)
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const resizeBoard = useCanvasStore((s) => s.resizeBoard)
   const removeBoard = useCanvasStore((s) => s.removeBoard)
   const selectBoard = useCanvasStore((s) => s.selectBoard)
+  const setSelection = useCanvasStore((s) => s.setSelection)
   const beginChange = useCanvasStore((s) => s.beginChange)
   const undo = useCanvasStore((s) => s.undo)
   const redo = useCanvasStore((s) => s.redo)
@@ -221,6 +233,15 @@ function CanvasInner(): ReactElement {
   const connectors = useCanvasStore((s) => s.connectors)
   const addConnector = useCanvasStore((s) => s.addConnector)
   const removeConnector = useCanvasStore((s) => s.removeConnector)
+  // groupSelection mints groups via useCanvasStore.getState().addGroup (it reads selectedIds +
+  // groups off the live snapshot in the same call), so only renameGroup needs a reactive binding.
+  const renameGroup = useCanvasStore((s) => s.renameGroup)
+  const removeGroup = useCanvasStore((s) => s.removeGroup)
+  const addBoardsToGroupReflowed = useCanvasStore((s) => s.addBoardsToGroupReflowed)
+  const removeBoardFromAllGroups = useCanvasStore((s) => s.removeBoardFromAllGroups)
+  // Reactive groups read for the focus picker (it lists one row per group; needs to re-render
+  // when groups change). The fit/select helpers read off getState() so they don't depend on it.
+  const groups = useCanvasStore((s) => s.groups)
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
   const viewport = useCanvasStore((s) => s.viewport)
@@ -235,6 +256,24 @@ function CanvasInner(): ReactElement {
   const setNodeGesture = usePreviewStore((s) => s.setNodeGesture)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
+  // Group create/rename: the inline name popover (anchored in client space) + the group whose
+  // name it is editing (null = closed). Ephemeral — never persisted.
+  const [namingGroupId, setNamingGroupId] = useState<string | null>(null)
+  const [namePopAt, setNamePopAt] = useState<{ x: number; y: number } | null>(null)
+  // Grouped focus: when >1 group exists the focus action opens this picker (anchored top-center
+  // of the pane); null = closed. The camera fit itself is in `fitGroup`.
+  const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null)
+  // Right-click-a-tab context menu (manage a group): null = closed. Anchored at the click point.
+  const [groupMenu, setGroupMenu] = useState<{ id: string; at: { x: number; y: number } } | null>(
+    null
+  )
+  // S6 "absorb" reflow: while true, a `.reflowing` class arms the board-node + group-box
+  // CSS transition so members glide into the re-packed cluster. EPHEMERAL — never persisted.
+  const [reflowing, setReflowing] = useState(false)
+  const reflowTimerRef = useRef<number | null>(null)
+  // S6 drag-onto-box: the group box under the dragged board's center (a non-member drop
+  // target), glowing accent; null = no target. EPHEMERAL — never persisted.
+  const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null)
   // M2 connector gesture (EPHEMERAL — never persisted): the source board of an in-flight
   // connector drag + the live pointer (client coords) for the rubber-band overlay; the
   // currently-selected orchestration connector (for the ✕ / Delete-key affordances).
@@ -360,8 +399,8 @@ function CanvasInner(): ReactElement {
   const [nodeCache] = useState<NodeCache>(() => new Map())
   const nodes = useMemo<BoardFlowNode[]>(
     () =>
-      buildBoardNodes(boards, { selectedId, focusedId, fullViewId, cameraFullViewId }, nodeCache),
-    [boards, selectedId, focusedId, fullViewId, cameraFullViewId, nodeCache]
+      buildBoardNodes(boards, { selectedIds, focusedId, fullViewId, cameraFullViewId }, nodeCache),
+    [boards, selectedIds, focusedId, fullViewId, cameraFullViewId, nodeCache]
   )
 
   // Preview-link arrows (Slice C′): one accent connector per Browser board linked to
@@ -491,17 +530,18 @@ function CanvasInner(): ReactElement {
         setGuides((g) => (g.length ? [] : g))
       }
 
-      let nextSel: string | null | undefined
-      for (const intent of nodeChangesToIntents(changes)) {
+      // Apply each change's SIDE EFFECTS (move/resize/remove); the multi-selection is folded
+      // after the loop by the pure foldSelectionIntents (nodeChanges.ts, unit-tested) so the
+      // select/deselect/ghost-id-prune rules live in one place. Snapshot selectedIds BEFORE the
+      // loop — removeBoard sweeps it mid-loop, but the fold result below is authoritative.
+      const intents = nodeChangesToIntents(changes)
+      const selBefore = useCanvasStore.getState().selectedIds
+      for (const intent of intents) {
         if (intent.kind === 'move') updateBoard(intent.id, { x: intent.x, y: intent.y })
         else if (intent.kind === 'resize') resizeBoard(intent.id, intent.w, intent.h)
-        else if (intent.kind === 'select') nextSel = intent.id
-        else if (intent.kind === 'deselect') {
-          if (nextSel === undefined) nextSel = null
-        } else if (intent.kind === 'remove') {
-          // #15: parking a terminal's live session BEFORE removal lets undo adopt it.
-          // Sent before removeBoard → main parks before the unmount's kill arrives
-          // (a single renderer's IPC is delivered in send order).
+        else if (intent.kind === 'remove') {
+          // #15: park a terminal's live session BEFORE removal so undo can adopt it. RF's
+          // deleteKeyCode removes EVERY selected node, so this loops over the whole selection.
           const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
           if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id)
           // #BUG-012: keyboard-delete (deleteKeyCode) reaches removal HERE, bypassing
@@ -520,14 +560,19 @@ function CanvasInner(): ReactElement {
           removeBoard(intent.id)
           setFocusedId((f) => (f === intent.id ? null : f))
         }
+        // select/deselect carry no side effect — folded below (ghost-id prune included).
       }
-      if (nextSel !== undefined) selectBoard(nextSel)
+      const folded = foldSelectionIntents(selBefore, intents)
+      if (folded.changed) setSelection(folded.ids)
     },
+    // Merged deps: the multi-select fold uses setSelection (groups branch); the keyboard-delete
+    // path uses the full-view cleanup refs/closers (#BUG-012, #85). selectBoard is no longer
+    // referenced here (setSelection drives selection).
     [
       updateBoard,
       resizeBoard,
       removeBoard,
-      selectBoard,
+      setSelection,
       boards,
       rf,
       fullViewIdRef,
@@ -550,6 +595,99 @@ function CanvasInner(): ReactElement {
       setFocusedId(null)
     },
     [rf]
+  )
+
+  // Create a group from the current multi-selection (>=2 boards). Mints the group with an
+  // auto-name, then opens the inline name popover over the selection's top-left so the user can
+  // rename immediately (Esc keeps the auto-name). No-op for <2 selected.
+  const groupSelection = useCallback(() => {
+    const st = useCanvasStore.getState()
+    const ids = st.selectedIds
+    // Resolve the selection to LIVE boards first, and require >=2 of them BEFORE minting the
+    // group — otherwise boards deleted between selection and Ctrl+G would commit a group over
+    // stale ids with no locatable bounds (no popover), leaving an orphan the user can't rename.
+    const sel = st.boards.filter((b) => ids.includes(b.id))
+    const bb = boardsBounds(sel)
+    if (sel.length < 2 || !bb) return
+    const name = nextGroupName(st.groups)
+    const gid = st.addGroup(
+      name,
+      sel.map((b) => b.id)
+    )
+    const p = rf.flowToScreenPosition({ x: bb.minX, y: bb.minY })
+    setNamePopAt({ x: p.x, y: Math.max(8, p.y - 40) })
+    setNamingGroupId(gid)
+  }, [rf])
+
+  // Fit the camera to one group's member boards (raster-capped). Mirrors focusBoard but over the
+  // whole member set; exits dim-focus first so the others aren't left dimmed (#14 parity).
+  const fitGroup = useCallback(
+    (groupId: string) => {
+      const st = useCanvasStore.getState()
+      const g = st.groups.find((x) => x.id === groupId)
+      if (!g) return
+      const members = st.boards.filter((b) => g.boardIds.includes(b.id))
+      if (members.length === 0) return
+      setFocusedId(null)
+      const maxZoom = groupFitMaxZoom(members, Z_MAX)
+      void rf.fitView(
+        cameraAnim({ ...FOCUS_OPTIONS, maxZoom, nodes: members.map((b) => ({ id: b.id })) })
+      )
+    },
+    [rf]
+  )
+
+  // Tab single-click selects all of a group's members (also reused by S5).
+  const selectGroupMembers = useCallback((groupId: string) => {
+    const st = useCanvasStore.getState()
+    const g = st.groups.find((x) => x.id === groupId)
+    if (g) st.setSelection(g.boardIds)
+  }, [])
+
+  // Focus action (key `f` + camera-cluster button + tab double-click): 0 groups → no-op,
+  // 1 group → fit it directly, >1 → open the picker anchored at the pane's top-center.
+  const focusGroup = useCallback(() => {
+    const st = useCanvasStore.getState()
+    if (st.groups.length === 0) return
+    if (st.groups.length === 1) {
+      fitGroup(st.groups[0].id)
+      return
+    }
+    const r = paneRef.current?.getBoundingClientRect()
+    setPickerAt({
+      x: r ? r.left + r.width / 2 : window.innerWidth / 2,
+      y: (r?.top ?? 0) + 56
+    })
+  }, [fitGroup])
+
+  // S6 "absorb": add board(s) to a group and animate the cluster re-packing to absorb them.
+  // Arms the .reflowing transition for one window, commits membership + the packed member
+  // positions in ONE tracked step, then disarms. Honors reduced motion (the CSS no-ops the
+  // transition); the membership/position commit happens regardless.
+  const reflowAddToGroup = useCallback(
+    (groupId: string, boardIds: string[]) => {
+      const st = useCanvasStore.getState()
+      const g = st.groups.find((x) => x.id === groupId)
+      if (!g) return
+      const memberIds = new Set([...g.boardIds, ...boardIds])
+      const members = st.boards.filter((b) => memberIds.has(b.id))
+      const placements = packGroupMembers(members)
+      setReflowing(true)
+      addBoardsToGroupReflowed(groupId, boardIds, placements)
+      if (reflowTimerRef.current != null) clearTimeout(reflowTimerRef.current)
+      reflowTimerRef.current = window.setTimeout(() => {
+        setReflowing(false)
+        reflowTimerRef.current = null
+      }, 340)
+    },
+    [addBoardsToGroupReflowed]
+  )
+  // Clear the reflow disarm timer on unmount so a pending setState can't fire post-teardown.
+  useEffect(
+    () => () => {
+      if (reflowTimerRef.current != null) clearTimeout(reflowTimerRef.current)
+    },
+    []
   )
 
   // Tidy / tile layout actions (paneSize · fitToBoards · applyTile · tidyAndFit + the
@@ -584,6 +722,14 @@ function CanvasInner(): ReactElement {
   const onNodeDragStart = useCallback(() => {
     beginChange()
     setNodeGesture(true)
+    // Disarm any in-flight reflow: if a drag starts inside the ~340ms absorb window the dragged
+    // node would otherwise inherit `.reflowing .react-flow__node`'s transform transition and trail
+    // the cursor. Clear the timer + class so the drag is direct.
+    if (reflowTimerRef.current != null) {
+      clearTimeout(reflowTimerRef.current)
+      reflowTimerRef.current = null
+    }
+    setReflowing(false)
     // Manually moving a board releases live tiled mode (like un-snapping a tiled window).
     setActiveTile(null)
     // Pull every live native view out IMMEDIATELY (before RF starts moving the node) so a
@@ -591,11 +737,38 @@ function CanvasInner(): ReactElement {
     // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
     void window.api.detachAllPreviews?.()
   }, [beginChange, setNodeGesture])
-  const onNodeDragStop = useCallback(() => {
-    setNodeGesture(false)
-    setGuides((g) => (g.length ? [] : g))
-    setOverlaps((o) => (o.length ? [] : o))
-  }, [setNodeGesture])
+  // S6 drag-onto-box: while a board is dragged, hit-test its CENTER against every group box
+  // (excluding the groups it already belongs to) and light the hovered box as a drop target.
+  const onNodeDrag = useCallback((_e: MouseEvent, node: BoardFlowNode) => {
+    const st = useCanvasStore.getState()
+    const boxes = computeGroupBoxes(st.groups, st.boards, {
+      pad: GROUP_BOX_PAD,
+      insetStep: GROUP_BOX_INSET_STEP
+    })
+    // Exclude groups the dragged board is already in (can't "add" to its own group).
+    const inGroups = new Set(st.groups.filter((g) => g.boardIds.includes(node.id)).map((g) => g.id))
+    // node.position is the live world position; size comes from the store board (the RF
+    // node carries w/h on `style`, not the measured `width`/`height` during a drag).
+    const b = st.boards.find((x) => x.id === node.id)
+    const w = b?.w ?? 0
+    const h = b?.h ?? 0
+    const center = { x: node.position.x + w / 2, y: node.position.y + h / 2 }
+    const target = groupBoxAt(boxes, center, inGroups)
+    setDropTargetGroupId((prev) => (prev === target ? prev : target))
+  }, [])
+
+  const onNodeDragStop = useCallback(
+    (_e: MouseEvent, node: BoardFlowNode) => {
+      setNodeGesture(false)
+      setGuides((g) => (g.length ? [] : g))
+      setOverlaps((o) => (o.length ? [] : o))
+      const target = dropTargetGroupId
+      setDropTargetGroupId(null)
+      // Dropped a non-member board inside a group box → absorb it (membership + re-pack).
+      if (target && node) reflowAddToGroup(target, [node.id])
+    },
+    [setNodeGesture, dropTargetGroupId, reflowAddToGroup]
+  )
 
   const clearSelection = useCallback(() => {
     selectBoard(null)
@@ -659,7 +832,11 @@ function CanvasInner(): ReactElement {
         setSelectedConnectorId(null)
         setConnectPointer(null)
         setConnectFromId(fromBoardId)
-      }
+      },
+      // S6: ⋯ menu → add this board to a group, animating the cluster re-pack.
+      addToGroup: (boardId, groupId) => reflowAddToGroup(groupId, [boardId]),
+      // S6: ⋯ menu → remove this board from every group it belongs to, in one undo step.
+      removeFromGroup: (boardId) => removeBoardFromAllGroups(boardId)
     }
   }, [
     duplicateBoard,
@@ -670,7 +847,9 @@ function CanvasInner(): ReactElement {
     enterCameraFullView,
     exitCameraFullView,
     fullViewIdRef,
-    cameraFullViewIdRef
+    cameraFullViewIdRef,
+    reflowAddToGroup,
+    removeBoardFromAllGroups
   ])
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
@@ -748,7 +927,9 @@ function CanvasInner(): ReactElement {
     cameraFullViewId,
     closeFullView,
     exitCameraFullView,
-    snapSuppressRef
+    snapSuppressRef,
+    groupSelection,
+    focusGroup
   })
 
   // E2E (CANVAS_E2E): expose the imperative test hook once the canvas (and its
@@ -763,7 +944,14 @@ function CanvasInner(): ReactElement {
         setDigestOpen,
         enterCameraFullView,
         exitCameraFullView,
-        selectConnector: setSelectedConnectorId
+        selectConnector: setSelectedConnectorId,
+        closeGroupNaming: () => {
+          setNamingGroupId(null)
+          setNamePopAt(null)
+        },
+        closeGroupPicker: () => setPickerAt(null),
+        closeGroupMenu: () => setGroupMenu(null),
+        addToGroupReflowed: (gid, bid) => reflowAddToGroup(gid, [bid])
       })
   }, [
     rf,
@@ -773,7 +961,8 @@ function CanvasInner(): ReactElement {
     enterCameraFullView,
     exitCameraFullView,
     setFullViewId,
-    setCameraFullViewId
+    setCameraFullViewId,
+    reflowAddToGroup
   ])
 
   // Capture the live camera into the (untracked) store so autosave persists it.
@@ -816,7 +1005,7 @@ function CanvasInner(): ReactElement {
   return (
     <BoardActionsContext.Provider value={boardActions}>
       <FullViewContext.Provider value={fullViewHost}>
-        <div ref={paneRef} style={paneStyle}>
+        <div ref={paneRef} className={reflowing ? 'reflowing' : undefined} style={paneStyle}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -837,6 +1026,7 @@ function CanvasInner(): ReactElement {
             }}
             onNodeDoubleClick={focusBoard}
             onNodeDragStart={onNodeDragStart}
+            onNodeDrag={onNodeDrag}
             onNodeDragStop={onNodeDragStop}
             minZoom={Z_MIN}
             maxZoom={Z_MAX}
@@ -849,6 +1039,12 @@ function CanvasInner(): ReactElement {
             style={{ width: '100%', height: '100%' }}
           >
             <FadingDots />
+            <GroupBoxLayer
+              dropTargetId={dropTargetGroupId}
+              onTabClick={selectGroupMembers}
+              onTabDoubleClick={fitGroup}
+              onTabContextMenu={(id, at) => setGroupMenu({ id, at })}
+            />
             {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
             <ReactFlow> so it can read the live camera (useReactFlow /
             useOnViewportChange) and sync every Browser board's native
@@ -924,7 +1120,80 @@ function CanvasInner(): ReactElement {
             })()}
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
-          <AppChrome onTidy={tidyAndFit} />
+          {selectedIds.length >= 2 && (
+            <button
+              className="group-fab"
+              onClick={groupSelection}
+              title="Group selection (Ctrl+G)"
+              aria-label={`Group ${selectedIds.length} selected boards`}
+            >
+              <span style={{ fontFamily: 'var(--mono)' }}>{IS_MAC ? '⌘G' : 'Ctrl+G'}</span> Group{' '}
+              {selectedIds.length}
+            </button>
+          )}
+          {namingGroupId && namePopAt && (
+            <GroupNamePopover
+              initial={
+                useCanvasStore.getState().groups.find((g) => g.id === namingGroupId)?.name ?? ''
+              }
+              at={namePopAt}
+              onCommit={(name) => {
+                // Only rename if the group still exists: if it was undone away while the popover
+                // was open, namingGroupId is stale — renameGroup would no-op, so guard explicitly
+                // rather than rely on that (and don't resurrect a removed group's name).
+                if (useCanvasStore.getState().groups.some((g) => g.id === namingGroupId)) {
+                  renameGroup(namingGroupId, name)
+                }
+                setNamingGroupId(null)
+                setNamePopAt(null)
+              }}
+              onCancel={() => {
+                setNamingGroupId(null)
+                setNamePopAt(null)
+              }}
+            />
+          )}
+          {pickerAt && (
+            <GroupFocusPicker
+              groups={groups}
+              at={pickerAt}
+              onPick={(id) => {
+                setPickerAt(null)
+                fitGroup(id)
+              }}
+              onClose={() => setPickerAt(null)}
+            />
+          )}
+          {groupMenu && (
+            <GroupContextMenu
+              at={groupMenu.at}
+              hasSelection={selectedIds.length > 0}
+              onRename={() => {
+                const g = useCanvasStore.getState().groups.find((x) => x.id === groupMenu.id)
+                if (g) {
+                  setNamePopAt(groupMenu.at)
+                  setNamingGroupId(groupMenu.id)
+                }
+                setGroupMenu(null)
+              }}
+              onFocus={() => {
+                fitGroup(groupMenu.id)
+                setGroupMenu(null)
+              }}
+              onAddSelected={() => {
+                // Animate the absorb re-pack, same as the drag-onto-box and board ⋯-menu paths —
+                // all three add-to-group routes converge on reflowAddToGroup for consistent feedback.
+                reflowAddToGroup(groupMenu.id, useCanvasStore.getState().selectedIds)
+                setGroupMenu(null)
+              }}
+              onRemove={() => {
+                removeGroup(groupMenu.id)
+                setGroupMenu(null)
+              }}
+              onClose={() => setGroupMenu(null)}
+            />
+          )}
+          <AppChrome onTidy={tidyAndFit} onFocusGroup={focusGroup} />
           <DigestPanel
             digest={digest}
             prose={prose}

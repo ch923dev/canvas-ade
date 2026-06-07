@@ -12,14 +12,16 @@ calm, single-accent Linear/Raycast aesthetic.
 ## Decision
 Add a **floating, contextual** font toolbar for the **`text` element only**: family (sans·mono·serif), size
 (S/M/L/XL presets), alignment (L/C/R), bold, and color drawn from the **neutral text ramp + the single
-accent** — no multi-hue palette. Values are closed tokens (schema v6), not free-form CSS.
+accent** — no multi-hue palette. Values are closed tokens (schema v7), not free-form CSS.
 
 ## What stays cut
 A general/persistent properties panel; per-element opacity; arbitrary/handwriting fonts; per-span rich text;
 multi-hue color; note/checklist typography. The single blue accent remains the only color.
 
 ## Consequences
-- Schema bumps to **v6**; this slice owns it. The Mermaid diagram element takes **v7**; the draw.io-D2,
-  file-editor, and PR #72 Diagram docs rebase their bump numbers off v6.
+- Schema bumps to **v7**; this slice owns it. (Originally drafted as v6, but Named Board Groups (#84)
+  landed v6 = `groups` on `main` first, so this slice rebased v6 → v7 at merge — exactly the
+  first-to-land-takes-the-number rule below.) The Mermaid diagram element now takes **v8**; the
+  draw.io-D2, file-editor, and PR #72 Diagram docs rebase their bump numbers off v7.
 - Tokenized + closed, so the feature cannot grow into the full Tweaks panel without another ADR.
 - Reversible: the fields are optional; dropping the toolbar leaves data that still validates.

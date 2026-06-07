@@ -105,6 +105,10 @@ export interface BoardViewProps<T extends Board = Board> {
   onDuplicate?: () => void
   /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
   onDelete?: () => void
+  /** S6 ⋯ menu → add this board to a group (the absorb re-pack). */
+  onAddToGroup?: (groupId: string) => void
+  /** S6 ⋯ menu → remove this board from every group it belongs to. */
+  onRemoveFromGroup?: () => void
   /** Terminal "Preview" action → push `url` to a chosen Browser target (refresh linked,
    *  connect, re-target, or spawn). Target chosen by gesture + the multi-select picker. */
   onPushPreviewTo?: (url: string, target: ResolvedPushTarget) => void
@@ -136,11 +140,23 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
   const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
   const onDelete = acts ? (): void => acts.remove(board.id) : undefined
+  const onAddToGroup = acts
+    ? (groupId: string): void => acts.addToGroup(board.id, groupId)
+    : undefined
+  const onRemoveFromGroup = acts ? (): void => acts.removeFromGroup(board.id) : undefined
   const onPushPreviewTo = acts
     ? (url: string, target: ResolvedPushTarget): void => acts.pushPreviewTo(board.id, url, target)
     : undefined
   const onStartConnect = acts ? (): void => acts.startConnect(board.id) : undefined
-  const actions = { onFull, onDuplicate, onDelete, onPushPreviewTo, onStartConnect }
+  const actions = {
+    onFull,
+    onDuplicate,
+    onDelete,
+    onAddToGroup,
+    onRemoveFromGroup,
+    onPushPreviewTo,
+    onStartConnect
+  }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover

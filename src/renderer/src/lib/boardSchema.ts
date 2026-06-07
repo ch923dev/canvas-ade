@@ -25,13 +25,15 @@ import {
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
  *
- * SCHEMA-VERSION CLAIM (2026-06-03): **v5 is MCP M2 — spatial connectors.** The
- * draw.io (D2/D3) and any future whiteboard track also plan a bump; first-to-land
- * takes v5, the others rebase to v6+. Do not silently reuse v5 for a different shape.
- * v6: free-text typography tokens (fontFamily / fontSize / align / color / bold — all
- * optional on TextElement; defaulted at render time). Identity migration (no backfill).
+ * SCHEMA-VERSION CLAIM:
+ * - v5 = MCP M2 — spatial connectors.
+ * - v6 = board groups (named board clusters, #84). Backfills an empty `groups` array.
+ * - **v7 = free-text typography tokens** (fontFamily / fontSize / align / color / bold —
+ *   all optional on TextElement; defaulted at render time). Identity migration (no
+ *   backfill). #84 took v6 first, so this slice rebased v6 → v7 (ADR 0004). The Diagram
+ *   element (PR #72 research) now eyes v8. Do not silently reuse a version for a new shape.
  */
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -168,6 +170,19 @@ export interface Connector {
   kind: ConnectorKind
 }
 
+/**
+ * A user-named set of boards for durable navigation/grouping purposes. A board may
+ * belong to MANY groups (multi-membership is intentional). Named-empty groups survive
+ * — a group whose boards were all deleted is kept so the user doesn't lose the name.
+ * Forward-compatible with the deferred Feature Workspaces phase, which will add an
+ * optional `worktreePath` to back the group with a git worktree.
+ */
+export interface NamedGroup {
+  id: string
+  name: string
+  boardIds: string[]
+}
+
 /** Persisted camera transform. `null` in a doc means "fit on load". */
 export interface CanvasViewport {
   x: number
@@ -186,6 +201,11 @@ export interface CanvasDoc {
    * folded back on load — only `orchestration` connectors are carried in memory.
    */
   connectors: Connector[]
+  /**
+   * Named board groups (schema v6). Optional so a pre-migration v5 doc still parses;
+   * the v5→v6 migration backfills `[]` and `fromObject` always returns a present array.
+   */
+  groups?: NamedGroup[]
 }
 
 // ── Sizes ─────────────────────────────────────────────────────────────────────
@@ -281,7 +301,7 @@ export function previewConnectorsFor(boards: Board[]): Connector[] {
  * tests still produce a valid current-version doc.
  *
  * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion,
- * viewport, boards, connectors}. Ephemeral session state (selected tool, selected
+ * viewport, boards, connectors, groups}. Ephemeral session state (selected tool, selected
  * element, in-flight draft/erase, hover, the in-flight "connecting" gesture) lives in
  * React/Zustand and MUST NEVER be routed into `board.elements[]`, a board patch key,
  * or `connectors[]`, or it bloats every autosave and resurrects stale state on reload.
@@ -290,13 +310,15 @@ export function previewConnectorsFor(boards: Board[]): Connector[] {
 export function toObject(
   boards: Board[],
   viewport: CanvasViewport | null,
-  connectors: Connector[] = []
+  connectors: Connector[] = [],
+  groups: NamedGroup[] = []
 ): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,
     viewport: viewport ? { ...viewport } : null,
     boards: structuredClone(boards),
-    connectors: structuredClone(connectors)
+    connectors: structuredClone(connectors),
+    groups: structuredClone(groups)
   }
 }
 
@@ -317,8 +339,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // project's preview links survive into the connector model. `previewSourceId` is left
   // on the board untouched (it stays the runtime source of truth — Decision B).
   4: (doc) => ({ ...doc, schemaVersion: 5, connectors: previewConnectorsFor(doc.boards) }),
-  // v6: free-text typography tokens (all optional → identity bump; defaulted at render).
-  5: (doc) => ({ ...doc, schemaVersion: 6 })
+  // v6 adds `groups` (named board clusters). Backfill an empty array — older projects
+  // have no groups. Boards/connectors are untouched.
+  5: (doc) => ({ ...doc, schemaVersion: 6, groups: (doc as CanvasDoc).groups ?? [] }),
+  // v7: free-text typography tokens (all optional → identity bump; defaulted at render).
+  6: (doc) => ({ ...doc, schemaVersion: 7 })
 }
 
 /**
@@ -523,6 +548,35 @@ function assertConnector(c: unknown): void {
   }
 }
 
+/** Validate one group (id/name strings + a string[] boardIds); throws on mismatch. */
+function assertGroup(g: unknown): void {
+  if (!isRecord(g)) fail('group is not an object')
+  if (typeof g.id !== 'string') fail('group has a non-string id')
+  if (typeof g.name !== 'string') fail('group has a non-string name')
+  if (!Array.isArray(g.boardIds)) fail('group boardIds is not an array')
+  for (const bid of g.boardIds as unknown[]) {
+    if (typeof bid !== 'string') fail('group boardIds contains a non-string entry')
+  }
+}
+
+/**
+ * Reconcile a migrated doc's groups: validates each group, then prunes dangling
+ * boardIds (pointing at boards that no longer exist) AND de-duplicates — `boardIds`
+ * is set-semantic (a board either belongs or it doesn't), matching the store's
+ * `addBoardsToGroup` write-path dedup. Named-empty groups survive — a group whose
+ * boards were all deleted is kept so the user does not lose the name. Missing `groups`
+ * field (pre-migration or stripped) defaults to `[]`.
+ */
+function reconcileGroups(doc: CanvasDoc): NamedGroup[] {
+  const raw = Array.isArray(doc.groups) ? doc.groups : []
+  raw.forEach(assertGroup)
+  const ids = new Set(doc.boards.map((b) => b.id))
+  return (raw as NamedGroup[]).map((g) => ({
+    ...g,
+    boardIds: [...new Set(g.boardIds.filter((bid) => ids.has(bid)))]
+  }))
+}
+
 /**
  * Reconcile a migrated doc's connectors into the in-memory shape (Decision B,
  * dual-source). Validates every connector, drops danglers (an endpoint board is gone),
@@ -588,6 +642,9 @@ export function fromObject(doc: unknown): CanvasDoc {
   // keep orchestration only in memory (Decision B). Runs post-migrate so a v4 doc's
   // freshly-folded preview connectors are reconciled the same as a v5 doc's.
   migrated.connectors = reconcileConnectors(migrated)
+  // Reconcile groups (v6): validate, prune dangling boardIds, keep named-empty groups.
+  // Runs post-migrate so a v5 doc's freshly-backfilled `[]` is handled like a v6 doc's.
+  migrated.groups = reconcileGroups(migrated)
   // A corrupt camera shouldn't fail the whole load — drop to fit-on-load.
   if (!isValidViewport(migrated.viewport)) migrated.viewport = null
   return migrated

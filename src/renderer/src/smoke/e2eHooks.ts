@@ -40,6 +40,14 @@ export interface CanvasE2E {
   seedBoard: (type: BoardType, patch?: Partial<Board>) => string
   /** Current boards (plain data — serializable). */
   getBoards: () => Board[]
+  /** Set the multi-selection (group create path). */
+  setSelection: (ids: string[]) => void
+  /** Named groups (plain data — serializable). */
+  getGroups: () => { id: string; name: string; boardIds: string[] }[]
+  /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
+  addGroup: (name: string, ids: string[]) => string
+  /** S6: add a board to a group via the real reflow path (membership + re-pack); for e2e. */
+  addToGroupReflowed: (groupId: string, boardId: string) => void
   /** Browser preview runtime for a board id, or null if none yet. */
   getRuntime: (id: string) => RuntimeProbe | null
   /** Whole xterm framebuffer for a terminal board id, or null if not registered. */
@@ -220,6 +228,14 @@ export interface E2EHostHooks {
   exitCameraFullView: () => void
   /** M2: select an orchestration connector (CanvasInner state) for the ✕/Delete path. */
   selectConnector: (id: string | null) => void
+  /** Close the group name popover (CanvasInner state) — an ephemeral UI mode reset() must clear. */
+  closeGroupNaming: () => void
+  /** Close the which-group focus picker (CanvasInner state) — same ephemeral-mode reset() parity. */
+  closeGroupPicker: () => void
+  /** Close the group right-click context menu (CanvasInner state) — ephemeral-mode reset() parity. */
+  closeGroupMenu: () => void
+  /** S6: run the real add-to-group reflow (membership + re-pack) — CanvasInner's reflowAddToGroup. */
+  addToGroupReflowed: (groupId: string, boardId: string) => void
 }
 
 declare global {
@@ -244,6 +260,18 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getBoards() {
       return useCanvasStore.getState().boards
+    },
+    setSelection(ids) {
+      useCanvasStore.getState().setSelection(ids)
+    },
+    getGroups() {
+      return useCanvasStore.getState().groups
+    },
+    addGroup(name, ids) {
+      return useCanvasStore.getState().addGroup(name, ids)
+    },
+    addToGroupReflowed(groupId, boardId) {
+      host.addToGroupReflowed(groupId, boardId)
     },
     getRuntime(id) {
       const r = usePreviewStore.getState().byId[id]
@@ -447,6 +475,14 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // The digest panel (feat/context) is a per-project UI mode too — close it so an
       // open panel from one test can't leak into the next.
       host.setDigestOpen(false)
+      // The group name popover (feat/named-board-groups) is the same: a test that fired Ctrl+G
+      // leaves it open + focused, where it swallows the next test's Ctrl+G — close it too.
+      host.closeGroupNaming()
+      // Likewise the which-group focus picker (a fixed overlay) — close it so a test that left it
+      // open can't steal the next test's outside-pointerdown / Escape.
+      host.closeGroupPicker()
+      // And the tab right-click context menu (a fixed overlay) — same ephemeral-mode parity.
+      host.closeGroupMenu()
       // 2. Empty the store + history (renderer stops referencing the old boards).
       //    Clear connectors too (feat/mcp orchestration cables) — else a seeded
       //    connector survives reset() and pollutes the next test. ALSO restore the
@@ -457,9 +493,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       useCanvasStore.setState({
         boards: [],
         connectors: [],
+        groups: [],
         past: [],
         future: [],
         selectedId: null,
+        selectedIds: [],
         project: { dir: null, name: 'e2e', status: 'open' }
       })
       // 3. Tear down native resources: close all preview views + kill live AND parked
