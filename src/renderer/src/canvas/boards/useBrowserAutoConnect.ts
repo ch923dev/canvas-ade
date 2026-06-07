@@ -21,7 +21,7 @@ const TICK_MS = 1000
 interface Attempt {
   attempts: number
   waitTicks: number
-  lastStatus: PreviewStatusLike
+  lastUrl: string
 }
 
 function isHttpUrl(u: string): boolean {
@@ -50,14 +50,14 @@ export function useBrowserAutoConnect(): void {
 
         let a = attemptsRef.current.get(board.id)
         if (!a) {
-          a = { attempts: 0, waitTicks: 0, lastStatus: status }
+          a = { attempts: 0, waitTicks: 0, lastUrl: board.url }
           attemptsRef.current.set(board.id, a)
         }
-        // A status change restarts backoff (a fresh load-failed retries promptly).
-        if (status !== a.lastStatus) {
+        // A new target URL (user edit or auto-push) restarts the backoff ramp.
+        if (board.url !== a.lastUrl) {
           a.attempts = 0
           a.waitTicks = 0
-          a.lastStatus = status
+          a.lastUrl = board.url
         }
         if (status === 'connected') {
           a.attempts = 0
@@ -83,6 +83,7 @@ export function useBrowserAutoConnect(): void {
           usePreviewStore.getState().requestReload(board.id)
         } else if (plan.kind === 'detect') {
           const sourceId = board.previewSourceId
+          // type-narrow: previewSourceId is optional in the schema, though detect implies it is set
           if (!sourceId) continue
           const bid = board.id
           void (async () => {

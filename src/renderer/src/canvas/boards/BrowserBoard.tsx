@@ -30,6 +30,15 @@ import { usePreviewStore, selectRuntime } from '../../store/previewStore'
 import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
 
+function isHttpUrl(u: string): boolean {
+  try {
+    const x = new URL(u)
+    return x.protocol === 'http:' || x.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
   mobile: 'mobile',
@@ -164,6 +173,10 @@ export function BrowserBoard({
   // (canvas://boards), so the on-canvas dot and the agent's view never disagree.
   const status = bucketToPill(boardStatusBucket('browser', { preview: runtime.status }))
 
+  // Only show "Reconnecting…" when the engine will actually retry: reload path needs
+  // an http(s) URL; detect path needs a linked source terminal.
+  const willRetry = isHttpUrl(board.url) || !!board.previewSourceId
+
   return (
     <BoardFrame
       type="browser"
@@ -269,7 +282,7 @@ export function BrowserBoard({
           }
         >
           {preset.notch && <div className="bb-notch" />}
-          <DeviceContent runtime={runtime} url={board.url} />
+          <DeviceContent runtime={runtime} url={board.url} willRetry={willRetry} />
         </div>
       </div>
     </BoardFrame>
@@ -305,10 +318,12 @@ function NavBtn({
 /** The fallback layer under the native view: snapshot, connecting, or load-failed. */
 function DeviceContent({
   runtime,
-  url
+  url,
+  willRetry
 }: {
   runtime: ReturnType<ReturnType<typeof selectRuntime>>
   url: string
+  willRetry: boolean
 }): ReactElement {
   if (runtime.status === 'load-failed') {
     return (
@@ -316,7 +331,10 @@ function DeviceContent({
         <div className="bb-state-title" style={{ color: 'var(--err)' }}>
           Couldn’t load
         </div>
-        <div className="bb-state-sub">Reconnecting… · {runtime.error || url}</div>
+        <div className="bb-state-sub">
+          {willRetry ? 'Reconnecting… · ' : ''}
+          {runtime.error || url}
+        </div>
       </div>
     )
   }
