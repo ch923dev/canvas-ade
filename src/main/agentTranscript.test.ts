@@ -27,9 +27,21 @@ const T = '2026-06-07T14:32:00.000Z'
 describe('extractMilestones', () => {
   it('keeps user + assistant TEXT turns, drops tool records, with real timestamps', () => {
     const jsonl = [
-      line({ type: 'user', timestamp: T, message: { role: 'user', content: 'review the auth service' } }),
-      line({ type: 'assistant', timestamp: T, message: { role: 'assistant', content: [{ type: 'text', text: 'Found 3 issues.' }] } }),
-      line({ type: 'assistant', timestamp: T, message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Edit', input: {} }] } }),
+      line({
+        type: 'user',
+        timestamp: T,
+        message: { role: 'user', content: 'review the auth service' }
+      }),
+      line({
+        type: 'assistant',
+        timestamp: T,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Found 3 issues.' }] }
+      }),
+      line({
+        type: 'assistant',
+        timestamp: T,
+        message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Edit', input: {} }] }
+      }),
       line({ type: 'tool_result', timestamp: T, message: { content: 'file body...' } }),
       'not json'
     ].join('\n')

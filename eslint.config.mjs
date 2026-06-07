@@ -22,6 +22,10 @@ export default tseslint.config(
       '.agents/**',
       // Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand).
       'src/vendor/**',
+      // Shipped hook scripts: plain CommonJS .js files run standalone under node
+      // (no build step, no bundler). ESLint's no-undef / no-require-imports do not
+      // apply to these — they use globals (require, process) that are valid at runtime.
+      'src/main/hooks/**',
       // Tooling configs are authored loosely and don't benefit from TS linting.
       '**/*.config.{js,cjs,mjs,ts,mts}',
       'eslint.config.mjs'

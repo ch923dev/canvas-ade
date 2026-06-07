@@ -4,7 +4,18 @@ export type AgentCli = 'claude' | 'unknown'
 export function detectAgentCli(launchCommand?: string): AgentCli {
   if (typeof launchCommand !== 'string') return 'unknown'
   // tokens that wrap the real command; look past them for the agent binary
-  const wrappers = new Set(['npx', 'pnpm', 'dlx', 'sudo', 'pwsh', 'powershell', 'cmd', 'bash', 'sh', 'zsh'])
+  const wrappers = new Set([
+    'npx',
+    'pnpm',
+    'dlx',
+    'sudo',
+    'pwsh',
+    'powershell',
+    'cmd',
+    'bash',
+    'sh',
+    'zsh'
+  ])
   const flags = new Set(['-c', '/c', '-lc', '-l', '-i'])
   const toks = launchCommand.trim().split(/\s+/).filter(Boolean)
   for (const t of toks) {
@@ -48,7 +59,11 @@ export function extractMilestones(jsonl: string, opts: ExtractOpts = {}): Milest
   for (const raw of jsonl.split('\n')) {
     const s = raw.trim()
     if (!s) continue
-    let rec: { type?: unknown; timestamp?: unknown; message?: { role?: unknown; content?: unknown } }
+    let rec: {
+      type?: unknown
+      timestamp?: unknown
+      message?: { role?: unknown; content?: unknown }
+    }
     try {
       rec = JSON.parse(s)
     } catch {
