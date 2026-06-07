@@ -354,6 +354,19 @@ it fails, switch to the cwd+spawn-order fallback before building on it.
 > `transcript_path` · `cwd` · `source`. **Install (Task 4) uses exec form `command:"node", args:[script,
 > map]` — not the shell-form command string the spike used.**
 
+> **Implementation status 2026-06-08: COMPLETE (pending live sign-off).** All plan tasks T0–T16 built
+> via subagent-driven TDD (each task: implementer + 2-stage spec/quality review, all green). Local gate
+> green at branch tip `18c16f1`: `typecheck` clean · `lint` 0 errors · `format:check` clean · `vitest`
+> **1480 passed / 120 files**; the deterministic flip-to-recap e2e (`recap.e2e.ts`) passes on the Windows
+> leg. A final whole-implementation review returned **SHIP** — end-to-end flow connected, the privacy
+> guarantee verified at the egress boundary (a test captures the real fetch body and asserts raw
+> `sk-…`/`ghp_…` tokens are absent / `[redacted]`), cross-zone changes additive + clean. **STILL OPEN
+> (the bar): Step 3 — real-`claude` live verification** (run a real agent in a terminal board, flip,
+> confirm an accurate NOW + timestamped timeline, edit → watcher refreshes ≤~25s, screenshot). That step
+> is a manual GUI gate and is NOT yet done; this banner records the gate/review state only, not the live
+> sign-off. (`claudeProjectSlug` slug-dir fallback dropped as dead code — the spike passed, so it was
+> never wired.)
+
 **Unit (vitest, pure — `agentTranscript.test.ts`):**
 - `detectAgentCli`: `claude`, `claude --resume x`, `npx claude`, `pwsh -c claude`, `aider`, empty.
 - `extractMilestones`: keeps user + assistant text turns w/ real timestamps; **drops tool_use/
