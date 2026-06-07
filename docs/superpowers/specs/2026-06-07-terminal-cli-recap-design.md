@@ -229,8 +229,15 @@ full transparency:
   it does **not** touch your global `~/.claude` settings or your own hooks). The hook only records each
   session's id + transcript path." Include an expandable "What gets added?" showing the exact JSON
   snippet + the file path.
-- **Privacy/cost line:** "Transcripts are read locally. Summaries use your own LLM key (Settings), are
-  cheap (~a fraction of a cent), and never run without a key. Turn it off anytime in Settings."
+- **"Your data stays yours" assurance block (must be accurate — no false zero-egress claim):**
+  - "Expanse has **no server and no account** — nothing is ever sent to us, and there's **no telemetry**."
+  - "Your transcripts are **read locally**, on your machine."
+  - "The only thing that leaves your computer is a short, **secret-scrubbed** slice of the conversation
+    sent to **the LLM provider you choose, with your own key**, to write the summary — and only if
+    you've set a key. **Choose a local model and nothing leaves your machine at all.**"
+  - "**File contents and command output are never sent** — only the conversation text, capped."
+- **Cost line:** "Summaries are cheap (~a fraction of a cent) and never run without a key. Turn it off
+  anytime in Settings."
 - **Buttons:** `Enable recaps` (primary) · `Not now` (declines for this project; revisitable in
   Settings). No dark patterns; "Not now" is a real, equal choice.
 
@@ -287,8 +294,14 @@ SUMMARIZE (shared):
 
 - **No visible command change; no mutation of the user's `~/.claude/settings.json`.** Our hook lives in
   `.claude/settings.local.json` (gitignored, merged, removable via the opt-in toggle).
-- **Egress:** message text → external LLM, same class as existing Tier-2 egress (ADR `0003-llm-egress`).
-  **tool_result bodies are never forwarded**; light secret-scrub (`sk-…`/`ghp_…`/`AKIA…`) before egress.
+- **No Expanse backend / no telemetry:** the app has no server or account; transcript data is never
+  sent to Expanse or any third party we control. The hook, mapping file, and transcript reads are all
+  local. (Single-user desktop app — there is no backend.)
+- **Egress is user-chosen + avoidable:** the only egress is the summarize call to the LLM **provider the
+  user configured, with their own key** — same class as existing Tier-2 egress (ADR `0003-llm-egress`).
+  A **local (loopback) provider means zero egress**; no key means no call at all.
+  **tool_result bodies are never forwarded**; only capped conversation text, light secret-scrub
+  (`sk-…`/`ghp_…`/`AKIA…`) before egress.
 - **Mapping file** is app-owned under `userData` (outside any repo); only the hook appends to it.
 - **Path safety:** only ever *reads* the transcript path the hook reported (or, in fallback,
   `*.jsonl` under the derived slug dir). No traversal.
