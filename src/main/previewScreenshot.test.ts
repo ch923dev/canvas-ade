@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { registerPreviewScreenshotHandler, type ScreenshotDeps } from './previewScreenshot'
+import { foreignEvent, mainWin } from './ipcTestHarness'
 
 // Minimal ipcMain capture (mirrors clipboardIpc.test.ts style).
 function makeIpc(): {
@@ -27,9 +28,6 @@ function deps(over: Partial<ScreenshotDeps> = {}): ScreenshotDeps {
 // No senderFrame -> isForeignSender returns false (internal/allowed), like the e2e harness.
 // (See ipcGuard.ts: `if (!e.senderFrame) return false`)
 const validEvent = {}
-// Truthy senderFrame + getWin()=null -> isForeignSender returns true (foreign).
-// (See clipboardIpc.test.ts `foreign` and ipcGuard.ts guard logic)
-const foreignEvent = { senderFrame: {} }
 
 describe('preview:screenshot', () => {
   it('copies to clipboard AND saves an asset when a project is open', async () => {
@@ -75,9 +73,14 @@ describe('preview:screenshot', () => {
   })
 
   it('rejects a foreign sender (no capture, no clipboard)', async () => {
+    // Uses mainWin + foreignEvent from ipcTestHarness: mainWin returns a live window
+    // (isDestroyed: false, webContents.isDestroyed: false) so isForeignSender reaches
+    // the `senderFrame !== win.webContents.mainFrame` comparison (not the !win branch).
+    // foreignEvent.senderFrame ({ id: 'preview-board-frame' }) !== mainFrame
+    // ({ id: 'main-frame' }) → returns true for the RIGHT reason (frame mismatch).
     const m = makeIpc()
     const d = deps()
-    registerPreviewScreenshotHandler(m.ipc as never, () => null, d)
+    registerPreviewScreenshotHandler(m.ipc as never, mainWin, d)
     const res = await m.invoke('preview:screenshot', foreignEvent, 'b1')
     expect(d.capture).not.toHaveBeenCalled()
     expect(res).toEqual({ ok: false, reason: 'forbidden' })
