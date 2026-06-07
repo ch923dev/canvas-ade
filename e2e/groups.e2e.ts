@@ -149,12 +149,27 @@ test.describe('named board groups — Ctrl+G create flow', () => {
     await page.keyboard.press('Escape')
     await expect(page.locator('.group-ctx')).toHaveCount(0)
     await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(ids[2])}])`)
+    // Capture the 3rd board's position before the menu-add — read the arg-free board list and find
+    // it Node-side (no value in the eval string → no js/bad-code-sanitization).
+    const posOf = async (id: string): Promise<{ x: number; y: number }> => {
+      const boards = await evalIn<{ id: string; x: number; y: number }[]>(
+        page,
+        `window.__canvasE2E.getBoards()`
+      )
+      const b = boards.find((x) => x.id === id)!
+      return { x: b.x, y: b.y }
+    }
+    const beforeAdd = await posOf(ids[2])
     await page.locator('.group-box-tab').first().click({ button: 'right' })
     await page.locator('.group-ctx-row', { hasText: 'Add selected boards' }).click()
     await expect(page.locator('.group-ctx')).toHaveCount(0)
     expect(
       await pollEval(page, `window.__canvasE2E.getGroups()[0].boardIds.length === 3`, 2000)
     ).toBe(true)
+    // The menu "Add selected boards" now animates the absorb re-pack — same reflowAddToGroup path as
+    // drag-onto-box and the board ⋯-menu, so the added board's position changes from its seed spot.
+    const afterAdd = await posOf(ids[2])
+    expect(afterAdd.x !== beforeAdd.x || afterAdd.y !== beforeAdd.y).toBe(true)
 
     // Reopen → Remove group → the group (and its box) are gone; boards remain.
     await page.locator('.group-box-tab').first().click({ button: 'right' })

@@ -237,7 +237,6 @@ function CanvasInner(): ReactElement {
   // groups off the live snapshot in the same call), so only renameGroup needs a reactive binding.
   const renameGroup = useCanvasStore((s) => s.renameGroup)
   const removeGroup = useCanvasStore((s) => s.removeGroup)
-  const addBoardsToGroup = useCanvasStore((s) => s.addBoardsToGroup)
   const addBoardsToGroupReflowed = useCanvasStore((s) => s.addBoardsToGroupReflowed)
   const removeBoardFromAllGroups = useCanvasStore((s) => s.removeBoardFromAllGroups)
   // Reactive groups read for the focus picker (it lists one row per group; needs to re-render
@@ -1182,7 +1181,9 @@ function CanvasInner(): ReactElement {
                 setGroupMenu(null)
               }}
               onAddSelected={() => {
-                addBoardsToGroup(groupMenu.id, useCanvasStore.getState().selectedIds)
+                // Animate the absorb re-pack, same as the drag-onto-box and board ⋯-menu paths —
+                // all three add-to-group routes converge on reflowAddToGroup for consistent feedback.
+                reflowAddToGroup(groupMenu.id, useCanvasStore.getState().selectedIds)
                 setGroupMenu(null)
               }}
               onRemove={() => {
