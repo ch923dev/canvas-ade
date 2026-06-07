@@ -565,6 +565,16 @@ export function registerPreviewHandlers(
     e.view.webContents.reload()
     return true
   })
+
+  // Open the preview's current URL in the OS browser (for real DevTools / extensions).
+  // Scheme stays allowlisted via openExternalSafe (Bug #23) — the renderer passes the
+  // URL it already shows (liveUrl ?? board.url); nothing new can reach the OS handler
+  // that window.open couldn't already. Frame-guarded (Bug #33).
+  ipcMain.handle('preview:openExternal', (ev, url: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    openExternalSafe(String(url))
+    return true
+  })
 }
 
 /** Close every view (app shutdown / leak-check). */

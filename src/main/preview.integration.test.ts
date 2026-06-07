@@ -130,6 +130,20 @@ describe('registerPreviewHandlers — foreign-sender rejection (#17)', () => {
   })
 })
 
+describe('preview:openExternal', () => {
+  it('rejects a foreign sender (returns false)', () => {
+    const cap = createIpcCapture()
+    registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
+    expect(cap.invokeAs(foreignEvent, 'preview:openExternal', 'http://localhost:3000/')).toBe(false)
+  })
+
+  it('accepts an internal (trusted) sender for an allowed scheme', () => {
+    const cap = createIpcCapture()
+    registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
+    expect(cap.invokeAs(internalEvent, 'preview:openExternal', 'http://localhost:3000/')).toBe(true)
+  })
+})
+
 // Security: deny-by-default permission handler on per-board preview sessions
 // (no-permission-handler-preview-views). Each WebContentsView gets a unique
 // in-memory session (`partition: preview-<id>`). Without a permission handler,
