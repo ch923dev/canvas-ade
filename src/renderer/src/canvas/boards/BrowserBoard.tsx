@@ -138,6 +138,7 @@ export function BrowserBoard({
   // render; https://react.dev/learn/you-might-not-need-an-effect).
   const [draftUrl, setDraftUrl] = useState(board.url)
   const [lastUrl, setLastUrl] = useState(board.url)
+  const [note, setNote] = useState<string | null>(null)
   if (board.url !== lastUrl) {
     setLastUrl(board.url)
     setDraftUrl(board.url)
@@ -159,6 +160,24 @@ export function BrowserBoard({
       beginChange()
       updateBoard(board.id, { viewport: vp })
     }
+  }
+
+  const openExternal = (): void => {
+    void window.api.openExternalPreview(runtime.liveUrl ?? board.url)
+  }
+
+  const showNote = (msg: string): void => {
+    setNote(msg)
+    window.setTimeout(() => setNote((n) => (n === msg ? null : n)), 2500)
+  }
+
+  const takeScreenshot = (): void => {
+    void (async () => {
+      const res = await window.api.screenshotPreview(board.id)
+      if (!res.ok) showNote('Open the preview to screenshot it')
+      else if (res.assetId) showNote('Screenshot copied + saved to assets/')
+      else showNote('Screenshot copied to clipboard')
+    })()
   }
 
   // Device-frame outer rect in board-LOCAL coords (matches browserLayout exactly:
@@ -212,6 +231,13 @@ export function BrowserBoard({
             title="Reload"
             onClick={() => void window.api.reloadPreview(board.id)}
           />
+          <NavBtn
+            name="camera"
+            title="Screenshot"
+            disabled={!runtime.live}
+            onClick={takeScreenshot}
+          />
+          <NavBtn name="external" title="Open in browser" onClick={openExternal} />
         </div>
         <div className="bb-url-field">
           <span className="bb-conn-dot" style={{ background: connDot(runtime.status) }} />
@@ -284,19 +310,27 @@ export function BrowserBoard({
           {preset.notch && <div className="bb-notch" />}
           <DeviceContent runtime={runtime} url={board.url} willRetry={willRetry} />
         </div>
+        {note && (
+          <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
+            {note}
+            <button className="ca-preview-dismiss" onClick={() => setNote(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
       </div>
     </BoardFrame>
   )
 }
 
-/** A 24x24 URL-bar nav button (back/forward/reload). */
+/** A 24x24 URL-bar nav button (back/forward/reload/camera/external). */
 function NavBtn({
   name,
   title,
   disabled = false,
   onClick
 }: {
-  name: 'back' | 'forward' | 'refresh'
+  name: 'back' | 'forward' | 'refresh' | 'camera' | 'external'
   title: string
   disabled?: boolean
   onClick: () => void
