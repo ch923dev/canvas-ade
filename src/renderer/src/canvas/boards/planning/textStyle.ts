@@ -3,8 +3,11 @@
  * unions + their LIVE (CSS custom-prop) and EXPORT (literal, portable) representations
  * for family / size / color, plus weight, line-height, and SVG text-anchor. Both the
  * live board (FreeText) and the SVG export (whiteboardExport) read from here so the two
- * can never drift — the R7 lesson (exportColors.ts duplicating tints.ts). A parity test
- * pins the EXPORT literals to the resolved design tokens.
+ * can never drift — the R7 lesson (exportColors.ts duplicating tints.ts). The EXPORT
+ * COLOR literals are parity-pinned to the resolved design tokens (textStyle.test.ts).
+ * The EXPORT FAMILY literals INTENTIONALLY differ from the live `var(--…)` stacks — a
+ * standalone SVG can't resolve a CSS custom prop or fetch the --ui webfont (Geist), so
+ * they fall back to portable generic stacks; a shape-guard test keeps them var()-free.
  *
  * Pure data — no React, no DOM. Safe in the node test env.
  */
@@ -50,6 +53,20 @@ export const FAMILY_EXPORT: Record<FontFamilyToken, string> = {
 export const SIZE_PX: Record<FontSizeToken, number> = { S: 11, M: 13, L: 18, XL: 26 }
 /** Line height (px) for a px size: 1.38× → lineHeightFor(13) === 18 (matches pre-v6). */
 export const lineHeightFor = (px: number): number => Math.round(px * 1.38)
+
+/** Approx glyph advance (× font-size) per family — for the export-time width estimate. */
+const CHAR_ADVANCE: Record<FontFamilyToken, number> = { sans: 0.52, mono: 0.6, serif: 0.5 }
+/**
+ * Rough rendered width (px) of a text element's longest line. There is NO DOM at SVG
+ * export time, so center/right anchoring can't read the auto-sized textarea — it
+ * approximates the box from glyph count × size × a per-family advance. Floored at 40 to
+ * mirror FreeText's `Math.max(40, scrollWidth)`. Exact width is unknowable without DOM;
+ * this keeps center/right text close to its on-board position (left stays exact).
+ */
+export function estimateTextWidth(text: string, px: number, family: FontFamilyToken): number {
+  const longest = text.split('\n').reduce((m, l) => Math.max(m, l.length), 0)
+  return Math.max(40, Math.round(longest * px * CHAR_ADVANCE[family]))
+}
 
 /** Live color (CSS custom prop). */
 export const COLOR_CSS: Record<TextColorToken, string> = {

@@ -144,6 +144,53 @@ describe('boardToSvg — text typography (v6)', () => {
     expect(svg).not.toContain('text-anchor=') // left is the default → no anchor attr
   })
 
+  it('multi-line text uses lineHeightFor for tspan spacing (matches the live board)', () => {
+    const { svg } = boardToSvg(
+      board([{ id: 't', kind: 'text', x: 0, y: 0, text: 'one\ntwo', fontSize: 'XL' }]),
+      {}
+    )
+    // lineHeightFor(26) === 36, NOT the legacy 26 + 4 === 30.
+    expect(svg).toContain('dy="36"')
+    expect(svg).not.toContain('dy="30"')
+  })
+
+  it('multi-line note keeps the legacy line spacing (byte-identical export preserved)', () => {
+    const { svg } = boardToSvg(
+      board([
+        {
+          id: 'n',
+          kind: 'note',
+          x: 0,
+          y: 0,
+          w: 156,
+          h: 96,
+          tint: 'yellow',
+          text: 'a\nb',
+          rotation: 0
+        }
+      ]),
+      {}
+    )
+    // Notes still use size(12) + 4 === 16 — only free-text adopted lineHeightFor.
+    expect(svg).toContain('dy="16"')
+  })
+
+  it('center-aligned text anchors at the estimated content center (scales with length)', () => {
+    const ax = (s: string): number => parseFloat(s.match(/<text x="(-?[\d.]+)"/)![1])
+    const short = boardToSvg(
+      board([{ id: 't', kind: 'text', x: 100, y: 0, text: 'hi', align: 'center' }]),
+      {}
+    ).svg
+    const long = boardToSvg(
+      board([
+        { id: 't', kind: 'text', x: 100, y: 0, text: 'a much longer line here', align: 'center' }
+      ]),
+      {}
+    ).svg
+    // Longer content → the center anchor sits further right (no longer pinned to a fixed 120px box).
+    expect(ax(long)).toBeGreaterThan(ax(short))
+  })
+
   it('honors family / size / weight / color / align tokens', () => {
     const { svg } = boardToSvg(
       board([

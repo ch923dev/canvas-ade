@@ -19,9 +19,17 @@ import {
   type TextAlignToken
 } from './textStyle'
 
+/** The typography-only patch surface — narrower than Partial<TextElement> so the toolbar
+ *  can NEVER write identity/geometry/text (id/kind/x/y/text) through the style channel. */
+export type TextStylePatch = Partial<
+  Pick<TextElement, 'fontFamily' | 'fontSize' | 'align' | 'color' | 'bold'>
+>
+
 export interface TextToolbarProps {
   element: TextElement
-  onPatch: (partial: Partial<TextElement>) => void
+  /** Board-local content width (board.w) — used to clamp the bar inside the well. */
+  boardW: number
+  onPatch: (partial: TextStylePatch) => void
 }
 
 const FAMILY_GLYPH: Record<FontFamilyToken, string> = { sans: 'A', mono: '</>', serif: 'A' }
@@ -31,8 +39,12 @@ const ALIGN_GLYPH: Record<TextAlignToken, string> = { left: '⇤', center: '⇔'
 const TOOLBAR_OFFSET = 40
 /** Px below the element's top when flipped down — clears a single text line. */
 const BELOW_OFFSET = 28
+/** Conservative on-screen width of the full bar (15 buttons + groups/gaps/padding). The
+ *  well clips overflow, so an element near the right edge would hide the rightmost
+ *  controls; we clamp `left` against this. jsdom can't measure, so it's a constant. */
+const TOOLBAR_WIDTH = 380
 
-export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElement {
+export function TextToolbar({ element, boardW, onPatch }: TextToolbarProps): ReactElement {
   const fam = element.fontFamily ?? TEXT_DEFAULTS.fontFamily
   const size = element.fontSize ?? TEXT_DEFAULTS.fontSize
   const align = element.align ?? TEXT_DEFAULTS.align
@@ -43,18 +55,21 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
   // below offset (28) clears a single text line; multi-line text at the very top edge
   // is a rare v1 edge case.
   const top = element.y >= TOOLBAR_OFFSET ? element.y - TOOLBAR_OFFSET : element.y + BELOW_OFFSET
+  // Pull the bar left so it never clips at the well's right edge (no clamp needed when the
+  // element leaves room); never below 0 so it can't slide off the left for a narrow board.
+  const left = Math.max(0, Math.min(element.x, boardW - TOOLBAR_WIDTH))
 
   const btn = (active: boolean, extra = ''): string =>
     `pl-tt-btn${active ? ' is-active' : ''}${extra ? ' ' + extra : ''}`
   // Patch only on a real change — an active-button click is a no-op (no phantom undo step).
-  const patchIf = (active: boolean, partial: Partial<TextElement>) => (): void => {
+  const patchIf = (active: boolean, partial: TextStylePatch) => (): void => {
     if (!active) onPatch(partial)
   }
 
   return (
     <div
       className="pl-text-toolbar"
-      style={{ position: 'absolute', left: element.x, top }}
+      style={{ position: 'absolute', left, top }}
       // Keep clicks off the well (which would clear selection / start a draw gesture).
       onPointerDown={(e) => e.stopPropagation()}
     >

@@ -41,7 +41,7 @@ import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
-import { TextToolbar } from './planning/TextToolbar'
+import { TextToolbar, type TextStylePatch } from './planning/TextToolbar'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { ImageCard } from './planning/ImageCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
@@ -357,19 +357,28 @@ export function PlanningBoard({
       commit(patchElement<NoteElement>(elements, id, (n) => ({ ...n, text }))),
     [commit, elements]
   )
+  // Live-read transform (not the render-time `elements` closure): a text edit and a
+  // typography patch from the toolbar can land in the same window, and the closure form
+  // would replace `elements` from a stale snapshot, dropping the typography change (BUG-023).
   const setTextText = useCallback(
     (id: string, text: string) =>
-      commit(patchElement<TextElement>(elements, id, (t) => ({ ...t, text }))),
-    [commit, elements]
+      commit((cur) => patchElement<TextElement>(cur, id, (t) => ({ ...t, text }))),
+    [commit]
   )
   // Typography patch from the floating TextToolbar — one undo step, live-read transform
   // (so it can't clobber a concurrent text edit landing in the same window; BUG-023 class).
   const onTextPatch = useCallback(
-    (id: string, partial: Partial<TextElement>) => {
+    (id: string, partial: TextStylePatch) => {
+      // Bail if the element vanished between the toolbar's render and this click (eraser,
+      // blur-prune, concurrent delete) so beginChange() never pushes an empty checkpoint
+      // for a patch that would no-op (#BUG M3 phantom-undo class).
+      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
+      const els = live?.type === 'planning' ? live.elements : []
+      if (!els.some((e) => e.id === id)) return
       beginChange()
       commit((cur) => patchElement<TextElement>(cur, id, (t) => ({ ...t, ...partial })))
     },
-    [beginChange, commit]
+    [beginChange, commit, board.id]
   )
   const deleteEl = useCallback(
     (id: string) => {
@@ -906,6 +915,7 @@ export function PlanningBoard({
         {selectedTextEl && (
           <TextToolbar
             element={selectedTextEl}
+            boardW={board.w}
             onPatch={(partial) => onTextPatch(selectedTextEl.id, partial)}
           />
         )}
