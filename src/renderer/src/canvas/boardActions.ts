@@ -21,6 +21,10 @@ export interface BoardActions {
    * in-flight "connecting" state is EPHEMERAL (never persisted — scene/session split).
    */
   startConnect: (fromBoardId: string) => void
+  /** Add a board to a group, animating the cluster re-pack (S6). */
+  addToGroup: (boardId: string, groupId: string) => void
+  /** Remove a board from every group it belongs to (S6). */
+  removeFromGroup: (boardId: string) => void
 }
 
 export const BoardActionsContext = createContext<BoardActions | null>(null)

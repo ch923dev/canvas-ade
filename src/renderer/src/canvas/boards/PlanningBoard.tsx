@@ -104,6 +104,8 @@ export function PlanningBoard({
   onFull,
   onDuplicate,
   onDelete,
+  onAddToGroup,
+  onRemoveFromGroup,
   onStartConnect
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
@@ -710,6 +712,7 @@ export function PlanningBoard({
   return (
     <BoardFrame
       type="planning"
+      boardId={board.id}
       title={board.title}
       selected={selected}
       hovered={hovered}
@@ -720,6 +723,8 @@ export function PlanningBoard({
       onFull={onFull}
       onDuplicate={onDuplicate}
       onDelete={onDelete}
+      onAddToGroup={onAddToGroup}
+      onRemoveFromGroup={onRemoveFromGroup}
       onStartConnect={onStartConnect}
     >
       <div
