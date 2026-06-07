@@ -31,7 +31,8 @@ describe('recordSession.js hook script', () => {
       boardId: 'board-9',
       sessionId: 'sess-1',
       transcriptPath: '/h/.claude/projects/p/sess-1.jsonl',
-      cwd: '/repo'
+      cwd: '/repo',
+      source: 'startup'
     })
     expect(typeof rec.ts).toBe('number')
   })
