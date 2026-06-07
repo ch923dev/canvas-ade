@@ -134,3 +134,38 @@ describe('boardToSvg — images', () => {
     expect(res.embeddedCount).toBe(0)
   })
 })
+
+describe('boardToSvg — text typography (v6)', () => {
+  it('a text element with NO tokens exports identically to the pre-v6 baseline', () => {
+    const { svg } = boardToSvg(board([{ id: 't', kind: 'text', x: 10, y: 10, text: 'plain' }]), {})
+    expect(svg).toContain('font-size="13"')
+    expect(svg).toContain('font-family="system-ui, -apple-system, Segoe UI, sans-serif"')
+    expect(svg).toContain('fill="#ededee"')
+    expect(svg).not.toContain('text-anchor=') // left is the default → no anchor attr
+  })
+
+  it('honors family / size / weight / color / align tokens', () => {
+    const { svg } = boardToSvg(
+      board([
+        {
+          id: 't',
+          kind: 'text',
+          x: 10,
+          y: 10,
+          text: 'styled',
+          fontFamily: 'mono',
+          fontSize: 'XL',
+          align: 'center',
+          color: 'accent',
+          bold: true
+        }
+      ]),
+      {}
+    )
+    expect(svg).toContain('font-size="26"')
+    expect(svg).toContain('font-weight="700"')
+    expect(svg).toContain('Cascadia Mono, Consolas, ui-monospace, monospace')
+    expect(svg).toContain('fill="#4f8cff"')
+    expect(svg).toContain('text-anchor="middle"')
+  })
+})

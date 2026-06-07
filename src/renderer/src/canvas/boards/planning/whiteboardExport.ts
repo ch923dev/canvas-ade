@@ -13,6 +13,7 @@ import type { PlanningBoard, PlanningElement } from '../../../lib/boardSchema'
 import { elementBBox, unionBBox, nominalChecklistHeight, TEXT_NOMINAL } from './elements'
 import { EXPORT_COLORS, EXPORT_NOTE_TINTS } from './exportColors'
 import { arrowPath, strokeToPath } from './svgPaths'
+import { SIZE_PX, COLOR_EXPORT, FAMILY_EXPORT, ANCHOR, WEIGHT } from './textStyle'
 
 /** assetId → data-URI (base64) for image elements; missing ids are absent. */
 export type ExportAssets = Record<string, string>
@@ -47,20 +48,24 @@ export function esc(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-/** A multi-line <text> block: one <tspan> per source line, left-aligned at (x,y). */
+/** A multi-line <text> block: one <tspan> per source line. `anchor` defaults to 'start'
+ *  (left) so existing callers (note/checklist) emit byte-identical markup. */
 function textBlock(
   x: number,
   y: number,
   raw: string,
   size: number,
   fill: string,
-  weight = 400
+  weight = 400,
+  family: string = FONT,
+  anchor: 'start' | 'middle' | 'end' = 'start'
 ): string {
   const lines = raw.split('\n')
   const tspans = lines
     .map((ln, i) => `<tspan x="${x}" dy="${i === 0 ? 0 : size + 4}">${esc(ln)}</tspan>`)
     .join('')
-  return `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" font-weight="${weight}" fill="${fill}">${tspans}</text>`
+  const a = anchor !== 'start' ? ` text-anchor="${anchor}"` : ''
+  return `<text x="${x}" y="${y}" font-family="${family}" font-size="${size}" font-weight="${weight}"${a} fill="${fill}">${tspans}</text>`
 }
 
 export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportResult {
@@ -133,11 +138,31 @@ function renderElement(
         embedded: false
       }
     }
-    case 'text':
+    case 'text': {
+      const fam = el.fontFamily ?? 'sans'
+      const px = SIZE_PX[el.fontSize ?? 'M']
+      const align = el.align ?? 'left'
+      const colorTok = el.color ?? 'default'
+      const weight = el.bold ? WEIGHT.bold : WEIGHT.normal
+      // Anchor x at the nominal box edge/center (no DOM at export time → approximate for
+      // center/right, exact for left). Baseline el.y + px + 3 === el.y + 16 at px=13,
+      // keeping default text byte-identical to pre-v6.
+      const w = TEXT_NOMINAL.w
+      const ax = align === 'center' ? el.x + w / 2 : align === 'right' ? el.x + w : el.x
       return {
-        markup: textBlock(el.x, el.y + TEXT_NOMINAL.h - 6, el.text, 13, EXPORT_COLORS.text),
+        markup: textBlock(
+          ax,
+          el.y + px + 3,
+          el.text,
+          px,
+          COLOR_EXPORT[colorTok],
+          weight,
+          FAMILY_EXPORT[fam],
+          ANCHOR[align]
+        ),
         embedded: false
       }
+    }
     case 'checklist': {
       const total = el.items.length
       const done = el.items.filter((i) => i.done).length
