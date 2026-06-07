@@ -154,6 +154,17 @@ clicks "Enable" in the consent modal — never silently.
 > `{session_id, transcript_path, cwd}` keyed by cwd; the app correlates the new entry to the board it
 > just spawned by spawn order (racy only for simultaneous same-cwd spawns — documented).
 
+**Resume handling (verified).** `SessionStart` fires on **resume** too (`source: "resume"`), not only
+fresh starts. So if a user opens a new terminal board and runs `claude --resume <id>` / `--continue`,
+the hook fires with the resumed session's `session_id` + the existing `transcript_path`, and our
+`CANVAS_RECAP_BOARD` env binds it to the new board → that board's recap shows the **full resumed
+history** (and the mtime watcher keeps it fresh). This also covers conversations *started outside
+Expanse* and resumed in one of our terminals. The hook only binds when `CANVAS_RECAP_BOARD` is set
+(i.e. terminals we spawn); a resume in an external terminal fires the hook but has no board to bind to
+(correct — not our board). Two boards may point at the same transcript over time (original + resumer) —
+fine, both render the same recap; the app keys board→transcript and uses the latest mapping line per
+board.
+
 ### 4.3 `src/main/summaryLoop.ts` (EXTEND — terminal recap path)
 
 For a terminal board with milestones available, the loop builds a **numbered milestone prompt** and
@@ -241,8 +252,11 @@ full transparency:
 - **Buttons:** `Enable recaps` (primary) · `Not now` (declines for this project; revisitable in
   Settings). No dark patterns; "Not now" is a real, equal choice.
 
-**Settings:** a per-project "Agent recaps" toggle mirrors/changes the decision later — enabling installs
-the hook, disabling removes our hook entry from `settings.local.json`.
+**Settings = the feature-flag control plane (the user's framing).** A per-project "Expanse features"
+section with an **Agent recaps** flag mirrors/changes the decision later — enabling installs the hook,
+disabling removes our hook entry from `settings.local.json`. This section is the home for future flags
+(e.g. the deferred MCP swarm / self-report enrichment, §12), so one clear opt-in surface governs all
+agent-integration features instead of silent per-feature installs.
 
 ---
 
@@ -392,3 +406,28 @@ Gate per CLAUDE.md: `pnpm typecheck · lint · format:check · vitest`, then the
 | `src/renderer/.../TerminalBoard.tsx` | flip control + flipped state (xterm stays mounted) |
 | `src/renderer/.../RecapView.tsx` | NEW — back-face NOW + timeline + ⟳ |
 | `e2e/*recap*.e2e.ts` + fake-claude fixture | NEW — live-chain proof (incl. consent path) |
+
+---
+
+## 12. Deferred follow-ups (not this feature)
+
+1. **Resume agent (fast-follow).** Storing `agentSessionId` already lays the groundwork. Add a
+   "Resume agent" affordance that relaunches `claude --resume <sessionId>` in the board to continue the
+   real conversation. Small; intentionally out of this feature to keep the first ship focused on the
+   verified recap.
+
+2. **MCP self-report enrichment + swarm wiring.** Evaluated and deferred (2026-06-07). Verification
+   showed MCP **cannot replace the hook** for recaps:
+   - The MCP connection is anonymous beyond `clientInfo` (name/version) — it carries **no** `session_id`
+     / `transcript_path`; the agent **cannot self-discover** its own session id/transcript path (only a
+     hook gets them). So MCP can't locate the transcript.
+   - Wiring `claude`→MCP is **not** more invisible: a committed `.mcp.json` (worse), a global
+     `~/.claude.json` mutation, or a visible `--mcp-config` flag. No invisible env path exists.
+   - `write_result` is **self-report only** (pull/agent-cooperation; no auto-push; can be
+     stale/missing; no guaranteed timeline) — lower quality than the independent transcript observer.
+   - It also requires building the currently-**unwired** claude→Expanse MCP client (token/URL
+     injection) — a separate swarm-layer effort.
+   **Future value:** once that wiring exists, `write_result` is excellent **opportunistic enrichment
+   layered on top of** the transcript recap (high-intent "agent says it's done", `status`/`refs`), and
+   it unlocks the swarm roadmap. It slots into the same Settings feature-flag panel (§4.8) as a new
+   flag. Build it as its own feature; this recap does not block on it.
