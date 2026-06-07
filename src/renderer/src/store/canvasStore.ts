@@ -78,10 +78,13 @@ export interface CanvasState {
   groups: NamedGroup[]
   selectedId: string | null
   /**
-   * Full multi-selection set (marquee / shift-click). `selectedId` is the PRIMARY —
-   * the last id added — kept in sync as `selectedIds[selectedIds.length - 1] ?? null`
-   * so single-select consumers (preview liveness, full view) are unchanged. Ephemeral:
-   * never serialized (scene/session split), reset to [] on load/undo like selectedId.
+   * Full multi-selection set. Populated by React Flow's native node selection (Shift+drag
+   * marquee, Ctrl/⌘-click to add — RF's default selection/multi-selection key codes), folded
+   * in `Canvas.onNodesChange` via `foldSelectionIntents` and written with `setSelection`.
+   * `selectedId` is the PRIMARY — the last id added — kept in sync as
+   * `selectedIds[selectedIds.length - 1] ?? null` so single-select consumers (preview
+   * liveness, full view) are unchanged. Ephemeral: never serialized (scene/session split),
+   * reset to [] on load/undo like selectedId.
    */
   selectedIds: string[]
   tool: Tool
@@ -141,6 +144,9 @@ export interface CanvasState {
   ) => void
   /** Remove one board from a group. One tracked step; no-op if not a member. */
   removeBoardFromGroup: (id: string, boardId: string) => void
+  /** Remove a board from EVERY group it belongs to in ONE tracked step (mirrors removeBoard's
+   *  membership sweep). One undo restores all memberships. No-op if it's in no group. */
+  removeBoardFromAllGroups: (boardId: string) => void
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
@@ -172,9 +178,9 @@ export interface CanvasState {
   /** Set the camera transform. UNTRACKED — never touches undo/redo (like growBoardHeight). */
   setViewport: (vp: CanvasViewport) => void
   selectBoard: (id: string | null) => void
-  /** Toggle one board in/out of the multi-selection (shift-click). Primary = last id. */
-  toggleSelect: (id: string) => void
-  /** Replace the whole multi-selection (marquee). Primary = last id, or null when empty. */
+  /** Replace the whole multi-selection (RF marquee/multi-click fold). Primary = last id, or
+   *  null when empty. The single source for writing `selectedIds` (no per-id toggle action —
+   *  React Flow owns the add/remove gesture; `Canvas.onNodesChange` folds it to a full set). */
   setSelection: (ids: string[]) => void
   setTool: (tool: Tool) => void
   /** Snapshot the current boards for undo (call at the start of a discrete edit). */
@@ -603,6 +609,23 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         { reflectPresent: false }
       )
     }),
+  removeBoardFromAllGroups: (boardId) =>
+    set((s) => {
+      // No-op (keep refs stable) when the board belongs to no group — same guard discipline as
+      // removeBoard's sweep, so a "remove from group" on an ungrouped board can't push a step.
+      if (!s.groups.some((g) => g.boardIds.includes(boardId))) return s
+      return trackedChange(
+        s,
+        {
+          groups: s.groups.map((g) =>
+            g.boardIds.includes(boardId)
+              ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) }
+              : g
+          )
+        },
+        { reflectPresent: false }
+      )
+    }),
 
   updateBoard: (id, patch) =>
     set((s) => {
@@ -729,12 +752,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
 
   selectBoard: (id) => set({ selectedId: id, selectedIds: id ? [id] : [] }),
-  toggleSelect: (id) =>
-    set((s) => {
-      const has = s.selectedIds.includes(id)
-      const selectedIds = has ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]
-      return { selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null }
-    }),
   setSelection: (ids) => {
     const selectedIds = [...new Set(ids)]
     set({ selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null })

@@ -1219,17 +1219,6 @@ describe('multi-select', () => {
     expect(useCanvasStore.getState().selectedId).toBeNull()
   })
 
-  it('toggleSelect adds then removes, keeping selectedId as the last', () => {
-    const { toggleSelect } = useCanvasStore.getState()
-    toggleSelect('a')
-    toggleSelect('b')
-    expect(useCanvasStore.getState().selectedIds).toEqual(['a', 'b'])
-    expect(useCanvasStore.getState().selectedId).toBe('b')
-    toggleSelect('b')
-    expect(useCanvasStore.getState().selectedIds).toEqual(['a'])
-    expect(useCanvasStore.getState().selectedId).toBe('a')
-  })
-
   it('setSelection replaces the set and derives the primary from the last id', () => {
     const { setSelection } = useCanvasStore.getState()
     setSelection(['a', 'b', 'c'])
@@ -1400,6 +1389,33 @@ describe('group CRUD', () => {
     const id = useCanvasStore.getState().addGroup('Auth', ['b1'])
     const len = useCanvasStore.getState().past.length
     useCanvasStore.getState().removeBoardFromGroup(id, 'zzz')
+    expect(useCanvasStore.getState().past.length).toBe(len)
+  })
+
+  it('removeBoardFromAllGroups drops a board from every group in ONE undo step', () => {
+    const g1 = useCanvasStore.getState().addGroup('Auth', ['b1', 'b2'])
+    const g2 = useCanvasStore.getState().addGroup('API', ['b1', 'b3'])
+    const lenBefore = useCanvasStore.getState().past.length
+    useCanvasStore.getState().removeBoardFromAllGroups('b1')
+    expect(useCanvasStore.getState().groups.find((x) => x.id === g1)?.boardIds).toEqual(['b2'])
+    expect(useCanvasStore.getState().groups.find((x) => x.id === g2)?.boardIds).toEqual(['b3'])
+    // ONE step covers both groups → a single undo restores every membership.
+    expect(useCanvasStore.getState().past.length).toBe(lenBefore + 1)
+    useCanvasStore.getState().undo()
+    expect(useCanvasStore.getState().groups.find((x) => x.id === g1)?.boardIds).toEqual([
+      'b1',
+      'b2'
+    ])
+    expect(useCanvasStore.getState().groups.find((x) => x.id === g2)?.boardIds).toEqual([
+      'b1',
+      'b3'
+    ])
+  })
+
+  it('removeBoardFromAllGroups on a board in no group does not push an undo step', () => {
+    useCanvasStore.getState().addGroup('Auth', ['b1'])
+    const len = useCanvasStore.getState().past.length
+    useCanvasStore.getState().removeBoardFromAllGroups('zzz')
     expect(useCanvasStore.getState().past.length).toBe(len)
   })
 

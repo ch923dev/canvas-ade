@@ -51,7 +51,7 @@ import {
 } from '../lib/alignmentGuides'
 import { snapOthers, boardsBounds } from '../lib/boardGeometry'
 import { AlignmentGuides } from './AlignmentGuides'
-import { nodeChangesToIntents } from '../lib/nodeChanges'
+import { nodeChangesToIntents, foldSelectionIntents } from '../lib/nodeChanges'
 import type { TileTemplate } from '../lib/tileLayout'
 import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { buildBoardNodes, type NodeCache } from './boardNodes'
@@ -213,6 +213,10 @@ function FadingDots(): ReactElement {
   )
 }
 
+// Group-create chord glyph: ⌘G on macOS, Ctrl+G elsewhere (the keybinding fires on either
+// Ctrl or ⌘). Mirrors TerminalBoard's IS_MAC detection so the FAB label matches the real key.
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
+
 function CanvasInner(): ReactElement {
   const boards = useCanvasStore((s) => s.boards)
   const selectedIds = useCanvasStore((s) => s.selectedIds)
@@ -235,7 +239,7 @@ function CanvasInner(): ReactElement {
   const removeGroup = useCanvasStore((s) => s.removeGroup)
   const addBoardsToGroup = useCanvasStore((s) => s.addBoardsToGroup)
   const addBoardsToGroupReflowed = useCanvasStore((s) => s.addBoardsToGroupReflowed)
-  const removeBoardFromGroup = useCanvasStore((s) => s.removeBoardFromGroup)
+  const removeBoardFromAllGroups = useCanvasStore((s) => s.removeBoardFromAllGroups)
   // Reactive groups read for the focus picker (it lists one row per group; needs to re-render
   // when groups change). The fit/select helpers read off getState() so they don't depend on it.
   const groups = useCanvasStore((s) => s.groups)
@@ -527,24 +531,18 @@ function CanvasInner(): ReactElement {
         setGuides((g) => (g.length ? [] : g))
       }
 
-      // Fold React Flow's select/deselect deltas onto the current multi-selection. RF emits
-      // select:false for the previously-selected on a plain click and select:true for each box
-      // member on a marquee/shift gesture, so applying the deltas to the live set yields the
-      // correct single OR multi selection (the prior single-id fold collapsed multi-select).
-      let selChanged = false
-      const selSet = new Set(useCanvasStore.getState().selectedIds)
-      for (const intent of nodeChangesToIntents(changes)) {
+      // Apply each change's SIDE EFFECTS (move/resize/remove); the multi-selection is folded
+      // after the loop by the pure foldSelectionIntents (nodeChanges.ts, unit-tested) so the
+      // select/deselect/ghost-id-prune rules live in one place. Snapshot selectedIds BEFORE the
+      // loop — removeBoard sweeps it mid-loop, but the fold result below is authoritative.
+      const intents = nodeChangesToIntents(changes)
+      const selBefore = useCanvasStore.getState().selectedIds
+      for (const intent of intents) {
         if (intent.kind === 'move') updateBoard(intent.id, { x: intent.x, y: intent.y })
         else if (intent.kind === 'resize') resizeBoard(intent.id, intent.w, intent.h)
-        else if (intent.kind === 'select') {
-          selSet.add(intent.id)
-          selChanged = true
-        } else if (intent.kind === 'deselect') {
-          selSet.delete(intent.id)
-          selChanged = true
-        } else if (intent.kind === 'remove') {
+        else if (intent.kind === 'remove') {
           // #15: park a terminal's live session BEFORE removal so undo can adopt it. RF's
-          // deleteKeyCode removes EVERY selected node, so this now loops over the whole selection.
+          // deleteKeyCode removes EVERY selected node, so this loops over the whole selection.
           const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
           if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id)
           // #BUG-012: keyboard-delete (deleteKeyCode) reaches removal HERE, bypassing
@@ -561,14 +559,12 @@ function CanvasInner(): ReactElement {
             else exitCameraFullView()
           }
           removeBoard(intent.id)
-          // Keep the fold set authoritative: drop the removed id so the trailing
-          // setSelection can't write a ghost id back into selectedIds (multi-delete).
-          selSet.delete(intent.id)
-          selChanged = true
           setFocusedId((f) => (f === intent.id ? null : f))
         }
+        // select/deselect carry no side effect — folded below (ghost-id prune included).
       }
-      if (selChanged) setSelection([...selSet])
+      const folded = foldSelectionIntents(selBefore, intents)
+      if (folded.changed) setSelection(folded.ids)
     },
     // Merged deps: the multi-select fold uses setSelection (groups branch); the keyboard-delete
     // path uses the full-view cleanup refs/closers (#BUG-012, #85). selectBoard is no longer
@@ -608,16 +604,20 @@ function CanvasInner(): ReactElement {
   const groupSelection = useCallback(() => {
     const st = useCanvasStore.getState()
     const ids = st.selectedIds
-    if (ids.length < 2) return
-    const name = nextGroupName(st.groups)
-    const gid = st.addGroup(name, ids)
+    // Resolve the selection to LIVE boards first, and require >=2 of them BEFORE minting the
+    // group — otherwise boards deleted between selection and Ctrl+G would commit a group over
+    // stale ids with no locatable bounds (no popover), leaving an orphan the user can't rename.
     const sel = st.boards.filter((b) => ids.includes(b.id))
     const bb = boardsBounds(sel)
-    if (bb) {
-      const p = rf.flowToScreenPosition({ x: bb.minX, y: bb.minY })
-      setNamePopAt({ x: p.x, y: Math.max(8, p.y - 40) })
-      setNamingGroupId(gid)
-    }
+    if (sel.length < 2 || !bb) return
+    const name = nextGroupName(st.groups)
+    const gid = st.addGroup(
+      name,
+      sel.map((b) => b.id)
+    )
+    const p = rf.flowToScreenPosition({ x: bb.minX, y: bb.minY })
+    setNamePopAt({ x: p.x, y: Math.max(8, p.y - 40) })
+    setNamingGroupId(gid)
   }, [rf])
 
   // Fit the camera to one group's member boards (raster-capped). Mirrors focusBoard but over the
@@ -836,13 +836,8 @@ function CanvasInner(): ReactElement {
       },
       // S6: ⋯ menu → add this board to a group, animating the cluster re-pack.
       addToGroup: (boardId, groupId) => reflowAddToGroup(groupId, [boardId]),
-      // S6: ⋯ menu → remove this board from every group it belongs to.
-      removeFromGroup: (boardId) => {
-        const st = useCanvasStore.getState()
-        st.groups
-          .filter((g) => g.boardIds.includes(boardId))
-          .forEach((g) => removeBoardFromGroup(g.id, boardId))
-      }
+      // S6: ⋯ menu → remove this board from every group it belongs to, in one undo step.
+      removeFromGroup: (boardId) => removeBoardFromAllGroups(boardId)
     }
   }, [
     duplicateBoard,
@@ -855,7 +850,7 @@ function CanvasInner(): ReactElement {
     fullViewIdRef,
     cameraFullViewIdRef,
     reflowAddToGroup,
-    removeBoardFromGroup
+    removeBoardFromAllGroups
   ])
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
@@ -1133,7 +1128,8 @@ function CanvasInner(): ReactElement {
               title="Group selection (Ctrl+G)"
               aria-label={`Group ${selectedIds.length} selected boards`}
             >
-              <span style={{ fontFamily: 'var(--mono)' }}>⌘G</span> Group {selectedIds.length}
+              <span style={{ fontFamily: 'var(--mono)' }}>{IS_MAC ? '⌘G' : 'Ctrl+G'}</span> Group{' '}
+              {selectedIds.length}
             </button>
           )}
           {namingGroupId && namePopAt && (
@@ -1143,7 +1139,12 @@ function CanvasInner(): ReactElement {
               }
               at={namePopAt}
               onCommit={(name) => {
-                renameGroup(namingGroupId, name)
+                // Only rename if the group still exists: if it was undone away while the popover
+                // was open, namingGroupId is stale — renameGroup would no-op, so guard explicitly
+                // rather than rely on that (and don't resurrect a removed group's name).
+                if (useCanvasStore.getState().groups.some((g) => g.id === namingGroupId)) {
+                  renameGroup(namingGroupId, name)
+                }
                 setNamingGroupId(null)
                 setNamePopAt(null)
               }}
