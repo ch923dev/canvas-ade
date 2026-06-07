@@ -16,7 +16,6 @@ import {
   FAMILY_CSS,
   TEXT_DEFAULTS,
   type FontFamilyToken,
-  type FontSizeToken,
   type TextAlignToken
 } from './textStyle'
 
@@ -37,8 +36,8 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
 
   const btn = (active: boolean, extra = ''): string =>
     `pl-tt-btn${active ? ' is-active' : ''}${extra ? ' ' + extra : ''}`
-  // Emit only on a real change (active button click = no-op).
-  const set = (active: boolean, partial: Partial<TextElement>) => (): void => {
+  // Patch only on a real change — an active-button click is a no-op (no phantom undo step).
+  const patchIf = (active: boolean, partial: Partial<TextElement>) => (): void => {
     if (!active) onPatch(partial)
   }
 
@@ -58,7 +57,7 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
             aria-pressed={fam === f}
             className={btn(fam === f)}
             style={{ fontFamily: FAMILY_CSS[f] }}
-            onClick={set(fam === f, { fontFamily: f as FontFamilyToken })}
+            onClick={patchIf(fam === f, { fontFamily: f })}
           >
             {FAMILY_GLYPH[f]}
           </button>
@@ -73,7 +72,7 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
             aria-label={`size ${s}`}
             aria-pressed={size === s}
             className={btn(size === s)}
-            onClick={set(size === s, { fontSize: s as FontSizeToken })}
+            onClick={patchIf(size === s, { fontSize: s })}
           >
             {s}
           </button>
@@ -88,7 +87,7 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
             aria-label={`align ${a}`}
             aria-pressed={align === a}
             className={btn(align === a)}
-            onClick={set(align === a, { align: a as TextAlignToken })}
+            onClick={patchIf(align === a, { align: a })}
           >
             {ALIGN_GLYPH[a]}
           </button>
@@ -115,7 +114,7 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
             aria-pressed={color === c}
             className={btn(color === c, 'pl-tt-swatch')}
             style={{ background: COLOR_CSS[c] }}
-            onClick={set(color === c, { color: c })}
+            onClick={patchIf(color === c, { color: c })}
           />
         ))}
       </div>

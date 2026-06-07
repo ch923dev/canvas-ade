@@ -52,12 +52,26 @@ describe('TextToolbar', () => {
     expect(onPatch).not.toHaveBeenCalled()
   })
 
-  it('bold toggles from its current value', () => {
+  it('bold toggles on from its current value', () => {
     const onPatch = vi.fn()
     const { getByLabelText } = render(
       <TextToolbar element={el({ bold: false })} onPatch={onPatch} />
     )
     fireEvent.click(getByLabelText('bold'))
     expect(onPatch).toHaveBeenCalledWith({ bold: true })
+  })
+
+  it('bold toggles off when already bold', () => {
+    const onPatch = vi.fn()
+    const { getByLabelText } = render(
+      <TextToolbar element={el({ bold: true })} onPatch={onPatch} />
+    )
+    fireEvent.click(getByLabelText('bold'))
+    expect(onPatch).toHaveBeenCalledWith({ bold: false })
+  })
+
+  it('bold defaults to not-pressed when the element has no bold field', () => {
+    const { getByLabelText } = render(<TextToolbar element={el()} onPatch={() => {}} />)
+    expect(getByLabelText('bold').getAttribute('aria-pressed')).toBe('false')
   })
 })
