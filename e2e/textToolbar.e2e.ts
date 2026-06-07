@@ -1,5 +1,29 @@
 import { test, expect } from './fixtures'
 import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { type Page } from '@playwright/test'
+
+// Poll until `expr` (a renderer expression returning `{cx,cy}` screen coords, or null when
+// not ready) yields coords, then return them. Reading the rect INSIDE the poll keeps the
+// coordinate read atomic with the readiness check — a separate post-poll read could race a
+// floating element (e.g. the toolbar) still settling its position and then click stale coords.
+async function pollRect(
+  page: Page,
+  expr: string,
+  message: string,
+  timeout = 4000
+): Promise<{ cx: number; cy: number }> {
+  let rect: { cx: number; cy: number } | null = null
+  await expect
+    .poll(
+      async () => {
+        rect = await evalIn<{ cx: number; cy: number } | null>(page, expr)
+        return rect !== null
+      },
+      { message, timeout }
+    )
+    .toBe(true)
+  return rect!
+}
 
 test.describe('text font toolbar (real OS input)', () => {
   test('select a text element → toolbar → click size L → persists fontSize', async ({
@@ -13,35 +37,23 @@ test.describe('text font toolbar (real OS input)', () => {
         { id: 'txt', kind: 'text', x: 160, y: 160, text: 'Hello' }
       ] })`
     )
+    // Give React Flow a tick to render the new element before polling.
     await page.waitForTimeout(160)
 
-    // Poll until the grip is on-screen and has a non-zero rect.
-    const gripReady = await pollEval(
+    // Select the text by a real OS press on its drag grip (coords read atomically).
+    const g = await pollRect(
       page,
       `(() => {
          const id = ${JSON.stringify(planId)};
          const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
          const grip = node && node.querySelector('.pl-text-grip');
-         if (!grip) return false;
+         if (!grip) return null;
          const r = grip.getBoundingClientRect();
-         return r.width > 0;
-       })()`,
-      4000
-    )
-    expect(gripReady, 'text grip is on screen').toBe(true)
-
-    // Now read the actual coordinates for the real OS click.
-    const g = await evalIn<{ cx: number; cy: number }>(
-      page,
-      `(() => {
-         const id = ${JSON.stringify(planId)};
-         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
-         const grip = node.querySelector('.pl-text-grip');
-         const r = grip.getBoundingClientRect();
+         if (!(r.width > 0)) return null;
          return { cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) };
-       })()`
+       })()`,
+      'text grip is on screen'
     )
-
     await mainCall(electronApp, 'sendInput', {
       type: 'mouseDown',
       x: g.cx,
@@ -57,33 +69,20 @@ test.describe('text font toolbar (real OS input)', () => {
       clickCount: 1
     })
 
-    // Poll until the toolbar appears.
-    const toolbarReady = await pollEval(
+    // The toolbar should appear for the single text selection; real-click its size-L button.
+    const s = await pollRect(
       page,
       `(() => {
          const id = ${JSON.stringify(planId)};
          const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
          const btn = node && node.querySelector('.pl-text-toolbar button[aria-label="size L"]');
-         if (!btn) return false;
+         if (!btn) return null;
          const r = btn.getBoundingClientRect();
-         return r.width > 0;
-       })()`,
-      4000
-    )
-    expect(toolbarReady, 'toolbar appeared with a size-L button').toBe(true)
-
-    // Read the size-L button coords.
-    const s = await evalIn<{ cx: number; cy: number }>(
-      page,
-      `(() => {
-         const id = ${JSON.stringify(planId)};
-         const node = document.querySelector('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
-         const btn = node.querySelector('.pl-text-toolbar button[aria-label="size L"]');
-         const r = btn.getBoundingClientRect();
+         if (!(r.width > 0)) return null;
          return { cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2) };
-       })()`
+       })()`,
+      'toolbar size-L button appeared'
     )
-
     await mainCall(electronApp, 'sendInput', {
       type: 'mouseDown',
       x: s.cx,
@@ -99,7 +98,7 @@ test.describe('text font toolbar (real OS input)', () => {
       clickCount: 1
     })
 
-    // Poll until the store reflects fontSize: 'L'.
+    // The store should reflect fontSize: 'L'.
     const persisted = await pollEval(
       page,
       `(() => {
