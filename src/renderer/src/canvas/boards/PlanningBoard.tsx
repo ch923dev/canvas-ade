@@ -717,6 +717,15 @@ export function PlanningBoard({
   // crosshair cursor so the active mode is legible.
   const drawing = tool === 'arrow' || tool === 'pen'
 
+  // The typography toolbar shows for exactly one selected free-text element (select tool
+  // only). Derived here so the JSX stays flat (the file uses named consts, not IIFEs).
+  // From viewElements so it tracks a live drag; a ghost copy can never be in selectedIds.
+  const selectedOne =
+    interactive && selectedIds.size === 1
+      ? (viewElements.find((e) => e.id === [...selectedIds][0]) ?? null)
+      : null
+  const selectedTextEl = selectedOne?.kind === 'text' ? selectedOne : null
+
   return (
     <BoardFrame
       type="planning"
@@ -893,17 +902,13 @@ export function PlanningBoard({
           return null
         })}
 
-        {/* Typography toolbar for a single selected free-text element (sibling to the
-            cards, board-local coords). Shown only in select mode with exactly one
-            text element selected. */}
-        {interactive &&
-          selectedIds.size === 1 &&
-          (() => {
-            const sid = [...selectedIds][0]
-            const sel = viewElements.find((e) => e.id === sid)
-            if (!sel || sel.kind !== 'text') return null
-            return <TextToolbar element={sel} onPatch={(partial) => onTextPatch(sel.id, partial)} />
-          })()}
+        {/* Typography toolbar — sibling to the cards, board-local coords (see selectedTextEl). */}
+        {selectedTextEl && (
+          <TextToolbar
+            element={selectedTextEl}
+            onPatch={(partial) => onTextPatch(selectedTextEl.id, partial)}
+          />
+        )}
 
         {elements.length === 0 && (
           <div

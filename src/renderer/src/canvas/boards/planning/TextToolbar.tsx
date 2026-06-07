@@ -27,6 +27,11 @@ export interface TextToolbarProps {
 const FAMILY_GLYPH: Record<FontFamilyToken, string> = { sans: 'A', mono: '</>', serif: 'A' }
 const ALIGN_GLYPH: Record<TextAlignToken, string> = { left: '⇤', center: '⇔', right: '⇥' }
 
+/** Px the toolbar sits above the element (≈ its own height) AND the room-above threshold. */
+const TOOLBAR_OFFSET = 40
+/** Px below the element's top when flipped down — clears a single text line. */
+const BELOW_OFFSET = 28
+
 export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElement {
   const fam = element.fontFamily ?? TEXT_DEFAULTS.fontFamily
   const size = element.fontSize ?? TEXT_DEFAULTS.fontSize
@@ -37,7 +42,7 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
   // clips overflow at its top edge, so a negative top would hide the toolbar. The
   // below offset (28) clears a single text line; multi-line text at the very top edge
   // is a rare v1 edge case.
-  const top = element.y >= 40 ? element.y - 40 : element.y + 28
+  const top = element.y >= TOOLBAR_OFFSET ? element.y - TOOLBAR_OFFSET : element.y + BELOW_OFFSET
 
   const btn = (active: boolean, extra = ''): string =>
     `pl-tt-btn${active ? ' is-active' : ''}${extra ? ' ' + extra : ''}`
