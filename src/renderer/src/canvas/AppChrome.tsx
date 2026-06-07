@@ -26,6 +26,7 @@ import { cameraAnim } from '../lib/motion'
 import { Icon, type IconName } from './Icon'
 import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
+import { RecapConsentModal } from './RecapConsentModal'
 
 export interface AppChromeProps {
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
@@ -35,12 +36,31 @@ export interface AppChromeProps {
 
 export function AppChrome({ onTidy }: AppChromeProps): ReactElement {
   const [showSettings, setShowSettings] = useState(false)
+  const [askRecap, setAskRecap] = useState(false)
+  // Re-run whenever the user switches to a different project (project.dir changes).
+  // Each project persists its own consent answer; an undecided project prompts once.
+  const projectDir = useCanvasStore((s) => s.project.dir)
+  useEffect(() => {
+    let cancelled = false
+    void window.api.recap
+      .getConsent()
+      .then((s) => {
+        if (!cancelled && s === 'undecided') setAskRecap(true)
+      })
+      .catch(() => {
+        // IPC rejection (channel unavailable, teardown race) — silently skip the prompt.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectDir])
   return (
     <>
       <ProjectSwitcher />
       <CameraCluster onTidy={onTidy} onSettings={() => setShowSettings(true)} />
       <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {askRecap && <RecapConsentModal onClose={() => setAskRecap(false)} />}
     </>
   )
 }
