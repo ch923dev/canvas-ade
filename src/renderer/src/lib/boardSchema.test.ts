@@ -178,6 +178,26 @@ describe('round-trip', () => {
     const wire = JSON.parse(JSON.stringify(toObject(boards, null)))
     expect(fromObject(wire).boards).toEqual(boards)
   })
+
+  it('persists agentSessionId + agentTranscriptPath on a terminal board', () => {
+    const boards: Board[] = [
+      {
+        id: 'b1',
+        type: 'terminal',
+        x: 0,
+        y: 0,
+        w: 400,
+        h: 300,
+        title: 'T',
+        agentSessionId: 's1',
+        agentTranscriptPath: '/t/s1.jsonl'
+      }
+    ]
+    const out = fromObject(toObject(boards, null))
+    const t = out.boards[0] as unknown as Record<string, unknown>
+    expect(t.agentSessionId).toBe('s1')
+    expect(t.agentTranscriptPath).toBe('/t/s1.jsonl')
+  })
 })
 
 describe('fromObject', () => {
