@@ -316,7 +316,7 @@ function DeviceContent({
         <div className="bb-state-title" style={{ color: 'var(--err)' }}>
           Couldn’t load
         </div>
-        <div className="bb-state-sub">{runtime.error || url}</div>
+        <div className="bb-state-sub">Reconnecting… · {runtime.error || url}</div>
       </div>
     )
   }
