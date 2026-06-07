@@ -13,7 +13,7 @@ describe('detectAgentCli', () => {
 })
 
 describe('claudeProjectSlug', () => {
-  it('replaces every non-alphanumeric with a dash (verified shape)', () => {
+  it('replaces every non-alphanumeric with a dash', () => {
     expect(claudeProjectSlug('Z:\\Canvas ADE')).toBe('Z--Canvas-ADE')
   })
   it('handles posix paths + trailing slash', () => {

@@ -9,7 +9,7 @@ export function detectAgentCli(launchCommand?: string): AgentCli {
   const toks = launchCommand.trim().split(/\s+/).filter(Boolean)
   for (const t of toks) {
     if (wrappers.has(t) || flags.has(t)) continue
-    return /(^|[\\/])claude(\.\w+)?$/i.test(t) || t.toLowerCase() === 'claude' ? 'claude' : 'unknown'
+    return /(^|[\\/])claude(\.\w+)?$/i.test(t) ? 'claude' : 'unknown'
   }
   return 'unknown'
 }
