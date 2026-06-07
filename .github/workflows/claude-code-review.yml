@@ -1,0 +1,99 @@
+name: claude-review
+
+# Automated PR review + triage. On every (non-draft) PR open/push, Claude reviews
+# the diff, posts a single review comment, then applies this repo's existing labels
+# and (only if one clearly fits) a milestone. It never CREATES labels or milestones —
+# it only chooses from what already exists (see `gh label list` / the milestones API).
+# Complements the deterministic `pr` gate (typecheck/lint/test/build) and `codeql`
+# (SAST): those say "is it green", this says "is it good".
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    # Optional: only review when certain files change
+    # paths:
+    #   - "src/**"
+
+concurrency:
+  # Cancel an in-progress review if a new push arrives on the same PR.
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # Skip draft PRs; remove this line if you want drafts reviewed too.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # post comments + edit labels/milestone on the PR
+      issues: write # labels and milestones go through the issues API
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Whitelist exactly which gh commands Claude may run.
+          # Note: each subcommand must be matched independently.
+          claude_args: |
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(gh label list:*),Bash(gh api repos:*)"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Perform these three tasks in order.
+
+            ## 1. Review the pull request
+            Provide feedback on:
+            - Code quality and best practices
+            - Potential bugs or logic errors
+            - Security concerns (this is an Electron app — sandbox/contextIsolation/IPC
+              boundaries, PTY input trust, native WebContentsView handling all matter)
+            - Performance considerations
+            - Edge cases and error handling
+            - Test coverage
+
+            Read the repository's CLAUDE.md for the architecture, the locked decisions,
+            and the style/convention rules — hold the diff against them. Be constructive
+            and concise. Focus on real issues, not style nitpicks the linter already
+            enforces. If the PR is clean, say so plainly rather than inventing concerns.
+
+            Post your review using:
+            gh pr comment ${{ github.event.pull_request.number }} --body "..."
+
+            ## 2. Apply labels
+            Run `gh label list` to see the labels that exist. This repo uses a STRUCTURED
+            scheme — pick from existing labels only, never create new ones:
+            - Exactly one `type/*` — the kind of change:
+              feature · fix · refactor · docs · research · chore · test
+            - One or two `area/*` — the subsystem(s) touched:
+              canvas · terminal · preview · planning · persistence · mcp · security ·
+              ci · e2e · design · packaging
+            - A `severity/*` (critical/high/medium/low) ONLY if this is a bug fix.
+            - `status/blocked` or `priority` only if clearly warranted.
+
+            Choose the 1–3 best-fitting EXISTING labels and apply them together:
+            gh pr edit ${{ github.event.pull_request.number }} --add-label "type/fix" --add-label "area/canvas"
+
+            Only use labels that already exist. Never create new labels. If nothing
+            fits, skip this step.
+
+            ## 3. Assign a milestone
+            List open milestones:
+            gh api repos/${{ github.repository }}/milestones --jq '.[].title'
+
+            Assign one ONLY if exactly one milestone clearly matches this PR's scope
+            (judge by the milestone title against the PR's title/description/changes):
+            gh pr edit ${{ github.event.pull_request.number }} --milestone "Milestone Title"
+
+            If no milestone clearly matches, or you are unsure, skip this step and note
+            in your review comment that no milestone was assigned. Never create new
+            milestones.
