@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { BrowserWindow } from 'electron'
+import { shell } from 'electron'
 import { registerPreviewHandlers } from './preview'
 import { createIpcCapture, foreignEvent, internalEvent, mainWin } from './ipcTestHarness'
 
@@ -141,6 +142,15 @@ describe('preview:openExternal', () => {
     const cap = createIpcCapture()
     registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
     expect(cap.invokeAs(internalEvent, 'preview:openExternal', 'http://localhost:3000/')).toBe(true)
+  })
+
+  it('returns true but does NOT call shell.openExternal for a blocked scheme (file:)', () => {
+    const cap = createIpcCapture()
+    registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
+    vi.mocked(shell.openExternal).mockClear()
+    const result = cap.invokeAs(internalEvent, 'preview:openExternal', 'file:///etc/passwd')
+    expect(result).toBe(true)
+    expect(shell.openExternal).not.toHaveBeenCalled()
   })
 })
 

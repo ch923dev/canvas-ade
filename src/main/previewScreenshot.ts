@@ -43,15 +43,20 @@ export function registerPreviewScreenshotHandler(
     if (isForeignSender(e, getWin)) return { ok: false, reason: 'forbidden' }
     const png = await deps.capture(String(id))
     if (!png) return { ok: false, reason: 'not-live' }
-    deps.writeImage(png)
+    try {
+      deps.writeImage(png)
+    } catch {
+      // Clipboard unavailable (headless / Wayland / locked session): non-fatal, still try to save.
+    }
     const dir = deps.currentDir()
     if (!dir) return { ok: true, assetId: null }
     try {
       const { assetId } = await deps.saveAsset(dir, png, 'png')
       return { ok: true, assetId }
-    } catch {
-      // Disk full / locked / read-only: the clipboard copy already succeeded, so report
-      // success with no path rather than failing the whole action.
+    } catch (err) {
+      // Disk full / locked / read-only: the clipboard copy already succeeded, so report success
+      // with no path rather than failing the whole action. Log so it's diagnosable.
+      console.warn('[preview:screenshot] asset save failed (clipboard copy succeeded):', err)
       return { ok: true, assetId: null }
     }
   })

@@ -72,6 +72,18 @@ describe('preview:screenshot', () => {
     expect(res).toEqual({ ok: true, assetId: null })
   })
 
+  it('still saves the asset when the clipboard write throws (headless)', async () => {
+    const m = makeIpc()
+    const d = deps({
+      writeImage: () => {
+        throw new Error('clipboard unavailable')
+      }
+    })
+    registerPreviewScreenshotHandler(m.ipc as never, mainWin, d)
+    const res = await m.invoke('preview:screenshot', validEvent, 'b1')
+    expect(res).toEqual({ ok: true, assetId: 'assets/abc.png' })
+  })
+
   it('rejects a foreign sender (no capture, no clipboard)', async () => {
     // Uses mainWin + foreignEvent from ipcTestHarness: mainWin returns a live window
     // (isDestroyed: false, webContents.isDestroyed: false) so isForeignSender reaches
