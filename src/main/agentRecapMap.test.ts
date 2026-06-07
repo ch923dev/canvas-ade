@@ -3,7 +3,12 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { installRecapHook, removeRecapHook, isRecapHookInstalled } from './agentRecapMap'
+import {
+  installRecapHook,
+  removeRecapHook,
+  isRecapHookInstalled,
+  readRecapMap
+} from './agentRecapMap'
 
 describe('recordSession.js hook script', () => {
   let dir: string
@@ -36,6 +41,36 @@ describe('recordSession.js hook script', () => {
       source: 'startup'
     })
     expect(typeof rec.ts).toBe('number')
+  })
+})
+
+describe('readRecapMap', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'recap-map-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('returns the LATEST entry per board, ignoring blank/malformed lines', () => {
+    const map = join(dir, 'map.jsonl')
+    writeFileSync(
+      map,
+      [
+        JSON.stringify({ boardId: 'b1', sessionId: 's1', transcriptPath: '/t/s1.jsonl', ts: 1 }),
+        'garbage',
+        JSON.stringify({ boardId: 'b1', sessionId: 's2', transcriptPath: '/t/s2.jsonl', ts: 2 }),
+        JSON.stringify({ boardId: '', sessionId: 'x', transcriptPath: '/t/x.jsonl', ts: 3 }),
+        ''
+      ].join('\n')
+    )
+    const m = readRecapMap(map)
+    expect(m.get('b1')).toEqual({ sessionId: 's2', transcriptPath: '/t/s2.jsonl' })
+    expect(m.has('')).toBe(false)
+  })
+  it('returns an empty map when the file is absent', () => {
+    expect(readRecapMap(join(dir, 'nope.jsonl')).size).toBe(0)
   })
 })
 

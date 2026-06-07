@@ -8,7 +8,7 @@
  * without clobbering any pre-existing hooks. Idempotency is keyed on whether
  * our scriptPath already appears in any hook's `args` array.
  */
-import { existsSync, readFileSync, mkdirSync } from 'node:fs'
+import { existsSync, readFileSync, mkdirSync, watch } from 'node:fs'
 import { join } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 
@@ -83,4 +83,63 @@ export function removeRecapHook(projectDir: string, scriptPath: string): void {
     .map((b) => ({ ...b, hooks: b.hooks.filter((h) => !h.args?.includes(scriptPath)) }))
     .filter((b) => b.hooks.length > 0)
   writeSettings(projectDir, cfg)
+}
+
+export interface RecapMapEntry {
+  sessionId: string
+  transcriptPath: string
+}
+
+/** Parse the mapping JSONL -> boardId -> latest {sessionId, transcriptPath}. Best-effort. */
+export function readRecapMap(mapPath: string): Map<string, RecapMapEntry> {
+  const out = new Map<string, RecapMapEntry>()
+  if (!existsSync(mapPath)) return out
+  let text = ''
+  try {
+    text = readFileSync(mapPath, 'utf8')
+  } catch {
+    return out
+  }
+  for (const raw of text.split('\n')) {
+    const s = raw.trim()
+    if (!s) continue
+    try {
+      const r = JSON.parse(s) as { boardId?: string; sessionId?: string; transcriptPath?: string }
+      if (r.boardId && r.transcriptPath) {
+        out.set(r.boardId, { sessionId: r.sessionId ?? '', transcriptPath: r.transcriptPath })
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return out
+}
+
+/** Watch the mapping file; call onChange (debounced) with the freshly-parsed map. Returns a disposer. */
+export function watchRecapMap(
+  mapPath: string,
+  onChange: (m: Map<string, RecapMapEntry>) => void,
+  debounceMs = 200
+): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const fire = (): void => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => onChange(readRecapMap(mapPath)), debounceMs)
+  }
+  let w: ReturnType<typeof watch> | null = null
+  try {
+    mkdirSync(join(mapPath, '..'), { recursive: true })
+    w = watch(mapPath, { persistent: false }, fire)
+  } catch {
+    /* file may not exist yet; caller re-arms on demand */
+  }
+  fire() // prime
+  return () => {
+    if (timer) clearTimeout(timer)
+    try {
+      w?.close()
+    } catch {
+      /* already closed */
+    }
+  }
 }
