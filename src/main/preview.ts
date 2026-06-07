@@ -104,9 +104,15 @@ export function isAllowedExternal(rawUrl: string): boolean {
   return u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:'
 }
 
-/** Open a URL in the OS browser ONLY if its scheme is allowlisted (Bug #23). */
-function openExternalSafe(rawUrl: string): void {
-  if (isAllowedExternal(rawUrl)) void shell.openExternal(rawUrl)
+/**
+ * Open a URL in the OS browser ONLY if its scheme is allowlisted (Bug #23). Returns
+ * whether it was actually opened (false = scheme blocked / unparseable) so callers can
+ * surface feedback; the setWindowOpenHandler caller ignores the result.
+ */
+function openExternalSafe(rawUrl: string): boolean {
+  if (!isAllowedExternal(rawUrl)) return false
+  void shell.openExternal(rawUrl)
+  return true
 }
 
 /** A cancellable navigation event (the `event` arg of will-navigate/will-redirect). */
@@ -565,6 +571,17 @@ export function registerPreviewHandlers(
     e.view.webContents.reload()
     return true
   })
+
+  // Open the preview's current URL in the OS browser (for real DevTools / extensions).
+  // Scheme stays allowlisted via openExternalSafe (Bug #23) — the renderer passes the
+  // URL it already shows (liveUrl ?? board.url); nothing new can reach the OS handler
+  // that window.open couldn't already. Frame-guarded (Bug #33).
+  ipcMain.handle('preview:openExternal', (ev, url: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    // Returns whether the URL was actually opened — false when the scheme is blocked
+    // (openExternalSafe allowlist, Bug #23) so the renderer can surface feedback.
+    return openExternalSafe(String(url))
+  })
 }
 
 /** Close every view (app shutdown / leak-check). */
@@ -596,6 +613,23 @@ export async function debugCaptureView(id: string): Promise<{ attached: boolean;
 }
 
 /**
+ * Capture a board's live native view as PNG bytes, or null if the view is missing /
+ * detached / off-screen / blank / un-composited. `capturePage()` is BLANK for a
+ * detached or off-screen view, so the caller must ensure the board is live first.
+ * Used by the user-facing screenshot IPC (previewScreenshot.ts) and the e2e helper.
+ */
+export async function captureViewPng(id: string): Promise<Buffer | null> {
+  const e = views.get(id)
+  if (!e || !e.attached) return null
+  try {
+    const img = await e.view.webContents.capturePage()
+    return img.isEmpty() ? null : img.toPNG()
+  } catch {
+    return null
+  }
+}
+
+/**
  * E2E ONLY — capture the live on-screen pixels of a board's view as PNG bytes, or null
  * if the view is missing / detached / off-screen / blank / un-composited. A native
  * WebContentsView paints ABOVE all HTML, so Playwright's `page.screenshot()` is blank
@@ -604,16 +638,7 @@ export async function debugCaptureView(id: string): Promise<{ attached: boolean;
  * screen or the capture is blank. The caller (e2eMain `captureViewToFile`) owns disk I/O.
  */
 export async function debugCaptureViewPng(id: string): Promise<Buffer | null> {
-  const e = views.get(id)
-  if (!e || !e.attached) return null
-  try {
-    const img = await e.view.webContents.capturePage()
-    return img.isEmpty() ? null : img.toPNG()
-  } catch {
-    // No composited display surface (headless / GPU-contended host): capturePage
-    // rejects. Treat as "no evidence available" rather than aborting the run.
-    return null
-  }
+  return captureViewPng(id)
 }
 
 /** E2E ONLY — ids of every native preview view currently created. */

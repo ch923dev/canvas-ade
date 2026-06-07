@@ -60,6 +60,15 @@ export interface DetectedUrl {
   port: number
 }
 
+/** Mirrors main `ScreenshotResult` (preview:screenshot). assetId is the relative
+ *  `assets/<sha1>.png` path, or null when copied to clipboard but not saved.
+ *  `ok:false` with reason `not-live` means the view is detached or off-screen so
+ *  `capturePage()` would return a blank image; reason `forbidden` means the sender
+ *  was not the trusted app renderer (should never occur from normal app flow). */
+export type PreviewScreenshotResult =
+  | { ok: true; assetId: string | null }
+  | { ok: false; reason: 'not-live' | 'forbidden' }
+
 /**
  * Preview lifecycle event (Phase 2.2 browser). Structurally mirrors the main
  * process `PreviewEvent` (re-declared here to keep preload decoupled from main).
@@ -166,6 +175,13 @@ const api = {
   goBackPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:goBack', id),
   goForwardPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:goForward', id),
   reloadPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:reload', id),
+  // Open the preview's current URL in the OS browser (scheme-gated in main).
+  openExternalPreview: (url: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:openExternal', url),
+  // Screenshot the live view -> clipboard + project assets/. { ok:false, reason:'not-live' }
+  // when the view is detached/off-screen (capturePage is blank then).
+  screenshotPreview: (id: string): Promise<PreviewScreenshotResult> =>
+    ipcRenderer.invoke('preview:screenshot', id),
   /**
    * Subscribe to preview lifecycle events (did-navigate / did-fail-load /
    * did-finish-load), keyed by board id. Returns an unsubscribe fn. The listener
