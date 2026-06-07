@@ -606,6 +606,23 @@ export async function debugCaptureView(id: string): Promise<{ attached: boolean;
 }
 
 /**
+ * Capture a board's live native view as PNG bytes, or null if the view is missing /
+ * detached / off-screen / blank / un-composited. `capturePage()` is BLANK for a
+ * detached or off-screen view, so the caller must ensure the board is live first.
+ * Used by the user-facing screenshot IPC (previewScreenshot.ts) and the e2e helper.
+ */
+export async function captureViewPng(id: string): Promise<Buffer | null> {
+  const e = views.get(id)
+  if (!e || !e.attached) return null
+  try {
+    const img = await e.view.webContents.capturePage()
+    return img.isEmpty() ? null : img.toPNG()
+  } catch {
+    return null
+  }
+}
+
+/**
  * E2E ONLY — capture the live on-screen pixels of a board's view as PNG bytes, or null
  * if the view is missing / detached / off-screen / blank / un-composited. A native
  * WebContentsView paints ABOVE all HTML, so Playwright's `page.screenshot()` is blank
@@ -614,16 +631,7 @@ export async function debugCaptureView(id: string): Promise<{ attached: boolean;
  * screen or the capture is blank. The caller (e2eMain `captureViewToFile`) owns disk I/O.
  */
 export async function debugCaptureViewPng(id: string): Promise<Buffer | null> {
-  const e = views.get(id)
-  if (!e || !e.attached) return null
-  try {
-    const img = await e.view.webContents.capturePage()
-    return img.isEmpty() ? null : img.toPNG()
-  } catch {
-    // No composited display surface (headless / GPU-contended host): capturePage
-    // rejects. Treat as "no evidence available" rather than aborting the run.
-    return null
-  }
+  return captureViewPng(id)
 }
 
 /** E2E ONLY — ids of every native preview view currently created. */
