@@ -1,10 +1,11 @@
 /**
  * Browser-board auto-connect engine (renderer). One always-on 1s interval drives
  * BOTH reconnect-on-refused and auto-push-detected-port via the pure `planAutoConnect`
- * policy. It reuses existing IPC/store: a `reload` bumps `previewStore.requestReload`
- * (reconcile re-navigates), a `detect` polls `detectPorts` on the linked terminal and
- * (only while NOT connected) sets the board's url via `updateBoard` (a plain setter →
- * no undo step). Per-board exponential backoff (1→2→4s) avoids hammering a dead server.
+ * policy. It reuses existing IPC/store: a 'reload' calls window.api.navigatePreview directly
+ * (the previewStore reloadNonce path is NOT used here -- reconcile only re-navigates on a
+ * canvasStore.boards change, so a lone nonce bump would never be consumed); a 'detect'
+ * polls detectPorts on the linked terminal and (only while NOT connected) sets the board
+ * url via updateBoard. Per-board exponential backoff (1->2->4s) avoids hammering a dead server.
  *
  * Mounted ONCE beside usePreviewManager (BrowserPreviewLayer). Reads stores via
  * getState() each tick (no selector → no re-render). Security: never writes the PTY;

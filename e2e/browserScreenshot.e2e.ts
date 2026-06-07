@@ -5,7 +5,7 @@ const runtimeStatus = (id: string, status: string) =>
   `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
 
 test.describe('browser board — screenshot', () => {
-  test('captures the live view → clipboard + assets/ file', async ({ page, electronApp }) => {
+  test('captures the live view to an assets/ PNG file', async ({ page, electronApp }) => {
     // Open a temp project so assets/ resolves.
     const projDir = await mainCall<string>(
       electronApp,
