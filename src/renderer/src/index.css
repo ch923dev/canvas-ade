@@ -647,6 +647,54 @@ body {
   opacity: 1;
 }
 
+/* ── TextToolbar — floating typography toolbar for selected free-text elements ── */
+.pl-text-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 5;
+}
+.pl-tt-group {
+  display: flex;
+  gap: 2px;
+}
+.pl-tt-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.pl-tt-btn:hover {
+  color: var(--text);
+  background: var(--inset);
+}
+.pl-tt-btn.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.pl-tt-swatch {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+.pl-tt-swatch.is-active {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+
 /* ── Phase 3 persistence — welcome / project-picker screen (tokenised in §B) ── */
 .welcome {
   position: fixed;
