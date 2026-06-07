@@ -41,6 +41,7 @@ import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
+import { TextToolbar } from './planning/TextToolbar'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { ImageCard } from './planning/ImageCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
@@ -360,6 +361,15 @@ export function PlanningBoard({
     (id: string, text: string) =>
       commit(patchElement<TextElement>(elements, id, (t) => ({ ...t, text }))),
     [commit, elements]
+  )
+  // Typography patch from the floating TextToolbar — one undo step, live-read transform
+  // (so it can't clobber a concurrent text edit landing in the same window; BUG-023 class).
+  const onTextPatch = useCallback(
+    (id: string, partial: Partial<TextElement>) => {
+      beginChange()
+      commit((cur) => patchElement<TextElement>(cur, id, (t) => ({ ...t, ...partial })))
+    },
+    [beginChange, commit]
   )
   const deleteEl = useCallback(
     (id: string) => {
@@ -882,6 +892,18 @@ export function PlanningBoard({
           }
           return null
         })}
+
+        {/* Typography toolbar for a single selected free-text element (sibling to the
+            cards, board-local coords). Shown only in select mode with exactly one
+            text element selected. */}
+        {interactive &&
+          selectedIds.size === 1 &&
+          (() => {
+            const sid = [...selectedIds][0]
+            const sel = viewElements.find((e) => e.id === sid)
+            if (!sel || sel.kind !== 'text') return null
+            return <TextToolbar element={sel} onPatch={(partial) => onTextPatch(sel.id, partial)} />
+          })()}
 
         {elements.length === 0 && (
           <div

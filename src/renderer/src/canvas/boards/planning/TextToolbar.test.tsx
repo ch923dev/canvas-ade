@@ -74,4 +74,16 @@ describe('TextToolbar', () => {
     const { getByLabelText } = render(<TextToolbar element={el()} onPatch={() => {}} />)
     expect(getByLabelText('bold').getAttribute('aria-pressed')).toBe('false')
   })
+
+  it('sits above the element, flipping below when within 40px of the top edge', () => {
+    const above = render(<TextToolbar element={el({ y: 200 })} onPatch={() => {}} />)
+    expect((above.container.querySelector('.pl-text-toolbar') as HTMLElement).style.top).toBe(
+      '160px'
+    )
+    above.unmount()
+    const below = render(<TextToolbar element={el({ y: 10 })} onPatch={() => {}} />)
+    expect((below.container.querySelector('.pl-text-toolbar') as HTMLElement).style.top).toBe(
+      '38px'
+    )
+  })
 })

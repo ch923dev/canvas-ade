@@ -33,6 +33,11 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
   const align = element.align ?? TEXT_DEFAULTS.align
   const color = element.color ?? TEXT_DEFAULTS.color
   const bold = element.bold ?? TEXT_DEFAULTS.bold
+  // Sit above the element; flip below when there's no room above — the content well
+  // clips overflow at its top edge, so a negative top would hide the toolbar. The
+  // below offset (28) clears a single text line; multi-line text at the very top edge
+  // is a rare v1 edge case.
+  const top = element.y >= 40 ? element.y - 40 : element.y + 28
 
   const btn = (active: boolean, extra = ''): string =>
     `pl-tt-btn${active ? ' is-active' : ''}${extra ? ' ' + extra : ''}`
@@ -44,7 +49,7 @@ export function TextToolbar({ element, onPatch }: TextToolbarProps): ReactElemen
   return (
     <div
       className="pl-text-toolbar"
-      style={{ position: 'absolute', left: element.x, top: element.y - 40 }}
+      style={{ position: 'absolute', left: element.x, top }}
       // Keep clicks off the well (which would clear selection / start a draw gesture).
       onPointerDown={(e) => e.stopPropagation()}
     >
