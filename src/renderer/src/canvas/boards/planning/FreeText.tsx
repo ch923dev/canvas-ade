@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef, type ReactElement } from 'react'
 import type { TextElement } from '../../../lib/boardSchema'
+import { FAMILY_CSS, SIZE_PX, lineHeightFor, COLOR_CSS, WEIGHT, TEXT_DEFAULTS } from './textStyle'
 
 export interface FreeTextProps {
   element: TextElement
@@ -73,6 +74,12 @@ export function FreeText({
       dragAbort.current = null
     }
   }, [])
+
+  const fam = element.fontFamily ?? TEXT_DEFAULTS.fontFamily
+  const px = SIZE_PX[element.fontSize ?? TEXT_DEFAULTS.fontSize]
+  const align = element.align ?? TEXT_DEFAULTS.align
+  const colorTok = element.color ?? TEXT_DEFAULTS.color
+  const weight = element.bold ? WEIGHT.bold : WEIGHT.normal
 
   return (
     <div
@@ -180,10 +187,12 @@ export function FreeText({
           border: 'none',
           outline: 'none',
           background: 'transparent',
-          color: 'var(--text)',
-          fontFamily: 'var(--ui)',
-          fontSize: 13,
-          lineHeight: '18px',
+          color: COLOR_CSS[colorTok],
+          fontFamily: FAMILY_CSS[fam],
+          fontSize: px,
+          fontWeight: weight,
+          textAlign: align,
+          lineHeight: `${lineHeightFor(px)}px`,
           padding: 0,
           overflow: 'hidden',
           whiteSpace: 'pre',

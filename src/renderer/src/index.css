@@ -32,6 +32,7 @@
      Mono / Consolas (Windows), SF Mono / Menlo (mac), ui-monospace (Linux). All system
      fonts → no webfont fetch, no load-timing softness. UI chrome keeps --mono (Geist). */
   --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+  --serif: Georgia, 'Times New Roman', serif;
 
   /* §2 Surfaces (furthest → closest) */
   --void: #0a0a0b;
