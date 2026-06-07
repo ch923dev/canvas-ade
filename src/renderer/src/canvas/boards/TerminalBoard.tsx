@@ -159,6 +159,10 @@ export function TerminalBoard({
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
   // let the spawn effect's ResizeObserver consume this flag on the first good fit.
   const pendingRespawnRef = useRef(false)
+  // T-resume: a one-shot launchCommand override for the NEXT respawn (the Restart menu's
+  // "Resume session" sets `claude --resume <id>`); respawn consumes + clears it so only that
+  // spawn uses it and a later restart falls back to board.launchCommand.
+  const launchOverrideRef = useRef<string | undefined>(undefined)
   // M-1: the idle-state "Start" button calls back into the CURRENT mount's `launch()`
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
@@ -190,6 +194,9 @@ export function TerminalBoard({
   // T15: flip to the recap back-face. The xterm well (front) stays MOUNTED across the
   // flip so the live PTY session never tears down — see the flip wrapper in render.
   const [flipped, setFlipped] = useState(false)
+  // T-resume: the Restart control offers Resume-vs-New only when we know a session to resume.
+  const [restartMenu, setRestartMenu] = useState(false)
+  const canResume = !!board.agentSessionId
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -297,12 +304,15 @@ export function TerminalBoard({
   const respawn = useCallback(() => {
     const term = termRef.current
     if (!term) return
+    // Consume a one-shot launch override (e.g. `claude --resume <id>`) for THIS spawn only.
+    const launchCommand = launchOverrideRef.current ?? board.launchCommand
+    launchOverrideRef.current = undefined
     void window.api
       .spawnTerminal({
         id: board.id,
         shell: board.shell,
         cwd: board.cwd ?? projectDir ?? undefined,
-        launchCommand: board.launchCommand,
+        launchCommand,
         cols: term.cols,
         rows: term.rows
       })
@@ -714,7 +724,12 @@ export function TerminalBoard({
         title="Configure terminal"
         onClick={() => setConfigOpen((v) => !v)}
       />
-      <IconBtn name="restart" title="Restart" onClick={restart} />
+      <IconBtn
+        name="restart"
+        title={canResume ? 'Restart (resume or new session)' : 'Restart'}
+        active={restartMenu}
+        onClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
+      />
       {/* T15: flip to the recap back-face. IconBtn has no data-test prop, so the e2e/test
           hook (`flip-<id>`) rides a wrapping span. */}
       <span data-test={`flip-${board.id}`} style={{ display: 'inline-flex' }}>
@@ -810,27 +825,22 @@ export function TerminalBoard({
         onStartConnect={onStartConnect}
       >
         <div style={lod ? shellHidden : shell}>
-          {/* T15 flip stage. The FRONT face holds the live xterm well (always mounted —
-              flipping never unmounts it, so the PTY session survives). The BACK face holds
-              the recap. `preserve-3d` + per-face `backfaceVisibility:hidden` does the flip;
-              reduced-motion drops the transition. The front face mirrors the shell's
+          {/* T15 flip: an OVERLAY, not a 3D card. The FRONT face (live xterm well) stays
+              mounted always — flipping never unmounts it, so the PTY survives. When `flipped`,
+              the recap renders as an OPAQUE overlay on top with NORMAL (un-transformed) geometry.
+              We deliberately avoid a `rotateY(180deg)` 3D flip: Chromium mis-maps pointer
+              hit-testing on nested preserve-3d back-faces, which left the recap's refresh button
+              unclickable (seen top-right, hit area mirrored). The front mirrors the shell's
               flex-column layout so the xterm well still fills (fit/webgl unaffected). */}
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              transformStyle: 'preserve-3d',
-              transition: prefersReducedMotion() ? 'none' : 'transform .35s',
-              transform: flipped ? 'rotateY(180deg)' : 'none'
-            }}
-          >
+          <div style={{ position: 'absolute', inset: 0 }}>
             <div
               style={{
                 position: 'absolute',
                 inset: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                backfaceVisibility: 'hidden'
+                // recap overlay is up → don't let the xterm behind it grab pointer/focus
+                pointerEvents: flipped ? 'none' : 'auto'
               }}
             >
               {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
@@ -986,18 +996,50 @@ export function TerminalBoard({
                 />
               )}
             </div>
-            {/* Back face: the recap. Mounted only while flipped so it doesn't fetch
-                memory for every terminal up-front; the xterm front face is unaffected. */}
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                backfaceVisibility: 'hidden',
-                transform: 'rotateY(180deg)'
-              }}
-            >
-              {flipped && <RecapView boardId={board.id} />}
-            </div>
+            {/* Recap overlay: rendered only while flipped (so it doesn't fetch memory for every
+                terminal up-front). Opaque (RecapView paints var(--surface)) so it fully covers the
+                xterm beneath. `nodrag nowheel` keeps React Flow from treating a click as a node-drag
+                or a scroll as a canvas zoom. No 3D transform → correct pointer hit-testing. */}
+            {flipped && (
+              <div className="nodrag nowheel" style={{ position: 'absolute', inset: 0 }}>
+                <RecapView boardId={board.id} />
+              </div>
+            )}
+            {/* T-resume: Restart menu. Sits at the flip-stage level (not inside a face) so it stays
+                interactive whether you're viewing the terminal OR the recap — you often resume FROM
+                the recap. Resume → respawn with `claude --resume <sessionId>`; New → fresh launch. */}
+            {restartMenu && (
+              <div
+                className="ca-port-picker nodrag nowheel"
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{ position: 'absolute', top: 8, right: 8, zIndex: 7 }}
+              >
+                <div className="ca-port-picker-title">Restart terminal</div>
+                <button
+                  className="ca-port-choice"
+                  onClick={() => {
+                    launchOverrideRef.current = `claude --resume ${board.agentSessionId ?? ''}`
+                    setRestartMenu(false)
+                    restart()
+                  }}
+                >
+                  Resume session
+                </button>
+                <button
+                  className="ca-port-choice"
+                  onClick={() => {
+                    launchOverrideRef.current = undefined
+                    setRestartMenu(false)
+                    restart()
+                  }}
+                >
+                  New session
+                </button>
+                <button className="ca-preview-dismiss" onClick={() => setRestartMenu(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </BoardFrame>
