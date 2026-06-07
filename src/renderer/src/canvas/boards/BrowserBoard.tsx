@@ -20,7 +20,7 @@
  * Security: this never touches the PTY. URL edits + nav go through the additive
  * `preview:*` control channel to the view's OWN webContents only.
  */
-import { useState, type ReactElement } from 'react'
+import { useState, useRef, useEffect, type ReactElement } from 'react'
 import type { BrowserBoard as BrowserBoardData, BrowserViewport } from '../../lib/boardSchema'
 import { VIEWPORT_PRESETS, deviceFrameRect, TITLEBAR_H, URLBAR_H } from '../../lib/browserLayout'
 import { BoardFrame } from '../BoardFrame'
@@ -29,6 +29,7 @@ import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
 import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
+import { isHttpUrl } from '../../lib/autoConnect'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
@@ -131,10 +132,20 @@ export function BrowserBoard({
   // render; https://react.dev/learn/you-might-not-need-an-effect).
   const [draftUrl, setDraftUrl] = useState(board.url)
   const [lastUrl, setLastUrl] = useState(board.url)
+  const [note, setNote] = useState<string | null>(null)
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   if (board.url !== lastUrl) {
     setLastUrl(board.url)
     setDraftUrl(board.url)
   }
+
+  // Clear the note timer on unmount to prevent setState-after-unmount.
+  useEffect(
+    () => () => {
+      if (noteTimer.current) clearTimeout(noteTimer.current)
+    },
+    []
+  )
 
   const commitUrl = (): void => {
     const next = draftUrl.trim()
@@ -154,6 +165,27 @@ export function BrowserBoard({
     }
   }
 
+  const openExternal = (): void => {
+    void window.api.openExternalPreview(runtime.liveUrl ?? board.url).then((ok) => {
+      if (!ok) showNote('Cannot open that URL in a browser')
+    })
+  }
+
+  const showNote = (msg: string): void => {
+    if (noteTimer.current) clearTimeout(noteTimer.current)
+    setNote(msg)
+    noteTimer.current = setTimeout(() => setNote(null), 2500)
+  }
+
+  const takeScreenshot = (): void => {
+    void (async () => {
+      const res = await window.api.screenshotPreview(board.id)
+      if (!res.ok) showNote('Open the preview to screenshot it')
+      else if (res.assetId) showNote('Screenshot copied + saved to assets/')
+      else showNote('Screenshot copied to clipboard')
+    })()
+  }
+
   // Device-frame outer rect in board-LOCAL coords (matches browserLayout exactly:
   // frame.y is measured from the board top, i.e. below TITLEBAR_H + URLBAR_H).
   const frame = deviceFrameRect(board.w, board.h, board.viewport)
@@ -165,6 +197,10 @@ export function BrowserBoard({
   // T1.6: the title-bar pill is derived from the SAME bucket the MCP sees
   // (canvas://boards), so the on-canvas dot and the agent's view never disagree.
   const status = bucketToPill(boardStatusBucket('browser', { preview: runtime.status }))
+
+  // Only show "Reconnecting…" when the engine will actually retry: reload path needs
+  // an http(s) URL; detect path needs a linked source terminal.
+  const willRetry = isHttpUrl(board.url) || !!board.previewSourceId
 
   return (
     <BoardFrame
@@ -204,6 +240,13 @@ export function BrowserBoard({
             title="Reload"
             onClick={() => void window.api.reloadPreview(board.id)}
           />
+          <NavBtn
+            name="camera"
+            title="Screenshot"
+            disabled={!runtime.live}
+            onClick={takeScreenshot}
+          />
+          <NavBtn name="external" title="Open in browser" onClick={openExternal} />
         </div>
         <div className="bb-url-field">
           <span className="bb-conn-dot" style={{ background: connDot(runtime.status) }} />
@@ -274,21 +317,35 @@ export function BrowserBoard({
           }
         >
           {preset.notch && <div className="bb-notch" />}
-          <DeviceContent runtime={runtime} url={board.url} />
+          <DeviceContent runtime={runtime} url={board.url} willRetry={willRetry} />
         </div>
       </div>
+      {/* Screenshot / open-external feedback toast. Rendered OUTSIDE .bb-stage so the
+          native WebContentsView (which paints above all HTML inside .bb-stage) does not
+          occlude it. The .ca-preview-note CSS (position:absolute; top:8px; z-index:4)
+          anchors this relative to the BoardFrame content div, placing it in the
+          URL-bar / title-bar zone that is pure HTML and never overlaid by a native view.
+          ADR 0002. */}
+      {note && (
+        <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
+          {note}
+          <button className="ca-preview-dismiss" onClick={() => setNote(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
     </BoardFrame>
   )
 }
 
-/** A 24x24 URL-bar nav button (back/forward/reload). */
+/** A 24x24 URL-bar nav button (back/forward/reload/camera/external). */
 function NavBtn({
   name,
   title,
   disabled = false,
   onClick
 }: {
-  name: 'back' | 'forward' | 'refresh'
+  name: 'back' | 'forward' | 'refresh' | 'camera' | 'external'
   title: string
   disabled?: boolean
   onClick: () => void
@@ -310,10 +367,12 @@ function NavBtn({
 /** The fallback layer under the native view: snapshot, connecting, or load-failed. */
 function DeviceContent({
   runtime,
-  url
+  url,
+  willRetry
 }: {
   runtime: ReturnType<ReturnType<typeof selectRuntime>>
   url: string
+  willRetry: boolean
 }): ReactElement {
   if (runtime.status === 'load-failed') {
     return (
@@ -321,7 +380,10 @@ function DeviceContent({
         <div className="bb-state-title" style={{ color: 'var(--err)' }}>
           Couldn’t load
         </div>
-        <div className="bb-state-sub">{runtime.error || url}</div>
+        <div className="bb-state-sub">
+          {willRetry ? 'Reconnecting… · ' : ''}
+          {runtime.error || url}
+        </div>
       </div>
     )
   }

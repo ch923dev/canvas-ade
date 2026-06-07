@@ -83,7 +83,13 @@ describe('preload api → preview channels', () => {
     ],
     ['goBackPreview', (a: CanvasApi) => a.goBackPreview('b1'), ['preview:goBack', 'b1']],
     ['goForwardPreview', (a: CanvasApi) => a.goForwardPreview('b1'), ['preview:goForward', 'b1']],
-    ['reloadPreview', (a: CanvasApi) => a.reloadPreview('b1'), ['preview:reload', 'b1']]
+    ['reloadPreview', (a: CanvasApi) => a.reloadPreview('b1'), ['preview:reload', 'b1']],
+    [
+      'openExternalPreview',
+      (a: CanvasApi) => a.openExternalPreview('http://x/'),
+      ['preview:openExternal', 'http://x/']
+    ],
+    ['screenshotPreview', (a: CanvasApi) => a.screenshotPreview('b1'), ['preview:screenshot', 'b1']]
   ] as const)('%s', (_label, call, expected) => {
     call(api)
     expect(h.invoke).toHaveBeenCalledWith(...expected)
