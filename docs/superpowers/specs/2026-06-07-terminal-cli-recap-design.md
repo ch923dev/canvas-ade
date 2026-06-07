@@ -69,7 +69,8 @@ Research (2026-06-07, three threads + two verifications) settled the *how*:
 
 **Identification (the user's concern — no visible injection):** invisible env var + `SessionStart`
 hook → mapping file → app learns each board's `session_id` + `transcript_path`. Installed the
-least-invasive way (see §4.3).
+least-invasive way (§4.2), **only after explicit, friendly, per-project consent** (§4.8) — the hook
+never touches the repo without the user opting in.
 
 **Recap content model (approved):**
 - **NOW** — 1–2 lines: what the agent is doing + the resume point.
@@ -144,9 +145,9 @@ BOARD` → appends `{boardId, session_id, transcript_path, cwd, ts}` to `CANVAS_
 { sessionId, transcriptPath }`. Persist the learned `transcriptPath` + `sessionId` onto the board
 (see §4.5) so the recap survives an app reopen.
 
-**Install is opt-in + transparent + reversible:** a per-project "Enable agent recap" toggle; disabling
-removes our hook entry from `settings.local.json`. The user asked for the hook, so default-enabled with
-a one-line notice.
+**Install is gated by explicit per-project consent (§4.8)** and is reversible (a Settings toggle that
+removes our hook entry from `settings.local.json`). The app installs the hook ONLY after the user
+clicks "Enable" in the consent modal — never silently.
 
 > **⚠️ Linchpin:** hook env inheritance (does the hook see `CANVAS_RECAP_BOARD`?) is implied but not
 > explicitly documented → **§9 smoke test gates the build.** Fallback if it fails: hook writes
@@ -203,14 +204,51 @@ Once a board's `transcriptPath` is known (from the map), watch its mtime (deboun
 `summaryLoop.onIntent({ boardId })`. Reuses the loop's in-flight guard + fingerprint dedupe. Errors
 swallowed; the flip ⟳ always works.
 
+### 4.8 Consent & install UX (NEW — `RecapConsentModal.tsx` + per-project consent store)
+
+The hook is installed ONLY with explicit, informed, per-project consent. Asked **once per project**
+(first open of a project with an undecided consent), persisted; not re-asked on every open.
+
+**Consent store:** decision (`'enabled' | 'declined' | undecided`) keyed by project path, in the app
+config under `userData` — NEVER in the project folder (CLAUDE.md rule). New IPC:
+`recap:getConsent(projectPath)` / `recap:setConsent(projectPath, decision)`.
+
+**Flow at project open** (`projectIpc` open/current + renderer App):
+- consent `enabled` → ensure the hook is installed/merged (idempotent); proceed.
+- consent `undecided` → show `RecapConsentModal`.
+- consent `declined` → do nothing (recap off for this project; the flip control shows a one-line
+  "Enable agent recaps in Settings" hint instead of a recap).
+
+**`RecapConsentModal.tsx`** (renderer portal, like `SettingsModal`) — friendly + benefit-first, with
+full transparency:
+- **Benefit (lead):** "See what each terminal agent is doing at a glance. Expanse can give every
+  terminal a **flip-to-recap** — a short 'now' summary + a timestamped timeline of what the agent and
+  you decided — so you can resume instantly instead of re-reading the whole session."
+- **Exactly what it adds (transparency):** "To find the right transcript per terminal, Expanse adds
+  **one hook** to this project's `.claude/settings.local.json` (**gitignored — never committed**, and
+  it does **not** touch your global `~/.claude` settings or your own hooks). The hook only records each
+  session's id + transcript path." Include an expandable "What gets added?" showing the exact JSON
+  snippet + the file path.
+- **Privacy/cost line:** "Transcripts are read locally. Summaries use your own LLM key (Settings), are
+  cheap (~a fraction of a cent), and never run without a key. Turn it off anytime in Settings."
+- **Buttons:** `Enable recaps` (primary) · `Not now` (declines for this project; revisitable in
+  Settings). No dark patterns; "Not now" is a real, equal choice.
+
+**Settings:** a per-project "Agent recaps" toggle mirrors/changes the decision later — enabling installs
+the hook, disabling removes our hook entry from `settings.local.json`.
+
 ---
 
 ## 5. Data flow
 
 ```
-SPAWN (claude terminal board):
+PROJECT OPEN:
+  consent undecided → RecapConsentModal → Enable → install hook + persist 'enabled'
+                                        → Not now → persist 'declined' (recap off for project)
+  consent 'enabled' → ensure hook merged into <cwd>/.claude/settings.local.json (idempotent)
+
+SPAWN (claude terminal board, only if consent 'enabled'):
   pty.spawn(env: { …, CANVAS_RECAP_BOARD=<id>, CANVAS_RECAP_MAP=<abs> })   // invisible
-  app ensures the SessionStart hook is merged into <cwd>/.claude/settings.local.json (idempotent)
 
 IDENTIFY:
   claude starts → SessionStart hook → recordSession.js reads stdin {session_id, transcript_path, cwd}
@@ -313,9 +351,12 @@ Gate per CLAUDE.md: `pnpm typecheck · lint · format:check · vitest`, then the
 3. **Per-board identification:** invisible env var + `SessionStart` hook → mapping file. **No visible
    CLI injection** (user rejected it). Pinpoints N same-cwd sessions. Verified hook mechanics.
 4. **Hook install:** `.claude/settings.local.json` (gitignored, merged, no `~/.claude` mutation),
-   opt-in + reversible.
-5. **Ship A + B together.**
-6. **Recap content:** NOW + timestamped meaningful-moment notes; drop tool-call noise; real timestamps
+   reversible.
+5. **Consent:** a friendly, benefit-first `RecapConsentModal` asked **once per project** (persisted in
+   userData), gating the hook install. "Not now" is an equal choice; revisitable in Settings. The hook
+   is NEVER installed silently.
+6. **Ship A + B together.**
+7. **Recap content:** NOW + timestamped meaningful-moment notes; drop tool-call noise; real timestamps
    by code, notes by one LLM call.
 
 ---
@@ -331,7 +372,10 @@ Gate per CLAUDE.md: `pnpm typecheck · lint · format:check · vitest`, then the
 | `src/main/summaryLoop.ts` | EXTEND — milestone prompt, one structured call, code-assembled timeline; `getAgentMilestones` dep |
 | `src/main/index.ts` | WIRE — provide `getAgentMilestones` (minimal) |
 | `src/main/agentRecapWatcher.ts` | NEW (slice B) — debounced transcript-mtime watcher |
+| `src/main/recapConsent.ts` (+test) | NEW — per-project consent store (userData); `recap:getConsent`/`setConsent` IPC; gates install |
 | `src/renderer/.../boardSchema.ts` | `agentSessionId?` + `agentTranscriptPath?` on TerminalBoard (**cross-zone: text-font-toolbar**) |
+| `src/renderer/.../RecapConsentModal.tsx` | NEW — friendly per-project consent modal (benefit-first, "What gets added?" transparency) |
+| `src/renderer/.../SettingsModal.tsx` | add a per-project "Agent recaps" toggle (enable→install / disable→remove hook) |
 | `src/renderer/.../TerminalBoard.tsx` | flip control + flipped state (xterm stays mounted) |
 | `src/renderer/.../RecapView.tsx` | NEW — back-face NOW + timeline + ⟳ |
-| `e2e/*recap*.e2e.ts` + fake-claude fixture | NEW — live-chain proof |
+| `e2e/*recap*.e2e.ts` + fake-claude fixture | NEW — live-chain proof (incl. consent path) |
