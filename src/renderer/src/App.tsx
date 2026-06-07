@@ -40,6 +40,27 @@ function App(): React.ReactElement {
     }
   }, [])
 
+  // Terminal-recap T15: MAIN learns a board's Claude session id + transcript path (by
+  // matching PTY cwd/launch to the freshest transcript) and pushes them here so the recap
+  // survives reload. Patch only boards that still exist (the store's `boards` is an array;
+  // updateBoard filters to PATCHABLE_KEYS, which now allows these two terminal-only fields).
+  // Guarded for non-electron test runtimes; the effect returns onLearned's disposer.
+  useEffect(() => {
+    const onLearned = window.api?.recap?.onLearned
+    if (!onLearned) return
+    return onLearned((patches) => {
+      const s = useCanvasStore.getState()
+      for (const p of patches) {
+        if (s.boards.some((b) => b.id === p.boardId)) {
+          s.updateBoard(p.boardId, {
+            agentSessionId: p.sessionId,
+            agentTranscriptPath: p.transcriptPath
+          })
+        }
+      }
+    })
+  }, [])
+
   useEffect(() => {
     // E2E (CANVAS_E2E) seeds boards directly and never opens a project. Flip to
     // `open` so the canvas mounts (and installs `window.__canvasE2E`); the disk path

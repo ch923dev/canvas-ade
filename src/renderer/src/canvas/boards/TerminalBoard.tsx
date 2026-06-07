@@ -48,6 +48,7 @@ import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMen
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { installSelectionShim } from './terminal/terminalSelection'
 import { BoardFullViewContext } from '../fullViewContext'
+import { RecapView } from '../RecapView'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -186,6 +187,9 @@ export function TerminalBoard({
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
+  // T15: flip to the recap back-face. The xterm well (front) stays MOUNTED across the
+  // flip so the live PTY session never tears down — see the flip wrapper in render.
+  const [flipped, setFlipped] = useState(false)
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -711,6 +715,16 @@ export function TerminalBoard({
         onClick={() => setConfigOpen((v) => !v)}
       />
       <IconBtn name="restart" title="Restart" onClick={restart} />
+      {/* T15: flip to the recap back-face. IconBtn has no data-test prop, so the e2e/test
+          hook (`flip-<id>`) rides a wrapping span. */}
+      <span data-test={`flip-${board.id}`} style={{ display: 'inline-flex' }}>
+        <IconBtn
+          name="back"
+          title={flipped ? 'Show terminal' : 'Show recap'}
+          active={flipped}
+          onClick={() => setFlipped((v) => !v)}
+        />
+      </span>
     </>
   )
 
@@ -796,150 +810,195 @@ export function TerminalBoard({
         onStartConnect={onStartConnect}
       >
         <div style={lod ? shellHidden : shell}>
-          {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
-          {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
+          {/* T15 flip stage. The FRONT face holds the live xterm well (always mounted —
+              flipping never unmounts it, so the PTY session survives). The BACK face holds
+              the recap. `preserve-3d` + per-face `backfaceVisibility:hidden` does the flip;
+              reduced-motion drops the transition. The front face mirrors the shell's
+              flex-column layout so the xterm well still fills (fit/webgl unaffected). */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              transformStyle: 'preserve-3d',
+              transition: prefersReducedMotion() ? 'none' : 'transform .35s',
+              transform: flipped ? 'rotateY(180deg)' : 'none'
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                backfaceVisibility: 'hidden'
+              }}
+            >
+              {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+              {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
               explicit Start that spawns the shell + fires launchCommand on click. */}
-          {state === 'idle' && (
-            <div className="nodrag" style={idleOverlay} onMouseDown={(e) => e.stopPropagation()}>
-              <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
-                Start {identity}
-              </button>
-            </div>
-          )}
-          {previewNote && (
-            <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
-              {previewNote}
-              <button className="ca-preview-dismiss" onClick={() => setPreviewNote(null)}>
-                Dismiss
-              </button>
-            </div>
-          )}
-          {portChoices && portChoices.urls.length > 1 && (
-            <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="ca-port-picker-title">Multiple servers — choose one:</div>
-              {portChoices.urls.map((u) => (
-                <button
-                  key={u.url}
-                  className="ca-port-choice"
-                  onClick={() => {
-                    const { gesture } = portChoices
-                    setPortChoices(null)
-                    routeUrl(u.url, gesture)
-                  }}
+              {state === 'idle' && (
+                <div
+                  className="nodrag"
+                  style={idleOverlay}
+                  onMouseDown={(e) => e.stopPropagation()}
                 >
-                  {u.host}:{u.port}
-                </button>
-              ))}
-              <button className="ca-preview-dismiss" onClick={() => setPortChoices(null)}>
-                Cancel
-              </button>
-            </div>
-          )}
-          {browserPick && (
-            <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="ca-port-picker-title">Push to which browser(s)?</div>
-              {browserPick.candidates.map((c) => (
-                <label key={c.id} className="ca-browser-choice" title={c.url}>
-                  <input
-                    type="checkbox"
-                    checked={checked.has(c.id)}
-                    onChange={(e) =>
-                      setChecked((prev) => {
-                        const next = new Set(prev)
-                        if (e.target.checked) next.add(c.id)
-                        else next.delete(c.id)
-                        return next
-                      })
-                    }
-                  />
-                  <span className="ca-browser-choice-label">{c.title}</span>
-                  {c.connectedTo && (
-                    <span
-                      className="ca-browser-choice-warn"
-                      title={`Connected to ${c.connectedTo.title}`}
-                    >
-                      ⚠ on {c.connectedTo.title}
-                    </span>
-                  )}
-                </label>
-              ))}
-              <label className="ca-browser-choice">
-                <input
-                  type="checkbox"
-                  checked={checked.has(NEW_BROWSER)}
-                  onChange={(e) =>
-                    setChecked((prev) => {
-                      const next = new Set(prev)
-                      if (e.target.checked) next.add(NEW_BROWSER)
-                      else next.delete(NEW_BROWSER)
-                      return next
-                    })
-                  }
-                />
-                <span className="ca-browser-choice-label">+ New browser</span>
-              </label>
-              {severCount > 0 && (
-                <div className="ca-browser-sever">
-                  ⚠ Disconnects {severCount} browser{severCount > 1 ? 's' : ''} from{' '}
-                  {severCount > 1 ? 'their' : 'its'} current terminal.
+                  <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
+                    Start {identity}
+                  </button>
                 </div>
               )}
-              <div className="ca-browser-actions">
-                <button className="ca-preview-dismiss" onClick={() => setBrowserPick(null)}>
-                  Cancel
-                </button>
-                <button
-                  className="ca-browser-connect"
-                  disabled={checked.size === 0}
-                  onClick={confirmBrowserPick}
+              {previewNote && (
+                <div
+                  className="ca-preview-note"
+                  role="status"
+                  onMouseDown={(e) => e.stopPropagation()}
                 >
-                  Connect{checked.size > 0 ? ` ${checked.size}` : ''}
-                </button>
-              </div>
-            </div>
-          )}
-          {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
+                  {previewNote}
+                  <button className="ca-preview-dismiss" onClick={() => setPreviewNote(null)}>
+                    Dismiss
+                  </button>
+                </div>
+              )}
+              {portChoices && portChoices.urls.length > 1 && (
+                <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+                  <div className="ca-port-picker-title">Multiple servers — choose one:</div>
+                  {portChoices.urls.map((u) => (
+                    <button
+                      key={u.url}
+                      className="ca-port-choice"
+                      onClick={() => {
+                        const { gesture } = portChoices
+                        setPortChoices(null)
+                        routeUrl(u.url, gesture)
+                      }}
+                    >
+                      {u.host}:{u.port}
+                    </button>
+                  ))}
+                  <button className="ca-preview-dismiss" onClick={() => setPortChoices(null)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+              {browserPick && (
+                <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+                  <div className="ca-port-picker-title">Push to which browser(s)?</div>
+                  {browserPick.candidates.map((c) => (
+                    <label key={c.id} className="ca-browser-choice" title={c.url}>
+                      <input
+                        type="checkbox"
+                        checked={checked.has(c.id)}
+                        onChange={(e) =>
+                          setChecked((prev) => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(c.id)
+                            else next.delete(c.id)
+                            return next
+                          })
+                        }
+                      />
+                      <span className="ca-browser-choice-label">{c.title}</span>
+                      {c.connectedTo && (
+                        <span
+                          className="ca-browser-choice-warn"
+                          title={`Connected to ${c.connectedTo.title}`}
+                        >
+                          ⚠ on {c.connectedTo.title}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                  <label className="ca-browser-choice">
+                    <input
+                      type="checkbox"
+                      checked={checked.has(NEW_BROWSER)}
+                      onChange={(e) =>
+                        setChecked((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(NEW_BROWSER)
+                          else next.delete(NEW_BROWSER)
+                          return next
+                        })
+                      }
+                    />
+                    <span className="ca-browser-choice-label">+ New browser</span>
+                  </label>
+                  {severCount > 0 && (
+                    <div className="ca-browser-sever">
+                      ⚠ Disconnects {severCount} browser{severCount > 1 ? 's' : ''} from{' '}
+                      {severCount > 1 ? 'their' : 'its'} current terminal.
+                    </div>
+                  )}
+                  <div className="ca-browser-actions">
+                    <button className="ca-preview-dismiss" onClick={() => setBrowserPick(null)}>
+                      Cancel
+                    </button>
+                    <button
+                      className="ca-browser-connect"
+                      disabled={checked.size === 0}
+                      onClick={confirmBrowserPick}
+                    >
+                      Connect{checked.size > 0 ? ` ${checked.size}` : ''}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
               `nodrag nowheel` stops React Flow from treating clicks as a node drag or
               wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF
               and force focus into xterm: otherwise RF focuses the node wrapper on
               click and swallows keystrokes until a restart (the "can't type" bug). */}
-          <div
-            className="nodrag nowheel"
-            style={screenWrap}
-            onMouseDown={(e) => {
-              e.stopPropagation()
-              termRef.current?.focus()
-            }}
-            onContextMenu={openMenu}
-            onDragOver={(e) => {
-              if (e.dataTransfer?.types?.includes('Files')) {
-                e.preventDefault() // required for onDrop to fire
-                e.stopPropagation()
-              }
-            }}
-            onDrop={(e) => {
-              const files = e.dataTransfer?.files
-              if (!files || files.length === 0) return
-              // preventDefault guards against browser nav (alongside App.tsx's window
-              // handler); stopPropagation keeps any outer React drop listener from also
-              // handling this drop.
-              e.preventDefault()
-              e.stopPropagation()
-              const paths = Array.from(files).map((f) => window.api.pathForFile(f))
-              const payload = quotePathsForPaste(paths)
-              if (payload) termRef.current?.paste(payload)
-            }}
-          >
-            <div ref={screenRef} style={screen} />
+              <div
+                className="nodrag nowheel"
+                style={screenWrap}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  termRef.current?.focus()
+                }}
+                onContextMenu={openMenu}
+                onDragOver={(e) => {
+                  if (e.dataTransfer?.types?.includes('Files')) {
+                    e.preventDefault() // required for onDrop to fire
+                    e.stopPropagation()
+                  }
+                }}
+                onDrop={(e) => {
+                  const files = e.dataTransfer?.files
+                  if (!files || files.length === 0) return
+                  // preventDefault guards against browser nav (alongside App.tsx's window
+                  // handler); stopPropagation keeps any outer React drop listener from also
+                  // handling this drop.
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const paths = Array.from(files).map((f) => window.api.pathForFile(f))
+                  const payload = quotePathsForPaste(paths)
+                  if (payload) termRef.current?.paste(payload)
+                }}
+              >
+                <div ref={screenRef} style={screen} />
+              </div>
+              {menu && (
+                <ElementContextMenu
+                  x={menu.x}
+                  y={menu.y}
+                  entries={menuEntries}
+                  onClose={() => setMenu(null)}
+                />
+              )}
+            </div>
+            {/* Back face: the recap. Mounted only while flipped so it doesn't fetch
+                memory for every terminal up-front; the xterm front face is unaffected. */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backfaceVisibility: 'hidden',
+                transform: 'rotateY(180deg)'
+              }}
+            >
+              {flipped && <RecapView boardId={board.id} />}
+            </div>
           </div>
-          {menu && (
-            <ElementContextMenu
-              x={menu.x}
-              y={menu.y}
-              entries={menuEntries}
-              onClose={() => setMenu(null)}
-            />
-          )}
         </div>
       </BoardFrame>
       {lod && (
