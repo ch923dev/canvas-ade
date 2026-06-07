@@ -7,7 +7,12 @@ const runtimeStatus = (id: string, status: string) =>
 test.describe('browser board — screenshot', () => {
   test('captures the live view → clipboard + assets/ file', async ({ page, electronApp }) => {
     // Open a temp project so assets/ resolves.
-    const projDir = await mainCall<string>(electronApp, 'createTempProject', 'screenshot-', 'screenshot-test')
+    const projDir = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'screenshot-',
+      'screenshot-test'
+    )
     try {
       const url = await mainCall<string>(electronApp, 'localUrl')
       const id = await seed(page, 'browser', { url, viewport: 'desktop' })
