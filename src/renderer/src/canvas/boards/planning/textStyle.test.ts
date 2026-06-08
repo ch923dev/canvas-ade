@@ -7,7 +7,8 @@ import {
   TEXT_DEFAULTS,
   FAMILY_EXPORT,
   FONT_FAMILY_TOKENS,
-  estimateTextWidth
+  estimateTextWidth,
+  tokenFromHeight
 } from './textStyle'
 import { EXPORT_COLORS } from './exportColors'
 
@@ -47,6 +48,19 @@ describe('textStyle tokens', () => {
       expect(FAMILY_EXPORT[t]).not.toContain('var(')
       expect(FAMILY_EXPORT[t]).toMatch(/(sans-serif|serif|monospace)$/)
     }
+  })
+})
+
+describe('tokenFromHeight', () => {
+  it('maps drag height (board px) to the nearest size token', () => {
+    expect(tokenFromHeight(0)).toBe('S')
+    expect(tokenFromHeight(23)).toBe('S')
+    expect(tokenFromHeight(24)).toBe('M')
+    expect(tokenFromHeight(39)).toBe('M')
+    expect(tokenFromHeight(40)).toBe('L')
+    expect(tokenFromHeight(69)).toBe('L')
+    expect(tokenFromHeight(70)).toBe('XL')
+    expect(tokenFromHeight(9999)).toBe('XL')
   })
 })
 

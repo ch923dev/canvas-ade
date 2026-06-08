@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ChecklistElement, ImageElement, PlanningElement } from '../../../lib/boardSchema'
+import { MIN_TEXT_WIDTH_PX } from './textStyle'
 import {
   makeNote,
   makeText,
@@ -412,6 +413,27 @@ describe('W3 mutators', () => {
     const arrow: PlanningElement = { id: 'ar', kind: 'arrow', x: 0, y: 0, x2: 30, y2: 40 }
     const { elements } = duplicateElements([arrow], ['ar'], 5, 7, seqId)
     expect(elements[1]).toMatchObject({ kind: 'arrow', x: 5, y: 7, x2: 35, y2: 47 })
+  })
+})
+
+describe('makeText', () => {
+  it('makes point text (no width) by default', () => {
+    const t = makeText('t', { x: 10.4, y: 20.6 })
+    expect(t).toEqual({ id: 't', kind: 'text', x: 10, y: 21, text: '' })
+    expect('width' in t).toBe(false)
+  })
+  it('carries width + fontSize for area text', () => {
+    const t = makeText('t', { x: 0, y: 0 }, { width: 200, fontSize: 'XL' })
+    expect(t.width).toBe(200)
+    expect(t.fontSize).toBe('XL')
+  })
+  it('clamps a below-minimum / non-finite width to MIN_TEXT_WIDTH_PX', () => {
+    expect(makeText('t', { x: 0, y: 0 }, { width: 5 }).width).toBe(MIN_TEXT_WIDTH_PX)
+    expect(makeText('t', { x: 0, y: 0 }, { width: 0 }).width).toBe(MIN_TEXT_WIDTH_PX)
+    expect(makeText('t', { x: 0, y: 0 }, { width: Number.NaN }).width).toBe(MIN_TEXT_WIDTH_PX)
+    expect(makeText('t', { x: 0, y: 0 }, { width: Number.POSITIVE_INFINITY }).width).toBe(
+      MIN_TEXT_WIDTH_PX
+    )
   })
 })
 

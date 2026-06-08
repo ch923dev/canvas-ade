@@ -30,10 +30,12 @@ import {
  * - v6 = board groups (named board clusters, #84). Backfills an empty `groups` array.
  * - **v7 = free-text typography tokens** (fontFamily / fontSize / align / color / bold —
  *   all optional on TextElement; defaulted at render time). Identity migration (no
- *   backfill). #84 took v6 first, so this slice rebased v6 → v7 (ADR 0004). The Diagram
- *   element (PR #72 research) now eyes v8. Do not silently reuse a version for a new shape.
+ *   backfill). #84 took v6 first, so this slice rebased v6 → v7 (ADR 0004).
+ * - **v8 = optional TextElement.width** (area-text wrap-box width in board px). All-optional
+ *   → identity bump; an existing text with no width renders as point text, byte-identical.
+ *   Do not silently reuse a version for a new shape.
  */
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 8
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -110,6 +112,8 @@ export interface TextElement extends ElementCommon {
   align?: TextAlignToken
   color?: TextColorToken
   bold?: boolean
+  /** v8: area-text wrap-box width (board px). Absent ⇒ point text (auto-size). */
+  width?: number
 }
 
 export interface ArrowElement extends ElementCommon {
@@ -351,7 +355,10 @@ const MIGRATIONS: Record<number, Migration> = {
   // have no groups. Boards/connectors are untouched.
   5: (doc) => ({ ...doc, schemaVersion: 6, groups: (doc as CanvasDoc).groups ?? [] }),
   // v7: free-text typography tokens (all optional → identity bump; defaulted at render).
-  6: (doc) => ({ ...doc, schemaVersion: 7 })
+  6: (doc) => ({ ...doc, schemaVersion: 7 }),
+  // v8: optional TextElement.width (area-text wrap box). All-optional → identity bump;
+  // an existing text with no width renders as point text, byte-identical.
+  7: (doc) => ({ ...doc, schemaVersion: 8 })
 }
 
 /**
@@ -462,6 +469,8 @@ function assertPlanningElement(el: unknown): void {
         fail(`text element has invalid color ${String(el.color)}`)
       if (el.bold !== undefined && typeof el.bold !== 'boolean')
         fail('text element has non-boolean bold')
+      if (el.width !== undefined && !isPositiveNum(el.width))
+        fail(`text element has non-positive width ${String(el.width)}`)
       return
     case 'arrow':
       if (!isFiniteNum(el.x2) || !isFiniteNum(el.y2)) fail('arrow element has non-finite x2/y2')

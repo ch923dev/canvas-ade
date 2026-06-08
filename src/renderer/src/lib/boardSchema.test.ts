@@ -497,23 +497,23 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 7', () => {
-    expect(SCHEMA_VERSION).toBe(7)
+  it('SCHEMA_VERSION is 8', () => {
+    expect(SCHEMA_VERSION).toBe(8)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 7, viewport: vp, boards: [], connectors: [], groups: [] })
+    expect(doc).toEqual({ schemaVersion: 8, viewport: vp, boards: [], connectors: [], groups: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
     expect(toObject([], null).viewport).toBeNull()
   })
 
-  it('migrates a v1 doc (no viewport) to v7 (via v2–v6) with viewport=null', () => {
+  it('migrates a v1 doc (no viewport) to v8 (via v2–v7) with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(7)
+    expect(out.schemaVersion).toBe(8)
     expect(out.viewport).toBeNull()
   })
 
@@ -683,8 +683,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 7', () => {
-    expect(SCHEMA_VERSION).toBe(7)
+  it('SCHEMA_VERSION is 8', () => {
+    expect(SCHEMA_VERSION).toBe(8)
   })
 
   it('round-trips a valid image element', () => {
@@ -724,7 +724,7 @@ describe('W4 image element', () => {
       ]
     }
     const doc = fromObject(v3)
-    expect(doc.schemaVersion).toBe(7)
+    expect(doc.schemaVersion).toBe(8)
     const el = (doc.boards[0] as { elements: Array<{ assetId: string; w: number }> }).elements[0]
     expect(el.assetId).toBe('assets/y.png')
     expect(el.w).toBe(50)
@@ -737,8 +737,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 7', () => {
-    expect(SCHEMA_VERSION).toBe(7)
+  it('SCHEMA_VERSION is 8', () => {
+    expect(SCHEMA_VERSION).toBe(8)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -982,6 +982,92 @@ describe('M2 connectors (schema v5)', () => {
       // The valid terminal source must still be preserved
       expect(b && b.type === 'browser' ? b.previewSourceId : 'MISSING').toBe('t1')
     })
+  })
+})
+
+// ── Schema v8 — TextElement.width (area-text wrap box) ───────────────────────
+describe('schema v8 — TextElement.width', () => {
+  it('migrates v7 → v8 as an identity bump (text without width passes through)', () => {
+    const v7 = { schemaVersion: 7, viewport: null, boards: [], connectors: [], groups: [] }
+    expect(migrate(v7 as never).schemaVersion).toBe(8)
+  })
+
+  it('a v7 text element with no width survives migration to v8 unchanged (point text)', () => {
+    const doc = {
+      schemaVersion: 7,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [
+        {
+          id: 'p',
+          type: 'planning',
+          x: 0,
+          y: 0,
+          w: 400,
+          h: 300,
+          title: 'P',
+          elements: [{ id: 't', kind: 'text', x: 1, y: 2, text: 'hi' }]
+        }
+      ]
+    }
+    const out = migrate(doc as never)
+    expect(out.schemaVersion).toBe(8)
+    expect((out.boards[0] as never as { elements: unknown[] }).elements[0]).toEqual({
+      id: 't',
+      kind: 'text',
+      x: 1,
+      y: 2,
+      text: 'hi'
+    })
+  })
+
+  it('accepts a text element with a positive width', () => {
+    expect(() =>
+      fromObject({
+        schemaVersion: 8,
+        viewport: null,
+        connectors: [],
+        groups: [],
+        boards: [
+          {
+            id: 'p',
+            type: 'planning',
+            x: 0,
+            y: 0,
+            w: 400,
+            h: 300,
+            title: 'P',
+            elements: [{ id: 't', kind: 'text', x: 0, y: 0, text: 'a', width: 200 }]
+          }
+        ]
+      })
+    ).not.toThrow()
+  })
+
+  it('rejects a text element with a non-positive / non-finite width', () => {
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        fromObject({
+          schemaVersion: 8,
+          viewport: null,
+          connectors: [],
+          groups: [],
+          boards: [
+            {
+              id: 'p',
+              type: 'planning',
+              x: 0,
+              y: 0,
+              w: 400,
+              h: 300,
+              title: 'P',
+              elements: [{ id: 't', kind: 'text', x: 0, y: 0, text: 'a', width: bad }]
+            }
+          ]
+        })
+      ).toThrow(/width/)
+    }
   })
 })
 

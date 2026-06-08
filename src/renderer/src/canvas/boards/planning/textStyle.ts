@@ -56,6 +56,21 @@ export const SIZE_PX: Record<FontSizeToken, number> = { S: 11, M: 13, L: 18, XL:
 /** Line height (px) for a px size: 1.38× → lineHeightFor(13) === 18 (matches pre-typography). */
 export const lineHeightFor = (px: number): number => Math.round(px * 1.38)
 
+/**
+ * Map an area-text drag HEIGHT (board px) to the nearest size token. Thresholds chosen
+ * so a small box reads as body text and a tall box as a heading. Pinned by a unit test —
+ * a change to the bands is deliberate. < 24 → S · < 40 → M · < 70 → L · ≥ 70 → XL.
+ */
+export function tokenFromHeight(boardPx: number): FontSizeToken {
+  if (boardPx < 24) return 'S'
+  if (boardPx < 40) return 'M'
+  if (boardPx < 70) return 'L'
+  return 'XL'
+}
+
+/** Minimum width (board px) for a text element — area-text wrap floor + mirrors FreeText's Math.max(40, scrollWidth). */
+export const MIN_TEXT_WIDTH_PX = 40
+
 /** Approx glyph advance (× font-size) per family — for the export-time width estimate. */
 const CHAR_ADVANCE: Record<FontFamilyToken, number> = { sans: 0.52, mono: 0.6, serif: 0.5 }
 /**
@@ -67,7 +82,7 @@ const CHAR_ADVANCE: Record<FontFamilyToken, number> = { sans: 0.52, mono: 0.6, s
  */
 export function estimateTextWidth(text: string, px: number, family: FontFamilyToken): number {
   const longest = text.split('\n').reduce((m, l) => Math.max(m, l.length), 0)
-  return Math.max(40, Math.round(longest * px * CHAR_ADVANCE[family]))
+  return Math.max(MIN_TEXT_WIDTH_PX, Math.round(longest * px * CHAR_ADVANCE[family]))
 }
 
 /** Live color (CSS custom prop). */

@@ -40,6 +40,7 @@ import {
   expandGroups,
   duplicateElements
 } from './elements'
+import { tokenFromHeight, MIN_TEXT_WIDTH_PX } from './textStyle'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -66,12 +67,13 @@ export interface PlanningPointerApi {
   onWellPointerMove: (e: PointerEvent<HTMLDivElement>) => void
   onWellDoubleClick: (e: MouseEvent<HTMLDivElement>) => void
   onWellContextMenu: (e: ReactMouseEvent<HTMLDivElement>) => void
-  onWellPointerUp: () => void
+  onWellPointerUp: (e?: PointerEvent<HTMLDivElement>) => void
   onWellPointerCancel: () => void
   draftArrow: ArrowElement | null
   draftStroke: number[] | null
   dragPos: { ids: string[]; dx: number; dy: number; alt: boolean } | null
   marqueeRect: { x: number; y: number; w: number; h: number } | null
+  draftTextBox: { x: number; y: number; w: number; h: number } | null
   pendingErase: Set<string> | null
   snapGuides: Guide[] | null
 }
@@ -120,11 +122,20 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
     | { mode: 'marquee'; startX: number; startY: number; additive: boolean }
+    | { mode: 'textbox'; startX: number; startY: number; sx: number; sy: number }
     | null
   >(null)
   // Live marquee box (board-local) while box-selecting; null when idle. Transient,
   // session-only (never serialized); resolved to a selection set on pointer-up.
   const [marqueeRect, setMarqueeRect] = useState<{
+    x: number
+    y: number
+    w: number
+    h: number
+  } | null>(null)
+  // Live text-tool drag box (board-local) while drawing; null when idle. Transient,
+  // session-only (never serialized); resolved to a new text element on pointer-up.
+  const [draftTextBox, setDraftTextBox] = useState<{
     x: number
     y: number
     w: number
@@ -233,6 +244,16 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         e.currentTarget.setPointerCapture(e.pointerId)
         return
       }
+      if (tool === 'text') {
+        // Do NOT beginChange() here — a no-movement tap must not push a phantom undo
+        // snapshot (WB-1 discipline; checkpoint taken in onWellPointerUp on commit).
+        // startX/Y = board-local anchor (for the committed element); sx/sy = screen-px press
+        // origin (for the zoom-independent click-vs-drag threshold on pointer-up).
+        drag.current = { mode: 'textbox', startX: p.x, startY: p.y, sx: e.clientX, sy: e.clientY }
+        setDraftTextBox({ x: p.x, y: p.y, w: 0, h: 0 })
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
@@ -291,6 +312,8 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         if (grew) setPendingErase(new Set(d.removed))
       } else if (d.mode === 'marquee') {
         setMarqueeRect(rectFromPoints(d.startX, d.startY, p.x, p.y))
+      } else if (d.mode === 'textbox') {
+        setDraftTextBox(rectFromPoints(d.startX, d.startY, p.x, p.y))
       }
     },
     [toBoard, elements, snapEnabled, measuredRef]
@@ -351,93 +374,129 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     [elements, toBoard, selectedIds, buildMenuEntries, setSelectedIds, setContextMenu]
   )
 
-  const onWellPointerUp = useCallback(() => {
-    const d = drag.current
-    drag.current = null
-    if (!d) return
-    if (d.mode === 'move') {
-      // Checkpoint + commit the final position ONCE, and only if the set actually
-      // moved (dragPos set on the first move frame). A zero-movement grab leaves
-      // dragPos null → no snapshot, no future-wipe (#11). The whole drag is a single
-      // undo checkpoint (#9), even when the set has many elements.
-      const pos = dragPos
-      setDragPos(null)
-      setSnapGuides(null)
-      if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
-        beginChange()
-        if (pos.alt) {
-          // Alt-drag → clone the moving set at the drop offset; originals stay put.
-          // Reselect the copies so a follow-on gesture acts on the new elements.
-          const { elements: withCopies, newIds } = duplicateElements(
-            elements,
-            pos.ids,
-            pos.dx,
-            pos.dy,
-            newId
-          )
-          commit(withCopies)
-          setSelectedIds(new Set(newIds))
-        } else {
-          commit(translateMany(elements, pos.ids, pos.dx, pos.dy))
+  const onWellPointerUp = useCallback(
+    (e?: PointerEvent<HTMLDivElement>) => {
+      const d = drag.current
+      drag.current = null
+      if (!d) return
+      if (d.mode === 'move') {
+        // Checkpoint + commit the final position ONCE, and only if the set actually
+        // moved (dragPos set on the first move frame). A zero-movement grab leaves
+        // dragPos null → no snapshot, no future-wipe (#11). The whole drag is a single
+        // undo checkpoint (#9), even when the set has many elements.
+        const pos = dragPos
+        setDragPos(null)
+        setSnapGuides(null)
+        if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
+          beginChange()
+          if (pos.alt) {
+            // Alt-drag → clone the moving set at the drop offset; originals stay put.
+            // Reselect the copies so a follow-on gesture acts on the new elements.
+            const { elements: withCopies, newIds } = duplicateElements(
+              elements,
+              pos.ids,
+              pos.dx,
+              pos.dy,
+              newId
+            )
+            commit(withCopies)
+            setSelectedIds(new Set(newIds))
+          } else {
+            commit(translateMany(elements, pos.ids, pos.dx, pos.dy))
+          }
         }
+      } else if (d.mode === 'arrow') {
+        const a = draftArrow
+        setDraftArrow(null)
+        // Discard a degenerate (no-drag) arrow. Checkpoint ONLY when we actually commit,
+        // so a tap-without-drag pushes no phantom undo snapshot (WB-1; mirrors move).
+        if (a && (Math.abs(a.x2 - a.x) > 4 || Math.abs(a.y2 - a.y) > 4)) {
+          beginChange()
+          commit([...elements, a])
+        }
+        setTool('select')
+      } else if (d.mode === 'pen') {
+        const pts = d.points
+        setDraftStroke(null)
+        if (pts.length >= 4) {
+          beginChange()
+          commit([...elements, makeStroke(newId(), pts)])
+        }
+        setTool('select')
+      } else if (d.mode === 'erase') {
+        const removed = d.removed
+        setPendingErase(null)
+        if (removed.size > 0) {
+          // One checkpoint for the whole swipe (phantom-undo discipline).
+          beginChange()
+          commit(elements.filter((el) => !removed.has(el.id)))
+        }
+      } else if (d.mode === 'marquee') {
+        // No pointer event in scope here — read the box from marqueeRect (updated on
+        // every move). Selection is ephemeral (never serialized) → ZERO checkpoints.
+        const rect = marqueeRect ?? { x: d.startX, y: d.startY, w: 0, h: 0 }
+        setMarqueeRect(null)
+        const moved = rect.w > 2 || rect.h > 2
+        if (moved) {
+          const hits = marqueeHits(elements, rect, measuredRef.current)
+          setSelectedIds((prev) => {
+            if (!d.additive) return new Set(hits)
+            const next = new Set(prev)
+            for (const id of hits) next.add(id)
+            return next
+          })
+        } else if (!d.additive) {
+          // A bare click on the empty well (no drag, no Shift) clears the selection.
+          clearSel()
+        }
+      } else if (d.mode === 'textbox') {
+        // Read the live box from draftTextBox (updated on every move frame, like marqueeRect).
+        // Checkpoint ONLY when committing (WB-1 discipline — phantom-undo prevention).
+        const box = draftTextBox
+        setDraftTextBox(null)
+        // Click-vs-drag on SCREEN-px travel (down→up), not board-px: toBoard divides by camera
+        // zoom, so a board-px threshold drifts with zoom (a small jitter at zoom 0.5x would
+        // spawn area text). 4px in screen space is zoom-independent. width/fontSize below stay
+        // board-px (the wrap box + size token are board-space quantities).
+        const moved = !!box && !!e && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4
+        if (moved && box) {
+          // Area text: top-left anchor from rectFromPoints' normalized rect, width drives
+          // wrap, height maps to the nearest size token.
+          beginChange()
+          const el = makeText(
+            newId(),
+            { x: box.x, y: box.y },
+            {
+              width: Math.max(MIN_TEXT_WIDTH_PX, box.w),
+              fontSize: tokenFromHeight(box.h)
+            }
+          )
+          commit([...elements, el])
+          setSelectedIds(new Set([el.id]))
+        } else {
+          // Click (no drag): point text at the press origin, default size. Use d.startX/Y
+          // (board-local grab) rather than the draft box so accuracy is preserved even
+          // if the board has been panned between down and up.
+          beginChange()
+          commit([...elements, makeText(newId(), { x: d.startX, y: d.startY })])
+        }
+        setTool('select')
       }
-    } else if (d.mode === 'arrow') {
-      const a = draftArrow
-      setDraftArrow(null)
-      // Discard a degenerate (no-drag) arrow. Checkpoint ONLY when we actually commit,
-      // so a tap-without-drag pushes no phantom undo snapshot (WB-1; mirrors move).
-      if (a && (Math.abs(a.x2 - a.x) > 4 || Math.abs(a.y2 - a.y) > 4)) {
-        beginChange()
-        commit([...elements, a])
-      }
-      setTool('select')
-    } else if (d.mode === 'pen') {
-      const pts = d.points
-      setDraftStroke(null)
-      if (pts.length >= 4) {
-        beginChange()
-        commit([...elements, makeStroke(newId(), pts)])
-      }
-      setTool('select')
-    } else if (d.mode === 'erase') {
-      const removed = d.removed
-      setPendingErase(null)
-      if (removed.size > 0) {
-        // One checkpoint for the whole swipe (phantom-undo discipline).
-        beginChange()
-        commit(elements.filter((el) => !removed.has(el.id)))
-      }
-    } else if (d.mode === 'marquee') {
-      // No pointer event in scope here — read the box from marqueeRect (updated on
-      // every move). Selection is ephemeral (never serialized) → ZERO checkpoints.
-      const rect = marqueeRect ?? { x: d.startX, y: d.startY, w: 0, h: 0 }
-      setMarqueeRect(null)
-      const moved = rect.w > 2 || rect.h > 2
-      if (moved) {
-        const hits = marqueeHits(elements, rect, measuredRef.current)
-        setSelectedIds((prev) => {
-          if (!d.additive) return new Set(hits)
-          const next = new Set(prev)
-          for (const id of hits) next.add(id)
-          return next
-        })
-      } else if (!d.additive) {
-        // A bare click on the empty well (no drag, no Shift) clears the selection.
-        clearSel()
-      }
-    }
-  }, [
-    draftArrow,
-    dragPos,
-    commit,
-    elements,
-    beginChange,
-    marqueeRect,
-    clearSel,
-    measuredRef,
-    setSelectedIds,
-    setTool
-  ])
+    },
+    [
+      draftArrow,
+      draftTextBox,
+      dragPos,
+      commit,
+      elements,
+      beginChange,
+      marqueeRect,
+      clearSel,
+      measuredRef,
+      setSelectedIds,
+      setTool
+    ]
+  )
 
   const onWellPointerCancel = useCallback(() => {
     // An OS pointer-cancel (palm/stylus/system gesture) mid-erase must NOT commit a
@@ -455,6 +514,11 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       setMarqueeRect(null)
       return
     }
+    if (drag.current?.mode === 'textbox') {
+      drag.current = null
+      setDraftTextBox(null)
+      return
+    }
     onWellPointerUp()
   }, [onWellPointerUp])
 
@@ -470,6 +534,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     draftStroke,
     dragPos,
     marqueeRect,
+    draftTextBox,
     pendingErase,
     snapGuides
   }

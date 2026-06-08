@@ -33,6 +33,49 @@ it('does NOT delete on Backspace when non-interactive (draw tool active) — TEX
   expect(onDelete).not.toHaveBeenCalled()
 })
 
+it('area text (width set) applies a fixed width + wraps', () => {
+  const el = {
+    id: 'a',
+    kind: 'text',
+    x: 0,
+    y: 0,
+    text: 'wrap me',
+    width: 180
+  } as unknown as TextElement
+  render(
+    <FreeText
+      element={el}
+      interactive
+      onDragStart={() => {}}
+      onChangeText={() => {}}
+      onDelete={() => {}}
+    />
+  )
+  const ta = screen.getByPlaceholderText('Text…') as HTMLTextAreaElement
+  expect(ta.style.width).toBe('180px')
+  expect(ta.style.whiteSpace).toBe('pre-wrap')
+})
+
+it('fires onEditingChange(true) on focus and (false) on blur', () => {
+  const onEditingChange = vi.fn()
+  const el = { id: 'a', kind: 'text', x: 0, y: 0, text: 'x' } as unknown as TextElement
+  render(
+    <FreeText
+      element={el}
+      interactive
+      onDragStart={() => {}}
+      onChangeText={() => {}}
+      onDelete={() => {}}
+      onEditingChange={onEditingChange}
+    />
+  )
+  const ta = screen.getByPlaceholderText('Text…')
+  fireEvent.focus(ta)
+  expect(onEditingChange).toHaveBeenCalledWith('a', true)
+  fireEvent.blur(ta)
+  expect(onEditingChange).toHaveBeenCalledWith('a', false)
+})
+
 it('BUG-037: document pointer listeners do not fire onDelete when FreeText unmounts during a grip drag', () => {
   const onDelete = vi.fn()
   const { unmount } = render(

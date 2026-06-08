@@ -112,4 +112,12 @@ describe('TextToolbar', () => {
       left(render(<TextToolbar element={el({ x: 300 })} boardW={200} onPatch={() => {}} />))
     ).toBe('0px')
   })
+
+  it('a pointer-down on the toolbar is prevented so the textarea keeps focus (no empty-prune)', () => {
+    const r = render(<TextToolbar element={el({})} boardW={9999} onPatch={() => {}} />)
+    const bar = r.container.querySelector('.pl-text-toolbar') as HTMLElement
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    bar.dispatchEvent(ev)
+    expect(ev.defaultPrevented).toBe(true)
+  })
 })
