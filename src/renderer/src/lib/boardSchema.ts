@@ -68,6 +68,11 @@ export interface TerminalBoard extends BoardCommon {
    * (iCloud/Dropbox/NAS) and reopened elsewhere. Don't assume it's portable across machines.
    */
   agentTranscriptPath?: string
+  /**
+   * Per-board xterm font size in px. Absent => use the sticky default (else 12.5). Optional
+   * + default-at-read => NO SCHEMA_VERSION bump (mirrors previewSourceId / agentSessionId).
+   */
+  fontSize?: number
 }
 
 export interface BrowserBoard extends BoardCommon {
@@ -538,6 +543,9 @@ function assertBoard(b: unknown): void {
       }
       if (b.agentTranscriptPath !== undefined && typeof b.agentTranscriptPath !== 'string') {
         fail('terminal agentTranscriptPath is not a string')
+      }
+      if (b.fontSize !== undefined && !isPositiveNum(b.fontSize)) {
+        fail('terminal fontSize must be a positive number')
       }
       return
     case 'browser':

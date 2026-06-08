@@ -385,7 +385,8 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     'cwd',
     'port',
     'agentSessionId',
-    'agentTranscriptPath'
+    'agentTranscriptPath',
+    'fontSize'
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements']

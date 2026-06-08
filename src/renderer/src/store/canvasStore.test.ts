@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from './canvasStore'
-import { SCHEMA_VERSION, toObject, createBoard, fromObject } from '../lib/boardSchema'
+import {
+  SCHEMA_VERSION,
+  toObject,
+  createBoard,
+  fromObject,
+  type TerminalBoard
+} from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 
 const get = () => useCanvasStore.getState()
@@ -1519,5 +1525,38 @@ describe('planning board — addChecklist + schema round-trip (migrated from e2e
     const kinds = after.type === 'planning' ? after.elements.map((e) => e.kind) : []
     expect(kinds).toContain('checklist')
     expect(() => fromObject(get().toObject())).not.toThrow()
+  })
+})
+
+describe('terminal fontSize patch', () => {
+  it('updateBoard persists fontSize on a terminal (PATCHABLE_KEYS.terminal)', () => {
+    const t = createBoard('terminal', { id: 't1', x: 0, y: 0 }) as TerminalBoard
+    useCanvasStore.setState({
+      boards: [t],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().updateBoard('t1', { fontSize: 11 } as Partial<TerminalBoard>)
+    expect((useCanvasStore.getState().boards[0] as TerminalBoard).fontSize).toBe(11)
+  })
+  it('drops a fontSize patched onto a browser (cross-type guard)', () => {
+    const b = createBoard('browser', { id: 'b1', x: 0, y: 0 })
+    useCanvasStore.setState({
+      boards: [b],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().updateBoard('b1', { fontSize: 11 } as Partial<TerminalBoard>)
+    expect(
+      (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).fontSize
+    ).toBeUndefined()
   })
 })
