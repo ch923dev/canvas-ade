@@ -6,6 +6,11 @@ name: claude-review
 # stale duplicate threads), then applies this repo's existing labels and (only if one
 # clearly fits) a milestone. It never CREATES labels or milestones — it only chooses
 # from what already exists (see `gh label list` / the milestones API).
+# Disposition-aware: before re-reviewing it reads the human replies on its own threads
+# and any author "Dispositions: …" summary, PRESERVES inline threads a human replied to
+# (never orphans a disposition), and does NOT re-flag a finding the author already fixed,
+# accepted, or declined-with-reason. This stops the re-flag-after-disposition loop seen
+# on PR #92.
 # Complements the deterministic `pr` gate (typecheck/lint/test/build) and `codeql`
 # (SAST): those say "is it green", this says "is it good".
 
@@ -61,26 +66,54 @@ jobs:
             You are reviewing this pull request like a senior engineer on the Canvas ADE
             (Expanse) Electron desktop app. Perform these tasks in order.
 
-            ## 1. Clear your previous review
-            This PR may have been reviewed by you on an earlier push. Delete ONLY your own
-            prior comments (the ones carrying the marker above) so the review never
-            accumulates stale duplicate threads. Leave all human comments untouched.
+            ## 1. Clear your previous review (but PRESERVE dispositioned threads)
+            This PR may have been reviewed by you on an earlier push. Delete your own prior
+            comments (the ones carrying the marker above) so the review never accumulates
+            stale duplicate threads — with ONE exception: NEVER delete an inline comment of
+            yours that a human has REPLIED to. A human reply on one of your comments is a
+            disposition (a fix, a refactor, or a reasoned "leave as-is"); deleting the root
+            would orphan that thread and lose the author's response. Preserve those threads
+            intact. Leave all human comments untouched.
 
-            Delete your previous inline review comments:
+            Delete your previous inline review comments EXCEPT any that have a human reply.
+            An auto comment has a human reply when another comment's in_reply_to_id points at
+            its id and that reply does NOT carry the marker. Keep this a single pipeline that
+            STARTS with `gh api` (the allowlist matches the command prefix) — `$replied` is the
+            set of your comment ids that have a non-marker reply, and only ids NOT in that set
+            are deleted:
               gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate \
-                --jq '.[] | select(.body | contains("claude-code-review:auto")) | .id' \
+                --jq '([.[] | select(.in_reply_to_id != null and ((.body | contains("claude-code-review:auto")) | not)) | .in_reply_to_id] | unique) as $replied | .[] | select(.body | contains("claude-code-review:auto")) | select(($replied | index(.id)) | not) | .id' \
               | while read id; do
                   gh api -X DELETE repos/${{ github.repository }}/pulls/comments/$id
                 done
 
-            Delete your previous summary comment:
+            Delete your previous summary comment (summaries have no inline thread, so always
+            clear the old one):
               gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate \
                 --jq '.[] | select(.body | contains("claude-code-review:auto")) | .id' \
               | while read id; do
                   gh api -X DELETE repos/${{ github.repository }}/issues/comments/$id
                 done
 
-            ## 2. Review the code
+            ## 2. Read prior human dispositions (do this BEFORE reviewing)
+            Find out what a human has ALREADY responded to, so you never re-flag a finding
+            they have addressed. There are two sources:
+
+            (a) Inline replies to your previous comments. A human reply on one of your threads
+                is a disposition. List your auto inline comments and any replies to them:
+                  gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate \
+                    --jq '.[] | {id, path, line, in_reply_to_id, user: .user.login, body}'
+            (b) Issue-level human comments — e.g. a "Dispositions: …" summary like the one the
+                author may post listing how each finding was handled:
+                  gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate \
+                    --jq '.[] | select((.body | contains("claude-code-review:auto")) | not) | {user: .user.login, body}'
+
+            From these, build a list of findings the human has already handled — whether they
+            FIXED it, ACCEPTED it as low / won't-fix, or DECLINED it with a stated reason.
+            Treat all three as resolved; you will skip them in step 4. Match by file + line +
+            topic, not exact wording (the author paraphrases).
+
+            ## 3. Review the code
             Read the diff with `gh pr diff` and open the surrounding files in the working
             directory to verify findings before posting. Look for:
             - Code quality and best practices
@@ -96,9 +129,16 @@ jobs:
             not style nitpicks the linter already enforces. If the PR is clean, say so
             plainly rather than inventing concerns.
 
-            ## 3. Post inline comments on the problem lines
-            For EACH issue found, post an inline comment anchored to the exact file and
-            line(s) using mcp__github_inline_comment__create_inline_comment with
+            ## 4. Post inline comments on the problem lines
+            Do NOT re-post any finding the human already dispositioned in step 2 (fixed,
+            accepted-as-low, or declined-with-reason) — even if you still believe it.
+            Re-raising a settled point stacks noise and overrides the author's decision. If
+            you genuinely think a DECLINED finding is critical (a real bug or security hole,
+            not a nit), do not re-open the inline thread: mention it ONCE, briefly, in the
+            step-5 summary and defer to the author.
+
+            For EACH NEW or still-unaddressed issue, post an inline comment anchored to the
+            exact file and line(s) using mcp__github_inline_comment__create_inline_comment with
             confirmed: true. In each comment:
             - State the issue and its severity: [critical], [warning], or [nit]
             - Explain why it's a problem (1-3 sentences)
@@ -111,14 +151,14 @@ jobs:
               larger or structural fixes, describe the fix in words instead.
             - End the comment body with the hidden marker.
 
-            ## 4. Post a summary comment
+            ## 5. Post a summary comment
             After all inline comments, post ONE summary with:
             gh pr comment ${{ github.event.pull_request.number }} --body "..."
             Include: a 2-3 sentence overview of the PR, a short table of issues found by
             severity, and what you checked. If you found no issues, post only this summary
             saying the PR looks good. End the body with the hidden marker.
 
-            ## 5. Apply labels
+            ## 6. Apply labels
             Run `gh label list` to see the labels that exist. This repo uses a STRUCTURED
             scheme — pick from existing labels only, never create new ones:
             - Exactly one `type/*` — the kind of change:
@@ -135,7 +175,7 @@ jobs:
             Only use labels that already exist. Never create new labels. If nothing fits,
             skip this step.
 
-            ## 6. Assign a milestone
+            ## 7. Assign a milestone
             List open milestones:
             gh api repos/${{ github.repository }}/milestones --jq '.[].title'
 
