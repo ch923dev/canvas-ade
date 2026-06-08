@@ -47,6 +47,7 @@ import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPrevie
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { installSelectionShim } from './terminal/terminalSelection'
+import { resumeCommand } from './terminal/resumeCommand'
 import { BoardFullViewContext } from '../fullViewContext'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
@@ -1042,7 +1043,10 @@ export function TerminalBoard({
                 <button
                   className="ca-port-choice"
                   onClick={() => {
-                    launchOverrideRef.current = `claude --resume ${board.agentSessionId ?? ''}`
+                    // Sanitise agentSessionId before it reaches the PTY — it comes from canvas.json
+                    // (third-party-craftable), so resumeCommand strips it to a single inert token
+                    // (or undefined → fresh launch). See resumeCommand.ts.
+                    launchOverrideRef.current = resumeCommand(board.agentSessionId)
                     setRestartMenu(false)
                     restart()
                   }}

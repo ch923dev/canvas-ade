@@ -104,7 +104,11 @@ export function redactSecrets(text: string): string {
       .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[redacted]')
       // Generic `Bearer <token>` (Authorization headers) — keep the word, redact the token
       .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/g, 'Bearer [redacted]')
-      // Long opaque hex blob (>= 40 hex chars: SHA-1+, raw key material)
+      // Long opaque hex blob (>= 40 hex chars: SHA-1+, raw key material). Threshold stays at 40 on
+      // purpose: a 20-byte (40-hex) token/hash MUST be redacted before egress, and over-redacting a
+      // 40-char git SHA in a milestone to [redacted] is an accepted cosmetic loss. Do NOT raise it
+      // to 64 to "keep commit hashes" — that re-exposes 20-byte secrets, and the base64 rule below
+      // already redacts any hex SHA containing a digit regardless, so it wouldn't even help.
       .replace(/\b[0-9a-fA-F]{40,}\b/g, '[redacted]')
       // Long base64/base64url blob (>= 40 chars) that looks like key material — require a digit so
       // ordinary all-letter prose words never trip it.
