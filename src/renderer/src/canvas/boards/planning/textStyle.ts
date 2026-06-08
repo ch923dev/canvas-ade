@@ -68,6 +68,9 @@ export function tokenFromHeight(boardPx: number): FontSizeToken {
   return 'XL'
 }
 
+/** Minimum width (board px) for a text element — area-text wrap floor + mirrors FreeText's Math.max(40, scrollWidth). */
+export const MIN_TEXT_WIDTH_PX = 40
+
 /** Approx glyph advance (× font-size) per family — for the export-time width estimate. */
 const CHAR_ADVANCE: Record<FontFamilyToken, number> = { sans: 0.52, mono: 0.6, serif: 0.5 }
 /**
@@ -79,7 +82,7 @@ const CHAR_ADVANCE: Record<FontFamilyToken, number> = { sans: 0.52, mono: 0.6, s
  */
 export function estimateTextWidth(text: string, px: number, family: FontFamilyToken): number {
   const longest = text.split('\n').reduce((m, l) => Math.max(m, l.length), 0)
-  return Math.max(40, Math.round(longest * px * CHAR_ADVANCE[family]))
+  return Math.max(MIN_TEXT_WIDTH_PX, Math.round(longest * px * CHAR_ADVANCE[family]))
 }
 
 /** Live color (CSS custom prop). */

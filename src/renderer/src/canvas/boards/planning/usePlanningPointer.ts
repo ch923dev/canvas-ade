@@ -40,6 +40,7 @@ import {
   expandGroups,
   duplicateElements
 } from './elements'
+import { tokenFromHeight, MIN_TEXT_WIDTH_PX } from './textStyle'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -72,6 +73,7 @@ export interface PlanningPointerApi {
   draftStroke: number[] | null
   dragPos: { ids: string[]; dx: number; dy: number; alt: boolean } | null
   marqueeRect: { x: number; y: number; w: number; h: number } | null
+  draftTextBox: { x: number; y: number; w: number; h: number } | null
   pendingErase: Set<string> | null
   snapGuides: Guide[] | null
 }
@@ -120,11 +122,20 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
     | { mode: 'marquee'; startX: number; startY: number; additive: boolean }
+    | { mode: 'textbox'; startX: number; startY: number }
     | null
   >(null)
   // Live marquee box (board-local) while box-selecting; null when idle. Transient,
   // session-only (never serialized); resolved to a selection set on pointer-up.
   const [marqueeRect, setMarqueeRect] = useState<{
+    x: number
+    y: number
+    w: number
+    h: number
+  } | null>(null)
+  // Live text-tool drag box (board-local) while drawing; null when idle. Transient,
+  // session-only (never serialized); resolved to a new text element on pointer-up.
+  const [draftTextBox, setDraftTextBox] = useState<{
     x: number
     y: number
     w: number
@@ -233,6 +244,14 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         e.currentTarget.setPointerCapture(e.pointerId)
         return
       }
+      if (tool === 'text') {
+        // Do NOT beginChange() here — a no-movement tap must not push a phantom undo
+        // snapshot (WB-1 discipline; checkpoint taken in onWellPointerUp on commit).
+        drag.current = { mode: 'textbox', startX: p.x, startY: p.y }
+        setDraftTextBox({ x: p.x, y: p.y, w: 0, h: 0 })
+        e.currentTarget.setPointerCapture(e.pointerId)
+        return
+      }
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
@@ -291,6 +310,8 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         if (grew) setPendingErase(new Set(d.removed))
       } else if (d.mode === 'marquee') {
         setMarqueeRect(rectFromPoints(d.startX, d.startY, p.x, p.y))
+      } else if (d.mode === 'textbox') {
+        setDraftTextBox(rectFromPoints(d.startX, d.startY, p.x, p.y))
       }
     },
     [toBoard, elements, snapEnabled, measuredRef]
@@ -425,9 +446,38 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         // A bare click on the empty well (no drag, no Shift) clears the selection.
         clearSel()
       }
+    } else if (d.mode === 'textbox') {
+      // Read the live box from draftTextBox (updated on every move frame, like marqueeRect).
+      // Checkpoint ONLY when committing (WB-1 discipline — phantom-undo prevention).
+      const box = draftTextBox
+      setDraftTextBox(null)
+      const moved = !!box && (box.w > 4 || box.h > 4)
+      if (moved && box) {
+        // Area text: top-left anchor from rectFromPoints' normalized rect, width drives
+        // wrap, height maps to the nearest size token.
+        beginChange()
+        const el = makeText(
+          newId(),
+          { x: box.x, y: box.y },
+          {
+            width: Math.max(MIN_TEXT_WIDTH_PX, box.w),
+            fontSize: tokenFromHeight(box.h)
+          }
+        )
+        commit([...elements, el])
+        setSelectedIds(new Set([el.id]))
+      } else {
+        // Click (no drag): point text at the press origin, default size. Use d.startX/Y
+        // (board-local grab) rather than the draft box so accuracy is preserved even
+        // if the board has been panned between down and up.
+        beginChange()
+        commit([...elements, makeText(newId(), { x: d.startX, y: d.startY })])
+      }
+      setTool('select')
     }
   }, [
     draftArrow,
+    draftTextBox,
     dragPos,
     commit,
     elements,
@@ -455,6 +505,11 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       setMarqueeRect(null)
       return
     }
+    if (drag.current?.mode === 'textbox') {
+      drag.current = null
+      setDraftTextBox(null)
+      return
+    }
     onWellPointerUp()
   }, [onWellPointerUp])
 
@@ -470,6 +525,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     draftStroke,
     dragPos,
     marqueeRect,
+    draftTextBox,
     pendingErase,
     snapGuides
   }
