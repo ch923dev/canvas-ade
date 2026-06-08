@@ -38,4 +38,29 @@ test.describe('terminal clip-free fit', () => {
       `bottom-row clip at heights (overflow px shown): ${JSON.stringify(offenders, null, 2)}`
     ).toEqual([])
   })
+
+  test('stays clip-free across font sizes', async ({ page }) => {
+    // Reset sticky font for determinism (persistent userData dir carries localStorage across runs).
+    await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '14')`)
+    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    await evalIn(
+      page,
+      `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, Array.from({length: 60}, (_, i) => 'ROW' + i).join('\\r\\n'))`
+    )
+    const offenders: Array<{ font: number; h: number; overflow: number }> = []
+    for (const font of [8, 11, 14, 18, 22]) {
+      await evalIn(page, `window.__canvasE2E.setBoardFont(${JSON.stringify(id)}, ${font})`)
+      await page.waitForTimeout(60) // reactive apply + refit
+      for (let h = 220; h <= 600; h += 11) {
+        await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(id)}, 460, ${h})`)
+        await page.waitForTimeout(50)
+        const geo = await evalIn<Geo | null>(page, geoOf(id))
+        if (geo && geo.overflow > TOLERANCE) offenders.push({ font, h, overflow: geo.overflow })
+      }
+    }
+    expect(offenders, `clip across font×height: ${JSON.stringify(offenders, null, 2)}`).toEqual([])
+  })
 })

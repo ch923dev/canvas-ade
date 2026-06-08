@@ -328,8 +328,11 @@ export function TerminalBoard({
   // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon
   // computes rows from the well height but IGNORES the screen div's CSS padding (measured: it
   // overcounts by one row; the 12px top padding then pushes the grid past the well bottom by a
-  // sub-cell remainder that the overflow:hidden boundary clips). After fitting, if the rendered
-  // grid spills, shed one row. overflow <= one cell, so a single drop always clears it.
+  // sub-cell remainder that the overflow:hidden boundary clips). After fitting, loop: if the
+  // rendered grid still spills, shed one row and re-check. Normally one iteration clears it, but
+  // at very small font sizes (e.g. 8px, cellHeight ~9.6px) the CSS padding can account for more
+  // than one cell height of spill, so we loop until clear (capped at the total row count to prevent
+  // infinite loops on degenerate layouts).
   const fitWhole = useCallback((): void => {
     const fit = fitRef.current
     const term = termRef.current
@@ -345,11 +348,14 @@ export function TerminalBoard({
     const screenEl = screenRef.current?.querySelector('.xterm-screen') as HTMLElement | null
     const wellEl = screenRef.current?.closest('.nowheel') as HTMLElement | null
     if (!screenEl || !wellEl) return
-    if (
-      screenEl.getBoundingClientRect().bottom - wellEl.getBoundingClientRect().bottom > 1 &&
-      term.rows > 1
-    ) {
-      term.resize(term.cols, term.rows - 1) // shed the partial row (fires onResize -> PTY resize)
+    // Loop: each shed immediately updates term.rows; re-read rects after each to catch the case
+    // where a single row drop still leaves spill (e.g. small fonts where padding > cellHeight).
+    const maxSheds = term.rows - 1
+    for (let i = 0; i < maxSheds; i++) {
+      if (screenEl.getBoundingClientRect().bottom - wellEl.getBoundingClientRect().bottom <= 1)
+        break
+      if (term.rows <= 1) break
+      term.resize(term.cols, term.rows - 1) // shed one partial row (fires onResize -> PTY resize)
     }
   }, [])
 
@@ -690,6 +696,22 @@ export function TerminalBoard({
     // clip-free. (Unfitted well: fitWhole swallows the not-laid-out throw; next RO fit applies.)
     fitWhole()
   }, [board.fontSize, fitWhole])
+
+  // Refit when devicePixelRatio changes (e.g. the window moved to a monitor with different scaling) —
+  // the host doesn't resize, so the ResizeObserver never fires, but the cell height changed.
+  useEffect(() => {
+    let mql: MediaQueryList | null = null
+    const onChange = (): void => {
+      fitWhole()
+      attach() // re-arm for the NEW dpr (each mql is dpr-specific)
+    }
+    const attach = (): void => {
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+      mql.addEventListener('change', onChange, { once: true })
+    }
+    attach()
+    return () => mql?.removeEventListener('change', onChange)
+  }, [fitWhole])
 
   // Clear the burst timer on unmount.
   useEffect(
