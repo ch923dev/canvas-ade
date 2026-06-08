@@ -135,6 +135,20 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - Match the design tokens in `src/renderer/src/index.css` (mirror of DESIGN.md §2-4).
 - Each phase ends runnable + committed.
 
+### Responding to the Claude PR reviewer
+- When you check the automated reviewer's inline comments on a PR, you **MUST reply inline on
+  EACH reviewer inline comment** with its disposition — the **fix** made, the **refactor**, or a
+  **general note** (e.g. "accepted as low", or "declined: <reason>"). Reply on the comment's own
+  thread (`gh api -X POST repos/<owner>/<repo>/pulls/<n>/comments/<comment-id>/replies -f body=…`),
+  not just in passing.
+- A summary-only "Dispositions: …" comment is **not sufficient on its own**. The reviewer
+  (`.github/workflows/claude-code-review.yml`) is disposition-aware: it **preserves** any inline
+  thread a human replied to and **skips re-flagging** a finding once the author has dispositioned it.
+  An inline reply is the signal that stops the re-flag-after-disposition loop (the PR #92 case); a
+  bare summary risks the reviewer re-raising the same point on the next push.
+- Post the summary disposition too if you like, but the **per-comment inline reply is the required
+  one**. Never resolve by deleting the reviewer's comment.
+
 ### Parallel sessions (worktree coordination)
 - **One session per worktree; never two sessions in the same dir.** Main = integration/merge only.
 - Before editing, read the shared board `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md` (the
