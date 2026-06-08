@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef, type ReactElement } from 'react'
 import type { TextElement } from '../../../lib/boardSchema'
+import { FAMILY_CSS, SIZE_PX, lineHeightFor, COLOR_CSS, WEIGHT, TEXT_DEFAULTS } from './textStyle'
 
 export interface FreeTextProps {
   element: TextElement
@@ -54,7 +55,10 @@ export function FreeText({
       const host = el.parentElement // the .pl-text flex row
       if (host) onMeasure(element.id, host.offsetWidth, host.offsetHeight)
     }
-  }, [element.text, onMeasure, element.id])
+    // Re-measure when a size-affecting typography token changes (not just text): a
+    // toolbar fontSize/family/bold change resizes the textarea, so the selection/snap
+    // bbox must be recomputed too. align/color don't affect the measured box.
+  }, [element.text, element.fontSize, element.fontFamily, element.bold, onMeasure, element.id])
 
   // Focus a freshly-dropped empty text element so the user can type immediately,
   // AND so leaving it untouched blurs → prunes it instead of leaving an orphan
@@ -73,6 +77,12 @@ export function FreeText({
       dragAbort.current = null
     }
   }, [])
+
+  const fam = element.fontFamily ?? TEXT_DEFAULTS.fontFamily
+  const px = SIZE_PX[element.fontSize ?? TEXT_DEFAULTS.fontSize]
+  const align = element.align ?? TEXT_DEFAULTS.align
+  const colorTok = element.color ?? TEXT_DEFAULTS.color
+  const weight = element.bold ? WEIGHT.bold : WEIGHT.normal
 
   return (
     <div
@@ -180,10 +190,12 @@ export function FreeText({
           border: 'none',
           outline: 'none',
           background: 'transparent',
-          color: 'var(--text)',
-          fontFamily: 'var(--ui)',
-          fontSize: 13,
-          lineHeight: '18px',
+          color: COLOR_CSS[colorTok],
+          fontFamily: FAMILY_CSS[fam],
+          fontSize: px,
+          fontWeight: weight,
+          textAlign: align,
+          lineHeight: `${lineHeightFor(px)}px`,
           padding: 0,
           overflow: 'hidden',
           whiteSpace: 'pre',

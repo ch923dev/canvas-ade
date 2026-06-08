@@ -11,16 +11,29 @@
  * `cameraBounds.Rect`, which is screen-geometry math, not persisted board data.
  */
 
+import {
+  FONT_FAMILY_TOKENS,
+  FONT_SIZE_TOKENS,
+  TEXT_ALIGN_TOKENS,
+  TEXT_COLOR_TOKENS,
+  type FontFamilyToken,
+  type FontSizeToken,
+  type TextAlignToken,
+  type TextColorToken
+} from '../canvas/boards/planning/textStyle'
+
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
  *
  * SCHEMA-VERSION CLAIM:
  * - v5 = MCP M2 — spatial connectors.
- * - **v6 = board groups** (named board clusters, this feature). The Diagram element
- *   (PR #72 research) also eyed v6 — whichever lands first takes v6, the other
- *   rebases to v7. Do not silently reuse a version for a different shape.
+ * - v6 = board groups (named board clusters, #84). Backfills an empty `groups` array.
+ * - **v7 = free-text typography tokens** (fontFamily / fontSize / align / color / bold —
+ *   all optional on TextElement; defaulted at render time). Identity migration (no
+ *   backfill). #84 took v6 first, so this slice rebased v6 → v7 (ADR 0004). The Diagram
+ *   element (PR #72 research) now eyes v8. Do not silently reuse a version for a new shape.
  */
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -92,6 +105,11 @@ export interface NoteElement extends ElementCommon {
 export interface TextElement extends ElementCommon {
   kind: 'text'
   text: string
+  fontFamily?: FontFamilyToken
+  fontSize?: FontSizeToken
+  align?: TextAlignToken
+  color?: TextColorToken
+  bold?: boolean
 }
 
 export interface ArrowElement extends ElementCommon {
@@ -331,7 +349,9 @@ const MIGRATIONS: Record<number, Migration> = {
   4: (doc) => ({ ...doc, schemaVersion: 5, connectors: previewConnectorsFor(doc.boards) }),
   // v6 adds `groups` (named board clusters). Backfill an empty array — older projects
   // have no groups. Boards/connectors are untouched.
-  5: (doc) => ({ ...doc, schemaVersion: 6, groups: (doc as CanvasDoc).groups ?? [] })
+  5: (doc) => ({ ...doc, schemaVersion: 6, groups: (doc as CanvasDoc).groups ?? [] }),
+  // v7: free-text typography tokens (all optional → identity bump; defaulted at render).
+  6: (doc) => ({ ...doc, schemaVersion: 7 })
 }
 
 /**
@@ -429,6 +449,19 @@ function assertPlanningElement(el: unknown): void {
       return
     case 'text':
       if (typeof el.text !== 'string') fail('text element is missing string text')
+      if (
+        el.fontFamily !== undefined &&
+        !FONT_FAMILY_TOKENS.includes(el.fontFamily as FontFamilyToken)
+      )
+        fail(`text element has invalid fontFamily ${String(el.fontFamily)}`)
+      if (el.fontSize !== undefined && !FONT_SIZE_TOKENS.includes(el.fontSize as FontSizeToken))
+        fail(`text element has invalid fontSize ${String(el.fontSize)}`)
+      if (el.align !== undefined && !TEXT_ALIGN_TOKENS.includes(el.align as TextAlignToken))
+        fail(`text element has invalid align ${String(el.align)}`)
+      if (el.color !== undefined && !TEXT_COLOR_TOKENS.includes(el.color as TextColorToken))
+        fail(`text element has invalid color ${String(el.color)}`)
+      if (el.bold !== undefined && typeof el.bold !== 'boolean')
+        fail('text element has non-boolean bold')
       return
     case 'arrow':
       if (!isFiniteNum(el.x2) || !isFiniteNum(el.y2)) fail('arrow element has non-finite x2/y2')

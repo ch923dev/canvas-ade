@@ -10,9 +10,19 @@
  * one-shot deliverable.
  */
 import type { PlanningBoard, PlanningElement } from '../../../lib/boardSchema'
-import { elementBBox, unionBBox, nominalChecklistHeight, TEXT_NOMINAL } from './elements'
+import { elementBBox, unionBBox, nominalChecklistHeight } from './elements'
 import { EXPORT_COLORS, EXPORT_NOTE_TINTS } from './exportColors'
 import { arrowPath, strokeToPath } from './svgPaths'
+import {
+  SIZE_PX,
+  COLOR_EXPORT,
+  FAMILY_EXPORT,
+  ANCHOR,
+  WEIGHT,
+  TEXT_DEFAULTS,
+  lineHeightFor,
+  estimateTextWidth
+} from './textStyle'
 
 /** assetId → data-URI (base64) for image elements; missing ids are absent. */
 export type ExportAssets = Record<string, string>
@@ -34,7 +44,9 @@ export const ARROW_COLOR = EXPORT_COLORS.borderStrong
 const STROKE_FILL = EXPORT_COLORS.text2
 const ARROW_MARKER_ID = 'wb-export-arrow'
 
-const FONT = 'system-ui, -apple-system, Segoe UI, sans-serif'
+// The default export font = the canonical sans stack (single source; checklist inline
+// <text> nodes + textBlock's default both use it → no R7-class drift).
+const FONT = FAMILY_EXPORT.sans
 const R_INNER = 6
 const R_BOARD = 8
 
@@ -47,20 +59,27 @@ export function esc(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-/** A multi-line <text> block: one <tspan> per source line, left-aligned at (x,y). */
+/** A multi-line <text> block: one <tspan> per source line. `anchor` defaults to 'start'
+ *  (left) so existing callers (note/checklist) emit byte-identical markup. */
 function textBlock(
   x: number,
   y: number,
   raw: string,
   size: number,
   fill: string,
-  weight = 400
+  weight = 400,
+  family: string = FONT,
+  anchor: 'start' | 'middle' | 'end' = 'start',
+  // Inter-line spacing. Defaults to the legacy `size + 4` so note/checklist callers
+  // emit byte-identical markup; free-text passes lineHeightFor(px) to match the board.
+  lineHeight: number = size + 4
 ): string {
   const lines = raw.split('\n')
   const tspans = lines
-    .map((ln, i) => `<tspan x="${x}" dy="${i === 0 ? 0 : size + 4}">${esc(ln)}</tspan>`)
+    .map((ln, i) => `<tspan x="${x}" dy="${i === 0 ? 0 : lineHeight}">${esc(ln)}</tspan>`)
     .join('')
-  return `<text x="${x}" y="${y}" font-family="${FONT}" font-size="${size}" font-weight="${weight}" fill="${fill}">${tspans}</text>`
+  const a = anchor !== 'start' ? ` text-anchor="${anchor}"` : ''
+  return `<text x="${x}" y="${y}" font-family="${family}" font-size="${size}" font-weight="${weight}"${a} fill="${fill}">${tspans}</text>`
 }
 
 export function boardToSvg(board: PlanningBoard, assets: ExportAssets): ExportResult {
@@ -133,11 +152,35 @@ function renderElement(
         embedded: false
       }
     }
-    case 'text':
+    case 'text': {
+      // Fallbacks resolve through TEXT_DEFAULTS (single source of truth) so a change to a
+      // default can't silently drift the export away from the live board (the R7 lesson).
+      const fam = el.fontFamily ?? TEXT_DEFAULTS.fontFamily
+      const px = SIZE_PX[el.fontSize ?? TEXT_DEFAULTS.fontSize]
+      const align = el.align ?? TEXT_DEFAULTS.align
+      const colorTok = el.color ?? TEXT_DEFAULTS.color
+      const weight = el.bold ? WEIGHT.bold : WEIGHT.normal
+      // Anchor x for center/right from an estimated content width (no DOM at export time);
+      // left stays exact at el.x. Baseline el.y + px + 3 === el.y + 16 at px=13, keeping
+      // default left text byte-identical to pre-typography. Multi-line spacing = lineHeightFor(px),
+      // matching FreeText's CSS line-height (not the legacy size + 4).
+      const w = estimateTextWidth(el.text, px, fam)
+      const ax = align === 'center' ? el.x + w / 2 : align === 'right' ? el.x + w : el.x
       return {
-        markup: textBlock(el.x, el.y + TEXT_NOMINAL.h - 6, el.text, 13, EXPORT_COLORS.text),
+        markup: textBlock(
+          ax,
+          el.y + px + 3,
+          el.text,
+          px,
+          COLOR_EXPORT[colorTok],
+          weight,
+          FAMILY_EXPORT[fam],
+          ANCHOR[align],
+          lineHeightFor(px)
+        ),
         embedded: false
       }
+    }
     case 'checklist': {
       const total = el.items.length
       const done = el.items.filter((i) => i.done).length

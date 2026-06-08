@@ -242,9 +242,9 @@ connectors/containers/z-order, local-first persistence, git-diffable JSON) or a 
 
 **Quick-win tier (shapes-free):**
 1. **`MermaidElement`** → `PlanningElement` union: `{kind:'mermaid'; x;y;w;h; source:string}`. Additive
-   new kind; bump `SCHEMA_VERSION 2→3` + no-op migration; new assert case (finite x/y, positive w/h,
-   string source). Source persists verbatim in `canvas.json` (strictly better than draw.io's
-   embedded-XML-in-PNG); re-render is an explicit user action, never live.
+   new kind; bump `SCHEMA_VERSION 7→8` (after the v7 text-typography slice; see ADR 0004) + no-op migration;
+   new assert case (finite x/y, positive w/h, string source). Source persists verbatim in `canvas.json`
+   (strictly better than draw.io's embedded-XML-in-PNG); re-render is an explicit user action, never live.
 2. **PNG export** — NO schema change; reuse `toObject`/`fromObject` as the embedded payload, add only
    an IPC handler.
 3. **`z` field** — DELETE `BoardCommon.z` (`:31`) + createBoard/assertBoard/clone paths, OR honor it

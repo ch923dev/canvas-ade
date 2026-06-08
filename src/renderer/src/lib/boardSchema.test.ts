@@ -497,23 +497,23 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 6', () => {
-    expect(SCHEMA_VERSION).toBe(6)
+  it('SCHEMA_VERSION is 7', () => {
+    expect(SCHEMA_VERSION).toBe(7)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 6, viewport: vp, boards: [], connectors: [], groups: [] })
+    expect(doc).toEqual({ schemaVersion: 7, viewport: vp, boards: [], connectors: [], groups: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
     expect(toObject([], null).viewport).toBeNull()
   })
 
-  it('migrates a v1 doc (no viewport) to v6 (via v2, v3, v4, v5) with viewport=null', () => {
+  it('migrates a v1 doc (no viewport) to v7 (via v2–v6) with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(6)
+    expect(out.schemaVersion).toBe(7)
     expect(out.viewport).toBeNull()
   })
 
@@ -683,8 +683,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 6', () => {
-    expect(SCHEMA_VERSION).toBe(6)
+  it('SCHEMA_VERSION is 7', () => {
+    expect(SCHEMA_VERSION).toBe(7)
   })
 
   it('round-trips a valid image element', () => {
@@ -724,7 +724,7 @@ describe('W4 image element', () => {
       ]
     }
     const doc = fromObject(v3)
-    expect(doc.schemaVersion).toBe(6)
+    expect(doc.schemaVersion).toBe(7)
     const el = (doc.boards[0] as { elements: Array<{ assetId: string; w: number }> }).elements[0]
     expect(el.assetId).toBe('assets/y.png')
     expect(el.w).toBe(50)
@@ -737,18 +737,18 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 6', () => {
-    expect(SCHEMA_VERSION).toBe(6)
+  it('SCHEMA_VERSION is 7', () => {
+    expect(SCHEMA_VERSION).toBe(7)
   })
 
-  it('migrates a v5 doc to v6 with an empty groups array', () => {
+  it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
     const v5 = { schemaVersion: 5, viewport: null, boards: [], connectors: [] }
     const migrated = migrate(v5 as never)
-    expect(migrated.schemaVersion).toBe(6)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
     expect(migrated.groups).toEqual([])
   })
 
-  it('preserves existing groups through a no-op migrate of a v6 doc', () => {
+  it('preserves existing groups when migrating a v6 doc forward (6→7)', () => {
     const v6 = {
       schemaVersion: 6,
       viewport: null,
@@ -757,6 +757,7 @@ describe('schema v6 — board groups', () => {
       groups: [{ id: 'g1', name: 'Auth', boardIds: [] }]
     }
     const migrated = migrate(v6 as never)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
     expect(migrated.groups).toEqual([{ id: 'g1', name: 'Auth', boardIds: [] }])
   })
 })
@@ -830,7 +831,7 @@ describe('M2 connectors (schema v5)', () => {
     it('backfills an empty connectors array on a doc with no preview links', () => {
       const v4 = { schemaVersion: 4, viewport: null, boards: [term()] } as unknown as CanvasDoc
       const out = migrate(structuredClone(v4))
-      expect(out.schemaVersion).toBe(6)
+      expect(out.schemaVersion).toBe(SCHEMA_VERSION)
       expect(out.connectors).toEqual([])
     })
 
@@ -841,7 +842,7 @@ describe('M2 connectors (schema v5)', () => {
         boards: [term(), browser('t1')]
       } as unknown as CanvasDoc
       const out = migrate(structuredClone(v4))
-      expect(out.schemaVersion).toBe(6)
+      expect(out.schemaVersion).toBe(SCHEMA_VERSION)
       expect(out.connectors).toEqual([
         { id: 'preview-b1', sourceId: 't1', targetId: 'b1', kind: 'preview' }
       ])
@@ -981,5 +982,104 @@ describe('M2 connectors (schema v5)', () => {
       // The valid terminal source must still be preserved
       expect(b && b.type === 'browser' ? b.previewSourceId : 'MISSING').toBe('t1')
     })
+  })
+})
+
+describe('schema v7 — text typography fields', () => {
+  const planBoard = (els: unknown[]): unknown => ({
+    id: 'p',
+    type: 'planning',
+    x: 0,
+    y: 0,
+    w: 300,
+    h: 200,
+    title: 'P',
+    elements: els
+  })
+
+  it('migrates a v5 doc to current leaving text elements untouched', () => {
+    const v5 = {
+      schemaVersion: 5,
+      viewport: null,
+      connectors: [],
+      boards: [planBoard([{ id: 't', kind: 'text', x: 1, y: 2, text: 'hi' }])]
+    }
+    const out = migrate(structuredClone(v5) as never)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect((out.boards[0] as { elements: unknown[] }).elements[0]).toEqual({
+      id: 't',
+      kind: 'text',
+      x: 1,
+      y: 2,
+      text: 'hi'
+    })
+  })
+
+  it('accepts a text element carrying valid typography tokens', () => {
+    const doc = {
+      schemaVersion: 6,
+      viewport: null,
+      connectors: [],
+      boards: [
+        planBoard([
+          {
+            id: 't',
+            kind: 'text',
+            x: 0,
+            y: 0,
+            text: 'styled',
+            fontFamily: 'mono',
+            fontSize: 'XL',
+            align: 'center',
+            color: 'accent',
+            bold: true
+          }
+        ])
+      ]
+    }
+    expect(() => fromObject(doc)).not.toThrow()
+  })
+
+  it('rejects an out-of-set token', () => {
+    const bad = (field: string, value: unknown): unknown => ({
+      schemaVersion: 6,
+      viewport: null,
+      connectors: [],
+      boards: [planBoard([{ id: 't', kind: 'text', x: 0, y: 0, text: 'x', [field]: value }])]
+    })
+    expect(() => fromObject(bad('fontSize', 'XXL'))).toThrow(/fontSize/)
+    expect(() => fromObject(bad('fontFamily', 'comic'))).toThrow(/fontFamily/)
+    expect(() => fromObject(bad('align', 'justify'))).toThrow(/align/)
+    expect(() => fromObject(bad('color', '#fff'))).toThrow(/color/)
+    expect(() => fromObject(bad('bold', 'yes'))).toThrow(/bold/)
+  })
+
+  it('round-trips the typography fields through toObject/fromObject', () => {
+    const el = {
+      id: 't',
+      kind: 'text' as const,
+      x: 5,
+      y: 6,
+      text: 'rt',
+      fontFamily: 'serif' as const,
+      fontSize: 'L' as const,
+      align: 'right' as const,
+      color: 'muted' as const,
+      bold: true
+    }
+    const board = {
+      id: 'p',
+      type: 'planning' as const,
+      x: 0,
+      y: 0,
+      w: 300,
+      h: 200,
+      title: 'P',
+      elements: [el]
+    }
+    const doc = toObject([board], null)
+    const back = fromObject(JSON.parse(JSON.stringify(doc)))
+    const got = (back.boards[0] as { elements: unknown[] }).elements[0]
+    expect(got).toEqual(el)
   })
 })
