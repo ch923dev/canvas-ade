@@ -74,11 +74,7 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
       />
       <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {/* Per-project prompt: only when a project is actually open. Gating on `projectDir`
-          (not just `askRecap`) is the correctness guard — `getConsent` keys off the MAIN
-          current dir while this effect keys off the renderer dir, so a project-close/switch
-          can leave `askRecap` true with no project open; without this gate the fixed-position
-          scrim would then occlude the canvas (it did exactly that across e2e specs). */}
+      {/* Guard: MAIN/renderer dir desync can leave askRecap=true with no project open. */}
       {askRecap && projectDir !== null && <RecapConsentModal onClose={() => setAskRecap(false)} />}
     </>
   )
