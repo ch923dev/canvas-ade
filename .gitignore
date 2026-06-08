@@ -28,11 +28,15 @@ Thumbs.db
 
 # agent worktrees (harness-managed git worktrees for parallel work)
 .claude/worktrees/
+# manual parallel-session worktrees (created by .claude/tools/new-worktree.ps1) - nested in-repo, never tracked
+.worktrees/
 # harness runtime artifacts
 .claude/scheduled_tasks.lock
 .claude/skills/
 # harness scratch (screenshots, audit parses, PR drafts) — never tracked
 .claude/tmp/
+# machine-specific local settings (bridgespace hooks w/ absolute user paths) — never tracked
+.claude/settings.local.json
 # parallel-session coordination: track the tooling (hook + ps1), ignore the live shared state
 .claude/coordination/ACTIVE-WORK.md
 .claude/coordination/edit-log.jsonl

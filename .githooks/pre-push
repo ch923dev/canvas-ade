@@ -46,6 +46,7 @@ if ! printf '%s\n' "$changed" | grep -qvE '(^docs/|\.md$)'; then
   exit 0
 fi
 
+echo "[pre-push] REMINDER: run the manual checks in docs/testing/MANUAL-CHECKS.md for the areas you touched -- it catches what e2e/unit do not."
 echo "[pre-push] e2e matrix (Windows native + Linux Docker) — this takes ~2-3 min."
 
 if ! command -v pnpm >/dev/null 2>&1; then

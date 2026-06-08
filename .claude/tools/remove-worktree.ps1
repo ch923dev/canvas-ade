@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
-  Safely tear down a Canvas ADE worktree. Drops the node_modules junction FIRST (removes the
-  reparse point, NOT the target) so the recursive worktree removal can never follow the junction
-  and delete the MAIN repo's node_modules. Memory: parallel-agent-worktrees TEARDOWN SAFETY.
+  Safely tear down a worktree created by new-worktree.ps1 (nested under `<repo>/.worktrees/<name>`).
+  Drops the node_modules junction FIRST (removes the reparse point, NOT the target) so the recursive
+  worktree removal can never follow the junction and delete the MAIN repo's node_modules.
+  Memory: parallel-agent-worktrees TEARDOWN SAFETY.
 
 .EXAMPLE
   pwsh .claude/tools/remove-worktree.ps1 -Name mcp-resize
@@ -12,8 +13,11 @@ param(
   [switch]$KeepBranch
 )
 $ErrorActionPreference = 'Stop'
-$Main = 'Z:\Canvas ADE'
-$wt   = "Z:\canvas-ade-$Name"
+
+# MAIN repo root, resolved from git (rebrand/relocation-safe, correct from main or a worktree).
+$gitCommon = (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir).Trim()
+$Main = (Split-Path $gitCommon -Parent)
+$wt = Join-Path $Main ".worktrees\$Name"
 if (-not (Test-Path $wt)) { throw "No such worktree: $wt" }
 
 # refuse if the worktree has uncommitted changes (locked decision: keep on disk + prompt, never silent --force)
@@ -29,7 +33,7 @@ if (Test-Path "$wt\node_modules") { cmd /c rmdir "$wt\node_modules" }
 # 2. now it is safe to remove the worktree
 git -C $Main worktree remove $wt
 
-# 3. mark the board row done (manual edit kept simple — flip Status to 'done')
+# 3. mark the board row done (manual edit kept simple - flip Status to 'done')
 Write-Host "Removed worktree $wt."
 Write-Host "Edit $Main\.claude\coordination\ACTIVE-WORK.md -> set its Status to 'done'."
 if (-not $KeepBranch) {

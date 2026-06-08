@@ -1,11 +1,13 @@
 <#
 .SYNOPSIS
-  Create a coordinated Canvas ADE worktree: isolated dir + branch, node_modules junction,
-  shared settings, and a row on the coordination board. One command = isolated AND coordinated.
+  Create a coordinated worktree: isolated dir + branch, node_modules junction, shared settings, and a
+  row on the coordination board. One command = isolated AND coordinated. Worktrees are nested under
+  `<repo>/.worktrees/<name>` (gitignored) so they travel with the repo and survive a folder/brand
+  rename - no hardcoded drive path.
 
 .EXAMPLE
   pwsh .claude/tools/new-worktree.ps1 -Name mcp-resize -Zone "src/main/mcp/resize.ts"
-  # -> Z:\canvas-ade-mcp-resize on feat/mcp-resize, ready to open a session in.
+  # -> <repo>/.worktrees/mcp-resize on feat/mcp-resize, ready to open a session in.
 #>
 param(
   [Parameter(Mandatory)][string]$Name,
@@ -14,25 +16,40 @@ param(
   [string]$Zone = '(declare zones)'
 )
 $ErrorActionPreference = 'Stop'
-$Main = 'Z:\Canvas ADE'
-$wt   = "Z:\canvas-ade-$Name"
+
+# MAIN repo root, resolved from git so it is correct whether this script runs from main OR a worktree,
+# and survives a folder/brand rename (no hardcoded path). --git-common-dir always points at MAIN's .git.
+$gitCommon = (git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir).Trim()
+$Main = (Split-Path $gitCommon -Parent)
+$wtRoot = Join-Path $Main '.worktrees'
+$wt = Join-Path $wtRoot $Name
 if (-not $Branch) { $Branch = "feat/$Name" }
 if (Test-Path $wt) { throw "Worktree path already exists: $wt" }
+if (-not (Test-Path $wtRoot)) { New-Item -ItemType Directory -Path $wtRoot | Out-Null }
 
-# 1. create the worktree on its own branch
+# 1. create the worktree on its own branch, nested in-repo (gitignored via .worktrees/)
 git -C $Main worktree add -b $Branch $wt $Base
 
 # 2. junction main node_modules in (skips the slow per-worktree electron/node-pty native rebuild;
-#    OS-transparent so .node natives load; same Z: volume required). Memory: parallel-agent-worktrees.
+#    OS-transparent so .node natives load; same volume required). Memory: parallel-agent-worktrees.
+#    Nesting under the spaced repo path is safe: the junction means node-pty is NEVER built here
+#    (the winpty/space-in-path build failure only bites a real install, which we skip).
 cmd /c mklink /J "$wt\node_modules" "$Main\node_modules" | Out-Null
 
-# 3. share the project settings (permissions + coordination hooks) into the worktree
-Copy-Item "$Main\.claude\settings.json" "$wt\.claude\settings.json" -Force
+# 3. share the project settings (permissions + coordination hooks) into the worktree.
+#    settings.json is tracked (already in the checkout) - re-copy to guarantee main's exact version.
+#    settings.local.json is machine-local + gitignored (bridgespace hooks) - copy it too if present so
+#    the worktree session keeps the same local hooks, without ever tracking it.
+Copy-Item (Join-Path $Main '.claude\settings.json') (Join-Path $wt '.claude\settings.json') -Force
+$localSettings = Join-Path $Main '.claude\settings.local.json'
+if (Test-Path $localSettings) {
+  Copy-Item $localSettings (Join-Path $wt '.claude\settings.local.json') -Force
+}
 
-# 4. register on the coordination board
+# 4. register on the coordination board (worktree identity = its dir name = $Name)
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
-$row = "| canvas-ade-$Name | $Branch | $Zone | active | $stamp | |"
-Add-Content "$Main\.claude\coordination\ACTIVE-WORK.md" $row
+$row = "| $Name | $Branch | $Zone | active | $stamp | |"
+Add-Content (Join-Path $Main '.claude\coordination\ACTIVE-WORK.md') $row
 
 Write-Host "Worktree ready: $wt  (branch $Branch)"
 Write-Host "Open a Claude session there. Refine your zones in $Main\.claude\coordination\ACTIVE-WORK.md"

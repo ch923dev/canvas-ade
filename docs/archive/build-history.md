@@ -61,3 +61,47 @@ per-task handoff. Phases 0–4 plans/specs/handoffs were under `docs/superpowers
 the whiteboard, context, and testing per-task docs were collapsed into the compiled build-logs above on
 2026-06-04. All originals are recoverable from git history:
 `git log --all --oneline -- docs/superpowers/ docs/handoffs/`, then check out the path at that commit.
+
+
+## Post-Phase-4 landing log (migrated from CLAUDE.md Status, 2026-06-09)
+
+> Committed PR-by-PR record. CLAUDE.md used to carry this inline and it churned every session, so it
+> now points here instead. New landings get appended below; in-flight work is tracked in
+> `.claude/coordination/ACTIVE-WORK.md`.
+
+**Baseline:** `main` @ `51aae5c` (2026-06-08). Gate on that tree: typecheck - lint (0 err, 3
+fast-refresh warns) - format - 1622 unit+integration / 130 files.
+
+Since Phase 4 (all SHIPPED on `main`): MCP M0-M5 - Context subsystem - Whiteboard W1-W5 - Testing
+T0-T5 - Electron 33->42 (T9) - review Waves 0-5 hardening - drag-to-create + dock-to-top redesign (#75).
+
+Landed since #75 (2026-06-06 -> 06-08):
+- **#81** `c9af28a` - full terminal I/O (selection-aware copy, smart paste, image paste, drag-drop, context menu, scale-correct selection).
+- **#82** `1578ffe` - preview camera-sync fixes (native-view pan-freeze + digest-panel occlusion; CodeQL e2e-sanitization).
+- **#83** `01da101` - e2e evidence harness + masked-bug reset() fix.
+- **#84** `ea221ad` - Named Board Groups S0-S6 (schema v6).
+- **#85** `aede88f` - bug-hunt 2026-06-07, 42/42 confirmed fixed (6 Med + 36 Low).
+- **#86** `5a93a58` - browser quick-wins (auto-reconnect / auto-push / open-external / screenshot).
+- **#87** `51aae5c` - text-font toolbar for the free-text element (schema v7).
+- **#89** `668a783` - terminal-recap (flip a terminal board to an agent-CLI session recap).
+- **#90** `c670732` - Shift+Enter sends LF.
+- **#88/#91** - Claude PR-review CI (inline comments + triage).
+
+MCP layer (SHIPPED to `main` 2026-06-05/06): PR #43 `2100022` (M0-M4) + M5 #70 `3824afc`
+(board-status event source + event-driven handoff await-idle) + M5 app-adopt #73 `c440251`
+(`Orchestrator.subscribeStatus`) + M-expose write->read proof #74 `97d356a`. App pins
+`@expanse-ade/mcp ^0.9.0` on public npmjs (migrated `63cf10c` off GitHub Packages
+`@ch923dev/canvas-ade-mcp`). Swarm layer done; Feature Workspaces unblocked.
+
+Context subsystem (SHIPPED 2026-06-04 `4c321c2`, PR #39): desktop LLM brain + persistent `.canvas/`
+memory (M-digest + M-brain + M-memory); Tier-1 heuristic digest upgraded to cached Tier-2 LLM prose;
+ADR `0003-llm-egress.md`. M-expose (`canvas://memory` + `canvas://board/{id}/summary` read
+resources) shipped with MCP M0-M4. Generated memory/summaries are untrusted passive context (never
+drive an action; prompt-injection residual noted in ADR 0003).
+
+Earlier Phase-4 anchors: Phases 0-4 + layout presets (`14f77d7`, PR #13); Phase 4 design pass
+`abd7fa2` (PR #9); post-Phase-4 fixes PR #12 `ed1d551` (13 bugs), `94baab9` (4 med), `1a0c615`
+(7 round-2); full-view preview-reset fix PR #14 (detach-not-close; `evictLiveBoard` deleted).
+
+Round-3 in-depth review (2026-06-01): healthy, no Critical/High; all 12 residual Low/Nit/Info cleared
+(`fix/round3-backlog` + `fix/round3-lows-remainder`); see `docs/reviews/2026-06-01-round3.md`.

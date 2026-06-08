@@ -135,6 +135,18 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - Match the design tokens in `src/renderer/src/index.css` (mirror of DESIGN.md §2-4).
 - Each phase ends runnable + committed.
 
+### Design artifact before code (spec/plan-driven UI work)
+Any spec or plan that adds or changes **UI/UX** MUST produce a *visible* design artifact for sign-off
+**before** implementation -- so the look can be checked and imagined first, not discovered after it is
+built. Match the `design-reference/` tokens. Pick the lightest medium that conveys the intent:
+- **Layout / flow** -> an ASCII or box wireframe inline in the spec (fast; good for structure + states).
+- **Real UI (non-trivial)** -> a throwaway static HTML/JSX mock built with the actual tokens from
+  `src/renderer/src/index.css`, rendered + screenshotted (the Playwright `_electron` harness can shoot
+  it) so the user reviews pixels, not prose.
+- **Comparing options** -> side-by-side wireframes in the brainstorm (the AskUserQuestion preview panel
+  renders ASCII mockups for exactly this).
+Get the user's nod on the artifact, THEN write the implementation plan. No UI design lands code-first.
+
 ### Responding to the Claude PR reviewer
 - When you check the automated reviewer's inline comments on a PR, you **MUST reply inline on
   EACH reviewer inline comment** with its disposition — the **fix** made, the **refactor**, or a
@@ -197,67 +209,18 @@ is summarized in **`docs/archive/build-history.md`** (originals in git history).
 history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
 file = open findings).
 
-**Current state (2026-06-08):** `main` @ `51aae5c`. Since Phase 4: **MCP M0–M5 · Context subsystem ·
-Whiteboard W1–W5 · Testing T0–T5 · Electron 33→42 (T9) · review Waves 0–5 hardening · the drag-to-create
-+ dock-to-top redesign (#75) — all SHIPPED.** Landed since #75 (2026-06-06→08): **full terminal I/O**
-(#81 `c9af28a`) · **preview camera-sync fixes** — native-view pan-freeze + digest-panel occlusion (#82
-`1578ffe`) · **e2e evidence harness + masked-bug reset() fix** (#83 `01da101`) · **Named Board Groups
-S0–S6** (#84 `ea221ad`, schema v6) · **bug-hunt 2026-06-07 — 42/42 confirmed fixed** (6 Med + 36 Low, #85
-`aede88f`) · **browser quick-wins** auto-reconnect/push/open-external/screenshot (#86 `5a93a58`) ·
-**text-font toolbar** for the free-text element (#87 `51aae5c`, **schema v7**) · **terminal-recap** —
-flip a terminal board to an agent-CLI session recap (#89 `668a783`) · **Shift+Enter sends LF** (#90
-`c670732`) · **Claude PR-review CI** inline-comments + triage (#88/#91). Gate green on this tree:
-typecheck · lint (0 err, 3 fast-refresh warnings) · format · **1622 unit+integration / 130 files**.
-Historical Phase-4 recap follows.
-**Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
-Phase 4 design pass = `abd7fa2` (PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified
-bugs) · `94baab9` (4 open-medium) · `1a0c615` (7 round-2 review findings). The full-view preview-reset
-fix landed (PR #14 / fullview-reset refactor — full-view DETACHes every board, never `close()`, so a
-navigated page survives full-view exit; `evictLiveBoard` was deleted, closing the PREV-A resurrection
-class). Testing T0–T5 landed (Playwright `_electron` + local Win-native/Linux-Docker pre-commit matrix;
-see `docs/testing/TESTING.md`). Latest baseline: **679 unit + integration** green (48 files), lint
-(0 errors) + typecheck clean; e2e local-matrix green (the `browser`/`browser-gesture`/`focus-detach`
-trio is a known live-`WebContentsView` env flake, memory `e2e-browser-trio-flake` — rerun for clean,
-not a regression).
+**Current state:** `main` @ `51aae5c` (2026-06-08). Phases 0-4 + all board types, MCP M0-M5, the
+Context subsystem, Whiteboard W1-W5, Testing T0-T5, the Electron 33->42 bump (T9), and review Waves
+0-5 are all shipped on `main`. **The release blocker is Phase 5 (packaging/signing).** Open
+candidates and "start here next" live in `docs/roadmap.md`.
 
-**Context subsystem SHIPPED to `main` (2026-06-04, `4c321c2`, squash PR #39).** The desktop's LLM brain +
-persistent `.canvas/` project memory (M-digest + M-brain + M-memory): instant per-board reopen digest
-(Tier-1 heuristic, no key) upgraded to cached LLM prose on reopen (Tier-2, provider-agnostic, key in
-`safeStorage`, per-day budget, ADR `0003-llm-egress.md`). New units `src/main/{llmService,llmIpc,llmConfig,
-llmKeyStore,llmBudget,canvasMemory,memoryEngine,summaryLoop}.ts` + `digest.ts`/`DigestPanel`/`SettingsModal`.
-Generated memory is untrusted passive context (never drives an action). Build log `docs/archive/2026-06-04-context-subsystem.md`.
-**M-expose** (`canvas://memory` + `canvas://board/{id}/summary` MCP read resources — lets agents read the
-memory) **SHIPPED** (T1.7, landed with MCP M0–M4; pkg 0.8.2/0.9.0 register the resources, `boardMemory.ts`
-is injected into `startMcpServer`). Generated summaries are untrusted passive context — a consuming agent
-can be prompt-injected by them (ADR `0003-llm-egress.md` › M-expose residual). Post-merge gate green (852
-unit+integration; e2e matrix green on the identical pre-merge tree).
+**Live state is deliberately NOT tracked in this file.** The per-PR landing log and the in-flight
+worktree/PR queue live in `.claude/coordination/ACTIVE-WORK.md` (injected into every session at
+start - the single source of truth for what is in flight). The committed, PR-by-PR record with SHAs
+is appended to `docs/archive/build-history.md`.
 
-**MCP layer SHIPPED to `main` (2026-06-05/06).** The `feat/mcp-integration` work landed via **PR #43**
-(`2100022`, M0–M4) + follow-ups: **M5** board-status event source + event-driven handoff await-idle
-(#70 `3824afc`), **M5 app-adopt** `Orchestrator.subscribeStatus` (#73 `c440251`), M-expose write→read
-proof (#74 `97d356a`). App pins **`@expanse-ade/mcp ^0.9.0`** — now on **public npmjs** (no token; was
-GitHub-Packages `@ch923dev/canvas-ade-mcp`, migrated `63cf10c`). The swarm layer is done; **Feature
-Workspaces is unblocked.** (The old "PR #32 re-port" was superseded by #43 — do not look for it.)
-
-**In flight (open PRs — `main` is integration-only):**
-- **PR #17 `chore/rebrand-expanse`** — Canvas ADE → **Expanse** rename (code + build IDs + docs).
-  **Merges LAST** (2 cross-zone one-liners), memory `rebrand-expanse`.
-- **Dependabot #76–80** — triaged + merged 2026-06-08: **#76** @electron-toolkit/utils 3→4 · **#78**
-  eslint 9→10 · **#79** @types/node 22→25 · **#80** write-file-atomic 5→8 **MERGED** (gate re-verified
-  green locally: typecheck · lint 0 err · 1622/130). **#77** react/react-dom/@types/react **HELD —
-  CI-RED (`check` fails)**, React major; needs RF-v12/React-19 compat work (own slice).
-- Research-only PRs: #72 (visual-spec Diagram) · #71 (orchestrator harness) · #29 (Maestri teardown) · #27 (demo-video playbook) · #25 (SaaS strategy).
-
-**Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:
-**healthy, no Critical/High** (the prior-round High MBC-1 did not reproduce). All 12 residual
-Low/Nit/Info findings **CLEARED** (`fix/round3-backlog` 9 + `fix/round3-lows-remainder` 3; PREV-A was
-already fixed by PR #14). See `docs/reviews/2026-06-01-round3.md` (two Resolution banners). No open
-findings; reviews are stale-clear — heavy new code (MCP/Context) has landed on branches since, so a
-fresh hunt against the post-merge tree is warranted before release.
-
-**Start here next:** Open candidates (see `docs/roadmap.md`): **Phase 5 — packaging/signing** (CI matrix
-unsigned until Phase 5; the de-facto release blocker — Electron 42 bump already done in T9) · the post-MCP
-**Feature Workspaces / worktrees** model (FW-1) — **now unblocked** (the `canvas-ade-mcp` swarm layer
-shipped) · land **rebrand #17** (last) + triage **dependabot #76–80**. Deferred: **agentic session resume**
-(roadmap note) · auto-update e2e coverage (Phase 5, needs packaging/electron-updater).
+> **Convention - CLAUDE.md is the durable contract only.** Do NOT grow a per-PR changelog here.
+> When a PR lands: append the entry to `docs/archive/build-history.md` and update the row in
+> `ACTIVE-WORK.md`; bump the one-line "Current state" SHA above only for a release-significant merge.
+> This keeps the contract stable and the churn in the files built for it.
 
