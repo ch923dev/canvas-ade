@@ -962,6 +962,9 @@ export function PlanningBoard({
               placeItems: 'center',
               pointerEvents: 'none',
               color: 'color-mix(in srgb, var(--accent) 85%, transparent)',
+              // Decorative serif glyph (reads as a "ghost" size indicator, per the wireframe);
+              // explicit so it doesn't inherit the surrounding UI sans by accident.
+              fontFamily: 'Georgia, "Times New Roman", serif',
               fontWeight: 700,
               lineHeight: 1,
               fontSize: SIZE_PX[tokenFromHeight(draftTextBox.h)]

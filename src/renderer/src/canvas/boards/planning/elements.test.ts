@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ChecklistElement, ImageElement, PlanningElement } from '../../../lib/boardSchema'
+import { MIN_TEXT_WIDTH_PX } from './textStyle'
 import {
   makeNote,
   makeText,
@@ -425,6 +426,14 @@ describe('makeText', () => {
     const t = makeText('t', { x: 0, y: 0 }, { width: 200, fontSize: 'XL' })
     expect(t.width).toBe(200)
     expect(t.fontSize).toBe('XL')
+  })
+  it('clamps a below-minimum / non-finite width to MIN_TEXT_WIDTH_PX', () => {
+    expect(makeText('t', { x: 0, y: 0 }, { width: 5 }).width).toBe(MIN_TEXT_WIDTH_PX)
+    expect(makeText('t', { x: 0, y: 0 }, { width: 0 }).width).toBe(MIN_TEXT_WIDTH_PX)
+    expect(makeText('t', { x: 0, y: 0 }, { width: Number.NaN }).width).toBe(MIN_TEXT_WIDTH_PX)
+    expect(makeText('t', { x: 0, y: 0 }, { width: Number.POSITIVE_INFINITY }).width).toBe(
+      MIN_TEXT_WIDTH_PX
+    )
   })
 })
 

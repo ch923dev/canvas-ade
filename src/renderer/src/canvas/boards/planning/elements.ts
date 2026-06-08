@@ -19,7 +19,7 @@ import type {
   TextElement
 } from '../../../lib/boardSchema'
 import { noteRotation, TINT_CYCLE } from './tints'
-import type { FontSizeToken } from './textStyle'
+import { MIN_TEXT_WIDTH_PX, type FontSizeToken } from './textStyle'
 
 /** Default sizes for the card-shaped elements (board-local px). */
 export const NOTE_SIZE = { w: 156, h: 96 } as const
@@ -71,7 +71,13 @@ export function makeText(
 ): TextElement {
   const base: TextElement = { id, kind: 'text', x: Math.round(at.x), y: Math.round(at.y), text: '' }
   if (opts?.fontSize !== undefined) base.fontSize = opts.fontSize
-  if (opts?.width !== undefined) base.width = Math.round(opts.width)
+  if (opts?.width !== undefined) {
+    // Defense-in-depth: callers already clamp, but guarantee a sane area-text width at the
+    // factory too — a finite value of at least MIN_TEXT_WIDTH_PX (the schema validator rejects
+    // ≤0 / non-finite on load; this keeps a direct caller from minting one in the first place).
+    const w = Math.round(opts.width)
+    base.width = Number.isFinite(w) ? Math.max(MIN_TEXT_WIDTH_PX, w) : MIN_TEXT_WIDTH_PX
+  }
   return base
 }
 
