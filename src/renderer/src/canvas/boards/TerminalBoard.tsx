@@ -39,7 +39,7 @@ import {
 } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
 import { isE2E, e2eTerminals, e2eTerminalInput, appendTerminalInput } from '../../smoke/e2eRegistry'
-import { resolveTerminalKey } from './terminal/terminalKeymap'
+import { handleTerminalKey, TERMINAL_NEWLINE } from './terminal/terminalKeymap'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
@@ -405,30 +405,32 @@ export function TerminalBoard({
       portRef.current?.postMessage({ t: 'resize', cols, rows })
     )
 
-    // Custom key handling (returns false to suppress xterm's default for keys we own):
-    //  - Shift+Enter inserts a newline (\x1b\r — CC-recognized, tmux-safe; NOT raw \n).
+    // Custom key handling (returns false to suppress xterm's default for keys we own).
+    // handleTerminalKey calls e.preventDefault() for every owned chord — REQUIRED: xterm's
+    // _keyDown bails before its own preventDefault once we return false, so without it the
+    // follow-up keypress for Enter leaks a CR after our LF (the Shift+Enter submit bug).
+    //  - Shift+Enter inserts a newline (LF / Ctrl+J via TERMINAL_NEWLINE; NOT the ConPTY-fragile ESC+CR).
     //  - Ctrl/Cmd+C copies when a selection exists (then clears); else falls through to
     //    xterm's SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there.
     //  - Ctrl/Cmd+V smart-pastes (image → staged path, else text), via term.paste so
     //    multiline content gets bracketed-paste markers.
-    term.attachCustomKeyEventHandler((e) => {
-      const action = resolveTerminalKey(e, { hasSelection: term.hasSelection(), isMac: IS_MAC })
-      if (!action) return true
-      if (action.kind === 'newline') {
-        sendInput('\x1b\r')
-      } else if (action.kind === 'copy') {
-        const sel = term.getSelection()
-        if (sel) {
-          void window.api.clipboard.writeText(sel)
-          term.clearSelection()
-        } else {
-          return true // selection vanished — fall through to xterm's Ctrl+C (SIGINT)
+    term.attachCustomKeyEventHandler((e) =>
+      handleTerminalKey(
+        e,
+        { hasSelection: term.hasSelection(), isMac: IS_MAC },
+        {
+          newline: () => sendInput(TERMINAL_NEWLINE),
+          copySelection: () => {
+            const sel = term.getSelection()
+            if (!sel) return false
+            void window.api.clipboard.writeText(sel)
+            term.clearSelection()
+            return true
+          },
+          paste: () => void pasteIntoTerminal(term, board.id)
         }
-      } else if (action.kind === 'paste') {
-        void pasteIntoTerminal(term, board.id)
-      }
-      return false
-    })
+      )
+    )
 
     // Let xterm handle the key FIRST (Backspace/Enter/arrows/Ctrl-C are keydown-
     // driven on xterm's textarea), THEN stop it bubbling to the canvas / React Flow
