@@ -121,6 +121,9 @@ export function PlanningBoard({
   // Default ON, toggled by the snap pill; guides are transient (session-only).
   const [snapEnabled, setSnapEnabled] = useState(true)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
+  // Ephemeral editing state — tracks which free-text element has its textarea focused.
+  // NEVER serialized (scene/session split); cleared on blur, set on focus.
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
   // Selection mutators (board-local, ephemeral — never serialized).
   const toggleSel = useCallback(
     (id: string) =>
@@ -739,6 +742,16 @@ export function PlanningBoard({
       ? (viewElements.find((e) => e.id === [...selectedIds][0]) ?? null)
       : null
   const selectedTextEl = selectedOne?.kind === 'text' ? selectedOne : null
+  // Widen the toolbar gate: also show when a text element is being edited (focused),
+  // even if its grip isn't selected. Gated on interactive so it stays invisible in
+  // read-only / non-select-tool modes. The blur only clears editingTextId if it's the
+  // one currently editing (cur === id guard) — avoids a stale clear when focus moves.
+  const editingTextEl =
+    editingTextId && interactive
+      ? (viewElements.find((e): e is TextElement => e.id === editingTextId && e.kind === 'text') ??
+        null)
+      : null
+  const toolbarTextEl = selectedTextEl ?? editingTextEl
 
   return (
     <BoardFrame
@@ -881,6 +894,9 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
+                onEditingChange={(id, editing) =>
+                  setEditingTextId((cur) => (editing ? id : cur === id ? null : cur))
+                }
               />
             )
           }
@@ -919,12 +935,13 @@ export function PlanningBoard({
           return null
         })}
 
-        {/* Typography toolbar — sibling to the cards, board-local coords (see selectedTextEl). */}
-        {selectedTextEl && (
+        {/* Typography toolbar — sibling to the cards, board-local coords (see toolbarTextEl).
+            Shows when a text element is selected (grip) OR being edited (focused textarea). */}
+        {toolbarTextEl && (
           <TextToolbar
-            element={selectedTextEl}
+            element={toolbarTextEl}
             boardW={board.w}
-            onPatch={(partial) => onTextPatch(selectedTextEl.id, partial)}
+            onPatch={(partial) => onTextPatch(toolbarTextEl.id, partial)}
           />
         )}
 

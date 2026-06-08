@@ -77,6 +77,10 @@ export function TextToolbar({ element, boardW, onPatch }: TextToolbarProps): Rea
       style={{ position: 'absolute', left, top }}
       // Keep clicks off the well (which would clear selection / start a draw gesture).
       onPointerDown={(e) => e.stopPropagation()}
+      // Keep the edited textarea focused when a control is pressed: a mousedown's default
+      // would blur the textarea → the empty-text prune (FreeText.onBlur) could delete a
+      // fresh, still-empty element mid-style. preventDefault holds focus; click still fires.
+      onMouseDown={(e) => e.preventDefault()}
     >
       <div className="pl-tt-group" role="group" aria-label="Font family">
         {FONT_FAMILY_TOKENS.map((f) => (
