@@ -23,7 +23,7 @@ parity).
 ## Consequences
 - **No `SCHEMA_VERSION` bump.** `fontSize?` is optional + default-at-read (mirrors `previewSourceId` /
   `agentSessionId`); old docs parse unchanged. This keeps schema **v8 free** for the Mermaid diagram
-  element (ADR 0004) and avoids collision with the in-flight `text-create-edit-ux` work.
+  element (tracked under PR #72) and avoids collision with the in-flight `text-create-edit-ux` work.
 - Reversible: dropping the controls leaves `fontSize` data that still validates.
 - **Clip-free fit folded in.** Because font size IS cell height, this feature subsumes the bottom-row
   clip bug: a measure-first probe roots the cause and a `fitWhole` wrapper + 12px padding + a
