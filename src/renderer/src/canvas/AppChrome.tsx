@@ -50,7 +50,12 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
     void window.api?.recap
       ?.getConsent?.()
       ?.then((s) => {
-        if (!cancelled && s === 'undecided') setAskRecap(true)
+        // Drive the prompt off the NEW project's decision in BOTH directions: open it when the
+        // project is undecided, and CLOSE a prompt left over from a previous project when the
+        // new one is already decided (or no project is open → getConsent returns 'declined').
+        // Setting only `true` here let the modal leak across a project switch — a fixed-position
+        // scrim then occluded the canvas for the next project (and, in e2e, every later spec).
+        if (!cancelled) setAskRecap(s === 'undecided')
       })
       ?.catch(() => {
         // IPC rejection (channel unavailable, teardown race) — silently skip the prompt.
@@ -69,7 +74,8 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
       />
       <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {askRecap && <RecapConsentModal onClose={() => setAskRecap(false)} />}
+      {/* Guard: MAIN/renderer dir desync can leave askRecap=true with no project open. */}
+      {askRecap && projectDir !== null && <RecapConsentModal onClose={() => setAskRecap(false)} />}
     </>
   )
 }

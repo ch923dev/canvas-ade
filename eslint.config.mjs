@@ -13,7 +13,15 @@ export default tseslint.config(
       'out/**',
       'dist/**',
       'release/**',
+      'coverage/**',
       'node_modules/**',
+      // Generated Playwright e2e artifacts (gitignored): the HTML report bundles
+      // minified vendor JS and `test-results/` holds traces/screenshots. eslint 10
+      // dropped `.eslintignore`, so they must be listed here or `pnpm lint` reports
+      // thousands of errors in generated files after any e2e run (local-only — a clean
+      // CI checkout has neither dir).
+      'playwright-report/**',
+      'test-results/**',
       'design-reference/**',
       // Harness-managed agent worktrees (each carries its own out/ build bundle).
       '.claude/**',
