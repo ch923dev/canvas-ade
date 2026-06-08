@@ -45,12 +45,14 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
   const projectDir = useCanvasStore((s) => s.project.dir)
   useEffect(() => {
     let cancelled = false
-    void window.api.recap
-      .getConsent()
-      .then((s) => {
+    // Optional-chain the whole surface (matches App.tsx's window.api?.recap?.… guard): the api
+    // bridge can be absent in smoke/test renders, and an unguarded access would throw on mount.
+    void window.api?.recap
+      ?.getConsent?.()
+      ?.then((s) => {
         if (!cancelled && s === 'undecided') setAskRecap(true)
       })
-      .catch(() => {
+      ?.catch(() => {
         // IPC rejection (channel unavailable, teardown race) — silently skip the prompt.
       })
     return () => {

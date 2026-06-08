@@ -27,8 +27,11 @@ try {
   })
   // Append-only by design: this hook runs in the user's separate `claude` process, so it must not
   // race the app's reads/writes of this file. readRecapMap() is last-write-wins per boardId, so the
-  // live map stays bounded no matter how many lines accumulate; the file itself grows ~1 short line
-  // per session (KB-scale). Safe compaction would need cross-process locking — deliberately skipped.
+  // live map stays bounded no matter how many lines accumulate. The file itself grows ~1 short line
+  // (~100 bytes) per session: a few hundred KB/year even for a heavy user, low-single-digit MB over
+  // years — a re-parse cost, not a correctness issue. Safe compaction would need cross-process
+  // locking (the app can't rewrite this file without racing this appender), so it's deliberately
+  // skipped; revisit with a real lock if the file ever grows enough to matter.
   fs.appendFileSync(mapPath, line + '\n')
 } catch {
   /* never fail the agent's startup */
