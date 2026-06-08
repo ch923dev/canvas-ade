@@ -53,7 +53,6 @@ import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
 import {
   clampTerminalFont,
-  readStickyFont,
   resolveInitialFont,
   writeStickyFont,
   DEFAULT_TERMINAL_FONT,
@@ -189,6 +188,19 @@ export function TerminalBoard({
   const fontResetRef = useRef<() => void>(() => {})
   // Trailing timer that coalesces a burst of nudges (Ctrl-wheel / held key) into one undo step.
   const fontBurstRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Authoritative font value, advanced SYNCHRONOUSLY in setFont. nudgeFont steps from THIS, not
+  // xterm's live `options.fontSize` (which only updates after the apply effect runs next paint) —
+  // so a Ctrl-wheel / held-key burst that fires several ticks within one frame steps once per
+  // notch instead of reading a stale size and collapsing to a single step. The apply effect
+  // re-syncs it to EXTERNAL changes (undo / project load) so a later nudge starts from the truth.
+  const liveFontRef = useRef<number>(resolveInitialFont(board.fontSize))
+  // The font this board was BORN with (the sticky default at mount, then frozen). The apply effect
+  // falls back to this for an UNPINNED board instead of the LIVE sticky: this board's own nudges
+  // mutate the sticky, so a live fallback would not revert when undo clears the pin back to
+  // undefined. (The sticky still seeds the NEXT terminal via the spawn closure — it just stops
+  // retroactively driving THIS one once the board exists.) A lazy-init useState (not a ref) so it
+  // can be read during render without tripping react-hooks/refs; the setter is intentionally unused.
+  const [bornFont] = useState<number>(() => resolveInitialFont(board.fontSize))
   // Live camera zoom source for the selection shim. We read it from the React Flow store
   // AT MOUSE-EVENT TIME (transform[2]) rather than via useOnViewportChange: the latter's
   // onChange does not fire for programmatic, zero-duration zoom (e.g. rf.zoomTo) — only for
@@ -660,7 +672,8 @@ export function TerminalBoard({
   const setFont = useCallback(
     (next: number): void => {
       const clamped = clampTerminalFont(next)
-      if (clamped === clampTerminalFont(board.fontSize ?? readStickyFont())) return // no-op at bound
+      if (clamped === liveFontRef.current) return // no-op (already this size / clamped at a bound)
+      liveFontRef.current = clamped // advance the authoritative value SYNCHRONOUSLY (burst-safe)
       // Leading-edge undo checkpoint: snapshot once per burst so a Ctrl-wheel / held-key run
       // collapses into ONE undo step; the trailing timer ends the burst (beginChange dedups).
       if (fontBurstRef.current === null) useCanvasStore.getState().beginChange()
@@ -671,11 +684,10 @@ export function TerminalBoard({
       updateBoard(board.id, { fontSize: clamped }) // persist the per-board pin
       writeStickyFont(clamped) // update the new-terminal default
     },
-    [board.id, board.fontSize, updateBoard]
+    [board.id, updateBoard]
   )
   const nudgeFont = useCallback(
-    (delta: number): void =>
-      setFont((termRef.current?.options.fontSize ?? DEFAULT_TERMINAL_FONT) + delta),
+    (delta: number): void => setFont(liveFontRef.current + delta),
     [setFont]
   )
   const resetFont = useCallback((): void => setFont(DEFAULT_TERMINAL_FONT), [setFont])
@@ -687,18 +699,24 @@ export function TerminalBoard({
   }, [nudgeFont, resetFont])
 
   // Apply a persisted font change to the LIVE term + reflow the grid (→ PTY resize). Keyed on
-  // board.fontSize ONLY (NOT a spawn dep) so resizing never respawns the PTY. Reads the sticky
-  // default for an unpinned board (dep never changes → runs once on mount, after construction).
+  // board.fontSize (NOT a spawn dep) so resizing never respawns the PTY. Falls back to the BORN
+  // font (frozen at mount) for an unpinned board — bornFont is stable so this still runs only when
+  // board.fontSize actually changes.
   useEffect(() => {
+    // Unpinned board falls back to the BORN font (frozen at mount), not the live sticky — a live
+    // sticky would have drifted under this board's own nudges and so undo-to-unpinned would not
+    // revert. Sync the authoritative ref FIRST (even before the term mounts) so a nudge after an
+    // external change (undo / project load) steps from the truth.
+    const fs = clampTerminalFont(board.fontSize ?? bornFont)
+    liveFontRef.current = fs
     const term = termRef.current
     if (!term) return
-    const fs = clampTerminalFont(board.fontSize ?? readStickyFont())
     if (term.options.fontSize === fs) return
     term.options.fontSize = fs
     // A bigger font means taller cells -> the row count must drop; whole-cell fit keeps it
     // clip-free. (Unfitted well: fitWhole swallows the not-laid-out throw; next RO fit applies.)
     fitWhole()
-  }, [board.fontSize, fitWhole])
+  }, [board.fontSize, bornFont, fitWhole])
 
   // Refit when devicePixelRatio changes (e.g. the window moved to a monitor with different scaling) —
   // the host doesn't resize, so the ResizeObserver never fires, but the cell height changed.
@@ -866,7 +884,9 @@ export function TerminalBoard({
     <>
       {(selected || hovered) &&
         (() => {
-          const fs = clampTerminalFont(board.fontSize ?? readStickyFont())
+          // Mirror the apply effect's fallback (born font, NOT live sticky) so the disabled state
+          // tracks the font this board actually renders at, not another board's sticky drift.
+          const fs = clampTerminalFont(board.fontSize ?? bornFont)
           return (
             <>
               <IconBtn
@@ -1054,7 +1074,7 @@ export function TerminalBoard({
                 <TerminalConfig
                   board={board}
                   onClose={() => setConfigOpen(false)}
-                  fontSize={clampTerminalFont(board.fontSize ?? readStickyFont())}
+                  fontSize={clampTerminalFont(board.fontSize ?? bornFont)}
                   onSetFont={setFont}
                 />
               )}

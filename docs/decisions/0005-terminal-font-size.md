@@ -25,6 +25,13 @@ parity).
   `agentSessionId`); old docs parse unchanged. This keeps schema **v8 free** for the Mermaid diagram
   element (tracked under PR #72) and avoids collision with the in-flight `text-create-edit-ux` work.
 - Reversible: dropping the controls leaves `fontSize` data that still validates.
+- **Two refs carry the font invariants** (verify on any future edit). `liveFontRef` is the
+  authoritative size, advanced *synchronously* in `setFont`; `nudgeFont` steps from it (not xterm's
+  `options.fontSize`, which only updates after the apply effect runs next paint) so a Ctrl-wheel
+  burst steps once per notch instead of collapsing. `bornFontRef` is the size the board was *born*
+  with (sticky at mount, frozen); the apply effect falls back to it for an UNPINNED board rather
+  than the live sticky — this board's own nudges mutate the sticky, so a live fallback would not
+  revert when undo clears the pin to `undefined`. The sticky still seeds the *next* terminal.
 - **Clip-free fit folded in.** Because font size IS cell height, this feature subsumes the bottom-row
   clip bug: a measure-first probe roots the cause and a `fitWhole` wrapper + 12px padding + a
   `devicePixelRatio`-change refit keep the grid within the well at every size. `BoardFrame`'s

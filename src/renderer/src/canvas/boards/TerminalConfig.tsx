@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
+import { MIN_TERMINAL_FONT, MAX_TERMINAL_FONT } from './terminal/terminalFont'
 
 type ShellInfo = Awaited<ReturnType<typeof window.api.listShells>>[number]
 
@@ -145,11 +146,21 @@ export function TerminalConfig({
       <div style={lbl}>
         Font size
         <div style={fontRow}>
-          <button type="button" style={stepBtn} onClick={() => onSetFont(fontSize - 1)}>
+          <button
+            type="button"
+            style={{ ...stepBtn, ...(fontSize <= MIN_TERMINAL_FONT ? stepBtnOff : null) }}
+            onClick={() => onSetFont(fontSize - 1)}
+            disabled={fontSize <= MIN_TERMINAL_FONT}
+          >
             A{'\u2212'}
           </button>
           <span style={fontVal}>{fontSize}</span>
-          <button type="button" style={stepBtn} onClick={() => onSetFont(fontSize + 1)}>
+          <button
+            type="button"
+            style={{ ...stepBtn, ...(fontSize >= MAX_TERMINAL_FONT ? stepBtnOff : null) }}
+            onClick={() => onSetFont(fontSize + 1)}
+            disabled={fontSize >= MAX_TERMINAL_FONT}
+          >
             A+
           </button>
         </div>
@@ -238,6 +249,9 @@ const stepBtn: React.CSSProperties = {
   fontSize: 13,
   cursor: 'pointer'
 }
+// Muted disabled state at a font bound — mirrors BoardFrame's IconBtn (opacity 0.35, default cursor)
+// so the popover stepper matches the title-bar controls instead of looking active-but-dead.
+const stepBtnOff: React.CSSProperties = { opacity: 0.35, cursor: 'default' }
 const fontVal: React.CSSProperties = {
   minWidth: 34,
   textAlign: 'center',

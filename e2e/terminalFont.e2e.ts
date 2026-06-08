@@ -40,6 +40,51 @@ test.describe('terminal font resize', () => {
     expect(persisted).toBe(before - 1)
   })
 
+  test('a synchronous burst of Ctrl+- steps once per notch (no step-skip)', async ({ page }) => {
+    // Regression for the stale-xterm-option read: nudgeFont must step from the synchronously
+    // advanced liveFontRef, not xterm's options.fontSize (updated only after the apply effect runs
+    // next paint). Firing 4 ticks in ONE round-trip guarantees no paint between them — the apply
+    // effect cannot run mid-burst — so a stale read would collapse all 4 into a single step.
+    await resetSticky(page) // 14 -> headroom for 4 steps down to 10 (> MIN 8)
+    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    const before = await evalIn<number>(page, fontOf(id))
+    await evalIn(
+      page,
+      `for (let i = 0; i < 4; i++) window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(id)}, { key: '-', ctrlKey: true })`
+    )
+    const dropped = await pollEval(page, `${fontOf(id)} === ${before - 4}`, 3000)
+    expect(dropped, '4 synchronous Ctrl+- ticks dropped the font by exactly 4').toBe(true)
+  })
+
+  test('undo reverts the first font nudge on an unpinned terminal', async ({ page }) => {
+    // Regression for the sticky-fallback drift: an unpinned board's apply effect must fall back to
+    // its BORN font (frozen at mount), not the live sticky (which this board's own nudge mutates).
+    // Otherwise undo clears the pin to undefined but the font stays at the nudged size.
+    await resetSticky(page)
+    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    const born = await evalIn<number>(page, fontOf(id)) // == sticky (14); board has no pin yet
+    await evalIn(
+      page,
+      `window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(id)}, { key: '-', ctrlKey: true })`
+    )
+    await pollEval(page, `${fontOf(id)} === ${born - 1}`, 3000) // nudged down one
+    await evalIn(page, `window.__canvasE2E.undo()`)
+    const reverted = await pollEval(page, `${fontOf(id)} === ${born}`, 3000)
+    expect(reverted, 'undo restored the unpinned font to its born size').toBe(true)
+    const boards = await evalIn<Array<{ id: string; fontSize?: number }>>(
+      page,
+      `window.__canvasE2E.getBoards()`
+    )
+    expect(
+      boards.find((b) => b.id === id)?.fontSize,
+      'pin cleared back to undefined'
+    ).toBeUndefined()
+  })
+
   test('a new terminal inherits the sticky last-used size', async ({ page }) => {
     // Reset sticky BEFORE seeding A so both A and B start from a known baseline.
     await resetSticky(page)

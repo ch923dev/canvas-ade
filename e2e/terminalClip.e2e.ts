@@ -33,7 +33,10 @@ test.describe('terminal clip-free fit', () => {
     // Odd step hits fractional remainders that a coarse step would skip.
     for (let h = 200; h <= 620; h += 7) {
       await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(id)}, 460, ${h})`)
-      await page.waitForTimeout(60) // let the ResizeObserver fit + xterm render settle
+      // Settle the async fit (ResizeObserver + xterm render run off-frame) instead of a fixed
+      // sleep. pollEval RETURNS on timeout (never throws), so a genuine clip falls through to the
+      // read below and still lands in the offenders list — the diagnostic is preserved.
+      await pollEval(page, `(${geoOf(id)})?.overflow <= ${TOLERANCE}`, 2000)
       const geo = await evalIn<Geo | null>(page, geoOf(id))
       if (geo && geo.overflow > TOLERANCE) offenders.push({ h, ...geo })
     }
@@ -57,10 +60,10 @@ test.describe('terminal clip-free fit', () => {
     const offenders: Array<{ font: number; h: number; overflow: number }> = []
     for (const font of [8, 11, 14, 18, 22]) {
       await evalIn(page, `window.__canvasE2E.setBoardFont(${JSON.stringify(id)}, ${font})`)
-      await page.waitForTimeout(60) // reactive apply + refit
+      await pollEval(page, `(${geoOf(id)})?.overflow <= ${TOLERANCE}`, 2000) // settle reactive apply + refit
       for (let h = 220; h <= 600; h += 11) {
         await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(id)}, 460, ${h})`)
-        await page.waitForTimeout(50)
+        await pollEval(page, `(${geoOf(id)})?.overflow <= ${TOLERANCE}`, 2000) // settle, then read below
         const geo = await evalIn<Geo | null>(page, geoOf(id))
         if (geo && geo.overflow > TOLERANCE) offenders.push({ font, h, overflow: geo.overflow })
       }
