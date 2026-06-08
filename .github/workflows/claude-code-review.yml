@@ -1,0 +1,147 @@
+name: claude-review
+
+# Automated PR review + triage. On every (non-draft) PR open/push, Claude reviews
+# the diff, posts INLINE comments on the problem lines (anchored to file+line) plus
+# one summary comment, clears its OWN prior review first (so re-pushes never stack
+# stale duplicate threads), then applies this repo's existing labels and (only if one
+# clearly fits) a milestone. It never CREATES labels or milestones — it only chooses
+# from what already exists (see `gh label list` / the milestones API).
+# Complements the deterministic `pr` gate (typecheck/lint/test/build) and `codeql`
+# (SAST): those say "is it green", this says "is it good".
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    # Optional: only review when certain files change
+    # paths:
+    #   - "src/**"
+
+concurrency:
+  # Cancel an in-progress review if a new push arrives on the same PR.
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # Skip draft PRs; remove this line if you want drafts reviewed too.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # inline review comments + edit labels/milestone
+      issues: write # labels and milestones go through the issues API
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # mcp__github_inline_comment__create_inline_comment is the action's built-in
+          # tool for posting comments anchored to specific lines.
+          # gh api:* is broadened (vs gh api repos:*) so the self-clear's
+          # `gh api -X DELETE repos/...` calls match — the allowlist matches on the
+          # command prefix, and `gh api -X DELETE` does NOT start with `gh api repos`.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(gh label list:*),Bash(gh api:*)"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Every comment you post (inline AND summary) MUST end with this exact hidden
+            marker on its own line so it can be found and cleared on the next push:
+            <!-- claude-code-review:auto -->
+
+            You are reviewing this pull request like a senior engineer on the Canvas ADE
+            (Expanse) Electron desktop app. Perform these tasks in order.
+
+            ## 1. Clear your previous review
+            This PR may have been reviewed by you on an earlier push. Delete ONLY your own
+            prior comments (the ones carrying the marker above) so the review never
+            accumulates stale duplicate threads. Leave all human comments untouched.
+
+            Delete your previous inline review comments:
+              gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate \
+                --jq '.[] | select(.body | contains("claude-code-review:auto")) | .id' \
+              | while read id; do
+                  gh api -X DELETE repos/${{ github.repository }}/pulls/comments/$id
+                done
+
+            Delete your previous summary comment:
+              gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate \
+                --jq '.[] | select(.body | contains("claude-code-review:auto")) | .id' \
+              | while read id; do
+                  gh api -X DELETE repos/${{ github.repository }}/issues/comments/$id
+                done
+
+            ## 2. Review the code
+            Read the diff with `gh pr diff` and open the surrounding files in the working
+            directory to verify findings before posting. Look for:
+            - Code quality and best practices
+            - Bugs and logic errors
+            - Security concerns (this is an Electron app — sandbox/contextIsolation/IPC
+              boundaries, PTY input trust, native WebContentsView handling all matter)
+            - Performance considerations
+            - Broken edge cases and missing error handling
+            - Missing or inadequate tests
+
+            Read the repository's CLAUDE.md for the architecture, the locked decisions, and
+            the style/convention rules — hold the diff against them. Focus on real issues,
+            not style nitpicks the linter already enforces. If the PR is clean, say so
+            plainly rather than inventing concerns.
+
+            ## 3. Post inline comments on the problem lines
+            For EACH issue found, post an inline comment anchored to the exact file and
+            line(s) using mcp__github_inline_comment__create_inline_comment with
+            confirmed: true. In each comment:
+            - State the issue and its severity: [critical], [warning], or [nit]
+            - Explain why it's a problem (1-3 sentences)
+            - For small, self-contained fixes (5 lines or fewer), include a committable
+              GitHub suggestion block:
+              ```suggestion
+              <corrected code>
+              ```
+              Only use a suggestion block if committing it fully fixes the issue. For
+              larger or structural fixes, describe the fix in words instead.
+            - End the comment body with the hidden marker.
+
+            ## 4. Post a summary comment
+            After all inline comments, post ONE summary with:
+            gh pr comment ${{ github.event.pull_request.number }} --body "..."
+            Include: a 2-3 sentence overview of the PR, a short table of issues found by
+            severity, and what you checked. If you found no issues, post only this summary
+            saying the PR looks good. End the body with the hidden marker.
+
+            ## 5. Apply labels
+            Run `gh label list` to see the labels that exist. This repo uses a STRUCTURED
+            scheme — pick from existing labels only, never create new ones:
+            - Exactly one `type/*` — the kind of change:
+              feature · fix · refactor · docs · research · chore · test
+            - One or two `area/*` — the subsystem(s) touched:
+              canvas · terminal · preview · planning · persistence · mcp · security ·
+              ci · e2e · design · packaging
+            - A `severity/*` (critical/high/medium/low) ONLY if this is a bug fix.
+            - `status/blocked` or `priority` only if clearly warranted.
+
+            Choose the 1–3 best-fitting EXISTING labels and apply them together:
+            gh pr edit ${{ github.event.pull_request.number }} --add-label "type/fix" --add-label "area/canvas"
+
+            Only use labels that already exist. Never create new labels. If nothing fits,
+            skip this step.
+
+            ## 6. Assign a milestone
+            List open milestones:
+            gh api repos/${{ github.repository }}/milestones --jq '.[].title'
+
+            Assign one ONLY if exactly one milestone clearly matches this PR's scope
+            (judge by the milestone title against the PR's title/description/changes):
+            gh pr edit ${{ github.event.pull_request.number }} --milestone "Milestone Title"
+
+            If no milestone clearly matches, or you are unsure, skip this step and note in
+            your summary comment that no milestone was assigned. Never create new milestones.

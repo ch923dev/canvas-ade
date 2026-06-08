@@ -32,9 +32,12 @@ export interface AppChromeProps {
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
    *  templates) and the `t` key (Smart). */
   onTidy: (preset: LayoutPreset) => void
+  /** Grouped focus (camera-cluster focus button + the `f` key): fit the sole group directly or
+   *  open the which-group picker. The Canvas owns the picker/fit; this is just the trigger. */
+  onFocusGroup: () => void
 }
 
-export function AppChrome({ onTidy }: AppChromeProps): ReactElement {
+export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElement {
   const [showSettings, setShowSettings] = useState(false)
   const [askRecap, setAskRecap] = useState(false)
   // Re-run whenever the user switches to a different project (project.dir changes).
@@ -57,7 +60,11 @@ export function AppChrome({ onTidy }: AppChromeProps): ReactElement {
   return (
     <>
       <ProjectSwitcher />
-      <CameraCluster onTidy={onTidy} onSettings={() => setShowSettings(true)} />
+      <CameraCluster
+        onTidy={onTidy}
+        onSettings={() => setShowSettings(true)}
+        onFocusGroup={onFocusGroup}
+      />
       <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {askRecap && <RecapConsentModal onClose={() => setAskRecap(false)} />}
@@ -207,10 +214,12 @@ export function ProjectSwitcher(): ReactElement {
 // ── Top-right: camera cluster ───────────────────────────────────────────────
 function CameraCluster({
   onTidy,
-  onSettings
+  onSettings,
+  onFocusGroup
 }: {
   onTidy: (preset: LayoutPreset) => void
   onSettings: () => void
+  onFocusGroup: () => void
 }): ReactElement {
   const rf = useReactFlow()
   const zoom = useStore((s) => s.transform[2])
@@ -238,6 +247,9 @@ function CameraCluster({
           title="Overview"
           onClick={() => void rf.fitView(cameraAnim(OVERVIEW_FRAME))}
         />
+        {/* Focus a group — present only when >=1 group exists (its own divider disappears with it,
+            so no double-gap when there are no groups). */}
+        <FocusGroupBtn onFocusGroup={onFocusGroup} />
         {/* Auto-tidy: a FancyZones-style picker of layout presets (Smart link-aware + tiling
             templates) that arranges the boards then fits. Keyboard `t` = Smart. See
             Canvas.tidyAndFit. */}
@@ -246,6 +258,21 @@ function CameraCluster({
         <ToolBtn name="settings" title="Settings" onClick={onSettings} />
       </div>
     </div>
+  )
+}
+
+// Focus-a-group button — rendered only when >=1 group exists. Fits the sole group directly, or
+// opens the which-group picker, via the Canvas-provided handler. Reuses the `maximize` glyph
+// (no dedicated focus icon; fit/overview already sit in this cluster). The leading divider is
+// part of this component so it disappears together with the button (no double-gap with no group).
+function FocusGroupBtn({ onFocusGroup }: { onFocusGroup: () => void }): ReactElement {
+  const groupCount = useCanvasStore((s) => s.groups.length)
+  if (groupCount === 0) return <></>
+  return (
+    <>
+      <span style={styles.divider} />
+      <ToolBtn name="maximize" title="Focus group (F)" onClick={onFocusGroup} />
+    </>
   )
 }
 

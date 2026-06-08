@@ -16,6 +16,7 @@ import {
   type CanvasViewport,
   type Connector,
   type ConnectorKind,
+  type NamedGroup,
   createBoard,
   fromObject,
   toObject,
@@ -54,13 +55,15 @@ export interface RecentProject {
 }
 
 /**
- * One undo/redo checkpoint: boards + connectors captured together so a single step
- * covers a change to either (or both, e.g. removeBoard + its incident connectors). The
- * undo rail was widened from `Board[]` to this when M2 added connectors (Decision C).
+ * One undo/redo checkpoint: boards + connectors + groups captured together so a single
+ * step covers a change to any combination (e.g. removeBoard + its incident connectors +
+ * its group memberships). The undo rail was widened from `Board[]` to include connectors
+ * when M2 added connectors (Decision C), and widened again to include groups (v6).
  */
 export interface CanvasSnapshot {
   boards: Board[]
   connectors: Connector[]
+  groups: NamedGroup[]
 }
 
 export interface CanvasState {
@@ -71,7 +74,19 @@ export interface CanvasState {
    * (Decision B), so they never live here. Rides the undo rail with `boards`.
    */
   connectors: Connector[]
+  /** Named board groups (v6). Rides the undo rail with boards + connectors. */
+  groups: NamedGroup[]
   selectedId: string | null
+  /**
+   * Full multi-selection set. Populated by React Flow's native node selection (Shift+drag
+   * marquee, Ctrl/⌘-click to add — RF's default selection/multi-selection key codes), folded
+   * in `Canvas.onNodesChange` via `foldSelectionIntents` and written with `setSelection`.
+   * `selectedId` is the PRIMARY — the last id added — kept in sync as
+   * `selectedIds[selectedIds.length - 1] ?? null` so single-select consumers (preview
+   * liveness, full view) are unchanged. Ephemeral: never serialized (scene/session split),
+   * reset to [] on load/undo like selectedId.
+   */
+  selectedIds: string[]
   tool: Tool
   /** Undo/redo rails (internal — drive via beginChange/undo/redo, don't read directly). */
   past: CanvasSnapshot[]
@@ -112,6 +127,26 @@ export interface CanvasState {
   addConnector: (sourceId: string, targetId: string, kind: ConnectorKind) => string | null
   /** Remove a connector by id (one tracked step). A no-op for an unknown id. */
   removeConnector: (id: string) => void
+  /** Create a named group over `boardIds`; returns the new id. One tracked undo step. */
+  addGroup: (name: string, boardIds: string[]) => string
+  /** Remove a group record (boards untouched). One tracked step; no-op for an unknown id. */
+  removeGroup: (id: string) => void
+  /** Rename a group. One tracked step; no-op for an unknown id or unchanged name. */
+  renameGroup: (id: string, name: string) => void
+  /** Union boards into a group (dedup). One tracked step; no-op if nothing new. */
+  addBoardsToGroup: (id: string, boardIds: string[]) => void
+  /** Add boards to a group AND move every member to `placements` in one tracked step (the
+   *  "absorb" reflow). No-op when membership and positions are both unchanged. */
+  addBoardsToGroupReflowed: (
+    id: string,
+    boardIds: string[],
+    placements: { id: string; x: number; y: number }[]
+  ) => void
+  /** Remove one board from a group. One tracked step; no-op if not a member. */
+  removeBoardFromGroup: (id: string, boardId: string) => void
+  /** Remove a board from EVERY group it belongs to in ONE tracked step (mirrors removeBoard's
+   *  membership sweep). One undo restores all memberships. No-op if it's in no group. */
+  removeBoardFromAllGroups: (boardId: string) => void
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
   updateBoard: (id: string, patch: Partial<Board>) => void
   /** Resize a board, clamped to the minimum board size. */
@@ -143,6 +178,10 @@ export interface CanvasState {
   /** Set the camera transform. UNTRACKED — never touches undo/redo (like growBoardHeight). */
   setViewport: (vp: CanvasViewport) => void
   selectBoard: (id: string | null) => void
+  /** Replace the whole multi-selection (RF marquee/multi-click fold). Primary = last id, or
+   *  null when empty. The single source for writing `selectedIds` (no per-id toggle action —
+   *  React Flow owns the add/remove gesture; `Canvas.onNodesChange` folds it to a full set). */
+  setSelection: (ids: string[]) => void
   setTool: (tool: Tool) => void
   /** Snapshot the current boards for undo (call at the start of a discrete edit). */
   beginChange: () => void
@@ -159,33 +198,38 @@ const newId = (): string => crypto.randomUUID()
 
 /**
  * The snapshot the undo stack already reflects — either the value last pushed onto
- * `past`, or the present {boards,connectors} after an undo/redo. `beginChange` skips
- * recording when the current present matches this (by boards AND connectors ref), so a
- * no-op gesture never pushes a duplicate snapshot. This is what the in-store
- * `past[last] === present` guard MISSES after an undo: undo pops the tail and sets the
- * present to it, so the new past tail is the entry *before* it (≠ present) even though
- * the present is unchanged — without this ref a post-undo no-op beginChange would push a
- * phantom snapshot (#BUG M3). Widened from `Board[]` to a snapshot when M2 added
- * connectors (memory `undo-lastrecorded-phantom`).
+ * `past`, or the present {boards,connectors,groups} after an undo/redo. `beginChange`
+ * skips recording when the current present matches this (by boards AND connectors AND
+ * groups ref), so a no-op gesture never pushes a duplicate snapshot. This is what the
+ * in-store `past[last] === present` guard MISSES after an undo: undo pops the tail and
+ * sets the present to it, so the new past tail is the entry *before* it (≠ present) even
+ * though the present is unchanged — without this ref a post-undo no-op beginChange would
+ * push a phantom snapshot (#BUG M3). Widened from `Board[]` to a snapshot when M2 added
+ * connectors (memory `undo-lastrecorded-phantom`); widened again to include groups (v6).
  */
 let lastRecorded: CanvasSnapshot | null = null
 
 /**
- * True when `snap` is the snapshot the present state still reflects — both the boards
- * AND connectors refs match. Used by `beginChange` to skip phantom checkpoints. A
- * connector-only change mints a new connectors ref (boards unchanged), so comparing
- * boards alone would wrongly treat it as "unchanged" — both refs must match.
+ * True when `snap` is the snapshot the present state still reflects — boards, connectors,
+ * AND groups refs all match. Used by `beginChange` to skip phantom checkpoints. A
+ * connector-only or groups-only change mints a new ref (boards unchanged), so comparing
+ * boards alone would wrongly treat it as "unchanged" — all three refs must match.
  */
 function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): boolean {
-  return !!snap && snap.boards === s.boards && snap.connectors === s.connectors
+  return (
+    !!snap &&
+    snap.boards === s.boards &&
+    snap.connectors === s.connectors &&
+    snap.groups === s.groups
+  )
 }
 
 /**
- * Apply a self-contained board mutation as ONE tracked undo step. `next` is the
- * already-computed next boards array, or the SAME reference / null to signal "no change"
- * (push nothing, leave undo/redo untouched). Centralizes the `recordPast` + future-clear
- * the five tracked actions each hand-rolled. Pure: takes state, returns a partial — side
- * values (a new id) are computed by the caller.
+ * Apply a self-contained canvas mutation as ONE tracked undo step. `next` is the
+ * already-computed next snapshot object `{ boards?, connectors?, groups? }`, or null to
+ * signal "no change" (push nothing, leave undo/redo untouched). Centralizes the
+ * `recordPast` + future-clear the tracked actions each hand-rolled. Pure: takes state,
+ * returns a partial — side values (a new id) are computed by the caller.
  *
  * `opts.reflectPresent` is REQUIRED (not optional) — every caller must make the layout-vs-
  * mutation decision explicitly so a future tracked action can't silently inherit the wrong
@@ -201,9 +245,9 @@ function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): 
  *
  * Returns a `Partial<CanvasState>` patch on a real change, or the full `s` (a same-ref no-op
  * merge) when `next` is null / unchanged — hence the `| CanvasState` in the return type.
- * `selectedId` is conditionally spread: callers that OMIT it (tidy/tile) must leave the
- * current selection untouched, so it must NOT be written as `selectedId: undefined` (Zustand's
- * shallow merge would clobber the selection). add/remove/duplicate pass it (string | null).
+ * Callers that OMIT `opts.selection` (tidy/tile, connector ops, group ops) leave the current
+ * selection untouched — do NOT write `selectedId: undefined` (Zustand's shallow merge would
+ * clobber it); add/remove/duplicate pass a full `{ selectedId, selectedIds }`.
  *
  * NOTE: the gesture-driven path (`beginChange` + `updateBoard`/`resizeBoard`) and the
  * untracked paths (`tileBoards(record:false)`, `growBoardHeight`, `setViewport`, `undo`/
@@ -211,24 +255,32 @@ function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): 
  */
 function trackedChange(
   s: CanvasState,
-  next: { boards?: Board[]; connectors?: Connector[] } | null,
-  opts: { selectedId?: string | null; reflectPresent: boolean }
+  next: { boards?: Board[]; connectors?: Connector[]; groups?: NamedGroup[] } | null,
+  opts: {
+    selection?: { selectedId: string | null; selectedIds: string[] }
+    reflectPresent: boolean
+  }
 ): Partial<CanvasState> | CanvasState {
   if (next == null) return s
   const nextBoards = next.boards ?? s.boards
   const nextConnectors = next.connectors ?? s.connectors
-  // No-op when neither array actually changed (same refs) — push nothing, leave undo
+  const nextGroups = next.groups ?? s.groups
+  // No-op when nothing actually changed (same refs) — push nothing, leave undo
   // untouched (the `next === s.boards` guard, generalized to the snapshot).
-  if (nextBoards === s.boards && nextConnectors === s.connectors) return s
-  if (opts.reflectPresent) lastRecorded = { boards: nextBoards, connectors: nextConnectors }
+  if (nextBoards === s.boards && nextConnectors === s.connectors && nextGroups === s.groups)
+    return s
+  if (opts.reflectPresent) {
+    lastRecorded = { boards: nextBoards, connectors: nextConnectors, groups: nextGroups }
+  }
   const base: Partial<CanvasState> = {
-    // Push the PRE-change present (boards + connectors) as one checkpoint.
-    past: recordPast(s.past, { boards: s.boards, connectors: s.connectors }),
+    // Push the PRE-change present (boards + connectors + groups) as one checkpoint.
+    past: recordPast(s.past, { boards: s.boards, connectors: s.connectors, groups: s.groups }),
     future: [],
     boards: nextBoards,
-    connectors: nextConnectors
+    connectors: nextConnectors,
+    groups: nextGroups
   }
-  return opts.selectedId === undefined ? base : { ...base, selectedId: opts.selectedId }
+  return opts.selection ? { ...base, ...opts.selection } : base
 }
 
 /**
@@ -342,7 +394,9 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   boards: [],
   connectors: [],
+  groups: [],
   selectedId: null,
+  selectedIds: [],
   tool: 'select',
   past: [],
   future: [],
@@ -359,7 +413,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
     set((s) =>
-      trackedChange(s, { boards: [...s.boards, board] }, { selectedId: id, reflectPresent: false })
+      trackedChange(
+        s,
+        { boards: [...s.boards, board] },
+        { selection: { selectedId: id, selectedIds: [id] }, reflectPresent: false }
+      )
     )
     return id
   },
@@ -385,10 +443,26 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const nextConnectors = incident
         ? s.connectors.filter((c) => c.sourceId !== id && c.targetId !== id)
         : s.connectors
+      // Sweep the deleted board from all group memberships in the SAME step (mirrors the
+      // connector sweep above), so one undo restores board + cables + memberships together.
+      // Only mints a new groups array when a membership actually changes — keep ref for no-op.
+      const inGroups = s.groups.some((g) => g.boardIds.includes(id))
+      const nextGroups = inGroups
+        ? s.groups.map((g) =>
+            g.boardIds.includes(id) ? { ...g, boardIds: g.boardIds.filter((b) => b !== id) } : g
+          )
+        : s.groups
+      const nextSelIds = s.selectedIds.filter((x) => x !== id)
       return trackedChange(
         s,
-        { boards: next, connectors: nextConnectors },
-        { selectedId: s.selectedId === id ? null : s.selectedId, reflectPresent: false }
+        { boards: next, connectors: nextConnectors, groups: nextGroups },
+        {
+          selection: {
+            selectedIds: nextSelIds,
+            selectedId: nextSelIds[nextSelIds.length - 1] ?? null
+          },
+          reflectPresent: false
+        }
       )
     }),
 
@@ -422,7 +496,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       trackedChange(
         s,
         { boards: [...s.boards, clone] },
-        { selectedId: cloneId, reflectPresent: false }
+        { selection: { selectedId: cloneId, selectedIds: [cloneId] }, reflectPresent: false }
       )
     )
     return cloneId
@@ -461,6 +535,106 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         {
           reflectPresent: false
         }
+      )
+    }),
+
+  addGroup: (name, boardIds) => {
+    const id = newId()
+    const group: NamedGroup = { id, name, boardIds: [...new Set(boardIds)] }
+    set((s) => trackedChange(s, { groups: [...s.groups, group] }, { reflectPresent: false }))
+    return id
+  },
+  removeGroup: (id) =>
+    set((s) => {
+      if (!s.groups.some((g) => g.id === id)) return s
+      return trackedChange(
+        s,
+        { groups: s.groups.filter((g) => g.id !== id) },
+        { reflectPresent: false }
+      )
+    }),
+  renameGroup: (id, name) =>
+    set((s) => {
+      const g = s.groups.find((x) => x.id === id)
+      if (!g || g.name === name) return s
+      return trackedChange(
+        s,
+        { groups: s.groups.map((x) => (x.id === id ? { ...x, name } : x)) },
+        { reflectPresent: false }
+      )
+    }),
+  addBoardsToGroup: (id, boardIds) =>
+    set((s) => {
+      const g = s.groups.find((x) => x.id === id)
+      if (!g) return s
+      const merged = [...new Set([...g.boardIds, ...boardIds])]
+      // Same length after Set-union ↔ all boardIds were already members — nothing to do.
+      if (merged.length === g.boardIds.length) return s
+      return trackedChange(
+        s,
+        { groups: s.groups.map((x) => (x.id === id ? { ...x, boardIds: merged } : x)) },
+        { reflectPresent: false }
+      )
+    }),
+  addBoardsToGroupReflowed: (id, boardIds, placements) =>
+    set((s) => {
+      const g = s.groups.find((x) => x.id === id)
+      if (!g) return s
+      const mergedIds = [...new Set([...g.boardIds, ...boardIds])]
+      const membershipChanged = mergedIds.length !== g.boardIds.length
+      // Only ever reposition the group's OWN members in this step — guard against a caller
+      // passing a placement for a non-member (the re-pack must not move unrelated boards).
+      const memberSet = new Set(mergedIds)
+      const pos = new Map(placements.filter((p) => memberSet.has(p.id)).map((p) => [p.id, p]))
+      let movedAny = false
+      const nextBoards = s.boards.map((b) => {
+        const p = pos.get(b.id)
+        if (p && (p.x !== b.x || p.y !== b.y)) {
+          movedAny = true
+          return { ...b, x: p.x, y: p.y }
+        }
+        return b
+      })
+      // No-op guard (mirrors addBoardsToGroup): if neither membership nor any position
+      // changed, push nothing — keep refs stable so trackedChange's no-op path holds.
+      if (!membershipChanged && !movedAny) return s
+      const nextGroups = membershipChanged
+        ? s.groups.map((x) => (x.id === id ? { ...x, boardIds: mergedIds } : x))
+        : s.groups
+      // One tracked step covers membership + the re-pack so a single undo restores both.
+      // reflectPresent:false matches the other group ops — the absorb stays granularly
+      // undoable; its post-no-op phantom is the same tolerated edge (#BUG M3).
+      return trackedChange(s, { boards: nextBoards, groups: nextGroups }, { reflectPresent: false })
+    }),
+  removeBoardFromGroup: (id, boardId) =>
+    set((s) => {
+      const g = s.groups.find((x) => x.id === id)
+      if (!g || !g.boardIds.includes(boardId)) return s
+      return trackedChange(
+        s,
+        {
+          groups: s.groups.map((x) =>
+            x.id === id ? { ...x, boardIds: x.boardIds.filter((b) => b !== boardId) } : x
+          )
+        },
+        { reflectPresent: false }
+      )
+    }),
+  removeBoardFromAllGroups: (boardId) =>
+    set((s) => {
+      // No-op (keep refs stable) when the board belongs to no group — same guard discipline as
+      // removeBoard's sweep, so a "remove from group" on an ungrouped board can't push a step.
+      if (!s.groups.some((g) => g.boardIds.includes(boardId))) return s
+      return trackedChange(
+        s,
+        {
+          groups: s.groups.map((g) =>
+            g.boardIds.includes(boardId)
+              ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) }
+              : g
+          )
+        },
+        { reflectPresent: false }
       )
     }),
 
@@ -588,7 +762,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return { viewport: vp }
     }),
 
-  selectBoard: (id) => set({ selectedId: id }),
+  selectBoard: (id) => set({ selectedId: id, selectedIds: id ? [id] : [] }),
+  setSelection: (ids) => {
+    const selectedIds = [...new Set(ids)]
+    set({ selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null })
+  },
   setTool: (tool) => set({ tool }),
   beginChange: () =>
     set((s) => {
@@ -598,7 +776,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // undo/redo. The past-tail check alone MISSES the post-undo case (#BUG M3): undo
       // pops the tail, so the present (the popped value) ≠ the new past tail even though
       // it's unchanged → a no-op beginChange would push a phantom snapshot. Compared by
-      // BOTH boards and connectors refs (a connector-only edit changes connectors only).
+      // boards, connectors, AND groups refs (a connector-only or groups-only edit changes
+      // connectors or groups only).
       if (sameSnapshot(s.past[s.past.length - 1], s) || sameSnapshot(lastRecorded, s)) return s
       // Take the pre-edit snapshot but do NOT clear the redo branch here (Bug #7).
       // beginChange fires at GESTURE START, before we know whether the gesture will
@@ -606,13 +785,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // arrow/pen tap calls it but mutates nothing. The redo branch is correctly
       // invalidated by the actual mutation: updateBoard/resizeBoard clear `future` only
       // when boards truly change.
-      const snap: CanvasSnapshot = { boards: s.boards, connectors: s.connectors }
+      const snap: CanvasSnapshot = { boards: s.boards, connectors: s.connectors, groups: s.groups }
       lastRecorded = snap
       return { past: recordPast(s.past, snap) }
     }),
   undo: () =>
     set((s) => {
-      const r = applyUndo(s.past, { boards: s.boards, connectors: s.connectors }, s.future)
+      const r = applyUndo(
+        s.past,
+        { boards: s.boards, connectors: s.connectors, groups: s.groups },
+        s.future
+      )
       if (!r) return s
       // The present after undo IS the history-reflected state — record it so a following
       // no-op beginChange recognizes it and doesn't push a phantom snapshot (#BUG M3).
@@ -627,32 +810,42 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return {
         boards: r.present.boards,
         connectors: r.present.connectors,
+        groups: r.present.groups,
         past: r.past,
         future: r.future,
-        selectedId: null
+        selectedId: null,
+        selectedIds: []
       }
     }),
   redo: () =>
     set((s) => {
-      const r = applyRedo(s.past, { boards: s.boards, connectors: s.connectors }, s.future)
+      const r = applyRedo(
+        s.past,
+        { boards: s.boards, connectors: s.connectors, groups: s.groups },
+        s.future
+      )
       if (!r) return s
       lastRecorded = r.present
       return {
         boards: r.present.boards,
         connectors: r.present.connectors,
+        groups: r.present.groups,
         past: r.past,
         future: r.future,
-        selectedId: null
+        selectedId: null,
+        selectedIds: []
       }
     }),
 
   // Re-derive preview connectors from board state (previewSourceId = runtime SoT) and
   // concat the in-memory orchestration connectors → the full persisted set (Decision B).
   toObject: () =>
-    toObject(get().boards, get().viewport, [
-      ...previewConnectorsFor(get().boards),
-      ...get().connectors
-    ]),
+    toObject(
+      get().boards,
+      get().viewport,
+      [...previewConnectorsFor(get().boards), ...get().connectors],
+      get().groups
+    ),
   loadObject: (doc) => {
     // Guard the deep-validation throw (corrupt board/element or too-new schemaVersion):
     // a raw-doc load with no dir can't do a .bak retry, so on a throw set status:'error'
@@ -676,8 +869,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({
       boards: d.boards,
       connectors: d.connectors,
+      groups: d.groups ?? [],
       viewport: d.viewport,
       selectedId: null,
+      selectedIds: [],
       past: [],
       future: []
     })
@@ -709,8 +904,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           set({
             boards: d2.boards,
             connectors: d2.connectors,
+            groups: d2.groups ?? [],
             viewport: d2.viewport,
             selectedId: null,
+            selectedIds: [],
             past: [],
             future: [],
             project: { dir: r.dir, name: r.name, status: 'open' }
@@ -735,8 +932,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({
       boards: d.boards,
       connectors: d.connectors,
+      groups: d.groups ?? [],
       viewport: d.viewport,
       selectedId: null,
+      selectedIds: [],
       past: [],
       future: [],
       project: { dir: r.dir, name: r.name, status: 'open' }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { BrowserWindow } from 'electron'
+import { shell } from 'electron'
 import { registerPreviewHandlers } from './preview'
 import { createIpcCapture, foreignEvent, internalEvent, mainWin } from './ipcTestHarness'
 
@@ -127,6 +128,29 @@ describe('registerPreviewHandlers — foreign-sender rejection (#17)', () => {
   it('preview:capture returns null for a foreign sender (async)', async () => {
     const cap = setup()
     expect(await cap.invokeAs(foreignEvent, 'preview:capture', 'b1')).toBeNull()
+  })
+})
+
+describe('preview:openExternal', () => {
+  it('rejects a foreign sender (returns false)', () => {
+    const cap = createIpcCapture()
+    registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
+    expect(cap.invokeAs(foreignEvent, 'preview:openExternal', 'http://localhost:3000/')).toBe(false)
+  })
+
+  it('accepts an internal (trusted) sender for an allowed scheme', () => {
+    const cap = createIpcCapture()
+    registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
+    expect(cap.invokeAs(internalEvent, 'preview:openExternal', 'http://localhost:3000/')).toBe(true)
+  })
+
+  it('returns false and does NOT call shell.openExternal for a blocked scheme (file:)', () => {
+    const cap = createIpcCapture()
+    registerPreviewHandlers(cap.ipcMain, mainWin, 'http://127.0.0.1:0/')
+    vi.mocked(shell.openExternal).mockClear()
+    const result = cap.invokeAs(internalEvent, 'preview:openExternal', 'file:///etc/passwd')
+    expect(result).toBe(false)
+    expect(shell.openExternal).not.toHaveBeenCalled()
   })
 })
 

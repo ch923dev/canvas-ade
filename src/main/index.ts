@@ -15,6 +15,7 @@ import {
   setRecapEnvProvider
 } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
+import { registerPreviewScreenshotHandler } from './previewScreenshot'
 import { readBoardResult, recordBoardResult } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
 import {
@@ -271,6 +272,7 @@ app.whenReady().then(async () => {
     recordResult: (id, result) => recordBoardResult(id, result)
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
+  registerPreviewScreenshotHandler(ipcMain, () => mainWindow)
 
   // T-B2: encrypt the API key with Electron safeStorage. Built here (index already imports
   // electron) and injected so llmKeyStore stays Electron-free + unit-testable. Under
