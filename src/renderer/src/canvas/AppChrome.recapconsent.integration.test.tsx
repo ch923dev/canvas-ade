@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, act } from '@testing-library/react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { AppChrome } from './AppChrome'
 import { useCanvasStore } from '../store/canvasStore'
@@ -46,7 +46,11 @@ describe('AppChrome recap-consent render gate', () => {
     // Wait past the async getConsent resolution + the (suppressed) setAskRecap(true) it would
     // trigger — without the gate, the modal would have mounted by now.
     await waitFor(() => expect(getConsent).toHaveBeenCalled())
-    await Promise.resolve()
+    // Drain microtasks + flush any React re-render queued by setAskRecap (React 18 posts
+    // re-renders via a macro-task, so a bare microtask flush could assert before it lands).
+    await act(async () => {
+      await Promise.resolve()
+    })
     expect(screen.queryByRole('dialog', { name: /agent recaps/i })).toBeNull()
   })
 
@@ -62,7 +66,9 @@ describe('AppChrome recap-consent render gate', () => {
     getConsent.mockResolvedValue('declined')
     renderChrome()
     await waitFor(() => expect(getConsent).toHaveBeenCalled())
-    await Promise.resolve()
+    await act(async () => {
+      await Promise.resolve()
+    })
     expect(screen.queryByRole('dialog', { name: /agent recaps/i })).toBeNull()
   })
 })
