@@ -11,7 +11,12 @@ const fontOf = (id: string) => `window.__canvasE2E.terminalFontSize(${JSON.strin
 // 14 is well above MIN (8) and below MAX (22), so Ctrl+- reliably produces 13.
 const KNOWN_STICKY = '14'
 const resetSticky = (page: Parameters<typeof evalIn>[0]) =>
-  evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '${KNOWN_STICKY}')`)
+  // JSON.stringify (not raw interpolation) keeps CodeQL happy + matches the JSON.stringify(id)
+  // pattern used elsewhere here — the value lands as a quoted JS string literal ("14").
+  evalIn(
+    page,
+    `window.localStorage.setItem('ca.terminal.fontSize', ${JSON.stringify(KNOWN_STICKY)})`
+  )
 
 test.describe('terminal font resize', () => {
   test.afterEach(async ({ page }) => {
