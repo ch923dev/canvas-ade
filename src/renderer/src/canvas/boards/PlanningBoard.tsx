@@ -42,6 +42,7 @@ import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
 import { TextToolbar, type TextStylePatch } from './planning/TextToolbar'
+import { SIZE_PX, tokenFromHeight } from './planning/textStyle'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { ImageCard } from './planning/ImageCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
@@ -587,6 +588,7 @@ export function PlanningBoard({
     draftStroke,
     dragPos,
     marqueeRect,
+    draftTextBox,
     pendingErase,
     snapGuides
   } = usePlanningPointer({
@@ -924,6 +926,32 @@ export function PlanningBoard({
             boardW={board.w}
             onPatch={(partial) => onTextPatch(selectedTextEl.id, partial)}
           />
+        )}
+
+        {/* Draft text-box preview: dashed rectangle + live size letter while dragging the text tool. */}
+        {draftTextBox && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: draftTextBox.x,
+              top: draftTextBox.y,
+              width: Math.max(1, draftTextBox.w),
+              height: Math.max(1, draftTextBox.h),
+              border: '1.5px dashed var(--accent)',
+              borderRadius: 'var(--r-inner)',
+              background: 'color-mix(in srgb, var(--accent) 6%, transparent)',
+              display: 'grid',
+              placeItems: 'center',
+              pointerEvents: 'none',
+              color: 'color-mix(in srgb, var(--accent) 85%, transparent)',
+              fontWeight: 700,
+              lineHeight: 1,
+              fontSize: SIZE_PX[tokenFromHeight(draftTextBox.h)]
+            }}
+          >
+            A
+          </div>
         )}
 
         {elements.length === 0 && (
