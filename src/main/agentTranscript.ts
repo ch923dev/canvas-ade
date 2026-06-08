@@ -1,29 +1,6 @@
-export type AgentCli = 'claude' | 'unknown'
-
-/** First meaningful token of a launchCommand -> which agent CLI it runs. */
-export function detectAgentCli(launchCommand?: string): AgentCli {
-  if (typeof launchCommand !== 'string') return 'unknown'
-  // tokens that wrap the real command; look past them for the agent binary
-  const wrappers = new Set([
-    'npx',
-    'pnpm',
-    'dlx',
-    'sudo',
-    'pwsh',
-    'powershell',
-    'cmd',
-    'bash',
-    'sh',
-    'zsh'
-  ])
-  const flags = new Set(['-c', '/c', '-lc', '-l', '-i'])
-  const toks = launchCommand.trim().split(/\s+/).filter(Boolean)
-  for (const t of toks) {
-    if (wrappers.has(t) || flags.has(t)) continue
-    return /(^|[\\/])claude(\.\w+)?$/i.test(t) ? 'claude' : 'unknown'
-  }
-  return 'unknown'
-}
+import { openSync, fstatSync, readSync, closeSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { resolve, sep } from 'node:path'
 
 export interface Milestone {
   ts: number
@@ -62,7 +39,7 @@ export function extractMilestones(jsonl: string, opts: ExtractOpts = {}): Milest
     try {
       rec = JSON.parse(s)
     } catch {
-      continue // skip malformed lines
+      continue // skip malformed lines (incl. a partial first line from a tail read)
     }
     const role = rec.message?.role
     if (role !== 'user' && role !== 'assistant') continue
@@ -72,4 +49,53 @@ export function extractMilestones(jsonl: string, opts: ExtractOpts = {}): Milest
     out.push({ ts, role: role === 'user' ? 'user' : 'agent', text: text.slice(0, cap) })
   }
   return out.slice(-maxN)
+}
+
+/** Default tail window — recaps only need the recent turns, not megabytes of history. */
+export const TRANSCRIPT_TAIL_BYTES = 64 * 1024
+
+/**
+ * Read only the last `maxBytes` of a (possibly large) transcript rather than the whole file:
+ * extractMilestones keeps just the last N turns, so reading the head is wasted work + a
+ * main-thread stall on a long session. A tail read can start mid-line; that leading partial
+ * line is malformed JSON and extractMilestones drops it (per-line try/catch), so the milestones
+ * are unaffected. Synchronous by design — the summary loop that calls this is already debounced.
+ */
+export function readTranscriptTail(path: string, maxBytes = TRANSCRIPT_TAIL_BYTES): string {
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    const start = size > maxBytes ? size - maxBytes : 0
+    const len = size - start
+    if (len <= 0) return ''
+    const buf = Buffer.allocUnsafe(len)
+    readSync(fd, buf, 0, len, start)
+    return buf.toString('utf8')
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/** Root where Claude Code writes session transcripts (CLAUDE_CONFIG_DIR overrides ~/.claude). */
+function claudeConfigRoot(env: NodeJS.ProcessEnv): string {
+  const override = env.CLAUDE_CONFIG_DIR
+  return override && override.length > 0 ? resolve(override) : resolve(homedir(), '.claude')
+}
+
+/**
+ * Guard a transcript path before MAIN reads + (secret-scrubbed) egresses it. The path is
+ * persisted in canvas.json, so a hand-crafted project file could otherwise point it at an
+ * arbitrary file whose scrubbed contents would be sent to the user's LLM — violating the
+ * consent modal's "nothing else leaves" promise. Require a `.jsonl` file resolving under the
+ * Claude config root (where Claude's own SessionStart hook legitimately writes transcripts).
+ * `resolve` collapses any `..` before the prefix check, so traversal can't escape the root.
+ */
+export function isTrustedTranscriptPath(
+  path: string,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  if (typeof path !== 'string' || !path.toLowerCase().endsWith('.jsonl')) return false
+  const root = claudeConfigRoot(env)
+  const abs = resolve(path)
+  return abs === root || abs.startsWith(root + sep)
 }

@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
-import { writeFileSync, mkdtempSync, readFileSync, existsSync } from 'fs'
+import { writeFileSync, mkdtempSync, existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
   registerPtyHandlers,
@@ -57,7 +57,7 @@ import {
   type RecapMapEntry
 } from './agentRecapMap'
 import { registerRecapHandlers, readConsent } from './recapConsent'
-import { extractMilestones } from './agentTranscript'
+import { extractMilestones, isTrustedTranscriptPath, readTranscriptTail } from './agentTranscript'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 
 let mainWindow: BrowserWindow | null = null
@@ -301,21 +301,23 @@ app.whenReady().then(async () => {
     readProject,
     // T-F1: fold each terminal board's live runtime (running/idle/exited) into its summary.
     getTerminalRuntime,
-    // Terminal recap (Task 10 Step 4): distil a claude board's transcript into milestones. The
-    // loop only invokes this for a claude terminal board (it gates on type + detectAgentCli). We
-    // prefer an explicit per-board transcript path on the doc, else the learned recap-map entry.
-    // Defensive + read-only: a missing path / read error / parse failure → undefined, and the loop
-    // falls back to its config+runtime summary (no action surface, never throws past this).
+    // Terminal recap (Task 10 Step 4): distil a terminal board's transcript into milestones. The
+    // loop invokes this for any terminal board in a consented project; we prefer an explicit
+    // per-board transcript path on the doc, else the learned recap-map entry.
+    // Security: the path is persisted in canvas.json, so a hand-crafted file could otherwise aim
+    // it at an arbitrary file whose scrubbed contents would egress to the user's LLM. isTrusted-
+    // TranscriptPath restricts reads to .jsonl files under Claude's config root (where the hook
+    // legitimately writes), honoring the consent modal's "nothing else leaves" promise.
+    // Perf: readTranscriptTail reads only the file's tail (we keep just the last N turns).
+    // Defensive + read-only: a missing/untrusted path / read error / parse failure → undefined,
+    // and the loop falls back to its config+runtime summary (no action surface, never throws past this).
     getAgentMilestones: (boardId, board) => {
       const path =
         (board as { agentTranscriptPath?: string })?.agentTranscriptPath ??
         recapMap.get(boardId)?.transcriptPath
-      if (!path || !existsSync(path)) return undefined
+      if (!path || !isTrustedTranscriptPath(path) || !existsSync(path)) return undefined
       try {
-        return extractMilestones(readFileSync(path, 'utf8'), {
-          maxMilestones: 12,
-          maxTextChars: 600
-        })
+        return extractMilestones(readTranscriptTail(path), { maxMilestones: 12, maxTextChars: 600 })
       } catch {
         return undefined
       }

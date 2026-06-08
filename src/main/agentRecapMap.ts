@@ -9,7 +9,7 @@
  * our scriptPath already appears in any hook's `args` array.
  */
 import { existsSync, readFileSync, mkdirSync, watch } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 
 export interface InstallOpts {
@@ -79,9 +79,17 @@ export function removeRecapHook(projectDir: string, scriptPath: string): void {
   const cfg = readSettings(projectDir)
   const blocks = cfg.hooks?.SessionStart
   if (!blocks) return
-  cfg.hooks!.SessionStart = blocks
+  const kept = blocks
     .map((b) => ({ ...b, hooks: b.hooks.filter((h) => !h.args?.includes(scriptPath)) }))
     .filter((b) => b.hooks.length > 0)
+  // Prune empty containers so removing our last hook leaves a clean file, not a dangling
+  // `{ hooks: { SessionStart: [] } }`.
+  if (kept.length > 0) {
+    cfg.hooks!.SessionStart = kept
+  } else {
+    delete cfg.hooks!.SessionStart
+    if (cfg.hooks && Object.keys(cfg.hooks).length === 0) delete cfg.hooks
+  }
   writeSettings(projectDir, cfg)
 }
 
@@ -128,10 +136,20 @@ export function watchRecapMap(
   }
   let w: ReturnType<typeof watch> | null = null
   try {
-    mkdirSync(join(mapPath, '..'), { recursive: true })
-    w = watch(mapPath, { persistent: false }, fire)
+    const dir = dirname(mapPath)
+    const fname = basename(mapPath)
+    mkdirSync(dir, { recursive: true })
+    // Watch the DIRECTORY (it exists after mkdirSync), not the file. The map file is created
+    // lazily by recordSession.js's first appendFileSync, and fs.watch on a not-yet-created
+    // file throws ENOENT — so watching the file directly silently misses the very first
+    // session after recaps are enabled (no event until an app restart). A directory watch
+    // catches the create; we filter by filename to stay scoped. `filename` can be null on
+    // some platforms → fall back to firing.
+    w = watch(dir, { persistent: false }, (_event, filename) => {
+      if (filename === null || filename === fname) fire()
+    })
   } catch {
-    /* file may not exist yet; caller re-arms on demand */
+    /* directory unwatchable (rare) — the prime fire below still runs once */
   }
   fire() // prime
   return () => {

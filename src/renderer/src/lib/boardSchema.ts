@@ -45,7 +45,11 @@ export interface TerminalBoard extends BoardCommon {
   port?: number
   /** App-learned (via the recap hook) Claude session id for this board. */
   agentSessionId?: string
-  /** App-learned absolute path to this board's transcript JSONL. */
+  /**
+   * App-learned absolute path to this board's transcript JSONL. MACHINE-LOCAL: like `cwd`, this
+   * is a path on the machine that recorded it, so it is stale if the project folder is synced
+   * (iCloud/Dropbox/NAS) and reopened elsewhere. Don't assume it's portable across machines.
+   */
   agentTranscriptPath?: string
 }
 

@@ -41,13 +41,13 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
       >
         <h2 style={{ margin: 0, fontSize: 16 }}>Turn on agent recaps for this project?</h2>
         <p style={{ margin: '10px 0 0', fontSize: 13, lineHeight: '1.5', color: 'var(--text-2)' }}>
-          See what each terminal agent is doing at a glance. Expanse gives every terminal a
+          See what each terminal agent is doing at a glance. Canvas ADE gives every terminal a
           flip-to-recap &mdash; a short &ldquo;now&rdquo; summary + a timestamped timeline of what
           the agent and you decided &mdash; so you can resume instantly instead of re-reading the
           whole session.
         </p>
         <p style={{ margin: '8px 0 0', fontSize: 13, lineHeight: '1.5', color: 'var(--text-2)' }}>
-          To do this, Expanse adds <b>one hook</b> to this project&apos;s{' '}
+          To do this, Canvas ADE adds <b>one hook</b> to this project&apos;s{' '}
           <code>.claude/settings.local.json</code> (<b>gitignored &mdash; never committed</b>; it
           does <b>not</b> touch your global <code>~/.claude</code> or your own hooks). It records
           only each session&apos;s id + transcript path.
@@ -63,7 +63,9 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
         <div style={assure}>
           <b>&#x1F512; Your data stays yours</b>
           <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-            <li>No Expanse server, no account, no telemetry &mdash; nothing is ever sent to us.</li>
+            <li>
+              No Canvas ADE server, no account, no telemetry &mdash; nothing is ever sent to us.
+            </li>
             <li>Transcripts are read locally, on your machine.</li>
             <li>
               The only thing that leaves is a short, secret-scrubbed slice sent to the LLM provider{' '}

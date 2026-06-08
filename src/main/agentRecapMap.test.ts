@@ -7,7 +7,9 @@ import {
   installRecapHook,
   removeRecapHook,
   isRecapHookInstalled,
-  readRecapMap
+  readRecapMap,
+  watchRecapMap,
+  type RecapMapEntry
 } from './agentRecapMap'
 
 describe('recordSession.js hook script', () => {
@@ -120,4 +122,49 @@ describe('recap hook install/merge', () => {
     removeRecapHook(dir, '/app/recordSession.js')
     expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(false)
   })
+
+  it('prunes empty containers when our hook was the only one', () => {
+    installRecapHook(opts(dir)) // creates hooks.SessionStart with just our entry
+    removeRecapHook(dir, '/app/recordSession.js')
+    const cfg = JSON.parse(readFileSync(join(dir, '.claude', 'settings.local.json'), 'utf8'))
+    // No dangling `{ hooks: { SessionStart: [] } }` — both keys are pruned.
+    expect(cfg.hooks).toBeUndefined()
+  })
+})
+
+describe('watchRecapMap (first-session discovery)', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'recap-watch-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  // Regression: the watcher must fire when the map file is CREATED after it starts. The hook's
+  // first appendFileSync creates the file lazily, so watching the (missing) file directly used to
+  // silently miss the very first session after enabling recaps (no event until an app restart).
+  it('fires onChange when the map file is created after the watcher arms', async () => {
+    const map = join(dir, 'recap', 'session-map.jsonl') // parent dir does not exist yet
+    let dispose: () => void = () => {}
+    const seen = new Promise<Map<string, RecapMapEntry>>((resolve) => {
+      dispose = watchRecapMap(
+        map,
+        (m) => {
+          if (m.has('b1')) resolve(m)
+        },
+        20
+      )
+      // Create the file AFTER the watcher is armed — what recordSession.js does on first session.
+      setTimeout(() => {
+        writeFileSync(
+          map,
+          JSON.stringify({ boardId: 'b1', sessionId: 's1', transcriptPath: '/t/s1.jsonl' }) + '\n'
+        )
+      }, 50)
+    })
+    const m = await seen
+    dispose()
+    expect(m.get('b1')).toEqual({ sessionId: 's1', transcriptPath: '/t/s1.jsonl' })
+  }, 6000)
 })

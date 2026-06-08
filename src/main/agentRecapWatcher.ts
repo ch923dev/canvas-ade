@@ -15,7 +15,9 @@ export interface RecapWatcher {
 }
 
 export function createRecapWatcher(deps: RecapWatcherDeps): RecapWatcher {
-  const debounceMs = deps.debounceMs ?? 20_000
+  // 25s matches the value index.ts passes — a transcript can churn rapidly mid-turn, so we
+  // coalesce a burst of writes into one summary refresh rather than re-summarizing per line.
+  const debounceMs = deps.debounceMs ?? 25_000
   const watchFile =
     deps.watchFile ??
     ((p, cb) => {
