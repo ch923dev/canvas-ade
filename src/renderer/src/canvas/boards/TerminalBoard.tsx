@@ -672,6 +672,23 @@ export function TerminalBoard({
     []
   )
 
+  // Ctrl+wheel font zoom over the well (VS Code / iTerm idiom; macOS pinch arrives as
+  // ctrl-wheel). NATIVE non-passive listener — React's synthetic onWheel is passive, so
+  // preventDefault would no-op. The screen div is inside `.nowheel`, so React Flow never
+  // zooms; we stop plain-wheel scrollback only when Ctrl is held.
+  useEffect(() => {
+    const el = screenRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      fontStepRef.current(e.deltaY < 0 ? 1 : -1)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
   // ── Actions ─────────────────────────────────────────────────────────────────
   /** Restart: kill the current session + respawn a fresh shell in place. */
   const restart = useCallback(() => {
