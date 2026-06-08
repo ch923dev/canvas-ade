@@ -356,7 +356,11 @@ app.whenReady().then(async () => {
           mapPath: recapMapPath
         })
       }
-    }
+    },
+    // Terminal recap: prune transcript watchers to the live board set on every save/open/switch,
+    // so a deleted terminal (or a switched-away project's boards) doesn't leak its fs.watch handle
+    // until quit. watchRecapMap re-tracks only boards still present in the app-owned map.
+    (liveBoardIds) => recapWatcher?.retain(liveBoardIds)
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
 

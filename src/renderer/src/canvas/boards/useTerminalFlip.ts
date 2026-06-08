@@ -92,6 +92,12 @@ export function useTerminalFlip(initial = false): TerminalFlip {
       const t2 = setTimeout(() => {
         setPhase('idle')
         setRotation(0)
+        // The fold is fully settled — every timer/raf for this flip has already fired. Clear the
+        // bookkeeping arrays so repeated flips don't grow them unboundedly. Mutate IN PLACE (not
+        // reassign) so the unmount-cleanup effect, which captured these exact array refs at mount,
+        // still cancels a future in-flight fold.
+        timers.current.length = 0
+        rafs.current.length = 0
       }, FLIP_HALF_MS)
       timers.current.push(t2)
     }, FLIP_HALF_MS)

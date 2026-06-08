@@ -1,7 +1,9 @@
 /**
  * Task 13: per-project consent modal for the terminal-recap feature.
  * Portaled to <body> over a scrim, design-token styled (mirrors SettingsModal).
- * Shows once per project when consent is 'undecided'; user picks Enable or Not now.
+ * Shows once per project when consent is 'undecided'; user picks Enable or No thanks.
+ * "No thanks" persists a 'declined' decision (re-enable later via Settings) — the label is
+ * deliberately NOT "Not now", which would imply a per-session deferral we don't do.
  * Privacy copy is a hard requirement — keep accurate (no false "nothing ever leaves" claim).
  */
 import { createPortal } from 'react-dom'
@@ -82,7 +84,7 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
             data-test="recap-decline"
             style={ghostBtn}
           >
-            Not now
+            No thanks
           </button>
           <button
             disabled={busy}

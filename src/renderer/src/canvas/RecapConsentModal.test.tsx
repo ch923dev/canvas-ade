@@ -23,11 +23,11 @@ describe('RecapConsentModal', () => {
     expect((window as unknown as ApiWindow).api.recap.setConsent).toHaveBeenCalledWith('enabled')
   })
 
-  it('Not now → setConsent("declined") + closes', async () => {
+  it('No thanks → setConsent("declined") + closes', async () => {
     const onClose = vi.fn()
     render(<RecapConsentModal onClose={onClose} />)
     const dialog = screen.getByRole('dialog', { name: /agent recaps/i })
-    fireEvent.click(within(dialog).getByRole('button', { name: /not now/i }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /no thanks/i }))
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled())
     expect((window as unknown as ApiWindow).api.recap.setConsent).toHaveBeenCalledWith('declined')
   })

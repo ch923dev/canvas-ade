@@ -10,6 +10,13 @@ export interface RecapWatcherDeps {
 export interface RecapWatcher {
   track(boardId: string, transcriptPath: string): void
   untrack(boardId: string): void
+  /**
+   * Untrack every currently-tracked board NOT in `liveBoardIds`. Driven from the canvas
+   * doc-observe path (project save/open/switch) so a deleted terminal — or every board of a
+   * project we switched away from — has its fs.watch handle + pending debounce torn down,
+   * instead of leaking until app quit.
+   */
+  retain(liveBoardIds: Set<string>): void
   kick(boardId: string): void // test seam: simulate a change
   dispose(): void
 }
@@ -25,7 +32,11 @@ export function createRecapWatcher(deps: RecapWatcherDeps): RecapWatcher {
       try {
         w = watch(p, { persistent: false }, () => cb())
       } catch {
-        /* file may not exist yet; watcher armed when it does */
+        // ENOENT/EACCES: the transcript file isn't there yet, so NO watcher is armed and it is
+        // NOT auto-re-armed when the file appears. Benign for Slice B — track() is called again
+        // on the next session-map update, which re-arms once the file exists. We deliberately do
+        // NOT fall back to watching the parent dir (as watchRecapMap does): the Claude projects
+        // dir holds many unrelated sessions' transcripts, so it would fire for other boards.
       }
       return () => {
         try {
@@ -51,6 +62,14 @@ export function createRecapWatcher(deps: RecapWatcherDeps): RecapWatcher {
     )
   }
 
+  const untrackId = (boardId: string): void => {
+    disposers.get(boardId)?.()
+    disposers.delete(boardId)
+    const t = timers.get(boardId)
+    if (t) clearTimeout(t)
+    timers.delete(boardId)
+  }
+
   return {
     track(boardId, transcriptPath) {
       // Dispose any prior watcher for this board before re-arming.
@@ -61,12 +80,12 @@ export function createRecapWatcher(deps: RecapWatcherDeps): RecapWatcher {
       )
     },
 
-    untrack(boardId) {
-      disposers.get(boardId)?.()
-      disposers.delete(boardId)
-      const t = timers.get(boardId)
-      if (t) clearTimeout(t)
-      timers.delete(boardId)
+    untrack: untrackId,
+
+    retain(liveBoardIds) {
+      for (const id of [...disposers.keys()]) {
+        if (!liveBoardIds.has(id)) untrackId(id)
+      }
     },
 
     kick: fire,
