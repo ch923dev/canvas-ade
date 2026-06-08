@@ -14,6 +14,10 @@ const resetSticky = (page: Parameters<typeof evalIn>[0]) =>
   evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '${KNOWN_STICKY}')`)
 
 test.describe('terminal font resize', () => {
+  test.afterEach(async ({ page }) => {
+    await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '12.5')`)
+  })
+
   test('Ctrl+- shrinks the live font and persists it on the board', async ({ page }) => {
     // Seed the terminal AFTER resetting the sticky so it opens at the known value.
     await resetSticky(page)

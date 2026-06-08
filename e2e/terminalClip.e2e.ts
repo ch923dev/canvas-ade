@@ -15,6 +15,10 @@ const geoOf = (id: string) => `window.__canvasE2E.terminalGeometry(${JSON.string
 const TOLERANCE = 1 // px -- sub-pixel rounding only; a clipped glyph is >=~6px
 
 test.describe('terminal clip-free fit', () => {
+  test.afterEach(async ({ page }) => {
+    await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '12.5')`)
+  })
+
   test('the grid never spills past the well across a height sweep', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
