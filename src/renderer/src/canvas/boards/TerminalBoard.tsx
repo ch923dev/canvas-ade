@@ -907,10 +907,28 @@ export function TerminalBoard({
               id: 'clear',
               label: 'Clear',
               onSelect: () => termRef.current?.clear()
+            },
+            {
+              kind: 'action',
+              id: 'font-bigger',
+              label: 'Bigger font',
+              onSelect: () => nudgeFont(1)
+            },
+            {
+              kind: 'action',
+              id: 'font-smaller',
+              label: 'Smaller font',
+              onSelect: () => nudgeFont(-1)
+            },
+            {
+              kind: 'action',
+              id: 'font-reset',
+              label: 'Reset font',
+              onSelect: () => resetFont()
             }
           ]
         : [],
-    [menu, board.id]
+    [menu, board.id, nudgeFont, resetFont]
   )
 
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
