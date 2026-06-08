@@ -995,12 +995,14 @@ export function TerminalBoard({
               kind: 'action',
               id: 'font-bigger',
               label: 'Bigger font',
+              disabled: effectiveFont >= MAX_TERMINAL_FONT,
               onSelect: () => nudgeFont(1)
             },
             {
               kind: 'action',
               id: 'font-smaller',
               label: 'Smaller font',
+              disabled: effectiveFont <= MIN_TERMINAL_FONT,
               onSelect: () => nudgeFont(-1)
             },
             {
@@ -1011,7 +1013,7 @@ export function TerminalBoard({
             }
           ]
         : [],
-    [menu, board.id, nudgeFont, resetFont]
+    [menu, board.id, effectiveFont, nudgeFont, resetFont]
   )
 
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
