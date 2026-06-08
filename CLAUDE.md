@@ -183,10 +183,18 @@ is summarized in **`docs/archive/build-history.md`** (originals in git history).
 history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
 file = open findings).
 
-**Current state (2026-06-06):** `main` @ `375c26c`. Since Phase 4: **MCP M0–M5 · Context subsystem ·
+**Current state (2026-06-08):** `main` @ `51aae5c`. Since Phase 4: **MCP M0–M5 · Context subsystem ·
 Whiteboard W1–W5 · Testing T0–T5 · Electron 33→42 (T9) · review Waves 0–5 hardening · the drag-to-create
-+ dock-to-top redesign (#75, `375c26c`) — all SHIPPED.** Gate green on this tree: typecheck · lint (0 err)
-· format · **1273 unit+integration / 95 files**. Historical Phase-4 recap follows.
++ dock-to-top redesign (#75) — all SHIPPED.** Landed since #75 (2026-06-06→08): **full terminal I/O**
+(#81 `c9af28a`) · **preview camera-sync fixes** — native-view pan-freeze + digest-panel occlusion (#82
+`1578ffe`) · **e2e evidence harness + masked-bug reset() fix** (#83 `01da101`) · **Named Board Groups
+S0–S6** (#84 `ea221ad`, schema v6) · **bug-hunt 2026-06-07 — 42/42 confirmed fixed** (6 Med + 36 Low, #85
+`aede88f`) · **browser quick-wins** auto-reconnect/push/open-external/screenshot (#86 `5a93a58`) ·
+**text-font toolbar** for the free-text element (#87 `51aae5c`, **schema v7**) · **terminal-recap** —
+flip a terminal board to an agent-CLI session recap (#89 `668a783`) · **Shift+Enter sends LF** (#90
+`c670732`) · **Claude PR-review CI** inline-comments + triage (#88/#91). Gate green on this tree:
+typecheck · lint (0 err, 3 fast-refresh warnings) · format · **1622 unit+integration / 130 files**.
+Historical Phase-4 recap follows.
 **Phases 0–4 SHIPPED on `main`** + layout presets (`14f77d7`, PR #13).
 Phase 4 design pass = `abd7fa2` (PR #9). Post-Phase-4 fixes merged: PR #12 (`ed1d551`, 13 verified
 bugs) · `94baab9` (4 open-medium) · `1a0c615` (7 round-2 review findings). The full-view preview-reset
@@ -220,7 +228,10 @@ Workspaces is unblocked.** (The old "PR #32 re-port" was superseded by #43 — d
 **In flight (open PRs — `main` is integration-only):**
 - **PR #17 `chore/rebrand-expanse`** — Canvas ADE → **Expanse** rename (code + build IDs + docs).
   **Merges LAST** (2 cross-zone one-liners), memory `rebrand-expanse`.
-- **5 dependabot bumps** (#76–80): write-file-atomic 5→8 · @types/node 22→25 · eslint 9→10 · react · @electron-toolkit/utils 3→4.
+- **5 dependabot bumps** (#76–80) — triaged 2026-06-08: **#76** @electron-toolkit/utils 3→4 · **#78**
+  eslint 9→10 · **#79** @types/node 22→25 · **#80** write-file-atomic 5→8 are all **CI-green / mergeable**
+  (78+79 dev-only; 76+80 runtime, covered by gate). **#77** react/react-dom/@types/react is **CI-RED
+  (`check` fails)** — React major; **HOLD** (needs RF-v12/React-19 compat work, own slice).
 - Research-only PRs: #72 (visual-spec Diagram) · #71 (orchestrator harness) · #29 (Maestri teardown) · #27 (demo-video playbook) · #25 (SaaS strategy).
 
 **Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:

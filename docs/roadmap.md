@@ -200,9 +200,16 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
   (`63cf10c`). **Feature Workspaces is now unblocked.** (The earlier "PR #32 re-port" was superseded by #43.)
 - **Drag-to-create board + dock→top-center** redesign (PR #75, `375c26c`).
 
+**Shipped 2026-06-06→08 (`main` now @ `51aae5c`):**
+- **Full terminal I/O** (#81) · **preview camera-sync fixes** (#82) · **e2e evidence harness** (#83) ·
+  **Named Board Groups S0–S6** (#84, schema v6) · **bug-hunt 2026-06-07 — 42/42 fixed** (#85) ·
+  **browser quick-wins** (#86) · **text-font toolbar** for free-text (#87, **schema v7**) ·
+  **terminal-recap** (#89) · **Shift+Enter→LF** (#90) · **Claude PR-review CI** (#88/#91).
+
 **Queued (open PRs):**
-- **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last.
-- 5 dependabot bumps (#76–80) + research-only docs (#25/27/29/71/72).
+- **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last; needs rebase onto `51aae5c`.
+- Dependabot (#76–80): #76/#78/#79/#80 CI-green/mergeable; **#77 react = CI-RED, HOLD** (React major, own slice).
+- Research-only docs (#25/27/29/71/72). **Diagram #72** now needs **schema v8** (v6 taken by Groups, v7 by font).
 
 ---
 
