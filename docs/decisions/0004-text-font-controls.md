@@ -21,7 +21,30 @@ multi-hue color; note/checklist typography. The single blue accent remains the o
 ## Consequences
 - Schema bumps to **v7**; this slice owns it. (Originally drafted as v6, but Named Board Groups (#84)
   landed v6 = `groups` on `main` first, so this slice rebased v6 → v7 at merge — exactly the
-  first-to-land-takes-the-number rule below.) The Mermaid diagram element now takes **v8**; the
-  draw.io-D2, file-editor, and PR #72 Diagram docs rebase their bump numbers off v7.
+  first-to-land-takes-the-number rule below.) The text create+edit UX follow-up took **v8**
+  (see § Follow-up: area-text UX + schema v8 below); the Mermaid diagram element now takes
+  **v9**; PR #72 Diagram docs rebase their bump numbers off v8.
 - Tokenized + closed, so the feature cannot grow into the full Tweaks panel without another ADR.
 - Reversible: the fields are optional; dropping the toolbar leaves data that still validates.
+
+## Follow-up: area-text UX + schema v8
+
+**Date:** 2026-06-08 · **Branch:** `feat/text-create-edit-ux`
+
+### Schema v8 — `TextElement.width`
+The area-text wrap-box width is stored as an optional `width: number` on `TextElement` (board px).
+Absent ⇒ point text (auto-size); all-optional → identity bump (no backfill). The v7→v8 migration
+is a pass-through. **v8 is owned by this follow-up slice; the Diagram / visual-spec work (PR #72)
+rebases to v9** (first-to-land-takes-the-number rule, same as v6→v7 above).
+
+### Drag-to-create area text
+The Text tool's well-drag produces an area-text box: **drag width → wrap-box width**; **drag height
+→ font-size token** (S/M/L/XL via `tokenFromHeight`). A click (no drag) makes point text at the
+default size. Gives users a spatial "I want text about this big" gesture that maps onto the closed
+token system — no free-form size entry.
+
+### Toolbar-on-edit
+The typography toolbar now surfaces while a text element is **focused / being edited**
+(`editingTextId` ephemeral state) in addition to when it is grip-selected. A keep-focus guard
+(`onMouseDown preventDefault` on the toolbar) prevents the empty-text prune from firing when the
+user clicks a toolbar button immediately after creating a fresh text element.
