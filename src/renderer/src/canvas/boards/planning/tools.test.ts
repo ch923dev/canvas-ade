@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { shortcutTool } from './tools'
+import { shortcutTool, type PlanTool } from './tools'
 
 const NONE = { ctrl: false, meta: false, alt: false }
 
@@ -28,5 +28,11 @@ describe('shortcutTool', () => {
     expect(shortcutTool('t', NONE)).toBeNull() // global tidy — never a board tool
     expect(shortcutTool('1', NONE)).toBeNull()
     expect(shortcutTool('z', NONE)).toBeNull()
+  })
+
+  it('text is a valid PlanTool but has no bare-letter shortcut (t = canvas Tidy)', () => {
+    const tool: PlanTool = 'text'
+    expect(tool).toBe('text')
+    expect(shortcutTool('t', { ctrl: false, meta: false, alt: false })).toBeNull()
   })
 })

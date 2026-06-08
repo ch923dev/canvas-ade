@@ -75,10 +75,11 @@ import { usePlanningPointer } from './planning/usePlanningPointer'
 
 const TOOLS: ReadonlyArray<{
   tool: PlanTool
-  icon: 'select' | 'note' | 'check' | 'arrow' | 'pen' | 'erase'
+  icon: 'select' | 'note' | 'text' | 'check' | 'arrow' | 'pen' | 'erase'
 }> = [
   { tool: 'select', icon: 'select' },
   { tool: 'note', icon: 'note' },
+  { tool: 'text', icon: 'text' },
   { tool: 'check', icon: 'check' },
   { tool: 'arrow', icon: 'arrow' },
   { tool: 'pen', icon: 'pen' },
