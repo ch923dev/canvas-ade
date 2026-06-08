@@ -50,7 +50,12 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
     void window.api?.recap
       ?.getConsent?.()
       ?.then((s) => {
-        if (!cancelled && s === 'undecided') setAskRecap(true)
+        // Drive the prompt off the NEW project's decision in BOTH directions: open it when the
+        // project is undecided, and CLOSE a prompt left over from a previous project when the
+        // new one is already decided (or no project is open → getConsent returns 'declined').
+        // Setting only `true` here let the modal leak across a project switch — a fixed-position
+        // scrim then occluded the canvas for the next project (and, in e2e, every later spec).
+        if (!cancelled) setAskRecap(s === 'undecided')
       })
       ?.catch(() => {
         // IPC rejection (channel unavailable, teardown race) — silently skip the prompt.
@@ -69,7 +74,12 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
       />
       <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {askRecap && <RecapConsentModal onClose={() => setAskRecap(false)} />}
+      {/* Per-project prompt: only when a project is actually open. Gating on `projectDir`
+          (not just `askRecap`) is the correctness guard — `getConsent` keys off the MAIN
+          current dir while this effect keys off the renderer dir, so a project-close/switch
+          can leave `askRecap` true with no project open; without this gate the fixed-position
+          scrim would then occlude the canvas (it did exactly that across e2e specs). */}
+      {askRecap && projectDir !== null && <RecapConsentModal onClose={() => setAskRecap(false)} />}
     </>
   )
 }
