@@ -228,10 +228,10 @@ Workspaces is unblocked.** (The old "PR #32 re-port" was superseded by #43 — d
 **In flight (open PRs — `main` is integration-only):**
 - **PR #17 `chore/rebrand-expanse`** — Canvas ADE → **Expanse** rename (code + build IDs + docs).
   **Merges LAST** (2 cross-zone one-liners), memory `rebrand-expanse`.
-- **5 dependabot bumps** (#76–80) — triaged 2026-06-08: **#76** @electron-toolkit/utils 3→4 · **#78**
-  eslint 9→10 · **#79** @types/node 22→25 · **#80** write-file-atomic 5→8 are all **CI-green / mergeable**
-  (78+79 dev-only; 76+80 runtime, covered by gate). **#77** react/react-dom/@types/react is **CI-RED
-  (`check` fails)** — React major; **HOLD** (needs RF-v12/React-19 compat work, own slice).
+- **Dependabot #76–80** — triaged + merged 2026-06-08: **#76** @electron-toolkit/utils 3→4 · **#78**
+  eslint 9→10 · **#79** @types/node 22→25 · **#80** write-file-atomic 5→8 **MERGED** (gate re-verified
+  green locally: typecheck · lint 0 err · 1622/130). **#77** react/react-dom/@types/react **HELD —
+  CI-RED (`check` fails)**, React major; needs RF-v12/React-19 compat work (own slice).
 - Research-only PRs: #72 (visual-spec Diagram) · #71 (orchestrator harness) · #29 (Maestri teardown) · #27 (demo-video playbook) · #25 (SaaS strategy).
 
 **Round-3 in-depth review (2026-06-01)** — 6-dimension parallel subagent audit + adversarial verify:

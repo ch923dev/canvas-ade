@@ -208,7 +208,7 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
 
 **Queued (open PRs):**
 - **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last; needs rebase onto `51aae5c`.
-- Dependabot (#76–80): #76/#78/#79/#80 CI-green/mergeable; **#77 react = CI-RED, HOLD** (React major, own slice).
+- Dependabot (#76–80): #76/#78/#79/#80 **MERGED 2026-06-08** (gate re-verified green); **#77 react HELD — CI-RED** (React major, own slice).
 - Research-only docs (#25/27/29/71/72). **Diagram #72** now needs **schema v8** (v6 taken by Groups, v7 by font).
 
 ---
