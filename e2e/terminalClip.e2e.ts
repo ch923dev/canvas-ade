@@ -20,6 +20,10 @@ test.describe('terminal clip-free fit', () => {
   })
 
   test('the grid never spills past the well across a height sweep', async ({ page }) => {
+    // Reset sticky for determinism — the persistent userData dir carries localStorage across runs,
+    // so without this the sweep font depends on whatever a prior spec left (drift hides the font in
+    // a failure message). Mirrors the font-matrix test below.
+    await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '12.5')`)
     const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
     await evalIn(page, `window.__canvasE2E.setZoom(1)`)
