@@ -51,6 +51,13 @@ import { resumeCommand } from './terminal/resumeCommand'
 import { BoardFullViewContext } from '../fullViewContext'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
+import {
+  clampTerminalFont,
+  readStickyFont,
+  resolveInitialFont,
+  writeStickyFont,
+  DEFAULT_TERMINAL_FONT
+} from './terminal/terminalFont'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -171,6 +178,15 @@ export function TerminalBoard({
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
+  // board.fontSize for the spawn closure's INITIAL xterm construction, read via a ref so
+  // a size change never becomes a spawn dep (which would respawn the PTY). Mirrors lodRef.
+  const fontSizeRef = useRef<number | undefined>(board.fontSize)
+  // Keymap effects + the Ctrl-wheel listener call the latest nudge/reset through refs so
+  // the spawn callback's identity stays stable (no respawn when the font handlers change).
+  const fontStepRef = useRef<(delta: number) => void>(() => {})
+  const fontResetRef = useRef<() => void>(() => {})
+  // Trailing timer that coalesces a burst of nudges (Ctrl-wheel / held key) into one undo step.
+  const fontBurstRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Live camera zoom source for the selection shim. We read it from the React Flow store
   // AT MOUSE-EVENT TIME (transform[2]) rather than via useOnViewportChange: the latter's
   // onChange does not fire for programmatic, zero-duration zoom (e.g. rf.zoomTo) — only for
@@ -218,6 +234,7 @@ export function TerminalBoard({
 
   // A board with no explicit cwd spawns in the open project folder, not os.homedir().
   const projectDir = useCanvasStore((s) => s.project.dir)
+  const updateBoard = useCanvasStore((s) => s.updateBoard)
 
   // `lod` read by the spawn effect (initial WebGL attach) without making it a spawn
   // dep — `lod` must NOT respawn the PTY (the session survives zoom-out by design).
@@ -225,6 +242,11 @@ export function TerminalBoard({
   useEffect(() => {
     lodRef.current = lod
   }, [lod])
+
+  // Keep the spawn closure's initial-font ref synced (read on construction only; never a spawn dep).
+  useEffect(() => {
+    fontSizeRef.current = board.fontSize
+  }, [board.fontSize])
 
   // ── WebGL renderer pooling (#10/#12/#29) ─────────────────────────────────────
   // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
@@ -358,7 +380,7 @@ export function TerminalBoard({
 
     const term = new Terminal({
       fontFamily: mono,
-      fontSize: 12.5,
+      fontSize: resolveInitialFont(fontSizeRef.current),
       lineHeight: 1.2,
       cursorBlink: true,
       theme: THEME,
@@ -429,9 +451,8 @@ export function TerminalBoard({
             return true
           },
           paste: () => void pasteIntoTerminal(term, board.id),
-          // TODO(terminal-font-resize): wire to per-board font store (Task 3)
-          fontStep: (_delta: number) => {},
-          fontReset: () => {}
+          fontStep: (d) => fontStepRef.current(d),
+          fontReset: () => fontResetRef.current()
         }
       )
     )
@@ -595,6 +616,61 @@ export function TerminalBoard({
   ])
 
   useEffect(() => spawn(), [spawn])
+
+  // ── Per-board font size ───────────────────────────────────────────────────────
+  // Persist path (the four triggers call these — they never touch xterm directly):
+  const setFont = useCallback(
+    (next: number): void => {
+      const clamped = clampTerminalFont(next)
+      if (clamped === clampTerminalFont(board.fontSize ?? readStickyFont())) return // no-op at bound
+      // Leading-edge undo checkpoint: snapshot once per burst so a Ctrl-wheel / held-key run
+      // collapses into ONE undo step; the trailing timer ends the burst (beginChange dedups).
+      if (fontBurstRef.current === null) useCanvasStore.getState().beginChange()
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+      fontBurstRef.current = setTimeout(() => {
+        fontBurstRef.current = null
+      }, 500)
+      updateBoard(board.id, { fontSize: clamped }) // persist the per-board pin
+      writeStickyFont(clamped) // update the new-terminal default
+    },
+    [board.id, board.fontSize, updateBoard]
+  )
+  const nudgeFont = useCallback(
+    (delta: number): void =>
+      setFont((termRef.current?.options.fontSize ?? DEFAULT_TERMINAL_FONT) + delta),
+    [setFont]
+  )
+  const resetFont = useCallback((): void => setFont(DEFAULT_TERMINAL_FONT), [setFont])
+
+  // Keep the keymap/wheel refs pointed at the latest handlers (stable spawn identity).
+  useEffect(() => {
+    fontStepRef.current = nudgeFont
+    fontResetRef.current = resetFont
+  }, [nudgeFont, resetFont])
+
+  // Apply a persisted font change to the LIVE term + reflow the grid (→ PTY resize). Keyed on
+  // board.fontSize ONLY (NOT a spawn dep) so resizing never respawns the PTY. Reads the sticky
+  // default for an unpinned board (dep never changes → runs once on mount, after construction).
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+    const fs = clampTerminalFont(board.fontSize ?? readStickyFont())
+    if (term.options.fontSize === fs) return
+    term.options.fontSize = fs
+    try {
+      fitRef.current?.fit() // unfitted well (LOD / display:none) → applies on the next RO fit
+    } catch {
+      /* element not laid out yet */
+    }
+  }, [board.fontSize])
+
+  // Clear the burst timer on unmount.
+  useEffect(
+    () => () => {
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+    },
+    []
+  )
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   /** Restart: kill the current session + respawn a fresh shell in place. */
