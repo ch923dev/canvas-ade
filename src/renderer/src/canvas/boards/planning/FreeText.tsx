@@ -6,7 +6,15 @@
  */
 import { useEffect, useRef, type ReactElement } from 'react'
 import type { TextElement } from '../../../lib/boardSchema'
-import { FAMILY_CSS, SIZE_PX, lineHeightFor, COLOR_CSS, WEIGHT, TEXT_DEFAULTS } from './textStyle'
+import {
+  FAMILY_CSS,
+  SIZE_PX,
+  lineHeightFor,
+  COLOR_CSS,
+  WEIGHT,
+  TEXT_DEFAULTS,
+  MIN_TEXT_WIDTH_PX
+} from './textStyle'
 
 export interface FreeTextProps {
   element: TextElement
@@ -22,6 +30,8 @@ export interface FreeTextProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
   onMeasure?: (id: string, w: number, h: number) => void
+  /** Fired with (id, editing) when the textarea gains/loses focus — drives the toolbar-on-edit gate. */
+  onEditingChange?: (id: string, editing: boolean) => void
 }
 
 export function FreeText({
@@ -33,7 +43,8 @@ export function FreeText({
   onEditStart,
   selected,
   onSelect,
-  onMeasure
+  onMeasure,
+  onEditingChange
 }: FreeTextProps): ReactElement {
   const ref = useRef<HTMLTextAreaElement>(null)
   // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
@@ -44,13 +55,17 @@ export function FreeText({
   // component unmounts while a grip drag is in progress (BUG-037).
   const dragAbort = useRef<AbortController | null>(null)
 
+  const wrap = element.width !== undefined
+
   useEffect(() => {
     const el = ref.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${el.scrollHeight}px`
-    el.style.width = 'auto'
-    el.style.width = `${Math.max(40, el.scrollWidth)}px`
+    if (!wrap) {
+      el.style.width = 'auto'
+      el.style.width = `${Math.max(MIN_TEXT_WIDTH_PX, el.scrollWidth)}px`
+    }
     if (onMeasure) {
       const host = el.parentElement // the .pl-text flex row
       if (host) onMeasure(element.id, host.offsetWidth, host.offsetHeight)
@@ -58,7 +73,16 @@ export function FreeText({
     // Re-measure when a size-affecting typography token changes (not just text): a
     // toolbar fontSize/family/bold change resizes the textarea, so the selection/snap
     // bbox must be recomputed too. align/color don't affect the measured box.
-  }, [element.text, element.fontSize, element.fontFamily, element.bold, onMeasure, element.id])
+  }, [
+    element.text,
+    element.fontSize,
+    element.fontFamily,
+    element.bold,
+    onMeasure,
+    element.id,
+    element.width,
+    wrap
+  ])
 
   // Focus a freshly-dropped empty text element so the user can type immediately,
   // AND so leaving it untouched blurs → prunes it instead of leaving an orphan
@@ -166,11 +190,15 @@ export function FreeText({
         spellCheck={false}
         rows={1}
         onChange={(e) => onChangeText(element.id, e.target.value)}
-        onFocus={() => onEditStart?.()}
+        onFocus={() => {
+          onEditStart?.()
+          onEditingChange?.(element.id, true)
+        }}
         // Prune an empty / whitespace-only text element on blur so a double-click
         // that never receives content doesn't leave an orphan (#29, #36). Skip
         // while a drag is starting (grip press blurs the textarea).
         onBlur={() => {
+          onEditingChange?.(element.id, false)
           if (!dragging.current && element.text.trim() === '') onDelete(element.id)
         }}
         // Let a draw gesture begin over the text (#6); only block in select.
@@ -198,7 +226,8 @@ export function FreeText({
           lineHeight: `${lineHeightFor(px)}px`,
           padding: 0,
           overflow: 'hidden',
-          whiteSpace: 'pre',
+          whiteSpace: wrap ? 'pre-wrap' : 'pre',
+          width: wrap ? element.width : undefined,
           cursor: interactive ? 'text' : 'default'
         }}
       />
