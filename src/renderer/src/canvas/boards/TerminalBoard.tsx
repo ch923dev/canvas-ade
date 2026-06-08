@@ -39,7 +39,7 @@ import {
 } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
 import { isE2E, e2eTerminals, e2eTerminalInput, appendTerminalInput } from '../../smoke/e2eRegistry'
-import { resolveTerminalKey } from './terminal/terminalKeymap'
+import { resolveTerminalKey, TERMINAL_NEWLINE } from './terminal/terminalKeymap'
 import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
@@ -388,7 +388,7 @@ export function TerminalBoard({
     )
 
     // Custom key handling (returns false to suppress xterm's default for keys we own):
-    //  - Shift+Enter inserts a newline (\x1b\r — CC-recognized, tmux-safe; NOT raw \n).
+    //  - Shift+Enter inserts a newline (LF / Ctrl+J via TERMINAL_NEWLINE; NOT the ConPTY-fragile ESC+CR).
     //  - Ctrl/Cmd+C copies when a selection exists (then clears); else falls through to
     //    xterm's SIGINT (\x03). Cmd is primary on macOS so Ctrl+C stays SIGINT there.
     //  - Ctrl/Cmd+V smart-pastes (image → staged path, else text), via term.paste so
@@ -397,7 +397,7 @@ export function TerminalBoard({
       const action = resolveTerminalKey(e, { hasSelection: term.hasSelection(), isMac: IS_MAC })
       if (!action) return true
       if (action.kind === 'newline') {
-        sendInput('\x1b\r')
+        sendInput(TERMINAL_NEWLINE)
       } else if (action.kind === 'copy') {
         const sel = term.getSelection()
         if (sel) {

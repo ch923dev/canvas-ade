@@ -21,6 +21,16 @@ export interface TermKeyChord {
 
 export type TerminalKeyAction = { kind: 'newline' } | { kind: 'copy' } | { kind: 'paste' }
 
+/**
+ * Byte written to the PTY for a Shift+Enter newline insert. LF (0x0A) — identical to Ctrl+J,
+ * which Anthropic's terminal docs (code.claude.com/docs/en/terminal-config) call the newline that
+ * works "in every terminal with no setup". The earlier ESC+CR (`\x1b\r`, Meta/Option+Enter) form is
+ * emulator/version/ConPTY-fragile: on Windows ConPTY the lone ESC can split from the CR, so the agent
+ * reads Escape (cancel) then CR (submit) and inserts no newline (the reported Shift+Enter bug;
+ * cf. claude-code issue #9321). LF carries no ESC, so it has no such ambiguity and is agent-agnostic.
+ */
+export const TERMINAL_NEWLINE = '\n'
+
 export function resolveTerminalKey(
   e: TermKeyChord,
   ctx: { hasSelection: boolean; isMac: boolean }

@@ -5,7 +5,7 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
 const readInput = (id: string) => `window.__canvasE2E.readTerminalInput(${JSON.stringify(id)})`
 
 test.describe('terminal I/O', () => {
-  test('Shift+Enter posts \\x1b\\r (newline insert), not a bare \\r', async ({ page }) => {
+  test('Shift+Enter posts LF (Ctrl+J newline), never ESC+CR or a bare \\r', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
     await evalIn(page, `window.__canvasE2E.setZoom(1)`)
@@ -16,8 +16,20 @@ test.describe('terminal I/O', () => {
       page,
       `window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(id)}, { key: 'Enter', shiftKey: true })`
     )
-    const sawNewline = await pollEval(page, `${readInput(id)}.includes('\\u001b\\r')`, 3000)
-    expect(sawNewline, 'shift+enter posted ESC+CR').toBe(true)
+    // LF (0x0A = Ctrl+J) is the universal newline claude inserts in every terminal. The old ESC+CR
+    // (`\x1b\r`) form was ConPTY-fragile (ESC split from CR → cancel+submit, no newline). It must be
+    // EXACTLY LF: carries the newline, no ESC byte rides along, and it is not a bare CR. See TERMINAL_NEWLINE.
+    // Recorded input may also carry benign async terminal reports (e.g. a focus-in report),
+    // so assert the SPECIFIC contract: LF (0x0A) is posted, and the old ConPTY-fragile ESC+CR is
+    // not. String.fromCharCode avoids page-side escaping of control bytes in the poll expression.
+    const sawLf = await pollEval(page, `${readInput(id)}.includes(String.fromCharCode(10))`, 3000)
+    expect(sawLf, 'Shift+Enter posts LF (0x0A)').toBe(true)
+    const raw = await evalIn<string>(page, readInput(id))
+    const escCr = String.fromCharCode(0x1b) + String.fromCharCode(13)
+    expect(
+      raw.includes(escCr),
+      `Shift+Enter must not post the ConPTY-fragile ESC+CR; recorded ${JSON.stringify(raw)}`
+    ).toBe(false)
   })
 
   test('Ctrl+C with a selection copies it to the clipboard', async ({ page, electronApp }) => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTerminalKey, type TermKeyChord } from './terminalKeymap'
+import { resolveTerminalKey, TERMINAL_NEWLINE, type TermKeyChord } from './terminalKeymap'
 
 const chord = (key: string, mods: Partial<TermKeyChord> = {}): TermKeyChord => ({
   type: 'keydown',
@@ -64,5 +64,18 @@ describe('resolveTerminalKey', () => {
         isMac: false
       })
     ).toBeNull()
+  })
+})
+
+describe('TERMINAL_NEWLINE (Shift+Enter byte)', () => {
+  it('is LF (Ctrl+J / 0x0A) — the universal newline, NOT the ConPTY-fragile ESC+CR', () => {
+    // Anthropic terminal docs (code.claude.com/docs/en/terminal-config): Ctrl+J and `\`+Enter
+    // insert a newline in EVERY terminal with no setup. Ctrl+J IS byte 0x0A (LF). The previous
+    // ESC+CR (`\x1b\r`, Meta/Option+Enter) form is emulator/version/ConPTY-fragile: on Windows
+    // ConPTY the lone ESC can split from the CR so claude sees Escape (cancel) then CR (submit),
+    // yielding no newline (the reported bug; cf. claude-code issue #9321 "OM" symptom).
+    expect(TERMINAL_NEWLINE).toBe('\n')
+    expect(TERMINAL_NEWLINE.charCodeAt(0)).toBe(0x0a)
+    expect(TERMINAL_NEWLINE).not.toBe('\x1b\r')
   })
 })
