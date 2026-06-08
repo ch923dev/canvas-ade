@@ -55,8 +55,10 @@ export function resolveTerminalKey(
   // Font-size chords: primary modifier (Cmd on mac, Ctrl else), no Alt/Shift. We
   // deliberately SHADOW these from the shell — matches VS Code / iTerm terminal zoom.
   if (primary && !e.altKey && !e.shiftKey) {
+    // '+' is reachable un-shifted on the numpad, so it stays an alias for inc. '_' is only
+    // Shift+'-' (always carries shiftKey, blocked above), so '-' alone covers dec.
     if (e.key === '=' || e.key === '+') return { kind: 'fontInc' }
-    if (e.key === '-' || e.key === '_') return { kind: 'fontDec' }
+    if (e.key === '-') return { kind: 'fontDec' }
     if (e.key === '0') return { kind: 'fontReset' }
   }
 

@@ -72,9 +72,11 @@ describe('resolveTerminalKey', () => {
     ).toBeNull()
   })
 
-  it('Ctrl+- and Ctrl+_ → fontDec (Windows)', () => {
+  it('Ctrl+- → fontDec; Ctrl+Shift+- (the real "_") is blocked (Windows)', () => {
     expect(resolveTerminalKey(chord('-', { ctrlKey: true }), WIN)).toEqual({ kind: 'fontDec' })
-    expect(resolveTerminalKey(chord('_', { ctrlKey: true }), WIN)).toEqual({ kind: 'fontDec' })
+    // '_' on real hardware is Shift+'-', and the font chords require no Shift — so the dec chord
+    // carrying shiftKey resolves to null (no dead '_' branch needed).
+    expect(resolveTerminalKey(chord('-', { ctrlKey: true, shiftKey: true }), WIN)).toBeNull()
   })
   it('Ctrl+= and Ctrl++ → fontInc (Windows)', () => {
     expect(resolveTerminalKey(chord('=', { ctrlKey: true }), WIN)).toEqual({ kind: 'fontInc' })

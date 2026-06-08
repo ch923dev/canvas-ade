@@ -670,7 +670,9 @@ export function TerminalBoard({
   // ── Per-board font size ───────────────────────────────────────────────────────
   // Persist path (the four triggers call these — they never touch xterm directly):
   const setFont = useCallback(
-    (next: number): void => {
+    // `sticky` defaults true so adjustments seed the new-terminal default. Reset passes false:
+    // resetting ONE board to the factory size must not clobber the user's global preference.
+    (next: number, sticky = true): void => {
       const clamped = clampTerminalFont(next)
       if (clamped === liveFontRef.current) return // no-op (already this size / clamped at a bound)
       liveFontRef.current = clamped // advance the authoritative value SYNCHRONOUSLY (burst-safe)
@@ -682,7 +684,7 @@ export function TerminalBoard({
         fontBurstRef.current = null
       }, 500)
       updateBoard(board.id, { fontSize: clamped }) // persist the per-board pin
-      writeStickyFont(clamped) // update the new-terminal default
+      if (sticky) writeStickyFont(clamped) // update the new-terminal default (skipped on reset)
     },
     [board.id, updateBoard]
   )
@@ -690,7 +692,8 @@ export function TerminalBoard({
     (delta: number): void => setFont(liveFontRef.current + delta),
     [setFont]
   )
-  const resetFont = useCallback((): void => setFont(DEFAULT_TERMINAL_FONT), [setFont])
+  // Reset is a per-board factory reset (12.5) that leaves the global sticky default untouched.
+  const resetFont = useCallback((): void => setFont(DEFAULT_TERMINAL_FONT, false), [setFont])
 
   // Keep the keymap/wheel refs pointed at the latest handlers (stable spawn identity).
   useEffect(() => {
@@ -880,30 +883,28 @@ export function TerminalBoard({
     ? [...checked].filter((k) => browserPick.candidates.find((c) => c.id === k)?.connectedTo).length
     : 0
 
+  // Effective font for the disabled-at-bound state: mirror the apply effect's fallback (born font,
+  // NOT live sticky) so the buttons track the size this board actually renders at, not another
+  // board's sticky drift.
+  const effectiveFont = clampTerminalFont(board.fontSize ?? bornFont)
   const actions = (
     <>
-      {(selected || hovered) &&
-        (() => {
-          // Mirror the apply effect's fallback (born font, NOT live sticky) so the disabled state
-          // tracks the font this board actually renders at, not another board's sticky drift.
-          const fs = clampTerminalFont(board.fontSize ?? bornFont)
-          return (
-            <>
-              <IconBtn
-                name="minus"
-                title="Smaller font (Ctrl -)"
-                onClick={() => nudgeFont(-1)}
-                disabled={fs <= MIN_TERMINAL_FONT}
-              />
-              <IconBtn
-                name="plus"
-                title="Bigger font (Ctrl +)"
-                onClick={() => nudgeFont(1)}
-                disabled={fs >= MAX_TERMINAL_FONT}
-              />
-            </>
-          )
-        })()}
+      {(selected || hovered) && (
+        <>
+          <IconBtn
+            name="minus"
+            title="Smaller font (Ctrl -)"
+            onClick={() => nudgeFont(-1)}
+            disabled={effectiveFont <= MIN_TERMINAL_FONT}
+          />
+          <IconBtn
+            name="plus"
+            title="Bigger font (Ctrl +)"
+            onClick={() => nudgeFont(1)}
+            disabled={effectiveFont >= MAX_TERMINAL_FONT}
+          />
+        </>
+      )}
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
       <IconBtn
         name="globe"
@@ -1074,7 +1075,7 @@ export function TerminalBoard({
                 <TerminalConfig
                   board={board}
                   onClose={() => setConfigOpen(false)}
-                  fontSize={clampTerminalFont(board.fontSize ?? bornFont)}
+                  fontSize={effectiveFont}
                   onSetFont={setFont}
                 />
               )}

@@ -104,4 +104,31 @@ test.describe('terminal font resize', () => {
     const inherited = await pollEval(page, `${fontOf(b)} === ${sticky}`, 3000)
     expect(inherited, 'new terminal opened at the sticky size').toBe(true)
   })
+
+  test('Reset font (Ctrl+0) is per-board — it does NOT touch the global sticky default', async ({
+    page
+  }) => {
+    await resetSticky(page) // 14
+    const a = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(a)})`, 8000)
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(a)})`)
+    const start = await evalIn<number>(page, fontOf(a)) // 14
+    // Nudge A down → the sticky default becomes 13.
+    await evalIn(
+      page,
+      `window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(a)}, { key: '-', ctrlKey: true })`
+    )
+    await pollEval(page, `${fontOf(a)} === ${start - 1}`, 3000)
+    // Reset A (Ctrl+0): A returns to the factory default 12.5 but must NOT rewrite the sticky.
+    await evalIn(
+      page,
+      `window.__canvasE2E.dispatchTerminalKey(${JSON.stringify(a)}, { key: '0', ctrlKey: true })`
+    )
+    await pollEval(page, `${fontOf(a)} === 12.5`, 3000)
+    // A new terminal still inherits the user's sticky (13), not the per-board reset value.
+    const b = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(b)})`, 8000)
+    const keptSticky = await pollEval(page, `${fontOf(b)} === ${start - 1}`, 3000)
+    expect(keptSticky, 'new terminal kept the sticky default, not the reset value').toBe(true)
+  })
 })

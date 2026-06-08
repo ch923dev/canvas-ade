@@ -26,6 +26,7 @@ import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
+import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
 import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 
@@ -418,7 +419,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       useCanvasStore.getState().resizeBoard(id, w, h)
     },
     setBoardFont(id, px) {
-      useCanvasStore.getState().updateBoard(id, { fontSize: px })
+      // Clamp like the production seam so the stored pin matches what the apply effect renders —
+      // an out-of-range raw write would diverge stored-vs-effective and confuse a test diagnostic.
+      useCanvasStore.getState().updateBoard(id, { fontSize: clampTerminalFont(px) })
     },
     roundTripOk() {
       try {
