@@ -1,5 +1,5 @@
 /**
- * Floating typography toolbar for a single selected free-`text` element (schema v6).
+ * Floating typography toolbar for a single selected free-`text` element (schema v7).
  * Lives in the board's content coordinate space (sibling to the cards) so it scales
  * with the board and sits just above the element. Each "set" control is a no-op when
  * its token is already active → it does NOT emit, so re-clicking the active button can't
@@ -14,6 +14,8 @@ import {
   TEXT_COLOR_TOKENS,
   COLOR_CSS,
   FAMILY_CSS,
+  SIZE_PX,
+  lineHeightFor,
   TEXT_DEFAULTS,
   type FontFamilyToken,
   type TextAlignToken
@@ -37,7 +39,8 @@ const ALIGN_GLYPH: Record<TextAlignToken, string> = { left: '⇤', center: '⇔'
 
 /** Px the toolbar sits above the element (≈ its own height) AND the room-above threshold. */
 const TOOLBAR_OFFSET = 40
-/** Px below the element's top when flipped down — clears a single text line. */
+/** Min px below the element's top when flipped down — clears a single M-size line. Larger
+ *  tokens (L/XL) widen it to their own line height so the bar never overlaps the first line. */
 const BELOW_OFFSET = 28
 /** Conservative on-screen width of the full bar (15 buttons + groups/gaps/padding). The
  *  well clips overflow, so an element near the right edge would hide the rightmost
@@ -51,10 +54,12 @@ export function TextToolbar({ element, boardW, onPatch }: TextToolbarProps): Rea
   const color = element.color ?? TEXT_DEFAULTS.color
   const bold = element.bold ?? TEXT_DEFAULTS.bold
   // Sit above the element; flip below when there's no room above — the content well
-  // clips overflow at its top edge, so a negative top would hide the toolbar. The
-  // below offset (28) clears a single text line; multi-line text at the very top edge
-  // is a rare v1 edge case.
-  const top = element.y >= TOOLBAR_OFFSET ? element.y - TOOLBAR_OFFSET : element.y + BELOW_OFFSET
+  // clips overflow at its top edge, so a negative top would hide the toolbar. The flip-down
+  // offset clears the element's own first line (≥ M baseline). Multi-line text at the very
+  // top edge — and the symmetric case of a flipped bar clipping a very short board's BOTTOM
+  // edge — stay rare v1 edge cases (TODO: clamp `top` against board height when flipped).
+  const belowOffset = Math.max(BELOW_OFFSET, lineHeightFor(SIZE_PX[size]))
+  const top = element.y >= TOOLBAR_OFFSET ? element.y - TOOLBAR_OFFSET : element.y + belowOffset
   // Pull the bar left so it never clips at the well's right edge (no clamp needed when the
   // element leaves room); never below 0 so it can't slide off the left for a narrow board.
   const left = Math.max(0, Math.min(element.x, boardW - TOOLBAR_WIDTH))

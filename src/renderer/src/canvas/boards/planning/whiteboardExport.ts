@@ -162,7 +162,7 @@ function renderElement(
       const weight = el.bold ? WEIGHT.bold : WEIGHT.normal
       // Anchor x for center/right from an estimated content width (no DOM at export time);
       // left stays exact at el.x. Baseline el.y + px + 3 === el.y + 16 at px=13, keeping
-      // default left text byte-identical to pre-v6. Multi-line spacing = lineHeightFor(px),
+      // default left text byte-identical to pre-typography. Multi-line spacing = lineHeightFor(px),
       // matching FreeText's CSS line-height (not the legacy size + 4).
       const w = estimateTextWidth(el.text, px, fam)
       const ax = align === 'center' ? el.x + w / 2 : align === 'right' ? el.x + w : el.x

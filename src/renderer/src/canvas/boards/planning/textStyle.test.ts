@@ -12,7 +12,7 @@ import {
 import { EXPORT_COLORS } from './exportColors'
 
 describe('textStyle tokens', () => {
-  it('M size + its line height match the pre-v6 hardcoded text (no visual regression)', () => {
+  it('M size + its line height match the pre-typography hardcoded text (no visual regression)', () => {
     expect(SIZE_PX.M).toBe(13)
     expect(lineHeightFor(SIZE_PX.M)).toBe(18)
   })

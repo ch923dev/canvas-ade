@@ -1,5 +1,5 @@
 /**
- * Single source of truth for free-text typography tokens (schema v6). Owns the token
+ * Single source of truth for free-text typography tokens (schema v7). Owns the token
  * unions + their LIVE (CSS custom-prop) and EXPORT (literal, portable) representations
  * for family / size / color, plus weight, line-height, and SVG text-anchor. Both the
  * live board (FreeText) and the SVG export (whiteboardExport) read from here so the two
@@ -21,7 +21,7 @@ export type FontSizeToken = (typeof FONT_SIZE_TOKENS)[number]
 export type TextAlignToken = (typeof TEXT_ALIGN_TOKENS)[number]
 export type TextColorToken = (typeof TEXT_COLOR_TOKENS)[number]
 
-/** Defaults chosen so a v5 text element (no tokens) renders byte-identical to pre-v6. */
+/** Defaults chosen so a pre-typography text element (no tokens) renders byte-identical to pre-v7. */
 export const TEXT_DEFAULTS = {
   fontFamily: 'sans',
   fontSize: 'M',
@@ -46,12 +46,14 @@ export const FAMILY_CSS: Record<FontFamilyToken, string> = {
 export const FAMILY_EXPORT: Record<FontFamilyToken, string> = {
   sans: 'system-ui, -apple-system, Segoe UI, sans-serif',
   mono: 'Cascadia Mono, Consolas, ui-monospace, monospace',
-  serif: 'Georgia, "Times New Roman", serif'
+  // Unquoted multi-word names (cf. sans `Segoe UI`, mono `Cascadia Mono`) — an embedded `"`
+  // would terminate the SVG `font-family="…"` attribute early (whiteboardExport.ts:82).
+  serif: 'Georgia, Times New Roman, serif'
 }
 
-/** Pixel size per token. M = 13 (the pre-v6 hardcoded size). */
+/** Pixel size per token. M = 13 (the pre-typography hardcoded size). */
 export const SIZE_PX: Record<FontSizeToken, number> = { S: 11, M: 13, L: 18, XL: 26 }
-/** Line height (px) for a px size: 1.38× → lineHeightFor(13) === 18 (matches pre-v6). */
+/** Line height (px) for a px size: 1.38× → lineHeightFor(13) === 18 (matches pre-typography). */
 export const lineHeightFor = (px: number): number => Math.round(px * 1.38)
 
 /** Approx glyph advance (× font-size) per family — for the export-time width estimate. */

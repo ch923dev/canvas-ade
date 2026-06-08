@@ -37,10 +37,8 @@ test.describe('text font toolbar (real OS input)', () => {
         { id: 'txt', kind: 'text', x: 160, y: 160, text: 'Hello' }
       ] })`
     )
-    // Give React Flow a tick to render the new element before polling.
-    await page.waitForTimeout(160)
-
-    // Select the text by a real OS press on its drag grip (coords read atomically).
+    // Select the text by a real OS press on its drag grip (coords read atomically — the
+    // pollRect below self-waits for React Flow to render the grip, so no fixed sleep needed).
     const g = await pollRect(
       page,
       `(() => {

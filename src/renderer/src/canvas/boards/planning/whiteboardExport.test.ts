@@ -135,8 +135,8 @@ describe('boardToSvg — images', () => {
   })
 })
 
-describe('boardToSvg — text typography (v6)', () => {
-  it('a text element with NO tokens exports identically to the pre-v6 baseline', () => {
+describe('boardToSvg — text typography (v7)', () => {
+  it('a text element with NO tokens exports identically to the pre-typography baseline', () => {
     const { svg } = boardToSvg(board([{ id: 't', kind: 'text', x: 10, y: 10, text: 'plain' }]), {})
     expect(svg).toContain('font-size="13"')
     expect(svg).toContain('font-family="system-ui, -apple-system, Segoe UI, sans-serif"')
@@ -214,5 +214,16 @@ describe('boardToSvg — text typography (v6)', () => {
     expect(svg).toContain('Cascadia Mono, Consolas, ui-monospace, monospace')
     expect(svg).toContain('fill="#4f8cff"')
     expect(svg).toContain('text-anchor="middle"')
+  })
+
+  it('serif family exports a well-formed font-family attribute (no embedded double-quotes)', () => {
+    const { svg } = boardToSvg(
+      board([{ id: 't', kind: 'text', x: 10, y: 10, text: 'serifed', fontFamily: 'serif' }]),
+      {}
+    )
+    // An embedded `"` inside the value would terminate the `font-family="…"` attribute early,
+    // silently truncating the stack to `Georgia,` → default-font fallback in every SVG renderer.
+    expect(svg).toContain('font-family="Georgia, Times New Roman, serif"')
+    expect(svg).not.toContain('font-family="Georgia, "')
   })
 })
