@@ -49,6 +49,7 @@ import { quotePathsForPaste } from './terminal/terminalDrop'
 import { installSelectionShim } from './terminal/terminalSelection'
 import { BoardFullViewContext } from '../fullViewContext'
 import { RecapView } from '../RecapView'
+import { useTerminalFlip } from './useTerminalFlip'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -193,7 +194,10 @@ export function TerminalBoard({
   const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
   // T15: flip to the recap back-face. The xterm well (front) stays MOUNTED across the
   // flip so the live PTY session never tears down — see the flip wrapper in render.
-  const [flipped, setFlipped] = useState(false)
+  // The fold animation + double-click trigger live in useTerminalFlip (flat-at-rest 3D,
+  // so it never reintroduces the preserve-3d pointer-hit-test bug). `flipped` aliases it.
+  const flip = useTerminalFlip()
+  const flipped = flip.flipped
   // T-resume: the Restart control offers Resume-vs-New only when we know a session to resume.
   const [restartMenu, setRestartMenu] = useState(false)
   const canResume = !!board.agentSessionId
@@ -737,7 +741,7 @@ export function TerminalBoard({
           name="back"
           title={flipped ? 'Show terminal' : 'Show recap'}
           active={flipped}
-          onClick={() => setFlipped((v) => !v)}
+          onClick={flip.toggle}
         />
       </span>
     </>
@@ -824,15 +828,28 @@ export function TerminalBoard({
         onDelete={onDelete}
         onStartConnect={onStartConnect}
       >
-        <div style={lod ? shellHidden : shell}>
-          {/* T15 flip: an OVERLAY, not a 3D card. The FRONT face (live xterm well) stays
-              mounted always — flipping never unmounts it, so the PTY survives. When `flipped`,
-              the recap renders as an OPAQUE overlay on top with NORMAL (un-transformed) geometry.
-              We deliberately avoid a `rotateY(180deg)` 3D flip: Chromium mis-maps pointer
-              hit-testing on nested preserve-3d back-faces, which left the recap's refresh button
-              unclickable (seen top-right, hit area mirrored). The front mirrors the shell's
-              flex-column layout so the xterm well still fills (fit/webgl unaffected). */}
-          <div style={{ position: 'absolute', inset: 0 }}>
+        <div style={{ ...(lod ? shellHidden : shell), ...flip.perspectiveStyle }}>
+          {/* T15 flip + double-click: the stage rotates as a UNIT during the fold, then settles
+              FLAT (transform:none at rest — see useTerminalFlip). The FRONT face (live xterm well)
+              stays mounted always — flipping never unmounts it, so the PTY survives. When `flipped`,
+              the recap renders as an OPAQUE overlay on top. We still never leave a PERSISTENT
+              `rotateY`/preserve-3d at rest: Chromium mis-maps pointer hit-testing on nested 3D
+              back-faces, which once left the recap's refresh button unclickable. The fold's 3D
+              exists only mid-animation and never crosses 90°. Double-click anywhere flips (and
+              flips back); it overrides React Flow's onNodeDoubleClick focus for terminals. */}
+          <div
+            style={flip.stageStyle}
+            onDoubleClick={(e) => {
+              // Skip interactive chrome (dock buttons, pickers/menus, the editable label) so a
+              // double-click on a control never also flips the board.
+              if (
+                (e.target as HTMLElement).closest('button, input, .ca-port-picker, [data-no-flip]')
+              )
+                return
+              e.stopPropagation() // stop RF's node-double-click (focusBoard) from also firing
+              flip.toggle()
+            }}
+          >
             <div
               style={{
                 position: 'absolute',

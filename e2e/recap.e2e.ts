@@ -38,3 +38,38 @@ test('flip shows the recap for a terminal board', async ({ page, electronApp }) 
     await mainCall(electronApp, 'teardownProject', tmp)
   }
 })
+
+/**
+ * Double-click flip: double-clicking the terminal flips it to the recap (overriding React
+ * Flow's node-double-click focus), and double-clicking the recap flips it back. Proves the
+ * onDoubleClick trigger + the fold animation settle (the recap overlay actually mounts and
+ * later unmounts). We offset the first double-click off-center so it lands on the terminal
+ * surface, not the centered idle "Start" button (double-clicks on buttons are guarded out).
+ */
+test('double-click flips a terminal to its recap and back', async ({ page, electronApp }) => {
+  const tmp = await mainCall<string>(electronApp, 'createTempProject', 'recap-dbl-', 'recap-dbl')
+  try {
+    const id = await seed(page, 'terminal', { launchCommand: 'claude', agentTranscriptPath: 'x' })
+    const wrote = await mainCall<boolean>(
+      electronApp,
+      'writeRecapMd',
+      id,
+      '# T\n\n**Now:** Reviewing auth; resume -> refresh-token\n\n- 14:32 — review auth\n'
+    )
+    expect(wrote, 'canned recap md persisted to the temp project .canvas/memory/').toBe(true)
+
+    const node = page.locator(`.react-flow__node[data-id="${id}"]`)
+    const recap = page.locator('[data-test="recap-body"]')
+
+    // Double-click the terminal surface (off-center, away from the title-bar + Start button)
+    // → flips to the recap. expect() auto-waits through the ~300ms fold.
+    await node.dblclick({ position: { x: 40, y: 80 } })
+    await expect(recap).toContainText('Reviewing auth')
+
+    // Double-click the recap body → flips back; the recap overlay unmounts.
+    await recap.dblclick()
+    await expect(recap).toHaveCount(0)
+  } finally {
+    await mainCall(electronApp, 'teardownProject', tmp)
+  }
+})
