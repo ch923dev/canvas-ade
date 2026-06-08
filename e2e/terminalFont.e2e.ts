@@ -32,10 +32,11 @@ test.describe('terminal font resize', () => {
     )
     const shrank = await pollEval(page, `${fontOf(id)} < ${before}`, 3000)
     expect(shrank, 'live font shrank by Ctrl+-').toBe(true)
-    const persisted = await evalIn<number>(
+    const boards = await evalIn<Array<{ id: string; fontSize?: number }>>(
       page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)}).fontSize`
+      `window.__canvasE2E.getBoards()`
     )
+    const persisted = boards.find((b) => b.id === id)?.fontSize
     expect(persisted).toBe(before - 1)
   })
 

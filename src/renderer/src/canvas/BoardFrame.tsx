@@ -35,6 +35,7 @@ export function IconBtn({
   title,
   active = false,
   danger = false,
+  disabled,
   size = 15,
   sw,
   restColor = 'var(--text-3)',
@@ -48,6 +49,8 @@ export function IconBtn({
   title: string
   active?: boolean
   danger?: boolean
+  /** When true, the button is visually muted and not clickable. */
+  disabled?: boolean
   size?: number
   /** Stroke width override for the glyph (sparse glyphs like ⋯ need more ink to read). */
   sw?: number
@@ -109,6 +112,7 @@ export function IconBtn({
   return (
     <button
       title={title}
+      disabled={disabled}
       onClick={handleClick}
       onContextMenu={
         onContextMenu
@@ -143,12 +147,13 @@ export function IconBtn({
         placeItems: 'center',
         borderRadius: 'var(--r-ctl)',
         border: '1px solid transparent',
-        cursor: 'pointer',
-        background: hover ? 'var(--surface-overlay)' : 'transparent',
+        cursor: disabled ? 'default' : 'pointer',
+        background: hover && !disabled ? 'var(--surface-overlay)' : 'transparent',
         color,
         outline: 'none',
         boxShadow: focus ? '0 0 0 1.5px var(--accent)' : 'none',
-        transition: 'color .1s, background .1s'
+        transition: 'color .1s, background .1s',
+        ...(disabled ? { opacity: 0.35 } : {})
       }}
     >
       <Icon name={name} size={size} sw={sw} />

@@ -146,7 +146,7 @@ export function TerminalConfig({
         Font size
         <div style={fontRow}>
           <button type="button" style={stepBtn} onClick={() => onSetFont(fontSize - 1)}>
-            A-
+            A{'\u2212'}
           </button>
           <span style={fontVal}>{fontSize}</span>
           <button type="button" style={stepBtn} onClick={() => onSetFont(fontSize + 1)}>

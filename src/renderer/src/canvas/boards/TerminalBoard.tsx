@@ -56,7 +56,9 @@ import {
   readStickyFont,
   resolveInitialFont,
   writeStickyFont,
-  DEFAULT_TERMINAL_FONT
+  DEFAULT_TERMINAL_FONT,
+  MIN_TERMINAL_FONT,
+  MAX_TERMINAL_FONT
 } from './terminal/terminalFont'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
@@ -328,11 +330,9 @@ export function TerminalBoard({
   // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon
   // computes rows from the well height but IGNORES the screen div's CSS padding (measured: it
   // overcounts by one row; the 12px top padding then pushes the grid past the well bottom by a
-  // sub-cell remainder that the overflow:hidden boundary clips). After fitting, loop: if the
-  // rendered grid still spills, shed one row and re-check. Normally one iteration clears it, but
-  // at very small font sizes (e.g. 8px, cellHeight ~9.6px) the CSS padding can account for more
-  // than one cell height of spill, so we loop until clear (capped at the total row count to prevent
-  // infinite loops on degenerate layouts).
+  // sub-cell remainder that the overflow:hidden boundary clips). After fitting, compute the
+  // target row count arithmetically (cell height is font-fixed, constant across sheds) and call
+  // term.resize AT MOST ONCE — one PTY IPC instead of N separate resize calls.
   const fitWhole = useCallback((): void => {
     const fit = fitRef.current
     const term = termRef.current
@@ -348,15 +348,18 @@ export function TerminalBoard({
     const screenEl = screenRef.current?.querySelector('.xterm-screen') as HTMLElement | null
     const wellEl = screenRef.current?.closest('.nowheel') as HTMLElement | null
     if (!screenEl || !wellEl) return
-    // Loop: each shed immediately updates term.rows; re-read rects after each to catch the case
-    // where a single row drop still leaves spill (e.g. small fonts where padding > cellHeight).
-    const maxSheds = term.rows - 1
-    for (let i = 0; i < maxSheds; i++) {
-      if (screenEl.getBoundingClientRect().bottom - wellEl.getBoundingClientRect().bottom <= 1)
-        break
-      if (term.rows <= 1) break
-      term.resize(term.cols, term.rows - 1) // shed one partial row (fires onResize -> PTY resize)
+    // Compute the final row count in JS and call term.resize AT MOST ONCE (one PTY IPC instead of N).
+    // Each row shed lifts the (top-aligned) grid bottom by exactly one cell height (font-fixed,
+    // constant across sheds), so we can arithmetically determine the target row count upfront.
+    const grid = screenEl.getBoundingClientRect()
+    const cellH = grid.height / Math.max(1, term.rows) // rendered cell height (font-fixed)
+    let rows = term.rows
+    let overflow = grid.bottom - wellEl.getBoundingClientRect().bottom
+    while (overflow > 1 && rows > 1) {
+      rows -= 1
+      overflow -= cellH // each shed lifts the (top-aligned) grid bottom by one cell
     }
+    if (rows !== term.rows) term.resize(term.cols, rows) // single PTY resize
   }, [])
 
   // Route the in-spawn fit calls through a ref so `spawn`'s dependency array stays byte-identical
@@ -861,12 +864,26 @@ export function TerminalBoard({
 
   const actions = (
     <>
-      {(selected || hovered) && (
-        <>
-          <IconBtn name="minus" title="Smaller font (Ctrl -)" onClick={() => nudgeFont(-1)} />
-          <IconBtn name="plus" title="Bigger font (Ctrl +)" onClick={() => nudgeFont(1)} />
-        </>
-      )}
+      {(selected || hovered) &&
+        (() => {
+          const fs = clampTerminalFont(board.fontSize ?? readStickyFont())
+          return (
+            <>
+              <IconBtn
+                name="minus"
+                title="Smaller font (Ctrl -)"
+                onClick={() => nudgeFont(-1)}
+                disabled={fs <= MIN_TERMINAL_FONT}
+              />
+              <IconBtn
+                name="plus"
+                title="Bigger font (Ctrl +)"
+                onClick={() => nudgeFont(1)}
+                disabled={fs >= MAX_TERMINAL_FONT}
+              />
+            </>
+          )
+        })()}
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
       <IconBtn
         name="globe"
