@@ -53,22 +53,22 @@ describe('projectStore', () => {
     await createProject(dir, 'My Proj', {})
     // The created file must be re-readable through the same guard project:save writes
     // by — locking the fresh-doc shape to the single validated write path.
-    // BUG-024: fresh doc uses SCHEMA_VERSION (7) + connectors field, not the old hardcoded 2.
+    // BUG-024: fresh doc uses SCHEMA_VERSION (8) + connectors field, not the old hardcoded 2.
     const r = readProject(dir)
     expect(r.ok).toBe(true)
     if (r.ok)
-      expect(r.doc).toEqual({ schemaVersion: 7, viewport: null, boards: [], connectors: [] })
+      expect(r.doc).toEqual({ schemaVersion: 8, viewport: null, boards: [], connectors: [] })
   })
 
-  // BUG-024: createProject hardcodes schemaVersion 2 instead of SCHEMA_VERSION (7).
+  // BUG-024: createProject hardcodes schemaVersion 2 instead of SCHEMA_VERSION (8).
   // A fresh canvas.json must carry the current schema version so external tooling (MCP,
   // user scripts) and the backup never see a stale/old version marker on disk.
-  it('BUG-024: createProject writes schemaVersion === SCHEMA_VERSION (7), not the hardcoded 2', async () => {
+  it('BUG-024: createProject writes schemaVersion === SCHEMA_VERSION (8), not the hardcoded 2', async () => {
     const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
     const onDisk = JSON.parse(readFileSync(join(dir, 'canvas.json'), 'utf8'))
-    // Before the fix this asserts 2; after the fix it must be 7 (SCHEMA_VERSION).
-    expect(onDisk.schemaVersion).toBe(7)
+    // Before the fix this asserts 2; after the fix it must be 8 (SCHEMA_VERSION).
+    expect(onDisk.schemaVersion).toBe(8)
     // The fresh doc must also carry the connectors field added at v4→v5 migration.
     expect(onDisk).toHaveProperty('connectors')
   })
