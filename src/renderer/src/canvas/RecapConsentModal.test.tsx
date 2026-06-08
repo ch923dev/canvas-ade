@@ -32,6 +32,20 @@ describe('RecapConsentModal', () => {
     expect((window as unknown as ApiWindow).api.recap.setConsent).toHaveBeenCalledWith('declined')
   })
 
+  it('keeps the modal open + shows an error when setConsent rejects', async () => {
+    ;(window as unknown as ApiWindow).api.recap.setConsent.mockRejectedValueOnce(
+      new Error('ipc gone')
+    )
+    const onClose = vi.fn()
+    render(<RecapConsentModal onClose={onClose} />)
+    const dialog = screen.getByRole('dialog', { name: /agent recaps/i })
+    fireEvent.click(within(dialog).getByRole('button', { name: /enable recaps/i }))
+    await screen.findByRole('alert') // the error surfaced
+    expect(onClose).not.toHaveBeenCalled() // NOT closed on a failed save
+    const enable = within(dialog).getByRole('button', { name: /enable recaps/i })
+    expect((enable as HTMLButtonElement).disabled).toBe(false) // re-enabled for a retry
+  })
+
   it('renders the privacy assurance text', () => {
     render(<RecapConsentModal onClose={vi.fn()} />)
     const dialog = screen.getByRole('dialog', { name: /agent recaps/i })

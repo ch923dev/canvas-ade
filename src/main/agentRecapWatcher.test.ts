@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createRecapWatcher } from './agentRecapWatcher'
 
 describe('createRecapWatcher', () => {
@@ -123,6 +126,23 @@ describe('createRecapWatcher', () => {
     vi.advanceTimersByTime(200)
     expect(fired).toEqual([])
     vi.useRealTimers()
+  })
+
+  // Real-fs (default watchFile): the SessionStart-before-JSONL race the dir-watch fallback fixes.
+  it('arms a transcript created AFTER track() (SessionStart-before-JSONL race)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'recap-race-'))
+    const file = join(dir, 's-1.jsonl')
+    const fired: string[] = []
+    const w = createRecapWatcher({ debounceMs: 50, onIntent: (id) => fired.push(id) })
+    try {
+      w.track('b1', file) // the .jsonl does NOT exist yet → dir-watch fallback arms
+      await new Promise((r) => setTimeout(r, 150)) // let the directory watcher arm
+      writeFileSync(file, '{}\n') // create it → must be detected → onIntent after the debounce
+      await vi.waitFor(() => expect(fired).toContain('b1'), { timeout: 6000, interval: 50 })
+    } finally {
+      w.dispose()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('dispose clears all timers and watchers', () => {

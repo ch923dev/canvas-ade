@@ -1,4 +1,5 @@
-import { watch } from 'node:fs'
+import { existsSync, watch } from 'node:fs'
+import { basename, dirname } from 'node:path'
 
 export interface RecapWatcherDeps {
   onIntent: (boardId: string) => void
@@ -28,19 +29,52 @@ export function createRecapWatcher(deps: RecapWatcherDeps): RecapWatcher {
   const watchFile =
     deps.watchFile ??
     ((p, cb) => {
-      let w: ReturnType<typeof watch> | null = null
+      // Prefer a direct file watch (fires on every write, regardless of whether the platform
+      // reports a filename). But the SessionStart hook can record the map entry — and so call
+      // track() — a beat BEFORE Claude has written the transcript JSONL, and the map gets only
+      // ONE entry per session, so a plain fs.watch(file) that ENOENTs would never re-arm for that
+      // session (its auto-refresh would be dead until another session starts). So when the file
+      // is absent, watch its PARENT DIR only long enough to catch the file's creation — gated on
+      // existsSync(p) so a sibling session's transcript in the same projects/<slug>/ dir doesn't
+      // trip it (and waste LLM budget) — then switch to a direct file watch.
+      let fileW: ReturnType<typeof watch> | null = null
+      let dirW: ReturnType<typeof watch> | null = null
+      const armFile = (): void => {
+        try {
+          fileW = watch(p, { persistent: false }, () => cb())
+        } catch {
+          /* vanished again between the create event and the arm — re-armed on next map update */
+        }
+      }
       try {
-        w = watch(p, { persistent: false }, () => cb())
+        fileW = watch(p, { persistent: false }, () => cb())
       } catch {
-        // ENOENT/EACCES: the transcript file isn't there yet, so NO watcher is armed and it is
-        // NOT auto-re-armed when the file appears. Benign for Slice B — track() is called again
-        // on the next session-map update, which re-arms once the file exists. We deliberately do
-        // NOT fall back to watching the parent dir (as watchRecapMap does): the Claude projects
-        // dir holds many unrelated sessions' transcripts, so it would fire for other boards.
+        try {
+          const fname = basename(p)
+          dirW = watch(dirname(p), { persistent: false }, (_event, filename) => {
+            if ((filename === null || filename === fname) && existsSync(p)) {
+              try {
+                dirW?.close()
+              } catch {
+                /* already closed */
+              }
+              dirW = null
+              armFile()
+              cb() // the file now exists — treat its creation as the first change
+            }
+          })
+        } catch {
+          /* neither file nor parent dir watchable yet — re-armed on the next session-map update */
+        }
       }
       return () => {
         try {
-          w?.close()
+          fileW?.close()
+        } catch {
+          /* already closed */
+        }
+        try {
+          dirW?.close()
         } catch {
           /* already closed */
         }

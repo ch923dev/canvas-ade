@@ -13,13 +13,21 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
   const [busy, setBusy] = useState(false)
   const [showSnippet, setShowSnippet] = useState(false)
 
+  const [error, setError] = useState(false)
+
   const decide = async (decision: 'enabled' | 'declined'): Promise<void> => {
     setBusy(true)
+    setError(false)
     try {
       await window.api.recap.setConsent(decision)
-    } finally {
+      onClose() // close ONLY once the decision is durably persisted
+    } catch (err) {
+      // Don't close on failure (IPC teardown race / disk error) — closing would leave the user
+      // believing their choice stuck when nothing was saved. Re-enable so they can retry.
+      // eslint-disable-next-line no-console
+      console.error('[recap] setConsent failed; keeping the modal open to retry', err)
       setBusy(false)
-      onClose()
+      setError(true)
     }
   }
 
@@ -77,6 +85,14 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
             <li>File contents and command output are never sent.</li>
           </ul>
         </div>
+        {error && (
+          <p
+            style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--danger, #e5484d)' }}
+            role="alert"
+          >
+            Couldn&apos;t save your choice. Please try again.
+          </p>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
           <button
             disabled={busy}

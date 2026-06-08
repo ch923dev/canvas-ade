@@ -25,6 +25,10 @@ try {
     source: d.source || '',
     ts: Date.now()
   })
+  // Append-only by design: this hook runs in the user's separate `claude` process, so it must not
+  // race the app's reads/writes of this file. readRecapMap() is last-write-wins per boardId, so the
+  // live map stays bounded no matter how many lines accumulate; the file itself grows ~1 short line
+  // per session (KB-scale). Safe compaction would need cross-process locking — deliberately skipped.
   fs.appendFileSync(mapPath, line + '\n')
 } catch {
   /* never fail the agent's startup */
