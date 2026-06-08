@@ -17,10 +17,14 @@ type ShellInfo = Awaited<ReturnType<typeof window.api.listShells>>[number]
 
 export function TerminalConfig({
   board,
-  onClose
+  onClose,
+  fontSize,
+  onSetFont
 }: {
   board: TerminalBoardData
   onClose: () => void
+  fontSize: number
+  onSetFont: (next: number) => void
 }): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const [shells, setShells] = useState<ShellInfo[]>([])
@@ -138,6 +142,18 @@ export function TerminalConfig({
           onBlur={ringOff}
         />
       </label>
+      <div style={lbl}>
+        Font size
+        <div style={fontRow}>
+          <button type="button" style={stepBtn} onClick={() => onSetFont(fontSize - 1)}>
+            A-
+          </button>
+          <span style={fontVal}>{fontSize}</span>
+          <button type="button" style={stepBtn} onClick={() => onSetFont(fontSize + 1)}>
+            A+
+          </button>
+        </div>
+      </div>
       <div style={footer}>
         <button style={btnGhost} onClick={onClose}>
           Cancel
@@ -205,4 +221,27 @@ const footer: React.CSSProperties = {
   justifyContent: 'flex-end',
   gap: 6,
   marginTop: 2
+}
+const fontRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8
+}
+const stepBtn: React.CSSProperties = {
+  height: 26,
+  width: 34,
+  borderRadius: 'var(--r-ctl)',
+  border: '1px solid var(--border-subtle)',
+  background: 'var(--inset)',
+  color: 'var(--text)',
+  fontFamily: 'var(--ui)',
+  fontSize: 13,
+  cursor: 'pointer'
+}
+const fontVal: React.CSSProperties = {
+  minWidth: 34,
+  textAlign: 'center',
+  fontFamily: 'var(--mono)',
+  fontSize: 12,
+  color: 'var(--text-2)'
 }

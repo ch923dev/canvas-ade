@@ -988,7 +988,14 @@ export function TerminalBoard({
                 pointerEvents: flipped ? 'none' : 'auto'
               }}
             >
-              {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+              {configOpen && (
+                <TerminalConfig
+                  board={board}
+                  onClose={() => setConfigOpen(false)}
+                  fontSize={clampTerminalFont(board.fontSize ?? readStickyFont())}
+                  onSetFont={setFont}
+                />
+              )}
               {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
               explicit Start that spawns the shell + fires launchCommand on click. */}
               {state === 'idle' && (
