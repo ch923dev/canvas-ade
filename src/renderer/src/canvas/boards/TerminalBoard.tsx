@@ -816,6 +816,12 @@ export function TerminalBoard({
 
   const actions = (
     <>
+      {(selected || hovered) && (
+        <>
+          <IconBtn name="minus" title="Smaller font (Ctrl -)" onClick={() => nudgeFont(-1)} />
+          <IconBtn name="plus" title="Bigger font (Ctrl +)" onClick={() => nudgeFont(1)} />
+        </>
+      )}
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
       <IconBtn
         name="globe"
