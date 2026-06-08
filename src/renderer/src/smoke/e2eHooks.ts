@@ -121,6 +121,8 @@ export interface CanvasE2E {
   panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
   terminalMounted: (id: string) => boolean
+  /** The live xterm font size for a terminal board (px), or undefined if not mounted. */
+  terminalFontSize: (id: string) => number | undefined
   /** True if the live store round-trips through toObject→fromObject without throwing. */
   roundTripOk: () => boolean
   /** M2: add a connector between two boards; returns its id (null if rejected). */
@@ -372,6 +374,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalMounted(id) {
       return e2eTerminals.has(id)
+    },
+    terminalFontSize(id) {
+      return e2eTerminals.get(id)?.options.fontSize
     },
     roundTripOk() {
       try {
