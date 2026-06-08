@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { resolveTerminalKey, TERMINAL_NEWLINE, type TermKeyChord } from './terminalKeymap'
+import {
+  resolveTerminalKey,
+  handleTerminalKey,
+  TERMINAL_NEWLINE,
+  type TermKeyChord,
+  type TerminalKeyEffects
+} from './terminalKeymap'
 
 const chord = (key: string, mods: Partial<TermKeyChord> = {}): TermKeyChord => ({
   type: 'keydown',
@@ -77,5 +83,89 @@ describe('TERMINAL_NEWLINE (Shift+Enter byte)', () => {
     expect(TERMINAL_NEWLINE).toBe('\n')
     expect(TERMINAL_NEWLINE.charCodeAt(0)).toBe(0x0a)
     expect(TERMINAL_NEWLINE).not.toBe('\x1b\r')
+  })
+})
+
+/**
+ * The xterm attachCustomKeyEventHandler callback. The CRITICAL invariant these tests guard:
+ * for EVERY key we own (handler returns false) we MUST call e.preventDefault(). xterm's _keyDown
+ * returns early the moment our handler returns false — BEFORE xterm's own preventDefault — so
+ * without our preventDefault the browser still fires the follow-up `keypress`, and for Enter that
+ * keypress emits a CR (\r) that leaks to the PTY AFTER our LF → claude newlines then submits
+ * (the live Shift+Enter bug a synthetic-dispatch e2e could never see — no real keypress).
+ */
+describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', () => {
+  type TestEvent = TermKeyChord & { preventDefault(): void; prevented: boolean }
+  const evt = (key: string, mods: Partial<TermKeyChord> = {}): TestEvent => {
+    const e = { ...chord(key, mods), prevented: false } as TestEvent
+    e.preventDefault = (): void => {
+      e.prevented = true
+    }
+    return e
+  }
+  const spyFx = (
+    over: Partial<TerminalKeyEffects> = {}
+  ): TerminalKeyEffects & { calls: { newline: number; copy: number; paste: number } } => {
+    const calls = { newline: 0, copy: 0, paste: 0 }
+    return {
+      calls,
+      newline: () => {
+        calls.newline++
+      },
+      copySelection: () => {
+        calls.copy++
+        return true
+      },
+      paste: () => {
+        calls.paste++
+      },
+      ...over
+    }
+  }
+
+  it('Shift+Enter: preventDefault + newline + returns false (owns the key)', () => {
+    const e = evt('Enter', { shiftKey: true })
+    const fx = spyFx()
+    expect(handleTerminalKey(e, WIN, fx)).toBe(false)
+    expect(e.prevented).toBe(true) // THE regression guard — was missing, so keypress leaked \r
+    expect(fx.calls.newline).toBe(1)
+  })
+
+  it('plain Enter: returns true and does NOT preventDefault (xterm sends \\r to submit)', () => {
+    const e = evt('Enter')
+    expect(handleTerminalKey(e, WIN, spyFx())).toBe(true)
+    expect(e.prevented).toBe(false)
+  })
+
+  it('Ctrl+V: preventDefault + paste + returns false', () => {
+    const e = evt('v', { ctrlKey: true })
+    const fx = spyFx()
+    expect(handleTerminalKey(e, WIN, fx)).toBe(false)
+    expect(e.prevented).toBe(true)
+    expect(fx.calls.paste).toBe(1)
+  })
+
+  it('Ctrl+C with a selection: preventDefault + copy + returns false', () => {
+    const e = evt('c', { ctrlKey: true })
+    const fx = spyFx()
+    expect(handleTerminalKey(e, { hasSelection: true, isMac: false }, fx)).toBe(false)
+    expect(e.prevented).toBe(true)
+    expect(fx.calls.copy).toBe(1)
+  })
+
+  it('Ctrl+C, selection vanished after resolve: falls through to SIGINT, NO preventDefault', () => {
+    const e = evt('c', { ctrlKey: true })
+    // resolve saw a selection, but copySelection finds none (race) → must let xterm send SIGINT
+    const fx = spyFx({ copySelection: () => false })
+    expect(handleTerminalKey(e, { hasSelection: true, isMac: false }, fx)).toBe(true)
+    expect(e.prevented).toBe(false)
+  })
+
+  it('unowned key (plain letter): returns true, no preventDefault, no effects', () => {
+    const e = evt('a')
+    const fx = spyFx()
+    expect(handleTerminalKey(e, WIN, fx)).toBe(true)
+    expect(e.prevented).toBe(false)
+    expect(fx.calls).toEqual({ newline: 0, copy: 0, paste: 0 })
   })
 })
