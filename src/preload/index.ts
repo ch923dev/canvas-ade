@@ -112,6 +112,9 @@ export interface LlmStatus {
 
 export type LlmWriteResult = { ok: boolean; reason?: string }
 
+// ── Terminal-recap T12: consent state ──
+export type RecapConsentState = 'enabled' | 'declined' | 'undecided'
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -267,6 +270,24 @@ const api = {
       baseUrl?: string
       maxCallsPerDay?: number
     }): Promise<LlmWriteResult> => ipcRenderer.invoke('llm:setConfig', args)
+  },
+
+  // ── Terminal-recap T12: consent + learned-patches push ──
+  recap: {
+    getConsent: (): Promise<RecapConsentState> => ipcRenderer.invoke('recap:getConsent'),
+    setConsent: (decision: 'enabled' | 'declined'): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('recap:setConsent', decision),
+    /** main → renderer: learned patches `{boardId, sessionId, transcriptPath}[]` to persist on boards. */
+    onLearned: (
+      cb: (patches: { boardId: string; sessionId: string; transcriptPath: string }[]) => void
+    ): (() => void) => {
+      const h = (
+        _e: IpcRendererEvent,
+        p: { boardId: string; sessionId: string; transcriptPath: string }[]
+      ): void => cb(p)
+      ipcRenderer.on('recap:learned', h)
+      return () => ipcRenderer.removeListener('recap:learned', h)
+    }
   },
 
   // ── MCP board mirror (control plane; metadata only — id/type/title + coarse status

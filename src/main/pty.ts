@@ -123,6 +123,24 @@ const sessions = new Map<string, SessionLike>()
 /** Deleted-but-undoable sessions, kept alive up to PARK_TTL_MS for adopt-on-undo. */
 const parked = new Map<string, ParkedLike>()
 
+/**
+ * Injectable policy seam for injecting extra env vars at spawn time (e.g. CANVAS_RECAP_BOARD).
+ * Returns a record to merge LAST into the spawn env, or undefined for no extra env.
+ * Policy errors must NEVER break a spawn — the provider is called inside a try/catch.
+ * index.ts wires the policy (consent + claude detection) here; pty.ts stays decoupled.
+ */
+type RecapEnvProvider = (opts: {
+  id: string
+  launchCommand?: string
+  cwd?: string
+}) => Record<string, string> | undefined
+let recapEnvProvider: RecapEnvProvider | undefined
+
+/** index.ts wires the policy (consent + claude detection) here; pty.ts stays decoupled. */
+export function setRecapEnvProvider(fn: RecapEnvProvider | undefined): void {
+  recapEnvProvider = fn
+}
+
 /** A freshly minted port pair (real `MessageChannelMain` or a test double). */
 interface PortPair {
   port1: MessagePortMain
@@ -461,6 +479,17 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     if (process.platform === 'win32' && args.length === 0 && /\\bash\.exe$/i.test(shell)) {
       args = ['-l', '-i']
     }
+    let recapEnv: Record<string, string> | undefined
+    try {
+      recapEnv = recapEnvProvider?.({
+        id: opts.id,
+        launchCommand: opts.launchCommand,
+        cwd: opts.cwd
+      })
+    } catch {
+      recapEnv = undefined // policy must never break a spawn
+    }
+
     let proc: pty.IPty
     try {
       proc = pty.spawn(shell, args, {
@@ -468,7 +497,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
         cols: opts.cols ?? 80,
         rows: opts.rows ?? 24,
         cwd: safeCwd(opts.cwd),
-        env: { ...process.env } as Record<string, string>
+        env: { ...process.env, ...(recapEnv ?? {}) } as Record<string, string>
       })
     } catch (err) {
       // No live session was registered, so report the failure straight back.

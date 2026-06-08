@@ -47,7 +47,10 @@ import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPrevie
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { installSelectionShim } from './terminal/terminalSelection'
+import { resumeCommand } from './terminal/resumeCommand'
 import { BoardFullViewContext } from '../fullViewContext'
+import { RecapView } from '../RecapView'
+import { useTerminalFlip } from './useTerminalFlip'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -160,6 +163,10 @@ export function TerminalBoard({
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
   // let the spawn effect's ResizeObserver consume this flag on the first good fit.
   const pendingRespawnRef = useRef(false)
+  // T-resume: a one-shot launchCommand override for the NEXT respawn (the Restart menu's
+  // "Resume session" sets `claude --resume <id>`); respawn consumes + clears it so only that
+  // spawn uses it and a later restart falls back to board.launchCommand.
+  const launchOverrideRef = useRef<string | undefined>(undefined)
   // M-1: the idle-state "Start" button calls back into the CURRENT mount's `launch()`
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
@@ -188,6 +195,15 @@ export function TerminalBoard({
   const [state, setState] = useState<TerminalState>('spawning')
   const [configOpen, setConfigOpen] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
+  // T15: flip to the recap back-face. The xterm well (front) stays MOUNTED across the
+  // flip so the live PTY session never tears down — see the flip wrapper in render.
+  // The fold animation + double-click trigger live in useTerminalFlip (flat-at-rest 3D,
+  // so it never reintroduces the preserve-3d pointer-hit-test bug). `flipped` aliases it.
+  const flip = useTerminalFlip()
+  const flipped = flip.flipped
+  // T-resume: the Restart control offers Resume-vs-New only when we know a session to resume.
+  const [restartMenu, setRestartMenu] = useState(false)
+  const canResume = !!board.agentSessionId
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -295,12 +311,15 @@ export function TerminalBoard({
   const respawn = useCallback(() => {
     const term = termRef.current
     if (!term) return
+    // Consume a one-shot launch override (e.g. `claude --resume <id>`) for THIS spawn only.
+    const launchCommand = launchOverrideRef.current ?? board.launchCommand
+    launchOverrideRef.current = undefined
     void window.api
       .spawnTerminal({
         id: board.id,
         shell: board.shell,
         cwd: board.cwd ?? projectDir ?? undefined,
-        launchCommand: board.launchCommand,
+        launchCommand,
         cols: term.cols,
         rows: term.rows
       })
@@ -714,7 +733,22 @@ export function TerminalBoard({
         title="Configure terminal"
         onClick={() => setConfigOpen((v) => !v)}
       />
-      <IconBtn name="restart" title="Restart" onClick={restart} />
+      <IconBtn
+        name="restart"
+        title={canResume ? 'Restart (resume or new session)' : 'Restart'}
+        active={restartMenu}
+        onClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
+      />
+      {/* T15: flip to the recap back-face. IconBtn has no data-test prop, so the e2e/test
+          hook (`flip-<id>`) rides a wrapping span. */}
+      <span data-test={`flip-${board.id}`} style={{ display: 'inline-flex' }}>
+        <IconBtn
+          name="back"
+          title={flipped ? 'Show terminal' : 'Show recap'}
+          active={flipped}
+          onClick={flip.toggle}
+        />
+      </span>
     </>
   )
 
@@ -802,151 +836,239 @@ export function TerminalBoard({
         onRemoveFromGroup={onRemoveFromGroup}
         onStartConnect={onStartConnect}
       >
-        <div style={lod ? shellHidden : shell}>
-          {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
-          {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
+        <div style={{ ...(lod ? shellHidden : shell), ...flip.perspectiveStyle }}>
+          {/* T15 flip + double-click: the stage rotates as a UNIT during the fold, then settles
+              FLAT (transform:none at rest — see useTerminalFlip). The FRONT face (live xterm well)
+              stays mounted always — flipping never unmounts it, so the PTY survives. When `flipped`,
+              the recap renders as an OPAQUE overlay on top. We still never leave a PERSISTENT
+              `rotateY`/preserve-3d at rest: Chromium mis-maps pointer hit-testing on nested 3D
+              back-faces, which once left the recap's refresh button unclickable. The fold's 3D
+              exists only mid-animation and never crosses 90°. Double-click anywhere flips (and
+              flips back); it overrides React Flow's onNodeDoubleClick focus for terminals. */}
+          <div
+            style={flip.stageStyle}
+            onDoubleClick={(e) => {
+              // Skip interactive chrome (dock buttons, pickers/menus, the editable label) so a
+              // double-click on a control never also flips the board.
+              if (
+                (e.target as HTMLElement).closest('button, input, .ca-port-picker, [data-no-flip]')
+              )
+                return
+              e.stopPropagation() // stop RF's node-double-click (focusBoard) from also firing
+              flip.toggle()
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                // recap overlay is up → don't let the xterm behind it grab pointer/focus
+                pointerEvents: flipped ? 'none' : 'auto'
+              }}
+            >
+              {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+              {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
               explicit Start that spawns the shell + fires launchCommand on click. */}
-          {state === 'idle' && (
-            <div className="nodrag" style={idleOverlay} onMouseDown={(e) => e.stopPropagation()}>
-              <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
-                Start {identity}
-              </button>
-            </div>
-          )}
-          {previewNote && (
-            <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
-              {previewNote}
-              <button className="ca-preview-dismiss" onClick={() => setPreviewNote(null)}>
-                Dismiss
-              </button>
-            </div>
-          )}
-          {portChoices && portChoices.urls.length > 1 && (
-            <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="ca-port-picker-title">Multiple servers — choose one:</div>
-              {portChoices.urls.map((u) => (
-                <button
-                  key={u.url}
-                  className="ca-port-choice"
-                  onClick={() => {
-                    const { gesture } = portChoices
-                    setPortChoices(null)
-                    routeUrl(u.url, gesture)
-                  }}
+              {state === 'idle' && (
+                <div
+                  className="nodrag"
+                  style={idleOverlay}
+                  onMouseDown={(e) => e.stopPropagation()}
                 >
-                  {u.host}:{u.port}
-                </button>
-              ))}
-              <button className="ca-preview-dismiss" onClick={() => setPortChoices(null)}>
-                Cancel
-              </button>
-            </div>
-          )}
-          {browserPick && (
-            <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
-              <div className="ca-port-picker-title">Push to which browser(s)?</div>
-              {browserPick.candidates.map((c) => (
-                <label key={c.id} className="ca-browser-choice" title={c.url}>
-                  <input
-                    type="checkbox"
-                    checked={checked.has(c.id)}
-                    onChange={(e) =>
-                      setChecked((prev) => {
-                        const next = new Set(prev)
-                        if (e.target.checked) next.add(c.id)
-                        else next.delete(c.id)
-                        return next
-                      })
-                    }
-                  />
-                  <span className="ca-browser-choice-label">{c.title}</span>
-                  {c.connectedTo && (
-                    <span
-                      className="ca-browser-choice-warn"
-                      title={`Connected to ${c.connectedTo.title}`}
-                    >
-                      ⚠ on {c.connectedTo.title}
-                    </span>
-                  )}
-                </label>
-              ))}
-              <label className="ca-browser-choice">
-                <input
-                  type="checkbox"
-                  checked={checked.has(NEW_BROWSER)}
-                  onChange={(e) =>
-                    setChecked((prev) => {
-                      const next = new Set(prev)
-                      if (e.target.checked) next.add(NEW_BROWSER)
-                      else next.delete(NEW_BROWSER)
-                      return next
-                    })
-                  }
-                />
-                <span className="ca-browser-choice-label">+ New browser</span>
-              </label>
-              {severCount > 0 && (
-                <div className="ca-browser-sever">
-                  ⚠ Disconnects {severCount} browser{severCount > 1 ? 's' : ''} from{' '}
-                  {severCount > 1 ? 'their' : 'its'} current terminal.
+                  <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
+                    Start {identity}
+                  </button>
                 </div>
               )}
-              <div className="ca-browser-actions">
-                <button className="ca-preview-dismiss" onClick={() => setBrowserPick(null)}>
-                  Cancel
-                </button>
-                <button
-                  className="ca-browser-connect"
-                  disabled={checked.size === 0}
-                  onClick={confirmBrowserPick}
+              {previewNote && (
+                <div
+                  className="ca-preview-note"
+                  role="status"
+                  onMouseDown={(e) => e.stopPropagation()}
                 >
-                  Connect{checked.size > 0 ? ` ${checked.size}` : ''}
-                </button>
-              </div>
-            </div>
-          )}
-          {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
+                  {previewNote}
+                  <button className="ca-preview-dismiss" onClick={() => setPreviewNote(null)}>
+                    Dismiss
+                  </button>
+                </div>
+              )}
+              {portChoices && portChoices.urls.length > 1 && (
+                <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+                  <div className="ca-port-picker-title">Multiple servers — choose one:</div>
+                  {portChoices.urls.map((u) => (
+                    <button
+                      key={u.url}
+                      className="ca-port-choice"
+                      onClick={() => {
+                        const { gesture } = portChoices
+                        setPortChoices(null)
+                        routeUrl(u.url, gesture)
+                      }}
+                    >
+                      {u.host}:{u.port}
+                    </button>
+                  ))}
+                  <button className="ca-preview-dismiss" onClick={() => setPortChoices(null)}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+              {browserPick && (
+                <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+                  <div className="ca-port-picker-title">Push to which browser(s)?</div>
+                  {browserPick.candidates.map((c) => (
+                    <label key={c.id} className="ca-browser-choice" title={c.url}>
+                      <input
+                        type="checkbox"
+                        checked={checked.has(c.id)}
+                        onChange={(e) =>
+                          setChecked((prev) => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(c.id)
+                            else next.delete(c.id)
+                            return next
+                          })
+                        }
+                      />
+                      <span className="ca-browser-choice-label">{c.title}</span>
+                      {c.connectedTo && (
+                        <span
+                          className="ca-browser-choice-warn"
+                          title={`Connected to ${c.connectedTo.title}`}
+                        >
+                          ⚠ on {c.connectedTo.title}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                  <label className="ca-browser-choice">
+                    <input
+                      type="checkbox"
+                      checked={checked.has(NEW_BROWSER)}
+                      onChange={(e) =>
+                        setChecked((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(NEW_BROWSER)
+                          else next.delete(NEW_BROWSER)
+                          return next
+                        })
+                      }
+                    />
+                    <span className="ca-browser-choice-label">+ New browser</span>
+                  </label>
+                  {severCount > 0 && (
+                    <div className="ca-browser-sever">
+                      ⚠ Disconnects {severCount} browser{severCount > 1 ? 's' : ''} from{' '}
+                      {severCount > 1 ? 'their' : 'its'} current terminal.
+                    </div>
+                  )}
+                  <div className="ca-browser-actions">
+                    <button className="ca-preview-dismiss" onClick={() => setBrowserPick(null)}>
+                      Cancel
+                    </button>
+                    <button
+                      className="ca-browser-connect"
+                      disabled={checked.size === 0}
+                      onClick={confirmBrowserPick}
+                    >
+                      Connect{checked.size > 0 ? ` ${checked.size}` : ''}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
               `nodrag nowheel` stops React Flow from treating clicks as a node drag or
               wheel as a canvas zoom. Crucially we also stop the mousedown reaching RF
               and force focus into xterm: otherwise RF focuses the node wrapper on
               click and swallows keystrokes until a restart (the "can't type" bug). */}
-          <div
-            className="nodrag nowheel"
-            style={screenWrap}
-            onMouseDown={(e) => {
-              e.stopPropagation()
-              termRef.current?.focus()
-            }}
-            onContextMenu={openMenu}
-            onDragOver={(e) => {
-              if (e.dataTransfer?.types?.includes('Files')) {
-                e.preventDefault() // required for onDrop to fire
-                e.stopPropagation()
-              }
-            }}
-            onDrop={(e) => {
-              const files = e.dataTransfer?.files
-              if (!files || files.length === 0) return
-              // preventDefault guards against browser nav (alongside App.tsx's window
-              // handler); stopPropagation keeps any outer React drop listener from also
-              // handling this drop.
-              e.preventDefault()
-              e.stopPropagation()
-              const paths = Array.from(files).map((f) => window.api.pathForFile(f))
-              const payload = quotePathsForPaste(paths)
-              if (payload) termRef.current?.paste(payload)
-            }}
-          >
-            <div ref={screenRef} style={screen} />
+              <div
+                className="nodrag nowheel"
+                style={screenWrap}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  termRef.current?.focus()
+                }}
+                onContextMenu={openMenu}
+                onDragOver={(e) => {
+                  if (e.dataTransfer?.types?.includes('Files')) {
+                    e.preventDefault() // required for onDrop to fire
+                    e.stopPropagation()
+                  }
+                }}
+                onDrop={(e) => {
+                  const files = e.dataTransfer?.files
+                  if (!files || files.length === 0) return
+                  // preventDefault guards against browser nav (alongside App.tsx's window
+                  // handler); stopPropagation keeps any outer React drop listener from also
+                  // handling this drop.
+                  e.preventDefault()
+                  e.stopPropagation()
+                  const paths = Array.from(files).map((f) => window.api.pathForFile(f))
+                  const payload = quotePathsForPaste(paths)
+                  if (payload) termRef.current?.paste(payload)
+                }}
+              >
+                <div ref={screenRef} style={screen} />
+              </div>
+              {menu && (
+                <ElementContextMenu
+                  x={menu.x}
+                  y={menu.y}
+                  entries={menuEntries}
+                  onClose={() => setMenu(null)}
+                />
+              )}
+            </div>
+            {/* Recap overlay: rendered only while flipped (so it doesn't fetch memory for every
+                terminal up-front). Opaque (RecapView paints var(--surface)) so it fully covers the
+                xterm beneath. `nodrag nowheel` keeps React Flow from treating a click as a node-drag
+                or a scroll as a canvas zoom. No 3D transform → correct pointer hit-testing. */}
+            {flipped && (
+              <div className="nodrag nowheel" style={{ position: 'absolute', inset: 0 }}>
+                <RecapView boardId={board.id} />
+              </div>
+            )}
+            {/* T-resume: Restart menu. Sits at the flip-stage level (not inside a face) so it stays
+                interactive whether you're viewing the terminal OR the recap — you often resume FROM
+                the recap. Resume → respawn with `claude --resume <sessionId>`; New → fresh launch. */}
+            {restartMenu && (
+              <div
+                className="ca-port-picker nodrag nowheel"
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{ position: 'absolute', top: 8, right: 8, zIndex: 7 }}
+              >
+                <div className="ca-port-picker-title">Restart terminal</div>
+                <button
+                  className="ca-port-choice"
+                  onClick={() => {
+                    // Sanitise agentSessionId before it reaches the PTY — it comes from canvas.json
+                    // (third-party-craftable), so resumeCommand strips it to a single inert token
+                    // (or undefined → fresh launch). See resumeCommand.ts.
+                    launchOverrideRef.current = resumeCommand(board.agentSessionId)
+                    setRestartMenu(false)
+                    restart()
+                  }}
+                >
+                  Resume session
+                </button>
+                <button
+                  className="ca-port-choice"
+                  onClick={() => {
+                    launchOverrideRef.current = undefined
+                    setRestartMenu(false)
+                    restart()
+                  }}
+                >
+                  New session
+                </button>
+                <button className="ca-preview-dismiss" onClick={() => setRestartMenu(false)}>
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
-          {menu && (
-            <ElementContextMenu
-              x={menu.x}
-              y={menu.y}
-              entries={menuEntries}
-              onClose={() => setMenu(null)}
-            />
-          )}
         </div>
       </BoardFrame>
       {lod && (

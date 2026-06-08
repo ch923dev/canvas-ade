@@ -375,7 +375,18 @@ function freeSlot(
  */
 const COMMON_KEYS = ['x', 'y', 'w', 'h', 'title', 'z'] as const
 const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
-  terminal: [...COMMON_KEYS, 'shell', 'launchCommand', 'cwd', 'port'],
+  // `agentSessionId`/`agentTranscriptPath` are terminal-only app-learned fields the
+  // recap hook (`recap:learned`) patches onto a board so its recap survives reload —
+  // they round-trip through toObject like any other terminal prop, so they belong here.
+  terminal: [
+    ...COMMON_KEYS,
+    'shell',
+    'launchCommand',
+    'cwd',
+    'port',
+    'agentSessionId',
+    'agentTranscriptPath'
+  ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements']
 }

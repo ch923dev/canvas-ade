@@ -1,6 +1,7 @@
-import { it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { it, expect, vi, beforeEach, afterEach, describe } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
 import { SettingsModal } from './SettingsModal'
+import { useCanvasStore } from '../store/canvasStore'
 
 // `globals: false` in vitest.config means RTL's auto-cleanup hook isn't registered,
 // so each render would leak its portaled <body> modal into the next test.
@@ -11,6 +12,11 @@ const llm = {
   setKey: vi.fn(),
   clearKey: vi.fn(),
   setConfig: vi.fn()
+}
+
+const recap = {
+  getConsent: vi.fn(),
+  setConsent: vi.fn()
 }
 
 beforeEach(() => {
@@ -25,7 +31,11 @@ beforeEach(() => {
   llm.setKey.mockResolvedValue({ ok: true })
   llm.clearKey.mockResolvedValue({ ok: true })
   llm.setConfig.mockResolvedValue({ ok: true })
-  ;(window as unknown as { api: { llm: typeof llm } }).api = { llm }
+  recap.getConsent.mockResolvedValue('undecided')
+  recap.setConsent.mockResolvedValue({ ok: true })
+  ;(window as unknown as { api: { llm: typeof llm; recap: typeof recap } }).api = { llm, recap }
+  // Reset the store to a no-project state between tests.
+  useCanvasStore.setState({ project: { dir: null, name: null, status: 'welcome' } })
 })
 
 it('prefills provider + model from status on open', async () => {
@@ -295,4 +305,106 @@ it('BUG-031: mount effect status() rejection must not produce unhandledRejection
   // Assert: no unhandled rejection
   expect(unhandled).not.toHaveBeenCalled()
   window.removeEventListener('unhandledrejection', unhandled)
+})
+
+// ── Agent recaps toggle ───────────────────────────────────────────────────────────────────────
+
+describe('Agent recaps toggle', () => {
+  // Helper: locate the toggle via its aria-label (the project uses data-test, not data-testid,
+  // so RTL's findByTestId won't find it — use findByLabelText or querySelector instead).
+  const findToggle = async (): Promise<HTMLInputElement> =>
+    (await screen.findByLabelText(/agent recaps \(this project\)/i)) as HTMLInputElement
+
+  it('is disabled with a hint when no project is open (project.dir === null)', async () => {
+    // Store already reset to dir:null in beforeEach.
+    recap.getConsent.mockResolvedValue('declined')
+    render(<SettingsModal onClose={() => {}} />)
+    const toggle = await findToggle()
+    expect(toggle.disabled).toBe(true)
+    expect(screen.getByText(/open a project to enable/i)).toBeTruthy()
+  })
+
+  it('is enabled and unchecked when a project is open and consent is declined', async () => {
+    useCanvasStore.setState({
+      project: { dir: '/some/project', name: 'my-project', status: 'open' }
+    })
+    recap.getConsent.mockResolvedValue('declined')
+    render(<SettingsModal onClose={() => {}} />)
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.disabled).toBe(false))
+    expect(toggle.checked).toBe(false)
+  })
+
+  it('is checked when consent is enabled', async () => {
+    useCanvasStore.setState({
+      project: { dir: '/some/project', name: 'my-project', status: 'open' }
+    })
+    recap.getConsent.mockResolvedValue('enabled')
+    render(<SettingsModal onClose={() => {}} />)
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.checked).toBe(true))
+  })
+
+  it('calls setConsent("enabled") and checks the box when toggled on', async () => {
+    useCanvasStore.setState({
+      project: { dir: '/some/project', name: 'my-project', status: 'open' }
+    })
+    recap.getConsent.mockResolvedValue('declined')
+    render(<SettingsModal onClose={() => {}} />)
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.disabled).toBe(false))
+    fireEvent.click(toggle)
+    expect(recap.setConsent).toHaveBeenCalledWith('enabled')
+    await waitFor(() => expect(toggle.checked).toBe(true))
+  })
+
+  it('calls setConsent("declined") and unchecks the box when toggled off', async () => {
+    useCanvasStore.setState({
+      project: { dir: '/some/project', name: 'my-project', status: 'open' }
+    })
+    recap.getConsent.mockResolvedValue('enabled')
+    render(<SettingsModal onClose={() => {}} />)
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.checked).toBe(true))
+    fireEvent.click(toggle)
+    expect(recap.setConsent).toHaveBeenCalledWith('declined')
+    await waitFor(() => expect(toggle.checked).toBe(false))
+  })
+
+  it('re-reads consent when the open project changes (projectDir dep)', async () => {
+    // Start with no project (dir:null) — getConsent is called once on mount.
+    recap.getConsent.mockResolvedValue('declined')
+    render(<SettingsModal onClose={() => {}} />)
+    await waitFor(() => expect(recap.getConsent).toHaveBeenCalledTimes(1))
+
+    // Simulate the user opening a project while the modal stays mounted.
+    recap.getConsent.mockResolvedValue('enabled')
+    useCanvasStore.setState({
+      project: { dir: '/new/project', name: 'new-project', status: 'open' }
+    })
+
+    // The effect must re-run, calling getConsent again and reflecting the new value.
+    await waitFor(() => expect(recap.getConsent).toHaveBeenCalledTimes(2))
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.checked).toBe(true))
+  })
+
+  it('loads consent with a cancellation guard (post-unmount resolve is a no-op)', async () => {
+    useCanvasStore.setState({
+      project: { dir: '/some/project', name: 'my-project', status: 'open' }
+    })
+    let resolveConsent: (v: string) => void = () => {}
+    recap.getConsent.mockReturnValue(
+      new Promise((res) => {
+        resolveConsent = res as (v: string) => void
+      })
+    )
+    const err = vi.spyOn(console, 'error')
+    const { unmount } = render(<SettingsModal onClose={() => {}} />)
+    unmount()
+    resolveConsent('enabled')
+    await new Promise((r) => setTimeout(r, 5))
+    expect(err).not.toHaveBeenCalled()
+    err.mockRestore()
+  })
 })

@@ -89,6 +89,18 @@ function rehydrateMissingSummaries(dir: string, doc: unknown, engine: MemoryEngi
   }
 }
 
+/** Extract the string board ids from a (possibly malformed) canvas doc. Best-effort, pure. */
+function boardIdsOf(doc: unknown): Set<string> {
+  const ids = new Set<string>()
+  const boards = (doc as { boards?: unknown })?.boards
+  if (!Array.isArray(boards)) return ids
+  for (const board of boards) {
+    const id = (board as { id?: unknown })?.id
+    if (typeof id === 'string' && id.length > 0) ids.add(id)
+  }
+  return ids
+}
+
 export function registerProjectHandlers(
   ipcMain: IpcMain,
   getWin: () => BrowserWindow | null,
@@ -97,7 +109,16 @@ export function registerProjectHandlers(
   memoryEngine: MemoryEngine = createMemoryEngine({ onIntent: logSummarizeIntent }),
   // T-F4: the manual-refresh sink. index.ts wires this to summaryLoop.onIntent so a user ⟳ runs
   // the SAME budgeted/passive summarize the detector does (no new egress). Default = no-op.
-  onRefresh: (boardId: string) => Promise<void> = async () => {}
+  onRefresh: (boardId: string) => Promise<void> = async () => {},
+  // Terminal recap (Task 10): fired with the project dir whenever a project is opened/reopened
+  // (project:open + project:current). index.ts wires this to re-ensure the recap SessionStart hook
+  // for an already-consented project. Default = no-op. Best-effort (never aborts the open).
+  onProjectOpen: (dir: string) => void = () => {},
+  // Terminal recap: fired with the set of board ids in the CURRENT canvas doc on every
+  // save/open/switch. index.ts wires this to recapWatcher.retain() so a deleted terminal — or the
+  // boards of a project we switched away from — has its transcript watcher torn down instead of
+  // leaking until quit. Default = no-op. Best-effort (never aborts the save/open).
+  onBoardsObserved: (liveBoardIds: Set<string>) => void = () => {}
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
@@ -153,12 +174,21 @@ export function registerProjectHandlers(
       const allReferencedIds = new Set<string>([...primaryIds, ...bakIds])
       gcAssets(r.dir, allReferencedIds)
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on open (best-effort, never aborts open)
+      // Terminal recap (Task 10): re-ensure the recap SessionStart hook for an already-consented
+      // project. Best-effort — a hook-install failure must NEVER abort the open.
+      try {
+        onProjectOpen(r.dir)
+      } catch (err) {
+        console.warn('[recap] onProjectOpen failed on project:open (non-fatal)', err)
+      }
       try {
         memoryEngine.reset() // T-M2: a project switch drops stale fingerprints/timers
         // Baseline from the LOADED doc so the FIRST meaningful post-open edit emits an intent.
         // Without this, the first project:save becomes the baseline (no emit) and the first
         // edit after every open/switch is silently swallowed until a second save.
         memoryEngine.observe(r.doc)
+        // recap: a project switch must drop the prior project's transcript watchers.
+        onBoardsObserved(boardIdsOf(r.doc))
         // BUG-018 #2: re-summarize boards whose cached summary file is missing on disk.
         rehydrateMissingSummaries(r.dir, r.doc, memoryEngine)
       } catch (err) {
@@ -208,6 +238,7 @@ export function registerProjectHandlers(
       await writeProject(dir, doc)
       try {
         memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
+        onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
       } catch (err) {
         console.warn('[memoryEngine] observe failed (non-fatal)', err)
       }
@@ -250,10 +281,19 @@ export function registerProjectHandlers(
       const bakIds = bakResult.ok ? collectAssetIds(bakResult.doc) : new Set<string>()
       gcAssets(r.dir, new Set([...primaryIds, ...bakIds]))
       scaffoldProjectMemory(r.dir) // T-M1: ensure .canvas/ on reopen (best-effort, never aborts)
+      // Terminal recap (Task 10): re-ensure the recap SessionStart hook for an already-consented
+      // project on auto-reopen. Best-effort — never abort the reopen.
+      try {
+        onProjectOpen(r.dir)
+      } catch (err) {
+        console.warn('[recap] onProjectOpen failed on project:current (non-fatal)', err)
+      }
       try {
         memoryEngine.reset() // T-M2: re-baseline on reopen/switch
         // Baseline from the loaded doc (see project:open) so the first post-reopen edit emits.
         memoryEngine.observe(r.doc)
+        // recap: re-baseline the transcript watchers to this project's boards on auto-reopen.
+        onBoardsObserved(boardIdsOf(r.doc))
         // BUG-018 #2: re-summarize boards whose cached summary file is missing on disk.
         rehydrateMissingSummaries(r.dir, r.doc, memoryEngine)
       } catch (err) {

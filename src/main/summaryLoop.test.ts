@@ -13,8 +13,14 @@ import {
   sanitizeSummary,
   sanitizeTitle,
   createSummaryLoop,
+  buildRecapMarkdown,
+  parseRecapPayload,
+  redactSecrets,
+  RECAP_SYSTEM,
+  MAX_RECAP_NOTES,
   type TerminalRuntime
 } from './summaryLoop'
+import type { Milestone } from './agentTranscript'
 import { createCanvasMemory } from './canvasMemory'
 import type { Encryptor } from './llmKeyStore'
 
@@ -800,6 +806,333 @@ describe('createSummaryLoop — in-flight guard', () => {
       await Promise.all([a, b])
       const mem = createCanvasMemory(proj)
       expect(mem.readBoard('p1')).toContain('[mock]')
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('redactSecrets — scrub common secret shapes before egress', () => {
+  it('redacts an OpenAI-style sk- key', () => {
+    expect(redactSecrets('key sk-abc123DEF456ghi789jkl mno')).toContain('[redacted]')
+    expect(redactSecrets('key sk-abc123DEF456ghi789jkl mno')).not.toContain(
+      'sk-abc123DEF456ghi789jkl'
+    )
+  })
+  it('redacts a GitHub token (ghp_/gho_/ghs_)', () => {
+    const out = redactSecrets('token ghp_abcdefghijklmnopqrstuvwxyz0123456789 done')
+    expect(out).toContain('[redacted]')
+    expect(out).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789')
+    expect(redactSecrets('gho_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')).toContain('[redacted]')
+    expect(redactSecrets('ghs_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')).toContain('[redacted]')
+  })
+  it('redacts an AWS access key id', () => {
+    expect(redactSecrets('AKIAIOSFODNN7EXAMPLE in config')).toContain('[redacted]')
+    expect(redactSecrets('AKIAIOSFODNN7EXAMPLE in config')).not.toContain('AKIAIOSFODNN7EXAMPLE')
+  })
+  it('redacts Slack xoxb-/xoxp- tokens', () => {
+    expect(redactSecrets('xoxb-12345-67890-abcdefABCDEF')).toContain('[redacted]')
+    expect(redactSecrets('xoxp-12345-67890-abcdefABCDEF')).toContain('[redacted]')
+  })
+  it('redacts a Bearer token', () => {
+    const out = redactSecrets('Authorization: Bearer abcDEF123ghiJKL456mnoPQR789stu')
+    expect(out).toContain('[redacted]')
+    expect(out).not.toContain('abcDEF123ghiJKL456mnoPQR789stu')
+  })
+  it('redacts a long hex / base64 blob that looks like a key', () => {
+    const hex = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+    expect(redactSecrets(`hash ${hex} end`)).toContain('[redacted]')
+    const b64 = 'QWxhZGRpbjpvcGVuIHNlc2FtZQ123456789ABCDEFabcdefXYZ='
+    expect(redactSecrets(`blob ${b64} end`)).toContain('[redacted]')
+  })
+  it('leaves ordinary prose intact', () => {
+    const prose = 'Reviewing the auth module; found 3 issues in the login handler.'
+    expect(redactSecrets(prose)).toBe(prose)
+  })
+  it('a non-string yields an empty string (never throws)', () => {
+    expect(redactSecrets(undefined as unknown as string)).toBe('')
+    expect(redactSecrets(12345 as unknown as string)).toBe('')
+  })
+})
+
+describe('recap assembly', () => {
+  const ms: Milestone[] = [
+    { ts: Date.parse('2026-06-07T14:32:00Z'), role: 'user', text: 'review auth' },
+    { ts: Date.parse('2026-06-07T14:35:00Z'), role: 'agent', text: 'found 3 issues' }
+  ]
+  // mirror summaryLoop's hhmm (LOCAL time) so assertions are timezone-independent
+  const localHHMM = (ts: number): string => {
+    const d = new Date(ts)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+  it('parses the curated {i,text} note shape', () => {
+    expect(
+      parseRecapPayload('{"now":"doing X","notes":[{"i":1,"text":"a"},{"i":2,"text":"b"}]}')
+    ).toEqual({
+      now: 'doing X',
+      notes: [
+        { i: 1, text: 'a' },
+        { i: 2, text: 'b' }
+      ]
+    })
+  })
+  it('back-compat: a bare-string note → {text} (no index)', () => {
+    expect(parseRecapPayload('{"now":"doing X","notes":["a","b"]}')).toEqual({
+      now: 'doing X',
+      notes: [{ text: 'a' }, { text: 'b' }]
+    })
+  })
+  it('drops malformed notes (missing text / non-object)', () => {
+    expect(parseRecapPayload('{"now":"x","notes":[{"i":1,"text":"ok"},{"i":2},42,null]}')).toEqual({
+      now: 'x',
+      notes: [{ i: 1, text: 'ok' }]
+    })
+  })
+  it('tolerates non-JSON → NOW only', () => {
+    expect(parseRecapPayload('just prose')).toEqual({ now: 'just prose', notes: [] })
+  })
+  it('unwraps a ```json markdown code fence (common LLM habit)', () => {
+    const fenced = '```json\n{"now":"doing X","notes":[{"i":1,"text":"a"}]}\n```'
+    expect(parseRecapPayload(fenced)).toEqual({ now: 'doing X', notes: [{ i: 1, text: 'a' }] })
+  })
+  it('unwraps JSON prefaced with prose', () => {
+    const prefaced = 'Here is the recap:\n{"now":"doing Y","notes":[{"i":1,"text":"c"}]}'
+    expect(parseRecapPayload(prefaced)).toEqual({ now: 'doing Y', notes: [{ i: 1, text: 'c' }] })
+  })
+  it('stamps each note with its referenced milestone time (curated, possibly out of order)', () => {
+    const md = buildRecapMarkdown(
+      'T',
+      {
+        now: 'Reviewing auth; resume -> refresh-token',
+        notes: [
+          { i: 2, text: 'Found 3 issues' },
+          { i: 1, text: 'You: review auth' }
+        ]
+      },
+      ms
+    )
+    expect(md).toContain('**Now:** Reviewing auth')
+    // the note text gets ITS referenced milestone's time (i:2 → ms[1], i:1 → ms[0]), not positional
+    expect(md).toContain(`- ${localHHMM(ms[1].ts)} — Found 3 issues`)
+    expect(md).toContain(`- ${localHHMM(ms[0].ts)} — You: review auth`)
+  })
+  it('falls back to positional milestone when a note has no index', () => {
+    const md = buildRecapMarkdown(
+      'T',
+      { now: 'x', notes: [{ text: 'You: review auth' }, { text: 'Found 3 issues' }] },
+      ms
+    )
+    expect(md).toContain(`- ${localHHMM(ms[0].ts)} — You: review auth`)
+    expect(md).toContain(`- ${localHHMM(ms[1].ts)} — Found 3 issues`)
+  })
+  it('caps the timeline at MAX_RECAP_NOTES lines', () => {
+    const many: Milestone[] = Array.from({ length: 10 }, (_, k) => ({
+      ts: Date.parse('2026-06-07T14:00:00Z') + k * 60_000,
+      role: 'agent',
+      text: `m${k}`
+    }))
+    const notes = Array.from({ length: 10 }, (_, k) => ({ i: k + 1, text: `n${k}` }))
+    const md = buildRecapMarkdown('T', { now: 'x', notes }, many)
+    expect((md.match(/^- \d\d:\d\d — /gm) ?? []).length).toBe(MAX_RECAP_NOTES)
+  })
+  it('RECAP_SYSTEM instructs JSON-only + no timestamps', () => {
+    expect(RECAP_SYSTEM).toMatch(/JSON/)
+    expect(RECAP_SYSTEM).toMatch(/timestamps/i)
+  })
+})
+
+describe('createSummaryLoop — terminal recap branch (getAgentMilestones)', () => {
+  // A terminal board whose launchCommand is claude; the injected milestones drive the recap path.
+  const claudeTerminal = (over: Record<string, unknown> = {}): unknown => ({
+    id: 't1',
+    type: 'terminal',
+    title: 'Agent',
+    launchCommand: 'claude',
+    cwd: '/repo',
+    ...over
+  })
+  const recapMilestones: Milestone[] = [
+    { ts: Date.parse('2026-06-07T14:32:00Z'), role: 'user', text: 'review auth' },
+    { ts: Date.parse('2026-06-07T14:35:00Z'), role: 'agent', text: 'found 3 issues' }
+  ]
+  // A fetch that returns the recap JSON payload as the provider `content`.
+  const recapFetch = (async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              now: 'Reviewing the auth module; resume at refresh-token',
+              notes: [
+                { i: 1, text: 'You: review auth' },
+                { i: 2, text: 'Found 3 issues' }
+              ]
+            })
+          }
+        }
+      ]
+    }),
+    text: async () => ''
+  })) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+
+  it('writes a NOW + timestamped timeline when getAgentMilestones returns milestones', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-recap-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => recapMilestones,
+      now: () => new Date(),
+      fetch: recapFetch,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      await loop.onIntent({ boardId: 't1' })
+      const md = createCanvasMemory(proj).readBoard('t1')
+      expect(md).toBeDefined()
+      expect(md).toContain('**Now:** Reviewing the auth module')
+      expect(md).toMatch(/- \d\d:\d\d — You: review auth/)
+      expect(md).toMatch(/- \d\d:\d\d — Found 3 issues/)
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the config+runtime path when getAgentMilestones returns empty', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-recap-'))
+    const { loop, llmDataDir } = makeLoop({
+      getDir: () => proj,
+      doc: docWith([claudeTerminal()])
+    })
+    // override: empty milestones must NOT take the recap branch
+    const loop2 = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => [],
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' } // mock echoes the board-content input
+    })
+    void loop // makeLoop only used for its temp dir cleanup wiring
+    try {
+      await loop2.onIntent({ boardId: 't1' })
+      const md = createCanvasMemory(proj).readBoard('t1')
+      expect(md).toBeDefined()
+      expect(md).toContain('[mock]') // config-path mock prose, NOT a recap NOW/timeline
+      expect(md).not.toContain('**Now:**')
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the config path for a terminal with no learned transcript (getter returns undefined)', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-recap-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({
+        ok: true,
+        dir: proj,
+        name: 'proj',
+        doc: docWith([terminal({ launchCommand: 'pnpm dev' })])
+      }),
+      // No transcript was ever learned for this board (no claude SessionStart hook fired) → the
+      // getter returns undefined → no recap, regardless of launchCommand. The presence of a learned
+      // transcript (milestones), not launchCommand, is what gates the recap branch now.
+      getAgentMilestones: () => undefined,
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    try {
+      await loop.onIntent({ boardId: 't1' })
+      const md = createCanvasMemory(proj).readBoard('t1')
+      expect(md).toBeDefined()
+      expect(md).toContain('[mock]')
+      expect(md).not.toContain('**Now:**')
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a throwing getAgentMilestones falls back to the config path (never fails the summarize)', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-recap-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => {
+        throw new Error('transcript unavailable')
+      },
+      now: () => new Date(),
+      env: { CANVAS_LLM_MOCK: '1' }
+    })
+    try {
+      await loop.onIntent({ boardId: 't1' })
+      const md = createCanvasMemory(proj).readBoard('t1')
+      expect(md).toBeDefined()
+      expect(md).toContain('[mock]')
+      expect(md).not.toContain('**Now:**')
+    } finally {
+      rmSync(proj, { recursive: true, force: true })
+      rmSync(llmDataDir, { recursive: true, force: true })
+    }
+  })
+
+  it('redacts secrets in milestone text before it becomes recap egress input', async () => {
+    const proj = mkdtempSync(join(tmpdir(), 'm3-recap-'))
+    const llmDataDir = mkdtempSync(join(tmpdir(), 'm3-llm-'))
+    let sentBody = ''
+    const captureFetch = (async (_url: unknown, init: { body?: string }) => {
+      sentBody = init?.body ?? ''
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({ now: 'ok', notes: ['a', 'b'] }) } }]
+        }),
+        text: async () => ''
+      }
+    }) as unknown as Parameters<typeof createSummaryLoop>[0]['fetch']
+    const secretMs: Milestone[] = [
+      {
+        ts: Date.parse('2026-06-07T14:32:00Z'),
+        role: 'user',
+        text: 'use key sk-abc123DEF456ghi789jkl'
+      },
+      {
+        ts: Date.parse('2026-06-07T14:35:00Z'),
+        role: 'agent',
+        text: 'export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789'
+      }
+    ]
+    const loop = createSummaryLoop({
+      llmDataDir,
+      encryptor: fakeEncryptor,
+      getCurrentDir: () => proj,
+      readProject: () => ({ ok: true, dir: proj, name: 'proj', doc: docWith([claudeTerminal()]) }),
+      getAgentMilestones: () => secretMs,
+      now: () => new Date(),
+      fetch: captureFetch,
+      env: { provider: 'openrouter', OPENROUTER_API_KEY: 'test-key' }
+    })
+    try {
+      await loop.onIntent({ boardId: 't1' })
+      expect(sentBody).toContain('[redacted]')
+      expect(sentBody).not.toContain('sk-abc123DEF456ghi789jkl')
+      expect(sentBody).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz0123456789')
     } finally {
       rmSync(proj, { recursive: true, force: true })
       rmSync(llmDataDir, { recursive: true, force: true })

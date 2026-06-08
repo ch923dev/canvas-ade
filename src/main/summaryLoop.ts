@@ -22,6 +22,7 @@ import { createBudgetStore } from './llmBudget'
 import { createCanvasMemory } from './canvasMemory'
 import { projectName, type ProjectResult } from './projectStore'
 import type { SummarizeIntent } from './memoryEngine'
+import { type Milestone } from './agentTranscript'
 
 /** Cap the board-content text fed to the model (canvas.json has no live scrollback). */
 export const MAX_INPUT_CHARS = 4000
@@ -78,6 +79,41 @@ export function sanitizeTitle(t: string): string {
     .replace(/[\r\n]+/g, ' ') // collapse any newlines to a single space
     .replace(/^[ \t]*#/, '\\#') // escape a leading # that would open a new heading context
     .trim()
+}
+
+/**
+ * SECURITY (terminal recap): scrub common secret shapes out of agent-transcript milestone text
+ * BEFORE it becomes egress input. The consent modal promises "only a secret-scrubbed slice leaves;
+ * secrets/file-contents never sent", so buildRecapInput runs every milestone through this. Pure +
+ * total: never throws; a non-string yields ''. Best-effort, NOT a guarantee — it targets the most
+ * common provider-token shapes plus long opaque hex/base64 blobs. Each match → `[redacted]`.
+ * Order matters: specific provider prefixes first, the generic high-entropy blob last so it does
+ * not chew up the surrounding prose around an already-handled token.
+ */
+export function redactSecrets(text: string): string {
+  if (typeof text !== 'string') return ''
+  return (
+    text
+      // OpenAI-style: sk-..., sk-proj-..., sk-ant-... (>= 16 trailing key chars)
+      .replace(/\bsk-(?:[a-z]+-)?[A-Za-z0-9_-]{16,}\b/g, '[redacted]')
+      // GitHub tokens: ghp_ (PAT), gho_ (OAuth), ghs_ (server), ghu_ (user), ghr_ (refresh)
+      .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, '[redacted]')
+      // AWS access key id: AKIA / ASIA + 16 uppercase alnum
+      .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[redacted]')
+      // Slack bot/user tokens: xoxb-/xoxp-/xoxa-/xoxr-...
+      .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[redacted]')
+      // Generic `Bearer <token>` (Authorization headers) — keep the word, redact the token
+      .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/g, 'Bearer [redacted]')
+      // Long opaque hex blob (>= 40 hex chars: SHA-1+, raw key material). Threshold stays at 40 on
+      // purpose: a 20-byte (40-hex) token/hash MUST be redacted before egress, and over-redacting a
+      // 40-char git SHA in a milestone to [redacted] is an accepted cosmetic loss. Do NOT raise it
+      // to 64 to "keep commit hashes" — that re-exposes 20-byte secrets, and the base64 rule below
+      // already redacts any hex SHA containing a digit regardless, so it wouldn't even help.
+      .replace(/\b[0-9a-fA-F]{40,}\b/g, '[redacted]')
+      // Long base64/base64url blob (>= 40 chars) that looks like key material — require a digit so
+      // ordinary all-letter prose words never trip it.
+      .replace(/\b(?=[A-Za-z0-9+/_-]*\d)[A-Za-z0-9+/_-]{40,}={0,2}\b/g, '[redacted]')
+  )
 }
 
 type RawBoard = { id?: unknown; type?: unknown; title?: unknown; [k: string]: unknown }
@@ -213,6 +249,134 @@ export function buildSummarizeInput(
   return { system: SYSTEM, text: text.length > 0 ? text : 'Empty board.' }
 }
 
+// ── Task 9: terminal/agent-CLI session RECAP ────────────────────────────────────────────
+//
+// ADDITIVE path: taken ONLY for a terminal board whose launchCommand is `claude` AND when the
+// injected getAgentMilestones returns >= 1 distilled milestone. Otherwise the loop falls back to
+// the existing buildSummarizeInput (config+runtime) path, unchanged. The model returns a small
+// JSON payload {now, notes[]}; CODE then assembles the markdown with the REAL milestone timestamps
+// (the model is told NOT to emit timestamps) so the timeline is trustworthy even if the prose
+// drifts. Egress is secret-scrubbed (redactSecrets) per the consent contract.
+
+/**
+ * The recap system prompt. The model receives NUMBERED milestones and returns JSON-only
+ * {now, notes:[{i,text}]}, where `i` is the milestone number a note summarizes — the app (not the
+ * model) stamps the real time from that milestone. CURATION is the point: a recap is a glance, not a
+ * log, so the model keeps only the few resume-relevant beats and drops routine churn.
+ */
+export const RECAP_SYSTEM =
+  'You summarize an AI coding agent session for a developer who wants to resume it. You are given ' +
+  'NUMBERED milestones (the user and agent turns). Return ONLY JSON: ' +
+  '{"now": "<ONE sentence: what the agent is doing right now + where to resume>", ' +
+  '"notes": [{"i": <the milestone number this note summarizes>, "text": "<short, resume-relevant>"}]}. ' +
+  'Keep ONLY the 3-5 MOST resume-relevant moments — merge granular steps into one, and SKIP routine ' +
+  'chatter, self-corrections, mode/setup lines, and internal status. Prefer concrete decisions, ' +
+  'scope, and findings. Be factual; never invent. Do NOT write timestamps — the app adds them from `i`.'
+
+/** Cap how many distilled milestones go into one recap (matches agentTranscript's default). */
+export const MAX_MILESTONES = 12
+
+/** Hard ceiling on rendered timeline lines (a recap is a glance, not a log). */
+export const MAX_RECAP_NOTES = 5
+
+/** One curated recap note: `i` (1-based milestone number, for the timestamp) + the short text. */
+export interface RecapNote {
+  i?: number
+  text: string
+}
+/** Parsed recap payload: the NOW headline + curated, milestone-referencing notes. */
+export interface RecapPayload {
+  now: string
+  notes: RecapNote[]
+}
+
+/** Coerce one model-supplied note into a RecapNote (tolerates a bare string for back-compat). */
+function normalizeNote(n: unknown): RecapNote | null {
+  if (typeof n === 'string') return { text: n }
+  if (n && typeof n === 'object') {
+    const o = n as { i?: unknown; text?: unknown }
+    if (typeof o.text === 'string') {
+      const i = typeof o.i === 'number' && Number.isFinite(o.i) ? o.i : undefined
+      return { i, text: o.text }
+    }
+  }
+  return null
+}
+
+/**
+ * Pure: parse the model's recap completion. A well-formed `{now, notes}` object → that shape; any
+ * non-JSON / malformed payload degrades gracefully to NOW-only (the whole text as `now`, no notes).
+ * Never throws.
+ *
+ * Robust to the common LLM habit of wrapping JSON in a markdown ```json fence (or prefacing it with
+ * prose) despite "return ONLY JSON": we slice from the first `{` to the last `}` before parsing, so
+ * a fenced/prefixed object still parses into a real NOW + timeline instead of dumping the raw blob.
+ */
+export function parseRecapPayload(text: string): RecapPayload {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  const candidate = start >= 0 && end > start ? text.slice(start, end + 1) : text
+  try {
+    const o = JSON.parse(candidate) as { now?: unknown; notes?: unknown }
+    if (typeof o?.now === 'string') {
+      const notes = Array.isArray(o.notes)
+        ? o.notes.map(normalizeNote).filter((n): n is RecapNote => n !== null)
+        : []
+      return { now: o.now, notes }
+    }
+  } catch {
+    /* fall through to NOW-only */
+  }
+  return { now: text.trim(), notes: [] }
+}
+
+/** Pure: a milestone epoch-ms → local "HH:MM" (or "--:--" for a missing/zero timestamp). */
+function hhmm(ts: number): string {
+  if (!ts) return '--:--'
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/**
+ * CODE assembles the recap markdown — real timestamps from the milestones, the NOW + curated notes
+ * from the (sanitized) model payload. Each note's timestamp comes from the milestone it references
+ * (`note.i`, 1-based); if the model omitted/over-ranged `i` we fall back to the note's positional
+ * milestone, so a stale index never mis-times or drops a line. Capped at MAX_RECAP_NOTES (a recap is
+ * a glance). Both the NOW line and each note run through sanitizeSummary (untrusted LLM → md file).
+ */
+export function buildRecapMarkdown(
+  title: string,
+  payload: RecapPayload,
+  milestones: Milestone[]
+): string {
+  const head = `# ${sanitizeTitle(title) || 'Recap'}\n\n**Now:** ${sanitizeSummary(payload.now).trim()}\n`
+  const notes = payload.notes.slice(0, MAX_RECAP_NOTES)
+  if (notes.length === 0) return head + '\n'
+  const lines: string[] = ['']
+  notes.forEach((note, idx) => {
+    const ref =
+      note.i && note.i >= 1 && note.i <= milestones.length
+        ? milestones[note.i - 1]
+        : milestones[idx]
+    const text = sanitizeSummary(note.text).replace(/\n/g, ' ').trim()
+    lines.push(`- ${hhmm(ref ? ref.ts : 0)} — ${text}`)
+  })
+  return head + lines.join('\n') + '\n'
+}
+
+/**
+ * Build the numbered-milestone summarize input for a terminal recap. SECURITY: each milestone's
+ * text is run through redactSecrets BEFORE it becomes egress input (the consent contract). Capped
+ * to MAX_INPUT_CHARS like the config path.
+ */
+export function buildRecapInput(milestones: Milestone[]): SummarizeInput {
+  const numbered = milestones
+    .map((m, i) => `${i + 1}. [${m.role === 'user' ? 'you' : 'agent'}] ${redactSecrets(m.text)}`)
+    .join('\n')
+    .slice(0, MAX_INPUT_CHARS)
+  return { system: RECAP_SYSTEM, text: numbered || 'No activity yet.' }
+}
+
 function boardsOf(doc: unknown): RawBoard[] {
   const boards = (doc as { boards?: unknown })?.boards
   return Array.isArray(boards) ? (boards as RawBoard[]) : []
@@ -260,6 +424,12 @@ export interface SummaryLoopDeps {
    * the summary simply omits the status line. NEVER an action surface: the loop only READS it.
    */
   getTerminalRuntime?: (boardId: string) => TerminalRuntime | undefined
+  /**
+   * Terminal recap (this feature): MAIN-internal accessor for a board's distilled transcript
+   * milestones. Optional + defensive (mirrors getTerminalRuntime): absent/throwing/empty → the
+   * loop falls back to the config+runtime summary. NEVER an action surface — read-only.
+   */
+  getAgentMilestones?: (boardId: string, board: unknown) => Milestone[] | undefined
   /** Clock for the per-day budget (default new Date()). */
   now?: () => Date
   /** Transport (default global fetch); the mock seam short-circuits it under e2e. */
@@ -313,10 +483,30 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         } catch {
           runtime = undefined
         }
+
+        // Task 9 (terminal recap): ADDITIVE branch. Taken for ANY terminal board once the injected
+        // getAgentMilestones returns >= 1 milestone. We do NOT gate on launchCommand==='claude' here:
+        // a transcript is only ever learned (via the SessionStart hook) for a real claude session, so
+        // the presence of milestones IS the claude signal — and gating on launchCommand wrongly
+        // excluded shell boards where the user typed `claude` by hand. Defensive (mirrors
+        // getTerminalRuntime): a throwing/absent getter, a non-terminal board, or an empty milestone
+        // list → milestones stays undefined → the existing config+runtime path runs unchanged.
+        let milestones: Milestone[] | undefined
+        try {
+          if ((board as RawBoard)?.type === 'terminal') {
+            milestones = deps.getAgentMilestones?.(boardId, board)
+          }
+        } catch {
+          milestones = undefined
+        }
+        const useRecap = !!milestones && milestones.length > 0
+
         const config = readLlmConfig(deps.llmDataDir)
         const result = await runSummarize(
           config,
-          buildSummarizeInput(board, runtime, now().getTime()),
+          useRecap
+            ? buildRecapInput(milestones!)
+            : buildSummarizeInput(board, runtime, now().getTime()),
           {
             fetch: fetchImpl,
             env,
@@ -347,14 +537,18 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         // BUG-016: sanitize + bound the untrusted LLM output before it lands on disk. The input
         // was capped (MAX_INPUT_CHARS) but the response was not - a local/openrouter endpoint with
         // no server-side token cap could return a giant or control-char-laced blob written verbatim.
-        mem.writeBoard(
-          boardId,
-          // BUG-017: sanitize the title to prevent newlines from breaking the # heading
-          `# ${sanitizeTitle(str((board as RawBoard).title)) || boardId}
+        // Task 9: the recap path assembles a NOW + code-timestamped timeline from the model's JSON
+        // payload + the REAL milestone timestamps; the non-recap path is byte-identical to before.
+        // BUG-017: sanitize the title to prevent newlines from breaking the # heading (both paths).
+        const title = sanitizeTitle(str((board as RawBoard).title)) || boardId
+        const md =
+          useRecap && milestones
+            ? buildRecapMarkdown(title, parseRecapPayload(result.text), milestones)
+            : `# ${title}
 
 ${sanitizeSummary(result.text)}
 `
-        )
+        mem.writeBoard(boardId, md)
         // BUG-014: the index + rollup enumerate the WHOLE board list, so they must reflect any
         // boards added/removed during the (up to 30 s) await — not the `r.doc` snapshot taken
         // before it. With another board's intent racing concurrently, the stale snapshot would

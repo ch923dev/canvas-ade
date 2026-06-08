@@ -1,8 +1,35 @@
-import { resolve } from 'path'
+import { resolve, join } from 'path'
+import { copyFileSync, mkdirSync } from 'fs'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 import { injectCspMeta } from './src/main/csp'
+
+/**
+ * Terminal recap (Task 10 Step 6): copy the SessionStart hook script into the main build output
+ * so it lands at `out/main/hooks/recordSession.js`. electron-vite/rollup only bundles MODULES that
+ * are imported — recordSession.js is run by an EXTERNAL process (Claude, via `node <path>`), never
+ * imported, so without this copy it would be absent from `out/` and the packaged app. We resolve
+ * the destination from the main build's outDir (so it tracks any outDir override) and copy on
+ * `writeBundle` for BOTH `pnpm dev` and `pnpm build`. Paired with a hooks asarUnpack glob in
+ * electron-builder.yml so the file is extracted to a real on-disk path when packaged.
+ */
+function copyRecapHook(): Plugin {
+  const src = resolve(__dirname, 'src/main/hooks/recordSession.js')
+  let outDir = resolve(__dirname, 'out/main')
+  return {
+    name: 'canvas-ade-copy-recap-hook',
+    configResolved(cfg): void {
+      // cfg.build.outDir is the main build's output dir (out/main by electron-vite convention).
+      if (cfg.build?.outDir) outDir = resolve(__dirname, cfg.build.outDir)
+    },
+    writeBundle(): void {
+      const destDir = join(outDir, 'hooks')
+      mkdirSync(destDir, { recursive: true })
+      copyFileSync(src, join(destDir, 'recordSession.js'))
+    }
+  }
+}
 
 /**
  * Content-Security-Policy hardening (Phase 4 §E). The renderer loads via `loadFile`
@@ -24,7 +51,7 @@ function cspMeta(): Plugin {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin(), copyRecapHook()],
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/main/index.ts') }
