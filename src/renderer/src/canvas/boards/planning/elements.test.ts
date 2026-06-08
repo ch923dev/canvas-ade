@@ -415,6 +415,19 @@ describe('W3 mutators', () => {
   })
 })
 
+describe('makeText', () => {
+  it('makes point text (no width) by default', () => {
+    const t = makeText('t', { x: 10.4, y: 20.6 })
+    expect(t).toEqual({ id: 't', kind: 'text', x: 10, y: 21, text: '' })
+    expect('width' in t).toBe(false)
+  })
+  it('carries width + fontSize for area text', () => {
+    const t = makeText('t', { x: 0, y: 0 }, { width: 200, fontSize: 'XL' })
+    expect(t.width).toBe(200)
+    expect(t.fontSize).toBe('XL')
+  })
+})
+
 describe('W4 image helpers', () => {
   it('fitImageSize scales down to the max longest side, preserving aspect', () => {
     expect(fitImageSize(720, 360, 360)).toEqual({ w: 360, h: 180 })

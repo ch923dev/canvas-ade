@@ -19,6 +19,7 @@ import type {
   TextElement
 } from '../../../lib/boardSchema'
 import { noteRotation, TINT_CYCLE } from './tints'
+import type { FontSizeToken } from './textStyle'
 
 /** Default sizes for the card-shaped elements (board-local px). */
 export const NOTE_SIZE = { w: 156, h: 96 } as const
@@ -62,9 +63,16 @@ export function makeNote(
   }
 }
 
-/** A new free-text element anchored at the drop point. */
-export function makeText(id: string, at: { x: number; y: number }): TextElement {
-  return { id, kind: 'text', x: Math.round(at.x), y: Math.round(at.y), text: '' }
+/** A new free-text element anchored at the drop point. `opts.width` ⇒ area text (wrap box). */
+export function makeText(
+  id: string,
+  at: { x: number; y: number },
+  opts?: { width?: number; fontSize?: FontSizeToken }
+): TextElement {
+  const base: TextElement = { id, kind: 'text', x: Math.round(at.x), y: Math.round(at.y), text: '' }
+  if (opts?.fontSize !== undefined) base.fontSize = opts.fontSize
+  if (opts?.width !== undefined) base.width = Math.round(opts.width)
+  return base
 }
 
 /** A new checklist card with one empty starter item. */
