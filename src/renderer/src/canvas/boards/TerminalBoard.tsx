@@ -325,6 +325,42 @@ export function TerminalBoard({
     else attachWebgl(term)
   }, [lod, attachWebgl, detachWebgl])
 
+  // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon
+  // computes rows from the well height but IGNORES the screen div's CSS padding (measured: it
+  // overcounts by one row; the 12px top padding then pushes the grid past the well bottom by a
+  // sub-cell remainder that the overflow:hidden boundary clips). After fitting, if the rendered
+  // grid spills, shed one row. overflow <= one cell, so a single drop always clears it.
+  const fitWhole = useCallback((): void => {
+    const fit = fitRef.current
+    const term = termRef.current
+    if (!fit || !term) return
+    try {
+      fit.fit()
+    } catch {
+      return // well not laid out (LOD / display:none)
+    }
+    // Measure the SAME elements the Task-11 probe (terminalGeometry) reads: the rendered
+    // `.xterm-screen` grid (a child of the screen host) vs the `.nowheel` well that clips it.
+    // `screenRef` is the term.open() host; `.closest('.nowheel')` walks up to the screenWrap.
+    const screenEl = screenRef.current?.querySelector('.xterm-screen') as HTMLElement | null
+    const wellEl = screenRef.current?.closest('.nowheel') as HTMLElement | null
+    if (!screenEl || !wellEl) return
+    if (
+      screenEl.getBoundingClientRect().bottom - wellEl.getBoundingClientRect().bottom > 1 &&
+      term.rows > 1
+    ) {
+      term.resize(term.cols, term.rows - 1) // shed the partial row (fires onResize -> PTY resize)
+    }
+  }, [])
+
+  // Route the in-spawn fit calls through a ref so `spawn`'s dependency array stays byte-identical
+  // (fitWhole is itself stable [], but the ref mirrors the fontStepRef/lodRef/attachWebglRef
+  // pattern and removes any exhaustive-deps churn risk). Kept in sync below.
+  const fitWholeRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    fitWholeRef.current = fitWhole
+  }, [fitWhole])
+
   // Fire a fresh PTY spawn into the CURRENT term. Shared by the Restart action and
   // the ResizeObserver's deferred-respawn path (#23). The async .then()/.catch()
   // bail if the captured term was disposed/replaced mid-IPC (#16), and a rejected
@@ -390,16 +426,13 @@ export function TerminalBoard({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
+    termRef.current = term
+    fitRef.current = fit
     // Attach a GL context only when mounting in detail view; a board mounted at LOD
     // runs on the DOM renderer until it returns to detail (see the LOD effect above).
     if (!lodRef.current) attachWebgl(term)
-    try {
-      fit.fit()
-    } catch {
-      /* element not laid out yet */
-    }
-    termRef.current = term
-    fitRef.current = fit
+    // Whole-cell mount fit (clip-free). Routed through the ref so spawn's deps stay byte-identical.
+    fitWholeRef.current()
     if (isE2E()) e2eTerminals.set(board.id, term)
 
     // Scale-correct selection (F2a): the board renders inside React Flow's scaled
@@ -557,11 +590,7 @@ export function TerminalBoard({
     })
 
     const ro = new ResizeObserver(() => {
-      try {
-        fit.fit()
-      } catch {
-        /* element detached mid-resize */
-      }
+      fitWholeRef.current() // whole-cell fit (clip-free); swallows the not-laid-out throw itself
       // First good fit after a hidden/LOD mount spawns the deferred PTY at the
       // board's true width; later fits no-op (`spawned` guard) and just resize.
       launch()
@@ -657,12 +686,10 @@ export function TerminalBoard({
     const fs = clampTerminalFont(board.fontSize ?? readStickyFont())
     if (term.options.fontSize === fs) return
     term.options.fontSize = fs
-    try {
-      fitRef.current?.fit() // unfitted well (LOD / display:none) → applies on the next RO fit
-    } catch {
-      /* element not laid out yet */
-    }
-  }, [board.fontSize])
+    // A bigger font means taller cells -> the row count must drop; whole-cell fit keeps it
+    // clip-free. (Unfitted well: fitWhole swallows the not-laid-out throw; next RO fit applies.)
+    fitWhole()
+  }, [board.fontSize, fitWhole])
 
   // Clear the burst timer on unmount.
   useEffect(
@@ -713,11 +740,7 @@ export function TerminalBoard({
     // any launchCommand TUI) at the wrong width. Defer to the ResizeObserver's
     // first good fit, mirroring the initial-spawn deferral.
     const fit = fitRef.current
-    try {
-      fit?.fit()
-    } catch {
-      /* element not laid out yet */
-    }
+    fitWhole() // whole-cell fit (clip-free); no-ops when the well isn't laid out
     const dims = fit?.proposeDimensions()
     if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)) {
       pendingRespawnRef.current = false
@@ -725,7 +748,7 @@ export function TerminalBoard({
     } else {
       pendingRespawnRef.current = true
     }
-  }, [respawn, board.id])
+  }, [respawn, board.id, fitWhole])
 
   // §9/§7.1 braille spinner: advance one frame every 80ms while running. Reduced
   // motion holds it on a static glyph (no interval → frame stays put).
@@ -1238,7 +1261,8 @@ const screenWrap: React.CSSProperties = {
 const screen: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
-  padding: '12px 12px 4px'
+  padding: '12px' // was '12px 12px 4px'; DESIGN.md §7.1 = 12px. Cosmetic — FitAddon ignores
+  // this padding, so fitWhole (not the padding) is what prevents the clip.
 }
 
 /** Idle (restored/duplicated, not yet started) overlay: centered Start affordance
