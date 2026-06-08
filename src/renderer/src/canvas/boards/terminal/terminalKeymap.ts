@@ -19,7 +19,13 @@ export interface TermKeyChord {
   shiftKey: boolean
 }
 
-export type TerminalKeyAction = { kind: 'newline' } | { kind: 'copy' } | { kind: 'paste' }
+export type TerminalKeyAction =
+  | { kind: 'newline' }
+  | { kind: 'copy' }
+  | { kind: 'paste' }
+  | { kind: 'fontInc' }
+  | { kind: 'fontDec' }
+  | { kind: 'fontReset' }
 
 /**
  * Byte written to the PTY for a Shift+Enter newline insert. LF (0x0A) — identical to Ctrl+J,
@@ -45,6 +51,15 @@ export function resolveTerminalKey(
   // Copy/paste use the platform primary modifier; never with Alt (Alt+V is reserved
   // for Claude Code's native image paste, which must pass straight through).
   const primary = ctx.isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+
+  // Font-size chords: primary modifier (Cmd on mac, Ctrl else), no Alt/Shift. We
+  // deliberately SHADOW these from the shell — matches VS Code / iTerm terminal zoom.
+  if (primary && !e.altKey && !e.shiftKey) {
+    if (e.key === '=' || e.key === '+') return { kind: 'fontInc' }
+    if (e.key === '-' || e.key === '_') return { kind: 'fontDec' }
+    if (e.key === '0') return { kind: 'fontReset' }
+  }
+
   if (!primary || e.altKey) return null
   const k = e.key.toLowerCase()
   if (k === 'c' && !e.shiftKey && ctx.hasSelection) return { kind: 'copy' }
@@ -64,6 +79,10 @@ export interface TerminalKeyEffects {
   copySelection(): boolean
   /** Smart-paste clipboard contents into the terminal (image → staged path, else text). */
   paste(): void
+  /** Nudge the per-board font size by `delta` px (clamped by the board). */
+  fontStep(delta: number): void
+  /** Reset the per-board font size to the default. */
+  fontReset(): void
 }
 
 /**
@@ -96,5 +115,8 @@ export function handleTerminalKey(
   e.preventDefault()
   if (action.kind === 'newline') fx.newline()
   else if (action.kind === 'paste') fx.paste()
+  else if (action.kind === 'fontInc') fx.fontStep(1)
+  else if (action.kind === 'fontDec') fx.fontStep(-1)
+  else if (action.kind === 'fontReset') fx.fontReset()
   return false
 }

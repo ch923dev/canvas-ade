@@ -428,7 +428,10 @@ export function TerminalBoard({
             term.clearSelection()
             return true
           },
-          paste: () => void pasteIntoTerminal(term, board.id)
+          paste: () => void pasteIntoTerminal(term, board.id),
+          // TODO(terminal-font-resize): wire to per-board font store (Task 3)
+          fontStep: (_delta: number) => {},
+          fontReset: () => {}
         }
       )
     )
