@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let the user shrink/grow/reset a terminal board's xterm font per board, with a sticky last-used default so every new terminal opens at the size they last chose.
+**Goal:** Let the user shrink/grow/reset a terminal board's xterm font per board, with a sticky last-used default so every new terminal opens at the size they last chose — and guarantee a clip-free fit (no clipped bottom row) at every supported size.
 
-**Architecture:** A new optional `fontSize?` field on `TerminalBoard` (zero-migration). Four triggers (keyboard + Ctrl-wheel, title-bar `A−`/`A+`, Configure popover row, right-click menu) all call one persist helper (`setFont`/`nudgeFont`/`resetFont`) that clamps, persists the board pin, and writes a global `localStorage` sticky default. A single `board.fontSize`-reactive effect applies the change to the live xterm (`term.options.fontSize`) and refits the grid (→ PTY resize). The pure clamp + sticky logic lives in a new, unit-tested `terminalFont.ts`.
+**Architecture:** A new optional `fontSize?` field on `TerminalBoard` (zero-migration). Four triggers (keyboard + Ctrl-wheel, title-bar `A−`/`A+`, Configure popover row, right-click menu) all call one persist helper (`setFont`/`nudgeFont`/`resetFont`) that clamps, persists the board pin, and writes a global `localStorage` sticky default. A single `board.fontSize`-reactive effect applies the change to the live xterm (`term.options.fontSize`) and refits the grid (→ PTY resize). The pure clamp + sticky logic lives in a new, unit-tested `terminalFont.ts`. **Workstream B** folds in the bottom-row-clip bug: it is the same cell-height → fit path, so a measure-first probe roots the cause and the fix is verified clip-free across the font×height matrix.
+
+**Two workstreams:** A (Tasks 1–10) = the font-resize feature. B (Tasks 11–13) = clip-free fit (measure → fix → matrix), done after A so the fix holds across every font size.
 
 **Tech Stack:** React 18, `@xterm/xterm` v5 (`term.options.fontSize` setter + FitAddon), Zustand store, Vitest (unit/integration), Playwright `_electron` (e2e).
 
@@ -28,9 +30,11 @@
 - **Modify** `src/renderer/src/store/canvasStore.test.ts` — patch-accept + cross-type-drop tests.
 - **Modify** `src/renderer/src/canvas/boards/TerminalBoard.tsx` — refs, initial size, reactive effect, `setFont`/`nudgeFont`/`resetFont`, keymap wiring, Ctrl-wheel listener, title-bar buttons, right-click entries, pass props to TerminalConfig.
 - **Modify** `src/renderer/src/canvas/boards/TerminalConfig.tsx` — live `Font size` row (`A−`/`A+`).
-- **Modify** `src/renderer/src/smoke/e2eHooks.ts` — `terminalFontSize(id)` hook.
+- **Modify** `src/renderer/src/smoke/e2eHooks.ts` — `terminalFontSize(id)` hook, plus (Workstream B) `terminalGeometry(id)` + `setBoardSize(id, w, h)` hooks.
 - **Create** `e2e/terminalFont.e2e.ts` — keyboard-resize + sticky-inherit e2e.
 - **Create** `docs/decisions/0005-terminal-font-size.md` — ADR.
+- **Modify** `src/renderer/src/canvas/boards/TerminalBoard.tsx` — (Workstream B) clip-free fit: `screen` bottom padding, a whole-cell fit wrapper, and a `devicePixelRatio`-change refit listener.
+- **Create** `e2e/terminalClip.e2e.ts` — Workstream B probe sweep → clip-free regression matrix.
 
 ---
 
@@ -959,6 +963,10 @@ parity).
   `agentSessionId`); old docs parse unchanged. This keeps schema **v8 free** for the Mermaid diagram
   element (ADR 0004) and avoids collision with the in-flight `text-create-edit-ux` work.
 - Reversible: dropping the controls leaves `fontSize` data that still validates.
+- **Clip-free fit folded in.** Because font size IS cell height, this feature subsumes the bottom-row
+  clip bug: a measure-first probe roots the cause and a `fitWhole` wrapper + 12px padding + a
+  `devicePixelRatio`-change refit keep the grid within the well at every size. `BoardFrame`'s
+  `overflow:hidden` is unchanged — the grid sizing is fixed, not the clip.
 ```
 
 - [ ] **Step 4: Run the full local gate**
@@ -982,11 +990,304 @@ Expected: Windows-native + Linux-Docker legs both green (Docker must be running 
 
 ---
 
+# Workstream B — clip-free fit (folds in the bottom-row-clip bug)
+
+> **MEASURE BEFORE FIXING.** Task 11 is a runtime probe that captures the actual geometry and turns
+> the clip into a failing assertion. Task 12 selects a fix FROM THE PROBE NUMBERS (candidates coded
+> below) — do not pick one before reading Task 11's output. Do these tasks AFTER Workstream A (the
+> fix must hold across font sizes, and the font-change refit from Task 4 is part of the guarantee).
+> `BoardFrame.tsx:437` `overflow:hidden` STAYS — fix the grid sizing, not the clip. No
+> preload/sandbox changes.
+
+## Task 11: Probe — measure the clip (red test + geometry capture)
+
+**Files:**
+- Modify: `src/renderer/src/smoke/e2eHooks.ts`
+- Create: `e2e/terminalClip.e2e.ts`
+
+- [ ] **Step 1: Add the geometry + resize e2e hooks**
+
+In `e2eHooks.ts`, add to the interface (near `terminalFontSize`):
+
+```ts
+  /** Rendered terminal geometry for the clip probe: rects of the live xterm sub-elements vs the
+   *  clipping well, plus dpr/rows/cols. Null if not mounted. */
+  terminalGeometry: (id: string) =>
+    | null
+    | {
+        dpr: number
+        rows: number
+        cols: number
+        cellHeight: number
+        gridBottom: number
+        wellBottom: number
+        overflow: number
+      }
+  /** Drive a REAL board resize (store → React Flow → the well ResizeObserver → fit). */
+  setBoardSize: (id: string, w: number, h: number) => void
+  /** Pin a terminal's font size (drives the reactive apply + refit). For the clip×font matrix. */
+  setBoardFont: (id: string, px: number) => void
+```
+
+In the returned object, add:
+
+```ts
+    terminalGeometry(id) {
+      const term = e2eTerminals.get(id)
+      if (!term) return null
+      const node = document.querySelector(`.react-flow__node[data-id="${id}"]`)
+      const screenEl = node?.querySelector('.xterm-screen') as HTMLElement | null
+      const wellEl = (node?.querySelector('.xterm') as HTMLElement | null)?.closest(
+        '.nowheel'
+      ) as HTMLElement | null
+      if (!screenEl || !wellEl) return null
+      const grid = screenEl.getBoundingClientRect()
+      const well = wellEl.getBoundingClientRect()
+      return {
+        dpr: window.devicePixelRatio,
+        rows: term.rows,
+        cols: term.cols,
+        cellHeight: grid.height / Math.max(1, term.rows),
+        gridBottom: grid.bottom,
+        wellBottom: well.bottom,
+        overflow: grid.bottom - well.bottom // > 0 ⇒ the grid spills past the clip boundary
+      }
+    },
+    setBoardSize(id, w, h) {
+      useCanvasStore.getState().resizeBoard(id, w, h)
+    },
+    setBoardFont(id, px) {
+      useCanvasStore.getState().updateBoard(id, { fontSize: px })
+    },
+```
+
+- [ ] **Step 2: Write the probe sweep (it doubles as the regression in Task 13)**
+
+Create `e2e/terminalClip.e2e.ts`:
+
+```ts
+// e2e/terminalClip.e2e.ts
+import { test, expect } from './fixtures'
+import { evalIn, pollEval, seed } from './helpers'
+
+type Geo = { dpr: number; rows: number; cols: number; cellHeight: number; gridBottom: number; wellBottom: number; overflow: number }
+const geoOf = (id: string) => `window.__canvasE2E.terminalGeometry(${JSON.stringify(id)})`
+const TOLERANCE = 1 // px — sub-pixel rounding only; a clipped glyph is ≥ ~6px
+
+test.describe('terminal clip-free fit', () => {
+  test('the grid never spills past the well across a height sweep', async ({ page }) => {
+    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    // Fill down to the last row so a clipped row shows a glyph, not whitespace.
+    await evalIn(
+      page,
+      `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, Array.from({length: 60}, (_, i) => 'ROW' + i).join('\\r\\n'))`
+    )
+    const offenders: Array<{ h: number } & Geo> = []
+    // Odd step hits fractional remainders that a coarse step would skip.
+    for (let h = 200; h <= 620; h += 7) {
+      await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(id)}, 460, ${h})`)
+      await page.waitForTimeout(60) // let the ResizeObserver fit + xterm render settle
+      const geo = await evalIn<Geo | null>(page, geoOf(id))
+      if (geo && geo.overflow > TOLERANCE) offenders.push({ h, ...geo })
+    }
+    expect(
+      offenders,
+      `bottom-row clip at heights (overflow px shown): ${JSON.stringify(offenders, null, 2)}`
+    ).toEqual([])
+  })
+})
+```
+
+- [ ] **Step 3: Build + run the probe — capture the measurement**
+
+Run: `pnpm test:e2e -- terminalClip`
+Expected on the CURRENT code: **FAIL** if the bug reproduces — the failure message lists each offending
+`{ h, dpr, rows, cellHeight, gridBottom, wellBottom, overflow }`. **Read this output — it is the
+root-cause measurement.** Note the pattern (does `overflow` grow with `rows`? is `cellHeight`
+fractional under dpr ≠ 1? is `overflow` ≈ a constant sub-cell remainder?). If it PASSES on this dev
+box's dpr, record that and proceed — Task 12 still hardens the path; re-run on a 1.25/1.5-dpr display
+(or with `--force-device-scale-factor=1.25`, Step note below) to reproduce.
+
+> To exercise non-1.0 dpr in `_electron`: launch with `--force-device-scale-factor=1.5` (add to the
+> Playwright `_electron.launch` args in `e2e/fixtures.ts` for a one-off local repro run; do NOT commit
+> that arg — it would pin the whole suite's dpr).
+
+- [ ] **Step 4: Commit the probe**
+
+```bash
+git add src/renderer/src/smoke/e2eHooks.ts e2e/terminalClip.e2e.ts
+git commit -m "test(terminal): clip-free-fit probe (geometry capture + height sweep)"
+```
+
+---
+
+## Task 12: Apply the fix indicated by the probe
+
+**Files:**
+- Modify: `src/renderer/src/canvas/boards/TerminalBoard.tsx`
+
+**Decision rule (read Task 11's numbers):**
+- **Always apply Fix 1** (design-compliance; restores the slack the spec mandates).
+- If `overflow` is roughly constant (≈ one sub-cell remainder independent of `rows`) → Fix 1 likely
+  suffices; verify the probe goes green.
+- If `cellHeight` is fractional and `overflow` grows with `rows` (DPR rounding: rendered cell taller
+  than the floored fit cell) → also apply **Fix 2** (whole-cell fit wrapper) — it removes any partial
+  row regardless of the rendered-vs-measured gap.
+- Apply **Fix 3** (DPR refit) in Task 13 regardless — it is a standalone correctness gap.
+
+- [ ] **Step 1: Fix 1 — restore the design's 12px bottom padding**
+
+In `TerminalBoard.tsx`, change the `screen` style (line ~1111):
+
+```ts
+const screen: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  padding: '12px' // was '12px 12px 4px' — 4px bottom dropped the slack (DESIGN.md §7.1 = 12px)
+}
+```
+
+- [ ] **Step 2: Fix 2 (apply only if the probe shows a growing/fractional overflow) — whole-cell fit**
+
+Replace the bare `fit.fit()` calls with a wrapper that trims the well to a whole multiple of the
+rendered cell height before fitting, so xterm never lays out a partial row. Add this helper near the
+top of the component body (after the refs):
+
+```ts
+  // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon floors
+  // rows against xterm's MEASURED cell height, but under fractional DPR the RENDERED cell can be
+  // taller than measured, so rows*renderedCell can exceed the well by a sub-cell remainder that the
+  // overflow:hidden well then clips. After fitting, if the rendered grid spills, drop one row.
+  const fitWhole = useCallback((): void => {
+    const fit = fitRef.current
+    const term = termRef.current
+    if (!fit || !term) return
+    try {
+      fit.fit()
+    } catch {
+      return // well not laid out (LOD / display:none)
+    }
+    const screenEl = screenRef.current?.querySelector('.xterm-screen') as HTMLElement | null
+    const wellEl = screenRef.current?.closest('.nowheel') as HTMLElement | null
+    if (!screenEl || !wellEl) return
+    if (screenEl.getBoundingClientRect().bottom - wellEl.getBoundingClientRect().bottom > 1 && term.rows > 1) {
+      term.resize(term.cols, term.rows - 1) // shed the partial row (fires onResize → PTY resize)
+    }
+  }, [])
+```
+
+Then route the fit calls through it: in `spawn` replace the `fit.fit()` after `term.open(el)` (line 375), the `ResizeObserver` callback's `fit.fit()` (line 537), the reactive font effect's `fitRef.current?.fit()` (Task 4), and `restart`'s `fit?.fit()` (line 621) with `fitWhole()`. (Keep each call site's existing try/catch context; `fitWhole` already guards internally, so a plain `fitWhole()` replaces the guarded `fit.fit()`.)
+
+> Note for the executor: `fitWhole` reads layout (`getBoundingClientRect`) synchronously after
+> `fit.fit()`. xterm updates its DOM during `fit.fit()`, so the rects are current. If the probe shows
+> the overflow only appears one frame later, wrap the measure-and-trim in a `requestAnimationFrame` and
+> re-run the probe.
+
+- [ ] **Step 3: Build + run the probe to verify it goes green**
+
+Run: `pnpm test:e2e -- terminalClip`
+Expected: PASS — `offenders` is empty across the sweep.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/renderer/src/canvas/boards/TerminalBoard.tsx
+git commit -m "fix(terminal): clip-free bottom row — restore 12px padding + whole-cell fit"
+```
+
+---
+
+## Task 13: DPR-change refit + matrix verification
+
+**Files:**
+- Modify: `src/renderer/src/canvas/boards/TerminalBoard.tsx`
+- Modify: `e2e/terminalClip.e2e.ts`
+
+- [ ] **Step 1: Fix 3 — refit on devicePixelRatio change**
+
+Today only the host `ResizeObserver` triggers a fit; moving the window to a different-DPR monitor
+changes the cell height without resizing the host, so `rows` goes stale. Add a DPR-change listener
+(the `matchMedia('(resolution: …)')` idiom) near the other effects:
+
+```ts
+  // Refit when devicePixelRatio changes (e.g. the window moved to a monitor with different scaling) —
+  // the host doesn't resize, so the ResizeObserver never fires, but the cell height changed.
+  useEffect(() => {
+    let mql: MediaQueryList | null = null
+    const onChange = (): void => {
+      fitWhole()
+      attach() // re-arm for the NEW dpr (each mql is dpr-specific)
+    }
+    const attach = (): void => {
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+      mql.addEventListener('change', onChange, { once: true })
+    }
+    attach()
+    return () => mql?.removeEventListener('change', onChange)
+  }, [fitWhole])
+```
+
+- [ ] **Step 2: Extend the probe across font sizes (the acceptance matrix)**
+
+In `e2e/terminalClip.e2e.ts`, add a second test that sweeps height at multiple font sizes:
+
+```ts
+  test('stays clip-free across font sizes', async ({ page }) => {
+    const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
+    await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)
+    await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+    await evalIn(page, `window.__canvasE2E.focusTerminal(${JSON.stringify(id)})`)
+    await evalIn(
+      page,
+      `window.__canvasE2E.resetTerminalWrite(${JSON.stringify(id)}, Array.from({length: 60}, (_, i) => 'ROW' + i).join('\\r\\n'))`
+    )
+    const offenders: Array<{ font: number; h: number; overflow: number }> = []
+    for (const font of [8, 11, 14, 18, 22]) {
+      await evalIn(page, `window.__canvasE2E.setBoardFont(${JSON.stringify(id)}, ${font})`)
+      await page.waitForTimeout(60) // reactive apply + refit
+      for (let h = 220; h <= 600; h += 11) {
+        await evalIn(page, `window.__canvasE2E.setBoardSize(${JSON.stringify(id)}, 460, ${h})`)
+        await page.waitForTimeout(50)
+        const geo = await evalIn<Geo | null>(page, geoOf(id))
+        if (geo && geo.overflow > TOLERANCE) offenders.push({ font, h, overflow: geo.overflow })
+      }
+    }
+    expect(offenders, `clip across font×height: ${JSON.stringify(offenders, null, 2)}`).toEqual([])
+  })
+```
+
+(`setBoardFont` was added to the e2e hooks in Task 11.)
+
+- [ ] **Step 3: Build + run the clip matrix**
+
+Run: `pnpm test:e2e -- terminalClip`
+Expected: PASS — both tests green (no offenders at any font × height).
+
+- [ ] **Step 4: Full gate + e2e matrix**
+
+Run: `pnpm typecheck && pnpm lint && pnpm format:check && pnpm test`
+Then: `pnpm test:e2e:matrix`
+Expected: all green (Windows-native + Linux-Docker). (The Linux-Docker dpr is 1.0; the cross-dpr
+guarantee rests on Fix 1/2 + the Fix 3 listener, with the local 1.25/1.5 repro from Task 11 Step 3.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/renderer/src/canvas/boards/TerminalBoard.tsx e2e/terminalClip.e2e.ts src/renderer/src/smoke/e2eHooks.ts
+git commit -m "fix(terminal): refit on dpr change + clip-free matrix across font sizes"
+```
+
+---
+
 ## Self-review checklist (run before handoff)
 
-- [ ] **Spec coverage:** per-board pin (Task 3, 4) · sticky default (Task 1, 4) · keyboard+Ctrl-wheel (Task 2, 4, 5) · title-bar (Task 6) · Configure row (Task 8) · right-click (Task 7) · PTY resize on change (Task 4 reactive effect) · zero-migration (Task 3) · undo coalescing (Task 4) · ADR (Task 10) — all mapped.
-- [ ] **No placeholders:** every code step above is concrete.
-- [ ] **Type consistency:** `setFont` / `nudgeFont` / `resetFont` / `fontStep` / `fontReset` / `clampTerminalFont` / `readStickyFont` / `writeStickyFont` / `resolveInitialFont` / `terminalFontSize` names match across tasks.
+- [ ] **Spec coverage:** per-board pin (Task 3, 4) · sticky default (Task 1, 4) · keyboard+Ctrl-wheel (Task 2, 4, 5) · title-bar (Task 6) · Configure row (Task 8) · right-click (Task 7) · PTY resize on change (Task 4 reactive effect) · zero-migration (Task 3) · undo coalescing (Task 4) · ADR (Task 10) · **clip-free fit: measure-first probe (Task 11) · fix from probe (Task 12) · DPR refit + font×height matrix (Task 13)** — all mapped.
+- [ ] **No placeholders:** every code step is concrete. Task 12's candidate selection is a decision rule over Task 11's measured numbers (each candidate is fully coded), not a placeholder.
+- [ ] **Type consistency:** `setFont` / `nudgeFont` / `resetFont` / `fontStep` / `fontReset` / `clampTerminalFont` / `readStickyFont` / `writeStickyFont` / `resolveInitialFont` / `terminalFontSize` / `terminalGeometry` / `setBoardSize` / `setBoardFont` / `fitWhole` names match across tasks.
+- [ ] **Clip-fix guardrails:** `BoardFrame.tsx:437` `overflow:hidden` untouched; no preload/sandbox change; `fitWhole` replaces every `fit.fit()` call site (mount, ResizeObserver, font effect, restart).
 
 ## Cross-zone / coordination
 

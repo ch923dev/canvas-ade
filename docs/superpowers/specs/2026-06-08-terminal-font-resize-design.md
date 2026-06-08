@@ -19,6 +19,9 @@ per-board control and no way to shift the default.
   the Configure popover, and the well right-click menu.
 - A font change reflows the grid and resizes the PTY (the agent's TUI reflows to the new columns).
 - Persist per board across reload; zero schema migration.
+- **Clip-free fit at every supported size** (folds in the bottom-row-clip bug): the rendered grid
+  must never spill past the well's clip boundary, at any font size × board height × display scaling ×
+  camera-zoom in the working band. Measured, not assumed (see "Clip-free fit" below).
 
 ## Non-goals
 
@@ -207,6 +210,48 @@ clean). What stays out: family/weight/line-height, a global settings panel, any 
 - LOD / idle / `display:none` mount: refit defers to the next good fit; the pin still persists.
 - A font change never respawns the PTY (fontSize is not a `spawn` dep; read via ref).
 - Sticky store unavailable (private mode/test) → silently falls back to `DEFAULT`.
+
+## Clip-free fit (folds in the terminal bottom-row-clip bug)
+
+**Symptom.** At specific board heights the terminal's last row renders horizontally clipped (top half
+of the glyph visible, bottom half gone) — stable at rest, not a pan/zoom transient. Reproduces with a
+running agent's pinned footer and with a plain shell on the last row. Likely sensitive to Windows
+display scaling (`devicePixelRatio` 1.25/1.5) and React Flow's fractional `scale(z)`.
+
+**Why it belongs here.** It is a cell-height → fit → does-the-grid-fit-the-well problem. Font size *is*
+cell height, so this feature re-exercises the exact path and must guarantee a clip-free fit at **every**
+supported size — fixing it separately would be redone here.
+
+**Measure before fixing (hard rule).** Root cause is inconclusive from static reading: FitAddon floors
+rows against xterm's own `dimensions.css.cell.height`, so `rows * cellHeight ≤ availableHeight` should
+hold with ≥ the bottom-padding slack. The observed clip therefore proves a DOM/render assumption is
+violated (rendered grid taller than the fit-measured height, stale `rows` vs current cell height,
+font-metric timing, a parent/computed-height mismatch, or a fractional-DPR rounding gap). **No
+guess-fix.** A runtime probe (Workstream B, Task 11) captures, at a reproducing size: `devicePixelRatio`,
+`term.rows`/`cols`, the rendered `.xterm` / `.xterm-viewport` / `.xterm-screen` rects, and the host
+well's `clientHeight` + computed height; it computes `gridBottom` vs `wellBottom` and confirms the
+overflow + magnitude. The probe drives a **real** resize (NodeResizer / `sendInputEvent`), not a
+synthetic event, and reads real DOM rects via the `e2eTerminals` handle.
+
+**Fix selection (after the probe, must hold across ALL font sizes).** Candidates, applied per the
+probe finding (each is coded in the plan, Task 12):
+1. Restore the design's **12px bottom padding** (`screen` style is `'12px 12px 4px'` — a 4px-bottom
+   deviation from DESIGN.md §7.1's 12px that removes the slack which would otherwise hide a sub-cell
+   remainder). Cheap; verify it covers the worst-case remainder, do not assume.
+2. **Snap the usable well height to a whole multiple of the current cell height** before/around fit, so
+   no partial row is ever laid out.
+3. **Refit on `devicePixelRatio` change** — today only a host `ResizeObserver` fires; moving the window
+   between monitors changes DPR (→ cell height) without resizing the host, leaving `rows` stale.
+4. **Refit on font-size change** — already in this feature's reactive effect; re-assert the invariant
+   after every change.
+
+`BoardFrame.tsx:437`'s `overflow:hidden` is **correct and stays** — fix the grid sizing, not the clip.
+Security/process model untouched (no preload/sandbox changes).
+
+**Acceptance.** No bottom-row clip at any board height, at every supported font size, on dpr
+1.0 / 1.25 / 1.5, across the working camera-zoom band. Whitespace below the last row is fine; a clipped
+glyph is not. e2e regression asserts `gridBottom ≤ wellBottom` (+small tolerance) for a matrix of
+{font size × board height} cases, using real DOM rects + a real resize.
 
 ## Coordination (cross-zone)
 
