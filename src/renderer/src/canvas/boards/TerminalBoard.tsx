@@ -26,7 +26,6 @@ import { useStoreApi } from '@xyflow/react'
 import { TerminalConfig } from './TerminalConfig'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { WebglAddon } from '@xterm/addon-webgl'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
@@ -48,6 +47,7 @@ import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMen
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { installSelectionShim } from './terminal/terminalSelection'
 import { resumeCommand } from './terminal/resumeCommand'
+import { useTerminalWebgl } from './terminal/useTerminalWebgl'
 import { BoardFullViewContext } from '../fullViewContext'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
@@ -90,45 +90,15 @@ interface PortMessage {
 /** Platform check for the terminal key resolver's primary modifier (Cmd on macOS). */
 const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
-// ── Renderer-wide WebGL context budget (#12/#29) ──────────────────────────────
-// Chromium caps live WebGL2 contexts per renderer (~16, shared across all terminal
-// boards + Browser views + React Flow) and silently evicts the OLDEST once exceeded.
-// The LOD release alone doesn't bound the many-visible-terminals case (lod is a
-// global zoom-only flag), so we add a hard cap WELL under 16 — terminals over the
-// cap stay on the slower DOM renderer instead of thrashing the shared budget. A
-// freed slot (LOD detach, unmount, or context loss) re-upgrades one waiting
-// DOM-fallback terminal so eviction is recoverable rather than permanent.
-const WEBGL_BUDGET = 8
-/** Board ids currently holding a live GL context. */
-const liveWebgl = new Set<string>()
-/** Board ids that want a GL context but are over budget — keyed retry callbacks. */
-const wantWebgl = new Map<string, () => void>()
-
-/** Reserve a GL slot for `id`. Returns false (caller stays on DOM renderer) at cap. */
-function acquireWebglSlot(id: string): boolean {
-  if (liveWebgl.has(id)) return true
-  if (liveWebgl.size >= WEBGL_BUDGET) return false
-  liveWebgl.add(id)
-  return true
-}
-
-/** Free `id`'s slot and let one waiting DOM-fallback terminal try to upgrade. */
-function releaseWebglSlot(id: string): void {
-  if (!liveWebgl.delete(id)) return
-  const next = wantWebgl.entries().next()
-  if (!next.done) {
-    const [waitingId, retry] = next.value
-    wantWebgl.delete(waitingId)
-    retry()
-  }
-}
-
 /**
  * Smart paste: if the clipboard holds an image, stage it to a temp file and inject the
  * quoted path; otherwise inject the clipboard text. Uses `term.paste` so multiline
  * content gets bracketed-paste markers when the agent enabled them (no per-line submit).
+ * Exported for the decision-seam unit test (TerminalBoard.paste.test.ts) — a non-component
+ * export from a component module, so react-refresh's only-export-components is moot here.
  */
-async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
+// eslint-disable-next-line react-refresh/only-export-components
+export async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
   // Staging can fail (ENOSPC disk full, EPERM antivirus lock, read-only .canvas/tmp).
   // The IPC handler now returns null on those errors, but guard the await itself too
   // so any unexpected rejection falls through to the text-paste branch rather than
@@ -165,7 +135,6 @@ export function TerminalBoard({
   const screenRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
-  const webglRef = useRef<WebglAddon | null>(null)
   const portRef = useRef<MessagePort | null>(null)
   // #23: when a Restart happens while the well is unfitted (LOD/display:none),
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
@@ -262,82 +231,7 @@ export function TerminalBoard({
     fontSizeRef.current = board.fontSize
   }, [board.fontSize])
 
-  // ── WebGL renderer pooling (#10/#12/#29) ─────────────────────────────────────
-  // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
-  // Flow) and silently drops the OLDEST under churn. We (1) hold a GL context only
-  // for DETAIL-view terminals — a board at LOD releases so on-screen terminals keep
-  // theirs — AND (2) enforce a hard renderer-wide cap (WEBGL_BUDGET) via the
-  // module-level registry, since `lod` is global zoom-only and never bounds the
-  // many-visible-terminals case. Over the cap a terminal stays on the DOM renderer
-  // and registers a retry that fires when a slot frees. The PTY session is
-  // independent of the renderer, so this is purely a perf/quality lever.
-  //
-  // The over-budget retry (wantWebgl) and onContextLoss re-acquire closures must
-  // re-invoke attachWebgl, but a useCallback can't reference its own binding from its
-  // body (react-hooks). Route the recursive call through a ref kept in sync below.
-  const attachWebglRef = useRef<(t: Terminal) => void>(() => {})
-  const attachWebgl = useCallback(
-    (term: Terminal): void => {
-      if (webglRef.current) return
-      // Over budget: stay on the DOM renderer and queue a retry for when a slot
-      // frees (LOD detach / unmount / context loss elsewhere). Re-read the live
-      // term then so a disposed/LOD'd board never upgrades.
-      if (!acquireWebglSlot(board.id)) {
-        wantWebgl.set(board.id, () => {
-          const t = termRef.current
-          if (!lodRef.current && t) attachWebglRef.current(t)
-        })
-        return
-      }
-      wantWebgl.delete(board.id)
-      try {
-        const webgl = new WebglAddon()
-        webgl.onContextLoss(() => {
-          webgl.dispose()
-          webglRef.current = null
-          // Free our slot (re-upgrades one waiting DOM-fallback terminal), then —
-          // if still in detail view — try to re-acquire so an in-detail eviction
-          // (#29) recovers rather than stranding us on the DOM renderer forever.
-          releaseWebglSlot(board.id)
-          setTimeout(() => {
-            const t = termRef.current
-            if (!lodRef.current && t) attachWebglRef.current(t)
-          }, 0)
-        })
-        term.loadAddon(webgl)
-        webglRef.current = webgl
-      } catch {
-        /* GL unavailable — xterm falls back to the DOM/canvas renderer */
-        releaseWebglSlot(board.id)
-      }
-    },
-    [board.id]
-  )
-
-  const detachWebgl = useCallback((): void => {
-    try {
-      webglRef.current?.dispose()
-    } catch {
-      /* already disposed */
-    }
-    webglRef.current = null
-    wantWebgl.delete(board.id)
-    releaseWebglSlot(board.id)
-  }, [board.id])
-
-  // Keep the recursion ref pointed at the latest attachWebgl (stable per board.id).
-  useEffect(() => {
-    attachWebglRef.current = attachWebgl
-  }, [attachWebgl])
-
-  // Release the GL context at LOD; re-acquire on return to detail view. Guarded by
-  // a live terminal (the spawn effect owns mount/unmount of `term` itself).
-  useEffect(() => {
-    const term = termRef.current
-    if (!term) return
-    if (lod) detachWebgl()
-    else attachWebgl(term)
-  }, [lod, attachWebgl, detachWebgl])
+  const { attachWebgl, detachWebgl } = useTerminalWebgl(board.id, lod, lodRef, termRef)
 
   // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon
   // computes rows from the well height but IGNORES the screen div's CSS padding (measured: it

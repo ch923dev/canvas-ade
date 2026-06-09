@@ -15,16 +15,7 @@
  * Owns this file + everything under `boards/planning/`; the shared surface
  * (`BoardFrame`, schema, store) is consumed, never modified.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type DragEvent as ReactDragEvent,
-  type ReactElement
-} from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useRef, useState, type ReactElement } from 'react'
 import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
@@ -48,7 +39,6 @@ import { ImageCard } from './planning/ImageCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { shortcutTool, type PlanTool } from './planning/tools'
 import {
-  makeImage,
   patchElement,
   translateMany,
   removeElement,
@@ -61,9 +51,7 @@ import {
   duplicateElements,
   groupElements,
   ungroupElements,
-  setLocked,
-  fitImageSize,
-  IMAGE_MAX
+  setLocked
 } from './planning/elements'
 import {
   alignElements,
@@ -73,6 +61,8 @@ import {
 } from './planning/align'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { usePlanningPointer } from './planning/usePlanningPointer'
+import { usePlanningImageIO } from './planning/usePlanningImageIO'
+import { ExportPopover } from './planning/ExportPopover'
 
 const TOOLS: ReadonlyArray<{
   tool: PlanTool
@@ -88,16 +78,6 @@ const TOOLS: ReadonlyArray<{
 ]
 
 const newId = (): string => crypto.randomUUID()
-
-/** Clipboard/file MIME → the ext the assets pipeline stores (undefined = not an image we accept). */
-const imageExt = (type: string): string | undefined =>
-  ({
-    'image/png': 'png',
-    'image/jpeg': 'jpg',
-    'image/gif': 'gif',
-    'image/webp': 'webp',
-    'image/svg+xml': 'svg'
-  })[type]
 
 export function PlanningBoard({
   board,
@@ -200,161 +180,16 @@ export function PlanningBoard({
     [zoom]
   )
 
-  /** Persist an image blob and drop an image element at `at` (one undo step). */
-  const addImageFromBlob = useCallback(
-    async (blob: Blob, at: { x: number; y: number }): Promise<void> => {
-      const ext = imageExt(blob.type)
-      if (!ext) return
-      const bytes = new Uint8Array(await blob.arrayBuffer())
-      const res = await window.api.asset.write(bytes, ext)
-      if ('error' in res) {
-        // Surface the write failure (disk full / no project open / bad ext) instead of
-        // silently abandoning the paste/drop. Keep the early return — we never add a
-        // broken image element — but don't swallow the cause.
-        // eslint-disable-next-line no-console
-        console.error('image write failed:', res.error)
-        return
-      }
-      let w = IMAGE_MAX
-      let h = IMAGE_MAX
-      try {
-        const bmp = await createImageBitmap(blob)
-        const fit = fitImageSize(bmp.width, bmp.height)
-        w = fit.w
-        h = fit.h
-        bmp.close()
-      } catch {
-        /* undecodable → keep the square fallback size */
-      }
-      beginChange()
-      // Re-read the LIVE elements at COMMIT time, not the closure captured at call time:
-      // updateBoard fully REPLACES `elements` (no merge), so an edit landing during the
-      // two awaits above (asset.write + createImageBitmap) would be silently dropped if we
-      // spread the stale captured array (lost update). Mirrors growForChecklist's getState().
-      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
-      const cur = live?.type === 'planning' ? live.elements : []
-      commit([...cur, makeImage(newId(), at, res.assetId, w, h)])
-    },
-    [beginChange, commit, board.id]
-  )
-
-  /** Paste an image from the clipboard → board centre. Bound at the DOCUMENT level, not
-   *  as the well's React onPaste: Chromium dispatches the `paste` event at the document
-   *  (not the focused non-editable well), so an onPaste on the well never fires for a real
-   *  Ctrl+V — only drag-drop reaches the well. We listen on the document and gate on this
-   *  board's well owning focus, so Ctrl+V only lands an image on the board the user is
-   *  working in (the Excalidraw/tldraw pattern). No image in the clipboard → we no-op
-   *  without preventDefault, so a text paste into a focused note still proceeds normally. */
-  const onWellPaste = useCallback(
-    (e: ClipboardEvent): void => {
-      const well = wellRef.current
-      if (!well || !well.contains(document.activeElement)) return
-      const data = e.clipboardData
-      if (!data) return
-      // A pasted bitmap can surface either as a DataTransferItem (kind 'file') OR only in
-      // `.files` — which one depends on the OS/source. Check both so paste is robust.
-      let file: File | null = null
-      for (const it of data.items) {
-        if (it.kind === 'file' && it.type.startsWith('image/')) {
-          file = it.getAsFile()
-          if (file) break
-        }
-      }
-      if (!file) file = Array.from(data.files).find((f) => f.type.startsWith('image/')) ?? null
-      if (!file) return
-      e.preventDefault()
-      const r = well.getBoundingClientRect()
-      void addImageFromBlob(
-        file,
-        toBoard({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })
-      )
-    },
-    [addImageFromBlob, toBoard]
-  )
-  useEffect(() => {
-    document.addEventListener('paste', onWellPaste)
-    return () => document.removeEventListener('paste', onWellPaste)
-  }, [onWellPaste])
-
-  /** Allow a file drag over the well (required for onDrop to fire). */
-  const onWellDragOver = useCallback((e: ReactDragEvent): void => {
-    if (e.dataTransfer?.types?.includes('Files')) e.preventDefault()
-  }, [])
-
-  /** Drop an image file → at the cursor (board-local). */
-  const onWellDrop = useCallback(
-    (e: ReactDragEvent): void => {
-      const files = e.dataTransfer?.files
-      if (!files || files.length === 0) return
-      const file = Array.from(files).find((f) => f.type.startsWith('image/'))
-      if (!file) return
-      e.preventDefault()
-      void addImageFromBlob(file, toBoard(e))
-    },
-    [addImageFromBlob, toBoard]
-  )
-
-  // ── Export popover (W5) ──────────────────────────────────────────────────────
-  // The popover is PORTALED to <body> (like BoardMenu): the title bar + board root
-  // are `overflow:hidden`, so an in-place absolute popover is clipped invisible.
-  const [exportOpen, setExportOpen] = useState(false)
-  const exportTriggerRef = useRef<HTMLDivElement>(null)
-  const [exportPos, setExportPos] = useState<{ top: number; left: number }>({
-    top: -9999,
-    left: -9999
+  // Image paste/drop pipeline (god-file split 6.3): the document-level clipboard
+  // listener + file-drop handlers + the asset.write→element commit live in the hook;
+  // only the two drag handlers (wired onto the well below) are surfaced.
+  const { onWellDragOver, onWellDrop } = usePlanningImageIO({
+    wellRef,
+    toBoard,
+    commit,
+    beginChange,
+    board
   })
-  const runExport = useCallback(
-    async (format: 'png' | 'svg') => {
-      setExportOpen(false)
-      try {
-        const { buildExport } = await import('./planning/exportBoard')
-        const { bytes, ext } = await buildExport(board, format)
-        // export:save RETURNS a discriminated result — it never throws on a write failure,
-        // so the catch below alone would let a real failure (permission denied / disk full)
-        // look like a user cancel. Inspect the result: surface a genuine error, but stay
-        // silent on an explicit cancel (the user dismissed the save dialog).
-        const res = await window.api.export.save({
-          bytes,
-          ext,
-          defaultName: board.title || 'whiteboard'
-        })
-        if (!res.ok && !res.canceled) {
-          // eslint-disable-next-line no-console
-          console.error('whiteboard export failed:', res.error)
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('whiteboard export failed', err)
-      }
-    },
-    [board]
-  )
-  useEffect(() => {
-    if (!exportOpen) return
-    const close = (): void => setExportOpen(false)
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setExportOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKey)
-    window.addEventListener('resize', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', onKey)
-      window.removeEventListener('resize', close)
-    }
-  }, [exportOpen])
-  // Measure the trigger and right-align the portaled popover under it (clamped into
-  // the viewport), before paint so it never flashes at a stale corner.
-  useLayoutEffect(() => {
-    if (!exportOpen) return
-    const t = exportTriggerRef.current?.getBoundingClientRect()
-    if (!t) return
-    const W = 148
-    const PAD = 8
-    const left = Math.max(PAD, Math.min(t.right - W, window.innerWidth - W - PAD))
-    setExportPos({ top: t.bottom + 4, left })
-  }, [exportOpen])
 
   // ── Element-level handlers (passed to the element components) ────────────────
   const interactive = tool === 'select'
@@ -663,44 +498,7 @@ export function PlanningBoard({
           margin: '0 2px'
         }}
       />
-      <div ref={exportTriggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
-        <IconBtn
-          name="download"
-          title="Export"
-          size={15}
-          active={exportOpen}
-          onClick={() => setExportOpen((v) => !v)}
-        />
-        {exportOpen &&
-          createPortal(
-            <div
-              role="menu"
-              onPointerDown={(e) => e.stopPropagation()}
-              style={{
-                position: 'fixed',
-                top: exportPos.top,
-                left: exportPos.left,
-                zIndex: 50,
-                width: 148,
-                display: 'flex',
-                flexDirection: 'column',
-                padding: 4,
-                background: 'var(--surface-overlay)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--r-inner)',
-                boxShadow: 'var(--shadow-pop)'
-              }}
-            >
-              <button className="board-menu-item" onClick={() => void runExport('png')}>
-                Export PNG
-              </button>
-              <button className="board-menu-item" onClick={() => void runExport('svg')}>
-                Export SVG
-              </button>
-            </div>,
-            document.body
-          )}
-      </div>
+      <ExportPopover board={board} />
     </div>
   ) : undefined
 
