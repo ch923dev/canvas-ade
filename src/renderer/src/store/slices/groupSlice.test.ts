@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { CanvasState } from '../canvasStore'
 import type { Board, NamedGroup } from '../../lib/boardSchema'
 import type { TrackedChange } from './sliceTypes'
-import { createGroupSlice } from './groupSlice'
+import { createGroupSlice, pruneBoardFromGroups } from './groupSlice'
 
 // ---------------------------------------------------------------------------
 // Minimal harness
@@ -468,5 +468,52 @@ describe('createGroupSlice — removeBoardFromAllGroups', () => {
     ]
     // The group that DID NOT contain b1 should be the exact same object (ref stable)
     expect(next.groups.find((g) => g.id === 'g2')).toBe(unchanged)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// pruneBoardFromGroups (pure exported helper)
+// ---------------------------------------------------------------------------
+
+describe('pruneBoardFromGroups', () => {
+  it('board in NO group → returns null (ref-stable signal)', () => {
+    const groups = [group('g1', 'Auth', ['b1', 'b2']), group('g2', 'API', ['b3'])]
+    const result = pruneBoardFromGroups(groups, 'zzz')
+    expect(result).toBeNull()
+  })
+
+  it('board in ONE group → returns a new array with that board stripped; other groups untouched', () => {
+    const g1 = group('g1', 'Auth', ['b1', 'b2'])
+    const g2 = group('g2', 'API', ['b3'])
+    const groups = [g1, g2]
+    const result = pruneBoardFromGroups(groups, 'b1')
+    expect(result).not.toBeNull()
+    expect(result!.find((g) => g.id === 'g1')?.boardIds).toEqual(['b2'])
+    // g2 was not affected — it must be the same object reference
+    expect(result!.find((g) => g.id === 'g2')).toBe(g2)
+  })
+
+  it('board in MULTIPLE groups → stripped from every group in the returned array', () => {
+    const groups = [group('g1', 'Auth', ['b1', 'b2']), group('g2', 'API', ['b1', 'b3'])]
+    const result = pruneBoardFromGroups(groups, 'b1')
+    expect(result).not.toBeNull()
+    expect(result!.find((g) => g.id === 'g1')?.boardIds).toEqual(['b2'])
+    expect(result!.find((g) => g.id === 'g2')?.boardIds).toEqual(['b3'])
+  })
+
+  it('returned array is a new reference (not the input) on change', () => {
+    const groups = [group('g1', 'Auth', ['b1', 'b2'])]
+    const result = pruneBoardFromGroups(groups, 'b1')
+    expect(result).not.toBeNull()
+    expect(result).not.toBe(groups)
+  })
+
+  it('input array is NOT mutated', () => {
+    const g1 = group('g1', 'Auth', ['b1', 'b2'])
+    const groups = [g1]
+    pruneBoardFromGroups(groups, 'b1')
+    // original group object and array must be unchanged
+    expect(groups).toHaveLength(1)
+    expect(groups[0].boardIds).toEqual(['b1', 'b2'])
   })
 })

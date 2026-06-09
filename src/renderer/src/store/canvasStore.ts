@@ -29,7 +29,8 @@ import { nextViewport } from '../lib/viewportCycle'
 import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
 import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 import { createConnectorSlice } from './slices/connectorSlice'
-import { createGroupSlice } from './slices/groupSlice'
+import { createGroupSlice, pruneBoardFromGroups } from './slices/groupSlice'
+import type { SetCanvasState } from './slices/sliceTypes'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -314,6 +315,34 @@ function markRestoredIdle(boards: Board[]): void {
   for (const b of boards) if (b.type === 'terminal') idleOnMountIds.add(b.id)
 }
 
+/**
+ * Commit a freshly-parsed, migrated document into the store: clears the undo-dedup ref
+ * (a loaded project's history starts empty), flags restored terminals idle-on-mount, and
+ * resets boards/connectors/groups/viewport/selection/history. Pass `project` to also mark
+ * the project open (the applyOpenResult paths); omit it for a raw loadObject. The
+ * `lastRecorded = null` + `markRestoredIdle` side effects live HERE so no load path
+ * (loadObject / open / .bak recovery) can forget either (#BUG M3 hygiene + M-1 idle rule).
+ */
+function applyLoadedDoc(
+  set: SetCanvasState,
+  d: ReturnType<typeof fromObject>,
+  project?: ProjectState
+): void {
+  lastRecorded = null
+  markRestoredIdle(d.boards)
+  set({
+    boards: d.boards,
+    connectors: d.connectors,
+    groups: d.groups ?? [],
+    viewport: d.viewport,
+    selectedId: null,
+    selectedIds: [],
+    past: [],
+    future: [],
+    ...(project ? { project } : {})
+  })
+}
+
 /** Gap (world px) kept between boards when auto-placing a new one. */
 const PLACE_GAP = 28
 /** How many expanding rings the free-slot search probes before giving up. */
@@ -448,13 +477,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         : s.connectors
       // Sweep the deleted board from all group memberships in the SAME step (mirrors the
       // connector sweep above), so one undo restores board + cables + memberships together.
-      // Only mints a new groups array when a membership actually changes — keep ref for no-op.
-      const inGroups = s.groups.some((g) => g.boardIds.includes(id))
-      const nextGroups = inGroups
-        ? s.groups.map((g) =>
-            g.boardIds.includes(id) ? { ...g, boardIds: g.boardIds.filter((b) => b !== id) } : g
-          )
-        : s.groups
+      // prune returns null when the board is in no group → `?? s.groups` keeps the ref so
+      // trackedChange no-ops the groups field (membership unchanged).
+      const nextGroups = pruneBoardFromGroups(s.groups, id) ?? s.groups
       const nextSelIds = s.selectedIds.filter((x) => x !== id)
       return trackedChange(
         s,
@@ -731,22 +756,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
-    // Clear the dedup ref: it points at the pre-load snapshot; a fresh project's history
-    // starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
-    lastRecorded = null
-    // Disk-restored terminals must start IDLE (no auto-spawn / no launchCommand on
-    // reopen) — flag every loaded terminal idle-on-mount (M-1).
-    markRestoredIdle(d.boards)
-    set({
-      boards: d.boards,
-      connectors: d.connectors,
-      groups: d.groups ?? [],
-      viewport: d.viewport,
-      selectedId: null,
-      selectedIds: [],
-      past: [],
-      future: []
-    })
+    applyLoadedDoc(set, d)
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
   applyOpenResult: async (r) => {
@@ -770,19 +780,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (bak.ok) {
         try {
           const d2 = fromObject(bak.doc)
-          lastRecorded = null
-          markRestoredIdle(d2.boards)
-          set({
-            boards: d2.boards,
-            connectors: d2.connectors,
-            groups: d2.groups ?? [],
-            viewport: d2.viewport,
-            selectedId: null,
-            selectedIds: [],
-            past: [],
-            future: [],
-            project: { dir: r.dir, name: r.name, status: 'open' }
-          })
+          applyLoadedDoc(set, d2, { dir: r.dir, name: r.name, status: 'open' })
           return
         } catch (bakErr) {
           // .bak is also deep-corrupt → fall through to the error path below (carrying the
@@ -796,20 +794,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
-    // Clear the dedup ref (see loadObject): the opened project's history starts empty.
-    lastRecorded = null
-    // Restored terminals start idle — flag every loaded terminal idle-on-mount (M-1).
-    markRestoredIdle(d.boards)
-    set({
-      boards: d.boards,
-      connectors: d.connectors,
-      groups: d.groups ?? [],
-      viewport: d.viewport,
-      selectedId: null,
-      selectedIds: [],
-      past: [],
-      future: [],
-      project: { dir: r.dir, name: r.name, status: 'open' }
-    })
+    applyLoadedDoc(set, d, { dir: r.dir, name: r.name, status: 'open' })
   }
 }))

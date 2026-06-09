@@ -13,6 +13,19 @@ import type { NamedGroup } from '../../lib/boardSchema'
 import type { CanvasState } from '../canvasStore'
 import type { SetCanvasState, GetCanvasState, SliceDeps } from './sliceTypes'
 
+/**
+ * Strip `boardId` from every group's membership. Returns a NEW groups array on change, or
+ * `null` when the board belongs to no group — null lets callers keep the EXISTING groups ref
+ * (`prune(...) ?? s.groups`), which trackedChange's same-ref no-op path depends on. Shared by
+ * canvasStore.removeBoard (the delete sweep) and groupSlice.removeBoardFromAllGroups.
+ */
+export function pruneBoardFromGroups(groups: NamedGroup[], boardId: string): NamedGroup[] | null {
+  if (!groups.some((g) => g.boardIds.includes(boardId))) return null
+  return groups.map((g) =>
+    g.boardIds.includes(boardId) ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) } : g
+  )
+}
+
 export function createGroupSlice(
   set: SetCanvasState,
   _get: GetCanvasState,
@@ -120,18 +133,9 @@ export function createGroupSlice(
       set((s) => {
         // No-op (keep refs stable) when the board belongs to no group — same guard discipline as
         // removeBoard's sweep, so a "remove from group" on an ungrouped board can't push a step.
-        if (!s.groups.some((g) => g.boardIds.includes(boardId))) return s
-        return trackedChange(
-          s,
-          {
-            groups: s.groups.map((g) =>
-              g.boardIds.includes(boardId)
-                ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) }
-                : g
-            )
-          },
-          { reflectPresent: false }
-        )
+        const next = pruneBoardFromGroups(s.groups, boardId)
+        if (next === null) return s
+        return trackedChange(s, { groups: next }, { reflectPresent: false })
       })
   }
 }
