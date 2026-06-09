@@ -93,7 +93,7 @@ in §5.
 
 ## 4. Per-file diagnosis
 
-### 4.1 `canvas/Canvas.tsx` — 1233 LOC
+### 4.1 `canvas/Canvas.tsx` — 1233 LOC total / 902 code-lines (pinned 925)
 RF canvas root: derives nodes/edges from the store, owns canvas pointer/keyboard/camera, composes all
 floating chrome. Already delegates full-view/keybindings/tidy/placement to hooks; **group
 choreography, `onNodesChange`, digest panel, connector drag** are still inline.
@@ -108,7 +108,7 @@ choreography, `onNodesChange`, digest panel, connector drag** are still inline.
 Smells: `onNodesChange` is 143 LOC / 3 passes; group state fragmented across 6 vars; JSX has an IIFE
 computing `rf.flowToScreenPosition` inline (rubber-band SVG).
 
-### 4.2 `boards/TerminalBoard.tsx` — 1138 LOC
+### 4.2 `boards/TerminalBoard.tsx` — 1138 LOC total / 1002 code-lines (pinned 1025)
 xterm board: bridges xterm ⇄ PTY over MessagePort + hosts config/idle/restart/recap/port-picker UI.
 Already extracted: `terminalKeymap`, `terminalSelection`, `terminalDrop`, `resumeCommand`,
 `terminalState`, `terminalPreview`, `useTerminalFlip`. Still inline: the `spawn` mega-callback, WebGL
@@ -124,7 +124,7 @@ Smells: `spawn` is ~250 LOC doing xterm init + MessagePort wiring + ResizeObserv
 teardown in one `useCallback` (9 deps); `restart` duplicates the respawn logic; `attachWebglRef`
 self-reference dance; **`pasteIntoTerminal` unexported → test is a replica** (fix per Rule 3).
 
-### 4.3 `boards/usePreviewManager.ts` — 1035 LOC
+### 4.3 `boards/usePreviewManager.ts` — 1035 LOC total / 597 code-lines (under cap)
 Imperative engine for native `WebContentsView` lifecycle + camera sync. Pure math already in
 `cameraBounds` / `previewPlan` / `browserLayout`. Seven concerns fused in one hook.
 
@@ -138,7 +138,7 @@ Guardrails to keep (memories `preview-camera-sync-rootcause`, `preview-reconcile
 camera sync stays one `useOnViewportChange({onStart,onChange,onEnd})` (no second slot); reconcile fires
 only on a `canvasStore.boards` reference change; `demoting` Set must always drain in `finally` (Bug H1).
 
-### 4.4 `boards/PlanningBoard.tsx` — 1002 LOC
+### 4.4 `boards/PlanningBoard.tsx` — 1002 LOC total / 828 code-lines (pinned 850)
 Whiteboard orchestrator. Already extracted: `usePlanningPointer` + the pure `erase`/`marquee`/
 `snapping`/`align`/`elements`/`tools`/`textStyle`/`svgPaths`. Confirmed **clean** of the
 second-transform full-view anti-pattern (memory `planning-fullview-camera-fit`) — `onFull` just
@@ -153,7 +153,7 @@ forwards to `BoardFrame`.
 Smell: delete logic duplicated between `buildMenuEntries` (557–569) and the inline `onKeyDown`
 (787–805) → unify behind a shared `deleteSelection()` in `elements.ts`.
 
-### 4.5 `store/canvasStore.ts` — 944 LOC
+### 4.5 `store/canvasStore.ts` — 944 LOC total / 612 code-lines (under cap)
 Single Zustand store: boards/connectors/groups/selection/tool/viewport/project + undo rails. Prime
 candidate for Zustand **slice-pattern** splitting.
 
@@ -169,7 +169,7 @@ Keep `trackedChange` + `lastRecorded` in a shared `undo/` module (don't scatter)
 granular move-undo). `lastRecorded` + `idleOnMountIds` are module singletons **not reset in
 `beforeEach`** → cross-test bleed risk; moving them into a slice makes that visible (net win).
 
-### 4.6 `main/mcpOrchestrator.ts` — 998 LOC  ⚠️ security-sensitive
+### 4.6 `main/mcpOrchestrator.ts` — 998 LOC total / 673 code-lines (under cap)  ⚠️ security-sensitive
 MCP swarm orchestration over an injected `BoardRegistry`. ~492 LOC is four near-identical dispatch
 methods.
 
@@ -179,7 +179,7 @@ methods.
 | lifecycle: cap/`reconcile`/`reapIdle`/`spawnBoard`/`closeBoard` | 196–489 | `main/mcpLifecycle.ts` | ~200 | med (pass `closeBoard` callback, not `this`) |
 | unify 4× dispatch gate (handoff/dispatch/relay/interrupt) | 490–993 | `main/mcpDispatchGate.ts` | ~350 | **HIGH** — security gate; extract LAST, tests unchanged as proof |
 
-### 4.7 `main/pty.ts` — 935 LOC  ⚠️ security-sensitive
+### 4.7 `main/pty.ts` — 935 LOC total / 524 code-lines (under cap)  ⚠️ security-sensitive
 node-pty lifecycle. Already uses the `*Core` pattern → cleanest seams of all eight files.
 
 | Seam | Lines | → module | LOC | Risk |
@@ -191,7 +191,7 @@ node-pty lifecycle. Already uses the `*Core` pattern → cleanest seams of all e
 Smell: `pty:spawn` handler is one 120-line `ipcMain.handle`. Gap: `enumerateShells` branches +
 `recapEnvProvider` exception path untested.
 
-### 4.8 `main/mcpSmoke.ts` — 1221 LOC  (not dissected)
+### 4.8 `main/mcpSmoke.ts` — 1221 LOC total / 976 code-lines (pinned 1000)  (not dissected)
 Dev/smoke harness, not a production runtime path. **Triage separately** — likely splits by smoke
 scenario, and may be exempt from the runtime ratchet (or pinned but lower priority). Confirm its role
 before touching.
