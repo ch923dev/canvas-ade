@@ -22,7 +22,7 @@ import { usePreviewStore } from '../../store/previewStore'
 import type { BoardRec } from '../boards/usePreviewManager'
 
 /** The store's `patch` / `patchIfPresent` action signatures, taken straight off the store so
- *  the host can pass `usePreviewStore((s) => s.patch)` / `(s) => s.patchIfPresent)` with no cast. */
+ *  the host can pass `usePreviewStore((s) => s.patch)` / `(s) => s.patchIfPresent` with no cast. */
 type PatchRuntime = ReturnType<typeof usePreviewStore.getState>['patch']
 type PatchRuntimeIfPresent = ReturnType<typeof usePreviewStore.getState>['patchIfPresent']
 
