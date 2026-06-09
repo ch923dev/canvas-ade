@@ -29,6 +29,7 @@ import { nextViewport } from '../lib/viewportCycle'
 import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
 import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 import { createConnectorSlice } from './slices/connectorSlice'
+import { createGroupSlice } from './slices/groupSlice'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -506,105 +507,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   ...createConnectorSlice(set, get, { trackedChange, newId }),
 
-  addGroup: (name, boardIds) => {
-    const id = newId()
-    const group: NamedGroup = { id, name, boardIds: [...new Set(boardIds)] }
-    set((s) => trackedChange(s, { groups: [...s.groups, group] }, { reflectPresent: false }))
-    return id
-  },
-  removeGroup: (id) =>
-    set((s) => {
-      if (!s.groups.some((g) => g.id === id)) return s
-      return trackedChange(
-        s,
-        { groups: s.groups.filter((g) => g.id !== id) },
-        { reflectPresent: false }
-      )
-    }),
-  renameGroup: (id, name) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g || g.name === name) return s
-      return trackedChange(
-        s,
-        { groups: s.groups.map((x) => (x.id === id ? { ...x, name } : x)) },
-        { reflectPresent: false }
-      )
-    }),
-  addBoardsToGroup: (id, boardIds) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g) return s
-      const merged = [...new Set([...g.boardIds, ...boardIds])]
-      // Same length after Set-union ↔ all boardIds were already members — nothing to do.
-      if (merged.length === g.boardIds.length) return s
-      return trackedChange(
-        s,
-        { groups: s.groups.map((x) => (x.id === id ? { ...x, boardIds: merged } : x)) },
-        { reflectPresent: false }
-      )
-    }),
-  addBoardsToGroupReflowed: (id, boardIds, placements) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g) return s
-      const mergedIds = [...new Set([...g.boardIds, ...boardIds])]
-      const membershipChanged = mergedIds.length !== g.boardIds.length
-      // Only ever reposition the group's OWN members in this step — guard against a caller
-      // passing a placement for a non-member (the re-pack must not move unrelated boards).
-      const memberSet = new Set(mergedIds)
-      const pos = new Map(placements.filter((p) => memberSet.has(p.id)).map((p) => [p.id, p]))
-      let movedAny = false
-      const nextBoards = s.boards.map((b) => {
-        const p = pos.get(b.id)
-        if (p && (p.x !== b.x || p.y !== b.y)) {
-          movedAny = true
-          return { ...b, x: p.x, y: p.y }
-        }
-        return b
-      })
-      // No-op guard (mirrors addBoardsToGroup): if neither membership nor any position
-      // changed, push nothing — keep refs stable so trackedChange's no-op path holds.
-      if (!membershipChanged && !movedAny) return s
-      const nextGroups = membershipChanged
-        ? s.groups.map((x) => (x.id === id ? { ...x, boardIds: mergedIds } : x))
-        : s.groups
-      // One tracked step covers membership + the re-pack so a single undo restores both.
-      // reflectPresent:false matches the other group ops — the absorb stays granularly
-      // undoable; its post-no-op phantom is the same tolerated edge (#BUG M3).
-      return trackedChange(s, { boards: nextBoards, groups: nextGroups }, { reflectPresent: false })
-    }),
-  removeBoardFromGroup: (id, boardId) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g || !g.boardIds.includes(boardId)) return s
-      return trackedChange(
-        s,
-        {
-          groups: s.groups.map((x) =>
-            x.id === id ? { ...x, boardIds: x.boardIds.filter((b) => b !== boardId) } : x
-          )
-        },
-        { reflectPresent: false }
-      )
-    }),
-  removeBoardFromAllGroups: (boardId) =>
-    set((s) => {
-      // No-op (keep refs stable) when the board belongs to no group — same guard discipline as
-      // removeBoard's sweep, so a "remove from group" on an ungrouped board can't push a step.
-      if (!s.groups.some((g) => g.boardIds.includes(boardId))) return s
-      return trackedChange(
-        s,
-        {
-          groups: s.groups.map((g) =>
-            g.boardIds.includes(boardId)
-              ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) }
-              : g
-          )
-        },
-        { reflectPresent: false }
-      )
-    }),
+  ...createGroupSlice(set, get, { trackedChange, newId }),
 
   updateBoard: (id, patch) =>
     set((s) => {
