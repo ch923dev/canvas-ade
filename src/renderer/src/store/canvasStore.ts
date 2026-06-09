@@ -28,6 +28,9 @@ import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
 import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
 import { tileLayout, type TileTemplate } from '../lib/tileLayout'
+import { createConnectorSlice } from './slices/connectorSlice'
+import { createGroupSlice, pruneBoardFromGroups } from './slices/groupSlice'
+import type { SetCanvasState } from './slices/sliceTypes'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -312,6 +315,34 @@ function markRestoredIdle(boards: Board[]): void {
   for (const b of boards) if (b.type === 'terminal') idleOnMountIds.add(b.id)
 }
 
+/**
+ * Commit a freshly-parsed, migrated document into the store: clears the undo-dedup ref
+ * (a loaded project's history starts empty), flags restored terminals idle-on-mount, and
+ * resets boards/connectors/groups/viewport/selection/history. Pass `project` to also mark
+ * the project open (the applyOpenResult paths); omit it for a raw loadObject. The
+ * `lastRecorded = null` + `markRestoredIdle` side effects live HERE so no load path
+ * (loadObject / open / .bak recovery) can forget either (#BUG M3 hygiene + M-1 idle rule).
+ */
+function applyLoadedDoc(
+  set: SetCanvasState,
+  d: ReturnType<typeof fromObject>,
+  project?: ProjectState
+): void {
+  lastRecorded = null
+  markRestoredIdle(d.boards)
+  set({
+    boards: d.boards,
+    connectors: d.connectors,
+    groups: d.groups ?? [],
+    viewport: d.viewport,
+    selectedId: null,
+    selectedIds: [],
+    past: [],
+    future: [],
+    ...(project ? { project } : {})
+  })
+}
+
 /** Gap (world px) kept between boards when auto-placing a new one. */
 const PLACE_GAP = 28
 /** How many expanding rings the free-slot search probes before giving up. */
@@ -446,13 +477,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         : s.connectors
       // Sweep the deleted board from all group memberships in the SAME step (mirrors the
       // connector sweep above), so one undo restores board + cables + memberships together.
-      // Only mints a new groups array when a membership actually changes — keep ref for no-op.
-      const inGroups = s.groups.some((g) => g.boardIds.includes(id))
-      const nextGroups = inGroups
-        ? s.groups.map((g) =>
-            g.boardIds.includes(id) ? { ...g, boardIds: g.boardIds.filter((b) => b !== id) } : g
-          )
-        : s.groups
+      // prune returns null when the board is in no group → `?? s.groups` keeps the ref so
+      // trackedChange no-ops the groups field (membership unchanged).
+      const nextGroups = pruneBoardFromGroups(s.groups, id) ?? s.groups
       const nextSelIds = s.selectedIds.filter((x) => x !== id)
       return trackedChange(
         s,
@@ -503,141 +530,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     return cloneId
   },
 
-  addConnector: (sourceId, targetId, kind) => {
-    const s = get()
-    // Reject a self-link, a missing endpoint, or an exact duplicate (same s+t+kind).
-    if (sourceId === targetId) return null
-    const ids = new Set(s.boards.map((b) => b.id))
-    if (!ids.has(sourceId) || !ids.has(targetId)) return null
-    if (
-      s.connectors.some(
-        (c) => c.sourceId === sourceId && c.targetId === targetId && c.kind === kind
-      )
-    ) {
-      return null
-    }
-    const id = newId()
-    const connector: Connector = { id, sourceId, targetId, kind }
-    // One tracked step; leaves `boards` untouched (omit selectedId → keep selection).
-    // reflectPresent:false matches add/remove/duplicate — keeps the cable granularly
-    // undoable; its post-no-op phantom is the same tolerated edge (#BUG M3).
-    set((st) =>
-      trackedChange(st, { connectors: [...st.connectors, connector] }, { reflectPresent: false })
-    )
-    return id
-  },
+  ...createConnectorSlice(set, get, { trackedChange, newId }),
 
-  removeConnector: (id) =>
-    set((s) => {
-      if (!s.connectors.some((c) => c.id === id)) return s // unknown id → no dead step
-      return trackedChange(
-        s,
-        { connectors: s.connectors.filter((c) => c.id !== id) },
-        {
-          reflectPresent: false
-        }
-      )
-    }),
-
-  addGroup: (name, boardIds) => {
-    const id = newId()
-    const group: NamedGroup = { id, name, boardIds: [...new Set(boardIds)] }
-    set((s) => trackedChange(s, { groups: [...s.groups, group] }, { reflectPresent: false }))
-    return id
-  },
-  removeGroup: (id) =>
-    set((s) => {
-      if (!s.groups.some((g) => g.id === id)) return s
-      return trackedChange(
-        s,
-        { groups: s.groups.filter((g) => g.id !== id) },
-        { reflectPresent: false }
-      )
-    }),
-  renameGroup: (id, name) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g || g.name === name) return s
-      return trackedChange(
-        s,
-        { groups: s.groups.map((x) => (x.id === id ? { ...x, name } : x)) },
-        { reflectPresent: false }
-      )
-    }),
-  addBoardsToGroup: (id, boardIds) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g) return s
-      const merged = [...new Set([...g.boardIds, ...boardIds])]
-      // Same length after Set-union ↔ all boardIds were already members — nothing to do.
-      if (merged.length === g.boardIds.length) return s
-      return trackedChange(
-        s,
-        { groups: s.groups.map((x) => (x.id === id ? { ...x, boardIds: merged } : x)) },
-        { reflectPresent: false }
-      )
-    }),
-  addBoardsToGroupReflowed: (id, boardIds, placements) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g) return s
-      const mergedIds = [...new Set([...g.boardIds, ...boardIds])]
-      const membershipChanged = mergedIds.length !== g.boardIds.length
-      // Only ever reposition the group's OWN members in this step — guard against a caller
-      // passing a placement for a non-member (the re-pack must not move unrelated boards).
-      const memberSet = new Set(mergedIds)
-      const pos = new Map(placements.filter((p) => memberSet.has(p.id)).map((p) => [p.id, p]))
-      let movedAny = false
-      const nextBoards = s.boards.map((b) => {
-        const p = pos.get(b.id)
-        if (p && (p.x !== b.x || p.y !== b.y)) {
-          movedAny = true
-          return { ...b, x: p.x, y: p.y }
-        }
-        return b
-      })
-      // No-op guard (mirrors addBoardsToGroup): if neither membership nor any position
-      // changed, push nothing — keep refs stable so trackedChange's no-op path holds.
-      if (!membershipChanged && !movedAny) return s
-      const nextGroups = membershipChanged
-        ? s.groups.map((x) => (x.id === id ? { ...x, boardIds: mergedIds } : x))
-        : s.groups
-      // One tracked step covers membership + the re-pack so a single undo restores both.
-      // reflectPresent:false matches the other group ops — the absorb stays granularly
-      // undoable; its post-no-op phantom is the same tolerated edge (#BUG M3).
-      return trackedChange(s, { boards: nextBoards, groups: nextGroups }, { reflectPresent: false })
-    }),
-  removeBoardFromGroup: (id, boardId) =>
-    set((s) => {
-      const g = s.groups.find((x) => x.id === id)
-      if (!g || !g.boardIds.includes(boardId)) return s
-      return trackedChange(
-        s,
-        {
-          groups: s.groups.map((x) =>
-            x.id === id ? { ...x, boardIds: x.boardIds.filter((b) => b !== boardId) } : x
-          )
-        },
-        { reflectPresent: false }
-      )
-    }),
-  removeBoardFromAllGroups: (boardId) =>
-    set((s) => {
-      // No-op (keep refs stable) when the board belongs to no group — same guard discipline as
-      // removeBoard's sweep, so a "remove from group" on an ungrouped board can't push a step.
-      if (!s.groups.some((g) => g.boardIds.includes(boardId))) return s
-      return trackedChange(
-        s,
-        {
-          groups: s.groups.map((g) =>
-            g.boardIds.includes(boardId)
-              ? { ...g, boardIds: g.boardIds.filter((b) => b !== boardId) }
-              : g
-          )
-        },
-        { reflectPresent: false }
-      )
-    }),
+  ...createGroupSlice(set, get, { trackedChange, newId }),
 
   updateBoard: (id, patch) =>
     set((s) => {
@@ -861,22 +756,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
-    // Clear the dedup ref: it points at the pre-load snapshot; a fresh project's history
-    // starts empty, so a dangling ref must not survive the load (#BUG M3 hygiene).
-    lastRecorded = null
-    // Disk-restored terminals must start IDLE (no auto-spawn / no launchCommand on
-    // reopen) — flag every loaded terminal idle-on-mount (M-1).
-    markRestoredIdle(d.boards)
-    set({
-      boards: d.boards,
-      connectors: d.connectors,
-      groups: d.groups ?? [],
-      viewport: d.viewport,
-      selectedId: null,
-      selectedIds: [],
-      past: [],
-      future: []
-    })
+    applyLoadedDoc(set, d)
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
   applyOpenResult: async (r) => {
@@ -900,19 +780,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (bak.ok) {
         try {
           const d2 = fromObject(bak.doc)
-          lastRecorded = null
-          markRestoredIdle(d2.boards)
-          set({
-            boards: d2.boards,
-            connectors: d2.connectors,
-            groups: d2.groups ?? [],
-            viewport: d2.viewport,
-            selectedId: null,
-            selectedIds: [],
-            past: [],
-            future: [],
-            project: { dir: r.dir, name: r.name, status: 'open' }
-          })
+          applyLoadedDoc(set, d2, { dir: r.dir, name: r.name, status: 'open' })
           return
         } catch (bakErr) {
           // .bak is also deep-corrupt → fall through to the error path below (carrying the
@@ -926,20 +794,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
-    // Clear the dedup ref (see loadObject): the opened project's history starts empty.
-    lastRecorded = null
-    // Restored terminals start idle — flag every loaded terminal idle-on-mount (M-1).
-    markRestoredIdle(d.boards)
-    set({
-      boards: d.boards,
-      connectors: d.connectors,
-      groups: d.groups ?? [],
-      viewport: d.viewport,
-      selectedId: null,
-      selectedIds: [],
-      past: [],
-      future: [],
-      project: { dir: r.dir, name: r.name, status: 'open' }
-    })
+    applyLoadedDoc(set, d, { dir: r.dir, name: r.name, status: 'open' })
   }
 }))
