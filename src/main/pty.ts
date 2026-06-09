@@ -7,15 +7,6 @@ import { parsePortsFromOutput } from './portDetect'
 import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi, type OutputPage } from './ptyOutput'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 
-// Public re-exports — preserve pty.ts's API surface after the ptyShells extraction.
-export {
-  canonicalizeShellPath,
-  clearShellCache,
-  enumerateShells,
-  resolveShell,
-  safeCwd
-} from './ptyShells'
-export type { ShellInfo } from './ptyShells'
 // T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
 // Type-only import (erased at runtime → no coupling to the LLM stack) so the returned shape is
 // guaranteed to match what createSummaryLoop expects.
