@@ -6,23 +6,33 @@ import type {
   BoardResultInput,
   BoardStatusChange,
   BoardSummary,
-  MemoryDoc,
-  Orchestrator
+  MemoryDoc
 } from '@expanse-ade/mcp'
-import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
-import { createDispatchGuard, type DispatchGuard } from './dispatchGuard'
+import { createDispatchGuard } from './dispatchGuard'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
+import {
+  deriveStatus,
+  makeSessionLookup,
+  MCP_IDLE_TTL_MS,
+  MCP_SPAWN_CAP,
+  MCP_SPAWN_GRACE_MS,
+  type BoardRegistry,
+  type DispatchStatus,
+  type LifecycleOrchestrator,
+  type OrchestratorOpts
+} from './mcpRegistry'
 
-/**
- * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
- * (the runaway-swarm guard, T3.1). Reconciled against the live mirror + idle-reaped
- * (T3.4). Spawns past the cap are rejected with a clear error.
- */
-export const MCP_SPAWN_CAP = 4
-
-/** Default idle TTL before an MCP-spawned board is reaped (T3.4). */
-export const MCP_IDLE_TTL_MS = 5 * 60 * 1000
+// Re-export the registry/types surface so existing importers (mcp.ts + the test suites)
+// keep importing it from './mcpOrchestrator' unchanged after the mcpRegistry split.
+export { MCP_SPAWN_CAP, MCP_IDLE_TTL_MS, MCP_SPAWN_GRACE_MS } from './mcpRegistry'
+export type {
+  BoardRegistry,
+  ConnectorMirrorEntry,
+  DispatchStatus,
+  LifecycleOrchestrator,
+  OrchestratorOpts
+} from './mcpRegistry'
 
 /**
  * 🔒 Board types the MCP layer may spawn — mirrors the renderer's SPAWNABLE allowlist
@@ -31,140 +41,6 @@ export const MCP_IDLE_TTL_MS = 5 * 60 * 1000
  * (defense-in-depth, APP-N3) rather than forwarding it to the renderer.
  */
 const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
-
-/**
- * Grace after a spawn during which a tracked board is NOT reconciled away even if it
- * is absent from the mirror — the renderer publishes the new board asynchronously
- * (~150ms debounce), so a just-spawned id legitimately isn't in `listBoards()` yet.
- */
-export const MCP_SPAWN_GRACE_MS = 5_000
-
-/** Tuning + clock seam for the lifecycle cap/reaper (all optional; injected by tests). */
-export interface OrchestratorOpts {
-  now?: () => number
-  cap?: number
-  idleTtlMs?: number
-  spawnGraceMs?: number
-  /** 🔒 Single-use-nonce authority for dispatch (T4.3); a fresh guard per orchestrator by default. */
-  guard?: DispatchGuard
-  /** Backstop timer seam for the handoff await-idle deadline (injected by tests to avoid real timers). */
-  sleep?: (ms: number) => Promise<void>
-  /** Backstop deadline for the handoff await-idle (M5: the await is event-driven via subscribeStatus). */
-  handoffTimeoutMs?: number
-}
-
-/** The adapter + the T3.4 idle-reap sweep (extra method beyond the package contract). */
-export type LifecycleOrchestrator = Orchestrator & {
-  /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
-  reapIdle(): Promise<string[]>
-}
-
-/** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
-export interface ConnectorMirrorEntry {
-  id: string
-  sourceId: string
-  targetId: string
-  kind: string
-}
-
-/** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
-export interface BoardRegistry {
-  listBoards(): Array<{ id: string; type: string; title: string; status?: string }>
-  /**
-   * The connector graph the renderer mirrors (T4.6). Only `orchestration` edges authorize
-   * an agent-to-agent relay; directional (source → target). MAIN injects `listConnectors`
-   * from `boardRegistry.ts`.
-   */
-  listConnectors(): ConnectorMirrorEntry[]
-  listSessions(): Array<{ id: string; status: string }>
-  /**
-   * Subscribe to per-board coarse status changes (M5 event-driven attention). MAIN injects
-   * `boardRegistry.ts`'s `subscribeBoardStatus`. Emits `{ id, status }` on each change
-   * (`status: 'gone'` when a board leaves the canvas); returns an unsubscribe fn. The handoff
-   * await-idle wakes on these instead of polling.
-   */
-  subscribeStatus(listener: (change: { id: string; status: string }) => void): () => void
-  /**
-   * Drive the canvas via the MAIN → renderer control-plane command channel (T3.1+).
-   * MAIN injects a frame-guarded `sendMcpCommand`; the renderer applies the command
-   * to `canvasStore` and acks. The ONLY write path from the MCP layer to the canvas.
-   */
-  sendCommand(command: McpCommand): Promise<McpCommandAck>
-  /**
-   * Read one capped, ANSI-stripped page of a board's PTY scrollback (T1.4 🔒).
-   * MAIN injects `pty.ts`'s `readPtyOutput`; non-terminal/unknown ids read empty.
-   */
-  readOutput(id: string, opts?: { cursor?: number }): BoardOutput
-  /**
-   * Read a board's structured last result (T1.5). MAIN injects `boardResults.ts`'s
-   * `readBoardResult`; a board with no recorded result reads the empty shell.
-   */
-  readResult(id: string): BoardResult
-  /**
-   * Read the project memory index (T1.7 🔒). MAIN injects `boardMemory.ts`'s
-   * `readProjectMemory`; empty shell when the memory engine is absent.
-   */
-  readMemory(): MemoryDoc
-  /**
-   * Read a board's memory summary (T1.7 🔒). MAIN injects `readBoardSummary` (which
-   * path-guards the agent-supplied id); empty shell when absent/invalid.
-   */
-  readSummary(id: string): MemoryDoc
-  /**
-   * Gracefully drain (then tree-kill) a board's PTY before it is removed (T3.2).
-   * MAIN injects `pty.ts`'s `drainPty`; a non-terminal / absent id resolves to a
-   * no-op. Always resolves — close is best-effort graceful, never throws on the PTY.
-   */
-  drainPty(id: string): Promise<void>
-  /**
-   * 🔒 Write `text` into a terminal board's PTY (T4.3 dispatch). MAIN injects
-   * `pty.ts`'s `writeToPty`; a non-terminal / absent id returns false (no write). The
-   * orchestrator calls this ONLY after id-resolution + terminal-check + a single-use
-   * nonce + a human confirm + an audit entry have authorized it.
-   */
-  writeToPty(id: string, text: string): boolean
-  /**
-   * 🔒 Block on a mandatory human confirm (T4.2). MAIN injects `requestConfirm`
-   * (fail-closed everywhere); resolves `{ approved }` only on an explicit human yes.
-   * The decision authority is the human via our own trusted UI — never the
-   * worker-originated content that prompted the dispatch.
-   */
-  confirm(req: { title: string; body: string }): Promise<{ approved: boolean }>
-  /**
-   * 🔒 Append one dispatch audit entry (T4.1). MAIN injects `getAuditLog().append`.
-   * Every dispatch attempt — rejected / denied / failed / completed — is recorded with
-   * the resolved target, full prompt, and nonce before/after the action runs.
-   */
-  audit(input: AuditInput): Promise<void>
-  /**
-   * 🔒 Record a board's structured last result (T4.4 `write_result`). MAIN injects
-   * `boardResults.ts`'s `recordBoardResult`, which feeds `canvas://board/{id}/result`
-   * (T1.5). The caller binds `id` to the worker's own token-bound board, so a worker can
-   * only write its own result. No PTY write, no confirm — the agent reports its outcome.
-   */
-  recordResult(id: string, result: BoardResult): void
-}
-
-/**
- * Coarse status bucket for a board (T1.1). The renderer-supplied `status` bucket
- * wins — it is derived from the live runtime stores (terminalRuntimeStore +
- * previewStore) and is the single source of truth shared with the on-canvas pill.
- * When the mirror carries no bucket (a renderer predating T1.1, or a board not yet
- * republished), fall back to a bucket derived from MAIN's own signals: the PTY
- * session map for terminals, presence for the rest. The fallback is intentionally
- * coarse — `running` only when the PTY is live, otherwise `idle`; `browser` is
- * `idle` (presence, not liveness — a crashed browser still reads idle here);
- * `planning` and any forward/unknown type are `static`.
- */
-function deriveStatus(
-  board: { id: string; type: string; status?: string },
-  sessionById: Map<string, string>
-): string {
-  if (board.status) return board.status
-  if (board.type === 'terminal') return sessionById.get(board.id) === 'running' ? 'running' : 'idle'
-  if (board.type === 'browser') return 'idle'
-  return 'static'
-}
 
 /**
  * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
@@ -189,8 +65,14 @@ export function buildOrchestrator(
         t.unref?.()
       }))
   const handoffTimeoutMs = opts.handoffTimeoutMs ?? MCP_IDLE_TTL_MS
-  const sessionMap = (): Map<string, string> =>
-    new Map(registry.listSessions().map((s) => [s.id, s.status]))
+  // A fresh LAZY session-status resolver per logical status read: materialises
+  // registry.listSessions() at most once, and only when a terminal-without-mirror-status
+  // is actually derived (deriveStatus's terminal-fallback branch — the common read never
+  // touches the PTY map). Built fresh each call so it always reflects the LIVE sessions
+  // (BUG-008: the handoff await-idle re-resolves the live status on every wake — never a
+  // captured snapshot).
+  const sessionLookup = (): ((id: string) => string | undefined) =>
+    makeSessionLookup(() => registry.listSessions())
   // Boards this orchestrator has spawned — the cap budget (T3.1). `spawnedAt` gates
   // reconciliation (T3.4): an id absent from the live mirror is dropped only after the
   // spawn grace, so a just-spawned not-yet-published board isn't pruned. `idleSince`
@@ -219,7 +101,7 @@ export function buildOrchestrator(
     const check = (): 'idle' | 'closed' | null => {
       const live = registry.listBoards().find((b) => b.id === boardId)
       if (!live) return 'closed'
-      return deriveStatus(live, sessionMap()) !== 'running' ? 'idle' : null
+      return deriveStatus(live, sessionLookup()) !== 'running' ? 'idle' : null
     }
     const immediate = check()
     if (immediate) return Promise.resolve(immediate)
@@ -242,17 +124,147 @@ export function buildOrchestrator(
     })
   }
 
+  // 🔒 One typed audit sink for every dispatch/lifecycle write path (T4.1). Routing all
+  // audit writes through it pins the `status` field to the closed DispatchStatus vocabulary
+  // — an off-vocabulary or typo'd status is a compile error, not a silently-mislabelled
+  // forensic line — and removes the repeated literal at each call site.
+  const writeAudit = (
+    input: Omit<AuditInput, 'status'> & { status: DispatchStatus }
+  ): Promise<void> => registry.audit(input)
+
+  /**
+   * 🔒 The single, unskippable write gate shared by ALL four PTY-dispatch tools
+   * (handoff_prompt / assign_prompt / relay_prompt / interrupt). Centralising the gate IS
+   * the hardening: no caller can assemble a partial pipeline. After the caller has resolved
+   * the target + proven it is a terminal, this runs the canonical, ORDERED sequence ONCE —
+   *   sanitize → issue nonce → human confirm (+evict-on-deny) → pre-write re-check
+   *   → consume nonce (+audit-on-replay) → writeToPty (+audit-on-fail) → audit `dispatched`
+   * — and audits EVERY branch (BUG-019: post-sanitization entries record safeText, never raw
+   * text; BUG-020: a denied/rejected nonce is evicted). The ordering must stay whole and in
+   * this order — do not reorder or skip a step. Returns the realised { safeText, nonce, seq }
+   * so a caller (handoffPrompt) can run its own await-idle follow-up and record the matching
+   * `completed`/`closed`/`timed_out` entry.
+   */
+  const runGatedWrite = async (d: {
+    /** Audit `type` + thrown-error prefix (e.g. 'handoff_prompt', 'interrupt'). */
+    type: string
+    /** The RESOLVED opaque target board id (audit targetId + writeToPty target). */
+    targetId: string
+    /** The raw payload to authorize ('' for the content-less interrupt). */
+    text: string
+    /** Appended to safeText for the PTY write: '\r' submits a line, '\x03' is a raw Ctrl-C. */
+    terminator: '\r' | '\x03'
+    /** false skips sanitization (interrupt has no command text to sanitize). Default true. */
+    sanitize?: boolean
+    confirmTitle: string
+    /** Confirm body built AFTER sanitization so it can embed the exact safeText shown+run. */
+    confirmBody: (safeText: string) => string
+    /** Trailing context appended to detail lines (relay's `${sourceId}->${targetId}`). */
+    detailSuffix?: string
+    /**
+     * 🔒 Optional re-check run AFTER the human approves but BEFORE the nonce is consumed /
+     * the PTY is written (relay's BUG-021 TOCTOU: the authorizing cable can be deleted while
+     * the modal is open). Return null to proceed, or { detail, error } to evict + reject.
+     */
+    preWriteRecheck?: (seq: number) => { detail: string; error: string } | null
+  }): Promise<{ safeText: string; nonce: string; seq: number }> => {
+    const { type, targetId, terminator } = d
+    let safeText: string | undefined
+    let nonce = ''
+    let seq = 0
+    // Bound audit: type/targetId fixed; prompt is safeText once sanitized (BUG-019), else the
+    // raw text (a pre-sanitization rejection, before safeText exists); nonce is '' until issued.
+    const audit = (
+      status: DispatchStatus,
+      extra?: { detail?: string; outputs?: string }
+    ): Promise<void> =>
+      writeAudit({ type, targetId, prompt: safeText ?? d.text, nonce, status, ...extra })
+
+    // (sanitize) 🔒 One dispatch = one command line. Reject an embedded CR/LF (it would run N
+    // commands from a single approval) + strip control chars — BEFORE nonce/confirm so a
+    // multi-command payload is never minted a nonce nor shown to the human to rubber-stamp.
+    if (d.sanitize === false) {
+      safeText = d.text
+    } else {
+      try {
+        safeText = sanitizeDispatchText(d.text)
+      } catch (err) {
+        if (err instanceof DispatchPayloadError) {
+          await audit('rejected', {
+            detail: `unsafe payload: ${err.message}${d.detailSuffix ? `; ${d.detailSuffix}` : ''}`
+          })
+        }
+        throw err
+      }
+    }
+
+    // (issue) Mint the single-use nonce + monotonic sequence for this dispatch.
+    const issued = guard.issue()
+    nonce = issued.nonce
+    seq = issued.seq
+    const seqDetail = d.detailSuffix ? `${d.detailSuffix}; seq=${seq}` : `seq=${seq}`
+
+    // (confirm) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
+    // carries the RESOLVED target + the EXACT (sanitized) payload the human is authorizing.
+    const { approved } = await registry.confirm({
+      title: d.confirmTitle,
+      body: d.confirmBody(safeText)
+    })
+    if (!approved) {
+      // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak it into
+      // the guard's outstanding set forever (BUG-020). consume() deletes it.
+      guard.consume(nonce)
+      await audit('denied', { detail: seqDetail })
+      throw new Error(`${type}: dispatch denied by the human gate`)
+    }
+
+    // (pre-write re-check) 🔒 relay's BUG-021 TOCTOU slots HERE — after confirm, before the
+    // nonce is consumed / the PTY is written. A vanished authorization → evict + reject.
+    if (d.preWriteRecheck) {
+      const failure = d.preWriteRecheck(seq)
+      if (failure) {
+        guard.consume(nonce)
+        await audit('rejected', { detail: failure.detail })
+        throw new Error(failure.error)
+      }
+    }
+
+    // (consume) Redeem the nonce (defensive — a replayed/forged nonce can never reach a
+    // write). Belt-and-braces against a re-entrant/duplicated dispatch.
+    if (!guard.consume(nonce)) {
+      await audit('rejected', { detail: `replayed/forged nonce; ${seqDetail}` })
+      throw new Error(`${type}: nonce already consumed (replay rejected)`)
+    }
+
+    // (write) Write into the PTY (safeText + the terminator). A false means no live terminal
+    // session held the id — audit failed + throw.
+    if (!registry.writeToPty(targetId, safeText + terminator)) {
+      await audit('failed', { detail: `pty write failed; ${seqDetail}` })
+      throw new Error(`${type}: PTY write failed (no live terminal session)`)
+    }
+
+    // (audit dispatched) 🔒 Record the write the MOMENT it lands — BEFORE any (bounded)
+    // await-idle follow-up the caller may run — so a crash mid-wait still leaves a durable
+    // trail that the command executed in the target shell (the audit log's BEFORE/AFTER
+    // contract).
+    await audit('dispatched', { detail: seqDetail })
+    return { safeText, nonce, seq }
+  }
+
   return {
     async listBoards(): Promise<BoardSummary[]> {
-      const sessions = sessionMap()
-      return registry
-        .listBoards()
-        .map((b) => ({ id: b.id, type: b.type, title: b.title, status: deriveStatus(b, sessions) }))
+      const sessionStatusFor = sessionLookup()
+      return registry.listBoards().map((b) => ({
+        id: b.id,
+        type: b.type,
+        title: b.title,
+        status: deriveStatus(b, sessionStatusFor)
+      }))
     },
     async boardStatus(boardId: BoardId): Promise<string> {
       const board = registry.listBoards().find((b) => b.id === boardId)
       if (!board) throw new Error(`board not found: ${boardId}`)
-      return deriveStatus(board, sessionMap())
+      return deriveStatus(board, sessionLookup())
     },
     async boardOutput(boardId: BoardId, opts?: { cursor?: number }): Promise<BoardOutput> {
       // Read-only scrollback page (T1.4). An absent board reads as empty (the
@@ -399,10 +411,12 @@ export function buildOrchestrator(
     ): Promise<void> {
       // 🔒 `launchCommand` is the exec vector (BUG-002): it is free-text written verbatim
       // as the FIRST PTY line on the board's next spawn, so a configure that sets it can
-      // pre-stage an arbitrary shell command with deferred execution. Gate it with the same
-      // protections handoffPrompt uses — sanitize (reject embedded CR/LF) → human confirm →
-      // audit — BEFORE the value is ever persisted. Shell/cwd-only patches carry no exec
-      // vector, so they pass through unchanged (no confirm) to keep the existing contract.
+      // pre-stage an arbitrary shell command with deferred execution. It has no live PTY to
+      // write into and no single-use nonce (nothing runs now), so it does NOT route through
+      // runGatedWrite (the live-PTY dispatch gate); instead it runs the same sanitize →
+      // human confirm → audit discipline — BEFORE the value is ever persisted. Shell/cwd-only
+      // patches carry no exec vector, so they pass through unchanged (no confirm) to keep the
+      // existing contract.
       if (config.launchCommand !== undefined && config.launchCommand !== '') {
         // (a) One launchCommand = one command line. Reject an embedded CR/LF (it would run
         // N commands on spawn) + strip control chars — BEFORE the human gate so a
@@ -412,7 +426,7 @@ export function buildOrchestrator(
           safeLaunch = sanitizeDispatchText(config.launchCommand)
         } catch (err) {
           if (err instanceof DispatchPayloadError) {
-            await registry.audit({
+            await writeAudit({
               type: 'configure_board',
               targetId: boardId,
               prompt: config.launchCommand,
@@ -435,7 +449,7 @@ export function buildOrchestrator(
           body: `Set this command to run on terminal "${boardLabel}" the next time it spawns?\n\n${safeLaunch}`
         })
         if (!approved) {
-          await registry.audit({
+          await writeAudit({
             type: 'configure_board',
             targetId: boardId,
             prompt: safeLaunch,
@@ -457,7 +471,7 @@ export function buildOrchestrator(
           // throw so the audit trail is symmetric with the dispatch paths (every other write
           // path audits a failure). Without this the exact path BUG-002 hardened had a
           // forensic gap: an approved-then-failed configure left no trace.
-          await registry.audit({
+          await writeAudit({
             type: 'configure_board',
             targetId: boardId,
             prompt: safeLaunch,
@@ -470,7 +484,7 @@ export function buildOrchestrator(
 
         // Record the approved configure (target board id + the new launchCommand) AFTER it
         // lands so the audit trail reflects a write that actually persisted.
-        await registry.audit({
+        await writeAudit({
           type: 'configure_board',
           targetId: boardId,
           prompt: safeLaunch,
@@ -488,15 +502,16 @@ export function buildOrchestrator(
       if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
     },
     async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
-      // 🔒 The dangerous path: a write into another agent's shell. Every branch that
-      // does NOT write still leaves an audit trail, and a nonce/confirm sit between the
-      // (possibly tainted) request and the PTY. See CLAUDE.md › Process model & security.
+      // 🔒 The dangerous path: a write into another agent's shell. Resolve the OPAQUE id +
+      // prove it is a terminal HERE; the shared write gate then runs the unskippable
+      // sanitize→nonce→confirm→consume→write→audit pipeline (every non-write branch still
+      // audits). See CLAUDE.md › Process model & security.
 
-      // (1) Resolve the target by its OPAQUE server id (never a label — a title is not
-      // an id, so label-targeting can't match here). Not found → audit + throw, no nonce.
+      // (1) Resolve the target by its OPAQUE server id (never a label — a title is not an
+      // id, so label-targeting can't match here). Not found → audit + throw, no nonce.
       const board = registry.listBoards().find((b) => b.id === boardId)
       if (!board) {
-        await registry.audit({
+        await writeAudit({
           type: 'handoff_prompt',
           targetId: boardId,
           prompt: text,
@@ -507,10 +522,10 @@ export function buildOrchestrator(
         throw new Error(`handoff_prompt: board not found: ${boardId}`)
       }
 
-      // (2) Terminal-only. Browser/Planning content must NEVER reach a PTY — reject
-      // BEFORE any nonce/confirm/write side effect.
+      // (2) Terminal-only. Browser/Planning content must NEVER reach a PTY — reject BEFORE
+      // any nonce/confirm/write side effect.
       if (board.type !== 'terminal') {
-        await registry.audit({
+        await writeAudit({
           type: 'handoff_prompt',
           targetId: boardId,
           prompt: text,
@@ -521,103 +536,29 @@ export function buildOrchestrator(
         throw new Error(`handoff_prompt: target is not a terminal (${board.type})`)
       }
 
-      // (2.5) 🔒 One dispatch = one command line. Reject an embedded CR/LF (it would run
-      // N commands from a single approval) + strip control chars — BEFORE nonce/confirm so
-      // a multi-command payload is never shown to the human to rubber-stamp.
-      let safeText: string
-      try {
-        safeText = sanitizeDispatchText(text)
-      } catch (err) {
-        if (err instanceof DispatchPayloadError) {
-          await registry.audit({
-            type: 'handoff_prompt',
-            targetId: boardId,
-            prompt: text,
-            nonce: '',
-            status: 'rejected',
-            detail: `unsafe payload: ${err.message}`
-          })
-        }
-        throw err
-      }
-
-      // (3) Mint the single-use nonce + monotonic sequence for this dispatch.
-      const { nonce, seq } = guard.issue()
-
-      // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
-      // carries the RESOLVED target + the EXACT (sanitized) prompt the human is authorizing.
-      const { approved } = await registry.confirm({
-        title: `Hand off to "${board.title}"`,
-        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
-      })
-      if (!approved) {
-        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
-        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
-        guard.consume(nonce)
-        await registry.audit({
-          type: 'handoff_prompt',
-          targetId: boardId,
-          prompt: safeText,
-          nonce,
-          status: 'denied',
-          detail: `seq=${seq}`
-        })
-        throw new Error('handoff_prompt: dispatch denied by the human gate')
-      }
-
-      // (5) Redeem the nonce (defensive — a replayed/forged nonce can never reach a
-      // write). Belt-and-braces against a re-entrant/duplicated dispatch.
-      if (!guard.consume(nonce)) {
-        await registry.audit({
-          type: 'handoff_prompt',
-          targetId: boardId,
-          prompt: safeText,
-          nonce,
-          status: 'rejected',
-          detail: `replayed/forged nonce; seq=${seq}`
-        })
-        throw new Error('handoff_prompt: nonce already consumed (replay rejected)')
-      }
-
-      // (6) Write into the PTY (append CR so the shell actually runs the line). A false
-      // means no live terminal session held the id — audit failed + throw.
-      if (!registry.writeToPty(boardId, safeText + '\r')) {
-        await registry.audit({
-          type: 'handoff_prompt',
-          targetId: boardId,
-          prompt: safeText,
-          nonce,
-          status: 'failed',
-          detail: `pty write failed; seq=${seq}`
-        })
-        throw new Error('handoff_prompt: PTY write failed (no live terminal session)')
-      }
-
-      // 🔒 Record the write the MOMENT it lands — BEFORE the (bounded, up-to-minutes)
-      // await-idle wait. A crash or a failed append during the wait then still leaves a
-      // durable trail that the command was executed in the target shell (the audit log's
-      // BEFORE/AFTER contract). The matching `completed` entry follows once it goes idle.
-      await registry.audit({
+      // (3) The shared, unskippable write gate: sanitize → nonce → confirm → consume →
+      // PTY write → audit `dispatched`. Returns the realised safeText/nonce/seq.
+      const { safeText, nonce, seq } = await runGatedWrite({
         type: 'handoff_prompt',
         targetId: boardId,
-        prompt: safeText,
-        nonce,
-        status: 'dispatched',
-        detail: `seq=${seq}`
+        text,
+        terminator: '\r',
+        confirmTitle: `Hand off to "${board.title}"`,
+        confirmBody: (s) => `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${s}`
       })
 
-      // (7) Await idle — event-driven off the status stream (M5). No busy-poll: park on the first
-      // status change for this board (re-resolving the live derived status on wake), bounded by a
-      // one-shot backstop deadline.
+      // (4) Await idle — event-driven off the status stream (M5). No busy-poll: park on the
+      // first status change for this board (re-resolving the live derived status on wake),
+      // bounded by a one-shot backstop deadline.
       const exit = await awaitHandoffSettled(boardId)
       const result = registry.readResult(boardId)
 
-      // (8) Record the dispatch outcome (target + full prompt + nonce + seq + outputs). The
+      // (5) Record the dispatch outcome (target + full prompt + nonce + seq + outputs). The
       // status distinguishes a true completion (`completed`) from a board that closed
       // mid-dispatch (`closed`) or never left `running` before the deadline (`timed_out`),
       // so the MCP client/audit trail can tell them apart instead of always seeing
       // `completed` over a false-empty result (BUG-008).
-      await registry.audit({
+      await writeAudit({
         type: 'handoff_prompt',
         targetId: boardId,
         prompt: safeText,
@@ -630,14 +571,13 @@ export function buildOrchestrator(
     },
     async dispatchPrompt(boardId: BoardId, text: string): Promise<void> {
       // 🔒 assign_prompt (T4.4): the FIRE-AND-FORGET sibling of handoffPrompt — the SAME
-      // gating (opaque id → terminal-only → nonce → human confirm → audit → PTY write)
-      // MINUS the blocking await-idle/result. Every non-write branch still audits. See
-      // CLAUDE.md › Process model & security.
+      // shared write gate MINUS the blocking await-idle/result. Resolve the OPAQUE id +
+      // prove it is a terminal HERE, then the gate. See CLAUDE.md › Process model & security.
 
       // (1) Resolve by OPAQUE id (never a label). Not found → audit + throw, no nonce.
       const board = registry.listBoards().find((b) => b.id === boardId)
       if (!board) {
-        await registry.audit({
+        await writeAudit({
           type: 'assign_prompt',
           targetId: boardId,
           prompt: text,
@@ -650,7 +590,7 @@ export function buildOrchestrator(
 
       // (2) Terminal-only. Browser/Planning content must NEVER reach a PTY.
       if (board.type !== 'terminal') {
-        await registry.audit({
+        await writeAudit({
           type: 'assign_prompt',
           targetId: boardId,
           prompt: text,
@@ -661,86 +601,15 @@ export function buildOrchestrator(
         throw new Error(`assign_prompt: target is not a terminal (${board.type})`)
       }
 
-      // (2.5) 🔒 One dispatch = one command line. Reject an embedded CR/LF (it would run
-      // N commands from a single approval) + strip control chars — BEFORE nonce/confirm.
-      let safeText: string
-      try {
-        safeText = sanitizeDispatchText(text)
-      } catch (err) {
-        if (err instanceof DispatchPayloadError) {
-          await registry.audit({
-            type: 'assign_prompt',
-            targetId: boardId,
-            prompt: text,
-            nonce: '',
-            status: 'rejected',
-            detail: `unsafe payload: ${err.message}`
-          })
-        }
-        throw err
-      }
-
-      // (3) Mint the single-use nonce + monotonic sequence for this dispatch.
-      const { nonce, seq } = guard.issue()
-
-      // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body
-      // carries the RESOLVED target + the EXACT (sanitized) prompt the human is authorizing.
-      const { approved } = await registry.confirm({
-        title: `Assign to "${board.title}"`,
-        body: `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${safeText}`
-      })
-      if (!approved) {
-        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
-        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
-        guard.consume(nonce)
-        await registry.audit({
-          type: 'assign_prompt',
-          targetId: boardId,
-          prompt: safeText,
-          nonce,
-          status: 'denied',
-          detail: `seq=${seq}`
-        })
-        throw new Error('assign_prompt: dispatch denied by the human gate')
-      }
-
-      // (5) Redeem the nonce (defensive — a replayed/forged nonce can never reach a write).
-      if (!guard.consume(nonce)) {
-        await registry.audit({
-          type: 'assign_prompt',
-          targetId: boardId,
-          prompt: safeText,
-          nonce,
-          status: 'rejected',
-          detail: `replayed/forged nonce; seq=${seq}`
-        })
-        throw new Error('assign_prompt: nonce already consumed (replay rejected)')
-      }
-
-      // (6) Write into the PTY (append CR so the shell runs the line). A false means no
-      // live terminal session held the id — audit failed + throw.
-      if (!registry.writeToPty(boardId, safeText + '\r')) {
-        await registry.audit({
-          type: 'assign_prompt',
-          targetId: boardId,
-          prompt: safeText,
-          nonce,
-          status: 'failed',
-          detail: `pty write failed; seq=${seq}`
-        })
-        throw new Error('assign_prompt: PTY write failed (no live terminal session)')
-      }
-
-      // 🔒 Fire-and-forget: record the write the moment it lands and RETURN. Unlike
-      // handoffPrompt there is no await-idle wait and no `completed` follow-up — the
-      // caller does not block on the target finishing.
-      await registry.audit({
+      // (3) The shared, unskippable write gate. Fire-and-forget: no await-idle, no
+      // `completed` follow-up — the caller does not block on the target finishing.
+      await runGatedWrite({
         type: 'assign_prompt',
         targetId: boardId,
-        prompt: safeText,
-        nonce,
-        status: 'dispatched',
-        detail: `seq=${seq}`
+        text,
+        terminator: '\r',
+        confirmTitle: `Assign to "${board.title}"`,
+        confirmBody: (s) => `Run this prompt in terminal "${board.title}" (${boardId})?\n\n${s}`
       })
     },
     async writeResult(boardId: BoardId, result: BoardResultInput): Promise<void> {
@@ -756,18 +625,19 @@ export function buildOrchestrator(
     },
     async relayPrompt(sourceId: BoardId, targetId: BoardId, text: string): Promise<void> {
       // 🔒 agent-to-agent relay (T4.6, the M4 gate): a dispatch A→B is authorized by an
-      // ORCHESTRATION connector A→B (the spatial cable is the route). Same write gating as
-      // assign_prompt, with edge-resolution as the target lookup. terminal→terminal only.
+      // ORCHESTRATION connector A→B (the spatial cable is the route). Resolve the cable +
+      // prove both ends are terminals HERE, then the shared write gate runs the dispatch
+      // pipeline; relay's BUG-021 TOCTOU re-check is supplied as the gate's preWriteRecheck.
 
       // (1) The cable IS the authorization: require a directed orchestration edge A→B.
-      // Resolved BEFORE a nonce/confirm so an unauthorized relay has no side effect.
+      // Resolved BEFORE the gate so an unauthorized relay has no side effect.
       const cable = registry
         .listConnectors()
         .find(
           (c) => c.kind === 'orchestration' && c.sourceId === sourceId && c.targetId === targetId
         )
       if (!cable) {
-        await registry.audit({
+        await writeAudit({
           type: 'relay_prompt',
           targetId,
           prompt: text,
@@ -783,7 +653,7 @@ export function buildOrchestrator(
       const source = boards.find((b) => b.id === sourceId)
       const target = boards.find((b) => b.id === targetId)
       if (!source || source.type !== 'terminal' || !target || target.type !== 'terminal') {
-        await registry.audit({
+        await writeAudit({
           type: 'relay_prompt',
           targetId,
           prompt: text,
@@ -794,120 +664,48 @@ export function buildOrchestrator(
         throw new Error('relay_prompt: relay requires a terminal source and a terminal target')
       }
 
-      // (2.5) 🔒 One dispatch = one command line. Reject an embedded CR/LF (it would run
-      // N commands from a single approval) + strip control chars — BEFORE nonce/confirm.
-      let safeText: string
-      try {
-        safeText = sanitizeDispatchText(text)
-      } catch (err) {
-        if (err instanceof DispatchPayloadError) {
-          await registry.audit({
-            type: 'relay_prompt',
-            targetId,
-            prompt: text,
-            nonce: '',
-            status: 'rejected',
-            detail: `unsafe payload: ${err.message}; ${sourceId}->${targetId}`
-          })
-        }
-        throw err
-      }
-
-      // (3) Mint the single-use nonce + sequence.
-      const { nonce, seq } = guard.issue()
-
-      // (4) Mandatory human confirm — the body names both endpoints + the exact (sanitized) prompt.
-      const { approved } = await registry.confirm({
-        title: `Relay "${source.title}" → "${target.title}"`,
-        body: `Relay this prompt from terminal "${source.title}" to terminal "${target.title}" (${targetId})?\n\n${safeText}`
-      })
-      if (!approved) {
-        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
-        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
-        guard.consume(nonce)
-        await registry.audit({
-          type: 'relay_prompt',
-          targetId,
-          prompt: safeText,
-          nonce,
-          status: 'denied',
-          detail: `${sourceId}->${targetId}; seq=${seq}`
-        })
-        throw new Error('relay_prompt: dispatch denied by the human gate')
-      }
-
-      // (4.5) 🔒 TOCTOU re-check (BUG-021): the cable IS the authorization, but the
-      // confirm await is unbounded and `listConnectors()` reads a mutable mirror the
-      // renderer can overwrite mid-wait (the user can delete the cable on the canvas while
-      // the modal is open). Re-verify the SAME directed orchestration edge still exists
-      // BEFORE consuming the nonce / writing — a human who approved "authorized by cable X"
-      // must not have the relay fire once that cable is gone. Missing → evict + reject.
-      const cableStillLive = registry
-        .listConnectors()
-        .some(
-          (c) => c.kind === 'orchestration' && c.sourceId === sourceId && c.targetId === targetId
-        )
-      if (!cableStillLive) {
-        guard.consume(nonce)
-        await registry.audit({
-          type: 'relay_prompt',
-          targetId,
-          prompt: safeText,
-          nonce,
-          status: 'rejected',
-          detail: `authorization cable removed during confirm; ${sourceId}->${targetId}; seq=${seq}`
-        })
-        throw new Error(
-          `relay_prompt: authorization connector ${sourceId} -> ${targetId} removed during confirm`
-        )
-      }
-
-      // (5) Redeem the nonce (defensive replay guard).
-      if (!guard.consume(nonce)) {
-        await registry.audit({
-          type: 'relay_prompt',
-          targetId,
-          prompt: safeText,
-          nonce,
-          status: 'rejected',
-          detail: `replayed/forged nonce; ${sourceId}->${targetId}; seq=${seq}`
-        })
-        throw new Error('relay_prompt: nonce already consumed (replay rejected)')
-      }
-
-      // (6) Write into the TARGET's PTY (append CR so the shell runs it).
-      if (!registry.writeToPty(targetId, safeText + '\r')) {
-        await registry.audit({
-          type: 'relay_prompt',
-          targetId,
-          prompt: safeText,
-          nonce,
-          status: 'failed',
-          detail: `pty write failed; ${sourceId}->${targetId}; seq=${seq}`
-        })
-        throw new Error('relay_prompt: PTY write failed (no live terminal session)')
-      }
-
-      // 🔒 Fire-and-forget: audit the dispatch the moment it lands and RETURN.
-      await registry.audit({
+      // (3) The shared, unskippable write gate, writing into the TARGET's PTY. The cable
+      // re-check (BUG-021) runs inside the gate, after the confirm, before the write.
+      await runGatedWrite({
         type: 'relay_prompt',
         targetId,
-        prompt: safeText,
-        nonce,
-        status: 'dispatched',
-        detail: `${sourceId}->${targetId}; seq=${seq}`
+        text,
+        terminator: '\r',
+        detailSuffix: `${sourceId}->${targetId}`,
+        confirmTitle: `Relay "${source.title}" → "${target.title}"`,
+        confirmBody: (s) =>
+          `Relay this prompt from terminal "${source.title}" to terminal "${target.title}" (${targetId})?\n\n${s}`,
+        // 🔒 TOCTOU re-check (BUG-021): the cable IS the authorization, but the confirm await
+        // is unbounded and listConnectors() reads a mutable mirror the renderer can overwrite
+        // mid-wait (the user can delete the cable on the canvas while the modal is open).
+        // Re-verify the SAME directed orchestration edge still exists BEFORE consuming the
+        // nonce / writing — a human who approved "authorized by cable X" must not have the
+        // relay fire once that cable is gone.
+        preWriteRecheck: (seq) => {
+          const cableStillLive = registry
+            .listConnectors()
+            .some(
+              (c) =>
+                c.kind === 'orchestration' && c.sourceId === sourceId && c.targetId === targetId
+            )
+          return cableStillLive
+            ? null
+            : {
+                detail: `authorization cable removed during confirm; ${sourceId}->${targetId}; seq=${seq}`,
+                error: `relay_prompt: authorization connector ${sourceId} -> ${targetId} removed during confirm`
+              }
+        }
       })
     },
     async interrupt(boardId: BoardId): Promise<void> {
-      // 🔒 interrupt (T4.5): the content-less sibling of dispatchPrompt — the SAME gating
-      // (opaque id → terminal-only → nonce → human confirm → audit → write) but it writes
-      // a raw Ctrl-C (\x03, NO carriage return) and carries no prompt. See CLAUDE.md ›
-      // Process model & security.
+      // 🔒 interrupt (T4.5): the content-less sibling — the SAME shared write gate, but it
+      // writes a raw Ctrl-C (\x03, NO carriage return) and carries no prompt (sanitization
+      // is skipped — there is no command text). Resolve + terminal-check HERE, then the gate.
 
       // (1) Resolve by OPAQUE id (never a label). Not found → audit + throw, no nonce.
       const board = registry.listBoards().find((b) => b.id === boardId)
       if (!board) {
-        await registry.audit({
+        await writeAudit({
           type: 'interrupt',
           targetId: boardId,
           prompt: '',
@@ -920,7 +718,7 @@ export function buildOrchestrator(
 
       // (2) Terminal-only. Browser/Planning never reach a PTY.
       if (board.type !== 'terminal') {
-        await registry.audit({
+        await writeAudit({
           type: 'interrupt',
           targetId: boardId,
           prompt: '',
@@ -931,67 +729,20 @@ export function buildOrchestrator(
         throw new Error(`interrupt: target is not a terminal (${board.type})`)
       }
 
-      // (3) Mint the single-use nonce + monotonic sequence.
-      const { nonce, seq } = guard.issue()
-
-      // (4) Mandatory human confirm — MAIN owns the decision, fail-closed.
-      const { approved } = await registry.confirm({
-        title: `Interrupt "${board.title}"`,
-        body: `Send Ctrl-C (interrupt) to terminal "${board.title}" (${boardId})?`
-      })
-      if (!approved) {
-        // 🔒 Evict the issued-but-unredeemed nonce so a denied dispatch does not leak
-        // it into the guard's outstanding set forever (BUG-020). consume() deletes it.
-        guard.consume(nonce)
-        await registry.audit({
-          type: 'interrupt',
-          targetId: boardId,
-          prompt: '',
-          nonce,
-          status: 'denied',
-          detail: `seq=${seq}`
-        })
-        throw new Error('interrupt: dispatch denied by the human gate')
-      }
-
-      // (5) Redeem the nonce (defensive — a replayed/forged nonce can never reach a write).
-      if (!guard.consume(nonce)) {
-        await registry.audit({
-          type: 'interrupt',
-          targetId: boardId,
-          prompt: '',
-          nonce,
-          status: 'rejected',
-          detail: `replayed/forged nonce; seq=${seq}`
-        })
-        throw new Error('interrupt: nonce already consumed (replay rejected)')
-      }
-
-      // (6) Write a raw Ctrl-C into the PTY (NO carriage return — \x03 is the signal). A
-      // false means no live terminal session held the id — audit failed + throw.
-      if (!registry.writeToPty(boardId, '\x03')) {
-        await registry.audit({
-          type: 'interrupt',
-          targetId: boardId,
-          prompt: '',
-          nonce,
-          status: 'failed',
-          detail: `pty write failed; seq=${seq}`
-        })
-        throw new Error('interrupt: PTY write failed (no live terminal session)')
-      }
-
-      // 🔒 Record the interrupt the moment it lands and RETURN (content-less, fire-and-forget).
-      await registry.audit({
+      // (3) The shared, unskippable write gate — writes a raw Ctrl-C (terminator '\x03',
+      // no sanitization, no carriage return) and audits `dispatched`. Content-less,
+      // fire-and-forget.
+      await runGatedWrite({
         type: 'interrupt',
         targetId: boardId,
-        prompt: '',
-        nonce,
-        status: 'dispatched',
-        detail: `seq=${seq}`
+        text: '',
+        terminator: '\x03',
+        sanitize: false,
+        confirmTitle: `Interrupt "${board.title}"`,
+        confirmBody: () => `Send Ctrl-C (interrupt) to terminal "${board.title}" (${boardId})?`
       })
     },
-    async gitDiff(): Promise<string> {
+    async gitDiff(_boardId: BoardId): Promise<string> {
       throw new Error('gitDiff not available until Phase 6')
     }
   }
