@@ -1115,6 +1115,21 @@ describe('terminal fontSize (zero-migration optional field)', () => {
     expect(() => fromObject(mk(0))).toThrow(/fontSize/)
     expect(() => fromObject(mk(-5))).toThrow(/fontSize/)
   })
+  it('clamps an out-of-band but positive fontSize into the [MIN,MAX] band on load', () => {
+    const mk = (fs: number) => ({
+      schemaVersion: SCHEMA_VERSION,
+      viewport: null,
+      boards: [{ ...createBoard('terminal', { id: 't1', x: 0, y: 0 }), fontSize: fs }],
+      connectors: [],
+      groups: []
+    })
+    // a hand-edited canvas.json with a tiny/huge positive value normalizes to the
+    // band so the stored value matches what renders (was: passes validation, snaps at use)
+    expect((fromObject(mk(0.001)).boards[0] as TerminalBoard).fontSize).toBe(8)
+    expect((fromObject(mk(999)).boards[0] as TerminalBoard).fontSize).toBe(22)
+    // an in-band value is left untouched
+    expect((fromObject(mk(14)).boards[0] as TerminalBoard).fontSize).toBe(14)
+  })
 })
 
 describe('schema v7 — text typography fields', () => {
