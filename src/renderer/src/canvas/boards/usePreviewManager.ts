@@ -394,7 +394,8 @@ export function usePreviewManager(props: LayerProps): void {
       // portal hasn't relocated `.bb-frame` into the modal host yet (fv null), skip the
       // push — the board keeps its prior (pre-full-view) bounds for the 1–2 frames until
       // the portal lands, then the rAF pump snaps it to the modal rect. Falling back to
-      // boundsFor here is what stranded the view at its canvas position.
+      // the camera-scaled canvas rect (the old `boundsFor`) here is what stranded the view
+      // at its canvas position.
       if (isFullView && !fv) return
       // Read getViewport() once in the non-full-view branch and derive bounds + zoom from
       // the SAME rounded width (Bug #20) via boundsAndZoom — instead of boundsFor then
