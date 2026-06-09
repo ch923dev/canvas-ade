@@ -34,6 +34,7 @@ import {
   fitZoomFactorForBounds
 } from '../../lib/cameraBounds'
 import type { Rect } from '../../lib/cameraBounds'
+import * as previewGeom from '../../lib/previewGeom'
 import { LOD_ZOOM } from '../../lib/canvasView'
 import {
   isLiveEligible,
@@ -217,27 +218,6 @@ export function usePreviewManager(props: LayerProps): void {
 
   const preset = useCallback((vp: BrowserViewport): ViewportPreset => VIEWPORT_PRESETS[vp], [])
 
-  /** The board's native-view stage rect in screen (pane-local + offset) space. */
-  const boundsFor = useCallback(
-    (g: BoardGeom): Rect => {
-      const stage = toWorldRect(deviceStageRect(g.w, g.h, g.viewport), g.x, g.y)
-      return roundRect(worldRectToScreen(stage, getViewport(), paneOffset.current))
-    },
-    [getViewport]
-  )
-
-  /** Zoom factor that holds the page at the preset CSS width (responsive trick). */
-  const zoomFor = useCallback(
-    (g: BoardGeom): number => {
-      // Bug #20: derive the factor from the SAME rounded bounds width fed to
-      // setBounds (boundsFor) — NOT the un-rounded stage width — so the documented
-      // invariant bounds.width / zoomFactor === presetW holds exactly and the page
-      // lays out at precisely 390/834/1280 CSS px (no sub-pixel rounding drift).
-      return fitZoomFactorForBounds(boundsFor(g).width, preset(g.viewport).w)
-    },
-    [boundsFor, preset]
-  )
-
   /** In full view, the native view binds to the portaled device frame's live DOM rect
    *  (the board's HTML frame is relocated into the modal; camera math no longer applies).
    *
@@ -275,10 +255,7 @@ export function usePreviewManager(props: LayerProps): void {
   // The board's device-stage rect in screen (pane-local + offset) space — the raw,
   // un-rounded rect used for eligibility + viewport-distance ranking.
   const stageScreenRect = useCallback(
-    (g: BoardGeom): Rect => {
-      const stage = deviceStageRect(g.w, g.h, g.viewport)
-      return worldRectToScreen(toWorldRect(stage, g.x, g.y), getViewport(), paneOffset.current)
-    },
+    (g: BoardGeom): Rect => previewGeom.stageScreenRect(g, getViewport(), paneOffset.current),
     [getViewport]
   )
 
@@ -419,8 +396,18 @@ export function usePreviewManager(props: LayerProps): void {
       // the portal lands, then the rAF pump snaps it to the modal rect. Falling back to
       // boundsFor here is what stranded the view at its canvas position.
       if (isFullView && !fv) return
-      const bounds = fv ?? boundsFor(g)
-      const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
+      // Read getViewport() once in the non-full-view branch and derive bounds + zoom from
+      // the SAME rounded width (Bug #20) via boundsAndZoom — instead of boundsFor then
+      // zoomFor, which recomputed boundsFor + re-read the camera. The full-view branch's
+      // read count is unchanged (it never reads the camera).
+      let bounds: Rect
+      let zoomFactor: number
+      if (fv) {
+        bounds = fv
+        zoomFactor = fitZoomFactorForBounds(fv.width, preset(g.viewport).w)
+      } else {
+        ;({ bounds, zoomFactor } = previewGeom.boundsAndZoom(g, getViewport(), paneOffset.current))
+      }
       // Diff-skip a redundant re-attach: if the view is already attached at exactly
       // these bounds/zoom, re-issuing attachPreview re-adds the child view (a wasted
       // IPC + attachSeq bump for nothing). The new selection-driven applyLiveness
@@ -479,7 +466,7 @@ export function usePreviewManager(props: LayerProps): void {
       }
       patchRuntime(g.id, { live: true })
     },
-    [rec, boundsFor, zoomFor, fullViewBoundsFor, preset, patchRuntime]
+    [rec, getViewport, fullViewBoundsFor, preset, patchRuntime]
   )
 
   // Free a renderer (over the live cap / board removed). Last snapshot keeps showing.
@@ -499,6 +486,10 @@ export function usePreviewManager(props: LayerProps): void {
   // One coalesced batch per frame for every attached board, diff-skipped.
   const flushBatch = useCallback((): boolean => {
     const items: Array<{ id: string; bounds: Rect; zoomFactor: number }> = []
+    // Read the camera ONCE per frame and reuse it for every board (was getViewport() ×2
+    // per board via boundsFor + zoomFor). boundsAndZoom derives both from one rounded
+    // width (Bug #20).
+    const vp = getViewport()
     for (const g of geomRef.current.values()) {
       const r = recs.current.get(g.id)
       if (!r || !r.attached) continue
@@ -509,8 +500,17 @@ export function usePreviewManager(props: LayerProps): void {
       // rect. Until the portal relocates `.bb-frame` into the modal host (fv null), skip
       // this board so its view stays at its prior bounds rather than snapping to canvas.
       if (isFullView && !fv) continue
-      const bounds = fv ?? boundsFor(g)
-      const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
+      let bounds: Rect
+      let zoomFactor: number
+      if (fv) {
+        bounds = fv
+        zoomFactor = fitZoomFactorForBounds(fv.width, preset(g.viewport).w)
+      } else {
+        // One boundsAndZoom call: computes the rounded bounds ONCE and derives zoom from
+        // its width (Bug #20) — replaces the boundsFor()+zoomFor() pair that recomputed
+        // boundsFor twice.
+        ;({ bounds, zoomFactor } = previewGeom.boundsAndZoom(g, vp, paneOffset.current))
+      }
       if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
       r.lastSent = bounds
       r.lastZoom = zoomFactor
@@ -519,7 +519,7 @@ export function usePreviewManager(props: LayerProps): void {
     if (!items.length) return false
     void window.api.setPreviewBoundsBatch(items)
     return true
-  }, [boundsFor, zoomFor, fullViewBoundsFor, preset])
+  }, [getViewport, fullViewBoundsFor, preset])
 
   const startPump = useCallback((): void => {
     if (rafRef.current) return
@@ -789,6 +789,9 @@ export function usePreviewManager(props: LayerProps): void {
     (boards: BoardGeom[]): void => {
       const seen = new Set(boards.map((g) => g.id))
       geomRef.current = new Map(boards.map((g) => [g.id, g]))
+      // Read the camera ONCE for this pass; the attached-board re-push block below reuses
+      // it via boundsAndZoom (was getViewport() ×2 per board via boundsFor + zoomFor).
+      const vp = getViewport()
 
       // Removed boards: close + clear runtime.
       for (const id of [...recs.current.keys()]) {
@@ -860,8 +863,7 @@ export function usePreviewManager(props: LayerProps): void {
           // bounds — re-pushing here every drag tick re-shows a detached view mid-drag
           // (the per-frame-setBounds-then-detach #43961 trigger). Bail during a gesture.
           if (r.attached && !gestureRef.current) {
-            const bounds = boundsFor(g)
-            const zoomFactor = zoomFor(g)
+            const { bounds, zoomFactor } = previewGeom.boundsAndZoom(g, vp, paneOffset.current)
             if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
             r.lastSent = bounds
             r.lastZoom = zoomFactor
@@ -877,8 +879,7 @@ export function usePreviewManager(props: LayerProps): void {
       liveEligible,
       occludesProtected,
       attachBoard,
-      boundsFor,
-      zoomFor,
+      getViewport,
       patchRuntime
     ]
   )
