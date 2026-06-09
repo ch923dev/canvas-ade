@@ -28,6 +28,7 @@ import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
 import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
 import { tileLayout, type TileTemplate } from '../lib/tileLayout'
+import { createConnectorSlice } from './slices/connectorSlice'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -503,41 +504,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     return cloneId
   },
 
-  addConnector: (sourceId, targetId, kind) => {
-    const s = get()
-    // Reject a self-link, a missing endpoint, or an exact duplicate (same s+t+kind).
-    if (sourceId === targetId) return null
-    const ids = new Set(s.boards.map((b) => b.id))
-    if (!ids.has(sourceId) || !ids.has(targetId)) return null
-    if (
-      s.connectors.some(
-        (c) => c.sourceId === sourceId && c.targetId === targetId && c.kind === kind
-      )
-    ) {
-      return null
-    }
-    const id = newId()
-    const connector: Connector = { id, sourceId, targetId, kind }
-    // One tracked step; leaves `boards` untouched (omit selectedId → keep selection).
-    // reflectPresent:false matches add/remove/duplicate — keeps the cable granularly
-    // undoable; its post-no-op phantom is the same tolerated edge (#BUG M3).
-    set((st) =>
-      trackedChange(st, { connectors: [...st.connectors, connector] }, { reflectPresent: false })
-    )
-    return id
-  },
-
-  removeConnector: (id) =>
-    set((s) => {
-      if (!s.connectors.some((c) => c.id === id)) return s // unknown id → no dead step
-      return trackedChange(
-        s,
-        { connectors: s.connectors.filter((c) => c.id !== id) },
-        {
-          reflectPresent: false
-        }
-      )
-    }),
+  ...createConnectorSlice(set, get, { trackedChange, newId }),
 
   addGroup: (name, boardIds) => {
     const id = newId()
