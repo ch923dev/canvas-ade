@@ -280,12 +280,6 @@ export function usePreviewManager(props: LayerProps): void {
     [getViewport]
   )
 
-  // Static-occlusion demote (LOT F): a live Browser view must fall back to its HTML
-  // snapshot when, AT REST, its native stage would paint over (a) a DIFFERENT selected
-  // board (#2/#19/#20 — restore that board's ring/handles + input) or (b) the fixed
-  // app-chrome zones (#21 — dock / camera cluster / DiagOverlay). Geometry is resolved
-  // to screen space here; the pure predicate decides. Kept narrow so a non-overlapping,
-  // unselected live preview is never needlessly demoted (the e2e `browser` live guard).
   // The chrome-exclusion zones for the CURRENT synchronous liveness pass: the fixed
   // app-chrome zones plus, while the "Project context" digest panel is open, its live DOM
   // rect. These are identical for every board within one applyLiveness/reconcile pass (the
@@ -317,6 +311,12 @@ export function usePreviewManager(props: LayerProps): void {
     return chromeZones
   }, [])
 
+  // Static-occlusion demote (LOT F): a live Browser view must fall back to its HTML
+  // snapshot when, AT REST, its native stage would paint over (a) a DIFFERENT selected
+  // board (#2/#19/#20 — restore that board's ring/handles + input) or (b) the fixed
+  // app-chrome zones (#21 — dock / camera cluster / DiagOverlay). Geometry is resolved
+  // to screen space here; the pure predicate decides. Kept narrow so a non-overlapping,
+  // unselected live preview is never needlessly demoted (the e2e `browser` live guard).
   const occludesProtected = useCallback(
     (g: BoardGeom, chromeZones: Box[]): boolean => {
       const vp = getViewport()
