@@ -286,8 +286,39 @@ export function usePreviewManager(props: LayerProps): void {
   // app-chrome zones (#21 — dock / camera cluster / DiagOverlay). Geometry is resolved
   // to screen space here; the pure predicate decides. Kept narrow so a non-overlapping,
   // unselected live preview is never needlessly demoted (the e2e `browser` live guard).
+  // The chrome-exclusion zones for the CURRENT synchronous liveness pass: the fixed
+  // app-chrome zones plus, while the "Project context" digest panel is open, its live DOM
+  // rect. These are identical for every board within one applyLiveness/reconcile pass (the
+  // pane geometry + panel rect don't change mid-pass), so resolve them ONCE per pass and
+  // hand the result to each occludesProtected(g, chromeZones) call (was a querySelector +
+  // getBoundingClientRect PER candidate board). Reads only refs + the DOM, returns Box[].
+  const resolveChromeZones = useCallback((): Box[] => {
+    const chromeZones = chromeExclusionZones({
+      x: paneOffset.current.x,
+      y: paneOffset.current.y,
+      w: paneSize.current.w,
+      h: paneSize.current.h
+    })
+    // The "Project context" digest panel is a fixed LEFT overlay (z-index above the
+    // canvas) that a native view would paint over. While open, add its live DOM rect as
+    // a chrome zone so an overlapping Browser view demotes to its HTML snapshot (the
+    // out-of-bounds bug: the page bleeds left over the panel on pan). Read the rect (not
+    // a hard-coded width) so it tracks the CSS; skip when off-screen (closed → the
+    // translateX(-100%) rect sits at right<=pane left).
+    if (digestOpenRef.current) {
+      const el = document.querySelector('[data-test=digest-panel]')
+      if (el) {
+        const r = el.getBoundingClientRect()
+        if (r.width > 0 && r.right > paneOffset.current.x) {
+          chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
+        }
+      }
+    }
+    return chromeZones
+  }, [])
+
   const occludesProtected = useCallback(
-    (g: BoardGeom): boolean => {
+    (g: BoardGeom, chromeZones: Box[]): boolean => {
       const vp = getViewport()
       const stage = stageScreenRect(g)
       const stageBox: Box = { x: stage.x, y: stage.y, width: stage.width, height: stage.height }
@@ -300,27 +331,6 @@ export function usePreviewManager(props: LayerProps): void {
           paneOffset.current
         )
         selectedRect = { x: s.x, y: s.y, width: s.width, height: s.height }
-      }
-      const chromeZones = chromeExclusionZones({
-        x: paneOffset.current.x,
-        y: paneOffset.current.y,
-        w: paneSize.current.w,
-        h: paneSize.current.h
-      })
-      // The "Project context" digest panel is a fixed LEFT overlay (z-index above the
-      // canvas) that a native view would paint over. While open, add its live DOM rect as
-      // a chrome zone so an overlapping Browser view demotes to its HTML snapshot (the
-      // out-of-bounds bug: the page bleeds left over the panel on pan). Read the rect (not
-      // a hard-coded width) so it tracks the CSS; skip when off-screen (closed → the
-      // translateX(-100%) rect sits at right<=pane left).
-      if (digestOpenRef.current) {
-        const el = document.querySelector('[data-test=digest-panel]')
-        if (el) {
-          const r = el.getBoundingClientRect()
-          if (r.width > 0 && r.right > paneOffset.current.x) {
-            chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
-          }
-        }
       }
       return shouldDemoteForOcclusion({
         id: g.id,
@@ -638,7 +648,10 @@ export function usePreviewManager(props: LayerProps): void {
     // occluding a selected board or the app chrome (LOT F #2/#19/#20/#21). The
     // occlusion-demoted set keeps its renderer + snapshot for a fast reattach once the
     // overlap clears (handled in the else-branch, like LOD), so it is NOT closed.
-    const wantLive = all.filter((g) => liveEligible(g) && !occludesProtected(g))
+    // Resolve the chrome-exclusion zones ONCE for this pass (identical for every board),
+    // then reuse them across the filter below (was rebuilt per candidate board).
+    const chromeZones = resolveChromeZones()
+    const wantLive = all.filter((g) => liveEligible(g) && !occludesProtected(g, chromeZones))
     // Bug L3: O(1) membership for the per-board loop below (was wantLive.includes → O(n²)).
     const wantLiveIds = new Set(wantLive.map((g) => g.id))
     // Bug #8: rank the live winners by distance to the viewport centre so the board
@@ -667,6 +680,7 @@ export function usePreviewManager(props: LayerProps): void {
   }, [
     liveEligible,
     occludesProtected,
+    resolveChromeZones,
     stageScreenRect,
     rec,
     attachBoard,
@@ -793,6 +807,10 @@ export function usePreviewManager(props: LayerProps): void {
       // Read the camera ONCE for this pass; the attached-board re-push block below reuses
       // it via boundsAndZoom (was getViewport() ×2 per board via boundsFor + zoomFor).
       const vp = getViewport()
+      // Resolve the chrome-exclusion zones ONCE for this pass; the new-board occlusion
+      // guard below reuses them for every board (was a querySelector + getBoundingClientRect
+      // rebuilt per new board inside occludesProtected).
+      const chromeZones = resolveChromeZones()
 
       // Removed boards: close + clear runtime.
       for (const id of [...recs.current.keys()]) {
@@ -831,7 +849,7 @@ export function usePreviewManager(props: LayerProps): void {
             !blockedByFullView &&
             liveNow < MAX_LIVE &&
             liveEligible(g) &&
-            !occludesProtected(g)
+            !occludesProtected(g, chromeZones)
           ) {
             void attachBoard(g)
             liveNow++
@@ -879,6 +897,7 @@ export function usePreviewManager(props: LayerProps): void {
       clearRuntime,
       liveEligible,
       occludesProtected,
+      resolveChromeZones,
       attachBoard,
       getViewport,
       patchRuntime
