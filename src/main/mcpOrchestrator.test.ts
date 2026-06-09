@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { BoardOutput, BoardResult, BoardStatusChange, MemoryDoc } from '@expanse-ade/mcp'
 import {
   buildOrchestrator,
@@ -1704,5 +1704,51 @@ describe('buildOrchestrator.subscribeStatus (M5 app-adopt)', () => {
     expect(subscribed()).toBe(false)
     emit({ id: 't1', status: 'running' }) // listener detached → ignored
     expect(seen).toEqual([])
+  })
+})
+
+describe('buildOrchestrator lazy session lookup (perf: listSessions only on a terminal fallback)', () => {
+  it('boardStatus on a board WITH a mirror status never reads listSessions', async () => {
+    const listSessions = vi.fn(() => [])
+    const orch = buildOrchestrator({
+      ...reg([{ id: 't1', type: 'terminal', title: 'T', status: 'running' }]),
+      listSessions
+    })
+    expect(await orch.boardStatus('t1')).toBe('running')
+    expect(listSessions).not.toHaveBeenCalled()
+  })
+
+  it('boardStatus on a non-terminal board never reads listSessions', async () => {
+    const listSessions = vi.fn(() => [])
+    const orch = buildOrchestrator({
+      ...reg([{ id: 'b1', type: 'browser', title: 'B' }]),
+      listSessions
+    })
+    expect(await orch.boardStatus('b1')).toBe('idle')
+    expect(listSessions).not.toHaveBeenCalled()
+  })
+
+  it('boardStatus on a terminal WITHOUT a mirror status reads listSessions exactly once', async () => {
+    const listSessions = vi.fn(() => [{ id: 't1', status: 'running' }])
+    const orch = buildOrchestrator({
+      ...reg([{ id: 't1', type: 'terminal', title: 'T' }]),
+      listSessions
+    })
+    expect(await orch.boardStatus('t1')).toBe('running')
+    expect(listSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('listBoards builds the lazy session map once for many terminals (no per-board rebuild)', async () => {
+    const listSessions = vi.fn(() => [{ id: 't1', status: 'running' }])
+    const orch = buildOrchestrator({
+      ...reg([
+        { id: 't1', type: 'terminal', title: 'A' },
+        { id: 't2', type: 'terminal', title: 'B' },
+        { id: 't3', type: 'terminal', title: 'C' }
+      ]),
+      listSessions
+    })
+    await orch.listBoards()
+    expect(listSessions).toHaveBeenCalledTimes(1) // one shared lazy map across all boards
   })
 })
