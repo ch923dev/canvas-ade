@@ -45,6 +45,12 @@ describe('resolveSpawnArgs — spawn descriptor resolution (pure)', () => {
     ).toBe('claude')
   })
 
+  it('launchCommand is undefined (plain shell, no agent) when the board has none and no override', () => {
+    expect(
+      resolveSpawnArgs({ cwd: undefined, launchCommand: undefined }, '/proj').launchCommand
+    ).toBeUndefined()
+  })
+
   it('a one-shot override (e.g. `claude --resume <id>`) takes precedence over the board command', () => {
     expect(
       resolveSpawnArgs({ cwd: undefined, launchCommand: 'claude' }, '/proj', 'claude --resume abc')

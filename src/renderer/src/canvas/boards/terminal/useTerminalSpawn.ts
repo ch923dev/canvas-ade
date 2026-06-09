@@ -136,8 +136,10 @@ export interface TerminalSpawnDeps {
 
 export interface TerminalSpawnApi {
   state: TerminalState
+  /** Read-only from the host (it only reads `.current`); the hook's internals own writes. */
   termRef: RefObject<Terminal | null>
   portRef: RefObject<MessagePort | null>
+  /** The host WRITES these (Restart menu sets the override; idle Start reads the launcher). */
   launchOverrideRef: MutableRefObject<string | undefined>
   startLaunchRef: MutableRefObject<(() => void) | null>
   fitWhole: () => void
