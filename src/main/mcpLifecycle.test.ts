@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { BoardResult, BoardSummary, MemoryDoc } from '@expanse-ade/mcp'
+import type { BoardOutput, BoardResult, BoardSummary, MemoryDoc } from '@expanse-ade/mcp'
 import { createMcpLifecycle } from './mcpLifecycle'
 import type { BoardRegistry } from './mcpRegistry'
 
-const EMPTY_OUTPUT = { text: '', total: 0, returned: 0, droppedOlder: false }
+const EMPTY_OUTPUT: BoardOutput = { text: '', total: 0, returned: 0, droppedOlder: false }
 const EMPTY_RESULT: BoardResult = { present: false }
 const EMPTY_MEMORY: MemoryDoc = { present: false, text: '' }
 
@@ -116,8 +116,8 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
     const clock = 0
     const drained: string[] = []
     let removeOk = false
-    const { registry } = liveReg({ drained, removeFailId: () => (removeOk ? null : failId) })
     let failId: string | null = null
+    const { registry } = liveReg({ drained, removeFailId: () => (removeOk ? null : failId) })
     const boardsRef: Array<{ id: string; type: string; title: string; status?: string }> =
       registry.listBoards()
     const life = createMcpLifecycle({
