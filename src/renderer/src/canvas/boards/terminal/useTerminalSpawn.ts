@@ -146,6 +146,7 @@ export interface TerminalSpawnApi {
   restart: () => void
 }
 
+/** Requires ReactFlowProvider (useStoreApi) + BoardFullViewContext in the render tree. */
 export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   const { board, projectDir, lod, screenRef, fontStepRef, fontResetRef, pasteIntoTerminal } = deps
 
