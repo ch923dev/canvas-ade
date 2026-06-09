@@ -156,6 +156,8 @@ function enumerateShellsUncached(): ShellInfo[] {
  * local `found` (`found[0].default = true`) and callers treat the result as
  * read-only (`resolveShell` reads it; the `pty:shells` IPC handler structure-clones
  * it over the wire), so returning the same reference is safe — no defensive clone.
+ * The public return type is `readonly` (below) so the shared cache cannot be mutated
+ * (push/splice or `found[0].default = …`) by a future caller — enforced, not just documented.
  */
 let cachedShells: ShellInfo[] | null = null
 
@@ -163,8 +165,9 @@ let cachedShells: ShellInfo[] | null = null
  * Discoverable shells, OS-aware, best-default first — memoized for the process
  * lifetime (see `cachedShells`). The first call runs the FS probe set; later calls
  * return the cached array. `clearShellCache` resets it (tests / shell-set changes).
+ * Returns a `readonly` view so the shared memo can't be mutated by a caller.
  */
-export function enumerateShells(): ShellInfo[] {
+export function enumerateShells(): ReadonlyArray<Readonly<ShellInfo>> {
   return (cachedShells ??= enumerateShellsUncached())
 }
 
@@ -193,7 +196,10 @@ function defaultShell(): string {
  * also falls back. Pure (the canonicalize probe is the only side effect) so it
  * is unit-testable against a fixed `shells` list.
  */
-export function resolveShell(shell: string | undefined, shells: ShellInfo[]): string {
+export function resolveShell(
+  shell: string | undefined,
+  shells: ReadonlyArray<Readonly<ShellInfo>>
+): string {
   const fallback = shells[0]?.path ?? defaultShell()
   if (!shell) return fallback
   const wanted = canonicalizeShellPath(shell).toLowerCase()

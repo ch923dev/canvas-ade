@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
@@ -160,10 +160,12 @@ describe('resolveShell (M5 — validate before spawn)', () => {
 // the reference-identity memoization behavior only — the probe set is OS-dependent, so
 // we do NOT assert platform-specific shell contents, only a non-empty ShellInfo[].
 describe('enumerateShells memoization (perf)', () => {
-  afterEach(() => clearShellCache()) // don't leak a cached list into other test files
+  // beforeEach resets the cache so each test starts fresh (no intra-block contamination);
+  // afterEach stops a cached list leaking into other test files.
+  beforeEach(() => clearShellCache())
+  afterEach(() => clearShellCache())
 
   it('returns the SAME array reference on repeated calls (memoized)', () => {
-    clearShellCache()
     const first = enumerateShells()
     expect(enumerateShells()).toBe(first) // same reference → cached, no re-probe
   })
@@ -386,6 +388,14 @@ describe('attachPortInput (Finding 3 — single renderer→PTY write guard)', ()
     const { proc } = makeProc(703)
     attachPortInput(port as any, proc as any)
     port.handler?.({ data: { t: 'resize', cols: 0, rows: 30 } })
+    expect(proc.resize).not.toHaveBeenCalled()
+  })
+
+  it('drops an out-of-bound resize (rows=0) — both axes are clamped at the forwarding layer', () => {
+    const port = makePort()
+    const { proc } = makeProc(706)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 80, rows: 0 } })
     expect(proc.resize).not.toHaveBeenCalled()
   })
 
