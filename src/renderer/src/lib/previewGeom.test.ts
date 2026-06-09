@@ -58,14 +58,19 @@ describe('boundsFor', () => {
   })
 
   it('hard-coded expected value at VP1 + OFF for mobile (regression anchor)', () => {
-    // Compute manually via the chain so a silent change in any upstream fn is caught.
-    const stageLocal = deviceStageRect(700, 500, 'mobile')
-    const stageWorld = toWorldRect(stageLocal, 100, 200)
-    const raw = worldRectToScreen(stageWorld, VP1, OFF)
-    const expected = roundRect(raw)
-    // Assert the concrete shape: x/y anchored by paneOffset.y=64.
-    expect(expected.y).toBeGreaterThanOrEqual(64) // always below pane top
-    expect(boundsFor(G_MOBILE, VP1, OFF)).toEqual(expected)
+    // Fully literal expectations — computed once by running the chain and baking the
+    // result. If any upstream fn (deviceStageRect / toWorldRect / worldRectToScreen /
+    // roundRect) silently changes its output, this test catches it.
+    //
+    // Derivation (board 700×500, mobile preset 390×844, VP1 zoom=1, OFF y=64):
+    //   well       = {x:0, y:64, w:700, h:436}
+    //   fitScale   = min(672/390, 408/844, 1.1) = 408/844 ≈ 0.48341
+    //   frame      = {x≈255.73, y:78, w≈188.53, h:408}
+    //   stageLocal = {x≈256.73, y:79, w≈186.53, h:406}  (1px border inset)
+    //   stageWorld = {x≈356.73, y:279, w≈186.53, h:406}  (+ board origin 100,200)
+    //   screen raw = {x≈356.73, y:343, w≈186.53, h:406}  (+ OFF.y=64)
+    //   rounded    = {x:357, y:343, w:187, h:406}
+    expect(boundsFor(G_MOBILE, VP1, OFF)).toEqual({ x: 357, y: 343, width: 187, height: 406 })
   })
 
   it('does not mutate g, vp, or paneOffset', () => {
@@ -107,6 +112,24 @@ describe('stageScreenRect', () => {
       (v) => v !== Math.round(v)
     )
     expect(hasFloat).toBe(true)
+  })
+
+  it('hard-coded raw literal at VP1 + OFF for mobile (regression anchor)', () => {
+    // Fully literal expectations — same derivation as the boundsFor anchor above but
+    // without roundRect. Catches silent changes in deviceStageRect / toWorldRect /
+    // worldRectToScreen that would otherwise be hidden behind rounding tolerance.
+    //
+    // stageScreenRect(G_MOBILE, VP1, OFF) raw (zoom=1 so no zoom scaling):
+    //   x     = 356.7345971563981   (≠ 357 — fractional, confirming un-rounded)
+    //   y     = 343                 (integer — happens to be exact at zoom=1)
+    //   width = 186.53080568720378  (≠ 187 — fractional)
+    //   height= 406                 (integer)
+    expect(stageScreenRect(G_MOBILE, VP1, OFF)).toEqual({
+      x: 356.7345971563981,
+      y: 343,
+      width: 186.53080568720378,
+      height: 406
+    })
   })
 
   it('does not mutate g, vp, or paneOffset', () => {
