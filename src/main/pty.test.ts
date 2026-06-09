@@ -1,11 +1,9 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
-  canonicalizeShellPath,
   isStaleExit,
   appendRing,
-  resolveShell,
   parkCore,
   adoptCore,
   reapParkedCore,
@@ -13,12 +11,18 @@ import {
   disposeAllPtysCore,
   drainPtyCore,
   killTreeCommand,
-  safeCwd,
   writeToPtyCore,
   getTerminalRuntimeCore,
   isValidResize
 } from './pty'
-import type { ShellInfo } from './pty'
+import {
+  canonicalizeShellPath,
+  clearShellCache,
+  enumerateShells,
+  resolveShell,
+  safeCwd
+} from './ptyShells'
+import type { ShellInfo } from './ptyShells'
 
 describe('safeCwd (SEC-1)', () => {
   it('returns an existing directory unchanged', () => {
@@ -146,6 +150,34 @@ describe('resolveShell (M5 — validate before spawn)', () => {
 
   it('falls back to the default for an empty string', () => {
     expect(resolveShell('', shells)).toBe('C:\\Windows\\System32\\cmd.exe')
+  })
+})
+
+// Finding 1 (perf): enumerateShells ran a full blocking-sync FS probe set on EVERY
+// pty:spawn on the MAIN thread, though installed shells don't change mid-session. It
+// is now memoized for the process lifetime; clearShellCache resets the cache. Assert
+// the reference-identity memoization behavior only — the probe set is OS-dependent, so
+// we do NOT assert platform-specific shell contents, only a non-empty ShellInfo[].
+describe('enumerateShells memoization (perf)', () => {
+  afterEach(() => clearShellCache()) // don't leak a cached list into other test files
+
+  it('returns the SAME array reference on repeated calls (memoized)', () => {
+    clearShellCache()
+    const first = enumerateShells()
+    expect(enumerateShells()).toBe(first) // same reference → cached, no re-probe
+  })
+
+  it('re-probes after clearShellCache (a fresh, non-empty ShellInfo[])', () => {
+    const cached = enumerateShells()
+    clearShellCache()
+    const fresh = enumerateShells()
+    expect(fresh).not.toBe(cached) // different reference → re-probed
+    expect(Array.isArray(fresh)).toBe(true)
+    expect(fresh.length).toBeGreaterThan(0)
+    for (const s of fresh) {
+      expect(typeof s.path).toBe('string')
+      expect(typeof s.label).toBe('string')
+    }
   })
 })
 
