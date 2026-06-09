@@ -149,7 +149,9 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         } catch {
           // best-effort: skip a board that failed to close and continue the sweep. Its
           // cap slot is already freed (closeBoard's finally), so it won't re-enter the
-          // budget; the next sweep re-evaluates it from the live mirror.
+          // budget. The id is also removed from `tracked`, so subsequent sweeps won't
+          // attempt to reap it again; it becomes invisible to the reaper (user can close
+          // the stale board manually if it is still visible in the canvas).
         }
       }
       return reaped
