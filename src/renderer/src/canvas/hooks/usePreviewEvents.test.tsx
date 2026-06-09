@@ -169,6 +169,14 @@ describe('usePreviewEvents', () => {
       expect(patchRuntime).not.toHaveBeenCalled()
     })
 
+    it('does NOTHING when the rec exists:false (renderer freed)', () => {
+      recs.current.set('b1', makeRec(false))
+      seedStatus('b1', 'connecting')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-finish-load', url: 'http://localhost:3000/' })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+
     it('does NOTHING when there is no live rec (deleted / evicted)', () => {
       seedStatus('b1', 'connecting')
       renderEvents()
