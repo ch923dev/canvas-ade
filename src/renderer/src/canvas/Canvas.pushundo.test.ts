@@ -7,16 +7,16 @@
  * deleted board FIRST (mirroring the boardActions guards) so `fullViewId`/`cameraFullViewId`
  * never transiently dangle at a board that no longer exists.
  *
- * Both fixes live inside inline closures in Canvas.tsx that cannot mount in jsdom (React Flow +
- * electron preload). Following the BUG-004 / Wave-4 pattern, the decision/effect logic is
- * extracted into exported, importable functions — `applyPush` (driven against the REAL store, so
- * undo/redo is exercised end-to-end) and the pure `planNodeRemovalCleanup` — so a regression in
- * the source breaks these tests even though the component never mounts.
+ * `applyPush` (driven against the REAL store, so undo/redo is exercised end-to-end) and the
+ * pure `planNodeRemovalCleanup` were extracted from inline closures in Canvas.tsx into exported
+ * functions in `lib/canvasDecisions.ts` (the Canvas.tsx closures now drive them). Following the
+ * BUG-004 / Wave-4 pattern, a regression in the source breaks these tests even though the
+ * component never mounts (React Flow + electron preload cannot mount in jsdom).
  *
  * globals: false — import all vitest helpers explicitly (see vitest.config.ts).
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { applyPush, planNodeRemovalCleanup, type ApplyPushDeps } from './Canvas'
+import { applyPush, planNodeRemovalCleanup, type ApplyPushDeps } from '../lib/canvasDecisions'
 import { useCanvasStore } from '../store/canvasStore'
 import type { Board, BrowserBoard } from '../lib/boardSchema'
 

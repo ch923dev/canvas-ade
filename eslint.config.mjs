@@ -202,7 +202,7 @@ export default tseslint.config(
   },
   {
     files: ['src/renderer/src/canvas/Canvas.tsx'],
-    rules: { 'max-lines': ['error', { max: 925, skipBlankLines: true, skipComments: true }] }
+    rules: { 'max-lines': ['error', { max: 779, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],

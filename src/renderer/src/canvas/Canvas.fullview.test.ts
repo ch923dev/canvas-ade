@@ -4,15 +4,15 @@
  *
  * `requestFullView` (Canvas.tsx) is an inline closure over component refs/callbacks that
  * cannot mount in the jsdom/vitest env (React Flow + Zustand + electron preload). Its
- * decision logic is extracted into the pure, exported `planFullViewAction`, which the
- * source closure now drives in order — so a regression in the decision breaks this test
- * even though the component never mounts (mirrors the Wave-4 `shouldFireCameraShortcut`
- * pattern in Canvas.wave4.test.tsx).
+ * decision logic lives in the pure, exported `planFullViewAction` in `lib/canvasDecisions.ts`
+ * (imported by both the Canvas.tsx closure and this test), so a regression in the decision
+ * breaks this test even though the component never mounts (mirrors the Wave-4
+ * `shouldFireCameraShortcut` pattern in Canvas.wave4.test.tsx).
  *
  * globals: false — import all vitest helpers explicitly (see vitest.config.ts).
  */
 import { describe, it, expect } from 'vitest'
-import { planFullViewAction } from './Canvas'
+import { planFullViewAction } from '../lib/canvasDecisions'
 
 describe('#BUG-004 — planFullViewAction never leaves portal + camera full view both live', () => {
   it('Terminal maximize while a Planning board is in camera-FV exits camera-FV BEFORE opening the portal', () => {
