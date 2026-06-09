@@ -63,7 +63,8 @@ describe('boundsFor', () => {
     // roundRect) silently changes its output, this test catches it.
     //
     // Derivation (board 700×500, mobile preset 390×844, VP1 zoom=1, OFF y=64):
-    //   well       = {x:0, y:64, w:700, h:436}
+    //   well       = {x:0, y:64, w:700, h:436}  (y=device-chrome bar height, internal to
+    //                                             deviceStageRect; coincidentally matches OFF.y)
     //   fitScale   = min(672/390, 408/844, 1.1) = 408/844 ≈ 0.48341
     //   frame      = {x≈255.73, y:78, w≈188.53, h:408}
     //   stageLocal = {x≈256.73, y:79, w≈186.53, h:406}  (1px border inset)
@@ -110,7 +111,8 @@ describe('stageScreenRect', () => {
     // result. Catches silent changes in deviceStageRect / toWorldRect / worldRectToScreen.
     //
     // Derivation (board 700×500, desktop preset 1280×800, VP_IN zoom=1.5, OFF y=64):
-    //   well       = {x:0, y:64, w:700, h:436}
+    //   well       = {x:0, y:64, w:700, h:436}  (y=device-chrome bar height, internal to
+    //                                             deviceStageRect; coincidentally matches OFF.y)
     //   fitScale   = min(672/1280, 408/800, 1.1) = 408/800 = 0.51
     //   frame      = {x≈23.6, y:78, w:652.8, h:408}
     //   stageLocal = {x≈24.6, y:79, w:650.8, h:406}  (1px border inset)
