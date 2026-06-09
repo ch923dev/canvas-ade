@@ -51,6 +51,14 @@ import { resumeCommand } from './terminal/resumeCommand'
 import { BoardFullViewContext } from '../fullViewContext'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
+import {
+  clampTerminalFont,
+  resolveInitialFont,
+  writeStickyFont,
+  DEFAULT_TERMINAL_FONT,
+  MIN_TERMINAL_FONT,
+  MAX_TERMINAL_FONT
+} from './terminal/terminalFont'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -171,6 +179,28 @@ export function TerminalBoard({
   // (the spawn closure is local per mount). The spawn effect points this ref at a
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
+  // board.fontSize for the spawn closure's INITIAL xterm construction, read via a ref so
+  // a size change never becomes a spawn dep (which would respawn the PTY). Mirrors lodRef.
+  const fontSizeRef = useRef<number | undefined>(board.fontSize)
+  // Keymap effects + the Ctrl-wheel listener call the latest nudge/reset through refs so
+  // the spawn callback's identity stays stable (no respawn when the font handlers change).
+  const fontStepRef = useRef<(delta: number) => void>(() => {})
+  const fontResetRef = useRef<() => void>(() => {})
+  // Trailing timer that coalesces a burst of nudges (Ctrl-wheel / held key) into one undo step.
+  const fontBurstRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Authoritative font value, advanced SYNCHRONOUSLY in setFont. nudgeFont steps from THIS, not
+  // xterm's live `options.fontSize` (which only updates after the apply effect runs next paint) —
+  // so a Ctrl-wheel / held-key burst that fires several ticks within one frame steps once per
+  // notch instead of reading a stale size and collapsing to a single step. The apply effect
+  // re-syncs it to EXTERNAL changes (undo / project load) so a later nudge starts from the truth.
+  const liveFontRef = useRef<number>(resolveInitialFont(board.fontSize))
+  // The font this board was BORN with (the sticky default at mount, then frozen). The apply effect
+  // falls back to this for an UNPINNED board instead of the LIVE sticky: this board's own nudges
+  // mutate the sticky, so a live fallback would not revert when undo clears the pin back to
+  // undefined. (The sticky still seeds the NEXT terminal via the spawn closure — it just stops
+  // retroactively driving THIS one once the board exists.) A lazy-init useState (not a ref) so it
+  // can be read during render without tripping react-hooks/refs; the setter is intentionally unused.
+  const [bornFont] = useState<number>(() => resolveInitialFont(board.fontSize))
   // Live camera zoom source for the selection shim. We read it from the React Flow store
   // AT MOUSE-EVENT TIME (transform[2]) rather than via useOnViewportChange: the latter's
   // onChange does not fire for programmatic, zero-duration zoom (e.g. rf.zoomTo) — only for
@@ -218,6 +248,7 @@ export function TerminalBoard({
 
   // A board with no explicit cwd spawns in the open project folder, not os.homedir().
   const projectDir = useCanvasStore((s) => s.project.dir)
+  const updateBoard = useCanvasStore((s) => s.updateBoard)
 
   // `lod` read by the spawn effect (initial WebGL attach) without making it a spawn
   // dep — `lod` must NOT respawn the PTY (the session survives zoom-out by design).
@@ -225,6 +256,11 @@ export function TerminalBoard({
   useEffect(() => {
     lodRef.current = lod
   }, [lod])
+
+  // Keep the spawn closure's initial-font ref synced (read on construction only; never a spawn dep).
+  useEffect(() => {
+    fontSizeRef.current = board.fontSize
+  }, [board.fontSize])
 
   // ── WebGL renderer pooling (#10/#12/#29) ─────────────────────────────────────
   // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
@@ -303,6 +339,49 @@ export function TerminalBoard({
     else attachWebgl(term)
   }, [lod, attachWebgl, detachWebgl])
 
+  // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon
+  // computes rows from the well height but IGNORES the screen div's CSS padding (measured: it
+  // overcounts by one row; the 12px top padding then pushes the grid past the well bottom by a
+  // sub-cell remainder that the overflow:hidden boundary clips). After fitting, compute the
+  // target row count arithmetically (cell height is font-fixed, constant across sheds) and call
+  // term.resize AT MOST ONCE — one PTY IPC instead of N separate resize calls.
+  const fitWhole = useCallback((): void => {
+    const fit = fitRef.current
+    const term = termRef.current
+    if (!fit || !term) return
+    try {
+      fit.fit()
+    } catch {
+      return // well not laid out (LOD / display:none)
+    }
+    // Measure the SAME elements the Task-11 probe (terminalGeometry) reads: the rendered
+    // `.xterm-screen` grid (a child of the screen host) vs the `.nowheel` well that clips it.
+    // `screenRef` is the term.open() host; `.closest('.nowheel')` walks up to the screenWrap.
+    const screenEl = screenRef.current?.querySelector('.xterm-screen') as HTMLElement | null
+    const wellEl = screenRef.current?.closest('.nowheel') as HTMLElement | null
+    if (!screenEl || !wellEl) return
+    // Compute the final row count in JS and call term.resize AT MOST ONCE (one PTY IPC instead of N).
+    // Each row shed lifts the (top-aligned) grid bottom by exactly one cell height (font-fixed,
+    // constant across sheds), so we can arithmetically determine the target row count upfront.
+    const grid = screenEl.getBoundingClientRect()
+    const cellH = grid.height / Math.max(1, term.rows) // rendered cell height (font-fixed)
+    let rows = term.rows
+    let overflow = grid.bottom - wellEl.getBoundingClientRect().bottom
+    while (overflow > 1 && rows > 1) {
+      rows -= 1
+      overflow -= cellH // each shed lifts the (top-aligned) grid bottom by one cell
+    }
+    if (rows !== term.rows) term.resize(term.cols, rows) // single PTY resize
+  }, [])
+
+  // Route the in-spawn fit calls through a ref so `spawn`'s dependency array stays byte-identical
+  // (fitWhole is itself stable [], but the ref mirrors the fontStepRef/lodRef/attachWebglRef
+  // pattern and removes any exhaustive-deps churn risk). Kept in sync below.
+  const fitWholeRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    fitWholeRef.current = fitWhole
+  }, [fitWhole])
+
   // Fire a fresh PTY spawn into the CURRENT term. Shared by the Restart action and
   // the ResizeObserver's deferred-respawn path (#23). The async .then()/.catch()
   // bail if the captured term was disposed/replaced mid-IPC (#16), and a rejected
@@ -358,7 +437,7 @@ export function TerminalBoard({
 
     const term = new Terminal({
       fontFamily: mono,
-      fontSize: 12.5,
+      fontSize: resolveInitialFont(fontSizeRef.current),
       lineHeight: 1.2,
       cursorBlink: true,
       theme: THEME,
@@ -368,16 +447,13 @@ export function TerminalBoard({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
+    termRef.current = term
+    fitRef.current = fit
     // Attach a GL context only when mounting in detail view; a board mounted at LOD
     // runs on the DOM renderer until it returns to detail (see the LOD effect above).
     if (!lodRef.current) attachWebgl(term)
-    try {
-      fit.fit()
-    } catch {
-      /* element not laid out yet */
-    }
-    termRef.current = term
-    fitRef.current = fit
+    // Whole-cell mount fit (clip-free). Routed through the ref so spawn's deps stay byte-identical.
+    fitWholeRef.current()
     if (isE2E()) e2eTerminals.set(board.id, term)
 
     // Scale-correct selection (F2a): the board renders inside React Flow's scaled
@@ -428,7 +504,9 @@ export function TerminalBoard({
             term.clearSelection()
             return true
           },
-          paste: () => void pasteIntoTerminal(term, board.id)
+          paste: () => void pasteIntoTerminal(term, board.id),
+          fontStep: (d) => fontStepRef.current(d),
+          fontReset: () => fontResetRef.current()
         }
       )
     )
@@ -533,11 +611,7 @@ export function TerminalBoard({
     })
 
     const ro = new ResizeObserver(() => {
-      try {
-        fit.fit()
-      } catch {
-        /* element detached mid-resize */
-      }
+      fitWholeRef.current() // whole-cell fit (clip-free); swallows the not-laid-out throw itself
       // First good fit after a hidden/LOD mount spawns the deferred PTY at the
       // board's true width; later fits no-op (`spawned` guard) and just resize.
       launch()
@@ -593,6 +667,101 @@ export function TerminalBoard({
 
   useEffect(() => spawn(), [spawn])
 
+  // ── Per-board font size ───────────────────────────────────────────────────────
+  // Persist path (the four triggers call these — they never touch xterm directly):
+  const setFont = useCallback(
+    // `sticky` defaults true so adjustments seed the new-terminal default. Reset passes false:
+    // resetting ONE board to the factory size must not clobber the user's global preference.
+    (next: number, sticky = true): void => {
+      const clamped = clampTerminalFont(next)
+      if (clamped === liveFontRef.current) return // no-op (already this size / clamped at a bound)
+      liveFontRef.current = clamped // advance the authoritative value SYNCHRONOUSLY (burst-safe)
+      // Leading-edge undo checkpoint: snapshot once per burst so a Ctrl-wheel / held-key run
+      // collapses into ONE undo step; the trailing timer ends the burst (beginChange dedups).
+      if (fontBurstRef.current === null) useCanvasStore.getState().beginChange()
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+      fontBurstRef.current = setTimeout(() => {
+        fontBurstRef.current = null
+      }, 500)
+      updateBoard(board.id, { fontSize: clamped }) // persist the per-board pin
+      if (sticky) writeStickyFont(clamped) // update the new-terminal default (skipped on reset)
+    },
+    [board.id, updateBoard]
+  )
+  const nudgeFont = useCallback(
+    (delta: number): void => setFont(liveFontRef.current + delta),
+    [setFont]
+  )
+  // Reset is a per-board factory reset (12.5) that leaves the global sticky default untouched.
+  const resetFont = useCallback((): void => setFont(DEFAULT_TERMINAL_FONT, false), [setFont])
+
+  // Keep the keymap/wheel refs pointed at the latest handlers (stable spawn identity).
+  useEffect(() => {
+    fontStepRef.current = nudgeFont
+    fontResetRef.current = resetFont
+  }, [nudgeFont, resetFont])
+
+  // Apply a persisted font change to the LIVE term + reflow the grid (→ PTY resize). Keyed on
+  // board.fontSize (NOT a spawn dep) so resizing never respawns the PTY. Falls back to the BORN
+  // font (frozen at mount) for an unpinned board — bornFont is stable so this still runs only when
+  // board.fontSize actually changes.
+  useEffect(() => {
+    // Unpinned board falls back to the BORN font (frozen at mount), not the live sticky — a live
+    // sticky would have drifted under this board's own nudges and so undo-to-unpinned would not
+    // revert. Sync the authoritative ref FIRST (even before the term mounts) so a nudge after an
+    // external change (undo / project load) steps from the truth.
+    const fs = clampTerminalFont(board.fontSize ?? bornFont)
+    liveFontRef.current = fs
+    const term = termRef.current
+    if (!term) return
+    if (term.options.fontSize === fs) return
+    term.options.fontSize = fs
+    // A bigger font means taller cells -> the row count must drop; whole-cell fit keeps it
+    // clip-free. (Unfitted well: fitWhole swallows the not-laid-out throw; next RO fit applies.)
+    fitWhole()
+  }, [board.fontSize, bornFont, fitWhole])
+
+  // Refit when devicePixelRatio changes (e.g. the window moved to a monitor with different scaling) —
+  // the host doesn't resize, so the ResizeObserver never fires, but the cell height changed.
+  useEffect(() => {
+    let mql: MediaQueryList | null = null
+    const onChange = (): void => {
+      fitWhole()
+      attach() // re-arm for the NEW dpr (each mql is dpr-specific)
+    }
+    const attach = (): void => {
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+      mql.addEventListener('change', onChange, { once: true })
+    }
+    attach()
+    return () => mql?.removeEventListener('change', onChange)
+  }, [fitWhole])
+
+  // Clear the burst timer on unmount.
+  useEffect(
+    () => () => {
+      if (fontBurstRef.current) clearTimeout(fontBurstRef.current)
+    },
+    []
+  )
+
+  // Ctrl+wheel font zoom over the well (VS Code / iTerm idiom; macOS pinch arrives as
+  // ctrl-wheel). NATIVE non-passive listener — React's synthetic onWheel is passive, so
+  // preventDefault would no-op. The screen div is inside `.nowheel`, so React Flow never
+  // zooms; we stop plain-wheel scrollback only when Ctrl is held.
+  useEffect(() => {
+    const el = screenRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      fontStepRef.current(e.deltaY < 0 ? 1 : -1)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
   // ── Actions ─────────────────────────────────────────────────────────────────
   /** Restart: kill the current session + respawn a fresh shell in place. */
   const restart = useCallback(() => {
@@ -617,11 +786,7 @@ export function TerminalBoard({
     // any launchCommand TUI) at the wrong width. Defer to the ResizeObserver's
     // first good fit, mirroring the initial-spawn deferral.
     const fit = fitRef.current
-    try {
-      fit?.fit()
-    } catch {
-      /* element not laid out yet */
-    }
+    fitWhole() // whole-cell fit (clip-free); no-ops when the well isn't laid out
     const dims = fit?.proposeDimensions()
     if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)) {
       pendingRespawnRef.current = false
@@ -629,7 +794,7 @@ export function TerminalBoard({
     } else {
       pendingRespawnRef.current = true
     }
-  }, [respawn, board.id])
+  }, [respawn, board.id, fitWhole])
 
   // §9/§7.1 braille spinner: advance one frame every 80ms while running. Reduced
   // motion holds it on a static glyph (no interval → frame stays put).
@@ -718,8 +883,28 @@ export function TerminalBoard({
     ? [...checked].filter((k) => browserPick.candidates.find((c) => c.id === k)?.connectedTo).length
     : 0
 
+  // Effective font for the disabled-at-bound state: mirror the apply effect's fallback (born font,
+  // NOT live sticky) so the buttons track the size this board actually renders at, not another
+  // board's sticky drift.
+  const effectiveFont = clampTerminalFont(board.fontSize ?? bornFont)
   const actions = (
     <>
+      {(selected || hovered) && (
+        <>
+          <IconBtn
+            name="minus"
+            title="Smaller font (Ctrl -)"
+            onClick={() => nudgeFont(-1)}
+            disabled={effectiveFont <= MIN_TERMINAL_FONT}
+          />
+          <IconBtn
+            name="plus"
+            title="Bigger font (Ctrl +)"
+            onClick={() => nudgeFont(1)}
+            disabled={effectiveFont >= MAX_TERMINAL_FONT}
+          />
+        </>
+      )}
       {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
       <IconBtn
         name="globe"
@@ -805,10 +990,30 @@ export function TerminalBoard({
               id: 'clear',
               label: 'Clear',
               onSelect: () => termRef.current?.clear()
+            },
+            {
+              kind: 'action',
+              id: 'font-bigger',
+              label: 'Bigger font',
+              disabled: effectiveFont >= MAX_TERMINAL_FONT,
+              onSelect: () => nudgeFont(1)
+            },
+            {
+              kind: 'action',
+              id: 'font-smaller',
+              label: 'Smaller font',
+              disabled: effectiveFont <= MIN_TERMINAL_FONT,
+              onSelect: () => nudgeFont(-1)
+            },
+            {
+              kind: 'action',
+              id: 'font-reset',
+              label: 'Reset font',
+              onSelect: () => resetFont()
             }
           ]
         : [],
-    [menu, board.id]
+    [menu, board.id, effectiveFont, nudgeFont, resetFont]
   )
 
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
@@ -868,7 +1073,14 @@ export function TerminalBoard({
                 pointerEvents: flipped ? 'none' : 'auto'
               }}
             >
-              {configOpen && <TerminalConfig board={board} onClose={() => setConfigOpen(false)} />}
+              {configOpen && (
+                <TerminalConfig
+                  board={board}
+                  onClose={() => setConfigOpen(false)}
+                  fontSize={effectiveFont}
+                  onSetFont={setFont}
+                />
+              )}
               {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
               explicit Start that spawns the shell + fires launchCommand on click. */}
               {state === 'idle' && (
@@ -1111,7 +1323,8 @@ const screenWrap: React.CSSProperties = {
 const screen: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
-  padding: '12px 12px 4px'
+  padding: '12px' // was '12px 12px 4px'; DESIGN.md §7.1 = 12px. Cosmetic — FitAddon ignores
+  // this padding, so fitWhole (not the padding) is what prevents the clip.
 }
 
 /** Idle (restored/duplicated, not yet started) overlay: centered Start affordance

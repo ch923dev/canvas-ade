@@ -11,6 +11,7 @@ import {
   type Board,
   type Connector,
   type PlanningBoard,
+  type TerminalBoard,
   type CanvasDoc,
   type CanvasViewport
 } from './boardSchema'
@@ -1068,6 +1069,66 @@ describe('schema v8 — TextElement.width', () => {
         })
       ).toThrow(/width/)
     }
+  })
+})
+
+describe('terminal fontSize (zero-migration optional field)', () => {
+  it('round-trips a terminal fontSize (integer)', () => {
+    const board = {
+      ...createBoard('terminal', { id: 't1', x: 0, y: 0 }),
+      fontSize: 11
+    } as TerminalBoard
+    const restored = fromObject(toObject([board], null))
+    expect((restored.boards[0] as TerminalBoard).fontSize).toBe(11)
+  })
+  it('round-trips a terminal fontSize (float 12.5 — the actual default)', () => {
+    const board = {
+      ...createBoard('terminal', { id: 't1', x: 0, y: 0 }),
+      fontSize: 12.5
+    } as TerminalBoard
+    const restored = fromObject(toObject([board], null))
+    expect((restored.boards[0] as TerminalBoard).fontSize).toBe(12.5)
+  })
+  it('an old terminal without fontSize still parses (field absent)', () => {
+    const board = createBoard('terminal', { id: 't1', x: 0, y: 0 })
+    const restored = fromObject(toObject([board], null))
+    expect((restored.boards[0] as TerminalBoard).fontSize).toBeUndefined()
+  })
+  it('rejects a non-numeric terminal fontSize', () => {
+    const doc = {
+      schemaVersion: SCHEMA_VERSION,
+      viewport: null,
+      boards: [{ ...createBoard('terminal', { id: 't1', x: 0, y: 0 }), fontSize: 'big' }],
+      connectors: [],
+      groups: []
+    }
+    expect(() => fromObject(doc)).toThrow(/fontSize/)
+  })
+  it('rejects a zero or negative terminal fontSize', () => {
+    const mk = (fs: number) => ({
+      schemaVersion: SCHEMA_VERSION,
+      viewport: null,
+      boards: [{ ...createBoard('terminal', { id: 't1', x: 0, y: 0 }), fontSize: fs }],
+      connectors: [],
+      groups: []
+    })
+    expect(() => fromObject(mk(0))).toThrow(/fontSize/)
+    expect(() => fromObject(mk(-5))).toThrow(/fontSize/)
+  })
+  it('clamps an out-of-band but positive fontSize into the [MIN,MAX] band on load', () => {
+    const mk = (fs: number) => ({
+      schemaVersion: SCHEMA_VERSION,
+      viewport: null,
+      boards: [{ ...createBoard('terminal', { id: 't1', x: 0, y: 0 }), fontSize: fs }],
+      connectors: [],
+      groups: []
+    })
+    // a hand-edited canvas.json with a tiny/huge positive value normalizes to the
+    // band so the stored value matches what renders (was: passes validation, snaps at use)
+    expect((fromObject(mk(0.001)).boards[0] as TerminalBoard).fontSize).toBe(8)
+    expect((fromObject(mk(999)).boards[0] as TerminalBoard).fontSize).toBe(22)
+    // an in-band value is left untouched
+    expect((fromObject(mk(14)).boards[0] as TerminalBoard).fontSize).toBe(14)
   })
 })
 

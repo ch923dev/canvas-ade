@@ -71,6 +71,36 @@ describe('resolveTerminalKey', () => {
       })
     ).toBeNull()
   })
+
+  it('Ctrl+- → fontDec; Ctrl+Shift+- (the real "_") is blocked (Windows)', () => {
+    expect(resolveTerminalKey(chord('-', { ctrlKey: true }), WIN)).toEqual({ kind: 'fontDec' })
+    // '_' on real hardware is Shift+'-', and the font chords require no Shift — so the dec chord
+    // carrying shiftKey resolves to null (no dead '_' branch needed).
+    expect(resolveTerminalKey(chord('-', { ctrlKey: true, shiftKey: true }), WIN)).toBeNull()
+  })
+  it('Ctrl+= and Ctrl++ → fontInc (Windows)', () => {
+    expect(resolveTerminalKey(chord('=', { ctrlKey: true }), WIN)).toEqual({ kind: 'fontInc' })
+    expect(resolveTerminalKey(chord('+', { ctrlKey: true }), WIN)).toEqual({ kind: 'fontInc' })
+  })
+  it('Ctrl+0 → fontReset (Windows)', () => {
+    expect(resolveTerminalKey(chord('0', { ctrlKey: true }), WIN)).toEqual({ kind: 'fontReset' })
+  })
+  it('mac: Cmd is the primary modifier for font chords; Ctrl+- does not', () => {
+    expect(
+      resolveTerminalKey(chord('-', { metaKey: true }), { hasSelection: false, isMac: true })
+    ).toEqual({ kind: 'fontDec' })
+    expect(
+      resolveTerminalKey(chord('-', { ctrlKey: true }), { hasSelection: false, isMac: true })
+    ).toBeNull()
+  })
+  it('plain -/=/0 (no modifier) → null', () => {
+    expect(resolveTerminalKey(chord('-'), WIN)).toBeNull()
+    expect(resolveTerminalKey(chord('='), WIN)).toBeNull()
+    expect(resolveTerminalKey(chord('0'), WIN)).toBeNull()
+  })
+  it('Alt+Ctrl+- → null (Alt reserved)', () => {
+    expect(resolveTerminalKey(chord('-', { ctrlKey: true, altKey: true }), WIN)).toBeNull()
+  })
 })
 
 describe('TERMINAL_NEWLINE (Shift+Enter byte)', () => {
@@ -105,8 +135,17 @@ describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', 
   }
   const spyFx = (
     over: Partial<TerminalKeyEffects> = {}
-  ): TerminalKeyEffects & { calls: { newline: number; copy: number; paste: number } } => {
-    const calls = { newline: 0, copy: 0, paste: 0 }
+  ): TerminalKeyEffects & {
+    calls: {
+      newline: number
+      copy: number
+      paste: number
+      fontStep: number
+      fontReset: number
+      lastFontDelta: number
+    }
+  } => {
+    const calls = { newline: 0, copy: 0, paste: 0, fontStep: 0, fontReset: 0, lastFontDelta: 0 }
     return {
       calls,
       newline: () => {
@@ -118,6 +157,13 @@ describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', 
       },
       paste: () => {
         calls.paste++
+      },
+      fontStep: (delta) => {
+        calls.fontStep++
+        calls.lastFontDelta = delta
+      },
+      fontReset: () => {
+        calls.fontReset++
       },
       ...over
     }
@@ -166,6 +212,37 @@ describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', 
     const fx = spyFx()
     expect(handleTerminalKey(e, WIN, fx)).toBe(true)
     expect(e.prevented).toBe(false)
-    expect(fx.calls).toEqual({ newline: 0, copy: 0, paste: 0 })
+    expect(fx.calls).toEqual({
+      newline: 0,
+      copy: 0,
+      paste: 0,
+      fontStep: 0,
+      fontReset: 0,
+      lastFontDelta: 0
+    })
+  })
+
+  it('Ctrl+-: preventDefault + fontStep(-1) + returns false', () => {
+    const e = evt('-', { ctrlKey: true })
+    const fx = spyFx()
+    expect(handleTerminalKey(e, WIN, fx)).toBe(false)
+    expect(e.prevented).toBe(true)
+    expect(fx.calls.fontStep).toBe(1)
+    expect(fx.calls.lastFontDelta).toBe(-1)
+  })
+  it('Ctrl+=: preventDefault + fontStep(+1) + returns false', () => {
+    const e = evt('=', { ctrlKey: true })
+    const fx = spyFx()
+    expect(handleTerminalKey(e, WIN, fx)).toBe(false)
+    expect(e.prevented).toBe(true)
+    expect(fx.calls.fontStep).toBe(1)
+    expect(fx.calls.lastFontDelta).toBe(1)
+  })
+  it('Ctrl+0: preventDefault + fontReset + returns false', () => {
+    const e = evt('0', { ctrlKey: true })
+    const fx = spyFx()
+    expect(handleTerminalKey(e, WIN, fx)).toBe(false)
+    expect(e.prevented).toBe(true)
+    expect(fx.calls.fontReset).toBe(1)
   })
 })

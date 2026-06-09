@@ -21,6 +21,7 @@ import {
   type TextAlignToken,
   type TextColorToken
 } from '../canvas/boards/planning/textStyle'
+import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/terminalFont'
 
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
@@ -68,6 +69,11 @@ export interface TerminalBoard extends BoardCommon {
    * (iCloud/Dropbox/NAS) and reopened elsewhere. Don't assume it's portable across machines.
    */
   agentTranscriptPath?: string
+  /**
+   * Per-board xterm font size in px. Absent => use the sticky default (else 12.5). Optional
+   * + default-at-read => NO SCHEMA_VERSION bump (mirrors previewSourceId / agentSessionId).
+   */
+  fontSize?: number
 }
 
 export interface BrowserBoard extends BoardCommon {
@@ -539,6 +545,9 @@ function assertBoard(b: unknown): void {
       if (b.agentTranscriptPath !== undefined && typeof b.agentTranscriptPath !== 'string') {
         fail('terminal agentTranscriptPath is not a string')
       }
+      if (b.fontSize !== undefined && !isPositiveNum(b.fontSize)) {
+        fail('terminal fontSize must be a positive number')
+      }
       return
     case 'browser':
       if (typeof b.url !== 'string') fail('browser board is missing a string url')
@@ -645,9 +654,16 @@ export function fromObject(doc: unknown): CanvasDoc {
   // Clamp each board to the MIN_BOARD_SIZE floor — assertBoard already rejects
   // non-positive w/h, but a valid-yet-below-minimum size (e.g. w:5) is normalized
   // here rather than dropped, so corrupt-but-recoverable input still loads (#BUG-025).
+  // A terminal fontSize is normalized the same way: assertBoard rejects non-positive,
+  // and an out-of-band-but-positive value (e.g. 0.001 or 999 from a hand-edited
+  // canvas.json) is clamped to the [MIN,MAX] band here so the stored value matches
+  // what renders — rather than passing validation and silently snapping at use.
   for (const b of owned.boards) {
     b.w = Math.max(MIN_BOARD_SIZE.w, b.w)
     b.h = Math.max(MIN_BOARD_SIZE.h, b.h)
+    if (b.type === 'terminal' && b.fontSize !== undefined) {
+      b.fontSize = Math.min(MAX_TERMINAL_FONT, Math.max(MIN_TERMINAL_FONT, b.fontSize))
+    }
   }
   // Drop a preview link whose source board is no longer present (Slice C′) — a
   // dangling link must not render a half-edge; clear it rather than fail the load.

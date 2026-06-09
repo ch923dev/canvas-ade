@@ -26,6 +26,7 @@ import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
+import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
 import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 
@@ -121,6 +122,23 @@ export interface CanvasE2E {
   panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
   terminalMounted: (id: string) => boolean
+  /** The live xterm font size for a terminal board (px), or undefined if not mounted. */
+  terminalFontSize: (id: string) => number | undefined
+  /** Rendered terminal geometry for the clip probe: rects of the live xterm sub-elements vs the
+   *  clipping well, plus dpr/rows/cols. Null if not mounted. */
+  terminalGeometry: (id: string) => null | {
+    dpr: number
+    rows: number
+    cols: number
+    cellHeight: number
+    gridBottom: number
+    wellBottom: number
+    overflow: number
+  }
+  /** Drive a REAL board resize (store -> React Flow -> the well ResizeObserver -> fit). */
+  setBoardSize: (id: string, w: number, h: number) => void
+  /** Pin a terminal's font size (drives the reactive apply + refit). For the clip x font matrix. */
+  setBoardFont: (id: string, px: number) => void
   /** True if the live store round-trips through toObject→fromObject without throwing. */
   roundTripOk: () => boolean
   /** M2: add a connector between two boards; returns its id (null if rejected). */
@@ -372,6 +390,38 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalMounted(id) {
       return e2eTerminals.has(id)
+    },
+    terminalFontSize(id) {
+      return e2eTerminals.get(id)?.options.fontSize
+    },
+    terminalGeometry(id) {
+      const term = e2eTerminals.get(id)
+      if (!term) return null
+      const node = document.querySelector(`.react-flow__node[data-id="${id}"]`)
+      const screenEl = node?.querySelector('.xterm-screen') as HTMLElement | null
+      const wellEl = (node?.querySelector('.xterm') as HTMLElement | null)?.closest(
+        '.nowheel'
+      ) as HTMLElement | null
+      if (!screenEl || !wellEl) return null
+      const grid = screenEl.getBoundingClientRect()
+      const well = wellEl.getBoundingClientRect()
+      return {
+        dpr: window.devicePixelRatio,
+        rows: term.rows,
+        cols: term.cols,
+        cellHeight: grid.height / Math.max(1, term.rows),
+        gridBottom: grid.bottom,
+        wellBottom: well.bottom,
+        overflow: grid.bottom - well.bottom // > 0 => the grid spills past the clip boundary
+      }
+    },
+    setBoardSize(id, w, h) {
+      useCanvasStore.getState().resizeBoard(id, w, h)
+    },
+    setBoardFont(id, px) {
+      // Clamp like the production seam so the stored pin matches what the apply effect renders —
+      // an out-of-range raw write would diverge stored-vs-effective and confuse a test diagnostic.
+      useCanvasStore.getState().updateBoard(id, { fontSize: clampTerminalFont(px) })
     },
     roundTripOk() {
       try {
