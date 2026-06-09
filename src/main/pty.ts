@@ -44,7 +44,7 @@ export function isValidResize(cols: number, rows: number): boolean {
 /** Renderer→PTY input/resize message over a board's MessagePort. The discriminated
  * union lets the resize branch read cols/rows as plain numbers (no non-null casts);
  * the runtime guards below still defend against malformed/untrusted payloads. */
-export type PortInputMsg = { t: 'input'; d: string } | { t: 'resize'; cols: number; rows: number }
+type PortInputMsg = { t: 'input'; d: string } | { t: 'resize'; cols: number; rows: number }
 
 /**
  * Attach the renderer→PTY input/resize forwarder to one MessagePort and start it.
