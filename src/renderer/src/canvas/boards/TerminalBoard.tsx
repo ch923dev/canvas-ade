@@ -94,8 +94,11 @@ const IS_MAC = navigator.platform.toLowerCase().includes('mac')
  * Smart paste: if the clipboard holds an image, stage it to a temp file and inject the
  * quoted path; otherwise inject the clipboard text. Uses `term.paste` so multiline
  * content gets bracketed-paste markers when the agent enabled them (no per-line submit).
+ * Exported for the decision-seam unit test (TerminalBoard.paste.test.ts) — a non-component
+ * export from a component module, so react-refresh's only-export-components is moot here.
  */
-async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
+// eslint-disable-next-line react-refresh/only-export-components
+export async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
   // Staging can fail (ENOSPC disk full, EPERM antivirus lock, read-only .canvas/tmp).
   // The IPC handler now returns null on those errors, but guard the await itself too
   // so any unexpected rejection falls through to the text-paste branch rather than
