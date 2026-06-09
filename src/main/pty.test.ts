@@ -1,11 +1,9 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
-  canonicalizeShellPath,
   isStaleExit,
   appendRing,
-  resolveShell,
   parkCore,
   adoptCore,
   reapParkedCore,
@@ -13,12 +11,19 @@ import {
   disposeAllPtysCore,
   drainPtyCore,
   killTreeCommand,
-  safeCwd,
   writeToPtyCore,
   getTerminalRuntimeCore,
-  isValidResize
+  isValidResize,
+  attachPortInput
 } from './pty'
-import type { ShellInfo } from './pty'
+import {
+  canonicalizeShellPath,
+  clearShellCache,
+  enumerateShells,
+  resolveShell,
+  safeCwd
+} from './ptyShells'
+import type { ShellInfo } from './ptyShells'
 
 describe('safeCwd (SEC-1)', () => {
   it('returns an existing directory unchanged', () => {
@@ -146,6 +151,36 @@ describe('resolveShell (M5 — validate before spawn)', () => {
 
   it('falls back to the default for an empty string', () => {
     expect(resolveShell('', shells)).toBe('C:\\Windows\\System32\\cmd.exe')
+  })
+})
+
+// Finding 1 (perf): enumerateShells ran a full blocking-sync FS probe set on EVERY
+// pty:spawn on the MAIN thread, though installed shells don't change mid-session. It
+// is now memoized for the process lifetime; clearShellCache resets the cache. Assert
+// the reference-identity memoization behavior only — the probe set is OS-dependent, so
+// we do NOT assert platform-specific shell contents, only a non-empty ShellInfo[].
+describe('enumerateShells memoization (perf)', () => {
+  // beforeEach resets the cache so each test starts fresh (no intra-block contamination);
+  // afterEach stops a cached list leaking into other test files.
+  beforeEach(() => clearShellCache())
+  afterEach(() => clearShellCache())
+
+  it('returns the SAME array reference on repeated calls (memoized)', () => {
+    const first = enumerateShells()
+    expect(enumerateShells()).toBe(first) // same reference → cached, no re-probe
+  })
+
+  it('re-probes after clearShellCache (a fresh, non-empty ShellInfo[])', () => {
+    const cached = enumerateShells()
+    clearShellCache()
+    const fresh = enumerateShells()
+    expect(fresh).not.toBe(cached) // different reference → re-probed
+    expect(Array.isArray(fresh)).toBe(true)
+    expect(fresh.length).toBeGreaterThan(0)
+    for (const s of fresh) {
+      expect(typeof s.path).toBe('string')
+      expect(typeof s.label).toBe('string')
+    }
   })
 })
 
@@ -320,6 +355,66 @@ describe('adoptCore (T1)', () => {
       vi.fn() as any
     )
     expect(res).toEqual({ adopted: false })
+  })
+})
+
+describe('attachPortInput (Finding 3 — single renderer→PTY write guard)', () => {
+  it('starts the port and registers the message handler', () => {
+    const port = makePort()
+    const { proc } = makeProc(700)
+    attachPortInput(port as any, proc as any)
+    expect(port.started).toBe(true)
+    expect(typeof port.handler).toBe('function')
+  })
+
+  it('forwards an input message to proc.write', () => {
+    const port = makePort()
+    const { proc } = makeProc(701)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'input', d: 'ls\r' } })
+    expect(proc.write).toHaveBeenCalledWith('ls\r')
+  })
+
+  it('forwards a VALID resize to proc.resize', () => {
+    const port = makePort()
+    const { proc } = makeProc(702)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } })
+    expect(proc.resize).toHaveBeenCalledWith(100, 30)
+  })
+
+  it('drops an out-of-bound resize (cols=0) — clamp holds', () => {
+    const port = makePort()
+    const { proc } = makeProc(703)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 0, rows: 30 } })
+    expect(proc.resize).not.toHaveBeenCalled()
+  })
+
+  it('drops an out-of-bound resize (rows=0) — both axes are clamped at the forwarding layer', () => {
+    const port = makePort()
+    const { proc } = makeProc(706)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 80, rows: 0 } })
+    expect(proc.resize).not.toHaveBeenCalled()
+  })
+
+  it('drops a non-integer resize (cols=80.5) — clamp holds', () => {
+    const port = makePort()
+    const { proc } = makeProc(704)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 80.5, rows: 24 } })
+    expect(proc.resize).not.toHaveBeenCalled()
+  })
+
+  it('swallows a throw from proc.write (would crash main via uncaughtException)', () => {
+    const port = makePort()
+    const { proc } = makeProc(705)
+    attachPortInput(port as any, proc as any)
+    proc.write.mockImplementationOnce(() => {
+      throw new Error('exited')
+    })
+    expect(() => port.handler?.({ data: { t: 'input', d: 'x' } })).not.toThrow()
   })
 })
 
