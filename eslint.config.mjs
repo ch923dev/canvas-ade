@@ -194,7 +194,7 @@ export default tseslint.config(
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],
-    rules: { 'max-lines': ['error', { max: 1025, skipBlankLines: true, skipComments: true }] }
+    rules: { 'max-lines': ['error', { max: 940, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/main/mcpSmoke.ts'],
