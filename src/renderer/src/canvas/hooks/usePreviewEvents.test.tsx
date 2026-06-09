@@ -1,0 +1,225 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { renderHook, cleanup } from '@testing-library/react'
+import { usePreviewStore, type PreviewRuntime } from '../../store/previewStore'
+import { usePreviewEvents } from './usePreviewEvents'
+import type { BoardRec } from '../boards/usePreviewManager'
+
+type PatchFn = (id: string, patch: Partial<PreviewRuntime>) => void
+
+// The preload PreviewEvent union (mirrors main). `escape` is NOT a declared variant — the
+// handler reaches it via a widened-string compare — so the test emits it through a loose type.
+type PreviewEvent =
+  | { id: string; type: 'did-finish-load'; url: string }
+  | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
+  | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
+  | { id: string; type: 'did-start-navigation' }
+  | { id: string; type: 'escape' }
+
+// ── window.api.onPreviewEvent stub ────────────────────────────────────────────
+// Capture the listener the hook registers so the test can invoke it with synthetic
+// events, and hand back a spyable unsubscribe so cleanup can be asserted.
+let listener: ((ev: PreviewEvent) => void) | null = null
+const unsubscribe = vi.fn()
+
+function stubApi(): void {
+  listener = null
+  unsubscribe.mockClear()
+  ;(window as unknown as { api: unknown }).api = {
+    onPreviewEvent: vi.fn((cb: (ev: PreviewEvent) => void) => {
+      listener = cb
+      return unsubscribe
+    })
+  }
+}
+
+/** Emit a synthetic preview event through the captured listener. */
+function emit(ev: PreviewEvent): void {
+  if (!listener) throw new Error('listener not registered')
+  listener(ev)
+}
+
+/** A BoardRec-shaped row; only `.exists` matters to the handler, the rest are defaults. */
+function makeRec(exists: boolean): BoardRec {
+  return {
+    exists,
+    attached: false,
+    lastSent: null,
+    lastZoom: 0,
+    lastUrl: null,
+    lastReloadNonce: 0,
+    attachSeq: 0
+  }
+}
+
+// Per-test refs + spies, rebuilt in beforeEach.
+let recs: { current: Map<string, BoardRec> }
+let fullViewIdRef: { current: string | null }
+let onCloseFullViewRef: { current: ReturnType<typeof vi.fn<() => void>> }
+let patchRuntime: ReturnType<typeof vi.fn<PatchFn>>
+let patchRuntimeIfPresent: ReturnType<typeof vi.fn<PatchFn>>
+
+function renderEvents(): { unmount: () => void } {
+  const { unmount } = renderHook(() =>
+    usePreviewEvents({
+      recs,
+      fullViewIdRef,
+      onCloseFullViewRef,
+      patchRuntime,
+      patchRuntimeIfPresent
+    })
+  )
+  return { unmount }
+}
+
+/** Seed one board's runtime status in the real store (status gating reads getState). */
+function seedStatus(id: string, status: 'idle' | 'connecting' | 'connected' | 'load-failed'): void {
+  usePreviewStore.getState().patch(id, { status })
+}
+
+beforeEach(() => {
+  stubApi()
+  usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+  recs = { current: new Map() }
+  fullViewIdRef = { current: 'board-fv' }
+  onCloseFullViewRef = { current: vi.fn<() => void>() }
+  patchRuntime = vi.fn<PatchFn>()
+  patchRuntimeIfPresent = vi.fn<PatchFn>()
+})
+
+afterEach(() => {
+  cleanup()
+  delete (window as unknown as { api?: unknown }).api
+})
+
+describe('usePreviewEvents', () => {
+  it('subscribes to onPreviewEvent on mount', () => {
+    renderEvents()
+    expect(
+      (window as unknown as { api: { onPreviewEvent: ReturnType<typeof vi.fn> } }).api
+        .onPreviewEvent
+    ).toHaveBeenCalledTimes(1)
+    expect(listener).toBeTypeOf('function')
+  })
+
+  describe('escape', () => {
+    it('closes full view when the event board IS the full-view board', () => {
+      renderEvents()
+      emit({ id: 'board-fv', type: 'escape' })
+      expect(onCloseFullViewRef.current).toHaveBeenCalledTimes(1)
+    })
+
+    it('does NOT close full view for a different board', () => {
+      renderEvents()
+      emit({ id: 'other', type: 'escape' })
+      expect(onCloseFullViewRef.current).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('did-start-navigation', () => {
+    it('clears a load-failed latch → connecting for an existing live board', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'load-failed')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-start-navigation' })
+      expect(patchRuntime).toHaveBeenCalledWith('b1', { status: 'connecting', error: null })
+    })
+
+    it('does NOTHING when the rec exists but the status is not load-failed', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'connecting')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-start-navigation' })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+
+    it('does NOTHING when the rec exists:false (renderer freed)', () => {
+      recs.current.set('b1', makeRec(false))
+      seedStatus('b1', 'load-failed')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-start-navigation' })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+
+    it('does NOTHING when there is no rec at all', () => {
+      seedStatus('b1', 'load-failed')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-start-navigation' })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('did-finish-load', () => {
+    it('promotes connecting → connected for an existing live board', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'connecting')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-finish-load', url: 'http://localhost:3000/' })
+      expect(patchRuntime).toHaveBeenCalledWith('b1', {
+        status: 'connected',
+        liveUrl: 'http://localhost:3000/',
+        error: null
+      })
+    })
+
+    it('does NOT promote when the status is load-failed (latch respected)', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'load-failed')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-finish-load', url: 'http://localhost:3000/' })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+
+    it('does NOTHING when there is no live rec (deleted / evicted)', () => {
+      seedStatus('b1', 'connecting')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-finish-load', url: 'http://localhost:3000/' })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('did-navigate', () => {
+    it('patches liveUrl + back/forward via patchIfPresent (not patch)', () => {
+      renderEvents()
+      emit({
+        id: 'b1',
+        type: 'did-navigate',
+        url: 'http://localhost:3000/about',
+        canGoBack: true,
+        canGoForward: false
+      })
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        liveUrl: 'http://localhost:3000/about',
+        canGoBack: true,
+        canGoForward: false
+      })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('did-fail-load', () => {
+    it('latches load-failed + error via patchIfPresent (not patch)', () => {
+      renderEvents()
+      emit({
+        id: 'b1',
+        type: 'did-fail-load',
+        url: 'http://localhost:3000/',
+        errorCode: -102,
+        errorDescription: 'ERR_CONNECTION_REFUSED'
+      })
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        status: 'load-failed',
+        error: 'ERR_CONNECTION_REFUSED'
+      })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('cleanup', () => {
+    it('calls the unsubscribe returned by onPreviewEvent on unmount', () => {
+      const { unmount } = renderEvents()
+      expect(unsubscribe).not.toHaveBeenCalled()
+      unmount()
+      expect(unsubscribe).toHaveBeenCalledTimes(1)
+    })
+  })
+})

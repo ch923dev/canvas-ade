@@ -51,6 +51,7 @@ import {
 } from '../../lib/browserLayout'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
+import { usePreviewEvents } from '../hooks/usePreviewEvents'
 import type { BrowserBoard, BrowserViewport } from '../../lib/boardSchema'
 
 /** Cap concurrent live renderers (ADR 0002); over-cap boards fall back to snapshot. */
@@ -78,7 +79,7 @@ interface BoardGeom {
 }
 
 /** Per-board native-view bookkeeping (mirrors the spike `BoardRec`). */
-interface BoardRec {
+export interface BoardRec {
   /** A native view is created (open) and not yet closed. */
   exists: boolean
   /** The native view is currently attached over the board. */
@@ -988,62 +989,9 @@ export function usePreviewManager(props: LayerProps): void {
   }, [paneRef, flushBatch])
 
   // ── Lifecycle events from main (load / navigate / fail) → runtime store ────────
-  useEffect(() => {
-    const off = window.api.onPreviewEvent((ev) => {
-      // Esc pressed while the native view's web content owns focus (main forwards it via
-      // before-input-event). The renderer window never receives this keydown, so close
-      // full view here when the event's board is the full-view one — parity with the
-      // window Esc handler that already exits full view for terminals/notes.
-      if ((ev.type as string) === 'escape') {
-        if (ev.id === fullViewIdRef.current) onCloseFullViewRef.current()
-        return
-      }
-      // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
-      // Clear a stale `load-failed` latch so the following did-finish-load can promote
-      // to `connected` after a successful recovery load (Bug #5). The preload
-      // `PreviewEvent` union doesn't declare this additive variant, so compare via a
-      // widened string. Only clears the load-failed latch — the error page's OWN
-      // did-finish-load is still suppressed (main reuses the failed navigation and
-      // emits no fresh did-start-navigation for it).
-      if ((ev.type as string) === 'did-start-navigation') {
-        // Recovery only matters for a board that still has a live native view; ignore
-        // an in-flight nav-start for an evicted/deleted board (Bug #18/#32 — no rec, or
-        // its renderer was freed → don't resurrect or mutate a stale entry).
-        if (!recs.current.get(ev.id)?.exists) return
-        const cur = usePreviewStore.getState().byId[ev.id]?.status
-        if (cur === 'load-failed') patchRuntime(ev.id, { status: 'connecting', error: null })
-        return
-      }
-      if (ev.type === 'did-finish-load') {
-        // Bug #18: reconcile against the lifecycle before promoting. An over-cap-evicted
-        // board (closeBoard cleared exists/attached + live, but left status 'connecting')
-        // whose load completes just as its view is closed would otherwise flip to a green
-        // 'connected' over a detached snapshot with no live view. Skip when there is no
-        // live native view (rec gone or its renderer was freed). This also avoids
-        // resurrecting a cleared runtime entry for a just-deleted board (Bug #32).
-        if (!recs.current.get(ev.id)?.exists) return
-        // Respect a prior load-failed: a dead/refused URL loads a Chromium error page
-        // whose own did-finish-load must not flip the board back to "connected"
-        // (Bug #5). Main already latches `failed` and suppresses the emit in that
-        // case; this is the renderer-side belt-and-suspenders — only promote to
-        // connected from the in-flight `connecting` state, never override load-failed.
-        const cur = usePreviewStore.getState().byId[ev.id]?.status
-        if (cur === 'load-failed') return
-        patchRuntime(ev.id, { status: 'connected', liveUrl: ev.url, error: null })
-      } else if (ev.type === 'did-navigate') {
-        // Bug #32: patch ONLY if the entry still exists — an in-flight nav event that
-        // arrives after the board was deleted must not resurrect a cleared orphan.
-        patchRuntimeIfPresent(ev.id, {
-          liveUrl: ev.url,
-          canGoBack: ev.canGoBack,
-          canGoForward: ev.canGoForward
-        })
-      } else if (ev.type === 'did-fail-load') {
-        patchRuntimeIfPresent(ev.id, { status: 'load-failed', error: ev.errorDescription })
-      }
-    })
-    return off
-  }, [patchRuntime, patchRuntimeIfPresent])
+  // Extracted to usePreviewEvents (behavior-preserving): folds each main `WebContentsView`
+  // event into the previewStore runtime, with the full-view id + close callback read via refs.
+  usePreviewEvents({ recs, fullViewIdRef, onCloseFullViewRef, patchRuntime, patchRuntimeIfPresent })
 
   // Tear down on unmount (HMR / route change): stop the pump + close every view.
   useEffect(
