@@ -13,7 +13,8 @@ import {
   killTreeCommand,
   writeToPtyCore,
   getTerminalRuntimeCore,
-  isValidResize
+  isValidResize,
+  attachPortInput
 } from './pty'
 import {
   canonicalizeShellPath,
@@ -352,6 +353,58 @@ describe('adoptCore (T1)', () => {
       vi.fn() as any
     )
     expect(res).toEqual({ adopted: false })
+  })
+})
+
+describe('attachPortInput (Finding 3 — single renderer→PTY write guard)', () => {
+  it('starts the port and registers the message handler', () => {
+    const port = makePort()
+    const { proc } = makeProc(700)
+    attachPortInput(port as any, proc as any)
+    expect(port.started).toBe(true)
+    expect(typeof port.handler).toBe('function')
+  })
+
+  it('forwards an input message to proc.write', () => {
+    const port = makePort()
+    const { proc } = makeProc(701)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'input', d: 'ls\r' } })
+    expect(proc.write).toHaveBeenCalledWith('ls\r')
+  })
+
+  it('forwards a VALID resize to proc.resize', () => {
+    const port = makePort()
+    const { proc } = makeProc(702)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 100, rows: 30 } })
+    expect(proc.resize).toHaveBeenCalledWith(100, 30)
+  })
+
+  it('drops an out-of-bound resize (cols=0) — clamp holds', () => {
+    const port = makePort()
+    const { proc } = makeProc(703)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 0, rows: 30 } })
+    expect(proc.resize).not.toHaveBeenCalled()
+  })
+
+  it('drops a non-integer resize (cols=80.5) — clamp holds', () => {
+    const port = makePort()
+    const { proc } = makeProc(704)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 80.5, rows: 24 } })
+    expect(proc.resize).not.toHaveBeenCalled()
+  })
+
+  it('swallows a throw from proc.write (would crash main via uncaughtException)', () => {
+    const port = makePort()
+    const { proc } = makeProc(705)
+    attachPortInput(port as any, proc as any)
+    proc.write.mockImplementationOnce(() => {
+      throw new Error('exited')
+    })
+    expect(() => port.handler?.({ data: { t: 'input', d: 'x' } })).not.toThrow()
   })
 })
 

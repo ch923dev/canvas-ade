@@ -41,6 +41,32 @@ export function isValidResize(cols: number, rows: number): boolean {
   )
 }
 
+/** Renderer→PTY input/resize message over a board's MessagePort. The discriminated
+ * union lets the resize branch read cols/rows as plain numbers (no non-null casts);
+ * the runtime guards below still defend against malformed/untrusted payloads. */
+export type PortInputMsg = { t: 'input'; d: string } | { t: 'resize'; cols: number; rows: number }
+
+/**
+ * Attach the renderer→PTY input/resize forwarder to one MessagePort and start it.
+ * This is the SINGLE renderer→PTY write guard, shared by the spawn-time and adopt-time
+ * listener sites so the resize clamp (isValidResize) and the swallow-on-exited-pty
+ * try/catch live in ONE place. node-pty's write/resize THROW on an exited-but-not-yet-
+ * reaped pty; that throw would escape this EventEmitter listener as an uncaughtException
+ * → app.exit(1), crashing the app — so it is swallowed (the session is being torn down).
+ */
+export function attachPortInput(port: MessagePortMain, proc: pty.IPty): void {
+  port.on('message', (e) => {
+    const m = e.data as PortInputMsg
+    try {
+      if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
+      else if (m.t === 'resize' && isValidResize(m.cols, m.rows)) proc.resize(m.cols, m.rows)
+    } catch {
+      /* pty already exited */
+    }
+  })
+  port.start()
+}
+
 /**
  * Append `chunk` to a capped output ring buffer, keeping only the last `cap`
  * characters (drop-oldest). Pure, so it is unit-tested. Used to record each
@@ -202,18 +228,7 @@ export function adoptCore(
   parkedMap.delete(id)
 
   const { port1, port2 } = deps.newChannel()
-  port1.on('message', (e) => {
-    const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-    // Guard as in the spawn handler: a write/resize on an exited pty throws and
-    // would escape to uncaughtException → app.exit(1). Swallow it.
-    try {
-      if (m.t === 'input' && typeof m.d === 'string') p.proc.write(m.d)
-      else if (m.t === 'resize' && isValidResize(m.cols!, m.rows!)) p.proc.resize(m.cols!, m.rows!)
-    } catch {
-      /* pty already exited */
-    }
-  })
-  port1.start()
+  attachPortInput(port1, p.proc)
 
   // Back into `sessions` with the SAME boxed buffer; the spawn-time onData listener
   // now forwards live output to this new port (it looks up sessions.get(id)).
@@ -386,20 +401,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       }
     })
 
-    port1.on('message', (e) => {
-      const m = e.data as { t: string; d?: string; cols?: number; rows?: number }
-      // node-pty's write/resize THROW on an exited-but-not-yet-reaped pty
-      // (resize: 'Cannot resize a pty that has already exited'). The throw would
-      // escape this EventEmitter listener as an uncaughtException → app.exit(1),
-      // crashing the whole app — so swallow it (the session is being torn down).
-      try {
-        if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
-        else if (m.t === 'resize' && isValidResize(m.cols!, m.rows!)) proc.resize(m.cols!, m.rows!)
-      } catch {
-        /* pty already exited */
-      }
-    })
-    port1.start()
+    attachPortInput(port1, proc)
 
     sessions.set(opts.id, { proc, port: port1, buf, state: 'running', lastActivityAt: Date.now() })
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
