@@ -18,11 +18,14 @@ import type { Rect, Viewport } from './cameraBounds'
 import { VIEWPORT_PRESETS, deviceStageRect, toWorldRect } from './browserLayout'
 import type { BrowserViewport } from './boardSchema'
 
+// Re-export so callers that only import from previewGeom get the geometry types without
+// a second import from cameraBounds.
 export type { Rect, Viewport }
 
 /**
  * Minimal per-board geometry consumed by the preview manager.
  * Matches the `BoardGeom` snapshot extracted from the canvas store.
+ * The short field names `w`/`h` deliberately mirror `BoardGeom` (vs `Rect`'s `width`/`height`).
  */
 export interface PreviewGeom {
   /** Board world-space x origin (React Flow node position). */

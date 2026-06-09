@@ -105,13 +105,24 @@ describe('stageScreenRect', () => {
     expect(anyDiffers).toBe(true)
   })
 
-  it('hard-coded: raw fields may be non-integer at VP_IN', () => {
-    const result = stageScreenRect(G_DESKTOP, VP_IN, OFF)
-    // At zoom 1.5 with a non-trivial stage, at least one field has a fractional part.
-    const hasFloat = [result.x, result.y, result.width, result.height].some(
-      (v) => v !== Math.round(v)
-    )
-    expect(hasFloat).toBe(true)
+  it('hard-coded raw literal at VP_IN + OFF for desktop (regression anchor)', () => {
+    // Fully literal expectations — computed once by running the chain and baking the
+    // result. Catches silent changes in deviceStageRect / toWorldRect / worldRectToScreen.
+    //
+    // Derivation (board 700×500, desktop preset 1280×800, VP_IN zoom=1.5, OFF y=64):
+    //   well       = {x:0, y:64, w:700, h:436}
+    //   fitScale   = min(672/1280, 408/800, 1.1) = 408/800 = 0.51
+    //   frame      = {x≈23.6, y:78, w:652.8, h:408}
+    //   stageLocal = {x≈24.6, y:79, w:650.8, h:406}  (1px border inset)
+    //   stageWorld = {x≈124.6, y:279, w:650.8, h:406}  (+ board origin 100,200)
+    //   screen raw = x: 136.90000000000003, y: 512.5, w: 976.1999999999999, h: 609
+    //                (x fractional ✓, y=512.5 fractional ✓, w fractional ✓)
+    expect(stageScreenRect(G_DESKTOP, VP_IN, OFF)).toEqual({
+      x: 136.90000000000003,
+      y: 512.5,
+      width: 976.1999999999999,
+      height: 609
+    })
   })
 
   it('hard-coded raw literal at VP1 + OFF for mobile (regression anchor)', () => {
@@ -155,6 +166,10 @@ describe('zoomFor', () => {
     const bounds = boundsFor(G_MOBILE, VP_IN, OFF)
     const zoom = zoomFor(G_MOBILE, VP_IN, OFF)
     const presetW = VIEWPORT_PRESETS['mobile'].w
+    // These fixtures must stay in the unclamped band — assert that up front so the
+    // conditional below cannot pass vacuously if the fixture drifts into the clamped zone.
+    expect(zoom).toBeGreaterThan(0.25)
+    expect(zoom).toBeLessThan(5)
     // In the unclamped band the invariant holds within floating-point epsilon
     // (see fitZoomFactorForBounds tests in cameraBounds.test.ts for the same pattern).
     if (zoom > 0.25 && zoom < 5) {
@@ -166,6 +181,9 @@ describe('zoomFor', () => {
     const bounds = boundsFor(G_TABLET, VP_IN, OFF)
     const zoom = zoomFor(G_TABLET, VP_IN, OFF)
     const presetW = VIEWPORT_PRESETS['tablet'].w
+    // These fixtures must stay in the unclamped band — assert that up front.
+    expect(zoom).toBeGreaterThan(0.25)
+    expect(zoom).toBeLessThan(5)
     // toBeCloseTo(presetW, 10): the rounded bounds width / zoom may carry a floating-point
     // epsilon (e.g. 833.9999999999999 vs 834) because the zoom factor itself is a float.
     // The invariant is that the drift is sub-epsilon — the page lays out at essentially
@@ -175,10 +193,18 @@ describe('zoomFor', () => {
     }
   })
 
-  it('holds the Bug #20 invariant for desktop at VP_OUT', () => {
+  it('holds the Bug #20 invariant for desktop at VP_OUT (clamped to 0.25)', () => {
     const bounds = boundsFor(G_DESKTOP, VP_OUT, OFF)
     const zoom = zoomFor(G_DESKTOP, VP_OUT, OFF)
     const presetW = VIEWPORT_PRESETS['desktop'].w
+    // At VP_OUT (camera zoom=0.45) the desktop preset is wide enough that the raw
+    // zoom factor (~0.229) falls below the Chromium floor (0.25) and is clamped.
+    // The zoom must be exactly the clamp floor — not below it.
+    expect(zoom).toBeGreaterThanOrEqual(0.25)
+    expect(zoom).toBeLessThan(5)
+    // The invariant only holds in the *unclamped* band; at the clamp the page
+    // intentionally lays out wider than presetW. Confirm we are clamped, not vacuously passing.
+    expect(zoom).toBe(0.25)
     if (zoom > 0.25 && zoom < 5) {
       expect(bounds.width / zoom).toBeCloseTo(presetW, 10)
     }
