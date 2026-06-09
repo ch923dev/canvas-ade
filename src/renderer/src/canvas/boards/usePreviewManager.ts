@@ -34,6 +34,7 @@ import {
   fitZoomFactorForBounds
 } from '../../lib/cameraBounds'
 import type { Rect } from '../../lib/cameraBounds'
+import * as previewGeom from '../../lib/previewGeom'
 import { LOD_ZOOM } from '../../lib/canvasView'
 import {
   isLiveEligible,
@@ -50,6 +51,7 @@ import {
 } from '../../lib/browserLayout'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
+import { usePreviewEvents } from '../hooks/usePreviewEvents'
 import type { BrowserBoard, BrowserViewport } from '../../lib/boardSchema'
 
 /** Cap concurrent live renderers (ADR 0002); over-cap boards fall back to snapshot. */
@@ -77,7 +79,7 @@ interface BoardGeom {
 }
 
 /** Per-board native-view bookkeeping (mirrors the spike `BoardRec`). */
-interface BoardRec {
+export interface BoardRec {
   /** A native view is created (open) and not yet closed. */
   exists: boolean
   /** The native view is currently attached over the board. */
@@ -217,27 +219,6 @@ export function usePreviewManager(props: LayerProps): void {
 
   const preset = useCallback((vp: BrowserViewport): ViewportPreset => VIEWPORT_PRESETS[vp], [])
 
-  /** The board's native-view stage rect in screen (pane-local + offset) space. */
-  const boundsFor = useCallback(
-    (g: BoardGeom): Rect => {
-      const stage = toWorldRect(deviceStageRect(g.w, g.h, g.viewport), g.x, g.y)
-      return roundRect(worldRectToScreen(stage, getViewport(), paneOffset.current))
-    },
-    [getViewport]
-  )
-
-  /** Zoom factor that holds the page at the preset CSS width (responsive trick). */
-  const zoomFor = useCallback(
-    (g: BoardGeom): number => {
-      // Bug #20: derive the factor from the SAME rounded bounds width fed to
-      // setBounds (boundsFor) — NOT the un-rounded stage width — so the documented
-      // invariant bounds.width / zoomFactor === presetW holds exactly and the page
-      // lays out at precisely 390/834/1280 CSS px (no sub-pixel rounding drift).
-      return fitZoomFactorForBounds(boundsFor(g).width, preset(g.viewport).w)
-    },
-    [boundsFor, preset]
-  )
-
   /** In full view, the native view binds to the portaled device frame's live DOM rect
    *  (the board's HTML frame is relocated into the modal; camera math no longer applies).
    *
@@ -275,10 +256,7 @@ export function usePreviewManager(props: LayerProps): void {
   // The board's device-stage rect in screen (pane-local + offset) space — the raw,
   // un-rounded rect used for eligibility + viewport-distance ranking.
   const stageScreenRect = useCallback(
-    (g: BoardGeom): Rect => {
-      const stage = deviceStageRect(g.w, g.h, g.viewport)
-      return worldRectToScreen(toWorldRect(stage, g.x, g.y), getViewport(), paneOffset.current)
-    },
+    (g: BoardGeom): Rect => previewGeom.stageScreenRect(g, getViewport(), paneOffset.current),
     [getViewport]
   )
 
@@ -303,6 +281,37 @@ export function usePreviewManager(props: LayerProps): void {
     [getViewport]
   )
 
+  // The chrome-exclusion zones for the CURRENT synchronous liveness pass: the fixed
+  // app-chrome zones plus, while the "Project context" digest panel is open, its live DOM
+  // rect. These are identical for every board within one applyLiveness/reconcile pass (the
+  // pane geometry + panel rect don't change mid-pass), so resolve them ONCE per pass and
+  // hand the result to each occludesProtected(g, chromeZones) call (was a querySelector +
+  // getBoundingClientRect PER candidate board). Reads only refs + the DOM, returns Box[].
+  const resolveChromeZones = useCallback((): Box[] => {
+    const chromeZones = chromeExclusionZones({
+      x: paneOffset.current.x,
+      y: paneOffset.current.y,
+      w: paneSize.current.w,
+      h: paneSize.current.h
+    })
+    // The "Project context" digest panel is a fixed LEFT overlay (z-index above the
+    // canvas) that a native view would paint over. While open, add its live DOM rect as
+    // a chrome zone so an overlapping Browser view demotes to its HTML snapshot (the
+    // out-of-bounds bug: the page bleeds left over the panel on pan). Read the rect (not
+    // a hard-coded width) so it tracks the CSS; skip when off-screen (closed → the
+    // translateX(-100%) rect sits at right<=pane left).
+    if (digestOpenRef.current) {
+      const el = document.querySelector('[data-test=digest-panel]')
+      if (el) {
+        const r = el.getBoundingClientRect()
+        if (r.width > 0 && r.right > paneOffset.current.x) {
+          chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
+        }
+      }
+    }
+    return chromeZones
+  }, [])
+
   // Static-occlusion demote (LOT F): a live Browser view must fall back to its HTML
   // snapshot when, AT REST, its native stage would paint over (a) a DIFFERENT selected
   // board (#2/#19/#20 — restore that board's ring/handles + input) or (b) the fixed
@@ -310,7 +319,7 @@ export function usePreviewManager(props: LayerProps): void {
   // to screen space here; the pure predicate decides. Kept narrow so a non-overlapping,
   // unselected live preview is never needlessly demoted (the e2e `browser` live guard).
   const occludesProtected = useCallback(
-    (g: BoardGeom): boolean => {
+    (g: BoardGeom, chromeZones: Box[]): boolean => {
       const vp = getViewport()
       const stage = stageScreenRect(g)
       const stageBox: Box = { x: stage.x, y: stage.y, width: stage.width, height: stage.height }
@@ -323,27 +332,6 @@ export function usePreviewManager(props: LayerProps): void {
           paneOffset.current
         )
         selectedRect = { x: s.x, y: s.y, width: s.width, height: s.height }
-      }
-      const chromeZones = chromeExclusionZones({
-        x: paneOffset.current.x,
-        y: paneOffset.current.y,
-        w: paneSize.current.w,
-        h: paneSize.current.h
-      })
-      // The "Project context" digest panel is a fixed LEFT overlay (z-index above the
-      // canvas) that a native view would paint over. While open, add its live DOM rect as
-      // a chrome zone so an overlapping Browser view demotes to its HTML snapshot (the
-      // out-of-bounds bug: the page bleeds left over the panel on pan). Read the rect (not
-      // a hard-coded width) so it tracks the CSS; skip when off-screen (closed → the
-      // translateX(-100%) rect sits at right<=pane left).
-      if (digestOpenRef.current) {
-        const el = document.querySelector('[data-test=digest-panel]')
-        if (el) {
-          const r = el.getBoundingClientRect()
-          if (r.width > 0 && r.right > paneOffset.current.x) {
-            chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
-          }
-        }
       }
       return shouldDemoteForOcclusion({
         id: g.id,
@@ -417,10 +405,21 @@ export function usePreviewManager(props: LayerProps): void {
       // portal hasn't relocated `.bb-frame` into the modal host yet (fv null), skip the
       // push — the board keeps its prior (pre-full-view) bounds for the 1–2 frames until
       // the portal lands, then the rAF pump snaps it to the modal rect. Falling back to
-      // boundsFor here is what stranded the view at its canvas position.
+      // the camera-scaled canvas rect (the old `boundsFor`) here is what stranded the view
+      // at its canvas position.
       if (isFullView && !fv) return
-      const bounds = fv ?? boundsFor(g)
-      const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
+      // Read getViewport() once in the non-full-view branch and derive bounds + zoom from
+      // the SAME rounded width (Bug #20) via boundsAndZoom — instead of boundsFor then
+      // zoomFor, which recomputed boundsFor + re-read the camera. The full-view branch's
+      // read count is unchanged (it never reads the camera).
+      let bounds: Rect
+      let zoomFactor: number
+      if (fv) {
+        bounds = fv
+        zoomFactor = fitZoomFactorForBounds(fv.width, preset(g.viewport).w)
+      } else {
+        ;({ bounds, zoomFactor } = previewGeom.boundsAndZoom(g, getViewport(), paneOffset.current))
+      }
       // Diff-skip a redundant re-attach: if the view is already attached at exactly
       // these bounds/zoom, re-issuing attachPreview re-adds the child view (a wasted
       // IPC + attachSeq bump for nothing). The new selection-driven applyLiveness
@@ -479,7 +478,7 @@ export function usePreviewManager(props: LayerProps): void {
       }
       patchRuntime(g.id, { live: true })
     },
-    [rec, boundsFor, zoomFor, fullViewBoundsFor, preset, patchRuntime]
+    [rec, getViewport, fullViewBoundsFor, preset, patchRuntime]
   )
 
   // Free a renderer (over the live cap / board removed). Last snapshot keeps showing.
@@ -499,6 +498,10 @@ export function usePreviewManager(props: LayerProps): void {
   // One coalesced batch per frame for every attached board, diff-skipped.
   const flushBatch = useCallback((): boolean => {
     const items: Array<{ id: string; bounds: Rect; zoomFactor: number }> = []
+    // Read the camera ONCE per frame and reuse it for every board (was getViewport() ×2
+    // per board via boundsFor + zoomFor). boundsAndZoom derives both from one rounded
+    // width (Bug #20).
+    const vp = getViewport()
     for (const g of geomRef.current.values()) {
       const r = recs.current.get(g.id)
       if (!r || !r.attached) continue
@@ -509,8 +512,17 @@ export function usePreviewManager(props: LayerProps): void {
       // rect. Until the portal relocates `.bb-frame` into the modal host (fv null), skip
       // this board so its view stays at its prior bounds rather than snapping to canvas.
       if (isFullView && !fv) continue
-      const bounds = fv ?? boundsFor(g)
-      const zoomFactor = fv ? fitZoomFactorForBounds(fv.width, preset(g.viewport).w) : zoomFor(g)
+      let bounds: Rect
+      let zoomFactor: number
+      if (fv) {
+        bounds = fv
+        zoomFactor = fitZoomFactorForBounds(fv.width, preset(g.viewport).w)
+      } else {
+        // One boundsAndZoom call: computes the rounded bounds ONCE and derives zoom from
+        // its width (Bug #20) — replaces the boundsFor()+zoomFor() pair that recomputed
+        // boundsFor twice.
+        ;({ bounds, zoomFactor } = previewGeom.boundsAndZoom(g, vp, paneOffset.current))
+      }
       if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
       r.lastSent = bounds
       r.lastZoom = zoomFactor
@@ -519,7 +531,7 @@ export function usePreviewManager(props: LayerProps): void {
     if (!items.length) return false
     void window.api.setPreviewBoundsBatch(items)
     return true
-  }, [boundsFor, zoomFor, fullViewBoundsFor, preset])
+  }, [getViewport, fullViewBoundsFor, preset])
 
   const startPump = useCallback((): void => {
     if (rafRef.current) return
@@ -637,7 +649,10 @@ export function usePreviewManager(props: LayerProps): void {
     // occluding a selected board or the app chrome (LOT F #2/#19/#20/#21). The
     // occlusion-demoted set keeps its renderer + snapshot for a fast reattach once the
     // overlap clears (handled in the else-branch, like LOD), so it is NOT closed.
-    const wantLive = all.filter((g) => liveEligible(g) && !occludesProtected(g))
+    // Resolve the chrome-exclusion zones ONCE for this pass (identical for every board),
+    // then reuse them across the filter below (was rebuilt per candidate board).
+    const chromeZones = resolveChromeZones()
+    const wantLive = all.filter((g) => liveEligible(g) && !occludesProtected(g, chromeZones))
     // Bug L3: O(1) membership for the per-board loop below (was wantLive.includes → O(n²)).
     const wantLiveIds = new Set(wantLive.map((g) => g.id))
     // Bug #8: rank the live winners by distance to the viewport centre so the board
@@ -666,6 +681,7 @@ export function usePreviewManager(props: LayerProps): void {
   }, [
     liveEligible,
     occludesProtected,
+    resolveChromeZones,
     stageScreenRect,
     rec,
     attachBoard,
@@ -789,6 +805,13 @@ export function usePreviewManager(props: LayerProps): void {
     (boards: BoardGeom[]): void => {
       const seen = new Set(boards.map((g) => g.id))
       geomRef.current = new Map(boards.map((g) => [g.id, g]))
+      // Read the camera ONCE for this pass; the attached-board re-push block below reuses
+      // it via boundsAndZoom (was getViewport() ×2 per board via boundsFor + zoomFor).
+      const vp = getViewport()
+      // Resolve the chrome-exclusion zones ONCE for this pass; the new-board occlusion
+      // guard below reuses them for every board (was a querySelector + getBoundingClientRect
+      // rebuilt per new board inside occludesProtected).
+      const chromeZones = resolveChromeZones()
 
       // Removed boards: close + clear runtime.
       for (const id of [...recs.current.keys()]) {
@@ -827,7 +850,7 @@ export function usePreviewManager(props: LayerProps): void {
             !blockedByFullView &&
             liveNow < MAX_LIVE &&
             liveEligible(g) &&
-            !occludesProtected(g)
+            !occludesProtected(g, chromeZones)
           ) {
             void attachBoard(g)
             liveNow++
@@ -860,8 +883,7 @@ export function usePreviewManager(props: LayerProps): void {
           // bounds — re-pushing here every drag tick re-shows a detached view mid-drag
           // (the per-frame-setBounds-then-detach #43961 trigger). Bail during a gesture.
           if (r.attached && !gestureRef.current) {
-            const bounds = boundsFor(g)
-            const zoomFactor = zoomFor(g)
+            const { bounds, zoomFactor } = previewGeom.boundsAndZoom(g, vp, paneOffset.current)
             if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
             r.lastSent = bounds
             r.lastZoom = zoomFactor
@@ -876,9 +898,9 @@ export function usePreviewManager(props: LayerProps): void {
       clearRuntime,
       liveEligible,
       occludesProtected,
+      resolveChromeZones,
       attachBoard,
-      boundsFor,
-      zoomFor,
+      getViewport,
       patchRuntime
     ]
   )
@@ -967,62 +989,9 @@ export function usePreviewManager(props: LayerProps): void {
   }, [paneRef, flushBatch])
 
   // ── Lifecycle events from main (load / navigate / fail) → runtime store ────────
-  useEffect(() => {
-    const off = window.api.onPreviewEvent((ev) => {
-      // Esc pressed while the native view's web content owns focus (main forwards it via
-      // before-input-event). The renderer window never receives this keydown, so close
-      // full view here when the event's board is the full-view one — parity with the
-      // window Esc handler that already exits full view for terminals/notes.
-      if ((ev.type as string) === 'escape') {
-        if (ev.id === fullViewIdRef.current) onCloseFullViewRef.current()
-        return
-      }
-      // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
-      // Clear a stale `load-failed` latch so the following did-finish-load can promote
-      // to `connected` after a successful recovery load (Bug #5). The preload
-      // `PreviewEvent` union doesn't declare this additive variant, so compare via a
-      // widened string. Only clears the load-failed latch — the error page's OWN
-      // did-finish-load is still suppressed (main reuses the failed navigation and
-      // emits no fresh did-start-navigation for it).
-      if ((ev.type as string) === 'did-start-navigation') {
-        // Recovery only matters for a board that still has a live native view; ignore
-        // an in-flight nav-start for an evicted/deleted board (Bug #18/#32 — no rec, or
-        // its renderer was freed → don't resurrect or mutate a stale entry).
-        if (!recs.current.get(ev.id)?.exists) return
-        const cur = usePreviewStore.getState().byId[ev.id]?.status
-        if (cur === 'load-failed') patchRuntime(ev.id, { status: 'connecting', error: null })
-        return
-      }
-      if (ev.type === 'did-finish-load') {
-        // Bug #18: reconcile against the lifecycle before promoting. An over-cap-evicted
-        // board (closeBoard cleared exists/attached + live, but left status 'connecting')
-        // whose load completes just as its view is closed would otherwise flip to a green
-        // 'connected' over a detached snapshot with no live view. Skip when there is no
-        // live native view (rec gone or its renderer was freed). This also avoids
-        // resurrecting a cleared runtime entry for a just-deleted board (Bug #32).
-        if (!recs.current.get(ev.id)?.exists) return
-        // Respect a prior load-failed: a dead/refused URL loads a Chromium error page
-        // whose own did-finish-load must not flip the board back to "connected"
-        // (Bug #5). Main already latches `failed` and suppresses the emit in that
-        // case; this is the renderer-side belt-and-suspenders — only promote to
-        // connected from the in-flight `connecting` state, never override load-failed.
-        const cur = usePreviewStore.getState().byId[ev.id]?.status
-        if (cur === 'load-failed') return
-        patchRuntime(ev.id, { status: 'connected', liveUrl: ev.url, error: null })
-      } else if (ev.type === 'did-navigate') {
-        // Bug #32: patch ONLY if the entry still exists — an in-flight nav event that
-        // arrives after the board was deleted must not resurrect a cleared orphan.
-        patchRuntimeIfPresent(ev.id, {
-          liveUrl: ev.url,
-          canGoBack: ev.canGoBack,
-          canGoForward: ev.canGoForward
-        })
-      } else if (ev.type === 'did-fail-load') {
-        patchRuntimeIfPresent(ev.id, { status: 'load-failed', error: ev.errorDescription })
-      }
-    })
-    return off
-  }, [patchRuntime, patchRuntimeIfPresent])
+  // Extracted to usePreviewEvents (behavior-preserving): folds each main `WebContentsView`
+  // event into the previewStore runtime, with the full-view id + close callback read via refs.
+  usePreviewEvents({ recs, fullViewIdRef, onCloseFullViewRef, patchRuntime, patchRuntimeIfPresent })
 
   // Tear down on unmount (HMR / route change): stop the pump + close every view.
   useEffect(
