@@ -43,6 +43,19 @@ function renderConfig(extra: Partial<Parameters<typeof TerminalConfig>[0]> = {})
 const launchInput = (): HTMLInputElement =>
   screen.getByPlaceholderText(LAUNCH_PLACEHOLDER) as HTMLInputElement
 
+// afterEach removal (not inline-after-assert) so a failing expect can't leak the span
+// into later tests — the TerminalRestartMenu.test.tsx makeAnchor() pattern.
+const triggers: HTMLElement[] = []
+function makeTrigger(): HTMLElement {
+  const el = document.createElement('span')
+  document.body.appendChild(el)
+  triggers.push(el)
+  return el
+}
+afterEach(() => {
+  triggers.splice(0).forEach((el) => el.remove())
+})
+
 describe('TerminalConfig unsaved-changes guard', () => {
   it('clean: Escape closes immediately, no confirm row', () => {
     const { onClose } = renderConfig()
@@ -79,12 +92,10 @@ describe('TerminalConfig unsaved-changes guard', () => {
   })
 
   it('a pointerdown inside the trigger is excluded (the ⚙ click toggles, no double-fire)', () => {
-    const trigger = document.createElement('span')
-    document.body.appendChild(trigger)
+    const trigger = makeTrigger()
     const { onClose } = renderConfig({ triggerRef: { current: trigger } })
     fireEvent.pointerDown(trigger)
     expect(onClose).not.toHaveBeenCalled()
-    document.body.removeChild(trigger)
   })
 
   it('editing a field disarms the confirm row (keep editing)', () => {
