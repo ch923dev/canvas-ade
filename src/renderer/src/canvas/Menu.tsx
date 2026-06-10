@@ -42,10 +42,10 @@ export interface MenuProps {
   /** Accessible name for the menu. */
   label?: string
   className?: string
-  /** Merged into the shell's container styles. The shell's positioning (top/left/
-   *  maxHeight/overflowY) always wins — typed out so a caller can't silently break the
-   *  viewport clamp; zIndex IS caller-overridable (default 250). */
-  style?: Omit<CSSProperties, 'top' | 'left'>
+  /** Merged into the shell's container styles. The shell's positioning (position/top/
+   *  left/maxHeight/overflowY) always wins — typed out so a caller can't silently break
+   *  the viewport clamp; zIndex IS caller-overridable (default 250). */
+  style?: Omit<CSSProperties, 'position' | 'top' | 'left'>
   /** Re-run the measure+clamp when this changes (async content, e.g. a recents list). */
   reclampKey?: unknown
   /** Move focus to the first menuitem on open (default true; closing restores focus). */

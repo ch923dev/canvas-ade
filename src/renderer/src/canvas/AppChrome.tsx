@@ -638,8 +638,7 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer'
   },
   tidyPop: {
-    position: 'fixed',
-    zIndex: 250, // above the fullview-scrim (200), matching .board-menu
+    // Positioning + zIndex come from the <Menu> shell (fixed, clamped, 250).
     background: 'var(--surface-overlay)',
     border: '1px solid var(--border-subtle)',
     borderRadius: 'var(--r-ctl)',
