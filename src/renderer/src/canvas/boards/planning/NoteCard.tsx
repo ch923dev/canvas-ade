@@ -8,8 +8,8 @@
  * Flow node-drag or clears the canvas selection mid-edit.
  */
 import { useEffect, useRef, type ReactElement } from 'react'
-import type { NoteElement } from '../../../lib/boardSchema'
-import { NOTE_TINTS } from './tints'
+import type { NoteElement, NoteTint } from '../../../lib/boardSchema'
+import { NOTE_TINTS, TINT_CYCLE } from './tints'
 
 export interface NoteCardProps {
   note: NoteElement
@@ -30,6 +30,8 @@ export interface NoteCardProps {
    * auto-sized dimensions instead of the stale schema h:96 (BUG-050).
    */
   onMeasure?: (id: string, w: number, h: number) => void
+  /** Set this note's tint from the hover swatch pill (D3-A); one undo step upstream. */
+  onSetTint?: (id: string, tint: NoteTint) => void
 }
 
 export function NoteCard({
@@ -41,7 +43,8 @@ export function NoteCard({
   onEditStart,
   selected,
   onSelect,
-  onMeasure
+  onMeasure,
+  onSetTint
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -126,6 +129,34 @@ export function NoteCard({
         ref.current?.focus()
       }}
     >
+      {/* Hover tint swatches (D3-A): a small overlay pill in the top-right corner,
+          select tool + unlocked note only. Revealed on card hover by index.css
+          (.pl-tint-pill — 120ms fade, reduced-motion gated). Pointer presses stop
+          here so picking a tint never starts a grip drag or clears the selection. */}
+      {interactive && note.locked !== true && onSetTint && (
+        <div
+          className="pl-tint-pill"
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          {TINT_CYCLE.map((t) => (
+            <button
+              key={t}
+              type="button"
+              data-testid={`pl-tint-${t}`}
+              data-current={note.tint === t ? '' : undefined}
+              className="pl-tint-dot"
+              title={`${t[0].toUpperCase()}${t.slice(1)} tint`}
+              aria-label={`${t[0].toUpperCase()}${t.slice(1)} tint`}
+              style={{ background: NOTE_TINTS[t].fill, border: `1px solid ${NOTE_TINTS[t].edge}` }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onSetTint(note.id, t)
+              }}
+            />
+          ))}
+        </div>
+      )}
       {/* Deletion is intentionally NOT an inline button — elements are removed only via
           the right-click menu (Delete) or the eraser tool (W3 decision). `onDelete` is
           still wired for the empty-note auto-prune below, not a user delete affordance. */}

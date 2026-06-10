@@ -66,3 +66,57 @@ it('BUG-037: document pointer listeners do not fire onDelete when NoteCard unmou
   fireEvent.pointerUp(document)
   expect(onDelete).not.toHaveBeenCalled()
 })
+
+// ── D3-A hover tint swatches ────────────────────────────────────────────────────
+
+function renderWithTint(
+  interactive: boolean,
+  over: Partial<NoteElement> = {},
+  onDragStart = vi.fn()
+): ReturnType<typeof vi.fn> {
+  const onSetTint = vi.fn()
+  render(
+    <NoteCard
+      note={{ ...note, ...over } as NoteElement}
+      interactive={interactive}
+      onDragStart={onDragStart}
+      onChangeText={() => {}}
+      onDelete={() => {}}
+      onSetTint={onSetTint}
+    />
+  )
+  return onSetTint
+}
+
+it('renders the hover swatch pill on an interactive unlocked note; a dot click sets that tint', () => {
+  const onSetTint = renderWithTint(true)
+  fireEvent.click(screen.getByTestId('pl-tint-blue'))
+  expect(onSetTint).toHaveBeenCalledWith('n1', 'blue')
+})
+
+it('marks only the current tint dot', () => {
+  renderWithTint(true) // tint: yellow
+  expect(screen.getByTestId('pl-tint-yellow').hasAttribute('data-current')).toBe(true)
+  expect(screen.getByTestId('pl-tint-blue').hasAttribute('data-current')).toBe(false)
+})
+
+it('renders no swatch pill on a locked note', () => {
+  renderWithTint(true, { locked: true })
+  expect(screen.queryByTestId('pl-tint-blue')).toBeNull()
+})
+
+it('renders no swatch pill while a draw tool is active (non-interactive)', () => {
+  renderWithTint(false)
+  expect(screen.queryByTestId('pl-tint-blue')).toBeNull()
+})
+
+it('a pointerdown on a swatch dot never starts a grip drag', () => {
+  const onDragStart = vi.fn()
+  renderWithTint(true, {}, onDragStart)
+  fireEvent.pointerDown(screen.getByTestId('pl-tint-blue'), {
+    clientX: 5,
+    clientY: 5,
+    pointerId: 1
+  })
+  expect(onDragStart).not.toHaveBeenCalled()
+})

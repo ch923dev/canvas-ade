@@ -793,6 +793,49 @@ body {
 .pl-check:hover .pl-del {
   opacity: 1;
 }
+/* D3-A note tint picker: hover mini-swatch pill, top-right of the note. Hidden
+   (and unclickable) until the card is hovered or a dot holds keyboard focus;
+   120ms fade-in, gated under prefers-reduced-motion below. */
+.pl-tint-pill {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px 4px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.pl-note:hover .pl-tint-pill,
+.pl-tint-pill:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.pl-tint-dot {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.pl-tint-dot[data-current] {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.pl-tint-dot:hover,
+.pl-tint-dot:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-tint-pill {
+    transition: none;
+  }
+}
 .pl-well:focus-visible {
   outline: none;
 }

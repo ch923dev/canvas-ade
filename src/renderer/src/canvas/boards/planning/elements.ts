@@ -442,6 +442,28 @@ export function ungroupElements(els: PlanningElement[], ids: Iterable<string>): 
   return els.map((el) => (el.groupId && groups.has(el.groupId) ? withoutGroup(el) : el))
 }
 
+/**
+ * Set the tint on every NOTE element in `ids` (D3-A tint picker). Non-note
+ * elements and locked notes are skipped. Returns the input array BY REFERENCE
+ * when nothing changes (no notes in the selection, all locked, or all already
+ * that tint) so `updateBoard`'s reference compare treats it as a true no-op and
+ * never consumes the pending undo checkpoint (no phantom step).
+ */
+export function setNoteTint(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  tint: NoteTint
+): PlanningElement[] {
+  const set = ids instanceof Set ? ids : new Set(ids)
+  let changed = false
+  const next = els.map((el) => {
+    if (el.kind !== 'note' || !set.has(el.id) || isLocked(el) || el.tint === tint) return el
+    changed = true
+    return { ...el, tint }
+  })
+  return changed ? next : els
+}
+
 /** Set (or remove) the `locked` flag across `ids`. */
 export function setLocked(
   els: PlanningElement[],

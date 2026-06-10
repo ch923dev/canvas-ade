@@ -186,11 +186,16 @@ describe('PlanningBoard export — returned-error surfaced [Fix 3]', () => {
   }
 
   /** runExport dynamically imports exportBoard then awaits buildExport + export.save; flush
-   *  the resulting microtasks (in act) until `save` has actually been called. */
+   *  the resulting microtasks (in act) until `save` has actually been called. TIME-bounded,
+   *  not iteration-bounded: under a loaded full-suite run vitest can take longer to
+   *  transform+load the dynamic import('./exportBoard') than 50 zero-delay macrotask turns,
+   *  which made the old `i < 50` loop a scheduling flake (always green isolated — the
+   *  PlanningBoard.images full-suite flake first logged on the D2-D row). */
   async function settleExport(saveSpy: ReturnType<typeof vi.fn>): Promise<void> {
-    for (let i = 0; i < 50 && saveSpy.mock.calls.length === 0; i++) {
+    const deadline = Date.now() + 5000
+    while (saveSpy.mock.calls.length === 0 && Date.now() < deadline) {
       await act(async () => {
-        await new Promise((r) => setTimeout(r, 0))
+        await new Promise((r) => setTimeout(r, 10))
       })
     }
     // One more turn so the .then/await after export.save (the result branch) runs.

@@ -31,7 +31,25 @@ export interface MenuIconRowEntry {
   buttons: { id: string; title: string; icon: string; onSelect: () => void }[]
 }
 
-export type MenuEntry = MenuActionEntry | MenuIconRowEntry
+export interface MenuSwatchRowEntry {
+  kind: 'swatchRow'
+  id: string
+  label: string
+  disabled?: boolean
+  swatches: {
+    id: string
+    title: string
+    /** Swatch face colour (the tint's note fill). */
+    fill: string
+    /** 1px swatch border (the tint's note edge). */
+    edge: string
+    /** True when every targeted note already carries this tint (accent ring). */
+    current?: boolean
+    onSelect: () => void
+  }[]
+}
+
+export type MenuEntry = MenuActionEntry | MenuIconRowEntry | MenuSwatchRowEntry
 
 interface Props {
   x: number
@@ -79,6 +97,31 @@ export function ElementContextMenu({ x, y, entries, onClose }: Props): ReactElem
           >
             {entry.label}
           </button>
+        ) : entry.kind === 'swatchRow' ? (
+          <div
+            key={entry.id}
+            className="w3-row"
+            data-w3-menu-row={entry.id}
+            data-disabled={entry.disabled ? '' : undefined}
+          >
+            <span className="w3-row-label">{entry.label}</span>
+            <span className="w3-row-btns">
+              {entry.swatches.map((s) => (
+                <button
+                  key={s.id}
+                  data-testid={`w3-menu-${entry.id}-${s.id}`}
+                  data-current={s.current ? '' : undefined}
+                  role="menuitem"
+                  className="w3-swatch"
+                  title={s.current ? `${s.title} (current)` : s.title}
+                  aria-label={s.current ? `${s.title} (current)` : s.title}
+                  disabled={entry.disabled}
+                  style={{ background: s.fill, border: `1px solid ${s.edge}` }}
+                  onClick={() => !entry.disabled && pick(s.onSelect)}
+                />
+              ))}
+            </span>
+          </div>
         ) : (
           <div
             key={entry.id}
@@ -138,4 +181,12 @@ const MENU_CSS = `
 }
 .w3-menu .w3-ib:focus-visible { outline: none; box-shadow: 0 0 0 1.5px var(--accent); }
 .w3-menu .w3-ib:disabled { color: var(--text-faint); opacity: 0.5; cursor: default; }
+.w3-menu .w3-swatch {
+  width: 16px; height: 16px; padding: 0;
+  border-radius: var(--r-ctl); cursor: pointer;
+}
+.w3-menu .w3-swatch[data-current] { box-shadow: 0 0 0 1.5px var(--accent); }
+.w3-menu .w3-swatch:hover:not(:disabled),
+.w3-menu .w3-swatch:focus-visible { outline: none; box-shadow: 0 0 0 1.5px var(--accent); }
+.w3-menu .w3-swatch:disabled { opacity: 0.5; cursor: default; }
 `
