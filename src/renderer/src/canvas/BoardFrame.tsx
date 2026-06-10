@@ -6,7 +6,7 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { BoardType } from '../lib/boardSchema'
 import { prefersReducedMotion } from '../lib/motion'
 import { useCanvasStore } from '../store/canvasStore'
@@ -56,6 +56,160 @@ function SrBoardStatus({ label }: { label?: string }): ReactElement {
   return (
     <span className="sr-only" role="status" aria-live="polite">
       {norm === initial ? '' : norm}
+    </span>
+  )
+}
+
+/** D2-A: inline board title (closes the DESIGN.md §6 "title is inline-editable on
+ *  double-click" mandate). Double-click — or F2 while this board is the single
+ *  selection — swaps the title span for an input; Enter/blur commit, Esc cancels.
+ *  A commit is one undoable gesture (`beginChange` + `updateBoard`); empty or
+ *  unchanged text cancels instead (no store write, no phantom undo step). Renders
+ *  the plain span when `boardId` is absent (nothing to rename). */
+function BoardTitle({
+  boardId,
+  title,
+  selected
+}: {
+  boardId?: string
+  title: string
+  selected: boolean
+}): ReactElement {
+  const [editing, setEditing] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Latches on the first commit/cancel so the close paths fire exactly once (the
+  // GroupNamePopover discipline): an Esc-cancel must not let the input's unmount
+  // blur re-fire commit and resurrect the discarded draft.
+  const doneRef = useRef(false)
+
+  // Mount-stable listener inputs (the mid-dispatch removal class, D1-B/C): the window
+  // listeners below are registered ONCE and read these refs — a dep-driven re-register
+  // gets removed mid-dispatch by a sync store commit and the DOM skips the very
+  // keydown being handled.
+  const editingRef = useRef(editing)
+  const selectedRef = useRef(selected)
+  const boardIdRef = useRef(boardId)
+  const titleRef = useRef(title)
+  useEffect(() => {
+    editingRef.current = editing
+    selectedRef.current = selected
+    boardIdRef.current = boardId
+    titleRef.current = title
+  })
+
+  // Stable identities (refs + setState only) so the mount-stable listener effect can
+  // depend on them without ever re-registering.
+  const startEdit = useCallback((): void => {
+    if (!boardIdRef.current) return
+    doneRef.current = false
+    setEditing(true)
+  }, [])
+  const commit = useCallback((): void => {
+    if (doneRef.current) return
+    doneRef.current = true
+    setEditing(false)
+    // Read the LIVE DOM value, not a state closure: a fast type-then-Enter can beat
+    // the last onChange flush (the input is uncontrolled for exactly this reason).
+    const next = (inputRef.current?.value ?? '').trim()
+    const id = boardIdRef.current
+    // Empty or unchanged → cancel semantics: no store write, no undo checkpoint.
+    if (!id || !next || next === titleRef.current) return
+    const store = useCanvasStore.getState()
+    store.beginChange()
+    store.updateBoard(id, { title: next })
+  }, [])
+  const cancel = useCallback((): void => {
+    if (doneRef.current) return
+    doneRef.current = true
+    setEditing(false)
+  }, [])
+
+  useEffect(() => {
+    // Esc on the CAPTURE phase: while editing in full view, the canvas's own capture
+    // listener (useCanvasKeybindings #3) stops propagation before the input's React
+    // handler ever sees the key — but same-target window listeners still run after a
+    // stopPropagation, so this one reliably cancels the edit. (That Esc also exits
+    // full view — the canvas listener registered first; acceptable: the draft is
+    // discarded either way, never committed by the relocation blur.)
+    const onEscCapture = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && editingRef.current) cancel()
+    }
+    const onF2 = (e: KeyboardEvent): void => {
+      if (e.key !== 'F2' || editingRef.current || !selectedRef.current || !boardIdRef.current)
+        return
+      const t = e.target as HTMLElement | null
+      // Typing guard: F2 must not hijack an input/textarea/contentEditable — including
+      // xterm's hidden helper textarea (F2 in a focused terminal belongs to the agent).
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      // Only an unambiguous single selection renames: a marquee multi-select would
+      // otherwise open an input on every selected board at once.
+      if (useCanvasStore.getState().selectedIds.length > 1) return
+      e.preventDefault()
+      startEdit()
+    }
+    window.addEventListener('keydown', onEscCapture, true)
+    window.addEventListener('keydown', onF2)
+    return () => {
+      window.removeEventListener('keydown', onEscCapture, true)
+      window.removeEventListener('keydown', onF2)
+    }
+  }, [startEdit, cancel])
+
+  // Focus + select the whole title once the input mounts, so typing replaces it.
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing])
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        // `nodrag nopan` (React Flow escape hatches): the title bar is the node drag
+        // handle and dblclick inside `nopan` is excluded from the d3 dblclick-zoom.
+        className="board-title-edit nodrag nopan"
+        defaultValue={title}
+        aria-label="Board title"
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Containment: title keystrokes must not reach the canvas keymap / React
+          // Flow deleteKeyCode (both listen on window bubble) or the board beneath.
+          e.stopPropagation()
+          if (e.key === 'Enter') commit()
+          else if (e.key === 'Escape') cancel()
+        }}
+        onBlur={commit}
+      />
+    )
+  }
+  return (
+    <span
+      className="board-title nodrag nopan"
+      title={boardId ? 'Rename: double-click or F2' : undefined}
+      onDoubleClick={
+        boardId
+          ? (e) => {
+              e.stopPropagation()
+              startEdit()
+            }
+          : undefined
+      }
+      style={{
+        fontSize: 12,
+        fontWeight: 500,
+        color: selected ? 'var(--text)' : 'var(--text-2)',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        flex: 1,
+        minWidth: 0
+      }}
+    >
+      {title}
     </span>
   )
 }
@@ -517,20 +671,8 @@ export function BoardFrame({
           >
             {TYPE_TAG[type]}
           </span>
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 500,
-              color: selected ? 'var(--text)' : 'var(--text-2)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              flex: 1,
-              minWidth: 0
-            }}
-          >
-            {title}
-          </span>
+          {/* D2-A: inline-editable title (double-click / F2) — see BoardTitle. */}
+          <BoardTitle boardId={boardId} title={title} selected={selected} />
           {/* D0-6 (A5): persistent polite live region so status TRANSITIONS are announced
               (the visible label is hover-only, so it can't serve as the live region). The
               text strips the per-frame spinner glyph and maps the per-second elapsed timer

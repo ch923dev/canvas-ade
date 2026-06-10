@@ -899,6 +899,26 @@ body {
   color: var(--err);
 }
 
+/* D2-A: inline board title edit — the input that swaps in for the title span on
+   double-click / F2. Sized to the §3 12px label slot so the 34px bar never reflows. */
+.board-title-edit {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--ui);
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.board-title-edit:focus {
+  border-color: var(--accent);
+}
+
 /* Tidy-layout picker: a thumbnail tile per preset. Hover lifts the tile and turns its
    zones accent so the chosen layout previews on the button itself. */
 .ca-tidy-preset {
