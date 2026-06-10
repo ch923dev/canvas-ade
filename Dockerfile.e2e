@@ -16,11 +16,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN corepack enable
 
 WORKDIR /work
-COPY . /work
+# Lockfile-only layer BEFORE the source copy: `pnpm install` (Electron download +
+# node-pty Electron-ABI rebuild, ~2GB) re-runs only when the manifest/lockfile/.npmrc
+# change — not on every source edit. Keeps each pre-push build from minting a fresh
+# multi-GB install layer in the BuildKit cache.
+COPY package.json pnpm-lock.yaml .npmrc electron-builder.yml ./
 # @expanse-ade/mcp is a PUBLIC npmjs package — install needs no auth/token. The
 # app's MCP server boots graceful-degraded; the e2e keep-set exercises the native
 # layer, not MCP.
 RUN pnpm install --frozen-lockfile
+COPY . /work
 
 ENV CI=1
 # Build then run under Xvfb with the `line` reporter — it streams line-by-line and

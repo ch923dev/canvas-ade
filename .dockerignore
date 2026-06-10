@@ -7,3 +7,7 @@ playwright-report
 dist
 canvas.json
 canvas.json.bak
+.worktrees
+.claude
+Dockerfile.e2e
+.dockerignore
