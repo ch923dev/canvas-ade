@@ -227,7 +227,11 @@ describe('installRecapHook BUG-003: env field', () => {
     expect(hook).toBeDefined()
     // The env assignment rides INSIDE the shell command string, not in an
     // (unsupported) env field; the script + map paths are quoted in the same string.
-    const shellArg = hook!.args!.find((a) => a.includes('ELECTRON_RUN_AS_NODE=1'))
+    // Quoting differs per platform: cmd wraps the whole assignment (`set "K=V"&&`),
+    // POSIX single-quotes the value (`K='V'`).
+    const envForm =
+      process.platform === 'win32' ? 'set "ELECTRON_RUN_AS_NODE=1"&& ' : "ELECTRON_RUN_AS_NODE='1' "
+    const shellArg = hook!.args!.find((a) => a.includes(envForm))
     expect(shellArg).toBeDefined()
     expect(shellArg).toContain('"/app/recordSession.js"')
     expect(shellArg).toContain('"/u/map.jsonl"')

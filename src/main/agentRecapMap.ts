@@ -107,7 +107,13 @@ export function installRecapHook(opts: InstallOpts): void {
         : {
             type: 'command',
             command: '/bin/sh',
-            args: ['-c', `${pairs.map(([k, v]) => `${k}=${v} `).join('')}${invocation}`]
+            // Single-quote the value (POSIX-safe for all metacharacters; embedded ' via
+            // the standard '\'' splice) so a future env entry with spaces/$/&c. can't
+            // shell-split or inject a command.
+            args: [
+              '-c',
+              `${pairs.map(([k, v]) => `${k}='${v.replace(/'/g, "'\\''")}' `).join('')}${invocation}`
+            ]
           }
   }
   cfg.hooks.SessionStart.push({ matcher: '', hooks: [hookCmd] })
