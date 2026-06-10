@@ -188,6 +188,10 @@ export function ProjectSwitcher(): ReactElement {
         setSaveFailure('Project could not be saved — switch cancelled to avoid losing edits')
         return
       }
+      // D0-8 symmetry: the flush SUCCEEDED — clear any standing failure chip now, or
+      // the global store carries the old project's stale message into the new one
+      // (the chip would flash on the next project until its first autosave).
+      clearSaveFailure()
       // 2. Suppress autosave + dispose native views/PTYs.
       setProjectLoading()
       await disposeLiveResources()
