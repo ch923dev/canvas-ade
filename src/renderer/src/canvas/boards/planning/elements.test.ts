@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import type { ChecklistElement, ImageElement, PlanningElement } from '../../../lib/boardSchema'
+import type {
+  ChecklistElement,
+  ImageElement,
+  NoteElement,
+  PlanningElement
+} from '../../../lib/boardSchema'
 import { MIN_TEXT_WIDTH_PX } from './textStyle'
 import {
   makeNote,
@@ -343,7 +348,8 @@ import {
   duplicateElements,
   groupElements,
   ungroupElements,
-  setLocked
+  setLocked,
+  setNoteTint
 } from './elements'
 
 const note = (id: string, x = 0, y = 0, extra: Partial<PlanningElement> = {}): PlanningElement =>
@@ -422,6 +428,56 @@ describe('W3 mutators', () => {
     const arrow: PlanningElement = { id: 'ar', kind: 'arrow', x: 0, y: 0, x2: 30, y2: 40 }
     const { elements } = duplicateElements([arrow], ['ar'], 5, 7, seqId)
     expect(elements[1]).toMatchObject({ kind: 'arrow', x: 5, y: 7, x2: 35, y2: 47 })
+  })
+})
+
+describe('setNoteTint (D3-A tint picker)', () => {
+  it('sets the tint on every selected note', () => {
+    const els = [note('a'), note('b'), note('c')]
+    const next = setNoteTint(els, ['a', 'b'], 'blue')
+    expect((next.find((e) => e.id === 'a') as NoteElement).tint).toBe('blue')
+    expect((next.find((e) => e.id === 'b') as NoteElement).tint).toBe('blue')
+    expect((next.find((e) => e.id === 'c') as NoteElement).tint).toBe('yellow')
+  })
+
+  it('leaves non-note elements untouched (same object reference)', () => {
+    const arrow: PlanningElement = { id: 'ar', kind: 'arrow', x: 0, y: 0, x2: 10, y2: 10 }
+    const els = [note('a'), arrow]
+    const next = setNoteTint(els, ['a', 'ar'], 'green')
+    expect(next.find((e) => e.id === 'ar')).toBe(arrow)
+    expect((next.find((e) => e.id === 'a') as NoteElement).tint).toBe('green')
+  })
+
+  it('skips locked notes', () => {
+    const els = [note('a', 0, 0, { locked: true }), note('b')]
+    const next = setNoteTint(els, ['a', 'b'], 'plain')
+    expect((next.find((e) => e.id === 'a') as NoteElement).tint).toBe('yellow')
+    expect((next.find((e) => e.id === 'b') as NoteElement).tint).toBe('plain')
+  })
+
+  it('returns the input BY REFERENCE when every targeted note already has the tint (no phantom undo)', () => {
+    const els = [note('a'), note('b', 0, 0, { tint: 'blue' })]
+    expect(setNoteTint(els, ['a'], 'yellow')).toBe(els)
+  })
+
+  it('returns the input by reference when the selection holds no notes', () => {
+    const arrow: PlanningElement = { id: 'ar', kind: 'arrow', x: 0, y: 0, x2: 10, y2: 10 }
+    const els = [note('a'), arrow]
+    expect(setNoteTint(els, ['ar'], 'blue')).toBe(els)
+  })
+
+  it('returns the input by reference when every targeted note is locked', () => {
+    const els = [note('a', 0, 0, { locked: true })]
+    expect(setNoteTint(els, ['a'], 'blue')).toBe(els)
+  })
+
+  it('keeps unchanged element references in a mixed apply', () => {
+    const els = [note('a'), note('b', 0, 0, { tint: 'blue' }), note('c')]
+    const next = setNoteTint(els, ['a', 'b'], 'blue')
+    expect(next).not.toBe(els)
+    expect(next.find((e) => e.id === 'b')).toBe(els[1]) // already blue — untouched
+    expect(next.find((e) => e.id === 'c')).toBe(els[2]) // unselected — untouched
+    expect((next.find((e) => e.id === 'a') as NoteElement).tint).toBe('blue')
   })
 })
 

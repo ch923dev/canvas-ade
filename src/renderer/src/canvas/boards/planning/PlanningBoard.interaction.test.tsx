@@ -432,3 +432,81 @@ describe('PlanningBoard interaction — group / align (migrated from W3 menu pro
     expect(bSurvives).toBe(true)
   })
 })
+
+function noteTint(id: string, nid: string): string {
+  const n = els(id).find((e) => e.id === nid) as { tint?: string } | undefined
+  return n?.tint ?? ''
+}
+
+describe('PlanningBoard interaction — context-menu Tint row (D3-A)', () => {
+  it('select both → click the green swatch tints BOTH; one undo restores both', () => {
+    const id = seedTwo() // w2-a yellow, w2-b blue
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150) // marquee both
+    openContextMenuAt(120, 80, grip(0))
+    clickMenuItem('w3-menu-tint-green')
+    expect(noteTint(id, 'w2-a')).toBe('green')
+    expect(noteTint(id, 'w2-b')).toBe('green')
+    useCanvasStore.getState().undo()
+    expect(noteTint(id, 'w2-a')).toBe('yellow')
+    expect(noteTint(id, 'w2-b')).toBe('blue')
+  })
+
+  it('marks the current tint when every selected note shares it', () => {
+    const id = seedPlanning([
+      note('t-a', { x: 40, y: 40, text: 'A', tint: 'blue' }),
+      note('t-b', { x: 260, y: 40, text: 'B', tint: 'blue' })
+    ])
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150)
+    openContextMenuAt(120, 80, grip(0))
+    expect(
+      (document.querySelector('[data-testid="w3-menu-tint-blue"]') as HTMLElement).hasAttribute(
+        'data-current'
+      )
+    ).toBe(true)
+    expect(
+      (document.querySelector('[data-testid="w3-menu-tint-yellow"]') as HTMLElement).hasAttribute(
+        'data-current'
+      )
+    ).toBe(false)
+  })
+
+  it('disables the Tint row when the only selected note is locked', () => {
+    const id = seedPlanning([note('lk', { x: 60, y: 60, text: 'L' })])
+    useCanvasStore.getState().updateBoard(id, {
+      elements: [{ ...els(id)[0], locked: true }]
+    } as never)
+    render(<Harness id={id} />)
+    openContextMenuAt(120, 80, grip(0))
+    const swatch = document.querySelector('[data-testid="w3-menu-tint-blue"]') as HTMLButtonElement
+    expect(swatch.disabled).toBe(true)
+    act(() => swatch.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(noteTint(id, 'lk')).toBe('yellow') // unchanged
+  })
+
+  it('re-applying the current tint pushes NO undo step (no phantom)', () => {
+    const id = seedPlanning([note('t-a', { x: 40, y: 40, text: 'A', tint: 'blue' })])
+    render(<Harness id={id} />)
+    const past0 = useCanvasStore.getState().past.length
+    openContextMenuAt(120, 80, grip(0))
+    clickMenuItem('w3-menu-tint-blue') // already blue → no-op
+    expect(useCanvasStore.getState().past.length).toBe(past0)
+    expect(noteTint(id, 't-a')).toBe('blue')
+  })
+
+  it('hover-pill dot click sets the tint in exactly ONE undo step; re-click is a no-op', () => {
+    const id = seedPlanning([note('hv', { x: 40, y: 40, text: 'A', tint: 'yellow' })])
+    render(<Harness id={id} />)
+    const past0 = useCanvasStore.getState().past.length
+    const dot = document.querySelector('[data-testid="pl-tint-green"]') as HTMLElement
+    act(() => dot.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(noteTint(id, 'hv')).toBe('green')
+    expect(useCanvasStore.getState().past.length).toBe(past0 + 1)
+    // Re-applying the same tint from the pill must not arm/push another step.
+    act(() => dot.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(useCanvasStore.getState().past.length).toBe(past0 + 1)
+    useCanvasStore.getState().undo()
+    expect(noteTint(id, 'hv')).toBe('yellow')
+  })
+})

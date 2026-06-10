@@ -21,6 +21,7 @@ import type {
   ArrowElement,
   ChecklistElement,
   NoteElement,
+  NoteTint,
   PlanningElement,
   PlanningBoard as PlanningBoardData,
   StrokeElement,
@@ -48,17 +49,9 @@ import {
   setItemLabel,
   isLocked,
   expandGroups,
-  duplicateElements,
-  groupElements,
-  ungroupElements,
-  setLocked
+  setNoteTint
 } from './planning/elements'
-import {
-  alignElements,
-  distributeElements,
-  type AlignEdge,
-  type AlignBoard
-} from './planning/align'
+import { buildContextMenuEntries } from './planning/contextMenuEntries'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
@@ -226,6 +219,20 @@ export function PlanningBoard({
     },
     [beginChange, commit, board.id]
   )
+  // D3-A hover-swatch tint: exactly one undo step, live-read transform. Bail BEFORE
+  // beginChange when the note vanished / is locked / already has the tint, so a no-op
+  // click never arms a checkpoint (#BUG M3 phantom-undo class — onTextPatch pattern).
+  const setTint = useCallback(
+    (id: string, tint: NoteTint) => {
+      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
+      const els = live?.type === 'planning' ? live.elements : []
+      const el = els.find((e) => e.id === id)
+      if (!el || el.kind !== 'note' || isLocked(el) || el.tint === tint) return
+      beginChange()
+      commit((cur) => setNoteTint(cur, [id], tint))
+    },
+    [beginChange, commit, board.id]
+  )
   const deleteEl = useCallback(
     (id: string) => {
       const el = elements.find((x) => x.id === id)
@@ -296,126 +303,28 @@ export function PlanningBoard({
 
   // Build the right-click menu entries off an explicit selection set (the
   // post-select-then-act set; React state is async, so the handler can't read it back
-  // — it passes the set in). Every action is exactly ONE undo checkpoint via `run`
-  // (beginChange + commit); the no-op-no-checkpoint discipline is delegated to the pure
-  // transforms (align/distribute/group/etc. return the input by reference when there's
-  // nothing to do) backed by disabling the entries below when they would be no-ops.
-  // Called from the event handler (NOT render), so `measuredRef` access is allowed
-  // (react-hooks/refs).
+  // — it passes the set in). The construction lives in planning/contextMenuEntries.ts
+  // (verbatim extraction, D3-A); this wrapper threads the store callbacks + the well's
+  // content box in. Called from the event handler (NOT render), so `measuredRef`
+  // access is allowed (react-hooks/refs).
   const buildMenuEntries = useCallback(
-    (sel: ReadonlySet<string>): MenuEntry[] => {
-      const selEls = elements.filter((e) => sel.has(e.id))
-      const allLocked = selEls.length > 0 && selEls.every(isLocked)
-      const anyGrouped = selEls.some((e) => !!e.groupId)
-      const groupIds = new Set(selEls.map((e) => e.groupId).filter(Boolean))
-      const isOneGroup = sel.size >= 2 && groupIds.size === 1 && selEls.every((e) => !!e.groupId)
-      const run = (next: PlanningElement[]): void => {
-        beginChange()
-        commit(next)
-      }
-      // Align/distribute reference the well's content box (board-local px) so edges
-      // flush to the BOARD and results clamp inside it.
-      const wb: AlignBoard = {
-        w: wellRef.current?.offsetWidth || board.w,
-        h: wellRef.current?.offsetHeight || board.h
-      }
-      const alignBtns = (
-        ['left', 'centerX', 'right', 'top', 'centerY', 'bottom'] as AlignEdge[]
-      ).map((edge) => ({
-        id: edge,
-        title: `Align ${edge}`,
-        icon: `align-${edge === 'centerX' ? 'center-h' : edge === 'centerY' ? 'middle' : edge}`,
-        onSelect: () => run(alignElements(elements, sel, edge, wb, measuredRef.current))
-      }))
-      const entries: MenuEntry[] = [
-        {
-          kind: 'action',
-          id: 'lock',
-          label: allLocked ? 'Unlock' : 'Lock',
-          onSelect: () => run(setLocked(elements, sel, !allLocked))
+    (sel: ReadonlySet<string>): MenuEntry[] =>
+      buildContextMenuEntries({
+        elements,
+        sel,
+        // Align/distribute reference the well's content box (board-local px) so edges
+        // flush to the BOARD and results clamp inside it.
+        wb: {
+          w: wellRef.current?.offsetWidth || board.w,
+          h: wellRef.current?.offsetHeight || board.h
         },
-        {
-          kind: 'action',
-          id: 'group',
-          label: 'Group',
-          disabled: sel.size < 2 || isOneGroup,
-          onSelect: () => run(groupElements(elements, sel, newId()))
-        },
-        {
-          kind: 'action',
-          id: 'ungroup',
-          label: 'Ungroup',
-          disabled: !anyGrouped,
-          onSelect: () => run(ungroupElements(elements, sel))
-        },
-        {
-          kind: 'action',
-          id: 'duplicate',
-          label: 'Duplicate',
-          onSelect: () => {
-            beginChange()
-            const { elements: wc, newIds } = duplicateElements(
-              elements,
-              expandGroups(elements, sel),
-              12,
-              12,
-              newId
-            )
-            commit(wc)
-            setSelectedIds(new Set(newIds))
-          }
-        },
-        {
-          kind: 'iconRow',
-          id: 'align',
-          label: 'Align',
-          disabled: sel.size < 2,
-          buttons: alignBtns
-        },
-        {
-          kind: 'iconRow',
-          id: 'distribute',
-          label: 'Distribute',
-          disabled: sel.size < 3,
-          buttons: [
-            {
-              id: 'h',
-              title: 'Distribute horizontally',
-              icon: 'distribute-h',
-              onSelect: () => run(distributeElements(elements, sel, 'h', wb, measuredRef.current))
-            },
-            {
-              id: 'v',
-              title: 'Distribute vertically',
-              icon: 'distribute-v',
-              onSelect: () => run(distributeElements(elements, sel, 'v', wb, measuredRef.current))
-            }
-          ]
-        },
-        {
-          kind: 'action',
-          id: 'delete',
-          label: 'Delete',
-          danger: true,
-          onSelect: () => {
-            // Group then lock precedence (mirrors the keyboard Delete handler).
-            const expanded = expandGroups(elements, sel)
-            const removable = new Set(
-              [...expanded].filter((rid) => {
-                const el = elements.find((x) => x.id === rid)
-                return el !== undefined && !isLocked(el)
-              })
-            )
-            if (removable.size > 0) {
-              beginChange()
-              commit(elements.filter((el) => !removable.has(el.id)))
-            }
-            clearSel()
-          }
-        }
-      ]
-      return entries
-    },
+        measured: measuredRef.current,
+        beginChange,
+        commit,
+        clearSel,
+        setSelectedIds,
+        newId
+      }),
     [elements, beginChange, commit, clearSel, board.w, board.h]
   )
 
@@ -692,6 +601,7 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
+                onSetTint={setTint}
               />
             )
           }
