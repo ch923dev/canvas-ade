@@ -53,6 +53,14 @@ const focusInXterm = (page: Page, id: string): Promise<boolean> =>
     const el = d.activeElement
     return !!n && !!el && n.contains(el) && el.classList.contains('xterm-helper-textarea')
   }, id)
+// True once the flip fold has SETTLED (flat-at-rest: the stage wrapper carries no
+// inline transform outside a fold — useTerminalFlip's stageStyle contract).
+const flipSettled = (page: Page, id: string): Promise<boolean> =>
+  page.evaluate((a) => {
+    const d = (globalThis as any).document
+    const stage = d.querySelector(`[data-test="recap-wrap-${a}"]`)?.parentElement
+    return !!stage && !stage.style.transform
+  }, id)
 
 test.describe('terminal polish (D2-B)', () => {
   test('first-run hint: bare shell shows the pill; click opens config; × dismisses app-wide', async ({
@@ -154,6 +162,15 @@ test.describe('terminal polish (D2-B)', () => {
         timeout: 4000,
         message: 'focus moved to the recap face after flip'
       })
+      .toBe(true)
+
+    // The fold must SETTLE before flipping back: toggle() swallows clicks while a
+    // fold is in flight (intended re-entrancy guard), and the focus poll above can
+    // pass right after the 150ms face swap — under load the settle timer starves,
+    // so an immediate second click lands mid-fold and is silently ignored (the
+    // recap face then stays up forever; caught by a full-suite run's failure.png).
+    await expect
+      .poll(() => flipSettled(page, id), { timeout: 4000, message: 'flip fold settled' })
       .toBe(true)
 
     await page.locator(`[data-test="flip-${id}"]`).click()
