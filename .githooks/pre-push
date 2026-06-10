@@ -25,8 +25,15 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     # classify ALL commits on the feature branch — not against the working tree
     # (a bare single sha compares to the working tree, which is always empty on a
     # clean checkout and gives wrong results on a dirty one; BUG-018).
-    base="$(git merge-base origin/main "$local_sha" 2>/dev/null)" \
-      || base="$(git rev-list "$local_sha" --not --remotes=origin 2>/dev/null | tail -1)"
+    base="$(git merge-base origin/main "$local_sha" 2>/dev/null)" || base=""
+    if [ -z "$base" ]; then
+      # No merge-base (unrelated/shallow history): take the OLDEST commit not on any
+      # origin ref and diff from its PARENT — `F..tip` excludes F's own changes, and a
+      # single-commit branch would make the range empty and silently skip the matrix.
+      # A root-commit parent makes git diff fail → the BUG-068 guard forces force-full.
+      first_new="$(git rev-list "$local_sha" --not --remotes=origin 2>/dev/null | tail -1)" || first_new=""
+      if [ -n "$first_new" ]; then base="${first_new}^"; fi
+    fi
     if [ -z "$base" ]; then
       # Cannot determine a safe base — run the full matrix rather than skip.
       echo "[pre-push] WARNING: could not find merge-base for new branch '$local_ref' — running full e2e matrix."

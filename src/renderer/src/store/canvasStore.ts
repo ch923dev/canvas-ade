@@ -870,6 +870,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
  * silently reverts the machine-written value. Mirrors growBoardHeight's untracked
  * contract. Module-scoped (like isIdleOnMount) rather than a CanvasState action: it is
  * for background engines, never user-gesture call sites.
+ *
+ * NOTE: unlike patchBoardMeta, the past/future snapshot rails are intentionally NOT
+ * rewritten — an undo reverts any value written here. Acceptable only for callers whose
+ * writes self-heal (useBrowserAutoConnect: the detect loop re-pushes next tick). Do NOT
+ * use this for persistent fields that cannot self-heal; use patchBoardMeta's mapRail
+ * pattern instead.
  */
 export function patchBoardUntracked(id: string, patch: Partial<Board>): void {
   useCanvasStore.setState((s) => {
