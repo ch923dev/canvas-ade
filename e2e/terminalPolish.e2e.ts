@@ -1,5 +1,6 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed } from './helpers'
+import { evalIn, seed } from './helpers'
 
 /**
  * D2-B terminal polish (design-audit wave D2):
@@ -13,10 +14,45 @@ import { evalIn, pollEval, seed } from './helpers'
  *  - restart menu on the shared Menu shell: Escape / outside-pointerdown / trigger
  *    re-click all auto-close (the audit's "no auto-close");
  *  - A6 recap-flip focus transfer: focus follows the visible face both ways.
+ *
+ * The seed()-derived board id flows into page.evaluate as a STRUCTURED ARG, never
+ * interpolated into an eval'd code string (CodeQL js/bad-code-sanitization — the
+ * preview-align.e2e.ts pattern from #82). Locator strings are fine: they are
+ * selectors, not code. Browser globals inside the evaluated functions go through
+ * `globalThis as any` (tsconfig.node has no DOM lib; no-explicit-any is off for e2e/).
  */
 
 const HINT_KEY = 'ca.terminal.hintDismissed'
 const node = (id: string): string => `.react-flow__node[data-id="${id}"]`
+
+const boardLaunchCommand = (page: Page, id: string): Promise<string | undefined> =>
+  page.evaluate(
+    (a) => (globalThis as any).__canvasE2E.getBoards().find((b: any) => b.id === a)?.launchCommand,
+    id
+  )
+const patchBoard = (page: Page, id: string, patch: Record<string, unknown>): Promise<void> =>
+  page.evaluate((a) => (globalThis as any).__canvasE2E.patchBoard(a.id, a.patch), { id, patch })
+const terminalEchoed = (page: Page, id: string, marker: string): Promise<boolean> =>
+  page.evaluate(
+    (a) => {
+      const t = (globalThis as any).__canvasE2E.readTerminal(a.id)
+      return typeof t === 'string' && t.includes(a.marker)
+    },
+    { id, marker }
+  )
+const focusInRecap = (page: Page, id: string): Promise<boolean> =>
+  page.evaluate((a) => {
+    const d = (globalThis as any).document
+    const w = d.querySelector(`[data-test="recap-wrap-${a}"]`)
+    return !!w && (d.activeElement === w || w.contains(d.activeElement))
+  }, id)
+const focusInXterm = (page: Page, id: string): Promise<boolean> =>
+  page.evaluate((a) => {
+    const d = (globalThis as any).document
+    const n = d.querySelector(`.react-flow__node[data-id="${a}"]`)
+    const el = d.activeElement
+    return !!n && !!el && n.contains(el) && el.classList.contains('xterm-helper-textarea')
+  }, id)
 
 test.describe('terminal polish (D2-B)', () => {
   test('first-run hint: bare shell shows the pill; click opens config; × dismisses app-wide', async ({
@@ -71,10 +107,7 @@ test.describe('terminal polish (D2-B)', () => {
     // Discard closes without persisting the edit.
     await page.locator(`${node(id)} button`, { hasText: 'Discard' }).click()
     await expect(launch).toHaveCount(0)
-    const persisted = await evalIn<string | undefined>(
-      page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})?.launchCommand`
-    )
+    const persisted = await boardLaunchCommand(page, id)
     expect(persisted, 'discard must not persist the edit').toBe('echo GUARD')
 
     // Clean reopen: Escape closes straight through (no confirm row).
@@ -89,10 +122,7 @@ test.describe('terminal polish (D2-B)', () => {
     page
   }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo RESTART' })
-    await evalIn(
-      page,
-      `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { agentSessionId: 'sess-e2e-1' })`
-    )
+    await patchBoard(page, id, { agentSessionId: 'sess-e2e-1' })
     const trigger = page.locator(`${node(id)} button[title^="Restart"]`)
     const menu = page.getByRole('menu', { name: 'Restart terminal' })
 
@@ -116,26 +146,22 @@ test.describe('terminal polish (D2-B)', () => {
   test('A6: flipping transfers focus to the recap and back to xterm', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo FLIPFOCUS' })
     // Let the spawn settle so xterm exists before we assert focus round-trips.
-    await pollEval(
-      page,
-      `(() => { const t = window.__canvasE2E.readTerminal(${JSON.stringify(id)}); return typeof t === 'string' && t.includes('FLIPFOCUS'); })()`,
-      10_000
-    )
+    await expect.poll(() => terminalEchoed(page, id, 'FLIPFOCUS'), { timeout: 10_000 }).toBe(true)
 
     await page.locator(`[data-test="flip-${id}"]`).click()
-    const onRecap = await pollEval(
-      page,
-      `(() => { const w = document.querySelector('[data-test="recap-wrap-${id}"]'); return !!w && (document.activeElement === w || w.contains(document.activeElement)); })()`,
-      4000
-    )
-    expect(onRecap, 'focus moved to the recap face after flip').toBe(true)
+    await expect
+      .poll(() => focusInRecap(page, id), {
+        timeout: 4000,
+        message: 'focus moved to the recap face after flip'
+      })
+      .toBe(true)
 
     await page.locator(`[data-test="flip-${id}"]`).click()
-    const onXterm = await pollEval(
-      page,
-      `(() => { const n = document.querySelector('${node(id)}'); const a = document.activeElement; return !!n && !!a && n.contains(a) && a.classList.contains('xterm-helper-textarea'); })()`,
-      4000
-    )
-    expect(onXterm, 'focus restored to xterm after flip-back').toBe(true)
+    await expect
+      .poll(() => focusInXterm(page, id), {
+        timeout: 4000,
+        message: 'focus restored to xterm after flip-back'
+      })
+      .toBe(true)
   })
 })
