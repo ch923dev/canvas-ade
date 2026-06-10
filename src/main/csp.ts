@@ -28,11 +28,24 @@ export const PROD_CSP =
   "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; " +
   HARDENING
 
-/** Replace the index.html CSP <meta> content with the policy for the given mode. */
+const CSP_META_RE = /(<meta\s+http-equiv="Content-Security-Policy"\s+content=")[^"]*(")/
+
+/**
+ * Replace the index.html CSP <meta> content with the policy for the given mode.
+ * THROWS if the meta tag is not found: index.html's fallback content is the DEV policy
+ * (script-src 'unsafe-inline'), so a silent no-match here would ship the dev CSP in
+ * packaged builds. The throw fails the vite build loudly instead. The regex requires
+ * exactly `<meta http-equiv="Content-Security-Policy" content="...">` — double quotes,
+ * that attribute order, no intervening attributes (whitespace/newlines are fine).
+ */
 export function injectCspMeta(html: string, isDev: boolean): string {
+  if (!CSP_META_RE.test(html)) {
+    throw new Error(
+      'injectCspMeta: no CSP <meta http-equiv="Content-Security-Policy" content="..."> tag ' +
+        'matched in index.html — refusing to silently ship the fallback (dev) policy. ' +
+        'Restore the tag to that exact shape (double quotes, http-equiv before content).'
+    )
+  }
   const csp = isDev ? DEV_CSP : PROD_CSP
-  return html.replace(
-    /(<meta\s+http-equiv="Content-Security-Policy"\s+content=")[^"]*(")/,
-    `$1${csp}$2`
-  )
+  return html.replace(CSP_META_RE, `$1${csp}$2`)
 }

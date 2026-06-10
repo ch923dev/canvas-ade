@@ -14,6 +14,7 @@ import {
   writeToPtyCore,
   getTerminalRuntimeCore,
   isValidResize,
+  clampSpawnDim,
   attachPortInput
 } from './pty'
 import {
@@ -407,6 +408,16 @@ describe('attachPortInput (Finding 3 — single renderer→PTY write guard)', ()
     expect(proc.resize).not.toHaveBeenCalled()
   })
 
+  it('BUG-023: clamps a legit OVERSIZED resize instead of dropping it (rows keep applying)', () => {
+    const port = makePort()
+    const { proc } = makeProc(707)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 1200, rows: 40 } })
+    expect(proc.resize).toHaveBeenCalledWith(1000, 40)
+    port.handler?.({ data: { t: 'resize', cols: 1200, rows: 55 } })
+    expect(proc.resize).toHaveBeenLastCalledWith(1000, 55)
+  })
+
   it('swallows a throw from proc.write (would crash main via uncaughtException)', () => {
     const port = makePort()
     const { proc } = makeProc(705)
@@ -471,6 +482,95 @@ describe('cleanupCore (T1)', () => {
     expect(sessions.has('k')).toBe(true)
     expect(killTree).not.toHaveBeenCalled()
     expect(port.closed).toBe(false)
+  })
+
+  // BUG-022: natural-exit path must NOT tree-kill the already-dead root PID to
+  // avoid the PID-reuse race window (taskkill against a recycled PID harms an
+  // unrelated process tree). It DOES still call node-pty's own kill(), which
+  // disposes the ConPTY handle/conout worker deterministically and closes the
+  // pseudoconsole (reaping still-attached children) without touching the PID.
+  it('BUG-022: skips killTree but disposes via proc.kill on natural exit', async () => {
+    const port = makePort()
+    const { proc } = makeProc(556)
+    const sessionProc = { ...proc, kill: vi.fn() }
+    const killTree = vi.fn(() => Promise.resolve())
+    const sessions = new Map<string, any>([
+      ['k', { proc: sessionProc, port, buf: { data: '' }, state: 'exited' as const }]
+    ])
+
+    // Pass the SAME proc (identity match = natural exit, not stale) so the
+    // identity guard passes and we reach the skip-kill branch.
+    await cleanupCore('k', sessions, { killTree } as any, sessionProc as any)
+
+    expect(sessions.has('k')).toBe(false) // session is removed
+    expect(killTree).not.toHaveBeenCalled() // no tree-kill on an already-exited proc
+    expect(sessionProc.kill).toHaveBeenCalledTimes(1) // ConPTY disposed deterministically
+    expect(port.closed).toBe(true) // port is still closed
+  })
+
+  it('BUG-022: still tree-kills on explicit pty:kill (no proc arg) even when state is exited', async () => {
+    const port = makePort()
+    const { proc } = makeProc(557)
+    const killTree = vi.fn(() => Promise.resolve())
+    const sessions = new Map<string, any>([
+      ['k', { proc, port, buf: { data: '' }, state: 'exited' as const }]
+    ])
+
+    // No proc argument = explicit kill path; always tears down regardless of state.
+    await cleanupCore('k', sessions, { killTree } as any)
+
+    expect(sessions.has('k')).toBe(false)
+    expect(killTree).toHaveBeenCalledWith(proc)
+    expect(port.closed).toBe(true)
+  })
+})
+
+// BUG-024: adoptCore must reap a live same-id session before replacing it,
+// mirroring the Bug #13 guard on the spawn path. Without this, the displaced
+// proc escapes both maps and outlives disposeAllPtys/quit.
+describe('adoptCore BUG-024 (symmetric Bug #13 guard)', () => {
+  it('reaps the live same-id session before adopting the parked one', async () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc: liveProc } = makeProc(500)
+    const { proc: parkedProc } = makeProc(501)
+    const livePort = makePort()
+    const buf = { data: 'scrollback' }
+    const timer = setTimeout(() => {}, 100000)
+    const sessions = new Map<string, any>([
+      ['t', { proc: liveProc, port: livePort, buf: { data: '' }, state: 'running' }]
+    ])
+    const parked = new Map<string, any>([['t', { proc: parkedProc, buf, timer }]])
+    const killTree = vi.fn(() => Promise.resolve())
+    const newChannel = vi.fn(() => ({ port1, port2 }))
+
+    const res = adoptCore('t', sessions, parked, { newChannel, killTree } as any, (() => {}) as any)
+
+    // The adopt must succeed and use the parked proc.
+    expect(res).toEqual({ adopted: true, pid: 501 })
+    // The displaced live proc must have been reaped.
+    expect(killTree).toHaveBeenCalledWith(liveProc)
+    expect(livePort.closed).toBe(true)
+    // The adopted session holds the parked proc, not the live one.
+    expect(sessions.get('t')?.proc).toBe(parkedProc)
+    clearTimeout(timer)
+  })
+
+  it('does not call killTree when no live session exists for the id', async () => {
+    const port1 = makePort()
+    const port2 = makePort()
+    const { proc: parkedProc } = makeProc(502)
+    const buf = { data: '' }
+    const timer = setTimeout(() => {}, 100000)
+    const sessions = new Map<string, any>()
+    const parked = new Map<string, any>([['t', { proc: parkedProc, buf, timer }]])
+    const killTree = vi.fn(() => Promise.resolve())
+    const newChannel = vi.fn(() => ({ port1, port2 }))
+
+    adoptCore('t', sessions, parked, { newChannel, killTree } as any, (() => {}) as any)
+
+    expect(killTree).not.toHaveBeenCalled()
+    clearTimeout(timer)
   })
 })
 
@@ -718,5 +818,45 @@ describe('isValidResize (Wave-4 — bounded integer validation)', () => {
 
   it('rejects Infinity for rows', () => {
     expect(isValidResize(80, Infinity)).toBe(false)
+  })
+})
+
+// BUG-023: spawn must clamp cols/rows to [1, 1000] so the post-spawn resize path
+// (gated on isValidResize) can always accept subsequent resizes. Without this, a
+// >1000-col board spawns fine but EVERY resize (including row-only changes) is
+// silently dropped by the isValidResize gate.
+describe('clampSpawnDim (BUG-023 — spawn/resize bounds parity)', () => {
+  it('returns the value unchanged when it is already within [1, 1000]', () => {
+    expect(clampSpawnDim(80, 80)).toBe(80)
+    expect(clampSpawnDim(1, 80)).toBe(1)
+    expect(clampSpawnDim(1000, 80)).toBe(1000)
+  })
+
+  it('clamps values above 1000 to 1000', () => {
+    expect(clampSpawnDim(1200, 80)).toBe(1000)
+    expect(clampSpawnDim(9999, 80)).toBe(1000)
+  })
+
+  it('clamps values below 1 to 1', () => {
+    expect(clampSpawnDim(0, 80)).toBe(1)
+    expect(clampSpawnDim(-5, 80)).toBe(1)
+  })
+
+  it('truncates fractional values before clamping', () => {
+    expect(clampSpawnDim(80.9, 80)).toBe(80)
+    expect(clampSpawnDim(0.9, 80)).toBe(1) // trunc(0.9)=0 -> clamp to 1
+  })
+
+  it('uses the fallback for non-finite values (NaN, Infinity)', () => {
+    expect(clampSpawnDim(NaN, 80)).toBe(80)
+    expect(clampSpawnDim(Infinity, 24)).toBe(24)
+  })
+
+  it('result always passes isValidResize as one axis (spawn and resize are self-consistent)', () => {
+    // Any value the renderer could send must produce a cols that isValidResize accepts.
+    for (const raw of [0, 1, 80, 1000, 1001, 9999, -1, 80.5, NaN]) {
+      const clamped = clampSpawnDim(raw, 80)
+      expect(isValidResize(clamped, 24)).toBe(true)
+    }
   })
 })

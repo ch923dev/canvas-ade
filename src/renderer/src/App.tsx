@@ -6,7 +6,7 @@ import ConfirmModal from './canvas/ConfirmModal'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
-import { useCanvasStore } from './store/canvasStore'
+import { useCanvasStore, patchBoardMeta } from './store/canvasStore'
 import { useAutosave } from './store/useAutosave'
 import { isE2E } from './smoke/e2eRegistry'
 
@@ -42,8 +42,10 @@ function App(): React.ReactElement {
 
   // Terminal-recap T15: MAIN learns a board's Claude session id + transcript path (by
   // matching PTY cwd/launch to the freshest transcript) and pushes them here so the recap
-  // survives reload. Patch only boards that still exist (the store's `boards` is an array;
-  // updateBoard filters to PATCHABLE_KEYS, which now allows these two terminal-only fields).
+  // survives reload. Patch only boards that still exist. #BUG-064: this arrives from MAIN
+  // at an arbitrary moment (not a user gesture), so it goes through patchBoardMeta — a
+  // history-invisible setter that neither wipes an armed redo branch (updateBoard clears
+  // `future` on any diff) nor gets reverted by a later undo (it rewrites the rails too).
   // Guarded for non-electron test runtimes; the effect returns onLearned's disposer.
   useEffect(() => {
     const onLearned = window.api?.recap?.onLearned
@@ -52,7 +54,7 @@ function App(): React.ReactElement {
       const s = useCanvasStore.getState()
       for (const p of patches) {
         if (s.boards.some((b) => b.id === p.boardId)) {
-          s.updateBoard(p.boardId, {
+          patchBoardMeta(p.boardId, {
             agentSessionId: p.sessionId,
             agentTranscriptPath: p.transcriptPath
           })

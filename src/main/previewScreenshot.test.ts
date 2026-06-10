@@ -37,7 +37,7 @@ describe('preview:screenshot', () => {
     const res = await m.invoke('preview:screenshot', validEvent, 'b1')
     expect(d.writeImage).toHaveBeenCalledWith(PNG)
     expect(d.saveAsset).toHaveBeenCalledWith('/proj', PNG, 'png')
-    expect(res).toEqual({ ok: true, assetId: 'assets/abc.png' })
+    expect(res).toEqual({ ok: true, assetId: 'assets/abc.png', clipboardOk: true })
   })
 
   it('copies to clipboard only when no project is open', async () => {
@@ -47,7 +47,7 @@ describe('preview:screenshot', () => {
     const res = await m.invoke('preview:screenshot', validEvent, 'b1')
     expect(d.writeImage).toHaveBeenCalled()
     expect(d.saveAsset).not.toHaveBeenCalled()
-    expect(res).toEqual({ ok: true, assetId: null })
+    expect(res).toEqual({ ok: true, assetId: null, clipboardOk: true })
   })
 
   it('returns not-live when the view is detached/off-screen (capture null)', async () => {
@@ -69,7 +69,7 @@ describe('preview:screenshot', () => {
     registerPreviewScreenshotHandler(m.ipc as never, () => null, d)
     const res = await m.invoke('preview:screenshot', validEvent, 'b1')
     expect(d.writeImage).toHaveBeenCalled()
-    expect(res).toEqual({ ok: true, assetId: null })
+    expect(res).toEqual({ ok: true, assetId: null, clipboardOk: true })
   })
 
   it('still saves the asset when the clipboard write throws (headless)', async () => {
@@ -81,7 +81,42 @@ describe('preview:screenshot', () => {
     })
     registerPreviewScreenshotHandler(m.ipc as never, mainWin, d)
     const res = await m.invoke('preview:screenshot', validEvent, 'b1')
-    expect(res).toEqual({ ok: true, assetId: 'assets/abc.png' })
+    expect(res).toEqual({ ok: true, assetId: 'assets/abc.png', clipboardOk: false })
+  })
+
+  // BUG-028 regression: clipboard write throws AND nothing can be saved (no project
+  // open) — the result must NOT read as "copied to clipboard" (the old shape had no
+  // way to convey the clipboard failure, so a total failure surfaced as success).
+  it('reports clipboardOk:false when the clipboard write throws and no project is open', async () => {
+    const m = makeIpc()
+    const d = deps({
+      writeImage: () => {
+        throw new Error('clipboard unavailable')
+      },
+      currentDir: () => null
+    })
+    registerPreviewScreenshotHandler(m.ipc as never, () => null, d)
+    const res = await m.invoke('preview:screenshot', validEvent, 'b1')
+    expect(d.saveAsset).not.toHaveBeenCalled()
+    expect(res).toEqual({ ok: true, assetId: null, clipboardOk: false })
+  })
+
+  // BUG-028 regression: clipboard threw and the asset save ALSO failed — both flags
+  // must reflect the total failure (the old catch comment asserted "the clipboard
+  // copy already succeeded", which was false).
+  it('reports clipboardOk:false with assetId null when both clipboard and save fail', async () => {
+    const m = makeIpc()
+    const d = deps({
+      writeImage: () => {
+        throw new Error('clipboard unavailable')
+      },
+      saveAsset: async () => {
+        throw new Error('ENOSPC')
+      }
+    })
+    registerPreviewScreenshotHandler(m.ipc as never, () => null, d)
+    const res = await m.invoke('preview:screenshot', validEvent, 'b1')
+    expect(res).toEqual({ ok: true, assetId: null, clipboardOk: false })
   })
 
   it('rejects a foreign sender (no capture, no clipboard)', async () => {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { IpcMain, IpcMainEvent, BrowserWindow } from 'electron'
 import {
   __setMirrorForTest,
   __setConnectorsForTest,
@@ -10,6 +11,7 @@ import {
   sanitizeConnectors,
   diffStatus,
   subscribeBoardStatus,
+  registerBoardRegistryHandler,
   type BoardStatusChange
 } from './boardRegistry'
 
@@ -113,6 +115,75 @@ describe('diffStatus', () => {
   it('exports BoardStatusChange with an { id, status } shape', () => {
     const change: BoardStatusChange = { id: 'x', status: 'idle' }
     expect(change).toEqual({ id: 'x', status: 'idle' })
+  })
+})
+
+// BUG-033 regression: registerBoardRegistryHandler must deny payloads when getWin()
+// returns null (fail-OPEN in the old inline guard) and must not throw on a destroyed window.
+describe('registerBoardRegistryHandler BUG-033 sender guard', () => {
+  // Minimal ipcMain stub that captures 'on' handlers.
+  function makeIpc(): { ipcMain: IpcMain; emit: (e: IpcMainEvent, payload: unknown) => void } {
+    let handler: ((e: IpcMainEvent, payload: unknown) => void) | null = null
+    const ipcMain = {
+      on: (_ch: string, fn: (e: IpcMainEvent, payload: unknown) => void) => {
+        handler = fn
+      }
+    } as unknown as IpcMain
+    return {
+      ipcMain,
+      emit: (e, payload) => handler?.(e, payload)
+    }
+  }
+
+  function makeWin(opts: {
+    destroyed?: boolean
+    wcDestroyed?: boolean
+    frame?: object
+  }): BrowserWindow {
+    const frame = opts.frame ?? { id: 'main-frame' }
+    return {
+      isDestroyed: () => opts.destroyed ?? false,
+      webContents: {
+        isDestroyed: () => opts.wcDestroyed ?? false,
+        mainFrame: frame
+      }
+    } as unknown as BrowserWindow
+  }
+
+  beforeEach(() => __setMirrorForTest([]))
+
+  it('BUG-033: does not throw and denies payload when getWin() returns null (boot window)', () => {
+    const { ipcMain, emit } = makeIpc()
+    // getWin returns null — the old inline guard accepted the payload (fail-open)
+    registerBoardRegistryHandler(ipcMain, () => null)
+    const payload = [{ id: 'x', type: 'terminal', title: 'X' }]
+    // isForeignSender with null window -> DENY; the mirror must NOT be updated
+    expect(() =>
+      emit({ senderFrame: { id: 'some-frame' } } as unknown as IpcMainEvent, payload)
+    ).not.toThrow()
+    expect(listBoardMirror()).toEqual([]) // payload rejected
+  })
+
+  it('BUG-033: does not throw when window is destroyed (was throw into uncaughtException)', () => {
+    const { ipcMain, emit } = makeIpc()
+    const win = makeWin({ destroyed: true })
+    registerBoardRegistryHandler(ipcMain, () => win)
+    expect(() =>
+      emit({ senderFrame: { id: 'some-frame' } } as unknown as IpcMainEvent, [
+        { id: 'y', type: 'browser', title: 'Y' }
+      ])
+    ).not.toThrow()
+    expect(listBoardMirror()).toEqual([])
+  })
+
+  it('accepts a payload from the main frame (legitimate sender)', () => {
+    const { ipcMain, emit } = makeIpc()
+    const frame = { id: 'main-frame' }
+    const win = makeWin({ frame })
+    registerBoardRegistryHandler(ipcMain, () => win)
+    const boards = [{ id: 'a', type: 'terminal', title: 'A' }]
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, boards)
+    expect(listBoardMirror()).toEqual([{ id: 'a', type: 'terminal', title: 'A' }])
   })
 })
 

@@ -15,6 +15,17 @@ if (!Element.prototype.setPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
 }
 
+// NoteCard (BUG-050 fix) observes its rendered size via ResizeObserver; jsdom has no
+// ResizeObserver — stub a no-op so cards mount without throwing (same pattern as
+// PlanningBoard.interaction.test.tsx / PlanningBoard.stale-closure.test.tsx).
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver
+}
+
 // jsdom has no createImageBitmap; addImageFromBlob calls it (in a try/catch) to size the
 // image. Resolve a tiny stub so the post-await commit runs — the catch fallback would also
 // work, but a clean resolve keeps the two-await window (asset.write + this) realistic.

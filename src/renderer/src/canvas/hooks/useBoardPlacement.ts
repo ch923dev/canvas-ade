@@ -4,8 +4,9 @@
  * transparent capture overlay whose `onPointerDown` is `startPlacement`:
  *   - drag ≥5px  → a board sized to the dragged rect (world coords, min-clamped), placed exact
  *   - click <5px → a default-size board centered on the cursor (freeSlot-nudged)
- * Either way the tool reverts to 'select'. Esc (or unmount) ABORTS an in-flight drag so a
- * late pointerup can't create a phantom board after cancel. The ghost is a screen-space rect
+ * Either way the tool reverts to 'select'. Esc, window blur, pointercancel, or unmount
+ * ABORTS an in-flight drag so a late pointerup can't create a phantom board after cancel;
+ * only the primary button (e.button === 0) starts one. The ghost is a screen-space rect
  * (client coords) the overlay draws; world conversion happens only on release.
  *
  * Pointer model mirrors Canvas.tsx's connector rubber-band: pointerdown arms a window
@@ -23,6 +24,7 @@ import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { DEFAULT_BOARD_SIZE, type BoardType } from '../../lib/boardSchema'
 import { isClickGesture, normalizeBox, placementRect, type Box } from '../../lib/placement'
+import { resolveConnectTarget } from '../../lib/resolveConnectTarget'
 
 export interface BoardPlacementApi {
   /** True while a board type is armed (capture overlay should mount). */
@@ -70,6 +72,9 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
   const startPlacement = useCallback(
     (e: ReactPointerEvent): void => {
       if (tool === 'select') return
+      // BUG-046: only the primary button places a board — a right/middle press would
+      // otherwise arm the window pointerup pair and commit a phantom board on release.
+      if (e.button !== 0) return
       // BUG-035: If a drag is already in flight (e.g. two-finger touch producing two concurrent
       // pointerdown events), abort the previous drag before starting a new one so its window
       // listeners are not orphaned.
@@ -103,15 +108,78 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
         }
         setTool('select')
       }
+      // BUG-047: a pointercancel (touch/pen) or an OS focus steal mid-drag (Alt+Tab — the
+      // pointerup goes to the other app) skips window pointerup, leaving these listeners
+      // armed; the NEXT pointerup anywhere (even on chrome above the overlay) would commit
+      // a phantom board from the stale origin. Abort the drag like Esc does (tool stays
+      // armed — only the in-flight gesture is cancelled).
+      const onCancel = (): void => abortDrag()
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
+      window.addEventListener('blur', onCancel)
       dragCleanupRef.current = (): void => {
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+        window.removeEventListener('blur', onCancel)
       }
     },
     [tool, rf, setTool, abortDrag]
   )
 
   return { armed, ghost, startPlacement }
+}
+
+/**
+ * M2 connector rubber-band drag (the placement gesture's documented sibling — moved here
+ * from Canvas.tsx so both window-pointer creation gestures share one home + the abort
+ * discipline above). While `connectFromId` is set (title-bar connector handle pressed),
+ * window listeners track the pointer for the rubber-band and, on release, resolve the
+ * drop target from STORE GEOMETRY (pure resolveConnectTarget — no DOM hit-test) → add an
+ * orchestration connector. Window-level so the drag resolves past the board edge.
+ *
+ * BUG-048: Esc (CAPTURE phase, same rationale as the placement Esc above), window blur
+ * (an OS focus steal swallows the pointerup), or pointercancel ABORTS without committing —
+ * otherwise the armed listeners survive and the next pointerup over a board (e.g. the
+ * user's re-focusing click) silently commits a connector.
+ */
+export function useConnectorDrag(opts: {
+  rf: ReactFlowInstance
+  connectFromId: string | null
+  setConnectFromId: (id: string | null) => void
+  setConnectPointer: (p: { x: number; y: number } | null) => void
+  addConnector: (sourceId: string, targetId: string, kind: 'orchestration') => string | null
+}): void {
+  const { rf, connectFromId, setConnectFromId, setConnectPointer, addConnector } = opts
+  useEffect(() => {
+    if (!connectFromId) return
+    const onMove = (e: PointerEvent): void => setConnectPointer({ x: e.clientX, y: e.clientY })
+    const onUp = (e: PointerEvent): void => {
+      const flow = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      const target = resolveConnectTarget(useCanvasStore.getState().boards, connectFromId, flow)
+      if (target) addConnector(connectFromId, target, 'orchestration')
+      setConnectFromId(null)
+      setConnectPointer(null)
+    }
+    const abort = (): void => {
+      setConnectFromId(null)
+      setConnectPointer(null)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') abort()
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', abort)
+    window.addEventListener('blur', abort)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', abort)
+      window.removeEventListener('blur', abort)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [connectFromId, rf, addConnector, setConnectFromId, setConnectPointer])
 }

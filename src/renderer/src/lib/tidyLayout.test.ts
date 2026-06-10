@@ -261,6 +261,29 @@ describe('tidyLayout — large board count (BUG-015 regression)', () => {
     expect(() => tidyLayout(boards, { mode: 'smart' })).not.toThrow()
   })
 
+  // BUG-062 regression: stackCenteredRows must not spread widths into Math.max
+  test('BUG-062: stackCenteredRows (smart mode, many rows) does not throw RangeError', () => {
+    // Build enough terminal+browser pairs so stackCenteredRows receives > SENTINEL_LIMIT rows.
+    // Each pair produces one browser row and contributes to the terminal row.
+    const n = SENTINEL_LIMIT + 3
+    const boards: TidyBoard[] = []
+    for (let i = 0; i < n; i++) {
+      boards.push({ id: `t${i}`, x: 0, y: 0, w: 400, h: 300, type: 'terminal' })
+      boards.push({
+        id: `b${i}`,
+        x: 0,
+        y: 0,
+        w: 700,
+        h: 500,
+        type: 'browser',
+        viewport: 'desktop',
+        previewSourceId: `t${i}`
+      })
+    }
+    // smartLayout builds one row per cluster => n browser rows + 1 terminal row = n+1 rows total
+    expect(() => tidyLayout(boards, { mode: 'smart' })).not.toThrow()
+  })
+
   test('by-type mode does not throw RangeError for board counts exceeding sentinel', () => {
     const boards = manyBoards(SENTINEL_LIMIT + 5).map((board, i) => ({
       ...board,

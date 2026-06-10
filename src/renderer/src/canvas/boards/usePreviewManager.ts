@@ -366,29 +366,45 @@ export function usePreviewManager(props: LayerProps): void {
     async (g: BoardGeom): Promise<void> => {
       const r = rec(g.id)
       if (!r.attached) return
+      // BUG-017: a demote of this board is already in flight (here or beginMotion) —
+      // it owns the detach; a second pass would double-capture and drain `demoting` early.
+      if (demoting.current.has(g.id)) return
       const seq = r.attachSeq
-      // Bug #8/#9: a rejected capturePage() (headless / GPU-contended host) must NOT
-      // abort the detach — the native view paints above all HTML, so it MUST still be
-      // pulled out. Treat a capture failure like an empty snapshot (url = null) and
-      // proceed to the detach + state-clear regardless.
-      let url: string | null = null
+      // BUG-017 (the applyLiveness twin of BUG-002): register this board in `demoting`
+      // for the capture→detach window, mirroring beginMotion. Without it a concurrent
+      // attachBoard takes the diff-skip no-op path (no attachSeq bump, no attachPreview)
+      // while this demote is mid-capture, and the demote then detaches an eligible
+      // board at rest with no healer. With it the attach falls through, re-issues a
+      // real attachPreview and bumps attachSeq — which the seq guards below detect.
+      demoting.current.add(g.id)
       try {
-        url = await window.api.capturePreview(g.id)
-      } catch {
-        url = null
+        // Bug #8/#9: a rejected capturePage() (headless / GPU-contended host) must NOT
+        // abort the detach — the native view paints above all HTML, so it MUST still be
+        // pulled out. Treat a capture failure like an empty snapshot (url = null) and
+        // proceed to the detach + state-clear regardless.
+        let url: string | null = null
+        try {
+          url = await window.api.capturePreview(g.id)
+        } catch {
+          url = null
+        }
+        // Re-check after the capture IPC round-trip:
+        //  • Bug #48 — the board may have been deleted mid-capture (reconcile removed
+        //    its rec + cleared its runtime); patching here would resurrect an orphan.
+        //  • Bug #45 — a concurrent attach (zoomed back in across LOD) re-claimed this
+        //    board (attachSeq bumped), so it should stay live, not be detached.
+        if (!recs.current.has(g.id)) return
+        if (!r.attached || r.attachSeq !== seq) return
+        if (url) patchRuntime(g.id, { snapshot: url })
+        await window.api.detachPreview(g.id)
+        if (!r.attached || r.attachSeq !== seq) return
+        r.attached = false
+        patchRuntime(g.id, { live: false })
+      } finally {
+        // Always drain (mirrors beginMotion's Bug H1 discipline) so flushBatch resumes
+        // positioning this board and future attaches diff-skip normally.
+        demoting.current.delete(g.id)
       }
-      // Re-check after the capture IPC round-trip:
-      //  • Bug #48 — the board may have been deleted mid-capture (reconcile removed
-      //    its rec + cleared its runtime); patching here would resurrect an orphan.
-      //  • Bug #45 — a concurrent attach (zoomed back in across LOD) re-claimed this
-      //    board (attachSeq bumped), so it should stay live, not be detached.
-      if (!recs.current.has(g.id)) return
-      if (!r.attached || r.attachSeq !== seq) return
-      if (url) patchRuntime(g.id, { snapshot: url })
-      await window.api.detachPreview(g.id)
-      if (!r.attached || r.attachSeq !== seq) return
-      r.attached = false
-      patchRuntime(g.id, { live: false })
     },
     [rec, patchRuntime]
   )
@@ -698,7 +714,13 @@ export function usePreviewManager(props: LayerProps): void {
     // re-occluding the dragged board mid-drag. Ignore a camera-driven end while a node
     // gesture is active — the node-drag's own end (nodeGesture → false) stays the sole
     // authority that finally clears the flag and reattaches.
-    if (usePreviewStore.getState().nodeGesture) return
+    // BUG-016: yield to an open ⋯ menu / popover the same way. menuOpen drives
+    // beginMotion via the same effect (nodeGesture || menuOpen = one motion source),
+    // but a wheel-zoom over the canvas fires onEnd while the menu is still open —
+    // reattaching the always-above native views OVER the popover (PREV-C). The
+    // menu-close path (menuOpen → false) stays the authority that reattaches.
+    const ps = usePreviewStore.getState()
+    if (ps.nodeGesture || ps.menuOpen) return
     gestureRef.current = false
     applyLiveness()
   }, [applyLiveness])
@@ -882,7 +904,11 @@ export function usePreviewManager(props: LayerProps): void {
           // Bug #10: while a node/camera gesture is in flight, the motion paths own
           // bounds — re-pushing here every drag tick re-shows a detached view mid-drag
           // (the per-frame-setBounds-then-detach #43961 trigger). Bail during a gesture.
-          if (r.attached && !gestureRef.current) {
+          // BUG-058: in full view the board is attached at the MODAL rect — pushing the
+          // camera-scaled canvas rect here snaps the native view over the scrim (and
+          // clobbers lastSent) until applyLiveness heals it. The full-view rAF pump +
+          // applyLiveness own that board's bounds (attachBoard/flushBatch HOLD likewise).
+          if (r.attached && !gestureRef.current && fullViewIdRef.current !== g.id) {
             const { bounds, zoomFactor } = previewGeom.boundsAndZoom(g, vp, paneOffset.current)
             if (r.lastSent && rectsEqual(r.lastSent, bounds) && r.lastZoom === zoomFactor) continue
             r.lastSent = bounds
@@ -964,7 +990,38 @@ export function usePreviewManager(props: LayerProps): void {
       // back down rather than left painting over the modal scrim.
       if ((selChanged || fullViewIdRef.current !== null) && !gestureRef.current) applyLiveness()
     })
-    return unsub
+    // BUG-049: an explicit same-URL push (applyPush 'existing') bumps reloadNonce, but the
+    // updateBoard that follows is value-identical → the `boards` ref never changes, so the
+    // boards-gated subscription above never reconciles: no reload happens now, and the
+    // unread nonce later fires a surprise re-navigate on the next unrelated boards
+    // mutation. Consume a nonce bump directly: when any OPEN view's nonce went stale,
+    // re-run reconcile (its existing branch navigates + adopts the nonce). Deferred one
+    // microtask so a push that DOES change the url lands its updateBoard first (the
+    // boards subscription then consumes url + nonce together — no double navigate).
+    let cancelled = false
+    let noncePending = false
+    const unsubNonce = usePreviewStore.subscribe(() => {
+      if (noncePending) return
+      noncePending = true
+      queueMicrotask(() => {
+        noncePending = false
+        if (cancelled) return
+        for (const [id, r] of recs.current) {
+          if (
+            r.exists &&
+            (usePreviewStore.getState().byId[id]?.reloadNonce ?? 0) !== r.lastReloadNonce
+          ) {
+            reconcile(toGeom(useCanvasStore.getState().boards))
+            return
+          }
+        }
+      })
+    })
+    return () => {
+      cancelled = true
+      unsub()
+      unsubNonce()
+    }
   }, [reconcile, applyLiveness])
 
   // paneOffset: the RF pane top-left in window CSS px. Once per layout (ResizeObserver

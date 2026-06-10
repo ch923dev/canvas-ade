@@ -132,11 +132,19 @@ export function BrowserBoard({
   // render; https://react.dev/learn/you-might-not-need-an-effect).
   const [draftUrl, setDraftUrl] = useState(board.url)
   const [lastUrl, setLastUrl] = useState(board.url)
+  // BUG-059: the URL input is being edited. While focused, an external board.url
+  // change (auto-connect detect push, terminal push-to-preview, MCP, undo) must NOT
+  // clobber the in-progress draft; blur/Escape re-sync from board.url instead.
+  const [editingUrl, setEditingUrl] = useState(false)
+  // The user actually typed since focus — only then does blur commit the draft
+  // (a focus-without-edit blur must not write a stale draft back over an external
+  // url change).
+  const urlDirty = useRef(false)
   const [note, setNote] = useState<string | null>(null)
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   if (board.url !== lastUrl) {
     setLastUrl(board.url)
-    setDraftUrl(board.url)
+    if (!editingUrl) setDraftUrl(board.url)
   }
 
   // Clear the note timer on unmount to prevent setState-after-unmount.
@@ -149,10 +157,14 @@ export function BrowserBoard({
 
   const commitUrl = (): void => {
     const next = draftUrl.trim()
-    if (!next || next === board.url) {
+    // BUG-059: an unedited blur must not commit — the draft may be a STALE value an
+    // external writer (auto-connect) superseded while the input was focused.
+    if (!urlDirty.current || !next || next === board.url) {
+      urlDirty.current = false
       setDraftUrl(board.url)
       return
     }
+    urlDirty.current = false
     // One undo checkpoint per committed URL edit (also clears any armed redo branch).
     beginChange()
     updateBoard(board.id, { url: next })
@@ -180,9 +192,17 @@ export function BrowserBoard({
   const takeScreenshot = (): void => {
     void (async () => {
       const res = await window.api.screenshotPreview(board.id)
+      // BUG-028: main reports whether the clipboard write actually landed.
+      const clipOk = res.ok && res.clipboardOk
       if (!res.ok) showNote('Open the preview to screenshot it')
-      else if (res.assetId) showNote('Screenshot copied + saved to assets/')
-      else showNote('Screenshot copied to clipboard')
+      else if (res.assetId)
+        showNote(
+          clipOk
+            ? 'Screenshot copied + saved to assets/'
+            : 'Screenshot saved to assets/ (clipboard unavailable)'
+        )
+      else if (clipOk) showNote('Screenshot copied to clipboard')
+      else showNote('Screenshot failed: clipboard unavailable and nothing saved')
     })()
   }
 
@@ -255,13 +275,26 @@ export function BrowserBoard({
             value={draftUrl}
             spellCheck={false}
             onMouseDown={(e) => e.stopPropagation()}
-            onChange={(e) => setDraftUrl(e.target.value)}
-            onBlur={commitUrl}
+            onFocus={() => {
+              setEditingUrl(true)
+              urlDirty.current = false
+            }}
+            onChange={(e) => {
+              urlDirty.current = true
+              setDraftUrl(e.target.value)
+            }}
+            onBlur={() => {
+              setEditingUrl(false)
+              commitUrl()
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
                 ;(e.target as HTMLInputElement).blur()
               } else if (e.key === 'Escape') {
+                // Discard the edit: blur's commitUrl sees a clean (non-dirty) draft
+                // and re-syncs from board.url instead of committing the typed text.
+                urlDirty.current = false
                 setDraftUrl(board.url)
                 ;(e.target as HTMLInputElement).blur()
               }

@@ -79,6 +79,7 @@ export function TerminalConfig({
     <div
       style={pop}
       className="nowheel"
+      data-no-flip
       tabIndex={-1}
       onWheel={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}

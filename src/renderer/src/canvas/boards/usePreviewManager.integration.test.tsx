@@ -36,21 +36,28 @@ import { usePreviewManager, type LayerProps } from './usePreviewManager'
 // concurrent endMotion→applyLiveness→attachBoard runs DURING that await. We hand
 // out a manually-resolved promise for detachPreview so the test can interleave the
 // endMotion call precisely between "detach issued" and "detach resolved".
+interface AttachArg {
+  id: string
+  bounds: { x: number; y: number; width: number; height: number }
+}
 interface ApiCalls {
   attach: string[]
+  attachArgs: AttachArg[]
   detach: string[]
+  navigate: Array<{ id: string; url: string }>
 }
 let calls: ApiCalls
 let releaseDetach: (() => void) | null = null
 
 function stubApi(): void {
-  calls = { attach: [], detach: [] }
+  calls = { attach: [], attachArgs: [], detach: [], navigate: [] }
   releaseDetach = null
   ;(window as unknown as { api: unknown }).api = {
     capturePreview: vi.fn(async () => null),
     openPreview: vi.fn(async () => true),
-    attachPreview: vi.fn(async (a: { id: string }) => {
+    attachPreview: vi.fn(async (a: AttachArg) => {
       calls.attach.push(a.id)
+      calls.attachArgs.push(a)
       return true
     }),
     detachPreview: vi.fn(
@@ -62,7 +69,10 @@ function stubApi(): void {
     ),
     closePreview: vi.fn(async () => true),
     closeAllPreviews: vi.fn(async () => true),
-    navigatePreview: vi.fn(async () => true),
+    navigatePreview: vi.fn(async (id: string, url: string) => {
+      calls.navigate.push({ id, url })
+      return true
+    }),
     setPreviewBoundsBatch: vi.fn(async () => true),
     onPreviewEvent: vi.fn(() => () => {})
   }
@@ -78,15 +88,20 @@ const PROPS: LayerProps = {
   digestOpen: false
 }
 
-function renderManager(): { unmount: () => void } {
+function renderManager(): {
+  unmount: () => void
+  rerender: (extra: Partial<LayerProps>) => void
+} {
   // A 2000×2000 pane keeps the seeded board away from the top dock band + top-right
   // chrome cluster (chromeExclusionZones), so occludesProtected is false.
   const paneEl = document.createElement('div')
   paneEl.getBoundingClientRect = () =>
     ({ left: 0, top: 0, width: 2000, height: 2000, right: 2000, bottom: 2000 }) as DOMRect
-  const props: LayerProps = { ...PROPS, paneRef: { current: paneEl } }
-  const { unmount } = renderHook(() => usePreviewManager(props))
-  return { unmount }
+  const base: LayerProps = { ...PROPS, paneRef: { current: paneEl } }
+  const { unmount, rerender } = renderHook((p: LayerProps) => usePreviewManager(p), {
+    initialProps: base
+  })
+  return { unmount, rerender: (extra) => rerender({ ...base, ...extra }) }
 }
 
 /** Flush microtasks (await IPC promise chains) inside act. */
@@ -177,5 +192,193 @@ describe('usePreviewManager — endMotion-during-detach race (BUG-002)', () => {
     // also satisfy the invariant above, but the fix re-attaches via the demoting guard.)
     expect(reAttached).toBe(true)
     expect(live).toBe(true)
+  })
+})
+
+describe('usePreviewManager — endMotion vs open popover (BUG-016)', () => {
+  it('does not reattach native views on a camera move end while a popover is open', async () => {
+    renderManager()
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 400, y: 400 })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+
+    // Open a popover (ref-counted token, PREV-C): the gesture effect runs beginMotion —
+    // capture, then detach (held); release it so the board settles detached (live:false).
+    await act(async () => {
+      usePreviewStore.getState().setMenuOpen('menu-a', true)
+    })
+    await flush()
+    expect(calls.detach).toContain(id)
+    await act(async () => {
+      releaseDetach?.()
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(false)
+
+    // Wheel-zoom over the canvas while the menu is STILL open: React Flow fires
+    // onStart/onEnd. The end must YIELD to the open menu (mirror of the nodeGesture
+    // guard) — the bug reattached the always-above native view over the popover.
+    const attachCountBefore = calls.attach.length
+    await act(async () => {
+      vpCallbacks.onStart?.()
+    })
+    await act(async () => {
+      vpCallbacks.onEnd?.()
+    })
+    await flush()
+    expect(calls.attach.length).toBe(attachCountBefore)
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(false)
+
+    // The menu-close path stays the sole authority that reattaches.
+    await act(async () => {
+      usePreviewStore.getState().setMenuOpen('menu-a', false)
+    })
+    await flush()
+    expect(calls.attach.length).toBeGreaterThan(attachCountBefore)
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+  })
+})
+
+describe('usePreviewManager — attach-during-direct-demote race (BUG-017)', () => {
+  it('does not leave an eligible board detached when attachBoard lands inside an applyLiveness demote capture window', async () => {
+    renderManager()
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 400, y: 400 })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+
+    const attachCountBefore = calls.attach.length
+    // Pass A: add + auto-select an OVERLAPPING planning board (exact:true skips the
+    // freeSlot nudge) → applyLiveness selection-occlusion demotes the browser board;
+    // demoteToSnapshot parks at its capturePreview await.
+    // Pass B — same tick, NO microtask flush in between, so the capture is still in
+    // flight: deselect → applyLiveness wants the browser live again → attachBoard runs
+    // INSIDE the demote's capture window. The bug: the diff-skip no-op path (demoting
+    // never registered the direct demote) bumps no attachSeq, so the resuming demote
+    // detaches the eligible board with no healer.
+    act(() => {
+      useCanvasStore.getState().addBoard('planning', { x: 420, y: 420 }, { exact: true })
+    })
+    act(() => {
+      useCanvasStore.getState().selectBoard(null)
+    })
+    await flush()
+    // Buggy path only: the demote proceeds to its (held) detach — release it so the
+    // inconsistent end state is observable. Fixed path issues no detach (no-op).
+    await act(async () => {
+      releaseDetach?.()
+    })
+    await flush()
+
+    // The board is eligible at rest: a real attachPreview must have been re-issued
+    // (the demoting-guard fall-through) and the runtime must say live.
+    const reAttached = calls.attach.length > attachCountBefore
+    const live = usePreviewStore.getState().byId[id]?.live === true
+    expect(live && !reAttached).toBe(false)
+    expect(reAttached).toBe(true)
+    expect(live).toBe(true)
+  })
+})
+
+describe('usePreviewManager — same-URL push consumes the reload nonce (BUG-049)', () => {
+  it('re-navigates immediately on a reloadNonce bump with NO boards mutation, and leaves no stale nonce', async () => {
+    renderManager()
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 400, y: 400 })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+    const b = useCanvasStore.getState().boards.find((x) => x.id === id)
+    const boardUrl = b && b.type === 'browser' ? b.url : ''
+
+    // Explicit same-URL push (applyPush 'existing'): requestReload bumps the nonce, but
+    // the value-identical updateBoard leaves the boards ref unchanged → the boards-gated
+    // reconcile never runs. The bug: no reload now; the unread nonce later fires a
+    // surprise re-navigate on the next unrelated boards mutation.
+    const before = calls.navigate.length
+    await act(async () => {
+      usePreviewStore.getState().requestReload(id)
+    })
+    await flush()
+    expect(calls.navigate.slice(before)).toEqual([{ id, url: boardUrl }])
+
+    // No deferred surprise: an unrelated boards mutation must NOT re-navigate.
+    const afterPush = calls.navigate.length
+    await act(async () => {
+      useCanvasStore.getState().addBoard('planning', { x: 1600, y: 1600 })
+    })
+    await flush()
+    expect(calls.navigate.length).toBe(afterPush)
+  })
+
+  it('does not double-navigate when the push also changes the url', async () => {
+    renderManager()
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 400, y: 400 })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+
+    // applyPush ordering: nonce bump FIRST, then the url-changing updateBoard in the
+    // same tick. The boards subscription consumes url + nonce together; the deferred
+    // nonce check must then find nothing stale (exactly ONE navigate, to the new url).
+    const before = calls.navigate.length
+    await act(async () => {
+      usePreviewStore.getState().requestReload(id)
+      useCanvasStore.getState().updateBoard(id, { url: 'http://localhost:9999' })
+    })
+    await flush()
+    expect(calls.navigate.slice(before)).toEqual([{ id, url: 'http://localhost:9999' }])
+  })
+})
+
+describe('usePreviewManager — reconcile re-push during full view (BUG-058)', () => {
+  it('does not push the camera-scaled canvas rect to a board attached at the modal rect', async () => {
+    const { rerender } = renderManager()
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 400, y: 400 })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+
+    // Full-view modal host with the portaled `.bb-frame` (what fullViewBoundsFor reads).
+    const host = document.createElement('div')
+    const frame = document.createElement('div')
+    frame.setAttribute('data-bb-frame', id)
+    frame.getBoundingClientRect = () =>
+      ({ left: 500, top: 100, width: 800, height: 600, right: 1300, bottom: 700 }) as DOMRect
+    host.appendChild(frame)
+    document.body.appendChild(host)
+    try {
+      // Enter full view → applyLiveness attaches the board at the MODAL rect (1px inset).
+      await act(async () => {
+        rerender({ fullViewId: id, fullViewHost: host })
+      })
+      await flush()
+      const modal = calls.attachArgs[calls.attachArgs.length - 1]
+      expect(modal?.id).toBe(id)
+      expect(modal?.bounds).toEqual({ x: 501, y: 101, width: 798, height: 598 })
+
+      // Any boards mutation while in full view re-runs reconcile. Its attached-board
+      // re-push must NOT fire the camera-scaled CANVAS rect at the modal-attached view
+      // (the transient native flash over the scrim + lastSent clobber). With the guard,
+      // the trailing applyLiveness diff-skips too → zero new attach IPCs for this board.
+      const before = calls.attachArgs.length
+      await act(async () => {
+        useCanvasStore.getState().addBoard('planning', { x: 1600, y: 1600 })
+      })
+      await flush()
+      expect(calls.attachArgs.slice(before).filter((a) => a.id === id)).toEqual([])
+    } finally {
+      document.body.removeChild(host)
+    }
   })
 })

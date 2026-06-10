@@ -359,6 +359,95 @@ describe('runSummarize', () => {
   })
 })
 
+// BUG-041: a trailing slash on the local baseUrl must be stripped so the joined URL is
+// '.../v1/chat/completions' not '.../v1//chat/completions'
+describe('buildRequest — BUG-041 trailing slash normalization', () => {
+  it('strips a single trailing slash from a local baseUrl', () => {
+    const r = buildRequest(
+      'local',
+      { provider: 'local', model: 'm', baseUrl: 'http://127.0.0.1:1234/v1/' },
+      '',
+      { text: 'hi' }
+    )
+    expect(r.url).toBe('http://127.0.0.1:1234/v1/chat/completions')
+    // Verify the path segment has no double slash (http:// is expected)
+    expect(r.url.slice('http://'.length)).not.toContain('//')
+  })
+
+  it('strips multiple trailing slashes', () => {
+    const r = buildRequest(
+      'local',
+      { provider: 'local', model: 'm', baseUrl: 'http://127.0.0.1:1234/v1///' },
+      '',
+      { text: 'hi' }
+    )
+    expect(r.url).toBe('http://127.0.0.1:1234/v1/chat/completions')
+  })
+
+  it('does not alter a baseUrl without a trailing slash', () => {
+    const r = buildRequest(
+      'local',
+      { provider: 'local', model: 'm', baseUrl: 'http://127.0.0.1:1234/v1' },
+      '',
+      { text: 'hi' }
+    )
+    expect(r.url).toBe('http://127.0.0.1:1234/v1/chat/completions')
+  })
+})
+
+// BUG-041: the local HTTP error message must include the attempted URL so a trailing-slash
+// misconfiguration is diagnosable.
+describe('runSummarize — BUG-041 local HTTP error includes URL', () => {
+  it('surfaces the attempted URL in a local 404 error', async () => {
+    const local404Fetch: FetchLike = () =>
+      Promise.resolve({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve('not found')
+      })
+    const r = await runSummarize(
+      { provider: 'local', model: 'm', baseUrl: 'http://127.0.0.1:1234/v1' },
+      { text: 'hi' },
+      { fetch: local404Fetch, env: {} }
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok && r.reason === 'provider-error') {
+      expect(r.message).toContain('local')
+      expect(r.message).toContain('404')
+      // BUG-041: the URL must appear in the message for diagnosability
+      expect(r.message).toContain('http://127.0.0.1:1234/v1/chat/completions')
+    }
+  })
+})
+
+// BUG-039: runSummarize must NOT throw when tryConsume's write() throws (EPERM/ENOSPC).
+// It must return a typed provider-error result (honouring the NEVER-throws contract).
+describe('runSummarize — BUG-039 tryConsume throw maps to provider-error', () => {
+  it('returns provider-error (not raw throw) when tryConsume throws', async () => {
+    const throwingBudget = {
+      tryConsume: (_cap: number): boolean => {
+        throw new Error('EPERM: llm-budget.json locked by antivirus')
+      },
+      peek: () => ({ day: '2026-06-03', calls: 0 })
+    }
+    const r = await runSummarize(
+      { provider: 'openrouter', model: 'm' },
+      { text: 'hi' },
+      {
+        fetch: ((): never => {
+          throw new Error('must not reach fetch')
+        }) as never,
+        env: { OPENROUTER_API_KEY: 'k' },
+        budget: throwingBudget
+      }
+    )
+    // Must return a typed result, not propagate the throw
+    expect(r.ok).toBe(false)
+    expect(r).toMatchObject({ reason: 'provider-error', message: expect.any(String) })
+  })
+})
+
 describe('llmService — fetch timeout (T-M3)', () => {
   it('aborts a hung provider and degrades to provider-error', async () => {
     // A fetch that never resolves on its own — it only settles when the injected

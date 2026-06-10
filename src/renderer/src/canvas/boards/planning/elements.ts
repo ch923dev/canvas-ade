@@ -293,7 +293,10 @@ export function nominalChecklistHeight(itemCount: number): number {
 export function elementBBox(el: PlanningElement, measured?: Measured): BBox {
   switch (el.kind) {
     case 'note':
-      return { x: el.x, y: el.y, w: el.w, h: el.h }
+      // Prefer the live measured height when positive (NoteCard auto-sizes its textarea,
+      // so el.h is only the initial schema default of 96 — BUG-050). A zero measured
+      // height means the DOM has not laid out yet; fall back to el.h in that case.
+      return { x: el.x, y: el.y, w: el.w, h: measured && measured.h > 0 ? measured.h : el.h }
     case 'checklist':
       return {
         x: el.x,

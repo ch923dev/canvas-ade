@@ -19,7 +19,14 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
     setBusy(true)
     setError(false)
     try {
-      await window.api.recap.setConsent(decision)
+      // BUG-066: a MAIN-side dir desync / frame guard replies with a RESOLVED { ok: false }
+      // (nothing persisted, no hook installed) — treat it like a rejection, never close on it.
+      const r = await window.api.recap.setConsent(decision)
+      if (!r.ok) {
+        setBusy(false)
+        setError(true)
+        return
+      }
       onClose() // close ONLY once the decision is durably persisted
     } catch (err) {
       // Don't close on failure (IPC teardown race / disk error) — closing would leave the user

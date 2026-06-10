@@ -115,6 +115,34 @@ function openExternalSafe(rawUrl: string): boolean {
   return true
 }
 
+/**
+ * Per-view rate limiter for page-initiated external opens (BUG-029). Electron does
+ * not enforce Chromium's user-activation requirement for window.open, so untrusted
+ * preview content could `setInterval(() => window.open('https://attacker/'), 50)`
+ * and flood the OS browser with real-chrome tabs (desktop DoS + phishing assist).
+ * Policy: a token bucket per view — a burst of `capacity` (3) opens, refilling one
+ * token per `refillMs` (10s). Generous for legitimate single link-clicks (one open
+ * per click) while capping a scripted flood at ~6/min; excess opens are silently
+ * dropped. The renderer-driven `preview:openExternal` (a real user gesture on app
+ * chrome) is NOT limited. Pure factory (injectable clock) so it is unit-testable.
+ */
+export function createOpenExternalLimiter(
+  capacity = 3,
+  refillMs = 10_000,
+  now: () => number = Date.now
+): () => boolean {
+  let tokens = capacity
+  let last = now()
+  return () => {
+    const t = now()
+    tokens = Math.min(capacity, tokens + (t - last) / refillMs)
+    last = t
+    if (tokens < 1) return false
+    tokens -= 1
+    return true
+  }
+}
+
 /** A cancellable navigation event (the `event` arg of will-navigate/will-redirect). */
 interface CancellableNav {
   preventDefault(): void
@@ -264,9 +292,12 @@ function ensure(id: string, win: BrowserWindow): Entry {
     // External links open in the OS browser, never inside the preview (security:
     // the preview must never become a general web browser / nav target). The scheme
     // is allowlisted (Bug #23) so untrusted preview content can't smuggle a
-    // file:/smb:/custom-protocol URL to the OS handler via window.open.
+    // file:/smb:/custom-protocol URL to the OS handler via window.open, and a
+    // per-view token bucket (BUG-029: burst 3, +1 token/10s) caps gesture-free
+    // window.open floods so a hostile page can't tab-bomb the user's OS browser.
+    const allowExternalOpen = createOpenExternalLimiter()
     wc.setWindowOpenHandler(({ url }) => {
-      openExternalSafe(url)
+      if (allowExternalOpen()) openExternalSafe(url)
       return { action: 'deny' }
     })
     // Defense-in-depth (Bug #16/#32/#14): block a page-driven navigation to a
@@ -378,6 +409,14 @@ function attach(e: Entry, bounds?: Rectangle, zoomFactor?: number): void {
 
 function detach(e: Entry): void {
   if (!owner || !e.attached) return
+  // BUG-005: the owner window may already be destroyed (window close / macOS
+  // close->activate reopen) — touching its contentView would throw "Object has
+  // been destroyed". The view left the window's tree with the window itself, so
+  // only the flag needs clearing.
+  if (owner.isDestroyed()) {
+    e.attached = false
+    return
+  }
   // Hide the native layer BEFORE removing it from the view tree. `removeChildView`
   // alone (even with the #44652 fix present in Electron ≥33.2.1) can leave a stale
   // composited frame painted on screen across the rapid detach→reattach toggle a node
@@ -391,8 +430,15 @@ function detach(e: Entry): void {
 function disposeOne(id: string): void {
   const e = views.get(id)
   if (!e) return
+  // BUG-005: detach and close live in SEPARATE try blocks — a detach throw must
+  // never skip the mandatory close() below (WebContentsView has no destroy();
+  // skipping close leaks the preview renderer while the entry leaves the map).
   try {
     detach(e)
+  } catch {
+    /* window/view gone */
+  }
+  try {
     e.view.webContents.close() // no destroy() — close or leak the renderer
   } catch {
     /* already gone */

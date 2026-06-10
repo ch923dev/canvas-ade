@@ -22,6 +22,46 @@ describe('stripAnsi', () => {
   it('leaves plain text untouched', () => {
     expect(stripAnsi('plain $ npm run dev\n> ready')).toBe('plain $ npm run dev\n> ready')
   })
+
+  // BUG-025: 8-bit C1 escape codes must be stripped, not passed through.
+  // On POSIX (non-ConPTY), programs can emit raw 8-bit C1 bytes (U+0080-U+009F);
+  // node-pty UTF-8-decodes 0xC2 0x9B -> U+009B etc., so these reach the ring
+  // as Unicode code points and must be caught by the strip regex.
+  it('BUG-025: removes 8-bit C1 CSI sequences (0x9B = ESC [ equivalent)', () => {
+    // U+009B is the 8-bit CSI introducer. The sequence \x9b31m sets red; \x9b0m resets.
+    // Both are stripped; the plain text RED and " hi" remain.
+    expect(stripAnsi('\x9b31mRED\x9b0m hi')).toBe('RED hi')
+    // A sequence with no surrounding plain text produces an empty string.
+    expect(stripAnsi('\x9b2J')).toBe('')
+  })
+
+  it('BUG-025: removes 8-bit C1 OSC sequences terminated by BEL', () => {
+    // U+009D is the 8-bit OSC introducer.
+    expect(stripAnsi('\x9d0;title\x07done')).toBe('done')
+  })
+
+  it('BUG-025: removes 8-bit C1 OSC sequences terminated by ST (0x9C)', () => {
+    expect(stripAnsi('\x9d0;title\x9cdone')).toBe('done')
+  })
+
+  it('BUG-025: removes 8-bit C1 OSC sequences terminated by 7-bit ST (ESC \\)', () => {
+    expect(stripAnsi('\x9d0;title\x1b\\done')).toBe('done')
+  })
+
+  it('BUG-025: removes 8-bit C1 DCS sequences terminated by ST (0x9C)', () => {
+    // U+0090 is the 8-bit DCS introducer; payload should be stripped.
+    expect(stripAnsi('\x90q#0;2;0;0;0SIXEL\x9cdone')).toBe('done')
+  })
+
+  it('BUG-025: removes 8-bit C1 DCS sequences terminated by 7-bit ST (ESC \\)', () => {
+    expect(stripAnsi('\x90q#0SIXEL\x1b\\done')).toBe('done')
+  })
+
+  it('BUG-025: removes 7-bit DCS sequences including their full payload (not just the introducer)', () => {
+    // Without the fix, ESC P ... ESC \\ stripped only ESC P (2-byte intro) and
+    // ESC \\ (2-byte ST), leaving the payload "q#0;2;0;0;0SIXELDATA" in the text.
+    expect(stripAnsi('\x1bPq#0;2;0;0;0SIXELDATA\x1b\\done')).toBe('done')
+  })
 })
 
 describe('pageOutput', () => {

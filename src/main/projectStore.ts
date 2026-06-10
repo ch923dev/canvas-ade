@@ -4,7 +4,15 @@
  * validation + migration happen in the renderer (`boardSchema.fromObject`). Holds the
  * single "current open dir" so `project:save` knows where to write.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync
+} from 'fs'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
@@ -92,7 +100,7 @@ export function rotateBakAtomic(primary: string, bakPath: string): void {
   writeFileAtomic.sync(bakPath, readFileSync(primary))
 }
 
-/** Rotate the prior good canvas.json → .bak, then atomic-write the new doc. */
+/** Atomic-write the new doc, THEN rotate the prior primary → .bak. */
 export async function writeProject(dir: string, doc: unknown): Promise<void> {
   // PERSIST-1: envelope-guard the INCOMING doc before any disk touch. MAIN trusts the
   // renderer's deep validation, but a renderer serialization bug could otherwise write a
@@ -104,14 +112,26 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   }
   mkdirSync(dir, { recursive: true })
   const primary = join(dir, CANVAS)
+  // BUG-007: capture the prior primary's bytes but rotate them into .bak only AFTER the
+  // new primary is durable. Rotating first destroyed the last-good .bak in the T5
+  // recovery flow (the prior primary is envelope-valid but deep-corrupt there): a crash
+  // or write failure between the rotation and the primary write left BOTH files corrupt.
+  let prior: Buffer | undefined
   if (tryParse(primary) !== undefined) {
     try {
-      rotateBakAtomic(primary, join(dir, CANVAS_BAK))
+      prior = readFileSync(primary)
     } catch {
       /* a missing/locked prior file must not block the new write */
     }
   }
   await writeFileAtomic(primary, JSON.stringify(doc, null, 2), 'utf8')
+  if (prior !== undefined) {
+    try {
+      writeFileAtomic.sync(join(dir, CANVAS_BAK), prior)
+    } catch {
+      /* a locked .bak must not fail the (already durable) save */
+    }
+  }
 }
 
 /** Ensure the folder; reuse an existing canvas.json, else write a fresh empty doc. */
@@ -126,6 +146,22 @@ export async function createProject(
   if (existing.ok) {
     scaffoldProjectMemory(dir) // open-if-absent on a reused project (best-effort)
     return existing
+  }
+  // BUG-042: reuse-if-exists failed, but unparseable canvas.json/.bak files may still be
+  // on disk (exactly the state after "Could not open project" → retry via Create). Their
+  // bytes are frequently hand-recoverable (truncated/garbled JSON), so rename them aside
+  // instead of letting the fresh write (and the next save's rotation) destroy them.
+  // Best-effort: a locked file must not block project creation.
+  const ts = Date.now()
+  for (const f of [CANVAS, CANVAS_BAK]) {
+    const p = join(dir, f)
+    if (existsSync(p)) {
+      try {
+        renameSync(p, join(dir, `${f}.corrupt-${ts}`))
+      } catch {
+        /* fall through — the fresh write below proceeds either way */
+      }
+    }
   }
   // PERSIST-C: route the fresh write through writeProject so a canvas.json is only ever
   // created via the one envelope-guarded + atomic path (the same guard project:save uses)

@@ -7,8 +7,12 @@
  * MAIN-only; the renderer never writes files.
  */
 import { mkdirSync, writeFileSync, readdirSync, rmSync, statSync } from 'fs'
+import { randomBytes } from 'node:crypto'
 import { join } from 'path'
 
+// Module-level seq is kept for uniqueness WITHIN a single session (monotonic ordering).
+// A random component is added per call to prevent collisions ACROSS restarts: board ids
+// persist in canvas.json but seq resets on every launch (BUG-026).
 let seq = 0
 const PREFIX = 'paste-'
 /** Default prune age: files older than this are removed when a new one is staged. */
@@ -38,7 +42,10 @@ export function stageClipboardImage(
   mkdirSync(dir, { recursive: true })
   pruneOld(dir, maxAgeMs)
   seq += 1
-  const file = join(dir, `${PREFIX}${safeId(boardId)}-${seq}.png`)
+  // Append a short random hex suffix so filenames are collision-free across app restarts
+  // (seq resets to 0 on every launch while board ids and staged files persist up to 1h).
+  const rand = randomBytes(4).toString('hex')
+  const file = join(dir, `${PREFIX}${safeId(boardId)}-${seq}-${rand}.png`)
   writeFileSync(file, png)
   return file
 }

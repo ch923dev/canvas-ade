@@ -62,6 +62,27 @@ const MAX_KEY_LEN = 1024
  */
 const MAX_MODEL_LEN = 256
 
+/**
+ * BUG-036: upper bound for a baseUrl string written over IPC. A valid loopback URL is at most a
+ * few hundred chars; a multi-MB path passes the hostname-only isLoopbackBaseUrl check and would
+ * be synchronously written to disk + echoed on every llm:status (event-loop stall / DoS surface).
+ */
+const MAX_BASE_URL_LEN = 2048
+
+/**
+ * BUG-036: bounds for a maxCallsPerDay value written over IPC. Must be a finite non-negative
+ * integer; an upper bound of 1e6 is orders of magnitude above any realistic daily cap and
+ * guards against a huge value wrapping the persisted-counter comparison in llmBudget.
+ */
+const MAX_CALLS_PER_DAY_CAP = 1_000_000
+
+/**
+ * BUG-037: upper bound for the summarize text/system string length. A megabyte of content is
+ * far beyond any real summarize payload; a larger string is synchronously JSON.stringify'd in
+ * MAIN and sent to the provider at API cost.
+ */
+const MAX_SUMMARIZE_TEXT_LEN = 100_000
+
 const NOOP_KEY_STORE: KeyStore = {
   getKey: () => undefined,
   setKey: () => {
@@ -107,6 +128,23 @@ export function registerLlmHandlers(
     // a null-content request or waste the daily cap.
     if (typeof input?.text !== 'string' || input.text.length === 0)
       return { ok: false, reason: 'provider-error', message: 'invalid input: text is required' }
+    // BUG-037: system must be undefined or a non-empty string — a truthy non-string (object, number)
+    // builds a malformed provider body the provider rejects with 400 AFTER a budget slot is
+    // irrevocably consumed. Also cap both fields: a giant string is JSON.stringify'd synchronously
+    // in MAIN and egressed at API cost.
+    if (
+      input.system !== undefined &&
+      (typeof input.system !== 'string' || input.system.length === 0)
+    )
+      return {
+        ok: false,
+        reason: 'provider-error',
+        message: 'invalid input: system must be a non-empty string'
+      }
+    if (input.text.length > MAX_SUMMARIZE_TEXT_LEN)
+      return { ok: false, reason: 'provider-error', message: 'invalid input: text too long' }
+    if (typeof input.system === 'string' && input.system.length > MAX_SUMMARIZE_TEXT_LEN)
+      return { ok: false, reason: 'provider-error', message: 'invalid input: system too long' }
     const config = readLlmConfig(userDataDir)
     return runSummarize(config, input, deps)
   })
@@ -180,18 +218,44 @@ export function registerLlmHandlers(
       // synchronously in MAIN (event-loop stall / DoS surface), mirroring MAX_KEY_LEN on setKey.
       if (typeof a.model !== 'string' || a.model.length === 0 || a.model.length > MAX_MODEL_LEN)
         return { ok: false, reason: 'invalid-model' }
+      // BUG-036: cap baseUrl length before the loopback check — a multi-MB path passes the
+      // hostname-only isLoopbackBaseUrl check and would be synchronously written to disk in MAIN.
+      if (
+        a.baseUrl !== undefined &&
+        typeof a.baseUrl === 'string' &&
+        a.baseUrl.length > MAX_BASE_URL_LEN
+      )
+        return { ok: false, reason: 'invalid-baseUrl' }
       // BUG-001 (SSRF): reject a non-loopback baseUrl BEFORE it is persisted, so a renderer
       // caller can't point LLM egress at file://, IMDS (169.254.169.254), or internal hosts.
       // An empty/omitted baseUrl is fine (non-local providers ignore it).
       if (a.baseUrl !== undefined && !isLoopbackBaseUrl(a.baseUrl))
         return { ok: false, reason: 'invalid-baseUrl' }
+      // BUG-036: validate maxCallsPerDay when present — a non-integer/negative/huge value would be
+      // persisted verbatim; readLlmConfig then repairs it to undefined, silently destroying a
+      // previously-configured cap and reverting to the 200 default. A non-number truthy value
+      // (string, object) also reaches writeFileAtomic.sync synchronously in MAIN (DoS surface).
+      if (a.maxCallsPerDay !== undefined) {
+        if (
+          typeof a.maxCallsPerDay !== 'number' ||
+          !Number.isInteger(a.maxCallsPerDay) ||
+          a.maxCallsPerDay < 0 ||
+          a.maxCallsPerDay > MAX_CALLS_PER_DAY_CAP
+        )
+          return { ok: false, reason: 'invalid-maxCallsPerDay' }
+      }
       // Preserve an already-configured cap when the caller omits it (the Settings modal does):
       // otherwise every Save silently wipes maxCallsPerDay back to the 200 default (F-B).
+      // BUG-040: same preserve-when-omitted rule for baseUrl — the Settings modal sends
+      // `baseUrl: undefined` for non-local providers, so writing `a.baseUrl` unconditionally
+      // wiped the stored local baseUrl on every non-local Save (local → openrouter → local
+      // left the local provider permanently unconfigured). baseUrl is local-only (llmConfig),
+      // so preserving it across non-local saves is loss-free.
       const existing = readLlmConfig(userDataDir)
       const cfg: LlmConfig = {
         provider: a.provider,
         model: a.model,
-        baseUrl: a.baseUrl,
+        baseUrl: a.baseUrl ?? existing.baseUrl,
         maxCallsPerDay: a.maxCallsPerDay ?? existing.maxCallsPerDay
       }
       writeLlmConfig(userDataDir, cfg)

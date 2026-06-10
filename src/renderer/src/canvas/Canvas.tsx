@@ -59,7 +59,6 @@ import { PreviewEdge } from './edges/PreviewEdge'
 import { OrchestrationEdge } from './edges/OrchestrationEdge'
 import { previewEdges } from '../lib/previewEdges'
 import { orchestrationEdges } from '../lib/orchestrationEdges'
-import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import { applyPush, planFullViewAction, planNodeRemovalCleanup } from '../lib/canvasDecisions'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { BoardActionsContext, type BoardActions } from './boardActions'
@@ -80,7 +79,7 @@ import { installE2EHooks } from '../smoke/e2eHooks'
 import { useCanvasKeybindings } from './hooks/useCanvasKeybindings'
 import { useTidyTile } from './hooks/useTidyTile'
 import { useFullView } from './hooks/useFullView'
-import { useBoardPlacement } from './hooks/useBoardPlacement'
+import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
 import { useGroupInteractions } from './hooks/useGroupInteractions'
 import { TypeGlyph } from './TypeGlyph'
 
@@ -226,6 +225,10 @@ function CanvasInner(): ReactElement {
   // when its gesture ends so the next gesture recomputes against the current layout.
   const dragOthersRef = useRef<{ id: string; rects: Rect[] } | null>(null)
   const resizeOthersRef = useRef<{ id: string; rects: Rect[] } | null>(null)
+  // The board id of the in-flight node drag (null = no drag). #BUG-011: if that board is
+  // removed mid-drag (Delete key / MCP), @xyflow's XYDrag ABORTS the gesture without calling
+  // onNodeDragStop — the healing effect below uses this ref to do the stop handler's cleanup.
+  const dragNodeIdRef = useRef<string | null>(null)
   const [digestOpen, setDigestOpen] = useState(false)
   // Auto-open the digest once per project open/switch — the React "adjust state during
   // render when a key changes" pattern (avoids setState-in-effect). Closing it stays
@@ -462,7 +465,14 @@ function CanvasInner(): ReactElement {
         // select/deselect carry no side effect — folded below (ghost-id prune included).
       }
       const folded = foldSelectionIntents(selBefore, intents)
-      if (folded.changed) setSelection(folded.ids)
+      if (folded.changed) {
+        setSelection(folded.ids)
+        // #BUG-010: selecting a board must clear a selected connector (mutual exclusivity —
+        // the inverse of onEdgeClick's selectBoard(null)). Otherwise one Delete fires BOTH
+        // the connector keybinding AND RF's deleteKeyCode (its useKeyPress ignores
+        // defaultPrevented), silently removing the connector and the board together.
+        if (folded.ids.length > 0) setSelectedConnectorId(null)
+      }
     },
     // Merged deps: the multi-select fold uses setSelection (groups branch); the keyboard-delete
     // path uses the full-view cleanup refs/closers (#BUG-012, #85). selectBoard is no longer
@@ -525,20 +535,24 @@ function CanvasInner(): ReactElement {
 
   // Drag start: checkpoint for undo + detach live preview views (snapshot carries
   // the motion + restores z-order so a dragged board isn't occluded). Stop: reattach.
-  const onNodeDragStart = useCallback(() => {
-    beginChange()
-    setNodeGesture(true)
-    // Disarm any in-flight reflow: if a drag starts inside the ~340ms absorb window the dragged
-    // node would otherwise inherit `.reflowing .react-flow__node`'s transform transition and trail
-    // the cursor. Clear the timer + class so the drag is direct.
-    disarmReflow()
-    // Manually moving a board releases live tiled mode (like un-snapping a tiled window).
-    setActiveTile(null)
-    // Pull every live native view out IMMEDIATELY (before RF starts moving the node) so a
-    // dragged board can't be occluded by — or strand — an always-above native layer (#43961).
-    // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
-    void window.api.detachAllPreviews?.()
-  }, [beginChange, setNodeGesture, disarmReflow])
+  const onNodeDragStart = useCallback(
+    (_e: MouseEvent, node: BoardFlowNode) => {
+      dragNodeIdRef.current = node.id
+      beginChange()
+      setNodeGesture(true)
+      // Disarm any in-flight reflow: if a drag starts inside the ~340ms absorb window the dragged
+      // node would otherwise inherit `.reflowing .react-flow__node`'s transform transition and trail
+      // the cursor. Clear the timer + class so the drag is direct.
+      disarmReflow()
+      // Manually moving a board releases live tiled mode (like un-snapping a tiled window).
+      setActiveTile(null)
+      // Pull every live native view out IMMEDIATELY (before RF starts moving the node) so a
+      // dragged board can't be occluded by — or strand — an always-above native layer (#43961).
+      // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
+      void window.api.detachAllPreviews?.()
+    },
+    [beginChange, setNodeGesture, disarmReflow]
+  )
   // S6 drag-onto-box: hit-test the dragged board's center against group boxes (lights the hovered
   // box as a drop target) — logic lives in useGroupInteractions.
   const onNodeDrag = useCallback(
@@ -548,6 +562,7 @@ function CanvasInner(): ReactElement {
 
   const onNodeDragStop = useCallback(
     (_e: MouseEvent, node: BoardFlowNode) => {
+      dragNodeIdRef.current = null
       setNodeGesture(false)
       setGuides((g) => (g.length ? [] : g))
       setOverlaps((o) => (o.length ? [] : o))
@@ -674,30 +689,25 @@ function CanvasInner(): ReactElement {
     setFocusedId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
     setFullViewId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
     setCameraFullViewId((c) => (c !== null && !boards.some((b) => b.id === c) ? null : c))
+    // #BUG-011: the dragged board was removed mid-drag (Delete key / MCP) — XYDrag aborts
+    // the gesture WITHOUT calling onNodeDragStop, so do its cleanup here. Otherwise
+    // nodeGesture latches true (every Browser preview frozen as a snapshot) and the last
+    // snap frame's guides / overlap tints / lit drop-target box stay painted.
+    if (dragNodeIdRef.current !== null && !boards.some((b) => b.id === dragNodeIdRef.current)) {
+      dragNodeIdRef.current = null
+      setNodeGesture(false)
+      setGuides((g) => (g.length ? [] : g))
+      setOverlaps((o) => (o.length ? [] : o))
+      setDropTargetGroupId(null)
+    }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [boards, setFullViewId, setCameraFullViewId])
+  }, [boards, setFullViewId, setCameraFullViewId, setNodeGesture, setDropTargetGroupId])
 
   // M2 connector drag: while a source board is armed (title-bar connector handle pressed),
   // track the pointer for the rubber-band and, on release, resolve the drop target from
-  // STORE GEOMETRY (pure resolveConnectTarget — no DOM hit-test) → add an orchestration
-  // connector. Window-level so the drag still resolves when released past the board edge.
-  useEffect(() => {
-    if (!connectFromId) return
-    const onMove = (e: PointerEvent): void => setConnectPointer({ x: e.clientX, y: e.clientY })
-    const onUp = (e: PointerEvent): void => {
-      const flow = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
-      const target = resolveConnectTarget(useCanvasStore.getState().boards, connectFromId, flow)
-      if (target) addConnector(connectFromId, target, 'orchestration')
-      setConnectFromId(null)
-      setConnectPointer(null)
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-  }, [connectFromId, rf, addConnector])
+  // store geometry → add an orchestration connector. Lives in useConnectorDrag (the
+  // placement gesture's sibling hook) with the #BUG-048 Esc/blur/pointercancel abort.
+  useConnectorDrag({ rf, connectFromId, setConnectFromId, setConnectPointer, addConnector })
 
   // Canvas keyboard bindings (Wave-5 B5): selected-connector Delete/Backspace · the main keymap
   // (undo/redo · Esc-clear · diag toggle · 1 fit / 0 reset · t tidy) · the capture-phase

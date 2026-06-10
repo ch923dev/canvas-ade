@@ -149,6 +149,9 @@ export function ChecklistCard({
       // through to the well so a stroke can START over the card (#6).
       onPointerDown={(e) => {
         if (!interactive) return
+        // Only the primary button initiates a drag; right/middle buttons fall
+        // through to the browser context-menu / OS default (primary-button guard).
+        if (e.button !== 0) return
         e.stopPropagation()
         onSelect?.(element.id, e.shiftKey)
         onDragStart(e, element.id)

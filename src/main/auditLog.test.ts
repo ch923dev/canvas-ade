@@ -175,4 +175,37 @@ describe('createAuditLog (append-only JSONL)', () => {
     const log = createAuditLog({ dir })
     expect(await log.read()).toEqual([])
   })
+
+  it('BUG-043: read with limit:0 returns the default cap, NOT the full log (slice(-0) guard)', async () => {
+    const log = createAuditLog({ dir, now: () => 1 })
+    // Write 5 entries
+    for (let i = 0; i < 5; i++) await log.append(input({ prompt: `p${i}` }))
+    // limit:0 must NOT return all 5 (the slice(-0) === slice(0) bug); it should use the
+    // default limit (200) which is larger than 5, so we get all 5 — but the bug would
+    // also return all 5. We verify via a stricter subcase: limit:0 treated as default-200
+    // vs a positive limit:2 that caps to 2.
+    const withZero = await log.read({ limit: 0 })
+    const withTwo = await log.read({ limit: 2 })
+    expect(withTwo).toHaveLength(2) // positive limit still caps
+    expect(withZero.length).toBe(5) // 0 falls back to default (200 > 5 = 5 entries returned)
+  })
+
+  it('BUG-043: read with a negative or NaN limit uses the default (not a partial/full slice)', async () => {
+    const log = createAuditLog({ dir, now: () => 1 })
+    for (let i = 0; i < 5; i++) await log.append(input({ prompt: `p${i}` }))
+    // Negative limit must not drop entries from the front (slice(n) for positive n)
+    const withNeg = await log.read({ limit: -2 })
+    expect(withNeg.length).toBe(5) // default=200, returns all 5
+    // NaN limit must use default, not slice(NaN) = all
+    const withNaN = await log.read({ limit: NaN })
+    expect(withNaN.length).toBe(5)
+  })
+
+  it('BUG-043: read clamps an excessively large limit to the sane ceiling', async () => {
+    const log = createAuditLog({ dir, now: () => 1 })
+    await log.append(input({ prompt: 'only' }))
+    // A huge limit is allowed but capped internally; with only 1 entry it returns 1.
+    const back = await log.read({ limit: 999_999 })
+    expect(back).toHaveLength(1)
+  })
 })

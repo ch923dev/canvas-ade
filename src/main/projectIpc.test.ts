@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
-import { mkdtempSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'fs'
 import { join, sep, basename } from 'path'
 import { tmpdir } from 'os'
 import { isUnsafeProjectDir, registerProjectHandlers } from './projectIpc'
@@ -106,5 +106,57 @@ describe('project:current handler', () => {
 
     expect(result).not.toBeNull()
     expect(result.ok).toBe(true)
+  })
+})
+
+// BUG-009 (MAIN half): project:save wrote the posted doc to getCurrentDir()
+// unconditionally — a save raced against a project switch cross-wrote one project's
+// canvas into another's canvas.json. An optional expectedDir lets dir-aware callers
+// (the autosaver) pin the doc to its project; a mismatch is rejected.
+describe('project:save expectedDir guard (BUG-009)', () => {
+  const tmp: string[] = []
+  const mkTmp = (p: string): string => {
+    const d = mkdtempSync(join(tmpdir(), p))
+    tmp.push(d)
+    return d
+  }
+  afterEach(() => {
+    vi.restoreAllMocks()
+    while (tmp.length) rmSync(tmp.pop()!, { recursive: true, force: true })
+  })
+
+  type Handler = (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+  const register = (userDataDir: string): Map<string, Handler> => {
+    const handlers = new Map<string, Handler>()
+    const ipcMain = {
+      handle: (ch: string, fn: Handler) => handlers.set(ch, fn)
+    } as unknown as IpcMain
+    registerProjectHandlers(
+      ipcMain,
+      () => null,
+      userDataDir,
+      () => 1
+    )
+    return handlers
+  }
+  const synthetic = {} as IpcMainInvokeEvent
+
+  it('rejects a save whose expectedDir mismatches the current dir; matching/omitted still save', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const userDataDir = mkTmp('canvas-ud-')
+    const projB = mkTmp('canvas-proj-b-')
+    const projC = mkTmp('canvas-proj-c-')
+    const seeded = JSON.stringify({ schemaVersion: 8, viewport: null, boards: [{ id: 'c1' }] })
+    writeFileSync(join(projC, 'canvas.json'), seeded)
+    const handlers = register(userDataDir)
+    await handlers.get('project:open')!(synthetic, projC) // currentDir = C
+
+    const doc = { schemaVersion: 8, viewport: null, boards: [], connectors: [] }
+    // The B-flavored save that lost the switch race must be rejected, leaving C intact.
+    expect(await handlers.get('project:save')!(synthetic, doc, projB)).toBe(false)
+    expect(readFileSync(join(projC, 'canvas.json'), 'utf8')).toBe(seeded)
+    // A matching expectedDir saves; an omitted one keeps back-compat.
+    expect(await handlers.get('project:save')!(synthetic, doc, projC)).toBe(true)
+    expect(await handlers.get('project:save')!(synthetic, doc)).toBe(true)
   })
 })

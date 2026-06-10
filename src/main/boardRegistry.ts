@@ -1,4 +1,5 @@
 import type { IpcMain, BrowserWindow, IpcMainEvent } from 'electron'
+import { isForeignSender } from './ipcGuard'
 
 /** Minimal board projection the renderer pushes to MAIN (control plane; no content). */
 export interface BoardMirror {
@@ -233,8 +234,10 @@ export function registerBoardRegistryHandler(
   getWin: () => BrowserWindow | null
 ): void {
   ipcMain.on('mcp:boards', (e: IpcMainEvent, payload: unknown) => {
-    const main = getWin()?.webContents.mainFrame
-    if (main && e.senderFrame && e.senderFrame !== main) return // foreign frame
+    // BUG-033: use the canonical isForeignSender (ipcGuard.ts) instead of the stale inline copy.
+    // The inline copy failed OPEN when getWin() returned null (boot window before createWindow),
+    // and threw "Object has been destroyed" on a destroyed-but-non-null window.
+    if (isForeignSender(e, getWin)) return
     if (Array.isArray(payload)) {
       // Legacy / version-skew only: a renderer predating T4.6 sends a bare boards array.
       applySnapshot(sanitizeSnapshot(payload), [])

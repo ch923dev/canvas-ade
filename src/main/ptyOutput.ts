@@ -20,14 +20,20 @@ export const MAX_OUTPUT_PAGE = 25_000
 
 /**
  * Matches the terminal escape sequences we strip:
- *  - CSI:  ESC [ … final byte           (SGR colors, cursor moves, erases)
- *  - OSC:  ESC ] … (BEL | ESC \)        (window title etc.)
- *  - 2-byte / charset / single-shift:   ESC followed by one byte in 0x20–0x5F
+ *  - CSI (7-bit):  ESC [ ... final byte          (SGR colors, cursor moves, erases)
+ *  - OSC (7-bit):  ESC ] ... (BEL | ESC \)       (window title etc.)
+ *  - DCS (7-bit):  ESC P ... (ESC \)             (sixel, tmux passthrough, XTGETTCAP)
+ *  - 2-byte / charset / single-shift: ESC followed by one byte in 0x20-0x5F
+ *  - CSI (8-bit):  0x9B ... final byte           (C1 equivalent of ESC [)
+ *  - OSC (8-bit):  0x9D ... (BEL | 0x9C)         (C1 equivalent of ESC ])
+ *  - DCS (8-bit):  0x90 ... (ESC \ | 0x9C)       (C1 equivalent of ESC P)
+ * 8-bit C1 forms (0x80-0x9F) are emitted on POSIX; ConPTY re-renders them as
+ * 7-bit on Windows, so the C1 branches are a POSIX-only practical concern.
  * Printable text, newlines and tabs are left intact.
  */
 const ANSI =
   // eslint-disable-next-line no-control-regex
-  /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]|\x1b[ -/]+[@-~]/g
+  /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1bP[^\x1b]*(?:\x1b\\)|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]|\x1b[ -/]+[@-~]|\x9b[0-9;?]*[ -/]*[@-~]|\x9d[^\x07\x9c\x1b]*(?:\x07|\x9c|\x1b\\)|\x90[^\x9c\x1b]*(?:\x9c|\x1b\\)/g
 
 /** Strip ANSI/VT escape sequences, leaving plain text (newlines/tabs preserved). */
 export function stripAnsi(raw: string): string {

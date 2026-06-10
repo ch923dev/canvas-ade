@@ -20,6 +20,14 @@ export interface InstallOpts {
   scriptPath: string
   /** Absolute path to the mapping JSONL file (app-owned, in userData) */
   mapPath: string
+  /**
+   * BUG-003: env vars the hook command must run under. Set
+   * { ELECTRON_RUN_AS_NODE: '1' } in packaged builds so the app exe acts as
+   * node when the Claude SessionStart hook invokes it. Claude Code's hook
+   * schema has NO `env` field, so these are baked into a SHELL-form command
+   * (cmd /c `set K=V&& ...` on Windows, `K=V ...` via /bin/sh on POSIX).
+   */
+  env?: Record<string, string>
 }
 
 type HookCmd = { type: string; command: string; args?: string[] }
@@ -45,11 +53,16 @@ function writeSettings(projectDir: string, cfg: SettingsCfg): void {
   writeFileAtomic.sync(settingsPath(projectDir), JSON.stringify(cfg, null, 2), 'utf8')
 }
 
+/** True when an args element IS the scriptPath (direct form) or embeds it (shell form). */
+function argsReferenceScript(args: string[] | undefined, scriptPath: string): boolean {
+  return !!args?.some((a) => typeof a === 'string' && a.includes(scriptPath))
+}
+
 /** Returns true if our hook (identified by scriptPath in args) is already installed. */
 export function isRecapHookInstalled(projectDir: string, scriptPath: string): boolean {
   const cfg = readSettings(projectDir)
   const blocks = cfg.hooks?.SessionStart ?? []
-  return blocks.some((b) => b.hooks?.some((h) => h.args?.includes(scriptPath)))
+  return blocks.some((b) => b.hooks?.some((h) => argsReferenceScript(h.args, scriptPath)))
 }
 
 /**
@@ -62,10 +75,51 @@ export function installRecapHook(opts: InstallOpts): void {
   const cfg = readSettings(opts.projectDir)
   cfg.hooks ??= {}
   cfg.hooks.SessionStart ??= []
-  cfg.hooks.SessionStart.push({
-    matcher: '',
-    hooks: [{ type: 'command', command: opts.nodePath, args: [opts.scriptPath, opts.mapPath] }]
-  })
+  let hookCmd: HookCmd = {
+    type: 'command',
+    command: opts.nodePath,
+    args: [opts.scriptPath, opts.mapPath]
+  }
+  // BUG-003: bake ELECTRON_RUN_AS_NODE=1 into the hook so the app exe acts as node in
+  // packaged builds (where process.execPath is the Electron app binary, not a plain
+  // node). Claude Code's documented hook schema has no `env` field, so the env
+  // assignment is baked into a shell-form command instead.
+  if (opts.env && Object.keys(opts.env).length > 0) {
+    const pairs = Object.entries(opts.env)
+    // cmd: double quotes (its only quoting form). POSIX: single quotes — double-quoted
+    // strings in sh still expand `$`/backtick, so paths/values get the '\'' splice form.
+    const q = (p: string): string => `"${p}"`
+    const sq = (p: string): string => `'${p.replace(/'/g, "'\\''")}'`
+    const invocation = `${q(opts.nodePath)} ${q(opts.scriptPath)} ${q(opts.mapPath)}`
+    const posixInvocation = `${sq(opts.nodePath)} ${sq(opts.scriptPath)} ${sq(opts.mapPath)}`
+    hookCmd =
+      process.platform === 'win32'
+        ? {
+            type: 'command',
+            command: 'cmd.exe',
+            // /d: skip AutoRun; /s: preserve the quoted command string verbatim.
+            args: [
+              '/d',
+              '/s',
+              '/c',
+              // `set "K=V"` (quotes around the WHOLE assignment — cmd strips them and the
+              // value keeps metacharacters/spaces literal). NOT `set K="V"`, which would
+              // store the quotes INTO the value. Embedded `"` is stripped — cmd has no
+              // reliable escape for it in this form, and a stray quote would terminate
+              // the assignment early (latent injection surface).
+              `${pairs.map(([k, v]) => `set "${k}=${v.replace(/"/g, '')}"&& `).join('')}${invocation}`
+            ]
+          }
+        : {
+            type: 'command',
+            command: '/bin/sh',
+            // Single-quote values AND paths (POSIX-safe for all metacharacters; embedded
+            // ' via the standard '\'' splice) so a future env entry or a path containing
+            // spaces/$/backtick can't shell-split, expand, or inject a command.
+            args: ['-c', `${pairs.map(([k, v]) => `${k}=${sq(v)} `).join('')}${posixInvocation}`]
+          }
+  }
+  cfg.hooks.SessionStart.push({ matcher: '', hooks: [hookCmd] })
   writeSettings(opts.projectDir, cfg)
 }
 
@@ -79,8 +133,20 @@ export function removeRecapHook(projectDir: string, scriptPath: string): void {
   const cfg = readSettings(projectDir)
   const blocks = cfg.hooks?.SessionStart
   if (!blocks) return
+  // BUG-032: guard against malformed settings.local.json (hand-edited or third-party-written)
+  // where a SessionStart block is not an array or has a non-array `hooks` field. Mirror the
+  // defensiveness of isRecapHookInstalled (b.hooks?.some). Without this, a TypeError escapes
+  // the ipcMain.handle callback, leaving consent persisted as 'declined' while the hook stays
+  // installed (no retry path on the decline side).
+  if (!Array.isArray(blocks)) return
   const kept = blocks
-    .map((b) => ({ ...b, hooks: b.hooks.filter((h) => !h.args?.includes(scriptPath)) }))
+    .filter((b) => b && typeof b === 'object')
+    .map((b) => ({
+      ...b,
+      hooks: Array.isArray(b.hooks)
+        ? b.hooks.filter((h: HookCmd) => !argsReferenceScript(h.args, scriptPath))
+        : []
+    }))
     .filter((b) => b.hooks.length > 0)
   // Prune empty containers so removing our last hook leaves a clean file, not a dangling
   // `{ hooks: { SessionStart: [] } }`.
