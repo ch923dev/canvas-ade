@@ -464,6 +464,8 @@ export interface BoardFrameProps {
    *  flips to the EXIT affordance (restore glyph + "Exit full view (Esc)"). */
   fullView?: boolean
   running?: boolean
+  /** D2-B: PTY warming up — shows the top sliver in its slow variant before `running`. */
+  spawning?: boolean
   status?: BoardStatus | null
   /** Per-type action controls shown left of maximize/⋯ in the title bar. */
   actions?: ReactNode
@@ -494,6 +496,7 @@ export function BoardFrame({
   lod = false,
   fullView = false,
   running = false,
+  spawning = false,
   status,
   actions,
   contentBg = 'var(--surface)',
@@ -603,7 +606,7 @@ export function BoardFrame({
           : 'opacity .15s, border-color .1s, box-shadow .12s ease-out'
       }}
     >
-      {running && (
+      {(running || spawning) && (
         <div
           style={{
             position: 'absolute',
@@ -615,7 +618,9 @@ export function BoardFrame({
             zIndex: 3
           }}
         >
-          <div className="ca-progress-bar" />
+          {/* D2-B: spawning shows the same sliver in a slower/dimmer variant, so the
+              state reads as activity before `running` (it previously showed label-only). */}
+          <div className={running ? 'ca-progress-bar' : 'ca-progress-bar ca-progress-spawn'} />
         </div>
       )}
 

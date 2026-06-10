@@ -35,6 +35,8 @@ import { BrowserPickPanel, NEW_BROWSER } from './terminal/BrowserPickPanel'
 import { usePickerDismiss } from './terminal/usePickerDismiss'
 import { useTerminalSpawn } from './terminal/useTerminalSpawn'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
+import { TerminalHint } from './terminal/TerminalHint'
+import { TerminalRestartMenu } from './terminal/TerminalRestartMenu'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
 import {
@@ -106,6 +108,12 @@ export function TerminalBoard({
     })
 
   const [configOpen, setConfigOpen] = useState(false)
+  // D2-B unsaved-changes guard: while the config popover is open, the ⚙ trigger does
+  // NOT unmount it directly — it bumps this counter and the popover routes the request
+  // through its dirty guard (TerminalConfig). The span ref is the popover's outside-
+  // close exclusion so the trigger's own click can toggle without re-entry.
+  const [cfgCloseReq, setCfgCloseReq] = useState(0)
+  const cfgBtnRef = useRef<HTMLSpanElement>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
   // T15: flip to the recap back-face. The xterm well (front) stays MOUNTED across the
   // flip so the live PTY session never tears down — see the flip wrapper in render.
@@ -115,7 +123,42 @@ export function TerminalBoard({
   const flipped = flip.flipped
   // T-resume: the Restart control offers Resume-vs-New only when we know a session to resume.
   const [restartMenu, setRestartMenu] = useState(false)
+  const restartBtnRef = useRef<HTMLSpanElement>(null)
   const canResume = !!board.agentSessionId
+
+  // D2-B (audit A6): flipping moves focus WITH the visible face — the recap wrapper on
+  // flip, xterm back on flip-back. Without this, focus stayed on the hidden xterm behind
+  // the opaque recap (keystrokes typed "into nothing"). RETRIED across the fold, not a
+  // single deferred shot: `flipped` swaps at the 90° edge MID-FOLD, and during the
+  // unfold's commits xterm's helper textarea can be transiently unfocusable — focus()
+  // is then a SILENT no-op (the Menu.tsx lesson) and a one-shot attempt loses the race
+  // under load (caught by terminalPolish.e2e on a slow run). Bounded: ~14 ticks ≈ the
+  // 2×150ms fold + margin, then gives up; cleanup cancels on re-flip/unmount.
+  const recapRef = useRef<HTMLDivElement>(null)
+  const flipFocusInit = useRef(true)
+  useEffect(() => {
+    if (flipFocusInit.current) {
+      flipFocusInit.current = false // mount is not a flip — don't steal focus on load
+      return
+    }
+    let tries = 0
+    let t: number
+    const attempt = (): void => {
+      let landed = false
+      if (flip.flipped) {
+        const w = recapRef.current
+        w?.focus()
+        landed = !!w && (document.activeElement === w || w.contains(document.activeElement))
+      } else {
+        const term = termRef.current
+        term?.focus()
+        landed = !!term?.textarea && document.activeElement === term.textarea
+      }
+      if (!landed && ++tries < 14) t = window.setTimeout(attempt, 25)
+    }
+    t = window.setTimeout(attempt, 0)
+    return () => window.clearTimeout(t)
+  }, [flip.flipped, termRef])
 
   const identity = agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
@@ -342,17 +385,24 @@ export function TerminalBoard({
         onLongPress={() => void onPreview('hold')}
         onContextMenu={() => void onPreview('hold')}
       />
-      <IconBtn
-        name="settings"
-        title="Configure terminal"
-        onClick={() => setConfigOpen((v) => !v)}
-      />
-      <IconBtn
-        name="restart"
-        title={canResume ? 'Restart (resume or new session)' : 'Restart'}
-        active={restartMenu}
-        onClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
-      />
+      {/* The spans anchor the config guard / restart menu (IconBtn forwards no ref):
+          each is its popover's outside-close exclusion, so the trigger click toggles. */}
+      <span ref={cfgBtnRef} style={{ display: 'inline-flex' }}>
+        <IconBtn
+          name="settings"
+          title="Configure terminal"
+          active={configOpen}
+          onClick={() => (configOpen ? setCfgCloseReq((n) => n + 1) : setConfigOpen(true))}
+        />
+      </span>
+      <span ref={restartBtnRef} style={{ display: 'inline-flex' }}>
+        <IconBtn
+          name="restart"
+          title={canResume ? 'Restart (resume or new session)' : 'Restart'}
+          active={restartMenu}
+          onClick={() => (canResume ? setRestartMenu((v) => !v) : restart())}
+        />
+      </span>
       {/* T15: flip to the recap back-face. IconBtn has no data-test prop, so the e2e/test
           hook (`flip-<id>`) rides a wrapping span. */}
       <span data-test={`flip-${board.id}`} style={{ display: 'inline-flex' }}>
@@ -465,6 +515,7 @@ export function TerminalBoard({
         hovered={hovered}
         dimmed={dimmed}
         running={running}
+        spawning={state === 'spawning'}
         status={displayStatus}
         actions={actions}
         contentBg="var(--inset)"
@@ -515,6 +566,8 @@ export function TerminalBoard({
                   onClose={() => setConfigOpen(false)}
                   fontSize={effectiveFont}
                   onSetFont={setFont}
+                  closeSignal={cfgCloseReq}
+                  triggerRef={cfgBtnRef}
                 />
               )}
               {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
@@ -595,6 +648,15 @@ export function TerminalBoard({
                 }}
               >
                 <div ref={screenRef} style={screen} />
+                {/* D2-B 🎨 first-run hint (signed off 2026-06-11): a bare-shell terminal
+                    (no launchCommand) shows one dismissible pill pointing at ⚙. Hidden at
+                    idle (the Start overlay covers that state); deliberately SHOWN for
+                    exited/spawn-failed too — those are natural moments to set a launch
+                    command and retry. Gone forever once dismissed anywhere
+                    (hintDismissal.ts) or a launch command is set. */}
+                {!board.launchCommand && state !== 'idle' && (
+                  <TerminalHint onConfigure={() => setConfigOpen(true)} />
+                )}
               </div>
               {menu && (
                 <ElementContextMenu
@@ -610,47 +672,35 @@ export function TerminalBoard({
                 xterm beneath. `nodrag nowheel` keeps React Flow from treating a click as a node-drag
                 or a scroll as a canvas zoom. No 3D transform → correct pointer hit-testing. */}
             {flipped && (
-              <div className="nodrag nowheel" style={{ position: 'absolute', inset: 0 }}>
+              <div
+                ref={recapRef}
+                tabIndex={-1} // A6 focus-transfer target (programmatic only, not tabbable)
+                className="nodrag nowheel"
+                style={{ position: 'absolute', inset: 0, outline: 'none' }}
+                data-test={`recap-wrap-${board.id}`}
+              >
                 <RecapView boardId={board.id} />
               </div>
             )}
-            {/* T-resume: Restart menu. Sits at the flip-stage level (not inside a face) so it stays
-                interactive whether you're viewing the terminal OR the recap — you often resume FROM
-                the recap. Resume → respawn with `claude --resume <sessionId>`; New → fresh launch. */}
+            {/* T-resume restart menu, on the shared Menu shell since D2-B (Escape/outside/
+                resize auto-close, menuitem keyboard nav — the audit's "no auto-close").
+                Body-portaled, so it stays reachable from the recap back-face too (you often
+                resume FROM the recap). Resume → respawn with `claude --resume <sessionId>`
+                (resumeCommand sanitises the canvas.json-sourced id to one inert token before
+                it nears the PTY); New → fresh launch. */}
             {restartMenu && (
-              <div
-                className="ca-port-picker nodrag nowheel"
-                onMouseDown={(e) => e.stopPropagation()}
-                style={{ position: 'absolute', top: 8, right: 8, zIndex: 7 }}
-              >
-                <div className="ca-port-picker-title">Restart terminal</div>
-                <button
-                  className="ca-port-choice"
-                  onClick={() => {
-                    // Sanitise agentSessionId before it reaches the PTY — it comes from canvas.json
-                    // (third-party-craftable), so resumeCommand strips it to a single inert token
-                    // (or undefined → fresh launch). See resumeCommand.ts.
-                    launchOverrideRef.current = resumeCommand(board.agentSessionId)
-                    setRestartMenu(false)
-                    restart()
-                  }}
-                >
-                  Resume session
-                </button>
-                <button
-                  className="ca-port-choice"
-                  onClick={() => {
-                    launchOverrideRef.current = undefined
-                    setRestartMenu(false)
-                    restart()
-                  }}
-                >
-                  New session
-                </button>
-                <button className="ca-preview-dismiss" onClick={() => setRestartMenu(false)}>
-                  Cancel
-                </button>
-              </div>
+              <TerminalRestartMenu
+                anchor={restartBtnRef}
+                onResume={() => {
+                  launchOverrideRef.current = resumeCommand(board.agentSessionId)
+                  restart()
+                }}
+                onNew={() => {
+                  launchOverrideRef.current = undefined
+                  restart()
+                }}
+                onClose={() => setRestartMenu(false)}
+              />
             )}
           </div>
         </div>
