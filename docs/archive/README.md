@@ -13,10 +13,19 @@ is `docs/reviews/README.md`.
 - [`2026-06-04-context-subsystem.md`](2026-06-04-context-subsystem.md) — compiled Context subsystem build-log
   (M-digest + M-brain + M-memory, PR #39). Collapsed `roadmap-context.md` + plans/specs/handoffs.
 
-Older raw docs were collapsed into the summaries above (2026-06-01 and 2026-06-04) and removed from the
-working tree (git history retains them):
+Older raw docs were collapsed into the summaries above (2026-06-01, 2026-06-04, and 2026-06-10) and
+removed from the working tree (git history retains them):
 
 - **Round-1 bug hunt** (2026-05-30): `bug-hunt-findings.md` (50 findings) · `bug-triage.md` (lots A–F)
   · `features-and-testables.md`. Now summarized in `docs/reviews/README.md` › Round-1.
 - **Per-slice specs/plans/research** under `docs/superpowers/` and **phase handoffs** under
   `docs/handoffs/`. Now summarized in `build-history.md`.
+- **2026-06-10 docs reconcile** — collapsed: the shipped `docs/superpowers/` specs/plans/handoffs
+  for #44/#53/#59/#75/#81–#87/#89/#92/#94/#97–#105 (23 files; summarized per-PR in
+  `build-history.md`); the root `bug-hunt-findings/` package (72 cards, fixed #107 — summary
+  `docs/reviews/2026-06-10-full-app-audit.md`); the `docs/reviews/2026-06-04-mcp-context-bughunt/`
+  package (28 cards, fixed #45/#47/#48), `2026-06-04-main-branch-full-audit.md`,
+  `2026-06-03-mcp-status-audit.md`, and the three executed 2026-06-05 kickoffs (rows remain in
+  `reviews/README.md`); the shipped camera-sync research
+  (`research/2026-06-06-browser-preview-{camera-sync-rootcause,layer-alignment}.md` +
+  `research/KICKOFF-preview-camera-sync.md`, fixed PR #82).

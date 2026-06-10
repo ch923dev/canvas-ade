@@ -3,7 +3,7 @@
 **Date:** 2026-06-09 · **Status:** research (no code changed) · **Scope:** the 8 largest source files
 **Method:** 6 parallel read-only subagent dissections (one per file group) + a read of the existing
 extraction idiom (`canvas/hooks/useTidyTile.ts`, the `*Core` pattern in `pty.ts`) and the Wave-5 B5
-kickoff (`docs/reviews/2026-06-05-wave5-b4-b5-kickoff.md`). Line refs captured on `main` @ `6ca45fd`.
+kickoff (`docs/reviews/2026-06-05-wave5-b4-b5-kickoff.md`, now git history). Line refs captured on `main` @ `6ca45fd`.
 
 ---
 

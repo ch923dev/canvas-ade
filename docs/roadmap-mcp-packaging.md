@@ -18,18 +18,25 @@ ever a pain:
 | **Release** (shipped installer) | electron-vite **bundles** the dep into the MAIN bundle | end users never touch a registry |
 | **Runtime serving** | MAIN hosts loopback HTTP + per-board bearer token | **locked**, unchanged |
 
-## Current state (2026-06-03)
+## Current state (2026-06-06+)
 
 - Package lives in a **separate sibling repo** `Z:\canvas-ade-mcp` (`@expanse-ade/mcp`), with
   its own contract + live tests and a `v*`-tag publish workflow.
-- App consumes it as a **published GitHub Packages dep** `^0.2.4` (committed `package.json` + lockfile).
+- App consumes it as a **published public-npmjs dep** `^0.9.0` (committed `package.json` + lockfile).
+  **No auth token needed anywhere** (local / CI / Docker).
 - For **dev**, the app worktree is **`pnpm link`ed** to the sibling so edits flow without publishing.
+
+> **Registry migration (2026-06-06, app commit `63cf10c`):** moved off **GitHub Packages** → the
+> **public npmjs registry** (free npm org `expanse-ade` owns the scope). GitHub Packages' npm
+> registry requires a token even for PUBLIC packages, which kept breaking CI legs and Docker e2e
+> (the NODE_AUTH_TOKEN failure class). `.npmrc` scope mapping, `packages:read` permissions, and all
+> NODE_AUTH_TOKEN plumbing were removed. GitHub-Packages references below this point are history.
 
 ## Dev workflow — `pnpm link` (no publish)
 
 The app's `node_modules/@expanse-ade/mcp` is a **symlink → the sibling working tree**, so
 whatever the sibling has built in `dist/` is what the app runs. `package.json`/lockfile stay on the
-**published** `^0.2.4` so **CI is unaffected** (CI has no sibling checkout — that's why a raw `file:`
+**published** `^0.9.0` so **CI is unaffected** (CI has no sibling checkout — that's why a raw `file:`
 dep was abandoned, pkg commit `f0aa561`).
 
 ```bash
@@ -58,10 +65,10 @@ Rules:
   ships the library. The runtime needs **no registry** and no separate process.
 - **Publish (versioning / external reuse only):** FF-merge the held pkg branch chain into pkg `main`,
   then `git tag vX.Y.Z && git push origin vX.Y.Z` → `.github/workflows/publish.yml` builds/tests and
-  publishes to GitHub Packages with the repo's own `GITHUB_TOKEN`. One tag publishes the cumulative
-  version. App CI installs the published dep for a clean, reproducible build.
-- So publish is the **release** mechanism, not the **dev** mechanism. (2026-06-03: v0.2.4 = the M0/M1
-  chain, published.)
+  publishes to the **public npmjs registry**. One tag publishes the cumulative version. App CI
+  installs the published dep **tokenlessly** for a clean, reproducible build.
+- So publish is the **release** mechanism, not the **dev** mechanism. (2026-06-06: v0.9.0 = M0–M5,
+  published to npmjs.)
 
 ## Roadmap
 

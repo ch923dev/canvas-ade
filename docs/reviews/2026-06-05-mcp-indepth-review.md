@@ -117,6 +117,7 @@ the real release gate but is independent of MCP.
 ---
 
 ### Sources
+*(The bughunt package, status audit, and kickoff below were collapsed to git history 2026-06-10.)*
 - Backlog/claims: `docs/reviews/2026-06-04-mcp-context-bughunt/` (INDEX · FIX-REPORT · cards),
   `2026-06-04-CONSOLIDATED-backlog.md`, `2026-06-03-mcp-status-audit.md`,
   `2026-06-05-remaining-backlog-kickoff.md`.
