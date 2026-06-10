@@ -42,8 +42,10 @@ export interface MenuProps {
   /** Accessible name for the menu. */
   label?: string
   className?: string
-  /** Merged over the shell's positioning styles — must NOT carry top/left. */
-  style?: CSSProperties
+  /** Merged into the shell's container styles. The shell's positioning (top/left/
+   *  maxHeight/overflowY) always wins — typed out so a caller can't silently break the
+   *  viewport clamp; zIndex IS caller-overridable (default 250). */
+  style?: Omit<CSSProperties, 'top' | 'left'>
   /** Re-run the measure+clamp when this changes (async content, e.g. a recents list). */
   reclampKey?: unknown
   /** Move focus to the first menuitem on open (default true; closing restores focus). */
@@ -215,6 +217,10 @@ export function Menu({
     if (list.length === 0) return
     const idx = list.indexOf(document.activeElement as HTMLElement)
     let next = -1
+    // ArrowLeft/Right intentionally alias Up/Down (a deliberate APG deviation): no menu
+    // here has submenus — the keys ←/→ are reserved for in the spec — and the Tidy preset
+    // picker is a 2-D thumbnail grid where horizontal arrows are the natural walk. One
+    // shell, one behavior; revisit if submenus ever land.
     if (e.key === 'ArrowDown' || e.key === 'ArrowRight')
       next = idx < 0 ? 0 : (idx + 1) % list.length
     else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft')
@@ -242,13 +248,15 @@ export function Menu({
       aria-label={label}
       className={className}
       style={{
+        zIndex: 250, // above the fullview-scrim (200); callers may override via `style`
+        ...style,
+        // Shell positioning LAST so a caller's style can never break the viewport clamp
+        // (top/left are also typed out of the style prop).
         position: 'fixed',
         top: pos.top,
         left: pos.left,
         maxHeight: pos.maxHeight || undefined,
-        overflowY: 'auto',
-        zIndex: 250, // above the fullview-scrim (200); callers may override via `style`
-        ...style
+        overflowY: 'auto'
       }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}

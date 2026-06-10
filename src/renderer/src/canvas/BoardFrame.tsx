@@ -243,9 +243,9 @@ export function BoardMenu({
     <div
       ref={triggerRef}
       style={{ position: 'relative', display: 'inline-flex' }}
-      // #BUG-045: the document-level pointerdown closer fires BEFORE the trigger's click, so
-      // re-clicking the open trigger would close-then-reopen (dead toggle). Stop the real
-      // pointerdown here, like the menu items below do (ProjectSwitcher parity, AppChrome).
+      // Prevent React Flow from treating a ⋯ button press as a canvas-node drag start (the
+      // trigger sits in the title bar, which is the RF drag handle). Outside-close re-click
+      // toggling (#BUG-045) no longer needs this — the Menu shell's anchor exclusion covers it.
       onPointerDown={(e) => e.stopPropagation()}
     >
       {/* The ⋯ dots are a near-inkless glyph; bump stroke + use a brighter rest colour so
