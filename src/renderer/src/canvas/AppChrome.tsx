@@ -196,14 +196,18 @@ export function ProjectSwitcher(): ReactElement {
 
   // D0-8: manual retry from the chip. A success clears the chip; a `false` return (the
   // IPC write failed without throwing) refreshes the message so the click visibly
-  // registered — otherwise the chip looks dead; a rejection surfaces the latest error.
+  // registered — otherwise the chip looks dead; a rejection logs + refreshes likewise.
   const retrySave = async (): Promise<void> => {
     try {
       const ok = await window.api.project.save(toObject())
       if (ok) clearSaveFailure()
       else setSaveFailure('Save failed again — check disk space and permissions')
     } catch (err) {
-      setSaveFailure(err instanceof Error ? err.message : 'project save failed')
+      // Fixed user-facing string (same rationale as useAutosave::onError) — raw OS
+      // rejections are opaque + read aloud by the alert region; console keeps detail.
+      // eslint-disable-next-line no-console
+      console.error('project save retry failed', err)
+      setSaveFailure('Save failed again — check disk space and permissions')
     }
   }
 
