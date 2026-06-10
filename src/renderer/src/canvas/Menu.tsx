@@ -45,7 +45,7 @@ export interface MenuProps {
   /** Merged into the shell's container styles. The shell's positioning (position/top/
    *  left/maxHeight/overflowY) always wins — typed out so a caller can't silently break
    *  the viewport clamp; zIndex IS caller-overridable (default 250). */
-  style?: Omit<CSSProperties, 'position' | 'top' | 'left'>
+  style?: Omit<CSSProperties, 'position' | 'top' | 'left' | 'maxHeight' | 'overflowY'>
   /** Re-run the measure+clamp when this changes (async content, e.g. a recents list). */
   reclampKey?: unknown
   /** Move focus to the first menuitem on open (default true; closing restores focus). */
