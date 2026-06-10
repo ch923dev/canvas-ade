@@ -39,7 +39,7 @@ Every doc here is one of four kinds, each with a death condition:
 | Kind | Lives in | Dies when |
 |---|---|---|
 | **Contract** (CLAUDE.md, ADRs, TESTING.md, file-size-doctrine) | root / `decisions/` / `testing/` / `contributing/` | superseded — mark + link the successor, never delete silently |
-| **Tracker** (roadmaps, feature-proposals, the two READMEs-as-index) | `docs/` root, `reviews/README.md` | never — but **update in the same PR** that changes what they track |
+| **Tracker** (roadmaps, feature-proposals, the three READMEs-as-index) | `docs/` root, `reviews/README.md`, `archive/README.md` | never — but **update in the same PR** that changes what they track |
 | **Slice artifact** (spec / plan / handoff / kickoff) | `superpowers/`, `reviews/*-kickoff` | **its PR merges** → delete the files in the merge PR (or next docs touch) + one line in `archive/build-history.md` |
 | **Findings package** (bug-hunt cards, audit dumps, root-cause research) | `reviews/<date>-…/`, `research/` | **all findings fixed** → replace with a dated summary file + index row; raw cards to git history |
 
