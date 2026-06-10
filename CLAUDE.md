@@ -134,6 +134,10 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - Keep boards small & isolated: shared chrome base + per-type content slot. One file = one clear purpose.
 - Match the design tokens in `src/renderer/src/index.css` (mirror of DESIGN.md §2-4).
 - Each phase ends runnable + committed.
+- **Doc lifecycle** (full policy: `docs/README.md` › Conventions): per-slice specs/plans/handoffs are
+  DELETED in the PR that merges their feature (build-history line is the residue); bug-hunt/review
+  packages land under `docs/reviews/<date>-…/` — **never at the repo root** — and collapse to a dated
+  summary once all findings are fixed; indexes update in the same PR that adds/removes indexed files.
 
 ### Design artifact before code (spec/plan-driven UI work)
 Any spec or plan that adds or changes **UI/UX** MUST produce a *visible* design artifact for sign-off
