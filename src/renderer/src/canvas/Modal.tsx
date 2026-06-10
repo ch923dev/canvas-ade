@@ -32,8 +32,10 @@ const FOCUSABLE =
   'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 /** Pass-through attrs for the scrim/card divs. The handlers Modal itself owns (the scrim's
- *  pointerdown dismiss, the card's Tab trap) are omitted so a caller can't silently lose one. */
-type DivProps = Omit<HTMLAttributes<HTMLDivElement>, 'onPointerDown' | 'onKeyDown'> & {
+ *  pointerdown dismiss, the card's Tab trap) AND `style` are omitted so nothing a caller
+ *  passes is silently swallowed by Modal's own attributes — `cardStyle` is the one supported
+ *  style override; the scrim's chrome is fully Modal-owned. */
+type DivProps = Omit<HTMLAttributes<HTMLDivElement>, 'onPointerDown' | 'onKeyDown' | 'style'> & {
   [key: `data-${string}`]: string | undefined
 }
 
@@ -54,7 +56,7 @@ export interface ModalProps {
   confirmGate?: boolean
   /** Wins over the first-focusable default for initial focus. */
   initialFocusRef?: RefObject<HTMLElement | null>
-  /** Extra attributes for the scrim div (test ids). `style` here wins over the defaults. */
+  /** Extra attributes for the scrim div (test ids). */
   scrimProps?: DivProps
   /** Extra attributes for the dialog card div (test ids). */
   cardProps?: DivProps
@@ -153,8 +155,7 @@ export function Modal({
         display: 'grid',
         placeItems: 'center',
         background: 'var(--scrim)',
-        cursor: closeDisabled ? 'wait' : 'default',
-        ...scrimProps?.style
+        cursor: closeDisabled ? 'wait' : 'default'
       }}
     >
       <div
