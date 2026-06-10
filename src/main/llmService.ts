@@ -75,12 +75,16 @@ export function buildRequest(
     // poisoned baseUrl slipped past the write/read guards. The `local` server is always local.
     if (!isLoopbackBaseUrl(config.baseUrl))
       throw new Error('local provider baseUrl must be a loopback http(s) URL')
-    base = config.baseUrl
+    // BUG-041: normalize trailing slashes so 'http://127.0.0.1:1234/v1/' produces
+    // '.../v1/chat/completions' not '.../v1//chat/completions'. LM Studio and most
+    // OpenAI-compatible shims do not collapse '//' and return 404.
+    base = config.baseUrl.replace(/\/+$/, '')
   } else {
     base = OPENAI_SHAPE_BASE[provider]
   }
+  const chatUrl = `${base}/chat/completions`
   return {
-    url: `${base}/chat/completions`,
+    url: chatUrl,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key}`
@@ -188,7 +192,12 @@ export function getProvider(config: LlmConfig, deps: ProviderDeps): Provider | n
         // BUG-003 (data leak): NEVER embed the raw provider response body — on an auth error a
         // provider may echo back partial/whole key material or request detail, and this string
         // travels into SummarizeResult.message over IPC. Surface only an opaque provider+status.
-        if (!res.ok) throw new Error(`${config.provider} HTTP ${res.status}`)
+        // BUG-041: for the local provider, include the attempted URL so a trailing-slash
+        // misconfiguration (double-slash 404) is diagnosable from the error message.
+        if (!res.ok) {
+          const urlHint = config.provider === 'local' ? ` (${req.url})` : ''
+          throw new Error(`${config.provider} HTTP ${res.status}${urlHint}`)
+        }
         return parseResponse(config.provider, await res.json())
       } finally {
         clearTimeout(timer)
@@ -216,12 +225,15 @@ export async function runSummarize(
 ): Promise<SummarizeResult> {
   const provider = getProvider(config, deps)
   if (!provider) return { ok: false, reason: 'no-provider' }
-  if (deps.budget && shouldEnforceBudget(config, deps.env)) {
-    const cap = config.maxCallsPerDay ?? DEFAULT_MAX_CALLS_PER_DAY
-    // Reserved before egress; a later provider-error is NOT refunded (count attempts, fail-closed).
-    if (!deps.budget.tryConsume(cap)) return { ok: false, reason: 'budget-exceeded' }
-  }
   try {
+    if (deps.budget && shouldEnforceBudget(config, deps.env)) {
+      const cap = config.maxCallsPerDay ?? DEFAULT_MAX_CALLS_PER_DAY
+      // Reserved before egress; a later provider-error is NOT refunded (count attempts, fail-closed).
+      // BUG-039: tryConsume is inside the try so a synchronous fs throw from write() (EPERM, ENOSPC,
+      // AV lock on llm-budget.json) does not escape runSummarize and reject the IPC promise raw.
+      // Map the throw to provider-error to honour the NEVER-throws contract (doc comment above).
+      if (!deps.budget.tryConsume(cap)) return { ok: false, reason: 'budget-exceeded' }
+    }
     return { ok: true, text: await provider.summarize(input) }
   } catch (err) {
     return {

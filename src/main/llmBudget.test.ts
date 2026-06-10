@@ -102,4 +102,40 @@ describe('llmBudget', () => {
     expect(raw).not.toMatch(/api[_-]?key/i) // never key material
     expect(JSON.parse(raw)).toMatchObject({ day: '2026-06-03', calls: 1 })
   })
+
+  // BUG-038: a configured cap above MAX_PERSISTED_CALLS_DEFAULT (2000) must NOT cause the
+  // persisted count to be rejected as corrupt once it exceeds 2000. The counter must count
+  // monotonically up to the configured cap.
+  it('BUG-038: caps above 2000 do not trigger false-corrupt warnings or wrap to 0', () => {
+    const c = clockAt('2026-06-03T10:00:00')
+    const cap = 2500
+    // Write a count of 2001 directly — faster than consuming 2001 times individually.
+    writeFileSync(join(dir, 'llm-budget.json'), '{"day":"2026-06-03","calls":2001}', 'utf8')
+
+    const b = createBudgetStore(dir, c)
+    // tryConsume with cap=2500 must accept 2001 (old bug: 2001 > 2000 ceiling -> corrupt -> reset)
+    expect(b.tryConsume(cap)).toBe(true) // 2001 < 2500 -> allowed, writes 2002
+    // peek() must report the real count, not 0
+    expect(b.peek().calls).toBe(2002)
+    // A fresh store instance must also read 2002 correctly when cap is passed
+    const b2 = createBudgetStore(dir, c)
+    expect(b2.tryConsume(cap)).toBe(true) // 2002 < 2500 -> allowed
+    expect(b2.peek().calls).toBe(2003)
+
+    // Verify the cap is still enforced at 2500: write 2500 and try one more
+    writeFileSync(join(dir, 'llm-budget.json'), '{"day":"2026-06-03","calls":2500}', 'utf8')
+    const b3 = createBudgetStore(dir, c)
+    expect(b3.tryConsume(cap)).toBe(false) // 2500 >= 2500 -> blocked
+    expect(b3.peek().calls).toBe(2500) // count unchanged
+  })
+
+  it('BUG-038: a count well below the default ceiling is still accepted as before', () => {
+    const c = clockAt('2026-06-03T10:00:00')
+    const b = createBudgetStore(dir, c)
+    b.tryConsume(5)
+    b.tryConsume(5)
+    const b2 = createBudgetStore(dir, c)
+    expect(b2.tryConsume(5)).toBe(true) // 2 < 5 -> allowed
+    expect(b2.peek().calls).toBe(3)
+  })
 })

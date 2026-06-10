@@ -376,6 +376,146 @@ describe('registerLlmHandlers — key channels', () => {
     expect(((await cap.invoke('llm:status')) as LlmStatus).hasKey).toBe(true)
   })
 
+  // BUG-036: setConfig must validate maxCallsPerDay (integer, non-negative, bounded) and cap baseUrl length
+  it('setConfig rejects invalid maxCallsPerDay values (BUG-036)', async () => {
+    const { cap, dir } = setupKeyed(fakeEncryptor())
+    writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 5 })
+
+    // Non-integer
+    const rFloat = (await cap.invoke('llm:setConfig', {
+      provider: 'openrouter',
+      model: 'm',
+      maxCallsPerDay: 1.5
+    } as never)) as { ok: boolean; reason?: string }
+    expect(rFloat).toEqual({ ok: false, reason: 'invalid-maxCallsPerDay' })
+
+    // Negative
+    const rNeg = (await cap.invoke('llm:setConfig', {
+      provider: 'openrouter',
+      model: 'm',
+      maxCallsPerDay: -1
+    } as never)) as { ok: boolean; reason?: string }
+    expect(rNeg).toEqual({ ok: false, reason: 'invalid-maxCallsPerDay' })
+
+    // String (truthy non-number)
+    const rStr = (await cap.invoke('llm:setConfig', {
+      provider: 'openrouter',
+      model: 'm',
+      maxCallsPerDay: 'many' as never
+    } as never)) as { ok: boolean; reason?: string }
+    expect(rStr).toEqual({ ok: false, reason: 'invalid-maxCallsPerDay' })
+
+    // Overflows cap (> 1_000_000)
+    const rHuge = (await cap.invoke('llm:setConfig', {
+      provider: 'openrouter',
+      model: 'm',
+      maxCallsPerDay: 2_000_000
+    } as never)) as { ok: boolean; reason?: string }
+    expect(rHuge).toEqual({ ok: false, reason: 'invalid-maxCallsPerDay' })
+
+    // Previously configured cap must be preserved after all rejections
+    expect(readLlmConfig(dir).maxCallsPerDay).toBe(5)
+
+    // Zero is valid (blocks all calls)
+    const rZero = await cap.invoke('llm:setConfig', {
+      provider: 'openrouter',
+      model: 'm',
+      maxCallsPerDay: 0
+    })
+    expect(rZero).toEqual({ ok: true })
+
+    // A valid positive integer round-trips
+    const rOk = await cap.invoke('llm:setConfig', {
+      provider: 'openrouter',
+      model: 'm',
+      maxCallsPerDay: 300
+    })
+    expect(rOk).toEqual({ ok: true })
+    expect(readLlmConfig(dir).maxCallsPerDay).toBe(300)
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('setConfig rejects an over-long baseUrl (BUG-036)', async () => {
+    const { cap, dir } = setupKeyed(fakeEncryptor())
+    const hugeUrl = 'http://127.0.0.1/' + 'a'.repeat(3000)
+    const r = (await cap.invoke('llm:setConfig', {
+      provider: 'local',
+      model: 'm',
+      baseUrl: hugeUrl
+    } as never)) as { ok: boolean; reason?: string }
+    expect(r).toEqual({ ok: false, reason: 'invalid-baseUrl' })
+    expect(readLlmConfig(dir).baseUrl).toBeUndefined()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  // BUG-037: summarize must reject a non-string system BEFORE consuming a budget slot
+  it('rejects summarize with a non-string system field and does not consume a budget slot (BUG-037)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llmipc-bug037-'))
+    try {
+      writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 5 })
+      const cap = createIpcCapture()
+      registerLlmHandlers(cap.ipcMain, mainWin, dir, {
+        fetch: noNetwork,
+        env: { CANVAS_LLM_MOCK: '1' }
+      })
+
+      const invalid = {
+        ok: false,
+        reason: 'provider-error',
+        message: 'invalid input: system must be a non-empty string'
+      }
+
+      // Object system
+      expect(
+        await cap.invoke('llm:summarize', { text: 'hi', system: { role: 'x' } } as never)
+      ).toEqual(invalid)
+      // Numeric system
+      expect(await cap.invoke('llm:summarize', { text: 'hi', system: 42 } as never)).toEqual(
+        invalid
+      )
+      // Empty string system
+      expect(await cap.invoke('llm:summarize', { text: 'hi', system: '' } as never)).toEqual(
+        invalid
+      )
+      // A valid call with undefined system still works
+      const ok = await cap.invoke('llm:summarize', { text: 'hi' })
+      expect(ok).toEqual({ ok: true, text: '[mock] hi' })
+      // A valid call with a real system string also works
+      const okSys = await cap.invoke('llm:summarize', { text: 'hi', system: 'be terse' })
+      expect(okSys).toEqual({ ok: true, text: '[mock] hi' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects summarize with an over-long text or system field (BUG-037)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'llmipc-bug037len-'))
+    try {
+      writeLlmConfig(dir, { provider: 'openrouter', model: 'm', maxCallsPerDay: 10 })
+      const cap = createIpcCapture()
+      registerLlmHandlers(cap.ipcMain, mainWin, dir, {
+        fetch: noNetwork,
+        env: { CANVAS_LLM_MOCK: '1' }
+      })
+
+      const longText = 'a'.repeat(200_000)
+      const rText = await cap.invoke('llm:summarize', { text: longText })
+      expect(rText).toMatchObject({ ok: false, reason: 'provider-error' })
+      if (rText && !(rText as { ok: boolean }).ok) {
+        expect((rText as { message?: string }).message).toContain('text too long')
+      }
+
+      const rSys = await cap.invoke('llm:summarize', { text: 'hi', system: longText })
+      expect(rSys).toMatchObject({ ok: false, reason: 'provider-error' })
+      if (rSys && !(rSys as { ok: boolean }).ok) {
+        expect((rSys as { message?: string }).message).toContain('system too long')
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   // BUG-040: setConfig must validate provider against VALID_PROVIDERS and cap model string length
   it('setConfig rejects unknown provider and over-long model string (BUG-040)', async () => {
     const { cap, dir } = setupKeyed(fakeEncryptor())
