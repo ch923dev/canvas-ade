@@ -74,7 +74,7 @@ Rules:
 
 1. **Now — `pnpm link` dev loop.** ✅ done. Kills the publish→reinstall friction for day-to-day work.
 2. **Per release — tag + publish + consume.** Bump the pkg, `v*` tag → CI publishes; bump the app's
-   `^0.2.x` floor + regen lockfile (in a worktree with its own `node_modules`, not a junction).
+   `^0.9.x` floor + regen lockfile (in a worktree with its own `node_modules`, not a junction).
 3. **Verify bundling before the first signed release (Phase 5).** Confirm electron-vite actually inlines
    `@expanse-ade/mcp` into `out/main` (it's a `dependencies` dep, dynamic-`import()`ed) and the
    packaged app has **no runtime registry dependency**. Add a packaged-app smoke if needed.
