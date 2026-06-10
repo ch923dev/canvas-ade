@@ -458,3 +458,13 @@ Generated 2026-06-10 | Package `bug-hunt-findings/` | Repo Canvas ADE | Branch `
 - Cluster/Wave: H/1 · Commit: c5c4346
 - Fix: Removed 'node' from tsconfig.web.json `compilerOptions.types` (set to `[]`) so the sandboxed renderer no longer has Node ambient globals and the typecheck gate can catch process/Buffer/fs leaks.
 - Verification: `pnpm typecheck:web` exit 0 with zero errors (no renderer source used any Node ambient); verifier independently re-ran tsc on the worktree — clean. · Adversarial verdict: verified
+
+## Addendum (2026-06-10, post-PR)
+
+**BUG-069 temporarily reverted on PR #107.** The claude-code-action refuses to run when a PR's
+copy of `claude-code-review.yml` differs from `main` (anti self-approval validation), so the
+allowlist narrowing was reverted on the branch to let the bot review this PR. The fix itself is
+preserved in commit `0d6bd9b` — re-land it as a tiny follow-up PR after #107 merges
+(`git checkout 0d6bd9b -- .github/workflows/claude-code-review.yml`). The enumeration was
+re-verified against every `gh api` form the prompt uses (5 prefixes, 7 call sites, no
+POST/PATCH) before the revert.

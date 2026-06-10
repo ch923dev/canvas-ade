@@ -50,22 +50,11 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # mcp__github_inline_comment__create_inline_comment is the action's built-in
           # tool for posting comments anchored to specific lines.
-          # gh api allowlist is narrowed to EXACTLY the forms used in the prompt
-          # (BUG-069: the previous "gh api:*" allowed any method on any endpoint,
-          # enabling prompt-injection payloads to self-approve PRs, close issues, etc.):
-          #
-          # Allowed gh api forms and why each is needed:
-          #   gh api repos/.../pulls/.../comments    -- list inline comments (step 1 self-clear + step 2 dispositions)
-          #   gh api -X DELETE repos/.../pulls/comments/...  -- delete own inline comment in self-clear (step 1)
-          #   gh api repos/.../issues/.../comments   -- list issue/summary comments (step 1 self-clear + step 2 dispositions)
-          #   gh api -X DELETE repos/.../issues/comments/... -- delete own summary comment in self-clear (step 1)
-          #   gh api repos/.../milestones            -- list milestones (step 7)
-          #
-          # The allowlist uses prefix-match semantics: each entry covers calls whose
-          # command string STARTS with that prefix. We explicitly exclude -X POST/PATCH
-          # on pulls (no self-approval) and issues (no close/edit via this tool).
+          # gh api:* is broadened (vs gh api repos:*) so the self-clear's
+          # `gh api -X DELETE repos/...` calls match — the allowlist matches on the
+          # command prefix, and `gh api -X DELETE` does NOT start with `gh api repos`.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(gh label list:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/pulls/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/issues/comments:*),Bash(gh api repos/${{ github.repository }}/milestones:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(gh label list:*),Bash(gh api:*)"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
