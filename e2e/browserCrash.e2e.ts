@@ -8,12 +8,36 @@
  *     partition/session survives).
  * The CTA click is a real Playwright click on the HTML state layer (the dead native
  * view is hidden by main on crash, so the HTML underneath is genuinely hittable).
+ *
+ * Renderer state is read via structured-arg page.evaluate (the preview-align
+ * pattern): the board id/status flow as DATA, never interpolated into an eval'd
+ * code string (CodeQL js/bad-code-sanitization — a JSON.stringify'd value embedded
+ * in code can still break out via U+2028/U+2029).
  */
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { mainCall, seed } from './helpers'
 
-const runtimeStatus = (id: string, status: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+const runtimeStatus = (page: Page, id: string, status: string): Promise<boolean> =>
+  page.evaluate(
+    (a) => {
+      const r = (globalThis as any).__canvasE2E.getRuntime(a.id)
+      return !!r && r.status === a.status
+    },
+    { id, status }
+  )
+
+const fitView = (page: Page, id: string): Promise<void> =>
+  page.evaluate((id) => (globalThis as any).__canvasE2E.fitView(id), id)
+
+const pollTrue = async (fn: () => Promise<boolean>, timeout: number): Promise<boolean> => {
+  try {
+    await expect.poll(fn, { timeout }).toBe(true)
+    return true
+  } catch {
+    return false
+  }
+}
 
 test.describe('browser board — crashed preview recovery (D2-C)', () => {
   test('render-process-gone → crashed state + Reload CTA reconnects', async ({
@@ -23,17 +47,18 @@ test.describe('browser board — crashed preview recovery (D2-C)', () => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    expect(await pollEval(page, runtimeStatus(id, 'connected'), 10_000), 'connects first').toBe(
-      true
-    )
+    await fitView(page, id)
+    expect(
+      await pollTrue(() => runtimeStatus(page, id, 'connected'), 10_000),
+      'connects first'
+    ).toBe(true)
     const wcBefore = await mainCall<number | null>(electronApp, 'viewWebContentsId', id)
 
     // Kill the preview's renderer process for real.
     const crashed = await mainCall<boolean>(electronApp, 'crashView', id)
     expect(crashed, 'crashView found the live view').toBe(true)
     expect(
-      await pollEval(page, runtimeStatus(id, 'crashed'), 10_000),
+      await pollTrue(() => runtimeStatus(page, id, 'crashed'), 10_000),
       'board surfaces crashed (no silent freeze)'
     ).toBe(true)
 
@@ -44,7 +69,7 @@ test.describe('browser board — crashed preview recovery (D2-C)', () => {
     await cta.click()
 
     expect(
-      await pollEval(page, runtimeStatus(id, 'connected'), 15_000),
+      await pollTrue(() => runtimeStatus(page, id, 'connected'), 15_000),
       'Reload CTA relaunches the renderer and reconnects'
     ).toBe(true)
     // Reload (not close+reopen): the SAME webContents survives the crash recovery.
