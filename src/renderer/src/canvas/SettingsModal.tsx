@@ -1,11 +1,12 @@
 /**
  * T-B2: the LLM Settings modal. Choose a provider, override its model, optionally enter an
- * API key (masked, write-only into MAIN via llm.setKey — never read back). Portaled to <body>
- * over a scrim, design-token styled (calm/dense, one accent). Provider/model persist via
- * llm.setConfig; the key via llm.setKey; Clear key via llm.clearKey. No multi-key/profiles.
+ * API key (masked, write-only into MAIN via llm.setKey — never read back). Rendered on the
+ * shared Modal primitive (scrim/portal/Esc/focus — design-audit D1-B), design-token styled
+ * (calm/dense, one accent). Provider/model persist via llm.setConfig; the key via llm.setKey;
+ * Clear key via llm.clearKey. No multi-key/profiles.
  */
 import { useEffect, useId, useState, type CSSProperties, type ReactElement } from 'react'
-import { createPortal } from 'react-dom'
+import { Modal } from './Modal'
 import { DEFAULT_MODELS } from '../lib/llmModels'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
@@ -88,14 +89,6 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && !busy) onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, busy])
 
   const onProvider = (p: keyof typeof DEFAULT_MODELS): void => {
     setProvider(p)
@@ -196,161 +189,144 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
     }
   }
 
-  return createPortal(
-    <div
-      // BUG-007(5): while a save is in flight a scrim click is correctly swallowed, but with no
-      // visual cue the user re-clicks thinking it failed. Show a 'wait' cursor so the lock is felt.
-      style={{ ...styles.scrim, cursor: busy ? 'wait' : 'default' }}
-      onPointerDown={() => {
-        if (!busy) onClose()
-      }}
-      data-test="settings-scrim"
+  return (
+    // BUG-007(5) rides on the shared Modal: while a save is in flight (closeDisabled) the
+    // scrim swallows the close AND shows a 'wait' cursor so the lock is felt.
+    <Modal
+      label="LLM settings"
+      onClose={onClose}
+      closeDisabled={busy}
+      zIndex={300}
+      scrimProps={{ 'data-test': 'settings-scrim' }}
+      cardProps={{ 'data-test': 'settings-modal' }}
+      cardStyle={styles.card}
     >
-      <div
-        style={styles.card}
-        role="dialog"
-        aria-label="LLM settings"
-        data-test="settings-modal"
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        <div style={styles.head}>Context brain · LLM</div>
+      <div style={styles.head}>Context brain · LLM</div>
 
-        <label style={styles.field}>
-          <span style={styles.label}>Provider</span>
-          <select
-            aria-label="Provider"
-            value={provider}
-            onChange={(e) => onProvider(e.target.value as keyof typeof DEFAULT_MODELS)}
-            style={styles.input}
-          >
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </label>
+      <label style={styles.field}>
+        <span style={styles.label}>Provider</span>
+        <select
+          aria-label="Provider"
+          value={provider}
+          onChange={(e) => onProvider(e.target.value as keyof typeof DEFAULT_MODELS)}
+          style={styles.input}
+        >
+          {PROVIDERS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </label>
 
+      <label style={styles.field}>
+        <span style={styles.label}>Model</span>
+        <input
+          aria-label="Model"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          style={styles.input}
+        />
+      </label>
+
+      {provider === 'local' && (
         <label style={styles.field}>
-          <span style={styles.label}>Model</span>
+          <span style={styles.label}>Base URL</span>
           <input
-            aria-label="Model"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            style={styles.input}
-          />
-        </label>
-
-        {provider === 'local' && (
-          <label style={styles.field}>
-            <span style={styles.label}>Base URL</span>
-            <input
-              aria-label="Base URL"
-              value={baseUrl}
-              placeholder="http://127.0.0.1:1234/v1"
-              onChange={(e) => setBaseUrl(e.target.value)}
-              style={styles.input}
-            />
-          </label>
-        )}
-
-        <label style={styles.field}>
-          <span style={styles.label}>
-            API key {hasKey && <span style={{ color: 'var(--accent)' }}>· set</span>}
-          </span>
-          <input
-            aria-label="API key"
-            type="password"
-            value={key}
-            placeholder={hasKey ? '•••••••• (leave blank to keep)' : 'Paste your key'}
-            onChange={(e) => setKey(e.target.value)}
+            aria-label="Base URL"
+            value={baseUrl}
+            placeholder="http://127.0.0.1:1234/v1"
+            onChange={(e) => setBaseUrl(e.target.value)}
             style={styles.input}
           />
         </label>
+      )}
 
-        {!encryptionAvailable && provider !== 'local' && (
-          <div role="note" data-test="settings-no-keyring" style={styles.notice}>
-            No system keyring detected — a key can&apos;t be stored encrypted on this machine. Set
-            the <code>{ENV_VAR[provider]}</code> environment variable instead.
-          </div>
-        )}
+      <label style={styles.field}>
+        <span style={styles.label}>
+          API key {hasKey && <span style={{ color: 'var(--accent)' }}>· set</span>}
+        </span>
+        <input
+          aria-label="API key"
+          type="password"
+          value={key}
+          placeholder={hasKey ? '•••••••• (leave blank to keep)' : 'Paste your key'}
+          onChange={(e) => setKey(e.target.value)}
+          style={styles.input}
+        />
+      </label>
 
-        {error && (
-          <div role="alert" data-test="settings-error" style={styles.error}>
-            {error}
-          </div>
-        )}
-
-        <div style={styles.divider} />
-
-        <div style={styles.head}>Terminal</div>
-
-        <label style={{ ...styles.field, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-          <input
-            type="checkbox"
-            data-test="settings-recap-toggle"
-            checked={recapConsent === 'enabled'}
-            disabled={projectDir === null}
-            aria-label="Agent recaps (this project)"
-            onChange={(e) => {
-              void onRecapToggle(e.target.checked ? 'enabled' : 'declined')
-            }}
-            style={{
-              marginTop: 2,
-              accentColor: 'var(--accent)',
-              cursor: projectDir === null ? 'not-allowed' : 'pointer'
-            }}
-          />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <span style={styles.label}>
-              Agent recaps (this project)
-              {projectDir === null && (
-                <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>
-                  {' '}
-                  — open a project to enable
-                </span>
-              )}
-            </span>
-            <span style={styles.hint}>
-              Flip a terminal to a recap of what its agent is doing. Reads the session transcript
-              locally; only a scrubbed slice is sent to your chosen LLM.
-            </span>
-          </div>
-        </label>
-
-        <div style={styles.row}>
-          <button style={styles.ghost} disabled={busy} onClick={() => void clear()}>
-            Clear key
-          </button>
-          <div style={{ flex: 1 }} />
-          <button style={styles.ghost} disabled={busy} onClick={onClose}>
-            Cancel
-          </button>
-          <button style={styles.primary} disabled={busy} onClick={() => void save()}>
-            Save
-          </button>
+      {!encryptionAvailable && provider !== 'local' && (
+        <div role="note" data-test="settings-no-keyring" style={styles.notice}>
+          No system keyring detected — a key can&apos;t be stored encrypted on this machine. Set the{' '}
+          <code>{ENV_VAR[provider]}</code> environment variable instead.
         </div>
+      )}
+
+      {error && (
+        <div role="alert" data-test="settings-error" style={styles.error}>
+          {error}
+        </div>
+      )}
+
+      <div style={styles.divider} />
+
+      <div style={styles.head}>Terminal</div>
+
+      <label style={{ ...styles.field, flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+        <input
+          type="checkbox"
+          data-test="settings-recap-toggle"
+          checked={recapConsent === 'enabled'}
+          disabled={projectDir === null}
+          aria-label="Agent recaps (this project)"
+          onChange={(e) => {
+            void onRecapToggle(e.target.checked ? 'enabled' : 'declined')
+          }}
+          style={{
+            marginTop: 2,
+            accentColor: 'var(--accent)',
+            cursor: projectDir === null ? 'not-allowed' : 'pointer'
+          }}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <span style={styles.label}>
+            Agent recaps (this project)
+            {projectDir === null && (
+              <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>
+                {' '}
+                — open a project to enable
+              </span>
+            )}
+          </span>
+          <span style={styles.hint}>
+            Flip a terminal to a recap of what its agent is doing. Reads the session transcript
+            locally; only a scrubbed slice is sent to your chosen LLM.
+          </span>
+        </div>
+      </label>
+
+      <div style={styles.row}>
+        <button style={styles.ghost} disabled={busy} onClick={() => void clear()}>
+          Clear key
+        </button>
+        <div style={{ flex: 1 }} />
+        <button style={styles.ghost} disabled={busy} onClick={onClose}>
+          Cancel
+        </button>
+        <button style={styles.primary} disabled={busy} onClick={() => void save()}>
+          Save
+        </button>
       </div>
-    </div>,
-    document.body
+    </Modal>
   )
 }
 
 const styles: Record<string, CSSProperties> = {
-  scrim: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 300,
-    background: 'rgba(0,0,0,0.4)',
-    display: 'grid',
-    placeItems: 'center'
-  },
+  // Scrim + card chrome (surface/border/shadow) come from the shared Modal; only the
+  // Settings-specific layout stays here.
   card: {
     width: 380,
-    background: 'var(--surface-raised)',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--r-ctl)',
-    boxShadow: 'var(--shadow-pop)',
     padding: 16,
     display: 'flex',
     flexDirection: 'column',
@@ -406,7 +382,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 6,
     border: 'none',
     background: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--text)',
     fontSize: 12.5,
     fontWeight: 500,
     cursor: 'pointer'
