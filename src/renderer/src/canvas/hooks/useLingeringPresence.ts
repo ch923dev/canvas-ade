@@ -12,7 +12,7 @@
  * exactly (§9: animated ops become instant). Read at the falling edge so a runtime
  * preference change is honored.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { prefersReducedMotion } from '../../lib/motion'
 
 /** LOD crossfade duration (ms) — keep in sync with the ca-lod-fade-* keyframes (§9). */
@@ -21,7 +21,12 @@ export const LOD_FADE_MS = 100
 export function useLingeringPresence(active: boolean, ms: number = LOD_FADE_MS): boolean {
   const [lingering, setLingering] = useState(false)
   const prev = useRef(active)
-  useEffect(() => {
+  // useLayoutEffect, NOT useEffect: a passive effect fires after paint, so the
+  // falling edge would render one frame with `active || lingering` both false —
+  // unmounting the leaving layer (blank flash + remount churn) before the linger
+  // kicks in. The layout effect commits `lingering = true` synchronously before
+  // paint, so presence never dips on the falling edge. Electron-only (no SSR).
+  useLayoutEffect(() => {
     if (prev.current === active) return undefined
     prev.current = active
     if (active) {
