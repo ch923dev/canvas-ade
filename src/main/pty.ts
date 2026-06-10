@@ -41,6 +41,17 @@ export function isValidResize(cols: number, rows: number): boolean {
   )
 }
 
+/**
+ * BUG-023: clamp a single spawn dimension (cols or rows) to the [1, 1000] range
+ * that isValidResize enforces on the resize path. Truncates fractional values
+ * before clamping so the result is always an integer in [1, 1000].
+ * Exported for unit testing — both spawn-time uses call this helper.
+ */
+export function clampSpawnDim(value: number, fallback: number): number {
+  const v = Number.isFinite(value) ? Math.trunc(value) : fallback
+  return Math.min(Math.max(1, v), 1000)
+}
+
 /** Renderer→PTY input/resize message over a board's MessagePort. The discriminated
  * union lets the resize branch read cols/rows as plain numbers (no non-null casts);
  * the runtime guards below still defend against malformed/untrusted payloads. */
@@ -219,13 +230,21 @@ export function adoptCore(
   id: string,
   sessionsMap: Map<string, SessionLike>,
   parkedMap: Map<string, ParkedLike>,
-  deps: Pick<SessionDeps, 'newChannel'>,
+  deps: Pick<SessionDeps, 'newChannel' | 'killTree'>,
   transferPort: (port2: MessagePortMain) => void
 ): { adopted: boolean; pid?: number } {
   const p = parkedMap.get(id)
   if (!p) return { adopted: false }
   clearTimeout(p.timer)
   parkedMap.delete(id)
+
+  // BUG-024: mirror the Bug #13 spawn-path guard — if a LIVE session already holds
+  // this id (e.g. duplicate board ids from a hand-edited canvas.json, or an MCP
+  // adopt against an already-running board), reap it before the set so the
+  // displaced proc is not orphaned outside both maps.
+  if (sessionsMap.has(id)) {
+    void cleanupCore(id, sessionsMap, deps)
+  }
 
   const { port1, port2 } = deps.newChannel()
   attachPortInput(port1, p.proc)
@@ -334,12 +353,19 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       recapEnv = undefined // policy must never break a spawn
     }
 
+    // BUG-023: clamp spawn dims to the same [1, 1000] bounds that isValidResize
+    // enforces on the resize path. Without this, a board wider than 1000 cols
+    // spawns fine but every subsequent resize (including row-only changes) is
+    // silently dropped by the isValidResize gate in attachPortInput, freezing
+    // the PTY at its spawn dimensions and causing TUI misrenders.
+    const spawnCols = clampSpawnDim(opts.cols ?? 80, 80)
+    const spawnRows = clampSpawnDim(opts.rows ?? 24, 24)
     let proc: pty.IPty
     try {
       proc = pty.spawn(shell, args, {
         name: 'xterm-256color',
-        cols: opts.cols ?? 80,
-        rows: opts.rows ?? 24,
+        cols: spawnCols,
+        rows: spawnRows,
         cwd: safeCwd(opts.cwd),
         env: { ...process.env, ...(recapEnv ?? {}) } as Record<string, string>
       })
@@ -478,7 +504,13 @@ export function cleanupCore(
   if (!s) return Promise.resolve()
   if (isStaleExit(s.proc, proc)) return Promise.resolve()
   sessionsMap.delete(id)
-  const done = deps.killTree(s.proc)
+  // BUG-022: when the shell/agent exited naturally (state === 'exited') AND this
+  // is the process's own onExit callback (proc !== undefined), the root PID is
+  // already dead and the OS may recycle it before taskkill resolves — a force-kill
+  // against a recycled PID can harm an unrelated process tree. Skip killTree on
+  // the natural-exit path only. An explicit pty:kill (proc === undefined, no caller
+  // proc pinning) always goes through because it may tear down a still-running proc.
+  const done = s.state === 'exited' && proc !== undefined ? Promise.resolve() : deps.killTree(s.proc)
   try {
     s.port.close()
   } catch {
