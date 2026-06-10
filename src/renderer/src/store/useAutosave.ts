@@ -103,9 +103,19 @@ export function useAutosave(): void {
       },
       // The `project` slice is added in a later task; read it defensively so the hook
       // compiles + no-ops (status 'welcome' → gate closed) until that slice exists.
-      getStatus: () =>
-        (useCanvasStore.getState() as { project?: { status?: ProjectStatus } }).project?.status ??
-        'welcome',
+      // A dir-less "open" project (the e2e harness boot — production always opens with
+      // a dir) has nowhere to save to: report 'welcome' so the gate stays closed instead
+      // of attempting a write MAIN fails (that raised a phantom sticky save-failure
+      // toast over every e2e run once D1-A made the failure surface an occluding island).
+      getStatus: () => {
+        const p = (
+          useCanvasStore.getState() as {
+            project?: { status?: ProjectStatus; dir?: string | null }
+          }
+        ).project
+        if (p?.dir == null) return 'welcome'
+        return p.status ?? 'welcome'
+      },
       // SAVE-1: a swallowed autosave failure means silent data loss. Log it AND raise
       // the visible save-failure chip in the project switcher (D0-8); the chip's final
       // home is the D1 toast channel.

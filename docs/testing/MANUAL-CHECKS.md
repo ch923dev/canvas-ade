@@ -55,6 +55,17 @@ is part of every check.
 - [ ] Multi-select boards -> Ctrl+G makes a named group box + tab; the tab is clickable (rename / focus / manage).
 - [ ] Grouped focus frames the group; add-to-group reflows + animates; remove works.
 
+## App feedback (toast island, D1-A)
+
+- [ ] Trigger a transient note (terminal globe with no dev server running) -> a toast appears in the
+      bottom-right island, auto-dismisses after ~5s; the X dismisses it immediately.
+- [ ] Force a save failure (make the project dir read-only) -> STICKY error toast with Retry; Retry
+      after restoring write access clears it; a later successful autosave also clears it.
+- [ ] Park a live browser preview under the island, then raise a toast -> the preview demotes to its
+      snapshot (the native view must NOT paint over the toasts); dismissing restores it live.
+- [ ] Raise >3 toasts -> only 3 visible; a queued one surfaces (with its own full read time) as a
+      slot frees.
+
 ## Persistence / migration
 
 - [ ] Open a project saved at an older `schemaVersion` -> migration runs, no data loss, re-saves at current version.
