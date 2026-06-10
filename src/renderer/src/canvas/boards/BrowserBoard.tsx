@@ -141,10 +141,29 @@ export function BrowserBoard({
   // (a focus-without-edit blur must not write a stale draft back over an external
   // url change).
   const urlDirty = useRef(false)
+  // D2-C: the committed draft failed the URL sanity check (scheme + host). Shown
+  // inline in the bar (red field + message in the dims slot) — NEVER over the device
+  // stage, where the always-above native view would occlude it (ADR 0002).
+  const [urlError, setUrlError] = useState<string | null>(null)
+  // D2-C: an EXTERNAL writer (auto-connect detect push, terminal push-to-preview,
+  // MCP) just rewrote board.url — flash the URL field with the accent wash for 600ms
+  // so the silent background mutation is noticeable. A self-commit must not flash.
+  const [urlFlash, setUrlFlash] = useState(false)
+  const selfCommit = useRef(false)
   if (board.url !== lastUrl) {
     setLastUrl(board.url)
-    if (!editingUrl) setDraftUrl(board.url)
+    if (!editingUrl) {
+      setDraftUrl(board.url)
+      setUrlError(null) // the synced board.url supersedes a stale inline error
+      if (!selfCommit.current) setUrlFlash(true)
+    }
+    selfCommit.current = false
   }
+  useEffect(() => {
+    if (!urlFlash) return
+    const t = setTimeout(() => setUrlFlash(false), 600)
+    return () => clearTimeout(t)
+  }, [urlFlash])
 
   // D0-6 (A9): live-region text for the connection dot. Starts EMPTY and fills only on
   // the first status TRANSITION — a region inserted with content can announce on mount,
@@ -166,9 +185,20 @@ export function BrowserBoard({
     if (!urlDirty.current || !next || next === board.url) {
       urlDirty.current = false
       setDraftUrl(board.url)
+      setUrlError(null)
+      return
+    }
+    // D2-C: lightweight sanity check (scheme + host) BEFORE the commit — a typo'd
+    // URL otherwise round-trips to main just to bounce off the scheme allowlist as a
+    // full "Couldn't load" board state. Keep the rejected draft in place (with the
+    // inline error) so the user can fix it; nothing is written to the board.
+    if (!isHttpUrl(next)) {
+      setUrlError('Needs an http(s)://host URL')
       return
     }
     urlDirty.current = false
+    setUrlError(null)
+    selfCommit.current = true
     // One undo checkpoint per committed URL edit (also clears any armed redo branch).
     beginChange()
     updateBoard(board.id, { url: next })
@@ -253,6 +283,17 @@ export function BrowserBoard({
   // an http(s) URL; detect path needs a linked source terminal.
   const willRetry = isHttpUrl(board.url) || !!board.previewSourceId
 
+  // D2-C: the renderer was FREED (over-cap eviction), not just detached for motion —
+  // page state is gone and interaction is dead until a live slot frees. Distinct
+  // from the visually-identical snapshot detach (audit §3.4).
+  const paused = runtime.evicted && !runtime.live
+
+  // D2-C Reload CTA: wc.reload() relaunches a crashed renderer; its fresh main-frame
+  // nav-start clears the crashed latch back to `connecting` (usePreviewEvents).
+  const reloadCrashed = (): void => {
+    void window.api.reloadPreview(board.id)
+  }
+
   return (
     <BoardFrame
       type="browser"
@@ -300,14 +341,25 @@ export function BrowserBoard({
           />
           <NavBtn name="external" title="Open in browser" onClick={openExternal} />
         </div>
-        <div className="bb-url-field">
-          {/* D0-6 (A9): the dot is color-only — pair it with a hover word and a polite
-              live region so connection-state changes are announced. */}
+        <div
+          className={
+            'bb-url-field' +
+            (urlError ? ' bb-url-invalid' : '') +
+            (urlFlash ? ' bb-url-flash' : '')
+          }
+        >
+          {/* D0-6 (A9): the dot is color-only — D2-C pairs it with an ALWAYS-VISIBLE
+              status word (Linear pattern, colorblind-safe) plus the polite live
+              region announcing transitions. An evicted board reads "paused" — its
+              status may still say connected, but the renderer (and the page state)
+              is gone until a live slot frees. */}
           <span
             className="bb-conn-dot"
-            title={connWord(runtime.status)}
-            style={{ background: connDot(runtime.status) }}
+            style={{ background: paused ? 'var(--text-3)' : connDot(runtime.status) }}
           />
+          <span className="bb-conn-word" aria-hidden>
+            {paused ? 'paused' : connWord(runtime.status)}
+          </span>
           <span className="sr-only" role="status" aria-live="polite">
             {srConn}
           </span>
@@ -322,6 +374,7 @@ export function BrowserBoard({
             }}
             onChange={(e) => {
               urlDirty.current = true
+              setUrlError(null) // re-validate on the next commit attempt
               setDraftUrl(e.target.value)
             }}
             onBlur={() => {
@@ -336,15 +389,25 @@ export function BrowserBoard({
                 // Discard the edit: blur's commitUrl sees a clean (non-dirty) draft
                 // and re-syncs from board.url instead of committing the typed text.
                 urlDirty.current = false
+                setUrlError(null)
                 setDraftUrl(board.url)
                 ;(e.target as HTMLInputElement).blur()
               }
             }}
           />
         </div>
-        <span className="bb-dims">
-          {preset.w} × {preset.h}
-        </span>
+        {/* D2-C: the inline URL error takes the dims slot — INSIDE the bar's own
+            height, never over the device stage (a live native view paints above any
+            HTML it overlaps, ADR 0002). */}
+        {urlError ? (
+          <span className="bb-url-error" role="alert">
+            {urlError}
+          </span>
+        ) : (
+          <span className="bb-dims">
+            {preset.w} × {preset.h}
+          </span>
+        )}
       </div>
 
       {/* Device stage: a hatched backing well + the rounded HTML device frame. The
@@ -391,7 +454,15 @@ export function BrowserBoard({
           }
         >
           {preset.notch && <div className="bb-notch" />}
-          <DeviceContent runtime={runtime} url={board.url} willRetry={willRetry} />
+          <DeviceContent
+            runtime={runtime}
+            url={board.url}
+            willRetry={willRetry}
+            onReload={reloadCrashed}
+          />
+          {/* D2-C: evicted (renderer freed) ≠ detached (snapshot) — say so. Safe to
+              overlay: an evicted board has no live native view above this HTML. */}
+          {paused && <span className="bb-paused-badge">paused</span>}
         </div>
       </div>
     </BoardFrame>
@@ -424,16 +495,32 @@ function NavBtn({
   )
 }
 
-/** The fallback layer under the native view: snapshot, connecting, or load-failed. */
+/** The fallback layer under the native view: snapshot, connecting, load-failed, or
+ *  crashed (D2-C — the dead native layer is hidden by main, so this state shows). */
 function DeviceContent({
   runtime,
   url,
-  willRetry
+  willRetry,
+  onReload
 }: {
   runtime: ReturnType<ReturnType<typeof selectRuntime>>
   url: string
   willRetry: boolean
+  onReload: () => void
 }): ReactElement {
+  if (runtime.status === 'crashed') {
+    return (
+      <div className="bb-state">
+        <div className="bb-state-title" style={{ color: 'var(--err)' }}>
+          Preview crashed
+        </div>
+        <div className="bb-state-sub">{runtime.error || url}</div>
+        <button className="bb-reload-btn" onClick={onReload} onMouseDown={(e) => e.stopPropagation()}>
+          Reload
+        </button>
+      </div>
+    )
+  }
   if (runtime.status === 'load-failed') {
     return (
       <div className="bb-state">
@@ -462,15 +549,16 @@ function DeviceContent({
 /** Connection dot colour for the URL field. */
 function connDot(status: ReturnType<ReturnType<typeof selectRuntime>>['status']): string {
   if (status === 'connected') return 'var(--ok)'
-  if (status === 'load-failed') return 'var(--err)'
+  if (status === 'load-failed' || status === 'crashed') return 'var(--err)'
   if (status === 'connecting') return 'var(--warn)'
   return 'var(--text-3)'
 }
 
-/** D0-6 (A9): the dot's meaning as a word — tooltip + live-region text. */
+/** D0-6 (A9) / D2-C: the dot's meaning as a word — visible label + live-region text. */
 function connWord(status: ReturnType<ReturnType<typeof selectRuntime>>['status']): string {
   if (status === 'connected') return 'connected'
   if (status === 'load-failed') return 'failed to load'
+  if (status === 'crashed') return 'crashed'
   if (status === 'connecting') return 'connecting'
   return 'not connected'
 }

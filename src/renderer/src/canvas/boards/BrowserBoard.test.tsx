@@ -116,6 +116,158 @@ describe('BrowserBoard — URL draft vs external writers (BUG-059)', () => {
   })
 })
 
+describe('BrowserBoard — crashed preview state (D2-C)', () => {
+  it('shows "Preview crashed" with the reason and a Reload CTA wired to reloadPreview', () => {
+    const id = seedBrowser()
+    act(() => {
+      usePreviewStore.getState().patch(id, { status: 'crashed', error: 'oom', live: true })
+    })
+    render(<Harness id={id} />)
+    expect(document.body.textContent).toContain('Preview crashed')
+    expect(document.body.textContent).toContain('oom')
+    const cta = document.querySelector<HTMLButtonElement>('.bb-reload-btn')
+    if (!cta) throw new Error('Reload CTA not found')
+    fireEvent.click(cta)
+    expect(
+      (window.api as unknown as { reloadPreview: ReturnType<typeof vi.fn> }).reloadPreview
+    ).toHaveBeenCalledWith(id)
+  })
+
+  it('names the crashed state beside the connection dot', () => {
+    const id = seedBrowser()
+    act(() => {
+      usePreviewStore.getState().patch(id, { status: 'crashed' })
+    })
+    render(<Harness id={id} />)
+    expect(document.querySelector('.bb-conn-word')?.textContent).toBe('crashed')
+  })
+})
+
+describe('BrowserBoard — status word beside the dot (D2-C, audit §3.4)', () => {
+  it('shows the colourblind-safe status word for the current preview state', () => {
+    const id = seedBrowser()
+    act(() => {
+      usePreviewStore.getState().patch(id, { status: 'connected' })
+    })
+    render(<Harness id={id} />)
+    expect(document.querySelector('.bb-conn-word')?.textContent).toBe('connected')
+  })
+
+  it('overrides the word with "paused" for an evicted (renderer-freed) board', () => {
+    const id = seedBrowser()
+    act(() => {
+      usePreviewStore.getState().patch(id, { status: 'connected', live: false, evicted: true })
+    })
+    render(<Harness id={id} />)
+    expect(document.querySelector('.bb-conn-word')?.textContent).toBe('paused')
+  })
+})
+
+describe('BrowserBoard — evicted "paused" badge (D2-C)', () => {
+  it('shows the badge when the renderer was freed and hides it while live', () => {
+    const id = seedBrowser()
+    act(() => {
+      usePreviewStore.getState().patch(id, { status: 'connected', live: false, evicted: true })
+    })
+    render(<Harness id={id} />)
+    expect(document.querySelector('.bb-paused-badge')?.textContent).toBe('paused')
+    act(() => {
+      usePreviewStore.getState().patch(id, { live: true, evicted: false })
+    })
+    expect(document.querySelector('.bb-paused-badge')).toBeNull()
+  })
+})
+
+describe('BrowserBoard — URL sanity check (D2-C inline error)', () => {
+  it('rejects a non-http(s) commit: inline error, red field, NO board write', () => {
+    const id = seedBrowser()
+    const original = boardUrl(id)
+    render(<Harness id={id} />)
+    const input = urlInput()
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'not a url' } })
+    fireEvent.blur(input)
+    expect(boardUrl(id)).toBe(original)
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-invalid')).toBe(
+      true
+    )
+    expect(document.querySelector('.bb-url-error')?.textContent).toBeTruthy()
+    // The rejected draft stays visible so the user can fix it in place.
+    expect(urlInput().value).toBe('not a url')
+  })
+
+  it('clears the error and commits once the URL is corrected', () => {
+    const id = seedBrowser()
+    render(<Harness id={id} />)
+    const input = urlInput()
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'nope' } })
+    fireEvent.blur(input)
+    expect(document.querySelector('.bb-url-error')).not.toBeNull()
+    fireEvent.focus(urlInput())
+    fireEvent.change(urlInput(), { target: { value: 'http://localhost:5173' } })
+    fireEvent.blur(urlInput())
+    expect(boardUrl(id)).toBe('http://localhost:5173')
+    expect(document.querySelector('.bb-url-error')).toBeNull()
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-invalid')).toBe(
+      false
+    )
+  })
+
+  it('Escape discards an errored draft and clears the error', () => {
+    const id = seedBrowser()
+    const original = boardUrl(id)
+    render(<Harness id={id} />)
+    const input = urlInput()
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'garbage' } })
+    fireEvent.blur(input)
+    expect(document.querySelector('.bb-url-error')).not.toBeNull()
+    fireEvent.focus(urlInput())
+    fireEvent.keyDown(urlInput(), { key: 'Escape' })
+    fireEvent.blur(urlInput())
+    expect(document.querySelector('.bb-url-error')).toBeNull()
+    expect(urlInput().value).toBe(original)
+  })
+})
+
+describe('BrowserBoard — auto-push URL accent flash (D2-C)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('flashes the URL field when an external writer pushes a new url, then settles', () => {
+    const id = seedBrowser()
+    render(<Harness id={id} />)
+    act(() => {
+      useCanvasStore.getState().updateBoard(id, { url: 'http://localhost:4321' })
+    })
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-flash')).toBe(true)
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-flash')).toBe(
+      false
+    )
+  })
+
+  it("does NOT flash on the user's own committed edit", () => {
+    const id = seedBrowser()
+    render(<Harness id={id} />)
+    const input = urlInput()
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'http://localhost:8080' } })
+    fireEvent.blur(input)
+    expect(boardUrl(id)).toBe('http://localhost:8080')
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-flash')).toBe(
+      false
+    )
+  })
+})
+
 describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel since D1-A)', () => {
   // The board no longer renders its own note — feedback goes to the app toast store.
   async function shoot(id: string): Promise<{ message: string; kind: string }> {
