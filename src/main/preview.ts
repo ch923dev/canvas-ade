@@ -779,6 +779,24 @@ export function debugViewIds(): string[] {
 }
 
 /**
+ * E2E ONLY — forcefully crash a board's preview renderer process (the D2-C
+ * crashed-state probe). Drives the REAL `render-process-gone` path: hide the dead
+ * layer, emit the lifecycle event, renderer shows the Reload CTA. Returns false when
+ * no view exists. Read-only over the Map + a Chromium debug call; exposes nothing a
+ * misbehaving previewed page couldn't already do to itself.
+ */
+export function debugCrashView(id: string): boolean {
+  const e = views.get(id)
+  if (!e) return false
+  try {
+    e.view.webContents.forcefullyCrashRenderer()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * E2E ONLY — the live webContents id for a board's view, or null if none exists. A
  * close + reopen (`disposeOne` → `openPreview`) mints a NEW webContents (new id); a
  * detach + reattach keeps the SAME one. Lets a probe assert page-state survival across

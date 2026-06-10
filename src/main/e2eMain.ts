@@ -15,6 +15,7 @@ import { join } from 'path'
 import {
   debugCaptureView,
   debugCaptureViewPng,
+  debugCrashView,
   debugViewBounds,
   debugViewIds,
   debugViewWebContentsId
@@ -36,6 +37,8 @@ export interface E2EMain {
   captureViewToFile(id: string, absPath: string): Promise<boolean>
   viewIds(): string[]
   viewWebContentsId(id: string): number | null
+  /** Forcefully crash a board's preview renderer (D2-C crashed-state probe). */
+  crashView(id: string): boolean
   /** The native view's live bounds + attached flag, for the alignment probe (native vs .bb-frame). */
   viewBounds(
     id: string
@@ -152,6 +155,7 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     },
     viewIds: debugViewIds,
     viewWebContentsId: debugViewWebContentsId,
+    crashView: debugCrashView,
     viewBounds: debugViewBounds,
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)

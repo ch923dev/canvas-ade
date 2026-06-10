@@ -53,6 +53,18 @@ is part of every check.
 - [ ] Full-view a browser board -> navigate inside it -> exit full view -> the navigated page survives
       (NOT reset to the board URL).
 - [ ] Digest / settings panels are NOT painted over by the native view (occlusion zones honored).
+- [ ] (D2-C) Kill the preview's renderer (or load a page that crashes it) -> "Preview crashed" +
+      Reload CTA, status word `crashed`; Reload reconnects without resetting the board URL/session.
+- [ ] (D2-C) Open >4 browser boards -> the evicted (renderer-freed) ones show the "paused" badge +
+      `paused` status word; freeing a slot (delete/zoom away another) clears the badge on reattach.
+- [ ] (D2-C) Type a junk URL (no scheme/host) + Enter -> red field + inline "Needs an http(s)://host
+      URL" in the bar (never over the stage); fixing it commits and clears.
+- [ ] (D2-C) Link a terminal whose dev server prints a URL -> when auto-push rewrites the URL bar it
+      flashes accent for ~600ms (a user's own committed edit must NOT flash).
+- [ ] (D2-C) Evicted board reattach (zoom back in / slot frees) -> the snapshot stays painted until
+      the page is ready — NO blank white frame while the fresh renderer loads.
+- [ ] (D2-C) Connection dot always has its status word beside it (connected / connecting / failed to
+      load / crashed / paused / not connected).
 
 ## Planning / whiteboard board
 
