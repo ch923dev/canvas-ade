@@ -173,6 +173,7 @@ Waves 0–2 is independent `fix/*` work on `main` and can land ahead of the MCP 
 ---
 
 ### Source-of-truth pointers
+*(Both raw packages were collapsed to git history on 2026-06-10 — recover via `git log --all -- <path>`.)*
 - Audit A full detail + per-dimension coverage: `docs/reviews/2026-06-04-main-branch-full-audit.md`
 - Hunt B cards (BUG-001…028) + `unconfirmed.md` + `partials-roadmap-xref.md`:
   `docs/reviews/2026-06-04-mcp-context-bughunt/`

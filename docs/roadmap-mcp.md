@@ -10,7 +10,7 @@
 > ships with an e2e probe AND a manual test** · **a handoff doc is written after every task**.
 >
 > Companion docs: package phase ledger `Z:\canvas-ade-mcp\docs\roadmap.md` · status audit
-> `docs/reviews/2026-06-03-mcp-status-audit.md` · **packaging & serving model**
+> `docs/reviews/2026-06-03-mcp-status-audit.md` (collapsed to git history 2026-06-10) · **packaging & serving model**
 > `docs/roadmap-mcp-packaging.md` (dev = `pnpm link`, release = bundled-in-MAIN) · MCP facts
 > `mcp-spec-state-2026-06` (memory).
 
@@ -123,7 +123,8 @@ all surfaced as tasks in this roadmap:
 **Invariants:** the brain/memory must work with **zero agents and zero MCP session** (it is more
 fundamental than MCP); MCP only adds the read-resource + the optional judge path. Generated memory is
 **untrusted, passive context** — never let it auto-trigger an action (lethal-trifecta discipline). The
-brain/memory build itself lives in its own roadmap (`docs/roadmap-context.md`, to be written); this
+brain/memory build itself shipped and is compiled in `docs/archive/2026-06-04-context-subsystem.md`
+(the planned `roadmap-context.md` was never split out — it collapsed into that build-log); this
 roadmap owns only the **MCP-side** of the connection (T1.7, the T9.4 option).
 
 ---

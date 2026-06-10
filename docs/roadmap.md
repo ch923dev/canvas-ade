@@ -206,14 +206,43 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
   **browser quick-wins** (#86) · **text-font toolbar** for free-text (#87, **schema v7**) ·
   **terminal-recap** (#89) · **Shift+Enter→LF** (#90) · **Claude PR-review CI** (#88/#91).
 
+**Shipped 2026-06-08→10:**
+- **Text create/edit UX** (#92, **schema v8**) · **terminal font-resize** (#94) · **e2e flake +
+  lint hygiene** (#93/#95) · **god-file ratchet + Tier-1/2 extractions** (#97–#105, see
+  `contributing/file-size-doctrine.md`) · **2026-06-10 full-app audit — 72/72 fixed** (#107/#109,
+  see `reviews/2026-06-10-full-app-audit.md`) · **design Wave D0 quick wins** (#108).
+
 **Queued (open PRs):**
-- **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last; needs rebase onto `51aae5c`.
-- Dependabot (#76–80): #76/#78/#79/#80 **MERGED 2026-06-08** (gate re-verified green); **#77 react HELD — CI-RED** (React major, own slice).
-- Research-only docs (#25/27/29/71/72). **Diagram #72** now needs **schema v8** (v6 taken by Groups, v7 by font).
+- **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last; needs rebase onto current `main`.
+- **Design/UX audit waves D1+** — on `feat/design-audit` (D0 merged #108).
+- Dependabot: **#77 react HELD — CI-RED** (React major, own slice; #76/#78/#79/#80 merged 2026-06-08).
+- Research-only docs (#25/27/29/71/72). **Diagram #72** — next free schema version when implemented (v8 now taken by #92).
 
 ---
 
 ## Phase 5 — Packaging & release ⛓ Phase 4
+
+> 🐛 **Bug-hunt finding (auto-noted 2026-06-10):** The codebase bug hunt independently
+> confirmed a bug that this planned work is expected to fix.
+> - **Location:** `electron-builder.yml:60`
+> - **Severity:** Medium
+> - **What:** production.yml `--publish always` is silently nullified by electron-builder.yml `publish: null` — the release workflow uploads nothing and goes green.
+> - **Verification:** Traced in the installed app-builder-lib (`PublishManager.js:63-64`): the config's `publish: null` wins over the CLI flag, so the release job completes green with zero uploaded assets.
+> - **Status:** Skipped from active fix queue; expected to be resolved by this phase.
+> - **Ref:** `docs/reviews/2026-06-10-full-app-audit.md` (raw card `bug-hunt-findings/skipped-roadmap.md`, git history).
+
+> 🔗 **Related bug-hunt finding:** BUG-003 (packaged-build recap hook) — **code fix landed in #107**
+> (`src/main/index.ts` ~208-225: `app.asar` → `app.asar.unpacked` path substitution +
+> `ELECTRON_RUN_AS_NODE=1` baked into the hook env; amendment `81365b6`). What remains is
+> **packaged-only verification**: the fix has never run in a real packaged build (no packaged smoke
+> exists pre-Phase 5). Verify the hook end-to-end when this phase produces installers. See
+> `docs/reviews/2026-06-10-full-app-audit.md` (raw card in git history).*
+
+> 🔗 **Related bug-hunt finding:** BUG-071 touches this area but is not fully resolved by this
+> work — see `docs/reviews/2026-06-10-full-app-audit.md` (raw card in git history).
+> *(Renderer-only deps in `dependencies` (`package.json:44`) are double-shipped: Vite-bundled into
+> `out/renderer` AND packed as raw `node_modules` inside `app.asar`. Phase 5 finalizes packaging but
+> asar slimming is not in its listed scope.)*
 
 - Finalize the per-OS CI matrix. Native rebuild green on all targets.
 - Signing: macOS code-sign + notarize (Apple Developer creds), Windows Authenticode (cert).

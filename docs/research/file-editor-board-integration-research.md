@@ -1,5 +1,7 @@
 # File Editor Board Integration — Research
 
+> **Status:** on-shelf reference for a future Editor board (new BoardType) — not on any active roadmap; greenlight pending. Collapse if the feature is rejected or once shipped.
+
 > Research only (no decisions locked). Produced 2026-06-04 via a 7-agent workflow:
 > 1 codebase scout → 5 parallel dimensions (embedded web editors · full-IDE embed ·
 > external native editor · interop protocols · arch+security fit) → synthesis.

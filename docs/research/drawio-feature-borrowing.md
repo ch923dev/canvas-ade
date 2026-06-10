@@ -1,5 +1,7 @@
 # Research — borrowing the best of draw.io (diagrams + dev tooling) for our canvas
 
+> **Status:** feeds the open `docs/roadmap-drawio.md` track (D1.1 shipped #18; D1.2/D2/D3 open). Collapse into the build-log when that track ships.
+
 > Deep-research output (2026-06-01), web-sourced + grounded in the actual codebase +
 > adversarially feasibility-checked. **Report only — nothing built or committed.** Borrow
 > IDEAS, not the engine: draw.io/mxGraph (Apache-2.0) is a diagramming tool we study, not

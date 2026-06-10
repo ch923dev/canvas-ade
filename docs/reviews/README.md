@@ -1,23 +1,27 @@
 # Reviews & bug hunts — consolidated index
 
 Every code review / bug-hunt run on Canvas ADE, newest first. Each round's **full
-finding cards live in git history** (this repo keeps current-only docs; the individual
-cards were collapsed here on 2026-06-01 during the docs centralization). To recover a
+finding cards live in git history** (this repo keeps current-only docs; raw cards are
+collapsed into a dated summary here once every finding is fixed). To recover a
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
-**Current open findings:** none — the 2026-06-04/05 main + MCP/Context audit cycle is fully
-remediated (Waves 0–5 shipped: #45/#47/#48/#53/#59/#60/#61–67, MCP review LOWs APP-N1/N2/N3 → #68);
-the 2026-06-05 MCP in-depth review came back healthy (no open Crit/High/Med). When the next review
-run happens, a new dated file will appear here and this line should be updated to point to it.
+**Current open findings:** none on `main` — the 2026-06-10 full-app audit (72 findings) is fully
+remediated (#107 + #109), as are all prior rounds. The only partially-open track is the
+**2026-06-10 design/UX audit** on branch `feat/design-audit` (Wave D0 merged via #108; later waves
+pending on that branch). When the next review run happens, add a dated file here and update this line.
 
 | # | File / status |
 |---|---|
+| Full-app audit (2026-06-10) | [`2026-06-10-full-app-audit.md`](2026-06-10-full-app-audit.md) — 72 confirmed (0 Crit · 4 High · 14 Med · 54 Low), **all fixed** #107 (`cd1ac61`) + BUG-069 re-land #109. Raw package: `bug-hunt-findings/` at repo root, collapsed to git history. |
+| Design/UX audit (2026-06-10) | On branch `feat/design-audit` (`2026-06-10-design-ux-audit{,-waves}.md` there). Wave D0 quick wins merged #108 (`146fc76`); remaining waves pending. |
+| Bug hunt (2026-06-07) | 42 confirmed (6 Med · 36 Low), **all fixed** #85 (`aede88f`). Raw package: `bug-hunt-findings/` at repo root at the time, git history (`ae807dc` = findings, `d25305a`/`1d9b155`/`3c6a8b1` = fix batches). No separate summary file — commit messages are the record. |
 | In-depth — MCP layer (2026-06-05) | [`2026-06-05-mcp-indepth-review.md`](2026-06-05-mcp-indepth-review.md) — healthy, no open Crit/High/Med; all 2026-06-04 MCP fixes verified real + merged; Host-header gap closed; 3 new LOW/INFO (APP-N1/N2/N3 → #68). |
+| Kickoffs (2026-06-05, historical) | `post-t9` · `remaining` · `wave5-b4-b5` — point-in-time tackle plans, **fully executed** (#53/#59/#60/#61–67) and collapsed to git history 2026-06-10. |
 | Consolidated backlog (2026-06-04) | [`2026-06-04-CONSOLIDATED-backlog.md`](2026-06-04-CONSOLIDATED-backlog.md) — merges Audit A + Hunt B into one ordered Wave 0–5 tackle plan. **All waves shipped.** |
-| Audit A — full main audit (2026-06-04) | [`2026-06-04-main-branch-full-audit.md`](2026-06-04-main-branch-full-audit.md) — 12-dimension broad sweep, 58 confirmed (4H · 8M · 34L · 12I), 0 Critical. All actioned via the consolidated waves. |
-| Hunt B — MCP+Context bug hunt (2026-06-04) | [`2026-06-04-mcp-context-bughunt/`](2026-06-04-mcp-context-bughunt/) — deep+narrow Context/MCP hunt, 28 cards (2H · 8M · 18L), 0 Critical. INDEX · FIX-REPORT · findings/. All shipped. |
-| Kickoffs (2026-06-05, historical) | [`post-t9`](2026-06-05-post-t9-backlog-kickoff.md) · [`remaining`](2026-06-05-remaining-backlog-kickoff.md) · [`wave5-b4-b5`](2026-06-05-wave5-b4-b5-kickoff.md) — point-in-time tackle plans; **now superseded** (their Tasks A/B + Wave-4/5 all shipped #60/#61–67). Kept as audit trail. |
+| Audit A — full main audit (2026-06-04) | 12-dimension broad sweep, 58 confirmed (4H · 8M · 34L · 12I), 0 Critical. All actioned via the consolidated waves (#45–#67). Raw doc (`2026-06-04-main-branch-full-audit.md`, 2066 lines) collapsed to git history 2026-06-10. |
+| Hunt B — MCP+Context bug hunt (2026-06-04) | Deep+narrow Context/MCP hunt, 28 cards (2H · 8M · 18L), 0 Critical, **all fixed** #45/#47/#48. Raw package (`2026-06-04-mcp-context-bughunt/`) collapsed to git history 2026-06-10. |
+| MCP status audit (2026-06-03) | Read-only status snapshot, superseded by the #43–#49 merges + the 2026-06-05 in-depth review. Collapsed to git history 2026-06-10 (`2026-06-03-mcp-status-audit.md`). |
 | Round 3 — in-depth (2026-06-01) | [`2026-06-01-round3.md`](2026-06-01-round3.md) — **ALL CLEARED** (`fix/round3-backlog` 9 fixed + `fix/round3-lows-remainder` final 3: PREV-A was already fixed by PR #14, PERSIST-B + PERSIST-C fixed). No open findings. |
 
 ---

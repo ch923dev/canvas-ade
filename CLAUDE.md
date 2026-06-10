@@ -134,6 +134,10 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 - Keep boards small & isolated: shared chrome base + per-type content slot. One file = one clear purpose.
 - Match the design tokens in `src/renderer/src/index.css` (mirror of DESIGN.md §2-4).
 - Each phase ends runnable + committed.
+- **Doc lifecycle** (full policy: `docs/README.md` › Conventions): per-slice specs/plans/handoffs are
+  DELETED in the PR that merges their feature (build-history line is the residue); bug-hunt/review
+  packages land under `docs/reviews/<date>-…/` — **never at the repo root** — and collapse to a dated
+  summary once all findings are fixed; indexes update in the same PR that adds/removes indexed files.
 
 ### Design artifact before code (spec/plan-driven UI work)
 Any spec or plan that adds or changes **UI/UX** MUST produce a *visible* design artifact for sign-off
@@ -209,18 +213,22 @@ is summarized in **`docs/archive/build-history.md`** (originals in git history).
 history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
 file = open findings).
 
-**Current state:** `main` @ `146fc76` (2026-06-10). Phases 0-4 + all board types, MCP M0-M5, the
-Context subsystem, Whiteboard W1-W5, Testing T0-T5, the Electron 33->42 bump (T9), review Waves
-0-5, and the 2026-06-10 full-app audit fix run (#107, 72/72 findings) are all shipped on `main`. **The release blocker is Phase 5 (packaging/signing).** Open
-candidates and "start here next" live in `docs/roadmap.md`.
+**Current state (milestone-level only — no SHA here):** Phases 0-4 + all board types, MCP M0-M5,
+the Context subsystem, Whiteboard W1-W5, Testing T0-T5, the Electron 33->42 bump (T9), review
+Waves 0-5, and the 2026-06-10 full-app audit fix run (#107, 72/72 findings) are all shipped on
+`main`. **The release blocker is Phase 5 (packaging/signing).** Open candidates and "start here
+next" live in `docs/roadmap.md`.
 
-**Live state is deliberately NOT tracked in this file.** The per-PR landing log and the in-flight
-worktree/PR queue live in `.claude/coordination/ACTIVE-WORK.md` (injected into every session at
-start - the single source of truth for what is in flight). The committed, PR-by-PR record with SHAs
-is appended to `docs/archive/build-history.md`.
+**Live state is deliberately NOT tracked in this file — including the current `main` SHA.** The
+current integration tip, the per-PR landing log, and the in-flight worktree/PR queue all live in
+`.claude/coordination/ACTIVE-WORK.md` (gitignored, injected into every session at start — the
+single source of truth for what is in flight; its "Integration tip" line is the rebase target).
+The committed, PR-by-PR record with SHAs is appended to `docs/archive/build-history.md`.
 
-> **Convention - CLAUDE.md is the durable contract only.** Do NOT grow a per-PR changelog here.
-> When a PR lands: append the entry to `docs/archive/build-history.md` and update the row in
-> `ACTIVE-WORK.md`; bump the one-line "Current state" SHA above only for a release-significant merge.
-> This keeps the contract stable and the churn in the files built for it.
+> **Convention - CLAUDE.md is the durable contract only.** Do NOT grow a per-PR changelog here,
+> and do NOT track the current `main` SHA here — that previously forced a
+> `docs(contract): bump Current state SHA` commit after every merge (pure churn; dropped
+> 2026-06-10). When a PR lands: append the entry to `docs/archive/build-history.md` and update the
+> Integration-tip line + your row in `ACTIVE-WORK.md` (gitignored — no commit). Touch this section
+> only when a milestone ships or the contract itself changes.
 
