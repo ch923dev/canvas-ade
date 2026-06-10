@@ -35,7 +35,7 @@
     "mcp:link": "pnpm link ../canvas-ade-mcp",
     "mcp:dev": "pnpm mcp:build && pnpm mcp:link",
     "postinstall": "electron-builder install-app-deps",
-    "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks')}catch(e){}\"",
+    "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks')}catch(e){process.stderr.write('[prepare] WARNING: git config core.hooksPath .githooks failed (' + e.message + '). Pre-commit and pre-push hooks may not be active.\\n')}\"",
     "pack:dir": "electron-vite build && electron-builder --dir",
     "build:win": "electron-vite build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",

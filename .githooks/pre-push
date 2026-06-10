@@ -21,11 +21,31 @@ changed=""
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$z40" ] && continue                 # branch delete — nothing to test
   if [ "$remote_sha" = "$z40" ]; then
-    range="$local_sha"                                  # new branch on remote — all its commits
+    # New branch on remote: diff from the common ancestor with origin/main so we
+    # classify ALL commits on the feature branch — not against the working tree
+    # (a bare single sha compares to the working tree, which is always empty on a
+    # clean checkout and gives wrong results on a dirty one; BUG-018).
+    base="$(git merge-base origin/main "$local_sha" 2>/dev/null)" \
+      || base="$(git rev-list "$local_sha" --not --remotes=origin 2>/dev/null | tail -1)"
+    if [ -z "$base" ]; then
+      # Cannot determine a safe base — run the full matrix rather than skip.
+      echo "[pre-push] WARNING: could not find merge-base for new branch '$local_ref' — running full e2e matrix."
+      changed="${changed}force-full"
+      continue
+    fi
+    range="$base..$local_sha"
   else
     range="$remote_sha..$local_sha"                     # only the commits being pushed
   fi
-  changed="$changed$(git diff --name-only --diff-filter=ACMR "$range" 2>/dev/null)
+  # BUG-068: guard against git diff exit-non-zero (object missing locally after
+  # a force-push from another machine); fall back to running the full matrix so
+  # the hook never silently succeeds due to set -e swallowing 2>/dev/null errors.
+  diff_out="$(git diff --name-only --diff-filter=ACMRD "$range" 2>/dev/null)" || {
+    echo "[pre-push] WARNING: git diff failed for range '$range' (remote tip may not be local) — running full e2e matrix."
+    changed="${changed}force-full"
+    continue
+  }
+  changed="$changed$diff_out
 "
 done
 
