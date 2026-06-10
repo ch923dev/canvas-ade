@@ -11,9 +11,11 @@
  *
  * So: a dispatch is EXACTLY ONE command line. Reject any embedded CR/LF (the dispatch
  * fails — the agent must resend a single command, never silently flattened). Strip the
- * other C0 control chars (0x00–0x1F) + DEL (0x7F) — ESC and friends are a terminal-escape
- * injection surface and carry no legitimate command meaning here. The trailing CR that
- * actually submits the line is added by the caller, NEVER by this function.
+ * other C0 control chars (0x00-0x1F) + DEL (0x7F) + C1 controls (0x80-0x9F) — ESC and
+ * friends are a terminal-escape injection surface and carry no legitimate command meaning
+ * here; the C1 range is the 8-bit encoding of exactly those escapes (CSI/OSC/DCS/NEL).
+ * The trailing CR that actually submits the line is added by the caller, NEVER by this
+ * function.
  */
 export class DispatchPayloadError extends Error {
   constructor(message: string) {
@@ -32,11 +34,13 @@ export function sanitizeDispatchText(text: string): string {
       'dispatch payload contains an embedded newline (CR/LF); a dispatch must be a single command line'
     )
   }
-  // Strip C0 controls (0x00–0x1F) + DEL (0x7F). CR/LF are already rejected above.
+  // Strip C0 controls (0x00-0x1F) + DEL (0x7F) + C1 controls (0x80-0x9F).
+  // C1 are the 8-bit encodings of CSI/OSC/DCS/NEL etc. — same injection surface as C0.
+  // CR/LF are already rejected above.
   let out = ''
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 0
-    if (code <= 0x1f || code === 0x7f) continue
+    if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
     out += ch
   }
   return out

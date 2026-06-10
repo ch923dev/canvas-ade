@@ -20,23 +20,23 @@ function fakeWin(mainFrame: object): {
   return { win, sent }
 }
 
-/** A fake ipc bus that captures the one-shot reply handler so a test can fire it. */
+/** A fake ipc bus that captures the persistent reply handler so a test can fire it. */
 function fakeBus(): {
-  bus: Pick<IpcMain, 'once' | 'removeListener'>
+  bus: Pick<IpcMain, 'on' | 'removeListener'>
   reply: (e: unknown, ack: unknown) => void
   channel: () => string | null
 } {
   let handler: ((e: unknown, ack: unknown) => void) | null = null
   let channel: string | null = null
   const bus = {
-    once: (ch: string, h: (e: unknown, ack: unknown) => void) => {
+    on: (ch: string, h: (e: unknown, ack: unknown) => void) => {
       channel = ch
       handler = h
     },
     removeListener: () => {
       handler = null
     }
-  } as unknown as Pick<IpcMain, 'once' | 'removeListener'>
+  } as unknown as Pick<IpcMain, 'on' | 'removeListener'>
   return { bus, reply: (e, ack) => handler?.(e, ack), channel: () => channel }
 }
 
@@ -73,6 +73,34 @@ describe('sendMcpCommand', () => {
     const p = sendMcpCommand(bus, () => win, { type: 'ping' }, 30)
     reply({ senderFrame: { name: 'evil' } }, { ok: true, type: 'ping' }) // foreign → ignored
     await expect(p).resolves.toEqual({ ok: false, error: 'timeout' })
+  })
+
+  it('BUG-030: genuine ack after a foreign-frame event still resolves (listener not consumed)', async () => {
+    // With bus.once, the foreign event consumed the listener and the real ack was never
+    // handled — the command fell through to timeout. With bus.on, the listener stays armed.
+    const mainFrame = { name: 'main' }
+    const { win } = fakeWin(mainFrame)
+    const { bus, reply } = fakeBus()
+
+    const p = sendMcpCommand(bus, () => win, { type: 'ping' }, 5000)
+    // First: a foreign-frame event (must NOT consume the listener)
+    reply({ senderFrame: { name: 'evil' } }, { ok: true, type: 'ping' })
+    // Then: the genuine renderer ack
+    reply({ senderFrame: mainFrame }, { ok: true, type: 'ping' })
+    await expect(p).resolves.toEqual({ ok: true, type: 'ping' })
+  })
+
+  it('BUG-031: the reply channel is a CSPRNG UUID (not Date.now()+Math.random)', async () => {
+    const mainFrame = { name: 'main' }
+    const { win } = fakeWin(mainFrame)
+    const { bus, channel } = fakeBus()
+    void sendMcpCommand(bus, () => win, { type: 'ping' })
+    const ch = channel()
+    expect(ch).toMatch(
+      /^mcp:command:ack:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    )
+    // Must NOT be the old predictable shape (Date.now():Math.random base36)
+    expect(ch).not.toMatch(/^mcp:command:ack:\d+:[0-9a-z]+$/)
   })
 
   it('reports a malformed ack rather than passing it through', async () => {

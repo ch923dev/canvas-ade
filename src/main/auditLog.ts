@@ -163,7 +163,16 @@ export function createAuditLog(opts: {
       return result
     },
     async read(readOpts) {
-      const limit = readOpts?.limit ?? DEFAULT_READ_LIMIT
+      // 🔒 Clamp limit to a positive, finite integer so callers cannot accidentally (or
+      // intentionally) trigger slice(-0) === slice(0) → full log return (BUG-043).
+      // - 0 / negative / NaN / non-integer → default
+      // - values above MAX_READ_LIMIT are capped (DOS memory bound)
+      const MAX_READ_LIMIT = 1000
+      const raw = readOpts?.limit
+      const limit =
+        typeof raw === 'number' && Number.isInteger(raw) && raw > 0
+          ? Math.min(raw, MAX_READ_LIMIT)
+          : DEFAULT_READ_LIMIT
       const entries = parseEntries(await readRaw())
       return entries.slice(-limit).reverse()
     }

@@ -2,6 +2,9 @@ import type { IpcMain, BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import type { AuditEntry, AuditLog } from './auditLog'
 
+/** Sane upper bound for a single read request (mirrors auditLog's MAX_READ_LIMIT). */
+const IPC_MAX_LIMIT = 1000
+
 /**
  * Read-only IPC surface over the MCP dispatch {@link AuditLog} (T4.1), plus the
  * process-wide accessor the dispatch tools (T4.3+) and the e2e harness append through.
@@ -31,7 +34,15 @@ export function registerAuditHandler(
     'audit:read',
     async (e: IpcMainInvokeEvent, opts?: { limit?: number }): Promise<AuditEntry[]> => {
       if (isForeignSender(e, getWin)) return []
-      return log.read(opts)
+      // 🔒 Validate the renderer-supplied limit before forwarding (BUG-043). Passing an
+      // unvalidated limit (0, negative, NaN) to log.read triggers slice(-0) = full log.
+      // Clamp to a positive integer within the sane cap here at the IPC boundary.
+      const rawLimit = opts?.limit
+      const safeLimit =
+        typeof rawLimit === 'number' && Number.isInteger(rawLimit) && rawLimit > 0
+          ? Math.min(rawLimit, IPC_MAX_LIMIT)
+          : undefined // let log.read use its own default
+      return log.read(safeLimit !== undefined ? { limit: safeLimit } : undefined)
     }
   )
 }
