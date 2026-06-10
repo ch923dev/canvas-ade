@@ -864,14 +864,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
  * Machine-driven board patch (#BUG-057): same type-filtered merge as updateBoard but
  * HISTORY-NEUTRAL — records no checkpoint, leaves any pending gesture checkpoint armed,
  * and never clears an armed redo branch, so a background writer (the auto-connect detect
- * push, a 1s timer) can't silently kill the user's redo stack. Mirrors growBoardHeight's
- * untracked contract. Module-scoped (like isIdleOnMount) rather than a CanvasState
- * action: it is for background engines, never user-gesture call sites.
+ * push, a 1s timer) can't silently kill the user's redo stack. An armed pendingCheckpoint
+ * is REWRITTEN with the same patch (like patchBoardMeta): without that, a checkpoint
+ * armed before this machine write snapshots the pre-patch board, and undoing the gesture
+ * silently reverts the machine-written value. Mirrors growBoardHeight's untracked
+ * contract. Module-scoped (like isIdleOnMount) rather than a CanvasState action: it is
+ * for background engines, never user-gesture call sites.
  */
 export function patchBoardUntracked(id: string, patch: Partial<Board>): void {
   useCanvasStore.setState((s) => {
     const boards = applyBoardPatch(s.boards, id, patch)
-    return boards ? { boards } : s
+    if (!boards) return s
+    if (pendingCheckpoint) {
+      const nb = applyBoardPatch(pendingCheckpoint.boards, id, patch)
+      if (nb) pendingCheckpoint = { ...pendingCheckpoint, boards: nb }
+    }
+    return { boards }
   })
 }
 

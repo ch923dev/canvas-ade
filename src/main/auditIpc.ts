@@ -1,9 +1,7 @@
 import type { IpcMain, BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import type { AuditEntry, AuditLog } from './auditLog'
-
-/** Sane upper bound for a single read request (mirrors auditLog's MAX_READ_LIMIT). */
-const IPC_MAX_LIMIT = 1000
+import { MAX_READ_LIMIT } from './auditLog'
 
 /**
  * Read-only IPC surface over the MCP dispatch {@link AuditLog} (T4.1), plus the
@@ -40,7 +38,7 @@ export function registerAuditHandler(
       const rawLimit = opts?.limit
       const safeLimit =
         typeof rawLimit === 'number' && Number.isInteger(rawLimit) && rawLimit > 0
-          ? Math.min(rawLimit, IPC_MAX_LIMIT)
+          ? Math.min(rawLimit, MAX_READ_LIMIT)
           : undefined // let log.read use its own default
       return log.read(safeLimit !== undefined ? { limit: safeLimit } : undefined)
     }
