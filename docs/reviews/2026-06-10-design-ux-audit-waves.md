@@ -17,9 +17,9 @@ gate + e2e matrix after EACH merge.**
 4. Gate per lane: `pnpm typecheck · lint · format:check · unit` green before PR; e2e matrix runs on
    push (watch the new-branch first-push skip — run `pnpm test:e2e:matrix` manually).
 5. Reviewer dispositions: inline reply on EACH bot comment (CLAUDE.md convention).
-6. **Coordinate with `fix/bug-hunt-2026-06-10`** (live worktree, zone = `src/main/index.ts` wiring
-   + undo): Wave D0's save-failure surface touches AppChrome/autosave — declare on ACTIVE-WORK
-   before editing; do not touch `src/main/index.ts` from design lanes.
+6. ~~Coordinate with `fix/bug-hunt-2026-06-10`~~ — resolved: that lane merged (#107/#109) before
+   D0 landed; rule kept for the record. Standing version: do not touch `src/main/index.ts` from
+   design lanes; declare shared files on ACTIVE-WORK before editing.
 
 ## Wave D0 — quick wins (1 lane, single session)
 
@@ -88,8 +88,8 @@ D0 (1 session) → D1 (A,B,C parallel) → D2 (A–D parallel) → D3 (A–C) �
 | Wave | Status |
 |---|---|
 | D0 | ✅ merged — #108 squash `146fc76` (2026-06-10); D0-1..D0-9 all landed (7 review rounds, 15 inline findings dispositioned). `--scrim` token now defined; D0-8 chip + D0-5 notes are interim surfaces D1-A migrates. |
-| D1 | not started — **next up.** Note: #107 (full-app audit fixes) already added `role="menuitem"` to AppChrome switcher / ElementContextMenu / GroupContextMenu / GroupFocusPicker — D1-C still owns BoardMenu, TidyMenu, terminal context menu roles + arrow-key/roving-tabindex nav + clamp unification everywhere. |
-| D2 | not started |
+| D1 | ✅ merged — A Toast #112 (`5d63559`) · B Modal #111 (`9da926d`) · C Menu #113 (`2f0a972`), all 2026-06-10. D0-8 chip deleted (sticky save-failure toast + Retry); 3 modals on shared `Modal.tsx` (`--scrim`, focus trap/restore); 6 menus on shared `Menu.tsx` (menuitem roles + roving tabindex + unified clamp + ADR 0002 detach). 2 real cross-lane bug classes found by e2e: mid-dispatch listener removal (B+C, refs pattern) · deferred xterm focus-restore (C). Post-D1 main gate green: unit 1984 + e2e matrix Win 63/Linux 63. |
+| D2 | not started — **next up** (4 lanes A–D parallel; note D2-A and D2-D both touch `BoardFrame.tsx` → merge A before D, D rebases). |
 | D3 | not started |
 | D4 | not started — D4-A/C need spec + design artifact + sign-off first |
 
