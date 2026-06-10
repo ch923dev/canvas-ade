@@ -7,7 +7,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, act } from '@testing-library/react'
 import WelcomeScreen from './WelcomeScreen'
-import { useCanvasStore } from '../store/canvasStore'
+import {
+  useCanvasStore,
+  acquireProjectSwitchLock,
+  releaseProjectSwitchLock
+} from '../store/canvasStore'
 
 // Reset the Zustand store to a known welcome state before each test.
 beforeEach(() => {
@@ -19,6 +23,9 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   delete (window as unknown as { api?: unknown }).api
+  // BUG-009 lock is module state: a test whose open IPC deliberately never settles (the
+  // disabled-buttons probe) would otherwise strand it held for every later test.
+  releaseProjectSwitchLock()
 })
 
 // ---------------------------------------------------------------------------
@@ -108,6 +115,32 @@ describe('WelcomeScreen busy guard (BUG-008)', () => {
     expect((openBtn as HTMLButtonElement).disabled).toBe(true)
     const createBtn = screen.getByText('Create project…')
     expect((createBtn as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  // BUG-009: the per-mount busy flag cannot see a switch started from the ProjectSwitcher
+  // (this screen mounts FRESH mid-switch with busy=false). The shared module-level lock
+  // must block openDir while another surface's switch pipeline is in flight.
+  it('an in-flight switch from another surface blocks openDir (BUG-009 shared lock)', async () => {
+    const openMock = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      project: {
+        recents: vi.fn().mockResolvedValue([{ path: '/proj/alpha', name: 'alpha' }]),
+        open: openMock
+      },
+      dialog: { openFolder: vi.fn() }
+    }
+
+    render(<WelcomeScreen />)
+    await waitFor(() => expect(screen.getByText('alpha')).toBeTruthy())
+
+    // Simulate a ProjectSwitcher switch mid-flight: it holds the module lock.
+    expect(acquireProjectSwitchLock()).toBe(true)
+    fireEvent.click(screen.getByText('alpha').closest('button')!)
+    await act(async () => {}) // flush microtasks
+
+    // openDir must bail BEFORE firing the IPC or touching project state.
+    expect(openMock).not.toHaveBeenCalled()
+    expect(useCanvasStore.getState().project.status).toBe('welcome')
   })
 })
 

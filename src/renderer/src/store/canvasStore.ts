@@ -186,7 +186,9 @@ export interface CanvasState {
    *  React Flow owns the add/remove gesture; `Canvas.onNodesChange` folds it to a full set). */
   setSelection: (ids: string[]) => void
   setTool: (tool: Tool) => void
-  /** Snapshot the current boards for undo (call at the start of a discrete edit). */
+  /** Capture the pre-edit snapshot for undo (call at the start of a discrete edit). The
+   *  checkpoint is recorded LAZILY — pushed onto `past` by the gesture's first real
+   *  mutation (updateBoard/resizeBoard), so a mutation-free gesture records nothing. */
   beginChange: () => void
   undo: () => void
   redo: () => void
@@ -200,31 +202,30 @@ export interface CanvasState {
 const newId = (): string => crypto.randomUUID()
 
 /**
- * The snapshot the undo stack already reflects — either the value last pushed onto
- * `past`, or the present {boards,connectors,groups} after an undo/redo. `beginChange`
- * skips recording when the current present matches this (by boards AND connectors AND
- * groups ref), so a no-op gesture never pushes a duplicate snapshot. This is what the
- * in-store `past[last] === present` guard MISSES after an undo: undo pops the tail and
- * sets the present to it, so the new past tail is the entry *before* it (≠ present) even
- * though the present is unchanged — without this ref a post-undo no-op beginChange would
- * push a phantom snapshot (#BUG M3). Widened from `Board[]` to a snapshot when M2 added
- * connectors (memory `undo-lastrecorded-phantom`); widened again to include groups (v6).
+ * Lazy gesture checkpoint (#BUG-004). `beginChange()` CAPTURES the pre-gesture snapshot
+ * here instead of eagerly pushing it onto `past`; the FIRST real mutation of the gesture
+ * (updateBoard/resizeBoard) consumes it via `takePendingPast`. A mutation-free gesture
+ * (zero-movement titlebar click, degenerate pen/arrow tap) therefore records nothing —
+ * the phantom-step class (#BUG M3 / Bug #7) is closed structurally, with no skip token
+ * that can go stale. The previous eager model reused `lastRecorded` (the snapshot the
+ * rails "already reflect") as that skip token, and undo()/redo() pointed it at the
+ * snapshot just POPPED off a rail — so the first real edit after an undo SKIPPED its
+ * checkpoint, the following mutation cleared `future`, and the undone-to state became
+ * unreachable from BOTH rails (#BUG-004: addBoard → move → undo → move → undo left an
+ * empty canvas). Invalidated (nulled) by trackedChange, undo/redo, and every load path —
+ * once the present moves on, the captured snapshot is stale.
  */
-let lastRecorded: CanvasSnapshot | null = null
+let pendingCheckpoint: CanvasSnapshot | null = null
 
 /**
- * True when `snap` is the snapshot the present state still reflects — boards, connectors,
- * AND groups refs all match. Used by `beginChange` to skip phantom checkpoints. A
- * connector-only or groups-only change mints a new ref (boards unchanged), so comparing
- * boards alone would wrongly treat it as "unchanged" — all three refs must match.
+ * Consume the pending gesture checkpoint: returns `past` with it appended (the lazy
+ * record), or `past` unchanged when no gesture is pending. Call ONLY on a real mutation
+ * — a no-op patch must leave the pending snapshot armed for the gesture's first real edit.
  */
-function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): boolean {
-  return (
-    !!snap &&
-    snap.boards === s.boards &&
-    snap.connectors === s.connectors &&
-    snap.groups === s.groups
-  )
+function takePendingPast(s: CanvasState): CanvasSnapshot[] {
+  const snap = pendingCheckpoint
+  pendingCheckpoint = null
+  return snap ? recordPast(s.past, snap) : s.past
 }
 
 /**
@@ -234,17 +235,12 @@ function sameSnapshot(snap: CanvasSnapshot | null | undefined, s: CanvasState): 
  * `recordPast` + future-clear the tracked actions each hand-rolled. Pure: takes state,
  * returns a partial — side values (a new id) are computed by the caller.
  *
- * `opts.reflectPresent` is REQUIRED (not optional) — every caller must make the layout-vs-
- * mutation decision explicitly so a future tracked action can't silently inherit the wrong
- * one. `true` marks the NEW present as the state the undo stack already reflects
- * (`lastRecorded = next`) so a following no-op gesture's beginChange skips a phantom snapshot
- * — BUT it also makes the next *real* gesture's beginChange skip its pre-edit checkpoint, so
- * a move right after is coalesced into THIS step (undo jumps back past it). Only bulk LAYOUT
- * ops (tidy/tile) pass `true`: that coalescing reads as "tidy, then nudge = one logical step",
- * an accepted tradeoff. add/remove/duplicate pass `false` — a board's first move must stay
- * granularly undoable to the add-position. Their post-no-op phantom is the TOLERATED edge
- * (#BUG M3); a store-layer flag can't close it without breaking granular move-undo (proven by
- * the undo/redo suite) — that needs a gesture-layer lazy-checkpoint, see `beginChange`.
+ * `opts.reflectPresent` is RETAINED for call-site compatibility (the connector/group slices
+ * pass it) but is now INERT: it existed to sync the eager model's `lastRecorded` skip token
+ * so a no-op gesture after tidy/tile wouldn't push a phantom snapshot. Under the lazy
+ * checkpoint model (#BUG-004, see `pendingCheckpoint`) beginChange never pushes, so there is
+ * no phantom to suppress — and a real move right after tidy now gets its own granular
+ * checkpoint instead of coalescing into the tidy step.
  *
  * Returns a `Partial<CanvasState>` patch on a real change, or the full `s` (a same-ref no-op
  * merge) when `next` is null / unchanged — hence the `| CanvasState` in the return type.
@@ -272,9 +268,9 @@ function trackedChange(
   // untouched (the `next === s.boards` guard, generalized to the snapshot).
   if (nextBoards === s.boards && nextConnectors === s.connectors && nextGroups === s.groups)
     return s
-  if (opts.reflectPresent) {
-    lastRecorded = { boards: nextBoards, connectors: nextConnectors, groups: nextGroups }
-  }
+  // A tracked op moves the present on — any un-consumed gesture checkpoint is now stale
+  // (pushing it later would duplicate the snapshot this op records below).
+  pendingCheckpoint = null
   const base: Partial<CanvasState> = {
     // Push the PRE-change present (boards + connectors + groups) as one checkpoint.
     past: recordPast(s.past, { boards: s.boards, connectors: s.connectors, groups: s.groups }),
@@ -294,9 +290,27 @@ function trackedChange(
  * removed only when the user explicitly Starts it (`clearIdleOnMount`), so a later
  * in-session respawn (config change / restart) of an already-started terminal spawns
  * normally (the bug the one-shot predecessor caused). CLAUDE.md LOCKED rule: "restored
- * terminals are idle". Module-scoped (mirrors `lastRecorded`); never persisted.
+ * terminals are idle". Module-scoped (mirrors `pendingCheckpoint`); never persisted.
  */
 const idleOnMountIds = new Set<string>()
+
+/**
+ * Idle flags swept by undo, PARKED so a redo that resurrects the board restores them
+ * (#BUG-012: duplicate → undo → redo must keep the clone idle — without the symmetric
+ * re-add the redone clone auto-spawned its shell + launchCommand, violating M-1). Pruned
+ * on every undo/redo against the redo rail: a parked id can only ever return via a
+ * `future` snapshot, so anything unreachable there is dead and dropped — preserving the
+ * BUG-033 no-leak guarantee the sweep was added for.
+ */
+const parkedIdleIds = new Set<string>()
+
+/** Drop parked idle ids that no `future` snapshot can ever resurrect (BUG-012/BUG-033). */
+function pruneParkedIdle(future: CanvasSnapshot[]): void {
+  if (parkedIdleIds.size === 0) return
+  const reachable = new Set<string>()
+  for (const snap of future) for (const b of snap.boards) reachable.add(b.id)
+  for (const id of [...parkedIdleIds]) if (!reachable.has(id)) parkedIdleIds.delete(id)
+}
 
 /** Whether `id` must mount idle (restored/duplicated, not yet started). Non-consuming. */
 export function isIdleOnMount(id: string): boolean {
@@ -312,23 +326,25 @@ export function clearIdleOnMount(id: string): void {
 /** Mark every terminal in a freshly-loaded doc as idle-on-mount (restore path). */
 function markRestoredIdle(boards: Board[]): void {
   idleOnMountIds.clear()
+  parkedIdleIds.clear() // a fresh load empties the redo rail — nothing parked can return
   for (const b of boards) if (b.type === 'terminal') idleOnMountIds.add(b.id)
 }
 
 /**
- * Commit a freshly-parsed, migrated document into the store: clears the undo-dedup ref
- * (a loaded project's history starts empty), flags restored terminals idle-on-mount, and
- * resets boards/connectors/groups/viewport/selection/history. Pass `project` to also mark
- * the project open (the applyOpenResult paths); omit it for a raw loadObject. The
- * `lastRecorded = null` + `markRestoredIdle` side effects live HERE so no load path
- * (loadObject / open / .bak recovery) can forget either (#BUG M3 hygiene + M-1 idle rule).
+ * Commit a freshly-parsed, migrated document into the store: clears any pending gesture
+ * checkpoint (a loaded project's history starts empty), flags restored terminals
+ * idle-on-mount, and resets boards/connectors/groups/viewport/selection/history. Pass
+ * `project` to also mark the project open (the applyOpenResult paths); omit it for a raw
+ * loadObject. The `pendingCheckpoint = null` + `markRestoredIdle` side effects live HERE
+ * so no load path (loadObject / open / .bak recovery) can forget either (#BUG M3 hygiene
+ * + M-1 idle rule).
  */
 function applyLoadedDoc(
   set: SetCanvasState,
   d: ReturnType<typeof fromObject>,
   project?: ProjectState
 ): void {
-  lastRecorded = null
+  pendingCheckpoint = null
   markRestoredIdle(d.boards)
   set({
     boards: d.boards,
@@ -341,6 +357,34 @@ function applyLoadedDoc(
     future: [],
     ...(project ? { project } : {})
   })
+}
+
+/**
+ * #BUG-013: monotonic open generation. Each applyOpenResult entry bumps it; the awaited
+ * `.bak`-retry continuation re-checks after its await and DISCARDS its late result when a
+ * newer open has superseded it — otherwise a slow .bak recovery (or its error-set) would
+ * clobber a concurrently opened project with the stale project's content.
+ */
+let openEpoch = 0
+
+/**
+ * #BUG-009: cross-surface in-flight project-switch lock. WelcomeScreen's per-mount `busy`
+ * state cannot see a switch started from the ProjectSwitcher — switching flips status to
+ * 'loading', which unmounts Canvas and mounts a FRESH WelcomeScreen (busy=false), so two
+ * open pipelines could interleave; MAIN's currentDir then points at the LAST-STARTED open
+ * while the renderer keeps whichever applyOpenResult settled LAST, and the next autosave
+ * cross-writes one project's canvas into the other's canvas.json. Module-scoped so every
+ * open/create/switch surface shares ONE lock. acquire → false means another switch is in
+ * flight: bail without touching project state.
+ */
+let projectSwitchInFlight = false
+export function acquireProjectSwitchLock(): boolean {
+  if (projectSwitchInFlight) return false
+  projectSwitchInFlight = true
+  return true
+}
+export function releaseProjectSwitchLock(): void {
+  projectSwitchInFlight = false
 }
 
 /** Gap (world px) kept between boards when auto-placing a new one. */
@@ -421,6 +465,36 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements']
+}
+
+/**
+ * Apply a type-filtered shallow patch to one board. Returns the new boards array, or
+ * null when nothing actually changed (unknown id, only off-type keys, or identical
+ * values) so callers can no-op without minting a new ref. Shared by `updateBoard`
+ * (tracked-edit semantics) and `patchBoardUntracked` (history-neutral machine writes).
+ */
+function applyBoardPatch(boards: Board[], id: string, patch: Partial<Board>): Board[] | null {
+  const src = patch as Record<string, unknown>
+  let changed = false
+  const next = boards.map((b) => {
+    if (b.id !== id) return b
+    const allowed = PATCHABLE_KEYS[b.type]
+    const safe: Record<string, unknown> = {}
+    let diff = false
+    for (const key of allowed) {
+      if (key in src) {
+        safe[key] = src[key]
+        // Reference/value compare: a patch re-applying identical values must NOT
+        // mint a new boards ref or clear the redo branch (STATE-2). New-array refs
+        // (e.g. elements) on a real edit still differ, so genuine edits register.
+        if ((b as unknown as Record<string, unknown>)[key] !== src[key]) diff = true
+      }
+    }
+    if (!diff) return b
+    changed = true
+    return { ...b, ...safe } as Board
+  })
+  return changed ? next : null
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
@@ -539,31 +613,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // A patch may carry props (move, rename, per-type fields) but MUST NOT change
       // a board's identity or type, nor smuggle an off-type field (e.g. a `url`
       // landing on a terminal board) — that would forge a cross-type hybrid the
-      // discriminated union forbids. So we keep only the keys valid for the target
-      // board's type before the merge, which keeps the cast sound.
-      const src = patch as Record<string, unknown>
-      let changed = false
-      const boards = s.boards.map((b) => {
-        if (b.id !== id) return b
-        const allowed = PATCHABLE_KEYS[b.type]
-        const safe: Record<string, unknown> = {}
-        let diff = false
-        for (const key of allowed) {
-          if (key in src) {
-            safe[key] = src[key]
-            // Reference/value compare: a patch re-applying identical values must NOT
-            // mint a new boards ref or clear the redo branch (STATE-2). New-array refs
-            // (e.g. elements) on a real edit still differ, so genuine edits register.
-            if ((b as unknown as Record<string, unknown>)[key] !== src[key]) diff = true
-          }
-        }
-        if (!diff) return b
-        changed = true
-        return { ...b, ...safe } as Board
-      })
-      if (!changed) return s
-      // A live edit invalidates any armed redo branch (else redo could clobber it).
-      return s.future.length ? { boards, future: [] } : { boards }
+      // discriminated union forbids. applyBoardPatch keeps only the keys valid for
+      // the target board's type and returns null on a true no-op.
+      const boards = applyBoardPatch(s.boards, id, patch)
+      if (!boards) return s
+      // First real mutation of the gesture: consume the pending beginChange checkpoint
+      // (lazy record, #BUG-004). A live edit also invalidates any armed redo branch
+      // (else redo could clobber it).
+      const past = takePendingPast(s)
+      return s.future.length ? { boards, past, future: [] } : { boards, past }
     }),
 
   resizeBoard: (id, w, h) =>
@@ -579,7 +637,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return { ...b, w: nw, h: nh }
       })
       if (!changed) return s
-      return s.future.length ? { boards, future: [] } : { boards }
+      // Consume the pending beginChange checkpoint (lazy record, #BUG-004) — see updateBoard.
+      const past = takePendingPast(s)
+      return s.future.length ? { boards, past, future: [] } : { boards, past }
     }),
 
   tidyBoards: (mode, aspect) =>
@@ -597,9 +657,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         return { ...b, x: p.x, y: p.y }
       })
       // One tracked step for the whole re-pack. trackedChange no-ops when nothing moved
-      // (already tidy → no phantom step, redo branch kept). reflectPresent syncs lastRecorded
-      // so a following zero-movement gesture doesn't push a phantom snapshot (#BUG M3) — at
-      // the accepted cost that an immediate nudge coalesces into this tidy step.
+      // (already tidy → no phantom step, redo branch kept). A following zero-movement
+      // gesture records nothing under the lazy-checkpoint model (#BUG M3 closed), and a
+      // real nudge right after gets its own granular step (no coalescing).
       return trackedChange(s, changed ? { boards } : null, { reflectPresent: true })
     }),
 
@@ -621,18 +681,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       })
       if (!changed) return s
       // Live reflow (window resize): layout-only, leave undo/redo untouched (like
-      // growBoardHeight) so a resize storm can't flood the history.
-      // Deliberately do NOT update `lastRecorded` here (and do NOT route through
-      // trackedChange, which would). It must keep meaning "the boards the undo stack
-      // reflects" — and the stack reflects the PRE-tile snapshot, not this reflow.
-      // Setting it to `boards` would make the next beginChange think the reflowed layout is
-      // already in history and SKIP the pre-drag checkpoint, so a real drag after a reflow
-      // couldn't be undone granularly (undo would jump past it to pre-tile). The only cost of
-      // leaving it stale is a phantom no-op step on a ZERO-movement titlebar press after a
-      // reflow — the same tolerated edge as addBoard/removeBoard (Bug #7 / #BUG M3). A real
-      // drag stays correctly undoable. Do not "fix" by syncing lastRecorded.
+      // growBoardHeight) so a resize storm can't flood the history. Untracked paths never
+      // touch the pending gesture checkpoint — a real drag after a reflow stays granularly
+      // undoable (its beginChange captures the reflowed present).
       if (!record) return { boards }
-      // Tracked apply: one undo step + lastRecorded sync via trackedChange (reflectPresent).
+      // Tracked apply: one undo step via trackedChange.
       return trackedChange(s, { boards }, { reflectPresent: true })
     }),
 
@@ -664,27 +717,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set({ selectedIds, selectedId: selectedIds[selectedIds.length - 1] ?? null })
   },
   setTool: (tool) => set({ tool }),
-  beginChange: () =>
-    set((s) => {
-      // No change since the last checkpoint → skip, so a no-op gesture doesn't push a
-      // duplicate snapshot. Two cases of "unchanged": the present matches the past tail
-      // (normal post-edit), OR it matches `lastRecorded` — the present left by an
-      // undo/redo. The past-tail check alone MISSES the post-undo case (#BUG M3): undo
-      // pops the tail, so the present (the popped value) ≠ the new past tail even though
-      // it's unchanged → a no-op beginChange would push a phantom snapshot. Compared by
-      // boards, connectors, AND groups refs (a connector-only or groups-only edit changes
-      // connectors or groups only).
-      if (sameSnapshot(s.past[s.past.length - 1], s) || sameSnapshot(lastRecorded, s)) return s
-      // Take the pre-edit snapshot but do NOT clear the redo branch here (Bug #7).
-      // beginChange fires at GESTURE START, before we know whether the gesture will
-      // commit anything — a zero-movement titlebar/resize-handle click or a degenerate
-      // arrow/pen tap calls it but mutates nothing. The redo branch is correctly
-      // invalidated by the actual mutation: updateBoard/resizeBoard clear `future` only
-      // when boards truly change.
-      const snap: CanvasSnapshot = { boards: s.boards, connectors: s.connectors, groups: s.groups }
-      lastRecorded = snap
-      return { past: recordPast(s.past, snap) }
-    }),
+  beginChange: () => {
+    // Lazy checkpoint (#BUG-004): CAPTURE the pre-gesture snapshot; it is pushed onto
+    // `past` only when the gesture commits a real mutation (updateBoard/resizeBoard
+    // consume it via takePendingPast). beginChange fires at GESTURE START, before we
+    // know whether the gesture will commit anything — a zero-movement titlebar/resize-
+    // handle click or a degenerate arrow/pen tap calls it but mutates nothing, and must
+    // neither push a phantom undo step (#BUG M3 / Bug #7) nor clear the redo branch.
+    // Because nothing is pushed eagerly, there is no post-undo skip token to go stale:
+    // after an undo, the next gesture's first real edit checkpoints the undone-to
+    // present like any other state (#BUG-004).
+    const s = get()
+    pendingCheckpoint = { boards: s.boards, connectors: s.connectors, groups: s.groups }
+  },
   undo: () =>
     set((s) => {
       const r = applyUndo(
@@ -693,16 +738,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         s.future
       )
       if (!r) return s
-      // The present after undo IS the history-reflected state — record it so a following
-      // no-op beginChange recognizes it and doesn't push a phantom snapshot (#BUG M3).
-      lastRecorded = r.present
+      // A history jump invalidates any un-consumed gesture checkpoint (#BUG-004) — the
+      // next gesture re-captures from the restored present.
+      pendingCheckpoint = null
       // BUG-033: boards that vanish from the present snapshot (e.g. a duplicated terminal
       // clone that was just undone) must be reclaimed from idleOnMountIds, or the Set
       // accumulates dead UUIDs across duplicate+undo cycles (session-lifetime memory leak).
+      // BUG-012: PARK (not drop) a swept flag so a redo that resurrects the board restores
+      // it — otherwise duplicate → undo → redo auto-spawned the clone's agent (M-1).
       const survivingIds = new Set(r.present.boards.map((b) => b.id))
       for (const b of s.boards) {
-        if (!survivingIds.has(b.id)) clearIdleOnMount(b.id)
+        if (!survivingIds.has(b.id) && idleOnMountIds.delete(b.id)) parkedIdleIds.add(b.id)
       }
+      pruneParkedIdle(r.future)
       return {
         boards: r.present.boards,
         connectors: r.present.connectors,
@@ -721,7 +769,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         s.future
       )
       if (!r) return s
-      lastRecorded = r.present
+      pendingCheckpoint = null // see undo — a history jump stales the gesture checkpoint
+      // BUG-012: re-add the parked idle flag of every board this redo RESURRECTS (the
+      // symmetric counterpart of undo's sweep) so a redone terminal clone mounts idle.
+      const priorIds = new Set(s.boards.map((b) => b.id))
+      for (const b of r.present.boards) {
+        if (!priorIds.has(b.id) && parkedIdleIds.delete(b.id)) idleOnMountIds.add(b.id)
+      }
+      pruneParkedIdle(r.future)
       return {
         boards: r.present.boards,
         connectors: r.present.connectors,
@@ -746,7 +801,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // Guard the deep-validation throw (corrupt board/element or too-new schemaVersion):
     // a raw-doc load with no dir can't do a .bak retry, so on a throw set status:'error'
     // (with the message) and leave board/connector/viewport state UNTOUCHED — do NOT null
-    // lastRecorded or flag restored terminals until the parse actually succeeds. Matches
+    // the pending checkpoint or flag restored terminals until the parse succeeds. Matches
     // applyOpenResult's guard so a corrupt doc never throws out and blanks the app (T4).
     let d: ReturnType<typeof fromObject>
     try {
@@ -760,6 +815,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
   applyOpenResult: async (r) => {
+    // #BUG-013: stamp this open with a generation token. The .bak-retry below awaits an
+    // IPC round-trip; a second open can complete during that await, and this call's late
+    // continuation must then discard its result instead of clobbering the newer project.
+    const epoch = ++openEpoch
     if (!r.ok) {
       set((s) => ({ project: { ...s.project, status: 'error', error: r.error } }))
       return
@@ -777,6 +836,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // to 'open'; if it ALSO throws (or there is no readable .bak), fall through to 'error'
       // carrying the ORIGINAL primary-parse message.
       const bak = await window.api.project.reopenFromBak(r.dir)
+      // #BUG-013: a newer open superseded this one while the .bak retry was in flight —
+      // drop the late result (neither apply the recovery nor stamp 'error' over it).
+      if (epoch !== openEpoch) return
       if (bak.ok) {
         try {
           const d2 = fromObject(bak.doc)
@@ -797,3 +859,72 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     applyLoadedDoc(set, d, { dir: r.dir, name: r.name, status: 'open' })
   }
 }))
+
+/**
+ * Machine-driven board patch (#BUG-057): same type-filtered merge as updateBoard but
+ * HISTORY-NEUTRAL — records no checkpoint, leaves any pending gesture checkpoint armed,
+ * and never clears an armed redo branch, so a background writer (the auto-connect detect
+ * push, a 1s timer) can't silently kill the user's redo stack. Mirrors growBoardHeight's
+ * untracked contract. Module-scoped (like isIdleOnMount) rather than a CanvasState
+ * action: it is for background engines, never user-gesture call sites.
+ */
+export function patchBoardUntracked(id: string, patch: Partial<Board>): void {
+  useCanvasStore.setState((s) => {
+    const boards = applyBoardPatch(s.boards, id, patch)
+    return boards ? { boards } : s
+  })
+}
+
+/**
+ * MAIN-pushed recap metadata setter (#BUG-064, `recap:learned`). agentSessionId /
+ * agentTranscriptPath are app-learned fields, not user-editable state, so the patch must
+ * be invisible to undo/redo: it skips updateBoard's future-clear AND rewrites the
+ * matching board inside every past/future snapshot (and any pending gesture checkpoint)
+ * — a naive skip-only setter would leave stale values in old snapshots, so a later undo
+ * silently reverted the learned metadata until the next learn event. Module-scoped for
+ * the same reason as patchBoardUntracked.
+ */
+export function patchBoardMeta(
+  id: string,
+  meta: { agentSessionId?: string; agentTranscriptPath?: string }
+): void {
+  const applyMeta = (boards: Board[]): Board[] => {
+    let changed = false
+    const next = boards.map((b) => {
+      if (b.id !== id || b.type !== 'terminal') return b
+      const safe: Record<string, unknown> = {}
+      let diff = false
+      for (const key of ['agentSessionId', 'agentTranscriptPath'] as const) {
+        if (key in meta && b[key] !== meta[key]) {
+          safe[key] = meta[key]
+          diff = true
+        }
+      }
+      if (!diff) return b
+      changed = true
+      return { ...b, ...safe } as Board
+    })
+    return changed ? next : boards
+  }
+  const mapRail = (rail: CanvasSnapshot[]): CanvasSnapshot[] => {
+    let railChanged = false
+    const next = rail.map((snap) => {
+      const nb = applyMeta(snap.boards)
+      if (nb === snap.boards) return snap
+      railChanged = true
+      return { ...snap, boards: nb }
+    })
+    return railChanged ? next : rail
+  }
+  useCanvasStore.setState((s) => {
+    const boards = applyMeta(s.boards)
+    const past = mapRail(s.past)
+    const future = mapRail(s.future)
+    if (pendingCheckpoint) {
+      const nb = applyMeta(pendingCheckpoint.boards)
+      if (nb !== pendingCheckpoint.boards) pendingCheckpoint = { ...pendingCheckpoint, boards: nb }
+    }
+    if (boards === s.boards && past === s.past && future === s.future) return s
+    return { boards, past, future }
+  })
+}

@@ -15,7 +15,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useReactFlow, useStore } from '@xyflow/react'
-import { useCanvasStore, type RecentProject } from '../store/canvasStore'
+import {
+  useCanvasStore,
+  acquireProjectSwitchLock,
+  releaseProjectSwitchLock,
+  type RecentProject
+} from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { cancelActiveAutosave } from '../store/useAutosave'
@@ -118,38 +123,50 @@ export function ProjectSwitcher(): ReactElement {
 
   const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
     setOpen(false)
-    // PERSIST-B: kill any pending debounced autosave armed editing the outgoing project.
-    // The explicit flush below is the authoritative final write; a leftover timer would
-    // otherwise fire after load flips status back to 'open' (currentDir now the NEW dir)
-    // and write the new project's state redundantly.
-    cancelActiveAutosave()
-    // 1. Flush the current project to disk before tearing it down. project:save returns
-    //    false on a write failure; the debounced autosaver is gated off once we flip to
-    //    'loading', so a swallowed false here loses the outgoing project's tail edits with
-    //    no signal (PERSIST-A / the SAVE-1 silent-loss class). Surface it and abort the
-    //    switch so the outgoing project stays open and editable for a retry.
-    const saved = await window.api.project.save(toObject())
-    if (saved === false) {
-      // eslint-disable-next-line no-console
-      console.error('project switch: final flush failed; aborting switch to avoid data loss')
-      return
-    }
-    // 2. Suppress autosave + dispose native views/PTYs.
-    setProjectLoading()
-    await disposeLiveResources()
-    // 3. Load the new project. applyOpenResult is async (it may retry canvas.json.bak on a
-    //    deep-validation failure) — await so the switch completes (or settles error) here.
-    //    BUG-006: load() can REJECT — createNew's project:create → MAIN createProject can
-    //    throw on a disk error (mkdirSync / writeFileAtomic; project:open's readProject
-    //    absorbs its errors, but create does not). Callers `void switchTo`, so an unhandled
-    //    rejection here would leave status stuck at 'loading' with all native resources
-    //    already disposed: unrecoverable. Route any throw through the existing error path so
-    //    the app settles to 'error' (carrying the message) and stays recoverable.
+    // BUG-009: one switch pipeline at a time, ACROSS surfaces. The lock is module-level
+    // (shared with WelcomeScreen's open/create) because mid-switch the status flips to
+    // 'loading', which unmounts Canvas and mounts a fresh WelcomeScreen whose per-mount
+    // `busy` state cannot see this in-flight switch — without the shared lock a second
+    // click there (or a re-opened dropdown here) interleaves two open pipelines and the
+    // renderer can settle on project B while MAIN's currentDir points at C, after which
+    // autosave writes B's canvas into C's canvas.json.
+    if (!acquireProjectSwitchLock()) return
     try {
-      await applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'failed to load project'
-      await applyOpenResult({ ok: false, error: msg })
+      // PERSIST-B: kill any pending debounced autosave armed editing the outgoing project.
+      // The explicit flush below is the authoritative final write; a leftover timer would
+      // otherwise fire after load flips status back to 'open' (currentDir now the NEW dir)
+      // and write the new project's state redundantly.
+      cancelActiveAutosave()
+      // 1. Flush the current project to disk before tearing it down. project:save returns
+      //    false on a write failure; the debounced autosaver is gated off once we flip to
+      //    'loading', so a swallowed false here loses the outgoing project's tail edits with
+      //    no signal (PERSIST-A / the SAVE-1 silent-loss class). Surface it and abort the
+      //    switch so the outgoing project stays open and editable for a retry.
+      const saved = await window.api.project.save(toObject())
+      if (saved === false) {
+        // eslint-disable-next-line no-console
+        console.error('project switch: final flush failed; aborting switch to avoid data loss')
+        return
+      }
+      // 2. Suppress autosave + dispose native views/PTYs.
+      setProjectLoading()
+      await disposeLiveResources()
+      // 3. Load the new project. applyOpenResult is async (it may retry canvas.json.bak on a
+      //    deep-validation failure) — await so the switch completes (or settles error) here.
+      //    BUG-006: load() can REJECT — createNew's project:create → MAIN createProject can
+      //    throw on a disk error (mkdirSync / writeFileAtomic; project:open's readProject
+      //    absorbs its errors, but create does not). Callers `void switchTo`, so an unhandled
+      //    rejection here would leave status stuck at 'loading' with all native resources
+      //    already disposed: unrecoverable. Route any throw through the existing error path so
+      //    the app settles to 'error' (carrying the message) and stays recoverable.
+      try {
+        await applyOpenResult((await load()) as Parameters<typeof applyOpenResult>[0])
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'failed to load project'
+        await applyOpenResult({ ok: false, error: msg })
+      }
+    } finally {
+      releaseProjectSwitchLock()
     }
   }
 
