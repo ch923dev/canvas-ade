@@ -181,47 +181,58 @@ export function BrowserBoard({
     }
   }
 
+  // D1-A: feedback routes to the app toast channel (was a board-anchored note that
+  // replaced a single slot). Board-scoped keys keep that collapse behavior — a rapid
+  // repeat (double-click on a broken URL, re-shot screenshot) replaces the previous
+  // toast in place instead of stacking duplicates (makePortDetectNote pattern).
   const openExternal = (): void => {
+    const externalError = (): string =>
+      showToast({
+        id: `browser-external-${board.id}`,
+        kind: 'error',
+        message: 'Cannot open that URL in a browser'
+      })
     void window.api
       .openExternalPreview(runtime.liveUrl ?? board.url)
       .then((ok) => {
-        if (!ok) showToast({ kind: 'error', message: 'Cannot open that URL in a browser' })
+        if (!ok) externalError()
       })
       // D0-5: an IPC rejection (teardown race, channel gone) was silent before.
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.error('openExternalPreview failed', err)
-        showToast({ kind: 'error', message: 'Cannot open that URL in a browser' })
+        externalError()
       })
   }
 
   const takeScreenshot = (): void => {
+    const shotToast = (t: { kind?: 'error' | 'ok' | 'info'; message: string }): string =>
+      showToast({ id: `browser-shot-${board.id}`, ...t })
     void (async () => {
       // D0-5: the IPC can also REJECT (capture race, channel teardown) — without the
       // catch that path was a silent no-op while the success/false branches spoke.
-      // D1-A: feedback routes to the app toast channel (was a board-anchored note).
       try {
         const res = await window.api.screenshotPreview(board.id)
         // BUG-028: main reports whether the clipboard write actually landed.
         const clipOk = res.ok && res.clipboardOk
-        if (!res.ok) showToast({ message: 'Open the preview to screenshot it' })
+        if (!res.ok) shotToast({ message: 'Open the preview to screenshot it' })
         else if (res.assetId)
-          showToast({
+          shotToast({
             kind: 'ok',
             message: clipOk
               ? 'Screenshot copied + saved to assets/'
               : 'Screenshot saved to assets/ (clipboard unavailable)'
           })
-        else if (clipOk) showToast({ kind: 'ok', message: 'Screenshot copied to clipboard' })
+        else if (clipOk) shotToast({ kind: 'ok', message: 'Screenshot copied to clipboard' })
         else
-          showToast({
+          shotToast({
             kind: 'error',
             message: 'Screenshot failed: clipboard unavailable and nothing saved'
           })
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('screenshotPreview failed', err)
-        showToast({ kind: 'error', message: 'Screenshot failed — try again' })
+        shotToast({ kind: 'error', message: 'Screenshot failed — try again' })
       }
     })()
   }

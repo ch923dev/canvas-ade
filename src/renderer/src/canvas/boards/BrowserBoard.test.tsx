@@ -166,7 +166,7 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
     expect(t.kind).toBe('ok')
   })
 
-  it('routes the open-external failure to an error toast', async () => {
+  it('routes the open-external failure to a board-keyed error toast (repeats collapse)', async () => {
     const id = seedBrowser()
     ;(window.api as unknown as { openExternalPreview: unknown }).openExternalPreview = vi.fn(
       async () => false
@@ -174,12 +174,16 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel sinc
     render(<Harness id={id} />)
     const btn = document.querySelector<HTMLButtonElement>('button[title="Open in browser"]')
     if (!btn) throw new Error('open-external button not found')
+    // Rapid double-click on a broken URL must REPLACE the keyed toast, not stack two.
     await act(async () => {
+      fireEvent.click(btn)
       fireEvent.click(btn)
       await Promise.resolve()
     })
-    const t = useToastStore.getState().toasts.at(-1)
-    expect(t?.message).toBe('Cannot open that URL in a browser')
-    expect(t?.kind).toBe('error')
+    const { toasts } = useToastStore.getState()
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0].id).toBe(`browser-external-${id}`)
+    expect(toasts[0].message).toBe('Cannot open that URL in a browser')
+    expect(toasts[0].kind).toBe('error')
   })
 })
