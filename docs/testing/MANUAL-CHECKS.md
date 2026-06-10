@@ -73,6 +73,17 @@ is part of every check.
 - [ ] Eraser, marquee-select, group/ungroup behave; full-view fits the board (camera fit, not a 2nd transform).
 - [ ] Export PNG/SVG produces a correct image.
 
+### Arrow endpoint editing (D3-B)
+
+- [ ] Select exactly one arrow (select tool) -> two hollow accent-ring handles appear on its
+      endpoints; crosshair cursor over them. Multi-select, a locked arrow, or any non-select
+      tool -> no handles.
+- [ ] Drag the head handle -> the bezier + arrowhead re-bow live under the cursor; release ->
+      the new shape persists; ONE Ctrl+Z restores the old shape (and a tap on a handle without
+      dragging adds no undo step).
+- [ ] Works zoomed in/out (handles scale with the camera; the drop lands under the cursor) and
+      after dragging the whole arrow first.
+
 ## Board groups
 
 - [ ] Multi-select boards -> Ctrl+G makes a named group box + tab; the tab is clickable (rename / focus / manage).
