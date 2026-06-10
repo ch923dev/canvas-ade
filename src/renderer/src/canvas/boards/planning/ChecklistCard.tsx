@@ -246,6 +246,10 @@ export function ChecklistCard({
               aria-checked={item.done}
               aria-label={item.label || 'Checklist item'}
               title={item.done ? 'Mark not done' : 'Mark done'}
+              // Keys pressed on a focused checkbox stay out of the well's handlers —
+              // an arrow would nudge the whole card mid-AT-exploration (D3-C). Matches
+              // the title/item inputs; Space/Enter activation is native, not bubbled.
+              onKeyDown={(e) => e.stopPropagation()}
               // Block the press only in select mode; a draw gesture may begin over
               // the checkbox and should reach the well (#6). Toggling is a click.
               onPointerDown={(e) => {

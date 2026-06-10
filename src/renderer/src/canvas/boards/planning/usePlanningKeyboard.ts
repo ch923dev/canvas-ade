@@ -199,7 +199,12 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
       if (delta && tool === 'select' && selectedIds.size > 0) {
         e.stopPropagation()
         e.preventDefault() // a focused well must never scroll/pan on arrows
-        // Drag-grammar moving set: whole groups, minus locked members.
+        // Drag-grammar moving set: whole groups, minus locked members. Derived from
+        // the render-time `elements` snapshot — every commit re-renders, so the NEXT
+        // keydown recomputes it fresh; only POSITIONS need the live-read transform
+        // below. Group/lock reads can lag at most the single not-yet-rendered commit
+        // of the BUG-023 window (a benign one-frame race; the burst ref is unaffected
+        // by re-renders, so coalescing continues across the refresh).
         const expanded = expandGroups(elements, selectedIds)
         const movingIds = [...expanded].filter((mid) => {
           const el = elements.find((x) => x.id === mid)
@@ -220,9 +225,13 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
 
       // Shift+F10 / ContextMenu key (A4): keyboard-open the element context menu.
       if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') {
-        if (tool !== 'select' || selectedIds.size === 0) return
+        // Consume UNCONDITIONALLY: Chromium synthesizes a `contextmenu` DOM event for
+        // these keys at a position unrelated to the selection — letting it leak (e.g.
+        // when nothing is selected) would run onWellContextMenu's hit-test at bogus
+        // coordinates and could open the pointer-path menu on a stray element.
         e.stopPropagation()
-        e.preventDefault() // suppress Chromium's synthesized contextmenu event
+        e.preventDefault()
+        if (tool !== 'select' || selectedIds.size === 0) return
         openMenuAtSelection()
         return
       }

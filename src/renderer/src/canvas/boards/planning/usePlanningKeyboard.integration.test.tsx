@@ -212,6 +212,60 @@ describe('planning keyboard — arrow-key nudge (A4)', () => {
     expect(pastLen()).toBe(p0)
   })
 
+  it('arrows while typing in a child input move the caret, never the element (#119 review)', () => {
+    // The NoteCard/ChecklistCard stopPropagation guards are the load-bearing mechanism
+    // for "arrows move the caret while editing" — pin them against the nudge handler.
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    selectNote(0, { x: 60, y: 60 }) // selection non-empty: the nudge WOULD fire if keys leaked
+    const ta = document.querySelector('.pl-note textarea') as HTMLTextAreaElement
+    expect(ta).not.toBeNull()
+    const p0 = pastLen()
+    act(() => {
+      ta.focus()
+      const e = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      ta.dispatchEvent(e)
+      expect(e.defaultPrevented).toBe(false) // caret movement stays native
+    })
+    expect(elById(id, 'ka')!.x).toBe(40)
+    expect(pastLen()).toBe(p0)
+  })
+
+  it('arrows on a focused checklist checkbox do not nudge the card (#119 review)', () => {
+    const id = seedPlanning([])
+    useCanvasStore.getState().updateBoard(id, {
+      elements: [
+        {
+          id: 'cl',
+          kind: 'checklist',
+          x: 40,
+          y: 40,
+          w: 240,
+          h: 0,
+          title: 'T',
+          items: [{ id: 'i1', label: 'one', done: false }]
+        }
+      ]
+    } as never)
+    useCanvasStore.setState({ past: [], future: [] })
+    render(<Harness id={id} />)
+    // Select the card via its body press, then move focus to the checkbox (AT-style).
+    act(() => {
+      pev(document.querySelector('.pl-check') as HTMLElement, 'pointerdown', 60, 60)
+      pev(well(), 'pointerup', 60, 60)
+    })
+    const box = document.querySelector('[role="checkbox"]') as HTMLButtonElement
+    expect(box).not.toBeNull()
+    act(() => {
+      box.focus()
+      box.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+      )
+    })
+    const cl = els(id).find((e) => e.id === 'cl') as unknown as { x: number }
+    expect(cl.x).toBe(40)
+  })
+
   it('arrows without a selection fall through (no move, no checkpoint, no preventDefault)', () => {
     const id = seedTwo()
     render(<Harness id={id} />)
@@ -340,10 +394,22 @@ describe('planning keyboard — Shift+F10 / ContextMenu key (A4)', () => {
     expect(elById(id, 'ka')!.x).toBe(elById(id, 'kb')!.x)
   })
 
-  it('Shift+F10 with no selection does nothing', () => {
+  it('Shift+F10 with no selection opens nothing but is still consumed (#119 review)', () => {
     const id = seedTwo()
     render(<Harness id={id} />)
-    down('F10', { shift: true })
+    act(() => {
+      well().focus()
+      const e = new KeyboardEvent('keydown', {
+        key: 'F10',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+      well().dispatchEvent(e)
+      // Consumed even as a no-op: Chromium's synthesized contextmenu event must never
+      // reach onWellContextMenu's hit-test at bogus coordinates.
+      expect(e.defaultPrevented).toBe(true)
+    })
     expect(document.querySelector('[data-testid="w3-menu-group"]')).toBeNull()
   })
 })
