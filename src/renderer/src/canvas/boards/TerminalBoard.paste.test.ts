@@ -3,8 +3,8 @@
 // BUG-025 regression: pasteIntoTerminal must fall through to the text-paste branch
 // (and not throw / silently drop the paste) when stageClipboardImage rejects.
 //
-// This drives the REAL exported `pasteIntoTerminal` from TerminalBoard.tsx (no
-// hand-kept replica): the function reads the GLOBAL `window.api` seam (we stub it
+// This drives the REAL exported `pasteIntoTerminal` from terminal/pasteIntoTerminal.ts
+// (no hand-kept replica): the function reads the GLOBAL `window.api` seam (we stub it
 // per-test) and takes a `Terminal` (we hand it a minimal fake whose `paste` is the
 // spy we assert on). jsdom is required because importing TerminalBoard.tsx runs
 // top-level browser code (navigator.platform, xterm/React module init).
@@ -17,14 +17,16 @@
 // to the text-paste branch (same as "no image in clipboard").
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { pasteIntoTerminal } from './TerminalBoard'
+import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
-// Build a minimal fake Terminal: `element` must be DEFINED so the disposal guard
-// (`if (term.element === undefined) return`) does not early-return; `paste` is the
-// spy we assert on.
+// Build a minimal fake Terminal: `paste` is the spy we assert on.
+// NOTE: `element` is intentionally NOT defined here — the old disposal guard
+// (`if (term.element === undefined) return`) was dead code because xterm keeps
+// `element` defined after dispose(). The replacement guard uses the `isLive`
+// predicate, so `element` is irrelevant to the tests below.
 function makeTerm(): import('@xterm/xterm').Terminal {
-  return { element: {}, paste: vi.fn() } as unknown as import('@xterm/xterm').Terminal
+  return { paste: vi.fn() } as unknown as import('@xterm/xterm').Terminal
 }
 
 // Install the GLOBAL `window.api` seam pasteIntoTerminal reads, shaped per scenario.
@@ -106,5 +108,51 @@ describe('BUG-025: pasteIntoTerminal — stageClipboardImage failure handling', 
     apiWith({ stageBehavior: 'return-null', clipboardText: 'text content' })
     await pasteIntoTerminal(term, 'board-1')
     expect(term.paste).toHaveBeenCalledWith('text content')
+  })
+})
+
+// ── BUG-056 regression: isLive predicate replaces the dead term.element guard ──
+// The old guard (`if (term.element === undefined) return`) was ineffective because
+// xterm does NOT clear `element` on dispose — verified in the bundled lib. The
+// replacement uses an `isLive` callback (defaults to always-true for call sites
+// that already guard before calling) so callers can pass `() => termRef.current === term`
+// to catch disposal / respawn during the stageClipboardImage / readText awaits.
+describe('BUG-056: pasteIntoTerminal — isLive predicate prevents paste on disposed terminal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    delete (window as { api?: unknown }).api
+  })
+
+  it('isLive returns false before image-paste → paste is NOT called', async () => {
+    const term = makeTerm()
+    // Image is staged successfully, but the terminal was replaced before the await resolved.
+    apiWith({ stageBehavior: 'return-path' })
+    await pasteIntoTerminal(term, 'board-1', () => false)
+    expect(term.paste).not.toHaveBeenCalled()
+  })
+
+  it('isLive returns false before text-paste → paste is NOT called', async () => {
+    const term = makeTerm()
+    // No image; the terminal was replaced during the readText await.
+    apiWith({ stageBehavior: 'return-null', clipboardText: 'hello' })
+    await pasteIntoTerminal(term, 'board-1', () => false)
+    expect(term.paste).not.toHaveBeenCalled()
+  })
+
+  it('isLive returns true → paste proceeds normally (sanity check)', async () => {
+    const term = makeTerm()
+    apiWith({ stageBehavior: 'return-null', clipboardText: 'hello' })
+    await pasteIntoTerminal(term, 'board-1', () => true)
+    expect(term.paste).toHaveBeenCalledWith('hello')
+  })
+
+  it('isLive defaults to always-true when omitted → existing behavior preserved', async () => {
+    const term = makeTerm()
+    apiWith({ stageBehavior: 'return-null', clipboardText: 'text' })
+    await pasteIntoTerminal(term, 'board-1') // no third arg
+    expect(term.paste).toHaveBeenCalledWith('text')
   })
 })

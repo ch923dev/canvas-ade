@@ -131,7 +131,7 @@ export interface TerminalSpawnDeps {
    * imported to avoid a host↔hook import cycle; it is a stable module reference, so
    * listing it in the spawn dep set below does not churn the callback identity.
    */
-  pasteIntoTerminal: (term: Terminal, boardId: string) => void
+  pasteIntoTerminal: (term: Terminal, boardId: string, isLive?: () => boolean) => void
 }
 
 export interface TerminalSpawnApi {
@@ -386,7 +386,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
             term.clearSelection()
             return true
           },
-          paste: () => void pasteIntoTerminal(term, board.id),
+          paste: () => void pasteIntoTerminal(term, board.id, () => termRef.current === term),
           fontStep: (d) => fontStepRef.current(d),
           fontReset: () => fontResetRef.current()
         }
@@ -459,12 +459,17 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           rows: term.rows
         })
         .then((res) => {
+          // Guard: if the effect was torn down and a new term was created before this
+          // IPC resolved, the result belongs to the old session — discard it (#54).
+          if (disposed || termRef.current !== term) return
           if (res.state === 'spawn-failed') {
             setState('spawn-failed')
             term.write(`\x1b[31mspawn failed: ${res.error ?? 'unknown error'}\x1b[0m\r\n`)
           }
         })
         .catch((err: Error) => {
+          // Same guard: stale rejection must not mislabel the successor session (#54).
+          if (disposed || termRef.current !== term) return
           setState('spawn-failed')
           term.write(`\x1b[31mspawn failed: ${err.message}\x1b[0m\r\n`)
         })
