@@ -29,7 +29,9 @@ gating) is senior-grade.
 
 **Biggest weaknesses**
 1. **Silent save failure** — `project.save()` false → console only. Data-loss risk, zero user
-   surface (AppChrome:131–135). Worst finding in audit.
+   surface. Two paths: project-switch flush (AppChrome:131–135) AND the more frequent
+   debounced/blur/beforeunload saves (`useAutosave.ts:92` `onError` → console.error only).
+   Worst finding in audit.
 2. **Discoverability debt.** Power features hidden behind unadvertised gestures: Ctrl+G group,
    Alt-drag duplicate, Shift+right-click terminal menu, double-click flip-to-recap, text-tool drag
    = area text, gear = shell config. No command palette, no shortcut legend, no onboarding.
@@ -87,7 +89,7 @@ language, status-dot grammar. The canvas reads as one system.
 - Grouped-focus button renders only when groups exist.
 
 **UX problems**
-- **Save failure silent** (AppChrome:131–135). High.
+- **Save failure silent** (AppChrome:131–135 switch-flush + `useAutosave.ts:92` debounced/blur/beforeunload `onError`). High.
 - Project switch: flush → dispose → load with zero loading indication. Medium.
 - Undo/redo keyboard-only; no buttons, no history affordance. Medium.
 - No shortcut legend / command palette. Medium.
