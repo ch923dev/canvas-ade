@@ -7,7 +7,11 @@ import type {
   PlanningBoard,
   PlanningElement,
   ChecklistElement,
-  NoteElement
+  NoteElement,
+  TextElement,
+  ArrowElement,
+  StrokeElement,
+  ImageElement
 } from './boardSchema'
 
 // ── test builders (minimal valid boards) ─────────────────────────────────────
@@ -75,6 +79,25 @@ describe('buildDigest — terminal', () => {
     expect(d.boards[0].status).toBe('idle')
     expect(d.boards[0].lines).toEqual(['No launch command set'])
   })
+
+  // BUG-063 regression: all linked browser consumers must be reported, not just the first
+  it('BUG-063: reports all linked preview consumers (not just the first)', () => {
+    const d = buildDigest(
+      doc([
+        terminal({ id: 't1', title: 'Dev', launchCommand: 'pnpm dev' }),
+        browser({ id: 'b1', title: 'Mobile', previewSourceId: 't1', viewport: 'mobile' }),
+        browser({ id: 'b2', title: 'Tablet', previewSourceId: 't1', viewport: 'tablet' }),
+        browser({ id: 'b3', title: 'Desktop', previewSourceId: 't1', viewport: 'desktop' })
+      ])
+    )
+    const t = d.boards[0]
+    expect(t.lines).toContain('Feeds preview "Mobile"')
+    expect(t.lines).toContain('Feeds preview "Tablet"')
+    expect(t.lines).toContain('Feeds preview "Desktop"')
+    // All three, not just one
+    const feedLines = t.lines.filter((l) => l.startsWith('Feeds preview'))
+    expect(feedLines).toHaveLength(3)
+  })
 })
 
 describe('buildDigest — browser', () => {
@@ -122,6 +145,18 @@ function checklist(title: string, done: number, total: number): ChecklistElement
 function note(id: string): NoteElement {
   return { kind: 'note', id, x: 0, y: 0, w: 160, h: 120, tint: 'yellow', text: 'hi' }
 }
+function textEl(id: string): TextElement {
+  return { kind: 'text', id, x: 0, y: 0, text: 'hello' }
+}
+function arrowEl(id: string): ArrowElement {
+  return { kind: 'arrow', id, x: 0, y: 0, x2: 100, y2: 0 }
+}
+function strokeEl(id: string): StrokeElement {
+  return { kind: 'stroke', id, x: 0, y: 0, points: [0, 0, 10, 10] }
+}
+function imageEl(id: string): ImageElement {
+  return { kind: 'image', id, x: 0, y: 0, w: 200, h: 150, assetId: 'assets/img.png' }
+}
 
 describe('buildDigest — planning', () => {
   it('reports checklist progress and note count', () => {
@@ -148,6 +183,59 @@ describe('buildDigest — planning', () => {
     const d = buildDigest(doc([planning({ id: 'p1', elements: [] })]))
     expect(d.boards[0].lines).toEqual(['Empty board'])
     expect(d.boards[0].status).toBe('notes')
+  })
+
+  // BUG-060 regression: boards with only text/arrow/stroke/image elements must NOT report 'Empty board'
+  it('BUG-060: does not label a board with only text elements as Empty board', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [textEl('t1'), textEl('t2')] })]))
+    const p = d.boards[0]
+    expect(p.lines).not.toContain('Empty board')
+    expect(p.lines).toContain('2 text elements')
+    expect(p.status).toBe('notes')
+  })
+
+  it('BUG-060: does not label a board with only arrow elements as Empty board', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [arrowEl('a1')] })]))
+    expect(d.boards[0].lines).not.toContain('Empty board')
+    expect(d.boards[0].lines).toContain('1 arrow')
+  })
+
+  it('BUG-060: does not label a board with only stroke elements as Empty board', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [strokeEl('s1'), strokeEl('s2')] })]))
+    expect(d.boards[0].lines).not.toContain('Empty board')
+    expect(d.boards[0].lines).toContain('2 drawings')
+  })
+
+  it('BUG-060: does not label a board with only image elements as Empty board', () => {
+    const d = buildDigest(doc([planning({ id: 'p1', elements: [imageEl('i1')] })]))
+    expect(d.boards[0].lines).not.toContain('Empty board')
+    expect(d.boards[0].lines).toContain('1 image')
+  })
+
+  it('BUG-060: reports all element kinds together', () => {
+    const d = buildDigest(
+      doc([
+        planning({
+          id: 'p1',
+          elements: [
+            checklist('Tasks', 1, 2),
+            note('n1'),
+            textEl('tx1'),
+            arrowEl('ar1'),
+            strokeEl('st1'),
+            imageEl('im1')
+          ]
+        })
+      ])
+    )
+    const p = d.boards[0]
+    expect(p.lines).toContain('Tasks: 1/2 done')
+    expect(p.lines).toContain('1 note')
+    expect(p.lines).toContain('1 text element')
+    expect(p.lines).toContain('1 arrow')
+    expect(p.lines).toContain('1 drawing')
+    expect(p.lines).toContain('1 image')
+    expect(p.lines).not.toContain('Empty board')
   })
 })
 

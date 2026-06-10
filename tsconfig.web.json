@@ -18,7 +18,7 @@
     "paths": {
       "@renderer/*": ["src/renderer/src/*"]
     },
-    "types": ["node"]
+    "types": []
   },
   "include": [
     "src/renderer/src/**/*",

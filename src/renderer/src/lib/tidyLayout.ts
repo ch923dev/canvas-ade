@@ -95,7 +95,9 @@ function stackCenteredRows(
   originY: number
 ): TidyPlacement[] {
   const widths = rows.map((r) => r.reduce((s, b) => s + b.w, 0) + gap * Math.max(0, r.length - 1))
-  const maxW = Math.max(0, ...widths)
+  // Linear scan instead of Math.max(...spread) — avoids V8's argument-count ceiling on large sets.
+  let maxW = 0
+  for (const w of widths) if (w > maxW) maxW = w
   const out: TidyPlacement[] = []
   let y = originY
   rows.forEach((row, i) => {

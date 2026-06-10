@@ -41,10 +41,10 @@ function digestTerminal(b: TerminalBoard, d: CanvasDoc): BoardDigest {
   else lines.push('No launch command set')
   if (b.cwd) lines.push(`cwd: ${b.cwd}`)
   if (b.port !== undefined) lines.push(`Dev server port ${b.port}`)
-  const consumer = d.boards.find(
+  const consumers = d.boards.filter(
     (o): o is BrowserBoard => o.type === 'browser' && o.previewSourceId === b.id
   )
-  if (consumer) lines.push(`Feeds preview "${consumer.title}"`)
+  for (const consumer of consumers) lines.push(`Feeds preview "${consumer.title}"`)
   return {
     boardId: b.id,
     type: 'terminal',
@@ -70,12 +70,20 @@ function digestBrowser(b: BrowserBoard, d: CanvasDoc): BoardDigest {
 function digestPlanning(b: PlanningBoard): BoardDigest {
   const checklists = b.elements.filter((e): e is ChecklistElement => e.kind === 'checklist')
   const noteCount = b.elements.filter((e) => e.kind === 'note').length
+  const textCount = b.elements.filter((e) => e.kind === 'text').length
+  const arrowCount = b.elements.filter((e) => e.kind === 'arrow').length
+  const strokeCount = b.elements.filter((e) => e.kind === 'stroke').length
+  const imageCount = b.elements.filter((e) => e.kind === 'image').length
   const lines: string[] = []
   for (const c of checklists) {
     const done = c.items.filter((i) => i.done).length
     lines.push(`${c.title}: ${done}/${c.items.length} done`)
   }
   if (noteCount > 0) lines.push(`${noteCount} note${noteCount === 1 ? '' : 's'}`)
+  if (textCount > 0) lines.push(`${textCount} text element${textCount === 1 ? '' : 's'}`)
+  if (arrowCount > 0) lines.push(`${arrowCount} arrow${arrowCount === 1 ? '' : 's'}`)
+  if (strokeCount > 0) lines.push(`${strokeCount} drawing${strokeCount === 1 ? '' : 's'}`)
+  if (imageCount > 0) lines.push(`${imageCount} image${imageCount === 1 ? '' : 's'}`)
   if (lines.length === 0) lines.push('Empty board')
   const totalItems = checklists.reduce((s, c) => s + c.items.length, 0)
   const totalDone = checklists.reduce((s, c) => s + c.items.filter((i) => i.done).length, 0)
