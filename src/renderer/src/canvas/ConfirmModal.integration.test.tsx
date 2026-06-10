@@ -76,7 +76,7 @@ describe('ConfirmModal (integration)', () => {
     expect(reply).toHaveBeenCalledWith({ approved: false })
   })
 
-  it('Esc and backdrop click both deny (fail-safe direction)', () => {
+  it('Esc and a backdrop pointerdown both deny (fail-safe direction)', () => {
     stubOnConfirm()
     render(<ConfirmModal />)
 
@@ -84,8 +84,10 @@ describe('ConfirmModal (integration)', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(escReply).toHaveBeenCalledWith({ approved: false })
 
+    // The shared Modal closes on the scrim's pointerdown (a click's down half) — pointerdown
+    // only, so a queue advance can't be double-fired by the down+click pair of one gesture.
     const backdropReply = pushRequest({ title: 'B', body: 'b' })
-    fireEvent.click(screen.getByTestId('confirm-backdrop'))
+    fireEvent.pointerDown(screen.getByTestId('confirm-backdrop'))
     expect(backdropReply).toHaveBeenCalledWith({ approved: false })
   })
 
