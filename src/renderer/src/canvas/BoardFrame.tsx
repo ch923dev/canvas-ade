@@ -44,6 +44,23 @@ function srStatusText(label: string): string {
     .trim()
 }
 
+/** D0-6: always-mounted live region that starts EMPTY and fills only on a real status
+ *  TRANSITION (same intent as BrowserBoard's srConn sentinel) — a region that mounts
+ *  WITH content is announced by NVDA/JAWS, so boards carrying a pre-existing status
+ *  would all speak at once on project load. Pure derived render: the mount-time
+ *  normalized text is captured once (lazy useState) and suppressed; anything else
+ *  renders. Known minor gap: a later return to exactly the mount-time text (e.g.
+ *  restart back into the state the board loaded in) is silent for that one step. */
+function SrBoardStatus({ label }: { label?: string }): ReactElement {
+  const [initial] = useState(() => (label ? srStatusText(label) : ''))
+  const norm = label ? srStatusText(label) : ''
+  return (
+    <span className="sr-only" role="status" aria-live="polite">
+      {norm === initial ? '' : norm}
+    </span>
+  )
+}
+
 /** 24×24 icon button used in the title-bar action slot. */
 export function IconBtn({
   name,
@@ -563,12 +580,9 @@ export function BoardFrame({
           {/* D0-6 (A5): persistent polite live region so status TRANSITIONS are announced
               (the visible label is hover-only, so it can't serve as the live region). The
               text strips the per-frame spinner glyph and maps the per-second elapsed timer
-              to a stable word — announcements fire only on real state changes. */}
-          {status?.label && (
-            <span className="sr-only" role="status" aria-live="polite">
-              {srStatusText(status.label)}
-            </span>
-          )}
+              to a stable word — announcements fire only on real state changes. Always
+              mounted + starts empty so project load never mass-announces. */}
+          <SrBoardStatus label={status?.label} />
           {/* Status label is on-demand: only while hovered or selected, kept calm at
               rest (the glyph colour carries the at-a-glance signal). */}
           {status?.label && (hovered || selected) && (

@@ -194,13 +194,14 @@ export function ProjectSwitcher(): ReactElement {
     }
   }
 
-  // D0-8: manual retry from the chip. A success clears the chip; a false result leaves
-  // the existing failure standing (the disk is still unhealthy); a rejection refreshes
-  // the message so the chip reflects the latest error.
+  // D0-8: manual retry from the chip. A success clears the chip; a `false` return (the
+  // IPC write failed without throwing) refreshes the message so the click visibly
+  // registered — otherwise the chip looks dead; a rejection surfaces the latest error.
   const retrySave = async (): Promise<void> => {
     try {
       const ok = await window.api.project.save(toObject())
       if (ok) clearSaveFailure()
+      else setSaveFailure('Save failed again — check disk space and permissions')
     } catch (err) {
       setSaveFailure(err instanceof Error ? err.message : 'project save failed')
     }
