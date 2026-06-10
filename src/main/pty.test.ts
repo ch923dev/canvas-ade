@@ -408,6 +408,16 @@ describe('attachPortInput (Finding 3 — single renderer→PTY write guard)', ()
     expect(proc.resize).not.toHaveBeenCalled()
   })
 
+  it('BUG-023: clamps a legit OVERSIZED resize instead of dropping it (rows keep applying)', () => {
+    const port = makePort()
+    const { proc } = makeProc(707)
+    attachPortInput(port as any, proc as any)
+    port.handler?.({ data: { t: 'resize', cols: 1200, rows: 40 } })
+    expect(proc.resize).toHaveBeenCalledWith(1000, 40)
+    port.handler?.({ data: { t: 'resize', cols: 1200, rows: 55 } })
+    expect(proc.resize).toHaveBeenLastCalledWith(1000, 55)
+  })
+
   it('swallows a throw from proc.write (would crash main via uncaughtException)', () => {
     const port = makePort()
     const { proc } = makeProc(705)
@@ -476,21 +486,25 @@ describe('cleanupCore (T1)', () => {
 
   // BUG-022: natural-exit path must NOT tree-kill the already-dead root PID to
   // avoid the PID-reuse race window (taskkill against a recycled PID harms an
-  // unrelated process tree).
-  it('BUG-022: skips killTree when the session state is already exited (natural-exit path)', async () => {
+  // unrelated process tree). It DOES still call node-pty's own kill(), which
+  // disposes the ConPTY handle/conout worker deterministically and closes the
+  // pseudoconsole (reaping still-attached children) without touching the PID.
+  it('BUG-022: skips killTree but disposes via proc.kill on natural exit', async () => {
     const port = makePort()
     const { proc } = makeProc(556)
+    const sessionProc = { ...proc, kill: vi.fn() }
     const killTree = vi.fn(() => Promise.resolve())
     const sessions = new Map<string, any>([
-      ['k', { proc, port, buf: { data: '' }, state: 'exited' as const }]
+      ['k', { proc: sessionProc, port, buf: { data: '' }, state: 'exited' as const }]
     ])
 
     // Pass the SAME proc (identity match = natural exit, not stale) so the
     // identity guard passes and we reach the skip-kill branch.
-    await cleanupCore('k', sessions, { killTree } as any, proc as any)
+    await cleanupCore('k', sessions, { killTree } as any, sessionProc as any)
 
     expect(sessions.has('k')).toBe(false) // session is removed
     expect(killTree).not.toHaveBeenCalled() // no tree-kill on an already-exited proc
+    expect(sessionProc.kill).toHaveBeenCalledTimes(1) // ConPTY disposed deterministically
     expect(port.closed).toBe(true) // port is still closed
   })
 

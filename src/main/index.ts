@@ -377,6 +377,10 @@ app.whenReady().then(async () => {
     // SessionStart hook so a project consented in a prior session keeps recording. Idempotent
     // (installRecapHook no-ops when present). Best-effort — projectIpc wraps this in try/catch.
     (dir) => {
+      // BUG-035 (verify follow-up): board results are per-project — an id-colliding
+      // board in the next project must not inherit the previous project's verdict.
+      // Clear-all on open; onBoardsObserved's prune handles deletions WITHIN a project.
+      pruneBoardResults(new Set())
       if (readConsent(userData, dir) === 'enabled') {
         installRecapHook({
           projectDir: dir,

@@ -21,14 +21,16 @@ export interface InstallOpts {
   /** Absolute path to the mapping JSONL file (app-owned, in userData) */
   mapPath: string
   /**
-   * BUG-003: extra env vars merged into the hook command block.
-   * Set { ELECTRON_RUN_AS_NODE: '1' } in packaged builds so the app exe
-   * acts as node when the Claude SessionStart hook invokes it.
+   * BUG-003: env vars the hook command must run under. Set
+   * { ELECTRON_RUN_AS_NODE: '1' } in packaged builds so the app exe acts as
+   * node when the Claude SessionStart hook invokes it. Claude Code's hook
+   * schema has NO `env` field, so these are baked into a SHELL-form command
+   * (cmd /c `set K=V&& ...` on Windows, `K=V ...` via /bin/sh on POSIX).
    */
   env?: Record<string, string>
 }
 
-type HookCmd = { type: string; command: string; args?: string[]; env?: Record<string, string> }
+type HookCmd = { type: string; command: string; args?: string[] }
 type HookBlock = { matcher?: string; hooks: HookCmd[] }
 type SettingsCfg = { hooks?: { SessionStart?: HookBlock[] } } & Record<string, unknown>
 
@@ -51,11 +53,16 @@ function writeSettings(projectDir: string, cfg: SettingsCfg): void {
   writeFileAtomic.sync(settingsPath(projectDir), JSON.stringify(cfg, null, 2), 'utf8')
 }
 
+/** True when an args element IS the scriptPath (direct form) or embeds it (shell form). */
+function argsReferenceScript(args: string[] | undefined, scriptPath: string): boolean {
+  return !!args?.some((a) => typeof a === 'string' && a.includes(scriptPath))
+}
+
 /** Returns true if our hook (identified by scriptPath in args) is already installed. */
 export function isRecapHookInstalled(projectDir: string, scriptPath: string): boolean {
   const cfg = readSettings(projectDir)
   const blocks = cfg.hooks?.SessionStart ?? []
-  return blocks.some((b) => b.hooks?.some((h) => h.args?.includes(scriptPath)))
+  return blocks.some((b) => b.hooks?.some((h) => argsReferenceScript(h.args, scriptPath)))
 }
 
 /**
@@ -68,15 +75,37 @@ export function installRecapHook(opts: InstallOpts): void {
   const cfg = readSettings(opts.projectDir)
   cfg.hooks ??= {}
   cfg.hooks.SessionStart ??= []
-  const hookCmd: HookCmd = {
+  let hookCmd: HookCmd = {
     type: 'command',
     command: opts.nodePath,
     args: [opts.scriptPath, opts.mapPath]
   }
   // BUG-003: bake ELECTRON_RUN_AS_NODE=1 into the hook so the app exe acts as node in
-  // packaged builds (where process.execPath is the Electron app binary, not a plain node).
+  // packaged builds (where process.execPath is the Electron app binary, not a plain
+  // node). Claude Code's documented hook schema has no `env` field, so the env
+  // assignment is baked into a shell-form command instead.
   if (opts.env && Object.keys(opts.env).length > 0) {
-    hookCmd.env = opts.env
+    const pairs = Object.entries(opts.env)
+    const q = (p: string): string => `"${p}"`
+    const invocation = `${q(opts.nodePath)} ${q(opts.scriptPath)} ${q(opts.mapPath)}`
+    hookCmd =
+      process.platform === 'win32'
+        ? {
+            type: 'command',
+            command: 'cmd.exe',
+            // /d: skip AutoRun; /s: preserve the quoted command string verbatim.
+            args: [
+              '/d',
+              '/s',
+              '/c',
+              `${pairs.map(([k, v]) => `set ${k}=${v}&& `).join('')}${invocation}`
+            ]
+          }
+        : {
+            type: 'command',
+            command: '/bin/sh',
+            args: ['-c', `${pairs.map(([k, v]) => `${k}=${v} `).join('')}${invocation}`]
+          }
   }
   cfg.hooks.SessionStart.push({ matcher: '', hooks: [hookCmd] })
   writeSettings(opts.projectDir, cfg)
@@ -103,7 +132,7 @@ export function removeRecapHook(projectDir: string, scriptPath: string): void {
     .map((b) => ({
       ...b,
       hooks: Array.isArray(b.hooks)
-        ? b.hooks.filter((h: HookCmd) => !h.args?.includes(scriptPath))
+        ? b.hooks.filter((h: HookCmd) => !argsReferenceScript(h.args, scriptPath))
         : []
     }))
     .filter((b) => b.hooks.length > 0)

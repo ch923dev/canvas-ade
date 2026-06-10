@@ -70,7 +70,15 @@ export function attachPortInput(port: MessagePortMain, proc: pty.IPty): void {
     const m = e.data as PortInputMsg
     try {
       if (m.t === 'input' && typeof m.d === 'string') proc.write(m.d)
-      else if (m.t === 'resize' && isValidResize(m.cols, m.rows)) proc.resize(m.cols, m.rows)
+      else if (m.t === 'resize') {
+        if (isValidResize(m.cols, m.rows)) proc.resize(m.cols, m.rows)
+        else if (Number.isInteger(m.cols) && Number.isInteger(m.rows) && m.cols >= 1 && m.rows >= 1)
+          // BUG-023: a legit but OVERSIZED grid (>1000 cols/rows — wide board at a
+          // tiny font) is clamped instead of dropped, so row updates keep applying
+          // instead of the PTY freezing at spawn dimensions. Garbage (non-integer,
+          // <1, non-finite) is still dropped wholesale.
+          proc.resize(clampSpawnDim(m.cols, 80), clampSpawnDim(m.rows, 24))
+      }
     } catch {
       /* pty already exited */
     }
@@ -510,8 +518,20 @@ export function cleanupCore(
   // against a recycled PID can harm an unrelated process tree. Skip killTree on
   // the natural-exit path only. An explicit pty:kill (proc === undefined, no caller
   // proc pinning) always goes through because it may tear down a still-running proc.
-  const done =
-    s.state === 'exited' && proc !== undefined ? Promise.resolve() : deps.killTree(s.proc)
+  // Still call node-pty's own kill(): it disposes the ConPTY handle + conout worker
+  // deterministically and closes the pseudoconsole (reaping children still attached
+  // to it) — without ever addressing the possibly-recycled root PID via taskkill.
+  let done: Promise<void>
+  if (s.state === 'exited' && proc !== undefined) {
+    try {
+      s.proc.kill()
+    } catch {
+      /* already disposed */
+    }
+    done = Promise.resolve()
+  } else {
+    done = deps.killTree(s.proc)
+  }
   try {
     s.port.close()
   } catch {

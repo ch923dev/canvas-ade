@@ -208,7 +208,7 @@ describe('installRecapHook BUG-003: env field', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('writes env into the hook command block when provided', () => {
+  it('bakes env into a shell-form command (Claude hooks have no env field)', () => {
     installRecapHook({
       projectDir: dir,
       nodePath: '/usr/bin/node',
@@ -218,16 +218,38 @@ describe('installRecapHook BUG-003: env field', () => {
     })
     const settings = join(dir, '.claude', 'settings.local.json')
     const cfg = JSON.parse(readFileSync(settings, 'utf8'))
-    const blocks = cfg.hooks.SessionStart
-    const hook = blocks
-      .flatMap((b: { hooks: unknown[] }) => b.hooks)
-      .find((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')) as {
-      env?: Record<string, string>
-    }
-    expect(hook?.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+    const hooks = cfg.hooks.SessionStart.flatMap((b: { hooks: unknown[] }) => b.hooks) as {
+      command: string
+      args?: string[]
+      env?: unknown
+    }[]
+    const hook = hooks.find((h) => h.args?.some((a) => a.includes('/app/recordSession.js')))
+    expect(hook).toBeDefined()
+    // The env assignment rides INSIDE the shell command string, not in an
+    // (unsupported) env field; the script + map paths are quoted in the same string.
+    const shellArg = hook!.args!.find((a) => a.includes('ELECTRON_RUN_AS_NODE=1'))
+    expect(shellArg).toBeDefined()
+    expect(shellArg).toContain('"/app/recordSession.js"')
+    expect(shellArg).toContain('"/u/map.jsonl"')
+    expect(shellArg).toContain('"/usr/bin/node"')
+    expect([process.platform === 'win32' ? 'cmd.exe' : '/bin/sh']).toContain(hook!.command)
+    expect(hook!.env).toBeUndefined()
+    // Idempotency + removal must work on the shell form (scriptPath is a SUBSTRING).
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(true)
+    installRecapHook({
+      projectDir: dir,
+      nodePath: '/usr/bin/node',
+      scriptPath: '/app/recordSession.js',
+      mapPath: '/u/map.jsonl',
+      env: { ELECTRON_RUN_AS_NODE: '1' }
+    })
+    const cfg2 = JSON.parse(readFileSync(settings, 'utf8'))
+    expect(cfg2.hooks.SessionStart).toHaveLength(1)
+    removeRecapHook(dir, '/app/recordSession.js')
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(false)
   })
 
-  it('omits env from the hook command block when not provided', () => {
+  it('keeps the direct command form when no env is provided', () => {
     installRecapHook({
       projectDir: dir,
       nodePath: '/usr/bin/node',
@@ -240,8 +262,10 @@ describe('installRecapHook BUG-003: env field', () => {
     const hook = blocks
       .flatMap((b: { hooks: unknown[] }) => b.hooks)
       .find((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')) as {
+      command: string
       env?: Record<string, string>
     }
+    expect(hook.command).toBe('/usr/bin/node')
     expect(hook?.env).toBeUndefined()
   })
 })

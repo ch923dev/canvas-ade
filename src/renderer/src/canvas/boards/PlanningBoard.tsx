@@ -15,7 +15,7 @@
  * Owns this file + everything under `boards/planning/`; the shared surface
  * (`BoardFrame`, schema, store) is consumed, never modified.
  */
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
@@ -456,7 +456,10 @@ export function PlanningBoard({
   })
 
   // Mirror dragPos into the ref so growForChecklist (defined earlier) reads it lazily.
-  useEffect(() => void (dragPosRef.current = dragPos), [dragPos])
+  // useLayoutEffect, not useEffect: it must run BEFORE ChecklistCard's passive measure
+  // effect in the same commit, so the first drag frame is gated and the drop commit
+  // (dragPos -> null + committed y) re-fires measure with the ref already cleared.
+  useLayoutEffect(() => void (dragPosRef.current = dragPos), [dragPos])
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
