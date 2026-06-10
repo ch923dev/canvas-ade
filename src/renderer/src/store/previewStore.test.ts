@@ -112,6 +112,28 @@ describe('previewStore.clear', () => {
   })
 })
 
+describe('previewStore.evicted (D2-C paused badge)', () => {
+  beforeEach(() => {
+    usePreviewStore.setState({
+      byId: {},
+      nodeGesture: false,
+      openMenus: new Set(),
+      menuOpen: false
+    })
+  })
+
+  test('DEFAULT_RUNTIME starts not-evicted', () => {
+    expect(DEFAULT_RUNTIME.evicted).toBe(false)
+  })
+
+  test('patch can mark a board evicted (renderer freed) and back', () => {
+    usePreviewStore.getState().patch('b1', { live: false, evicted: true })
+    expect(usePreviewStore.getState().byId['b1'].evicted).toBe(true)
+    usePreviewStore.getState().patch('b1', { live: true, evicted: false })
+    expect(usePreviewStore.getState().byId['b1'].evicted).toBe(false)
+  })
+})
+
 describe('previewStore.setNodeGesture / setMenuOpen', () => {
   beforeEach(() => {
     usePreviewStore.setState({

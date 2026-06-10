@@ -477,7 +477,7 @@ export function usePreviewManager(props: LayerProps): void {
         rectsEqual(r.lastSent, bounds) &&
         r.lastZoom === zoomFactor
       ) {
-        patchRuntime(g.id, { live: true })
+        patchRuntime(g.id, { live: true, evicted: false })
         return
       }
       r.lastSent = bounds
@@ -494,7 +494,7 @@ export function usePreviewManager(props: LayerProps): void {
         // next reconcile (existing branch) would see a nonce mismatch and re-navigate the
         // url we just loaded (a redundant double-load).
         r.lastReloadNonce = usePreviewStore.getState().byId[g.id]?.reloadNonce ?? 0
-        patchRuntime(g.id, { status: 'connecting', live: true })
+        patchRuntime(g.id, { status: 'connecting', live: true, evicted: false })
         await window.api.openPreview({ id: g.id, url: g.url, bounds, zoomFactor })
         // Bug #48/#30: the board may have been deleted during the open IPC round-trip
         // (reconcile ran closeBoard + recs.delete + clearRuntime). Re-check existence
@@ -509,12 +509,15 @@ export function usePreviewManager(props: LayerProps): void {
         // if we were closed (r.attached false) or a newer attach superseded us (seq bump).
         if (!r.attached || r.attachSeq !== attachSeq) return
       }
-      patchRuntime(g.id, { live: true })
+      patchRuntime(g.id, { live: true, evicted: false })
     },
     [rec, getViewport, fullViewBoundsFor, preset, patchRuntime]
   )
 
   // Free a renderer (over the live cap / board removed). Last snapshot keeps showing.
+  // D2-C: mark the runtime `evicted` — unlike a motion/LOD detach the page state is
+  // GONE and interaction is dead until a live slot frees, so the board shows a
+  // "paused" badge. Any later (re)attach clears the flag.
   const closeBoard = useCallback(
     (id: string): void => {
       const r = rec(id)
@@ -523,7 +526,7 @@ export function usePreviewManager(props: LayerProps): void {
       r.lastSent = null
       r.lastUrl = null
       void window.api.closePreview(id)
-      patchRuntime(id, { live: false })
+      patchRuntime(id, { live: false, evicted: true })
     },
     [rec, patchRuntime]
   )

@@ -385,6 +385,52 @@ describe('usePreviewManager — reconcile re-push during full view (BUG-058)', (
   })
 })
 
+describe('usePreviewManager — over-cap eviction marks the runtime evicted (D2-C)', () => {
+  it('closeBoard flags evicted:true (paused badge) and a later reattach clears it', async () => {
+    renderManager()
+    // 4 boards (700×500 default) fill the MAX_LIVE cap, mutually disjoint, clear of
+    // the dock band (y<64) + top-right cluster (y<104). D sits FARTHEST from the pane
+    // centre (1000,1000) so it loses its slot deterministically when the nearer 5th
+    // board arrives. The 5th (auto-selected) overlaps NONE of them, so the
+    // selection-occlusion demote can't filter the candidate set.
+    const ids: string[] = []
+    await act(async () => {
+      ids.push(useCanvasStore.getState().addBoard('browser', { x: 60, y: 200 }, { exact: true }))
+      ids.push(useCanvasStore.getState().addBoard('browser', { x: 1260, y: 200 }, { exact: true }))
+      ids.push(useCanvasStore.getState().addBoard('browser', { x: 60, y: 1400 }, { exact: true }))
+      ids.push(
+        useCanvasStore.getState().addBoard('browser', { x: 1260, y: 1400 }, { exact: true })
+      )
+    })
+    await flush()
+    const far = ids[3]
+    expect(usePreviewStore.getState().byId[far]?.live).toBe(true)
+    expect(usePreviewStore.getState().byId[far]?.evicted).toBe(false)
+
+    // A 5th board nearer the centre: reconcile holds it (cap), then the selection-
+    // driven applyLiveness ranks all five and EVICTS the farthest (real closeBoard —
+    // renderer freed, page state gone — not a motion detach).
+    let nearId = ''
+    await act(async () => {
+      nearId = useCanvasStore.getState().addBoard('browser', { x: 820, y: 780 }, { exact: true })
+    })
+    await flush()
+    const farRt = usePreviewStore.getState().byId[far]
+    expect(farRt?.live).toBe(false)
+    expect(farRt?.evicted).toBe(true)
+
+    // Deleting the 5th frees a slot; reconcile re-attaches the evicted board and the
+    // badge state clears.
+    await act(async () => {
+      useCanvasStore.getState().removeBoard(nearId)
+    })
+    await flush()
+    const healed = usePreviewStore.getState().byId[far]
+    expect(healed?.live).toBe(true)
+    expect(healed?.evicted).toBe(false)
+  })
+})
+
 describe('usePreviewManager — toast island joins the chrome-exclusion zones (D1-A)', () => {
   it('demotes a live view overlapping the visible toast island, and restores it on dismiss', async () => {
     renderManager()

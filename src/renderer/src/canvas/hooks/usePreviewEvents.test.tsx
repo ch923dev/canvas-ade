@@ -14,6 +14,7 @@ type PreviewEvent =
   | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
   | { id: string; type: 'did-start-navigation' }
   | { id: string; type: 'escape' }
+  | { id: string; type: 'render-process-gone'; reason: string }
 
 // ── window.api.onPreviewEvent stub ────────────────────────────────────────────
 // Capture the listener the hook registers so the test can invoke it with synthetic
@@ -72,7 +73,10 @@ function renderEvents(): { unmount: () => void } {
 }
 
 /** Seed one board's runtime status in the real store (status gating reads getState). */
-function seedStatus(id: string, status: 'idle' | 'connecting' | 'connected' | 'load-failed'): void {
+function seedStatus(
+  id: string,
+  status: 'idle' | 'connecting' | 'connected' | 'load-failed' | 'crashed'
+): void {
   usePreviewStore.getState().patch(id, { status })
 }
 
@@ -219,6 +223,30 @@ describe('usePreviewEvents', () => {
         error: 'ERR_CONNECTION_REFUSED'
       })
       expect(patchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  // D2-C: a dead preview renderer must surface as a `crashed` state (not a silent
+  // freeze), and the Reload CTA's nav-start must clear it back to `connecting`.
+  describe('render-process-gone (D2-C crashed state)', () => {
+    it('flags the board crashed (with the reason) via patchIfPresent (not patch)', () => {
+      renderEvents()
+      emit({ id: 'b1', type: 'render-process-gone', reason: 'oom' })
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        status: 'crashed',
+        error: 'oom'
+      })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('did-start-navigation after a crash', () => {
+    it('clears a crashed latch → connecting for an existing live board (Reload CTA path)', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'crashed')
+      renderEvents()
+      emit({ id: 'b1', type: 'did-start-navigation' })
+      expect(patchRuntime).toHaveBeenCalledWith('b1', { status: 'connecting', error: null })
     })
   })
 

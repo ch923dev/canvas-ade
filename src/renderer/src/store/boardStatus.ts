@@ -45,6 +45,7 @@ export function boardStatusBucket(type: string, signals: BoardStatusSignals): Bo
         case 'connecting':
           return 'running'
         case 'load-failed':
+        case 'crashed': // D2-C: a dead preview renderer is a failure the agent should see
           return 'failed'
         case 'connected':
         case 'idle':

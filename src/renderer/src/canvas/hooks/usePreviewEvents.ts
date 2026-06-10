@@ -12,6 +12,8 @@
  *   • `did-finish-load`   — promote `connecting` → `connected` (latch- + existence-gated).
  *   • `did-navigate`      — update liveUrl + back/forward (present-only, Bug #32).
  *   • `did-fail-load`     — latch `load-failed` + error (present-only, Bug #32).
+ *   • `render-process-gone` — the preview renderer died (D2-C); latch `crashed` +
+ *                           reason (present-only) so the board offers a Reload CTA.
  * All Bug #5/#18/#32 gating + the `recs.exists` existence checks move verbatim; the only
  * change vs the host is dropping a now-stale `did-start-navigation` cast (the preload
  * `PreviewEvent` union declares it). The subscription re-binds only when the patch
@@ -58,7 +60,17 @@ export function usePreviewEvents(params: {
         // its renderer was freed → don't resurrect or mutate a stale entry).
         if (!recs.current.get(ev.id)?.exists) return
         const cur = usePreviewStore.getState().byId[ev.id]?.status
-        if (cur === 'load-failed') patchRuntime(ev.id, { status: 'connecting', error: null })
+        // D2-C: `crashed` clears the same way — the Reload CTA's wc.reload() relaunches
+        // the renderer and fires a fresh main-frame nav-start.
+        if (cur === 'load-failed' || cur === 'crashed')
+          patchRuntime(ev.id, { status: 'connecting', error: null })
+        return
+      }
+      // D2-C: the preview's renderer process died. Surface it (status `crashed` +
+      // reason) so the board shows the crashed state + Reload CTA instead of a silent
+      // freeze. Present-only (Bug #32 pattern): never resurrect a deleted board.
+      if (ev.type === 'render-process-gone') {
+        patchRuntimeIfPresent(ev.id, { status: 'crashed', error: ev.reason })
         return
       }
       if (ev.type === 'did-finish-load') {

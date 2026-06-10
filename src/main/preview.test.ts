@@ -6,6 +6,7 @@ import {
   isAllowedExternal,
   registerPreviewNavGuards,
   registerLoadLatch,
+  registerCrashReadyGate,
   createOpenExternalLimiter
 } from './preview'
 
@@ -257,6 +258,69 @@ describe('registerLoadLatch (failed-latch lifecycle)', () => {
     wc.emit('did-fail-load', {}, -102, 'ERR_FAILED', 'http://localhost:5173/sub', false) // subframe
     expect(latch.failed).toBe(false)
     expect(hooks.onFail).not.toHaveBeenCalled()
+  })
+})
+
+// D2-C: snapshot-until-ready + crashed-renderer recovery. A freshly-opened (or
+// crash-relaunched) preview renderer paints a blank white frame until its first
+// did-finish-load; the `ready` flag gates the native view's visibility so the HTML
+// snapshot/state underneath stays painted until real content exists. A
+// render-process-gone resets `ready` (the view is a dead white layer) and surfaces
+// the crash to the renderer. Driven with the same fake-emitter pattern as the latch.
+describe('registerCrashReadyGate (D2-C snapshot-until-ready + crash)', () => {
+  type Listener = (...args: unknown[]) => void
+
+  function fakeWc(): {
+    on: (event: string, listener: Listener) => unknown
+    emit: (event: string, ...args: unknown[]) => void
+  } {
+    const handlers = new Map<string, Listener>()
+    return {
+      on: (event, listener) => {
+        handlers.set(event, listener)
+        return undefined
+      },
+      emit: (event, ...args) => handlers.get(event)?.(...args)
+    }
+  }
+
+  function setup(): {
+    wc: ReturnType<typeof fakeWc>
+    holder: { ready: boolean }
+    hooks: { onReady: ReturnType<typeof vi.fn>; onCrashed: ReturnType<typeof vi.fn> }
+  } {
+    const wc = fakeWc()
+    const holder = { ready: false }
+    const hooks = { onReady: vi.fn(), onCrashed: vi.fn() }
+    registerCrashReadyGate(wc as never, holder, hooks)
+    return { wc, holder, hooks }
+  }
+
+  it('marks the view ready (and calls onReady) on the first did-finish-load', () => {
+    const { wc, holder, hooks } = setup()
+    expect(holder.ready).toBe(false)
+    wc.emit('did-finish-load')
+    expect(holder.ready).toBe(true)
+    expect(hooks.onReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('render-process-gone clears ready and reports the crash reason', () => {
+    const { wc, holder, hooks } = setup()
+    wc.emit('did-finish-load')
+    wc.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 5 })
+    expect(holder.ready).toBe(false)
+    expect(hooks.onCrashed).toHaveBeenCalledWith('crashed')
+  })
+
+  it('a reload after a crash restores ready via its did-finish-load', () => {
+    const { wc, holder, hooks } = setup()
+    wc.emit('did-finish-load')
+    wc.emit('render-process-gone', {}, { reason: 'oom', exitCode: 0 })
+    expect(holder.ready).toBe(false)
+    // wc.reload() relaunches the renderer; its successful load fires finish-load.
+    wc.emit('did-finish-load')
+    expect(holder.ready).toBe(true)
+    expect(hooks.onReady).toHaveBeenCalledTimes(2)
   })
 })
 

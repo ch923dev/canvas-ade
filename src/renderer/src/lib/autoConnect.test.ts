@@ -38,6 +38,17 @@ describe('planAutoConnect', () => {
       kind: 'idle'
     })
   })
+
+  it('idles a crashed board — recovery is the explicit Reload CTA, never an auto-loop (D2-C)', () => {
+    // A page that crashes its renderer deterministically (OOM, GPU bug) would
+    // otherwise relaunch-crash forever on the backoff ramp.
+    expect(planAutoConnect({ status: 'crashed', hasUrl: true, hasSource: true })).toEqual({
+      kind: 'idle'
+    })
+    expect(planAutoConnect({ status: 'crashed', hasUrl: false, hasSource: true })).toEqual({
+      kind: 'idle'
+    })
+  })
 })
 
 describe('backoffTicks', () => {

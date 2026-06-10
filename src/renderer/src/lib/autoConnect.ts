@@ -11,7 +11,7 @@
  * An in-flight `connecting` load is left alone so a slow-but-legitimate load is
  * never interrupted; if it fails it becomes `load-failed` and the reload path takes over.
  */
-export type PreviewStatusLike = 'idle' | 'connecting' | 'connected' | 'load-failed'
+export type PreviewStatusLike = 'idle' | 'connecting' | 'connected' | 'load-failed' | 'crashed'
 
 export type AutoConnectPlan = { kind: 'idle' } | { kind: 'reload' } | { kind: 'detect' }
 
@@ -25,6 +25,10 @@ export interface AutoConnectInput {
 
 export function planAutoConnect(i: AutoConnectInput): AutoConnectPlan {
   if (i.status === 'connected') return { kind: 'idle' }
+  // D2-C: a crashed renderer recovers ONLY via the explicit Reload CTA. A page that
+  // crashes deterministically (OOM / GPU bug) would otherwise relaunch-crash forever
+  // on the backoff ramp — never auto-loop a crash.
+  if (i.status === 'crashed') return { kind: 'idle' }
   if (i.status === 'load-failed' && i.hasUrl) return { kind: 'reload' }
   if (i.hasSource && !i.hasUrl) return { kind: 'detect' }
   return { kind: 'idle' }

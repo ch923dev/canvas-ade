@@ -82,6 +82,9 @@ export type PreviewEvent =
   // `load-failed` latch so a successful reload/back/forward promotes to `connected`
   // (Bug #5). Kept in sync with the main-process union.
   | { id: string; type: 'did-start-navigation' }
+  // The preview's renderer process died (D2-C) — the board shows a crashed state
+  // with a Reload CTA. Kept in sync with the main-process union.
+  | { id: string; type: 'render-process-gone'; reason: string }
 
 // ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
 export interface RecentProject {

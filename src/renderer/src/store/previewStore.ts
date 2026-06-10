@@ -12,8 +12,9 @@
  */
 import { create } from 'zustand'
 
-/** Load lifecycle as the URL bar should display it. */
-export type PreviewStatus = 'idle' | 'connecting' | 'connected' | 'load-failed'
+/** Load lifecycle as the URL bar should display it. `crashed` = the preview's
+ *  renderer process died (D2-C) — recovery is the explicit Reload CTA. */
+export type PreviewStatus = 'idle' | 'connecting' | 'connected' | 'load-failed' | 'crashed'
 
 /** Per-board runtime preview state. Absent entries default to idle/no-snapshot. */
 export interface PreviewRuntime {
@@ -28,6 +29,14 @@ export interface PreviewRuntime {
   live: boolean
   /** Last load error description, for the load-failed state. */
   error: string | null
+  /**
+   * The board's renderer was FREED (over-cap eviction / full-view teardown), not
+   * just detached for motion/LOD (D2-C). Both render the same snapshot, but an
+   * evicted board's page state is gone and interaction is dead until a live slot
+   * frees — the "paused" badge tells the user why. Set by closeBoard, cleared on
+   * (re)attach.
+   */
+  evicted: boolean
   /**
    * Monotonic "please (re)load" counter, bumped by `requestReload` (push-to-preview).
    * The board's durable `url` can be pushed UNCHANGED (same dev-server URL), which the
@@ -46,6 +55,7 @@ export const DEFAULT_RUNTIME: PreviewRuntime = {
   canGoForward: false,
   live: false,
   error: null,
+  evicted: false,
   reloadNonce: 0
 }
 
