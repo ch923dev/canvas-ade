@@ -7,14 +7,11 @@
 import {
   useCallback,
   useEffect,
-  useId,
-  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
   type ReactElement
 } from 'react'
-import { createPortal } from 'react-dom'
 import { useReactFlow, useStore } from '@xyflow/react'
 import {
   useCanvasStore,
@@ -22,7 +19,6 @@ import {
   releaseProjectSwitchLock,
   type RecentProject
 } from '../store/canvasStore'
-import { usePreviewStore } from '../store/previewStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { showToast, dismissToast } from '../store/toastStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
@@ -32,6 +28,7 @@ import { LAYOUT_PRESETS, type LayoutPreset } from '../lib/layoutPresets'
 import { FIT_FRAME, OVERVIEW_FRAME, RESET_FRAME } from '../lib/canvasView'
 import { cameraAnim } from '../lib/motion'
 import { Icon, type IconName } from './Icon'
+import { Menu } from './Menu'
 import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
 import { RecapConsentModal } from './RecapConsentModal'
@@ -110,50 +107,15 @@ export function ProjectSwitcher(): ReactElement {
   const saveFailure = useSaveStatusStore((s) => s.failure)
   const setSaveFailure = useSaveStatusStore((s) => s.setSaveFailure)
   const clearSaveFailure = useSaveStatusStore((s) => s.clearSaveFailure)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  // project-switcher-no-outside-close: dismiss the dropdown on an outside pointerdown /
-  // Escape / resize, matching BoardMenu and the layout-preset picker below.
-  useEffect(() => {
-    if (!open) return
-    const close = (): void => setOpen(false)
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKey)
-    window.addEventListener('resize', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', onKey)
-      window.removeEventListener('resize', close)
-    }
-  }, [open])
+  // Anchor for the shared <Menu> shell — the pill button itself, so the dropdown hangs
+  // under it (left-aligned) and re-clicking the pill toggles closed (the shell excludes
+  // the anchor from outside-close; BUG-045 class).
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   const toggle = async (): Promise<void> => {
     if (!open) setRecents(await window.api.project.recents())
     setOpen((v) => !v)
   }
-
-  // D0-4: clamp the dropdown into the viewport (BoardMenu/TidyMenu parity). The menu is
-  // CSS-anchored under the pill; a long recents list can run past the bottom edge (cap +
-  // scroll) and a long project name past the right edge (pull left).
-  useLayoutEffect(() => {
-    if (!open) return
-    const el = menuRef.current
-    if (!el) return
-    const PAD = 8
-    // Reset before measuring: this effect re-runs while open (recents load), and
-    // measuring with a previously-applied shift would compound the offset.
-    el.style.left = ''
-    el.style.maxHeight = ''
-    const r = el.getBoundingClientRect()
-    el.style.maxHeight = `${Math.max(80, window.innerHeight - r.top - PAD)}px`
-    el.style.overflowY = 'auto'
-    if (r.right > window.innerWidth - PAD) {
-      el.style.left = `${window.innerWidth - PAD - r.right}px`
-    }
-  }, [open, recents])
 
   const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
     setOpen(false)
@@ -282,16 +244,16 @@ export function ProjectSwitcher(): ReactElement {
   return (
     <div style={styles.tl} className="project-switcher">
       <button
+        ref={triggerRef}
         className="project-switcher-trigger"
         // D0-7: dim + disable the pill while a switch pipeline runs (flush → dispose → load)
         // so the multi-step teardown never reads as a hang.
         style={switching ? { ...styles.proj, opacity: 0.6, cursor: 'default' } : styles.proj}
         disabled={switching}
-        // Stop the trigger's own pointerdown from reaching the document outside-close listener,
-        // or re-clicking to close would close-then-reopen (BoardMenu parity).
-        onPointerDown={(e) => e.stopPropagation()}
         onClick={() => void toggle()}
         title="Switch project"
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>
           <Icon name="diamond" size={15} />
@@ -309,24 +271,40 @@ export function ProjectSwitcher(): ReactElement {
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
+      {/* D0-8 chip removed by D1-A — save failures surface as a sticky Retry toast via
+          the bridge effect above. */}
+      {/* Shared Menu shell (D1-C): body portal + viewport clamp (D0-4's maxHeight scroll
+          cap for a long recents list), Escape/outside/resize close, menuitem roving
+          tabindex + arrow keys, ADR 0002 preview-detach while open. reclampKey re-clamps
+          when the async recents list lands. */}
       {open && (
-        // Inside pointerdowns must not reach the document outside-close listener, so a menu-item
-        // click isn't pre-empted by an unmount (BoardMenu parity).
-        <div
-          ref={menuRef}
+        <Menu
+          anchor={triggerRef}
+          align="left"
+          gap={6}
+          label="Switch project"
           className="project-switcher-menu"
-          role="menu"
-          onPointerDown={(e) => e.stopPropagation()}
+          reclampKey={recents.length}
+          onClose={() => setOpen(false)}
         >
           {recents.map((r) => (
-            <button key={r.path} onClick={() => void openRecent(r.path)} title={r.path}>
+            <button
+              key={r.path}
+              role="menuitem"
+              onClick={() => void openRecent(r.path)}
+              title={r.path}
+            >
               {r.name}
             </button>
           ))}
           <div className="project-switcher-divider" />
-          <button onClick={() => void openFolder()}>Open folder…</button>
-          <button onClick={() => void createNew()}>Create project…</button>
-        </div>
+          <button role="menuitem" onClick={() => void openFolder()}>
+            Open folder…
+          </button>
+          <button role="menuitem" onClick={() => void createNew()}>
+            Create project…
+          </button>
+        </Menu>
       )}
     </div>
   )
@@ -432,56 +410,18 @@ function PresetThumb({ preset }: { preset: LayoutPreset }): ReactElement {
   )
 }
 
-// The Tidy preset PICKER (FancyZones-style). Mirrors the board ⋯ menu plumbing: portaled to
-// <body>, signals the preview layer to detach live native views while open (a WebContentsView
-// paints above all HTML, so it would otherwise cover this popover — ADR 0002), clamps into the
-// viewport, closes on outside pointerdown / Escape. Each thumbnail applies its preset.
-// KNOWN (matches the board ⋯ menu, BoardFrame.tsx): setMenuOpen runs in an effect + the detach
-// IPC is async, so a live Browser view overlapping this popover can occlude it for a few frames
-// before detaching. Accepted limitation of the menu-detach pattern; a fix would need sync IPC
-// across BrowserPreviewLayer too. The camera cluster is top-right, where live views rarely sit.
+// The Tidy preset PICKER (FancyZones-style). Rendered through the shared <Menu> shell
+// (D1-C): body portal, right-aligned under the trigger + unified viewport clamp, outside
+// pointerdown / Escape / resize close, menuitem roving tabindex + arrow keys, and the
+// ADR 0002 detach-live-previews-while-open signal. Each thumbnail applies its preset.
+// KNOWN (matches the board ⋯ menu): setMenuOpen runs in an effect + the detach IPC is
+// async, so a live Browser view overlapping this popover can occlude it for a few frames
+// before detaching. Accepted limitation of the menu-detach pattern; a fix would need sync
+// IPC across BrowserPreviewLayer too. The camera cluster is top-right, where live views
+// rarely sit.
 function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): ReactElement {
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<{ top: number; left: number }>({ top: -9999, left: -9999 })
   const triggerRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const menuToken = useId()
-  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
-
-  // Detach live previews while the picker is open (un-occlude it), like the board menu.
-  // Token-keyed so closing this picker can't reattach views under a still-open board ⋯
-  // menu, or vice versa (PREV-C).
-  useEffect(() => {
-    setMenuOpen(menuToken, open)
-    if (open) return () => setMenuOpen(menuToken, false)
-  }, [open, setMenuOpen, menuToken])
-
-  useEffect(() => {
-    if (!open) return
-    const close = (): void => setOpen(false)
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKey)
-    window.addEventListener('resize', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', onKey)
-      window.removeEventListener('resize', close)
-    }
-  }, [open])
-
-  // Right-align the picker under the trigger, clamped into the viewport.
-  useLayoutEffect(() => {
-    if (!open) return
-    const t = triggerRef.current?.getBoundingClientRect()
-    const m = menuRef.current?.getBoundingClientRect()
-    if (!t || !m) return
-    const PAD = 8
-    const left = Math.max(PAD, Math.min(t.right - m.width, window.innerWidth - m.width - PAD))
-    setPos({ top: t.bottom + 6, left })
-  }, [open])
 
   return (
     <div ref={triggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
@@ -491,36 +431,35 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
         active={open}
         onClick={() => setOpen((v) => !v)}
       />
-      {open &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="menu"
-            style={{ ...styles.tidyPop, top: pos.top, left: pos.left }}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <div style={styles.tidyHead}>Tidy layout</div>
-            <div style={styles.tidyGrid}>
-              {LAYOUT_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  className="ca-tidy-preset"
-                  role="menuitem"
-                  title={p.hint}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => {
-                    setOpen(false)
-                    onTidy(p)
-                  }}
-                >
-                  <PresetThumb preset={p} />
-                  <span style={styles.tidyLabel}>{p.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>,
-          document.body
-        )}
+      {open && (
+        <Menu
+          anchor={triggerRef}
+          align="right"
+          gap={6}
+          label="Tidy layout"
+          style={styles.tidyPop}
+          onClose={() => setOpen(false)}
+        >
+          <div style={styles.tidyHead}>Tidy layout</div>
+          <div style={styles.tidyGrid}>
+            {LAYOUT_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                className="ca-tidy-preset"
+                role="menuitem"
+                title={p.hint}
+                onClick={() => {
+                  setOpen(false)
+                  onTidy(p)
+                }}
+              >
+                <PresetThumb preset={p} />
+                <span style={styles.tidyLabel}>{p.label}</span>
+              </button>
+            ))}
+          </div>
+        </Menu>
+      )}
     </div>
   )
 }
@@ -709,8 +648,7 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer'
   },
   tidyPop: {
-    position: 'fixed',
-    zIndex: 250, // above the fullview-scrim (200), matching .board-menu
+    // Positioning + zIndex come from the <Menu> shell (fixed, clamped, 250).
     background: 'var(--surface-overlay)',
     border: '1px solid var(--border-subtle)',
     borderRadius: 'var(--r-ctl)',

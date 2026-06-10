@@ -6,14 +6,13 @@
  * the canvas (React Flow node) owns position / drag / resize / selection state.
  */
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
-import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useContext, useEffect, useRef, useState } from 'react'
 import type { BoardType } from '../lib/boardSchema'
 import { prefersReducedMotion } from '../lib/motion'
 import { useCanvasStore } from '../store/canvasStore'
-import { usePreviewStore } from '../store/previewStore'
 import { BoardFullViewContext } from './fullViewContext'
 import { Icon, type IconName } from './Icon'
+import { Menu } from './Menu'
 import { TypeGlyph } from './TypeGlyph'
 
 const TYPE_TAG: Record<BoardType, string> = {
@@ -218,59 +217,7 @@ export function BoardMenu({
     boardId && onAddToGroup ? groups.filter((g) => !g.boardIds.includes(boardId)) : []
   const inAnyGroup = !!boardId && groups.some((g) => g.boardIds.includes(boardId))
   const [open, setOpen] = useState(false)
-  // Start off-screen; the layout effect below measures the real menu and clamps it
-  // into the viewport before paint (bug 14 — no flash at the stale corner).
-  const [pos, setPos] = useState<{ top: number; left: number }>({ top: -9999, left: -9999 })
   const triggerRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  // A native preview `WebContentsView` paints above ALL HTML — even this body-portaled
-  // popover — so a menu dropping over a live Browser board's device stage renders under
-  // it. Signal the preview layer to detach live views to their HTML snapshot while open,
-  // then reattach on close (mirrors the node-gesture detach path). ADR 0002.
-  const menuToken = useId()
-  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
-  useEffect(() => {
-    setMenuOpen(menuToken, open)
-    if (open) return () => setMenuOpen(menuToken, false)
-  }, [open, setMenuOpen, menuToken])
-
-  useEffect(() => {
-    if (!open) return
-    const close = (): void => setOpen(false)
-    // Close on any outside pointerdown or Escape.
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('pointerdown', close)
-    document.addEventListener('keydown', onKey)
-    // Reposition on scroll/resize while open (the canvas can pan under it).
-    window.addEventListener('resize', close)
-    return () => {
-      document.removeEventListener('pointerdown', close)
-      document.removeEventListener('keydown', onKey)
-      window.removeEventListener('resize', close)
-    }
-  }, [open])
-
-  // Position once the popover has mounted: right-align to the trigger, then clamp into
-  // the viewport (left ≥ 8, right ≤ innerWidth − 8) and flip above the trigger if it
-  // would overflow the bottom edge (bug 14 — was anchored by `right` with no clamp/flip).
-  useLayoutEffect(() => {
-    if (!open) return
-    const t = triggerRef.current?.getBoundingClientRect()
-    const m = menuRef.current?.getBoundingClientRect()
-    if (!t || !m) return
-    const PAD = 8
-    let left = Math.min(t.right - m.width, window.innerWidth - m.width - PAD)
-    left = Math.max(PAD, left)
-    let top = t.bottom + 4
-    if (top + m.height > window.innerHeight - PAD) {
-      const flipped = t.top - m.height - 4
-      top = flipped >= PAD ? flipped : Math.max(PAD, window.innerHeight - m.height - PAD)
-    }
-    setPos({ top, left })
-  }, [open])
 
   const openMenu = (e: MouseEvent): void => {
     e.stopPropagation()
@@ -280,9 +227,8 @@ export function BoardMenu({
   const item = (label: string, danger: boolean, fn?: (e: MouseEvent) => void): ReactElement => (
     <button
       className="board-menu-item"
+      role="menuitem"
       data-danger={danger || undefined}
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation()
         setOpen(false)
@@ -297,9 +243,9 @@ export function BoardMenu({
     <div
       ref={triggerRef}
       style={{ position: 'relative', display: 'inline-flex' }}
-      // #BUG-045: the document-level pointerdown closer fires BEFORE the trigger's click, so
-      // re-clicking the open trigger would close-then-reopen (dead toggle). Stop the real
-      // pointerdown here, like the menu items below do (ProjectSwitcher parity, AppChrome).
+      // Prevent React Flow from treating a ⋯ button press as a canvas-node drag start (the
+      // trigger sits in the title bar, which is the RF drag handle). Outside-close re-click
+      // toggling (#BUG-045) no longer needs this — the Menu shell's anchor exclusion covers it.
       onPointerDown={(e) => e.stopPropagation()}
     >
       {/* The ⋯ dots are a near-inkless glyph; bump stroke + use a brighter rest colour so
@@ -313,32 +259,33 @@ export function BoardMenu({
         restColor="var(--text-2)"
         onClick={openMenu}
       />
-      {open &&
-        createPortal(
-          <div
-            ref={menuRef}
-            className="board-menu"
-            role="menu"
-            style={{ position: 'fixed', top: pos.top, left: pos.left }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {onFull && item('Full view', false, onFull)}
-            {onDuplicate && item('Duplicate', false, () => onDuplicate())}
-            {/* S6: one "Add to {name}" row per group this board is NOT already in. */}
-            {onAddToGroup &&
-              eligibleGroups.map((g) => (
-                <span key={g.id} style={{ display: 'contents' }}>
-                  {item(`Add to ${g.name}`, false, () => onAddToGroup(g.id))}
-                </span>
-              ))}
-            {/* S6: remove from every group the board belongs to (shown only when in one). */}
-            {onRemoveFromGroup && inAnyGroup && item('Remove from group', false, onRemoveFromGroup)}
-            {onDelete && item('Delete', true, () => onDelete())}
-          </div>,
-          document.body
-        )}
+      {/* Shared Menu shell (D1-C): body portal, viewport clamp (right-aligned under the
+          trigger, flips above on bottom overflow — bug 14), Escape/outside/resize close,
+          menuitem roving tabindex + arrow keys, and the ADR 0002 detach-live-previews-
+          while-open signal. The trigger wrapper above is the anchor (and is excluded
+          from outside-close so re-clicking the ⋯ toggles closed — BUG-045). */}
+      {open && (
+        <Menu
+          anchor={triggerRef}
+          align="right"
+          label="Board actions"
+          className="board-menu"
+          onClose={() => setOpen(false)}
+        >
+          {onFull && item('Full view', false, onFull)}
+          {onDuplicate && item('Duplicate', false, () => onDuplicate())}
+          {/* S6: one "Add to {name}" row per group this board is NOT already in. */}
+          {onAddToGroup &&
+            eligibleGroups.map((g) => (
+              <span key={g.id} style={{ display: 'contents' }}>
+                {item(`Add to ${g.name}`, false, () => onAddToGroup(g.id))}
+              </span>
+            ))}
+          {/* S6: remove from every group the board belongs to (shown only when in one). */}
+          {onRemoveFromGroup && inAnyGroup && item('Remove from group', false, onRemoveFromGroup)}
+          {onDelete && item('Delete', true, () => onDelete())}
+        </Menu>
+      )}
     </div>
   )
 }

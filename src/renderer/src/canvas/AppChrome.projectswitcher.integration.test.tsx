@@ -44,4 +44,16 @@ describe('ProjectSwitcher outside-close (project-switcher-no-outside-close)', ()
     fireEvent.click(trigger)
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
   })
+
+  // D1-C: the dropdown renders through the shared Menu shell — every row is a menuitem
+  // and arrow keys walk the roving focus (no recents mocked → Open folder / Create project).
+  it('D1-C: rows are menuitems; ArrowDown walks the roving focus', async () => {
+    render(<ProjectSwitcher />)
+    await open()
+    const items = screen.getAllByRole('menuitem')
+    expect(items.map((b) => b.textContent?.trim())).toEqual(['Open folder…', 'Create project…'])
+    await waitFor(() => expect(document.activeElement).toBe(items[0]))
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items[1])
+  })
 })
