@@ -86,8 +86,12 @@ export function installRecapHook(opts: InstallOpts): void {
   // assignment is baked into a shell-form command instead.
   if (opts.env && Object.keys(opts.env).length > 0) {
     const pairs = Object.entries(opts.env)
+    // cmd: double quotes (its only quoting form). POSIX: single quotes — double-quoted
+    // strings in sh still expand `$`/backtick, so paths/values get the '\'' splice form.
     const q = (p: string): string => `"${p}"`
+    const sq = (p: string): string => `'${p.replace(/'/g, "'\\''")}'`
     const invocation = `${q(opts.nodePath)} ${q(opts.scriptPath)} ${q(opts.mapPath)}`
+    const posixInvocation = `${sq(opts.nodePath)} ${sq(opts.scriptPath)} ${sq(opts.mapPath)}`
     hookCmd =
       process.platform === 'win32'
         ? {
@@ -109,13 +113,10 @@ export function installRecapHook(opts: InstallOpts): void {
         : {
             type: 'command',
             command: '/bin/sh',
-            // Single-quote the value (POSIX-safe for all metacharacters; embedded ' via
-            // the standard '\'' splice) so a future env entry with spaces/$/&c. can't
-            // shell-split or inject a command.
-            args: [
-              '-c',
-              `${pairs.map(([k, v]) => `${k}='${v.replace(/'/g, "'\\''")}' `).join('')}${invocation}`
-            ]
+            // Single-quote values AND paths (POSIX-safe for all metacharacters; embedded
+            // ' via the standard '\'' splice) so a future env entry or a path containing
+            // spaces/$/backtick can't shell-split, expand, or inject a command.
+            args: ['-c', `${pairs.map(([k, v]) => `${k}=${sq(v)} `).join('')}${posixInvocation}`]
           }
   }
   cfg.hooks.SessionStart.push({ matcher: '', hooks: [hookCmd] })

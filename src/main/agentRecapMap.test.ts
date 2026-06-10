@@ -233,9 +233,11 @@ describe('installRecapHook BUG-003: env field', () => {
       process.platform === 'win32' ? 'set "ELECTRON_RUN_AS_NODE=1"&& ' : "ELECTRON_RUN_AS_NODE='1' "
     const shellArg = hook!.args!.find((a) => a.includes(envForm))
     expect(shellArg).toBeDefined()
-    expect(shellArg).toContain('"/app/recordSession.js"')
-    expect(shellArg).toContain('"/u/map.jsonl"')
-    expect(shellArg).toContain('"/usr/bin/node"')
+    // Paths are double-quoted for cmd, single-quoted for sh (where "..." still expands $).
+    const wrap = (p: string): string => (process.platform === 'win32' ? `"${p}"` : `'${p}'`)
+    expect(shellArg).toContain(wrap('/app/recordSession.js'))
+    expect(shellArg).toContain(wrap('/u/map.jsonl'))
+    expect(shellArg).toContain(wrap('/usr/bin/node'))
     expect([process.platform === 'win32' ? 'cmd.exe' : '/bin/sh']).toContain(hook!.command)
     expect(hook!.env).toBeUndefined()
     // Idempotency + removal must work on the shell form (scriptPath is a SUBSTRING).
