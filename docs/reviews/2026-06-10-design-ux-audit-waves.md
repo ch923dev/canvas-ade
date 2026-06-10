@@ -87,8 +87,8 @@ D0 (1 session) → D1 (A,B,C parallel) → D2 (A–D parallel) → D3 (A–C) �
 
 | Wave | Status |
 |---|---|
-| D0 | not started |
-| D1 | not started |
+| D0 | ✅ merged — #108 squash `146fc76` (2026-06-10); D0-1..D0-9 all landed (7 review rounds, 15 inline findings dispositioned). `--scrim` token now defined; D0-8 chip + D0-5 notes are interim surfaces D1-A migrates. |
+| D1 | not started — **next up.** Note: #107 (full-app audit fixes) already added `role="menuitem"` to AppChrome switcher / ElementContextMenu / GroupContextMenu / GroupFocusPicker — D1-C still owns BoardMenu, TidyMenu, terminal context menu roles + arrow-key/roving-tabindex nav + clamp unification everywhere. |
 | D2 | not started |
 | D3 | not started |
 | D4 | not started — D4-A/C need spec + design artifact + sign-off first |
