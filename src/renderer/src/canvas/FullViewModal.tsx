@@ -17,6 +17,12 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { CAMERA_MS, prefersReducedMotion } from '../lib/motion'
 
+// D0-9: the "Esc to exit" hint shows on the FIRST full-view entry per app session
+// (module flag, deliberately not persisted — a gentle once-per-launch reminder, and
+// e2e runs stay deterministic with no sticky localStorage to reset).
+let escHintShown = false
+const ESC_HINT_HOLD_MS = 3000
+
 export function FullViewModal({
   closing,
   onClose,
@@ -37,6 +43,28 @@ export function FullViewModal({
 }): ReactElement {
   const [hostEl, setHostEl] = useState<HTMLElement | null>(null)
   const [open, setOpen] = useState(false)
+  // D0-9: mount the hint only on the session's first entry; `show` drives the fade
+  // (in with the scrim, out after the hold), then the element unmounts.
+  const [hint, setHint] = useState(() => !escHintShown)
+  const [hintShow, setHintShow] = useState(false)
+
+  useEffect(() => {
+    if (!hint) return
+    escHintShown = true
+    const raf = requestAnimationFrame(() => setHintShow(true))
+    // Hold, then fade out; unmount after the fade so the exit transition can play.
+    // Reduced-motion: transitions are off (CSS), the timers just show/remove it.
+    const fade = setTimeout(() => setHintShow(false), ESC_HINT_HOLD_MS)
+    const gone = setTimeout(
+      () => setHint(false),
+      ESC_HINT_HOLD_MS + (prefersReducedMotion() ? 0 : CAMERA_MS) + 16
+    )
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(fade)
+      clearTimeout(gone)
+    }
+  }, [hint])
 
   useEffect(() => {
     onHost(hostEl)
@@ -79,6 +107,14 @@ export function FullViewModal({
       <div className="fullview-frame" onMouseDown={(e) => e.stopPropagation()}>
         <div className="fullview-host" ref={setHostEl} />
       </div>
+      {/* D0-9: transient exit hint — the three exit paths (Esc / title-bar toggle /
+          scrim click) are otherwise unlabeled. pointer-events:none (CSS), so it never
+          eats a scrim click. */}
+      {hint && (
+        <div className="fullview-hint" data-show={hintShow ? '' : undefined}>
+          <kbd>Esc</kbd> to exit
+        </div>
+      )}
     </div>
   )
 }

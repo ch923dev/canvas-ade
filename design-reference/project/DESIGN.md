@@ -55,8 +55,13 @@ Pure-neutral dark theme (zero hue in the greys). Hex is the source of truth.
 |---|---|---|
 | `--text` | `#ededee` | primary |
 | `--text-2` | `#9b9ba1` | secondary / board titles at rest |
-| `--text-3` | `#6a6a70` | tertiary, meta, mono labels |
-| `--text-faint` | `#46464b` | disabled, watermark |
+| `--text-3` | `#7b7b81` | tertiary, meta, mono labels, readable hints/watermark |
+| `--text-faint` | `#46464b` | disabled states ONLY |
+
+> **Contract delta (2026-06-10, design-audit D0-2, approved):** `--text-3` lightened
+> `#6a6a70` → `#7b7b81` — the old value sat ~4.0:1 on `--surface-raised`, failing WCAG AA
+> at the 10px micro tags (A2). `--text-faint` (~2.8:1) is now **disabled-only**; readable
+> hints / watermark / checklist done-items moved up to `--text-3` (A1).
 
 ### Accent + status (status hues are muted, used as 8px dots / 1px rings only)
 | Token | Hex | Use |
@@ -70,6 +75,14 @@ Pure-neutral dark theme (zero hue in the greys). Hex is the source of truth.
 
 > Tweakable in the prototype: accent (blue / green / amber / mono) and grid
 > style. Ship default = **blue**.
+
+### Overlay + one-off chrome (added 2026-06-10, design-audit D0-3, approved)
+| Token | Value | Use |
+|---|---|---|
+| `--scrim` | `rgba(0,0,0,.5)` | modal scrim (Confirm / RecapConsent / Settings). The full-view scrim stays its own darker `rgba(0,0,0,.66)` — a full-bleed workspace overlay, intentionally heavier than a modal. |
+| `--connector` | `#5a6573` | orchestration-connector arrowhead at rest |
+| `--connector-selected` | `#e6e6e6` | orchestration-connector arrowhead, selected |
+| `--notch` | `#15161a` | browser device-frame notch (§7.2) |
 
 ---
 
@@ -225,8 +238,9 @@ LOD and only the title (rendered at a zoom-compensated size) shows.
 - **Checklist element:** a `--surface-raised` card, `--r-board`, with a title +
   `done/total` mono count, a 3px `--accent` progress bar, and rows of
   togglable items. Item = 16px `--r-ctl` checkbox (checked = filled `--accent`
-  + `--void` check glyph) and a `body` label that goes `--text-faint` +
-  strikethrough when done. Checklists scale with the board, so resize the
+  + `--void` check glyph) and a `body` label that goes `--text-3` +
+  strikethrough when done (D0-2: was `--text-faint`, below AA — faint is
+  disabled-only now). Checklists scale with the board, so resize the
   planning board to give a long list room. Toggling is live.
 - **Actions:** mini tool cluster — `select · note · checklist · arrow · pen` —
   only shown when the planning board is selected; otherwise it's just content.

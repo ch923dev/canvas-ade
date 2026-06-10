@@ -166,9 +166,13 @@ export function BrowserBoard({
   }
 
   const openExternal = (): void => {
-    void window.api.openExternalPreview(runtime.liveUrl ?? board.url).then((ok) => {
-      if (!ok) showNote('Cannot open that URL in a browser')
-    })
+    void window.api
+      .openExternalPreview(runtime.liveUrl ?? board.url)
+      .then((ok) => {
+        if (!ok) showNote('Cannot open that URL in a browser')
+      })
+      // D0-5: an IPC rejection (teardown race, channel gone) was silent before.
+      .catch(() => showNote('Cannot open that URL in a browser'))
   }
 
   const showNote = (msg: string): void => {
@@ -179,10 +183,16 @@ export function BrowserBoard({
 
   const takeScreenshot = (): void => {
     void (async () => {
-      const res = await window.api.screenshotPreview(board.id)
-      if (!res.ok) showNote('Open the preview to screenshot it')
-      else if (res.assetId) showNote('Screenshot copied + saved to assets/')
-      else showNote('Screenshot copied to clipboard')
+      // D0-5: the IPC can also REJECT (capture race, channel teardown) — without the
+      // catch that path was a silent no-op while the success/false branches spoke.
+      try {
+        const res = await window.api.screenshotPreview(board.id)
+        if (!res.ok) showNote('Open the preview to screenshot it')
+        else if (res.assetId) showNote('Screenshot copied + saved to assets/')
+        else showNote('Screenshot copied to clipboard')
+      } catch {
+        showNote('Screenshot failed — try again')
+      }
     })()
   }
 
@@ -222,7 +232,8 @@ export function BrowserBoard({
     >
       {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
       <div className="bb-urlbar" style={{ height: URLBAR_H }}>
-        <div style={{ display: 'flex', gap: 2, color: 'var(--text-faint)' }}>
+        {/* D0-2: interactive cluster at rest — faint is disabled-only */}
+        <div style={{ display: 'flex', gap: 2, color: 'var(--text-3)' }}>
           <NavBtn
             name="back"
             title="Back"
@@ -249,7 +260,16 @@ export function BrowserBoard({
           <NavBtn name="external" title="Open in browser" onClick={openExternal} />
         </div>
         <div className="bb-url-field">
-          <span className="bb-conn-dot" style={{ background: connDot(runtime.status) }} />
+          {/* D0-6 (A9): the dot is color-only — pair it with a hover word and a polite
+              live region so connection-state changes are announced. */}
+          <span
+            className="bb-conn-dot"
+            title={connWord(runtime.status)}
+            style={{ background: connDot(runtime.status) }}
+          />
+          <span className="sr-only" role="status" aria-live="polite">
+            {connWord(runtime.status)}
+          </span>
           <input
             className="bb-url-input"
             value={draftUrl}
@@ -405,4 +425,12 @@ function connDot(status: ReturnType<ReturnType<typeof selectRuntime>>['status'])
   if (status === 'load-failed') return 'var(--err)'
   if (status === 'connecting') return 'var(--warn)'
   return 'var(--text-3)'
+}
+
+/** D0-6 (A9): the dot's meaning as a word — tooltip + live-region text. */
+function connWord(status: ReturnType<ReturnType<typeof selectRuntime>>['status']): string {
+  if (status === 'connected') return 'connected'
+  if (status === 'load-failed') return 'failed to load'
+  if (status === 'connecting') return 'connecting'
+  return 'not connected'
 }

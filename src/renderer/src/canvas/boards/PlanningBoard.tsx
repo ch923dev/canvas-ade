@@ -779,7 +779,7 @@ export function PlanningBoard({
               position: 'absolute',
               left: 14,
               top: 12,
-              color: 'var(--text-faint)',
+              color: 'var(--text-3)', // D0-2: a readable hint — faint is disabled-only
               pointerEvents: 'none'
             }}
           >

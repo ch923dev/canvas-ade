@@ -10,6 +10,10 @@ export default function WelcomeScreen(): React.ReactElement {
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
   const setProjectLoading = useCanvasStore((s) => s.setProjectLoading)
   const error = useCanvasStore((s) => s.project.error)
+  // D0-7: this screen also renders MID-SWITCH (status 'loading' unmounts Canvas), where
+  // its own `busy` flag can't see the in-flight pipeline — read the status so a project
+  // switch shows a loading line instead of a fully interactive picker flash.
+  const status = useCanvasStore((s) => s.project.status)
   const [recents, setRecents] = useState<RecentProject[]>([])
   // BUG-008: busy guard — blocks concurrent openDir/onCreate calls while a project IPC is
   // in-flight. Without this, a double-click or two rapid distinct clicks fire two concurrent
@@ -66,16 +70,24 @@ export default function WelcomeScreen(): React.ReactElement {
     }
   }
 
+  // D0-7: any in-flight load — this screen's own IPC (busy) or a switch pipeline that
+  // unmounted Canvas (status 'loading') — disables the picker and says so.
+  const loading = busy || status === 'loading'
   return (
     <div className="welcome">
       <h1>Canvas ADE</h1>
       {error && <p className="welcome-error">Could not open project: {error}</p>}
+      {loading && (
+        <p className="welcome-loading" role="status">
+          Loading project…
+        </p>
+      )}
       <div className="welcome-actions">
         {/* BUG-008: disable all action buttons while a project IPC is in-flight */}
-        <button onClick={onCreate} disabled={busy}>
+        <button onClick={onCreate} disabled={loading}>
           Create project…
         </button>
-        <button onClick={onOpen} disabled={busy}>
+        <button onClick={onOpen} disabled={loading}>
           Open folder…
         </button>
       </div>
@@ -83,7 +95,7 @@ export default function WelcomeScreen(): React.ReactElement {
         <ul className="welcome-recents">
           {recents.map((r) => (
             <li key={r.path}>
-              <button onClick={() => openDir(r.path)} title={r.path} disabled={busy}>
+              <button onClick={() => openDir(r.path)} title={r.path} disabled={loading}>
                 <span className="recent-name">{r.name}</span>
                 <span className="recent-path">{r.path}</span>
               </button>

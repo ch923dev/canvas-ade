@@ -29,6 +29,18 @@ export interface BoardStatus {
   label?: string
 }
 
+/** D0-6: stable live-region text. The terminal's visible label churns — a braille
+ *  spinner glyph re-renders every 80ms and the elapsed timer every second — so the
+ *  polite region would otherwise announce continuously. Drop the glyph and map the
+ *  timer suffix to a constant word; the text then changes only on real transitions
+ *  (`claude · starting` → `claude · running` → `claude · exited`). */
+function srStatusText(label: string): string {
+  return label
+    .replace(/[⠀-⣿]\s*/g, '')
+    .replace(/\s*·\s*\d+:\d{2}\s*$/, ' · running')
+    .trim()
+}
+
 /** 24×24 icon button used in the title-bar action slot. */
 export function IconBtn({
   name,
@@ -402,7 +414,7 @@ export function BoardFrame({
               fontSize: 'var(--fs-micro)',
               letterSpacing: 'var(--tr-micro)',
               fontWeight: 'var(--fw-micro)',
-              color: 'var(--text-faint)',
+              color: 'var(--text-3)', // D0-2: a readable tag — faint is disabled-only
               fontFamily: 'var(--mono)'
             }}
           >
@@ -545,6 +557,15 @@ export function BoardFrame({
           >
             {title}
           </span>
+          {/* D0-6 (A5): persistent polite live region so status TRANSITIONS are announced
+              (the visible label is hover-only, so it can't serve as the live region). The
+              text strips the per-frame spinner glyph and maps the per-second elapsed timer
+              to a stable word — announcements fire only on real state changes. */}
+          {status?.label && (
+            <span className="sr-only" role="status" aria-live="polite">
+              {srStatusText(status.label)}
+            </span>
+          )}
           {/* Status label is on-demand: only while hovered or selected, kept calm at
               rest (the glyph colour carries the at-a-glance signal). */}
           {status?.label && (hovered || selected) && (
