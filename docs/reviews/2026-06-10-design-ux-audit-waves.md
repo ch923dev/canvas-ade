@@ -89,7 +89,7 @@ D0 (1 session) → D1 (A,B,C parallel) → D2 (A–D parallel) → D3 (A–C) �
 |---|---|
 | D0 | ✅ merged — #108 squash `146fc76` (2026-06-10); D0-1..D0-9 all landed (7 review rounds, 15 inline findings dispositioned). `--scrim` token now defined; D0-8 chip + D0-5 notes are interim surfaces D1-A migrates. |
 | D1 | ✅ merged — A Toast #112 (`5d63559`) · B Modal #111 (`9da926d`) · C Menu #113 (`2f0a972`), all 2026-06-10. D0-8 chip deleted (sticky save-failure toast + Retry); 3 modals on shared `Modal.tsx` (`--scrim`, focus trap/restore); 6 menus on shared `Menu.tsx` (menuitem roles + roving tabindex + unified clamp + ADR 0002 detach). 2 real cross-lane bug classes found by e2e: mid-dispatch listener removal (B+C, refs pattern) · deferred xterm focus-restore (C). Post-D1 main gate green: unit 1984 + e2e matrix Win 63/Linux 63. |
-| D2 | not started — **next up** (4 lanes A–D parallel; note D2-A and D2-D both touch `BoardFrame.tsx` → merge A before D, D rebases). |
+| D2 | in progress — **A merged** #114 `0a45583` (2026-06-11): inline title edit (double-click + F2, Enter/blur commit, Esc cancel, one undo gesture; §6 mandate closed; unit 1995, e2e 67×2). B/C in flight (any order); **D motion merges LAST** (shares `BoardFrame.tsx` with A → D rebases over `0a45583`). |
 | D3 | not started |
 | D4 | not started — D4-A/C need spec + design artifact + sign-off first |
 
