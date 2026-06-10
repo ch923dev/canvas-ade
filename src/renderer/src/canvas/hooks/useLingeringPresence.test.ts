@@ -80,6 +80,18 @@ describe('useLingeringPresence', () => {
     expect(result.current).toBe(false)
   })
 
+  it('an ms change mid-linger does not hang the linger (timer keeps its armed duration)', () => {
+    const { result, rerender } = renderHook(({ a, ms }) => useLingeringPresence(a, ms), {
+      initialProps: { a: true, ms: 100 }
+    })
+    rerender({ a: false, ms: 100 }) // falling edge arms the 100ms timer
+    rerender({ a: false, ms: 50 }) // dynamic ms change mid-linger must not cancel it
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+    expect(result.current).toBe(false) // releases at the armed duration — never stuck
+  })
+
   it('respects a custom ms override', () => {
     const { result, rerender } = renderHook(({ a }) => useLingeringPresence(a, 50), {
       initialProps: { a: true }

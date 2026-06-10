@@ -21,6 +21,15 @@ export const LOD_FADE_MS = 100
 export function useLingeringPresence(active: boolean, ms: number = LOD_FADE_MS): boolean {
   const [lingering, setLingering] = useState(false)
   const prev = useRef(active)
+  // `ms` lives in a ref (synced every render, read at timer-arm time) so it is NOT an
+  // effect dep: with it in the dep array, an ms change mid-linger re-ran the effect —
+  // cleanup cancelled the in-flight timer and the edge guard below early-returned
+  // without re-arming, leaving `lingering` stuck true until the next active edge.
+  // Declared before the edge effect so this sync runs first each commit.
+  const msRef = useRef(ms)
+  useLayoutEffect(() => {
+    msRef.current = ms
+  })
   // useLayoutEffect, NOT useEffect: a passive effect fires after paint, so the
   // falling edge would render one frame with `active || lingering` both false —
   // unmounting the leaving layer (blank flash + remount churn) before the linger
@@ -40,8 +49,8 @@ export function useLingeringPresence(active: boolean, ms: number = LOD_FADE_MS):
     }
     if (prefersReducedMotion()) return undefined
     setLingering(true)
-    const t = window.setTimeout(() => setLingering(false), ms)
+    const t = window.setTimeout(() => setLingering(false), msRef.current)
     return () => window.clearTimeout(t)
-  }, [active, ms])
+  }, [active])
   return active || lingering
 }
