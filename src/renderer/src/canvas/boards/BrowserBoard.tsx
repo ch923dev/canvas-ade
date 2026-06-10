@@ -351,16 +351,17 @@ export function BrowserBoard({
         >
           {/* D0-6 (A9): the dot is color-only — D2-C pairs it with an ALWAYS-VISIBLE
               status word (Linear pattern, colorblind-safe) plus the polite live
-              region announcing transitions. An evicted board reads "paused" — its
-              status may still say connected, but the renderer (and the page state)
-              is gone until a live slot frees. */}
+              region announcing transitions. The word IS the accessible label (no
+              aria-hidden): a screen reader navigating here in a static state reads
+              it directly; the live region only speaks transitions. An evicted board
+              reads "paused" — its status may still say connected, but the renderer
+              (and the page state) is gone until a live slot frees. */}
           <span
             className="bb-conn-dot"
+            aria-hidden
             style={{ background: paused ? 'var(--text-3)' : connDot(runtime.status) }}
           />
-          <span className="bb-conn-word" aria-hidden>
-            {paused ? 'paused' : connWord(runtime.status)}
-          </span>
+          <span className="bb-conn-word">{paused ? 'paused' : connWord(runtime.status)}</span>
           <span className="sr-only" role="status" aria-live="polite">
             {srConn}
           </span>
