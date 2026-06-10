@@ -27,6 +27,7 @@ import { BoardFrame } from '../BoardFrame'
 import { Icon } from '../Icon'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
+import { showToast } from '../../store/toastStore'
 import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
 import { isHttpUrl } from '../../lib/autoConnect'
@@ -140,20 +141,10 @@ export function BrowserBoard({
   // (a focus-without-edit blur must not write a stale draft back over an external
   // url change).
   const urlDirty = useRef(false)
-  const [note, setNote] = useState<string | null>(null)
-  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   if (board.url !== lastUrl) {
     setLastUrl(board.url)
     if (!editingUrl) setDraftUrl(board.url)
   }
-
-  // Clear the note timer on unmount to prevent setState-after-unmount.
-  useEffect(
-    () => () => {
-      if (noteTimer.current) clearTimeout(noteTimer.current)
-    },
-    []
-  )
 
   // D0-6 (A9): live-region text for the connection dot. Starts EMPTY and fills only on
   // the first status TRANSITION — a region inserted with content can announce on mount,
@@ -194,43 +185,43 @@ export function BrowserBoard({
     void window.api
       .openExternalPreview(runtime.liveUrl ?? board.url)
       .then((ok) => {
-        if (!ok) showNote('Cannot open that URL in a browser')
+        if (!ok) showToast({ kind: 'error', message: 'Cannot open that URL in a browser' })
       })
       // D0-5: an IPC rejection (teardown race, channel gone) was silent before.
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.error('openExternalPreview failed', err)
-        showNote('Cannot open that URL in a browser')
+        showToast({ kind: 'error', message: 'Cannot open that URL in a browser' })
       })
-  }
-
-  const showNote = (msg: string): void => {
-    if (noteTimer.current) clearTimeout(noteTimer.current)
-    setNote(msg)
-    noteTimer.current = setTimeout(() => setNote(null), 2500)
   }
 
   const takeScreenshot = (): void => {
     void (async () => {
       // D0-5: the IPC can also REJECT (capture race, channel teardown) — without the
       // catch that path was a silent no-op while the success/false branches spoke.
+      // D1-A: feedback routes to the app toast channel (was a board-anchored note).
       try {
         const res = await window.api.screenshotPreview(board.id)
         // BUG-028: main reports whether the clipboard write actually landed.
         const clipOk = res.ok && res.clipboardOk
-        if (!res.ok) showNote('Open the preview to screenshot it')
+        if (!res.ok) showToast({ message: 'Open the preview to screenshot it' })
         else if (res.assetId)
-          showNote(
-            clipOk
+          showToast({
+            kind: 'ok',
+            message: clipOk
               ? 'Screenshot copied + saved to assets/'
               : 'Screenshot saved to assets/ (clipboard unavailable)'
-          )
-        else if (clipOk) showNote('Screenshot copied to clipboard')
-        else showNote('Screenshot failed: clipboard unavailable and nothing saved')
+          })
+        else if (clipOk) showToast({ kind: 'ok', message: 'Screenshot copied to clipboard' })
+        else
+          showToast({
+            kind: 'error',
+            message: 'Screenshot failed: clipboard unavailable and nothing saved'
+          })
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('screenshotPreview failed', err)
-        showNote('Screenshot failed — try again')
+        showToast({ kind: 'error', message: 'Screenshot failed — try again' })
       }
     })()
   }
@@ -392,20 +383,6 @@ export function BrowserBoard({
           <DeviceContent runtime={runtime} url={board.url} willRetry={willRetry} />
         </div>
       </div>
-      {/* Screenshot / open-external feedback toast. Rendered OUTSIDE .bb-stage so the
-          native WebContentsView (which paints above all HTML inside .bb-stage) does not
-          occlude it. The .ca-preview-note CSS (position:absolute; top:8px; z-index:4)
-          anchors this relative to the BoardFrame content div, placing it in the
-          URL-bar / title-bar zone that is pure HTML and never overlaid by a native view.
-          ADR 0002. */}
-      {note && (
-        <div className="ca-preview-note" role="status" onMouseDown={(e) => e.stopPropagation()}>
-          {note}
-          <button className="ca-preview-dismiss" onClick={() => setNote(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
     </BoardFrame>
   )
 }

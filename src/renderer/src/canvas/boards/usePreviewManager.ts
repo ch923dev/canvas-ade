@@ -51,6 +51,7 @@ import {
 } from '../../lib/browserLayout'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
+import { useToastStore } from '../../store/toastStore'
 import { usePreviewEvents } from '../hooks/usePreviewEvents'
 import type { BrowserBoard, BrowserViewport } from '../../lib/boardSchema'
 
@@ -168,6 +169,10 @@ export function usePreviewManager(props: LayerProps): void {
   // body-portaled menu, so suppress live views (→ HTML snapshot) the same way as a
   // gesture while the menu is open, then reattach on close. ADR 0002.
   const menuOpen = usePreviewStore((s) => s.menuOpen)
+  // D1-A: toast-queue size — any change re-runs the liveness pass (the bottom-right
+  // toast island is HTML a native view would paint over; its rect joins the chrome
+  // zones in resolveChromeZones while visible). ADR 0002.
+  const toastCount = useToastStore((s) => s.toasts.length)
 
   // Live ref for the main-driven `escape` event handler so its subscription (below) need
   // not re-bind when the close callback identity changes. (The full-view id it checks
@@ -307,6 +312,18 @@ export function usePreviewManager(props: LayerProps): void {
         if (r.width > 0 && r.right > paneOffset.current.x) {
           chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
         }
+      }
+    }
+    // D1-A: the toast island (bottom-right, App-mounted) is HTML a native view would
+    // paint over — same treatment as the digest panel. The island unmounts when the
+    // queue empties, so a missed querySelector IS the closed state (no open-flag ref
+    // needed); the liveness re-pass on queue changes comes from the toastCount dep on
+    // the focus effect below.
+    const toastEl = document.querySelector('[data-test=toast-island]')
+    if (toastEl) {
+      const r = toastEl.getBoundingClientRect()
+      if (r.width > 0) {
+        chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
       }
     }
     return chromeZones
@@ -765,7 +782,10 @@ export function usePreviewManager(props: LayerProps): void {
     // A motion flip (enter settled / exit started) re-reconciles: detach the full-view
     // view while the frame transforms, attach it once settled (Slice 5 hold-then-snap).
     applyLiveness()
-  }, [focusedId, fullViewId, fullViewHost, fullViewMotion, digestOpen, applyLiveness])
+    // toastCount: every queue change can grow/shrink/remove the toast island, so the
+    // covered region changes — re-reconcile (resolveChromeZones reads the island's
+    // live DOM rect, already committed when this effect runs).
+  }, [focusedId, fullViewId, fullViewHost, fullViewMotion, digestOpen, toastCount, applyLiveness])
 
   // Full view: the camera never moves, so the camera-driven rAF pump (startPump, fired
   // by useOnViewportChange) never runs — yet the full-view board's native bounds must

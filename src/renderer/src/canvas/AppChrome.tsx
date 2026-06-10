@@ -5,6 +5,7 @@
  * React Flow via `useReactFlow`; the dock adds store boards centered in view.
  */
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -23,6 +24,7 @@ import {
 } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
+import { showToast, dismissToast } from '../store/toastStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { cancelActiveAutosave } from '../store/useAutosave'
 import type { BoardType } from '../lib/boardSchema'
@@ -102,8 +104,9 @@ export function ProjectSwitcher(): ReactElement {
   // the multi-step teardown never reads as a hang; once status flips to 'loading' this
   // component unmounts and WelcomeScreen carries the loading presentation.
   const [switching, setSwitching] = useState(false)
-  // D0-8: the last failed save, surfaced as a visible chip (set by the autosave hook's
-  // onError and the flush-failure path below; cleared by the next successful save).
+  // D0-8→D1-A: the last failed save (set by the autosave hook's onError and the
+  // flush-failure path below; cleared by the next successful save), surfaced as a
+  // STICKY error toast with a Retry action — the toast bridge effect below.
   const saveFailure = useSaveStatusStore((s) => s.failure)
   const setSaveFailure = useSaveStatusStore((s) => s.setSaveFailure)
   const clearSaveFailure = useSaveStatusStore((s) => s.clearSaveFailure)
@@ -215,10 +218,11 @@ export function ProjectSwitcher(): ReactElement {
     }
   }
 
-  // D0-8: manual retry from the chip. A success clears the chip; a `false` return (the
-  // IPC write failed without throwing) refreshes the message so the click visibly
-  // registered — otherwise the chip looks dead; a rejection logs + refreshes likewise.
-  const retrySave = async (): Promise<void> => {
+  // D0-8: manual retry (the toast's Retry action). A success clears the failure (the
+  // bridge effect then dismisses the toast); a `false` return (the IPC write failed
+  // without throwing) refreshes the message so the click visibly registered —
+  // otherwise the action looks dead; a rejection logs + refreshes likewise.
+  const retrySave = useCallback(async (): Promise<void> => {
     try {
       // BUG-009 parity: pin the write to the current project dir so a racing switch
       // can't land this doc in the wrong canvas.json.
@@ -235,7 +239,25 @@ export function ProjectSwitcher(): ReactElement {
       console.error('project save retry failed', err)
       setSaveFailure('Save failed again — check disk space and permissions')
     }
-  }
+  }, [toObject, clearSaveFailure, setSaveFailure])
+
+  // D1-A: bridge the save-failure state into the app toast channel (replaces the D0-8
+  // chip). STICKY — a failed save is a data-loss condition the user must act on, so it
+  // never auto-expires; keyed so a repeat failure replaces in place and the next
+  // successful save (or a successful Retry) dismisses it by id.
+  useEffect(() => {
+    if (saveFailure) {
+      showToast({
+        id: 'save-failure',
+        message: saveFailure,
+        kind: 'error',
+        sticky: true,
+        action: { label: 'Retry', run: () => void retrySave() }
+      })
+    } else {
+      dismissToast('save-failure')
+    }
+  }, [saveFailure, retrySave])
 
   const openRecent = (dir: string): Promise<void> => switchTo(() => window.api.project.open(dir))
   const openFolder = async (): Promise<void> => {
@@ -287,26 +309,6 @@ export function ProjectSwitcher(): ReactElement {
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
-      {/* D0-8: visible save-failure chip (SAVE-1 class). A failed save is the one state
-          worth announcing assertively — but `alert` is not an allowed role on an
-          interactive element (SRs ignore it or double-announce), so the live region is a
-          visually-hidden SIBLING and the button stays a plain button. Click = retry;
-          cleared by the next successful save. Interim surface; final home = D1 toast. */}
-      {saveFailure && (
-        <>
-          <span role="alert" className="sr-only">
-            {saveFailure}
-          </span>
-          <button
-            className="proj-save-chip"
-            title={`${saveFailure} — click to retry`}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => void retrySave()}
-          >
-            ⚠ Save failed — retry
-          </button>
-        </>
-      )}
       {open && (
         // Inside pointerdowns must not reach the document outside-close listener, so a menu-item
         // click isn't pre-empted by an unmount (BoardMenu parity).

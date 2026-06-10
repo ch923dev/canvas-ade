@@ -22,7 +22,12 @@ import { agentIdentity, brailleFrame, isRunning, statusFor } from './terminalSta
 import { prefersReducedMotion } from '../../lib/motion'
 import { useCanvasStore } from '../../store/canvasStore'
 import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
-import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPreview'
+import {
+  runDetectPorts,
+  makePortDetectNote,
+  type DetectedUrl,
+  type Gesture
+} from './terminalPreview'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { resumeCommand } from './terminal/resumeCommand'
@@ -233,12 +238,13 @@ export function TerminalBoard({
     portRef.current?.postMessage({ t: 'input', d: '\x03' })
   }, [portRef]) // stable hook ref; listed for exhaustive-deps (#98)
 
-  // Slice C′: detected dev-server URLs (picker when >1) + a transient "not found" note.
+  // Slice C′: detected dev-server URLs (picker when >1) + a transient "not found" note
+  // (D1-A: the note is a board-keyed toast now, not a board overlay).
   // DetectedUrl and Gesture types are imported from ./terminalPreview.
   const [portChoices, setPortChoices] = useState<{ urls: DetectedUrl[]; gesture: Gesture } | null>(
     null
   )
-  const [previewNote, setPreviewNote] = useState<string | null>(null)
+  const previewNote = useMemo(() => makePortDetectNote(board.id), [board.id])
   // Multi-select connect picker (long-press, or tap with nothing linked): pick one or more
   // browsers (B + C) and/or a fresh spawn to wire to this terminal and push the url to each.
   // The panel (checkboxes + sever warning) lives in BrowserPickPanel; its transient checked
@@ -274,12 +280,12 @@ export function TerminalBoard({
     (gesture: Gesture) =>
       runDetectPorts(
         () => window.api.detectPorts(board.id),
-        setPreviewNote,
+        previewNote,
         routeUrl,
         setPortChoices,
         gesture
       ),
-    [board.id, routeUrl]
+    [board.id, previewNote, routeUrl]
   )
 
   // Apply the multi-select connect picker: wire every checked browser to this terminal
@@ -521,19 +527,6 @@ export function TerminalBoard({
                 >
                   <button style={startBtn} onClick={() => startLaunchRef.current?.()}>
                     Start {identity}
-                  </button>
-                </div>
-              )}
-              {previewNote && (
-                <div
-                  className="ca-preview-note"
-                  role="status"
-                  data-no-flip
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  {previewNote}
-                  <button className="ca-preview-dismiss" onClick={() => setPreviewNote(null)}>
-                    Dismiss
                   </button>
                 </div>
               )}
