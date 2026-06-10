@@ -95,6 +95,18 @@ describe('readTranscriptTail', () => {
   it('defaults to a 64 KB window', () => {
     expect(TRANSCRIPT_TAIL_BYTES).toBe(64 * 1024)
   })
+
+  // BUG-034 regression: readTranscriptTail must use the bytesRead return value of readSync
+  // (not decode the full allocUnsafe buffer). When fstat reports a size that a concurrent
+  // truncation makes stale, readSync returns fewer bytes; decoding the full buffer would include
+  // uninitialized heap content. We test the normal path to confirm length alignment.
+  it('BUG-034: returned string length equals the file byte size (no heap overread)', () => {
+    const content = 'A'.repeat(200)
+    const f = tmpFile(content)
+    const result = readTranscriptTail(f, 1024)
+    expect(result.length).toBe(200)
+    expect(result).toBe(content)
+  })
 })
 
 describe('isTrustedTranscriptPath', () => {

@@ -294,7 +294,14 @@ export function BoardMenu({
   )
 
   return (
-    <div ref={triggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
+    <div
+      ref={triggerRef}
+      style={{ position: 'relative', display: 'inline-flex' }}
+      // #BUG-045: the document-level pointerdown closer fires BEFORE the trigger's click, so
+      // re-clicking the open trigger would close-then-reopen (dead toggle). Stop the real
+      // pointerdown here, like the menu items below do (ProjectSwitcher parity, AppChrome).
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       {/* The ⋯ dots are a near-inkless glyph; bump stroke + use a brighter rest colour so
           the overflow affordance is actually visible at rest (not only when clicked). */}
       <IconBtn

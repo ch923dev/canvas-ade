@@ -46,6 +46,22 @@ describe('terminalImageStaging', () => {
     expect(() => cleanupStaged(join(proj, 'nope'), 'x')).not.toThrow()
   })
 
+  it('BUG-026: staged filenames include a random component so same-board same-seq never collides', () => {
+    // Even if two calls produce the same seq (e.g. across restarts where seq resets),
+    // the random suffix should make names distinct. Within one session, seq is different
+    // already, but we can verify the random part exists and varies between calls.
+    const a = stageClipboardImage(proj, 'board1', Buffer.from([0]))
+    const b = stageClipboardImage(proj, 'board1', Buffer.from([0]))
+    // Both paths must be unique (they have different seq AND random suffix)
+    expect(a).not.toBe(b)
+    // Each filename must contain a hex random suffix (4 bytes = 8 hex chars) after the seq
+    const baseName = (p: string) => p.split('/').pop()!.split('\\').pop()!
+    // Pattern: paste-<safeId>-<seq>-<8hexchars>.png
+    const re = /^paste-[a-zA-Z0-9_-]+-\d+-[0-9a-f]{8}\.png$/
+    expect(baseName(a)).toMatch(re)
+    expect(baseName(b)).toMatch(re)
+  })
+
   it('prunes staged files older than the given age on stage', () => {
     const old = stageClipboardImage(proj, 'old', Buffer.from([0]))
     // Force the file's mtime into the past.

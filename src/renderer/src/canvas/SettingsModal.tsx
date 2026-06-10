@@ -114,6 +114,26 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       })
   }
 
+  // BUG-065: the recap toggle was optimistic fire-and-forget — a resolved {ok:false} (MAIN dir
+  // desync / frame guard) or a rejection (disk error, teardown race) left the checkbox showing a
+  // state that never persisted (privacy-relevant on untick: the hook stays installed). Mirror the
+  // llm save() pattern: check .ok, revert the optimistic state and surface the error on failure.
+  const onRecapToggle = async (next: 'enabled' | 'declined'): Promise<void> => {
+    const prev = recapConsent
+    setRecapConsent(next)
+    setError(null)
+    try {
+      const r = await window.api.recap.setConsent(next)
+      if (!r.ok) {
+        setRecapConsent(prev)
+        setError('Could not update agent recaps — please try again.')
+      }
+    } catch {
+      setRecapConsent(prev)
+      setError('Could not update agent recaps — please try again.')
+    }
+  }
+
   const save = async (): Promise<void> => {
     setBusy(true)
     setError(null)
@@ -273,9 +293,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
             disabled={projectDir === null}
             aria-label="Agent recaps (this project)"
             onChange={(e) => {
-              const next = e.target.checked ? 'enabled' : 'declined'
-              setRecapConsent(next)
-              void window.api.recap.setConsent(next)
+              void onRecapToggle(e.target.checked ? 'enabled' : 'declined')
             }}
             style={{
               marginTop: 2,

@@ -87,6 +87,10 @@ Landed since #75 (2026-06-06 -> 06-08):
 - **#90** `c670732` - Shift+Enter sends LF.
 - **#88/#91** - Claude PR-review CI (inline comments + triage).
 
+Landed 2026-06-10:
+- **#107** `cd1ac61` - 2026-06-10 full-app audit fix run: all 72 verified findings fixed (0 Crit / 4 High / 14 Med / 54 Low) via 16 collision-aware cluster agents over 4 waves + adversarial verify (5 amendments); ~130 new regression tests (unit suite -> 1906). 6 bot-review rounds, 12 inline findings all fixed + dispositioned. Findings package committed under `bug-hunt-findings/` (INDEX + 72 cards + FIX-REPORT).
+- **#109** `1230b7f` - BUG-069 re-land: claude-review `gh api` allowlist narrowed to the 5 exact endpoint forms the prompt uses (was `gh api:*` — prompt-injection could self-approve PRs). Reverted from #107 because claude-code-action refuses to run when the PR edits the review workflow (anti-self-approval) — such PRs gate on the `check` job only. Plus `.worktrees/**` eslint ignore (session worktrees broke `pnpm lint` on main).
+
 MCP layer (SHIPPED to `main` 2026-06-05/06): PR #43 `2100022` (M0-M4) + M5 #70 `3824afc`
 (board-status event source + event-driven handoff await-idle) + M5 app-adopt #73 `c440251`
 (`Orchestrator.subscribeStatus`) + M-expose write->read proof #74 `97d356a`. App pins

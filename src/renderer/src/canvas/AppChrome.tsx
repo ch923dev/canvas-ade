@@ -15,7 +15,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useReactFlow, useStore } from '@xyflow/react'
-import { useCanvasStore, type RecentProject } from '../store/canvasStore'
+import {
+  useCanvasStore,
+  acquireProjectSwitchLock,
+  releaseProjectSwitchLock,
+  type RecentProject
+} from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
@@ -149,6 +154,14 @@ export function ProjectSwitcher(): ReactElement {
 
   const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
     setOpen(false)
+    // BUG-009: one switch pipeline at a time, ACROSS surfaces. The lock is module-level
+    // (shared with WelcomeScreen's open/create) because mid-switch the status flips to
+    // 'loading', which unmounts Canvas and mounts a fresh WelcomeScreen whose per-mount
+    // `busy` state cannot see this in-flight switch — without the shared lock a second
+    // click there (or a re-opened dropdown here) interleaves two open pipelines and the
+    // renderer can settle on project B while MAIN's currentDir points at C, after which
+    // autosave writes B's canvas into C's canvas.json.
+    if (!acquireProjectSwitchLock()) return
     // D0-7: dim + spin the pill for the whole pipeline. The finally also covers the
     // post-unmount path (status flips to 'loading' mid-await): React 18 treats setState
     // on an unmounted component as a no-op.
@@ -164,7 +177,10 @@ export function ProjectSwitcher(): ReactElement {
       //    'loading', so a swallowed false here loses the outgoing project's tail edits with
       //    no signal (PERSIST-A / the SAVE-1 silent-loss class). Surface it and abort the
       //    switch so the outgoing project stays open and editable for a retry.
-      const saved = await window.api.project.save(toObject())
+      const saved = await window.api.project.save(
+        toObject(),
+        useCanvasStore.getState().project.dir ?? undefined
+      )
       if (saved === false) {
         // eslint-disable-next-line no-console
         console.error('project switch: final flush failed; aborting switch to avoid data loss')
@@ -190,6 +206,7 @@ export function ProjectSwitcher(): ReactElement {
         await applyOpenResult({ ok: false, error: msg })
       }
     } finally {
+      releaseProjectSwitchLock()
       setSwitching(false)
     }
   }
@@ -199,7 +216,12 @@ export function ProjectSwitcher(): ReactElement {
   // registered — otherwise the chip looks dead; a rejection logs + refreshes likewise.
   const retrySave = async (): Promise<void> => {
     try {
-      const ok = await window.api.project.save(toObject())
+      // BUG-009 parity: pin the write to the current project dir so a racing switch
+      // can't land this doc in the wrong canvas.json.
+      const ok = await window.api.project.save(
+        toObject(),
+        useCanvasStore.getState().project.dir ?? undefined
+      )
       if (ok) clearSaveFailure()
       else setSaveFailure('Save failed again — check disk space and permissions')
     } catch (err) {

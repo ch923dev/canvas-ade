@@ -91,4 +91,50 @@ describe('registerAuditHandler', () => {
     registerAuditHandler(fakeIpc().bus, () => win, log)
     expect(getAuditLog()).toBe(log)
   })
+
+  it('🔒 BUG-043: limit:0 is rejected at the IPC boundary (does not forward a 0 to log.read)', async () => {
+    const log = fakeLog(entries)
+    const ipc = fakeIpc()
+    registerAuditHandler(ipc.bus, () => win, log)
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: 0 }
+    )
+    // limit:0 must NOT be forwarded to log.read as 0 (would trigger slice(-0) = full log);
+    // the handler should forward undefined (use log's default) instead.
+    expect(log.reads[0]).toBeUndefined()
+  })
+
+  it('🔒 BUG-043: negative limit is rejected at the IPC boundary', async () => {
+    const log = fakeLog(entries)
+    const ipc = fakeIpc()
+    registerAuditHandler(ipc.bus, () => win, log)
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: -5 }
+    )
+    expect(log.reads[0]).toBeUndefined()
+  })
+
+  it('🔒 BUG-043: a valid positive limit passes through clamped to IPC_MAX_LIMIT', async () => {
+    const log = fakeLog(entries)
+    const ipc = fakeIpc()
+    registerAuditHandler(ipc.bus, () => win, log)
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: 5 }
+    )
+    expect((log.reads[0] as { limit: number }).limit).toBe(5)
+  })
+
+  it('🔒 BUG-043: an over-large limit is clamped to 1000 at the IPC boundary', async () => {
+    const log = fakeLog(entries)
+    const ipc = fakeIpc()
+    registerAuditHandler(ipc.bus, () => win, log)
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: 999_999 }
+    )
+    expect((log.reads[0] as { limit: number }).limit).toBe(1000)
+  })
 })

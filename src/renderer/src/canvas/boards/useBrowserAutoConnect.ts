@@ -5,14 +5,15 @@
  * (the previewStore reloadNonce path is NOT used here -- reconcile only re-navigates on a
  * canvasStore.boards change, so a lone nonce bump would never be consumed); a 'detect'
  * polls detectPorts on the linked terminal and (only while NOT connected) sets the board
- * url via updateBoard. Per-board exponential backoff (1->2->4s) avoids hammering a dead server.
+ * url via patchBoardUntracked (history-neutral — a background machine write must not touch
+ * undo/redo, #BUG-057). Per-board exponential backoff (1->2->4s) avoids hammering a dead server.
  *
  * Mounted ONCE beside usePreviewManager (BrowserPreviewLayer). Reads stores via
  * getState() each tick (no selector → no re-render). Security: never writes the PTY;
  * detected URLs are used as-is (origin form from portDetect) and only steer the board url.
  */
 import { useEffect, useRef } from 'react'
-import { useCanvasStore } from '../../store/canvasStore'
+import { useCanvasStore, patchBoardUntracked } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
 import type { BrowserBoard } from '../../lib/boardSchema'
 import {
@@ -101,7 +102,10 @@ export function useBrowserAutoConnect(): void {
             const fresh = live.boards.find((x) => x.id === bid)
             if (!fresh || fresh.type !== 'browser') return
             if ((usePreviewStore.getState().byId[bid]?.status ?? 'idle') === 'connected') return
-            if ((fresh as BrowserBoard).url !== next) live.updateBoard(bid, { url: next })
+            // #BUG-057: history-neutral patch — this is a machine write from a background
+            // timer, so it must neither clear an armed redo branch nor record an undo step
+            // (updateBoard would wipe `future` on any real diff with zero user gesture).
+            if ((fresh as BrowserBoard).url !== next) patchBoardUntracked(bid, { url: next })
           })()
         }
       }

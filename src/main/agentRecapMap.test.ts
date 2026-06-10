@@ -132,6 +132,150 @@ describe('recap hook install/merge', () => {
   })
 })
 
+describe('removeRecapHook BUG-032: tolerates malformed settings.local.json', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'recap-malformed-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('does not throw when SessionStart block has a non-array hooks field', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { matcher: '', hooks: 'not-an-array' } // malformed: hooks is a string, not array
+          ]
+        }
+      })
+    )
+    expect(() => removeRecapHook(dir, '/app/recordSession.js')).not.toThrow()
+  })
+
+  it('does not throw when SessionStart is not an array', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: 'not-an-array' // malformed: should be an array of blocks
+        }
+      })
+    )
+    expect(() => removeRecapHook(dir, '/app/recordSession.js')).not.toThrow()
+  })
+
+  it('still removes a valid hook when valid blocks coexist with malformed ones', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { matcher: '', hooks: 'not-an-array' }, // malformed block
+            {
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command: '/usr/bin/node',
+                  args: ['/app/recordSession.js', '/u/map.jsonl']
+                }
+              ]
+            }
+          ]
+        }
+      })
+    )
+    removeRecapHook(dir, '/app/recordSession.js')
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(false)
+  })
+})
+
+describe('installRecapHook BUG-003: env field', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'recap-env-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('bakes env into a shell-form command (Claude hooks have no env field)', () => {
+    installRecapHook({
+      projectDir: dir,
+      nodePath: '/usr/bin/node',
+      scriptPath: '/app/recordSession.js',
+      mapPath: '/u/map.jsonl',
+      env: { ELECTRON_RUN_AS_NODE: '1' }
+    })
+    const settings = join(dir, '.claude', 'settings.local.json')
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    const hooks = cfg.hooks.SessionStart.flatMap((b: { hooks: unknown[] }) => b.hooks) as {
+      command: string
+      args?: string[]
+      env?: unknown
+    }[]
+    const hook = hooks.find((h) => h.args?.some((a) => a.includes('/app/recordSession.js')))
+    expect(hook).toBeDefined()
+    // The env assignment rides INSIDE the shell command string, not in an
+    // (unsupported) env field; the script + map paths are quoted in the same string.
+    // Quoting differs per platform: cmd wraps the whole assignment (`set "K=V"&&`),
+    // POSIX single-quotes the value (`K='V'`).
+    const envForm =
+      process.platform === 'win32' ? 'set "ELECTRON_RUN_AS_NODE=1"&& ' : "ELECTRON_RUN_AS_NODE='1' "
+    const shellArg = hook!.args!.find((a) => a.includes(envForm))
+    expect(shellArg).toBeDefined()
+    // Paths are double-quoted for cmd, single-quoted for sh (where "..." still expands $).
+    const wrap = (p: string): string => (process.platform === 'win32' ? `"${p}"` : `'${p}'`)
+    expect(shellArg).toContain(wrap('/app/recordSession.js'))
+    expect(shellArg).toContain(wrap('/u/map.jsonl'))
+    expect(shellArg).toContain(wrap('/usr/bin/node'))
+    expect([process.platform === 'win32' ? 'cmd.exe' : '/bin/sh']).toContain(hook!.command)
+    expect(hook!.env).toBeUndefined()
+    // Idempotency + removal must work on the shell form (scriptPath is a SUBSTRING).
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(true)
+    installRecapHook({
+      projectDir: dir,
+      nodePath: '/usr/bin/node',
+      scriptPath: '/app/recordSession.js',
+      mapPath: '/u/map.jsonl',
+      env: { ELECTRON_RUN_AS_NODE: '1' }
+    })
+    const cfg2 = JSON.parse(readFileSync(settings, 'utf8'))
+    expect(cfg2.hooks.SessionStart).toHaveLength(1)
+    removeRecapHook(dir, '/app/recordSession.js')
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(false)
+  })
+
+  it('keeps the direct command form when no env is provided', () => {
+    installRecapHook({
+      projectDir: dir,
+      nodePath: '/usr/bin/node',
+      scriptPath: '/app/recordSession.js',
+      mapPath: '/u/map.jsonl'
+    })
+    const settings = join(dir, '.claude', 'settings.local.json')
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    const blocks = cfg.hooks.SessionStart
+    const hook = blocks
+      .flatMap((b: { hooks: unknown[] }) => b.hooks)
+      .find((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')) as {
+      command: string
+      env?: Record<string, string>
+    }
+    expect(hook.command).toBe('/usr/bin/node')
+    expect(hook?.env).toBeUndefined()
+  })
+})
+
 describe('watchRecapMap (first-session discovery)', () => {
   let dir: string
   beforeEach(() => {

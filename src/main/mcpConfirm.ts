@@ -55,7 +55,7 @@ const DENIED: ConfirmDecision = { approved: false }
  * and is unit-testable without the runtime.
  */
 export function requestConfirm(
-  bus: Pick<IpcMain, 'once' | 'removeListener'>,
+  bus: Pick<IpcMain, 'on' | 'removeListener'>,
   getWin: () => BrowserWindow | null,
   request: ConfirmRequest,
   opts: { timeoutMs?: number } = {}
@@ -102,9 +102,12 @@ export function requestConfirm(
       typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
         ? setTimeout(() => finish(DENIED), timeoutMs)
         : null
-    bus.once(replyChannel, onReply)
+    // 🔒 Use bus.on (not bus.once) so a foreign-frame event on the reply channel does NOT
+    // consume the listener before the genuine human reply arrives (BUG-030). finish() calls
+    // bus.removeListener on every resolution path, so the listener is torn down exactly once.
+    bus.on(replyChannel, onReply)
     // If the window/render-process dies after the modal is shown but before a reply,
-    // `bus.once` never fires — deny so the awaiting MCP tool call can't hang forever.
+    // the on-listener never fires — deny so the awaiting MCP tool call can't hang forever.
     wc.once('destroyed', onGone)
     wc.once('render-process-gone', onGone)
     try {

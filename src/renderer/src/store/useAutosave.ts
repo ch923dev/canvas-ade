@@ -37,11 +37,22 @@ export function createAutosaver(opts: AutosaverOpts): Autosaver {
     // SAVE-1: surface a failed save (rejection OR a `false` result from main's
     // project:save) instead of floating it silently — otherwise a failing disk loses
     // every edit with zero signal to the user.
+    // BUG-008: a failure must also RE-ARM dirty, or the unsaved edits become
+    // unrecoverable — every later flush (blur, beforeunload, MAIN's project:flush quit
+    // handshake) would hit the `!dirty` gate and write nothing even after the disk
+    // recovers. Re-arming alone cannot hot-loop: retries only run via the debounced
+    // schedule() or an explicit flush().
     return Promise.resolve(opts.save())
       .then((ok) => {
-        if (ok === false) opts.onError?.(new Error('autosave: project:save returned false'))
+        if (ok === false) {
+          dirty = true
+          opts.onError?.(new Error('autosave: project:save returned false'))
+        }
       })
-      .catch((e) => opts.onError?.(e))
+      .catch((e) => {
+        dirty = true
+        opts.onError?.(e)
+      })
   }
   return {
     schedule: () => {
@@ -80,10 +91,13 @@ export function cancelActiveAutosave(): void {
 export function useAutosave(): void {
   useEffect(() => {
     const saver = createAutosaver({
+      // BUG-009: pass the project dir this doc belongs to, so MAIN can reject the write
+      // if a project switch raced the save (currentDir would point at the new project).
       // D0-8: a successful save clears any standing failure chip — the surface tracks
       // the CURRENT disk health, not a sticky history (clear is a no-op when clean).
       save: async () => {
-        const ok = await window.api.project.save(useCanvasStore.getState().toObject())
+        const s = useCanvasStore.getState()
+        const ok = await window.api.project.save(s.toObject(), s.project.dir ?? undefined)
         if (ok) useSaveStatusStore.getState().clearSaveFailure()
         return ok
       },

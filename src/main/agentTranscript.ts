@@ -69,8 +69,14 @@ export function readTranscriptTail(path: string, maxBytes = TRANSCRIPT_TAIL_BYTE
     const len = size - start
     if (len <= 0) return ''
     const buf = Buffer.allocUnsafe(len)
-    readSync(fd, buf, 0, len, start)
-    return buf.toString('utf8')
+    // BUG-034: honor the actual byte count returned by readSync. If the file shrinks between
+    // fstatSync and readSync (TOCTOU: an external process truncates/replaces the transcript),
+    // readSync returns fewer bytes and the tail of the allocUnsafe buffer is uninitialized
+    // prior heap content. Slicing to bytesRead ensures only real file bytes are decoded, so
+    // no heap content (which may include decrypted API keys or prior transcript data) can
+    // appear in the string handed to extractMilestones -> buildRecapInput -> LLM egress.
+    const bytesRead = readSync(fd, buf, 0, len, start)
+    return buf.toString('utf8', 0, bytesRead)
   } finally {
     closeSync(fd)
   }

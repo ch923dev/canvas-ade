@@ -27,7 +27,8 @@ export const ERASE_TOL = 8
 
 /**
  * Auto-sized text persists no w/h, so give it a nominal hit box anchored at its
- * top-left. Approximate; W2 refines this with a DOM-measured bbox.
+ * top-left. Used as a fallback when no live DOM measurement is available.
+ * W2 refinement: eraseHitTest now accepts a measured map and prefers it when present.
  */
 export const TEXT_HIT = { w: 160, h: 24 } as const
 
@@ -87,24 +88,48 @@ function nearStroke(s: StrokeElement, p: HitPoint, tol: number): boolean {
 /**
  * True if the board-local point hits the element (within `tol`). Cards use a
  * tolerance-padded rect (checklist uses a nominal height since its schema h is 0);
- * arrows sample the bezier; strokes test the polyline; text uses a nominal box.
+ * arrows sample the bezier; strokes test the polyline; text uses the live DOM
+ * measurement when provided, falling back to a nominal box.
+ *
+ * `measured` is a map of element-id → {w,h} (board-local px) populated at runtime
+ * by the card components' onMeasure callbacks. Pass null/undefined when no live
+ * DOM sizes are available (e.g. in unit tests).
  */
-export function eraseHitTest(el: PlanningElement, p: HitPoint, tol = ERASE_TOL): boolean {
+export function eraseHitTest(
+  el: PlanningElement,
+  p: HitPoint,
+  tol?: number,
+  measured?: ReadonlyMap<string, { w: number; h: number }> | null
+): boolean {
+  const t = tol ?? ERASE_TOL
   switch (el.kind) {
-    case 'note':
-      return inRect(p, el.x, el.y, el.w, el.h, tol)
-    case 'checklist': {
-      const h = nominalChecklistHeight(el.items.length)
-      return inRect(p, el.x, el.y, el.w, h, tol)
+    case 'note': {
+      // Prefer the live measured height when positive (NoteCard auto-sizes); fall
+      // back to el.h. A zero measured height means the DOM has not laid out yet
+      // (e.g. first frame or jsdom test environment) — treat it as unmeasured.
+      const m = measured?.get(el.id)
+      const h = m && m.h > 0 ? m.h : el.h
+      return inRect(p, el.x, el.y, el.w, h, t)
     }
-    case 'text':
-      return inRect(p, el.x, el.y, TEXT_HIT.w, TEXT_HIT.h, tol)
+    case 'checklist': {
+      const m = measured?.get(el.id)
+      const h = m && m.h > 0 ? m.h : nominalChecklistHeight(el.items.length)
+      return inRect(p, el.x, el.y, el.w, h, t)
+    }
+    case 'text': {
+      const m = measured?.get(el.id)
+      // Only use measured dimensions when both are positive — a zero-area measured
+      // entry means no layout has occurred yet; fall back to the nominal box.
+      const w = m && m.w > 0 ? m.w : TEXT_HIT.w
+      const h = m && m.h > 0 ? m.h : TEXT_HIT.h
+      return inRect(p, el.x, el.y, w, h, t)
+    }
     case 'arrow':
-      return nearArrow(el, p, tol)
+      return nearArrow(el, p, t)
     case 'stroke':
-      return nearStroke(el, p, tol)
+      return nearStroke(el, p, t)
     // W4: image element — treat as a rect hit (renderer task handles display).
     case 'image':
-      return inRect(p, el.x, el.y, el.w, el.h, tol)
+      return inRect(p, el.x, el.y, el.w, el.h, t)
   }
 }

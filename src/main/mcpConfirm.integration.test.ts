@@ -61,23 +61,23 @@ function fakeWinWithLifecycle(mainFrame: object): {
   }
 }
 
-/** A fake ipc bus that captures the one-shot reply handler so a test can fire it. */
+/** A fake ipc bus that captures the persistent reply handler so a test can fire it. */
 function fakeBus(): {
-  bus: Pick<IpcMain, 'once' | 'removeListener'>
+  bus: Pick<IpcMain, 'on' | 'removeListener'>
   reply: (e: unknown, decision: unknown) => void
   channel: () => string | null
 } {
   let handler: ((e: unknown, decision: unknown) => void) | null = null
   let channel: string | null = null
   const bus = {
-    once: (ch: string, h: (e: unknown, decision: unknown) => void) => {
+    on: (ch: string, h: (e: unknown, decision: unknown) => void) => {
       channel = ch
       handler = h
     },
     removeListener: () => {
       handler = null
     }
-  } as unknown as Pick<IpcMain, 'once' | 'removeListener'>
+  } as unknown as Pick<IpcMain, 'on' | 'removeListener'>
   return { bus, reply: (e, decision) => handler?.(e, decision), channel: () => channel }
 }
 
@@ -146,6 +146,22 @@ describe('requestConfirm', () => {
     const p = requestConfirm(bus, () => win, REQ, { timeoutMs: 30 })
     reply({ senderFrame: { name: 'evil' } }, { approved: true }) // foreign → ignored
     await expect(p).resolves.toEqual({ approved: false })
+  })
+
+  it('🔒 BUG-030: genuine reply after a foreign-frame event still resolves (listener not consumed)', async () => {
+    // With bus.once, a foreign event consumed the listener and the genuine human reply
+    // was never handled — the request fell through to the timeout and denied.
+    // With bus.on + finish() removeListener, the listener stays armed after the foreign
+    // event, so the genuine reply resolves correctly.
+    const mainFrame = { name: 'main' }
+    const { win } = fakeWin(mainFrame)
+    const { bus, reply } = fakeBus()
+    const p = requestConfirm(bus, () => win, REQ, { timeoutMs: 5000 })
+    // First: a foreign-frame event (should NOT consume the listener)
+    reply({ senderFrame: { name: 'evil' } }, { approved: true })
+    // Then: the genuine human reply
+    reply({ senderFrame: mainFrame }, { approved: true })
+    await expect(p).resolves.toEqual({ approved: true })
   })
 
   it('🔒 denies (never approves) when the window is gone — no send', async () => {

@@ -25,6 +25,11 @@ export interface NoteCardProps {
   selected?: boolean
   /** Select this element on grip press; `additive` = Shift held. */
   onSelect?: (id: string, additive: boolean) => void
+  /**
+   * Report the rendered board-local size so erase/marquee/snap use the actual
+   * auto-sized dimensions instead of the stale schema h:96 (BUG-050).
+   */
+  onMeasure?: (id: string, w: number, h: number) => void
 }
 
 export function NoteCard({
@@ -35,10 +40,12 @@ export function NoteCard({
   onDelete,
   onEditStart,
   selected,
-  onSelect
+  onSelect,
+  onMeasure
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
   // Set while a grip-drag is initiating so the textarea's blur (focus leaves when
   // the grip is pressed) does NOT prune an empty note mid-drag (#29 guard).
   const dragging = useRef(false)
@@ -54,6 +61,22 @@ export function NoteCard({
     el.style.height = 'auto'
     el.style.height = `${el.scrollHeight}px`
   }, [note.text, note.w])
+
+  // Report the card's rendered board-local size so erase/marquee/snap use the
+  // actual auto-sized height instead of the stale schema h:96 (BUG-050). A
+  // ResizeObserver mirrors the checklist pattern so content-driven size changes
+  // (text edits, font-size changes) are always reflected.
+  useEffect(() => {
+    const card = cardRef.current
+    if (!card || !onMeasure) return
+    const report = (): void => {
+      onMeasure(note.id, card.offsetWidth, card.offsetHeight)
+    }
+    report()
+    const ro = new ResizeObserver(report)
+    ro.observe(card)
+    return () => ro.disconnect()
+  }, [note.id, onMeasure])
 
   // Focus a freshly-dropped empty note so the user can type immediately, AND so
   // leaving it untouched blurs → prunes it instead of leaving an orphan (#29).
@@ -75,6 +98,7 @@ export function NoteCard({
 
   return (
     <div
+      ref={cardRef}
       className="pl-note"
       style={{
         position: 'absolute',
@@ -113,6 +137,9 @@ export function NoteCard({
           // In a draw mode let the press fall through to the well (#6); in select
           // mode this band is the drag handle (the textarea owns its own press).
           if (!interactive) return
+          // Only the primary button initiates a drag; right/middle buttons fall
+          // through to the browser context-menu / OS default (primary-button guard).
+          if (e.button !== 0) return
           e.stopPropagation()
           onSelect?.(note.id, e.shiftKey)
           // Suppress the empty-note blur-prune this gesture is about to trigger.

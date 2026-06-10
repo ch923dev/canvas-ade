@@ -123,6 +123,7 @@ export function WhiteboardSvg({
           markerEnd={selectedIds?.has(a.id) ? `url(#${markerId}-sel)` : `url(#${markerId})`}
           style={{ pointerEvents: drawing ? 'none' : 'stroke', cursor: 'grab' }}
           onPointerDown={(e) => {
+            if (e.button !== 0) return // right/middle: let contextmenu handle it
             e.stopPropagation()
             onSelect?.(a.id, e.shiftKey)
             onDragStart?.(e, a.id)
@@ -147,6 +148,7 @@ export function WhiteboardSvg({
             fill={selectedIds?.has(strokes[i].id) ? 'var(--accent)' : 'var(--text-2)'}
             style={{ pointerEvents: drawing ? 'none' : 'auto', cursor: 'grab' }}
             onPointerDown={(e) => {
+              if (e.button !== 0) return // right/middle: let contextmenu handle it
               e.stopPropagation()
               onSelect?.(strokes[i].id, e.shiftKey)
               onDragStart?.(e, strokes[i].id)

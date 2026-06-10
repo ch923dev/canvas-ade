@@ -4,7 +4,12 @@
  * pick from the recent list. On success the store flips to `open` and the canvas mounts.
  */
 import { useEffect, useState } from 'react'
-import { useCanvasStore, type RecentProject } from '../store/canvasStore'
+import {
+  useCanvasStore,
+  acquireProjectSwitchLock,
+  releaseProjectSwitchLock,
+  type RecentProject
+} from '../store/canvasStore'
 
 export default function WelcomeScreen(): React.ReactElement {
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
@@ -25,8 +30,11 @@ export default function WelcomeScreen(): React.ReactElement {
   }, [])
 
   const openDir = async (dir: string): Promise<void> => {
-    // BUG-008: return early if an IPC call is already in-flight.
-    if (busy) return
+    // BUG-008: return early if an IPC call is already in-flight on THIS mount.
+    // BUG-009: also take the module-level switch lock — a switch started from the
+    // ProjectSwitcher (another surface) mounts this screen fresh mid-flight, so the
+    // per-mount `busy` flag alone cannot see it and two open pipelines could interleave.
+    if (busy || !acquireProjectSwitchLock()) return
     setBusy(true)
     setProjectLoading()
     try {
@@ -39,6 +47,7 @@ export default function WelcomeScreen(): React.ReactElement {
       await applyOpenResult({ ok: false, error: msg })
     } finally {
       setBusy(false)
+      releaseProjectSwitchLock()
     }
   }
 
@@ -52,6 +61,9 @@ export default function WelcomeScreen(): React.ReactElement {
     if (busy) return
     const dir = await window.api.dialog.openFolder()
     if (!dir) return
+    // BUG-009: take the shared switch lock AFTER the (modal) folder dialog so a cancelled
+    // dialog never strands it; bail if another surface's switch is mid-flight.
+    if (!acquireProjectSwitchLock()) return
     setBusy(true)
     setProjectLoading()
     const name =
@@ -67,6 +79,7 @@ export default function WelcomeScreen(): React.ReactElement {
       await applyOpenResult({ ok: false, error: msg })
     } finally {
       setBusy(false)
+      releaseProjectSwitchLock()
     }
   }
 

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, act, fireEvent } from '@testing-library/react'
-import type { ReactElement } from 'react'
-import { useBoardPlacement } from './useBoardPlacement'
+import { useState, type ReactElement } from 'react'
+import { useBoardPlacement, useConnectorDrag } from './useBoardPlacement'
 import { useCanvasStore } from '../../store/canvasStore'
 
 // Mock rf.screenToFlowPosition as identity (world == screen). Transform correctness is the
@@ -146,5 +146,97 @@ describe('useBoardPlacement', () => {
       () => void window.dispatchEvent(new MouseEvent('pointerup', { clientX: 400, clientY: 400 }))
     )
     expect(useCanvasStore.getState().boards).toHaveLength(1)
+  })
+
+  // BUG-046 regression: a right/middle press while a placement tool is armed must NOT start
+  // the gesture — before the fix, the right-button pointerup committed a phantom board.
+  it('BUG-046: a non-primary (right-button) pointerdown does not place a board', () => {
+    const { getByTestId } = render(<Harness />)
+    fireEvent.pointerDown(getByTestId('cap'), { clientX: 100, clientY: 100, button: 2 })
+    up(120, 110)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+    // The press is ignored (not a cancel) — the tool stays armed for the real left-click.
+    expect(useCanvasStore.getState().tool).toBe('terminal')
+  })
+
+  // BUG-047 regression: an OS focus steal mid-drag swallows the pointerup; the stale window
+  // listeners must be torn down or a later, unrelated pointerup commits a phantom board
+  // spanning from the abandoned origin.
+  it('BUG-047: window blur during a drag aborts it — a later pointerup creates nothing', () => {
+    const { getByTestId } = render(<Harness />)
+    down(getByTestId('cap'), 100, 100)
+    move(400, 300)
+    act(() => void window.dispatchEvent(new Event('blur')))
+    up(400, 300)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+    expect(getByTestId('cap').getAttribute('data-ghost')).toBe('none')
+    expect(useCanvasStore.getState().tool).toBe('terminal') // only the drag died; still armed
+  })
+
+  it('BUG-047: pointercancel during a drag aborts it — a later pointerup creates nothing', () => {
+    const { getByTestId } = render(<Harness />)
+    down(getByTestId('cap'), 100, 100)
+    move(400, 300)
+    act(() => void window.dispatchEvent(new Event('pointercancel')))
+    up(400, 300)
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+})
+
+// ── useConnectorDrag (M2 rubber-band, moved here from Canvas.tsx) ──────────────────────
+
+/** Drives the connector gesture with the source pre-armed (as if the handle was pressed). */
+function ConnectorHarness(): ReactElement {
+  const [connectFromId, setConnectFromId] = useState<string | null>('src')
+  const addConnector = useCanvasStore((s) => s.addConnector)
+  useConnectorDrag({
+    rf,
+    connectFromId,
+    setConnectFromId,
+    setConnectPointer: () => {},
+    addConnector
+  })
+  return <div data-testid="armed" data-armed={connectFromId !== null} />
+}
+
+describe('useConnectorDrag', () => {
+  beforeEach(() => {
+    const add = useCanvasStore.getState().addBoard
+    add('terminal', { x: 0, y: 0 }, { id: 'src', size: { w: 100, h: 100 }, exact: true })
+    add('terminal', { x: 200, y: 0 }, { id: 'dst', size: { w: 100, h: 100 }, exact: true })
+  })
+
+  it('releasing over another board commits an orchestration connector', () => {
+    render(<ConnectorHarness />)
+    up(250, 50) // inside dst (screenToFlowPosition is identity)
+    const connectors = useCanvasStore.getState().connectors
+    expect(connectors).toHaveLength(1)
+    expect(connectors[0]).toMatchObject({ sourceId: 'src', targetId: 'dst', kind: 'orchestration' })
+  })
+
+  // BUG-048 regressions: the gesture must ABORT (no commit, listeners gone) on Esc, window
+  // blur (Alt+Tab swallows the pointerup), or pointercancel — before the fix the armed
+  // listeners survived and the next pointerup over a board silently committed a connector.
+  it('BUG-048: Esc aborts — a later pointerup over a board commits nothing', () => {
+    const { getByTestId } = render(<ConnectorHarness />)
+    act(() => void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    expect(getByTestId('armed').getAttribute('data-armed')).toBe('false')
+    up(250, 50)
+    expect(useCanvasStore.getState().connectors).toHaveLength(0)
+  })
+
+  it('BUG-048: window blur aborts — the re-focusing click commits nothing', () => {
+    const { getByTestId } = render(<ConnectorHarness />)
+    act(() => void window.dispatchEvent(new Event('blur')))
+    expect(getByTestId('armed').getAttribute('data-armed')).toBe('false')
+    up(250, 50)
+    expect(useCanvasStore.getState().connectors).toHaveLength(0)
+  })
+
+  it('BUG-048: pointercancel aborts — a later pointerup commits nothing', () => {
+    render(<ConnectorHarness />)
+    act(() => void window.dispatchEvent(new Event('pointercancel')))
+    up(250, 50)
+    expect(useCanvasStore.getState().connectors).toHaveLength(0)
   })
 })

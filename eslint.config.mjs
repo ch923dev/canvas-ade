@@ -25,6 +25,10 @@ export default tseslint.config(
       'design-reference/**',
       // Harness-managed agent worktrees (each carries its own out/ build bundle).
       '.claude/**',
+      // Session worktrees checked out inside the repo dir (parallel-session
+      // convention) — each is its own lint root; linting them from main trips
+      // tsconfigRootDir ambiguity and double-lints in-flight branches.
+      '.worktrees/**',
       // Agent tooling — workflow scripts run with injected globals (phase/agent/…),
       // not lintable as standalone modules; not project source.
       '.agents/**',

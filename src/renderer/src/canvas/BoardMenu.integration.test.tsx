@@ -21,6 +21,23 @@ describe('BoardMenu', () => {
     expect(onDuplicate).toHaveBeenCalledTimes(1)
   })
 
+  // BUG-045 regression: while open, a document-level pointerdown listener closes the menu.
+  // The trigger must stop the REAL pointerdown (the IconBtn only stops mousedown) or the
+  // ordering on a second press is: pointerdown → close → click → toggle(false→true) → the
+  // menu instantly reopens and the ⋯ toggle is dead.
+  it('BUG-045: clicking the open ⋯ trigger closes the menu (no close-then-reopen)', () => {
+    render(<BoardMenu onDuplicate={() => {}} onDelete={() => {}} onFull={() => {}} />)
+    const trigger = screen.getByTitle('More')
+    // Open (real order: pointerdown then click — closed, so the document closer is inert).
+    fireEvent.pointerDown(trigger)
+    fireEvent.click(trigger)
+    expect(document.querySelector('.board-menu')).toBeTruthy()
+    // Second press on the now-open trigger: must CLOSE, not close-then-reopen.
+    fireEvent.pointerDown(trigger)
+    fireEvent.click(trigger)
+    expect(document.querySelector('.board-menu')).toBeNull()
+  })
+
   it('renders the open menu outside the BoardFrame overflow:hidden frame (portaled to body)', () => {
     const { container } = render(
       <div className="bb-frame" style={{ overflow: 'hidden', position: 'absolute', inset: 0 }}>

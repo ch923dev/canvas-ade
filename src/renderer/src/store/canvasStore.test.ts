@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { useCanvasStore, isIdleOnMount, clearIdleOnMount } from './canvasStore'
+import {
+  useCanvasStore,
+  isIdleOnMount,
+  clearIdleOnMount,
+  patchBoardUntracked,
+  patchBoardMeta,
+  acquireProjectSwitchLock,
+  releaseProjectSwitchLock
+} from './canvasStore'
 import {
   SCHEMA_VERSION,
   toObject,
@@ -205,6 +213,31 @@ describe('idle-on-mount registry (M-1: restored terminals stay idle)', () => {
     for (const id of cloneIds) {
       expect(isIdleOnMount(id)).toBe(false)
     }
+  })
+
+  // BUG-012: undo's sweep must have a symmetric redo counterpart — a redone clone must
+  // come back WITH its idle flag, or it auto-spawns shell + launchCommand (a silent
+  // second agent, violating the M-1 rule duplicateBoard exists to uphold).
+  it('duplicate → undo → redo restores the clone idle-on-mount flag (BUG-012)', () => {
+    const src = get().addBoard('terminal', { x: 0, y: 0 })
+    const cloneId = get().duplicateBoard(src)!
+    expect(isIdleOnMount(cloneId)).toBe(true)
+    get().undo() // clone gone, flag swept (BUG-033) — but PARKED for redo
+    expect(get().boards.some((b) => b.id === cloneId)).toBe(false)
+    expect(isIdleOnMount(cloneId)).toBe(false)
+    get().redo() // clone resurrected — it must still mount idle
+    expect(get().boards.some((b) => b.id === cloneId)).toBe(true)
+    expect(isIdleOnMount(cloneId)).toBe(true)
+  })
+
+  it('a real edit after duplicate+undo drops the parked flag for good (no resurrection path)', () => {
+    const src = get().addBoard('terminal', { x: 0, y: 0 })
+    const cloneId = get().duplicateBoard(src)!
+    get().undo() // clone parked, redo armed
+    get().beginChange()
+    get().updateBoard(src, { x: 500 }) // real edit → future cleared, clone unreachable
+    get().undo() // prune runs: parked id no longer reachable from any future snapshot
+    expect(isIdleOnMount(cloneId)).toBe(false)
   })
 })
 
@@ -451,6 +484,40 @@ describe('undo/redo history', () => {
     get().selectBoard(id)
     get().redo()
     expect(get().selectedId).toBeNull()
+  })
+
+  // BUG-004: the first tracked edit after an undo/redo must STILL checkpoint. The old
+  // eager model reused the post-undo present as a skip token, so undo → edit → undo
+  // jumped two logical steps and the undone-to state was permanently lost (in the
+  // minimal repro the board vanished entirely).
+  it('undo → edit → undo restores the pre-edit state, not two steps back (BUG-004)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 200 })
+    get().undo() // back to x=0
+    expect(get().boards[0].x).toBe(0)
+    const pastLen = get().past.length
+    get().beginChange() // gesture start for a REAL move — must not skip its checkpoint
+    get().updateBoard(id, { x: 50 })
+    expect(get().past.length).toBe(pastLen + 1) // checkpoint recorded, not skipped
+    get().undo()
+    expect(get().boards).toHaveLength(1) // the board does NOT vanish (the BUG-004 repro)
+    expect(get().boards[0].x).toBe(0) // restored to the undone-to state
+    get().undo()
+    expect(get().boards).toHaveLength(0) // and one more undo reaches the empty canvas
+  })
+
+  it('redo → edit → undo restores the redone-to state (BUG-004 redo leg)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 200 })
+    get().undo()
+    get().redo() // back to x=200
+    expect(get().boards[0].x).toBe(200)
+    get().beginChange()
+    get().updateBoard(id, { x: 300 })
+    get().undo()
+    expect(get().boards[0].x).toBe(200) // the redone-to state was checkpointed
   })
 })
 
@@ -777,6 +844,67 @@ describe('canvasStore — project lifecycle', () => {
     expect(s.project.status).toBe('error')
     // The original primary-parse message is preserved (not the .bak's).
     expect(s.project.error).toMatch(/non-string id/)
+  })
+
+  // BUG-013: the awaited .bak retry has an open-epoch guard — a SECOND open completing
+  // while the retry is in flight must win; the first call's late continuation is dropped.
+  const corruptDoc = {
+    schemaVersion: 5,
+    viewport: null,
+    boards: [{ id: 123, type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'P', elements: [] }]
+  }
+  const goodDocB = {
+    schemaVersion: 2,
+    viewport: null,
+    boards: [
+      { id: 'b-board', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'B', elements: [] }
+    ]
+  }
+
+  it('a late .bak RECOVERY does not clobber a newer open (BUG-013)', async () => {
+    let release!: (v: unknown) => void
+    reopenFromBak.mockReturnValue(new Promise((res) => (release = res)) as never)
+    const first = useCanvasStore
+      .getState()
+      .applyOpenResult({ ok: true, dir: 'C:/a', name: 'a', doc: corruptDoc })
+    // While project A's .bak retry is in flight, project B opens and applies.
+    await useCanvasStore
+      .getState()
+      .applyOpenResult({ ok: true, dir: 'C:/b', name: 'b', doc: goodDocB })
+    expect(useCanvasStore.getState().project).toEqual({ dir: 'C:/b', name: 'b', status: 'open' })
+    // Now A's .bak recovery resolves with a GOOD doc — it must be discarded, not applied.
+    release({
+      ok: true,
+      dir: 'C:/a',
+      name: 'a',
+      doc: {
+        schemaVersion: 2,
+        viewport: null,
+        boards: [
+          { id: 'stale-a', type: 'planning', x: 0, y: 0, w: 300, h: 200, title: 'A', elements: [] }
+        ]
+      }
+    })
+    await first
+    const s = useCanvasStore.getState()
+    expect(s.project).toEqual({ dir: 'C:/b', name: 'b', status: 'open' }) // B still open
+    expect(s.boards.map((b) => b.id)).toEqual(['b-board']) // not clobbered by A's .bak
+  })
+
+  it('a late .bak FAILURE does not stamp error over a newer open (BUG-013)', async () => {
+    let release!: (v: unknown) => void
+    reopenFromBak.mockReturnValue(new Promise((res) => (release = res)) as never)
+    const first = useCanvasStore
+      .getState()
+      .applyOpenResult({ ok: true, dir: 'C:/a', name: 'a', doc: corruptDoc })
+    await useCanvasStore
+      .getState()
+      .applyOpenResult({ ok: true, dir: 'C:/b', name: 'b', doc: goodDocB })
+    release({ ok: false }) // A's .bak retry fails late → must NOT set status:'error' now
+    await first
+    const s = useCanvasStore.getState()
+    expect(s.project).toEqual({ dir: 'C:/b', name: 'b', status: 'open' })
+    expect(s.boards.map((b) => b.id)).toEqual(['b-board'])
   })
 
   // T4 (loadObject): envelope-valid but deep-corrupt doc must route the fromObject throw to
@@ -1558,5 +1686,88 @@ describe('terminal fontSize patch', () => {
     expect(
       (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).fontSize
     ).toBeUndefined()
+  })
+})
+
+describe('patchBoardUntracked (BUG-057)', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+  })
+
+  it('applies a url patch without clearing an armed redo branch or recording a step', () => {
+    const id = get().addBoard('browser', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 300 })
+    get().undo() // redo armed
+    expect(get().future).toHaveLength(1)
+    const pastLen = get().past.length
+    // The auto-connect detect push: a background machine write, no user gesture.
+    patchBoardUntracked(id, { url: 'http://localhost:5173' })
+    const b = get().boards.find((x) => x.id === id)!
+    expect(b.type === 'browser' && b.url).toBe('http://localhost:5173')
+    expect(get().future).toHaveLength(1) // redo branch SURVIVES the background push
+    expect(get().past.length).toBe(pastLen) // and no undo checkpoint was recorded
+    get().redo() // redo still re-applies the undone move
+    expect(get().boards.find((x) => x.id === id)!.x).toBe(300)
+  })
+
+  it('filters off-type keys (no cross-type forgery) and no-ops on identical values', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    patchBoardUntracked(id, { url: 'http://evil' } as never)
+    expect((get().boards[0] as unknown as Record<string, unknown>).url).toBeUndefined()
+    const ref = get().boards
+    patchBoardUntracked(id, { x: get().boards[0].x })
+    expect(get().boards).toBe(ref) // identical value → same ref, no notify churn
+  })
+})
+
+describe('patchBoardMeta (BUG-064)', () => {
+  beforeEach(() => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+  })
+
+  it('keeps an armed redo branch, and the metadata survives undo AND redo (rails rewritten)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    get().beginChange()
+    get().updateBoard(id, { x: 200 })
+    get().undo() // redo armed, x=0
+    expect(get().future).toHaveLength(1)
+    // MAIN pushes recap:learned at an arbitrary moment.
+    patchBoardMeta(id, { agentSessionId: 'sess-1', agentTranscriptPath: 'C:/t.jsonl' })
+    expect(get().future).toHaveLength(1) // redo branch survives the MAIN push
+    expect((get().boards[0] as TerminalBoard).agentSessionId).toBe('sess-1')
+    get().redo() // the future snapshot was rewritten → metadata survives redo
+    expect(get().boards[0].x).toBe(200)
+    expect((get().boards[0] as TerminalBoard).agentSessionId).toBe('sess-1')
+    expect((get().boards[0] as TerminalBoard).agentTranscriptPath).toBe('C:/t.jsonl')
+    get().undo() // past snapshots were rewritten too → undo does not revert the metadata
+    expect(get().boards[0].x).toBe(0)
+    expect((get().boards[0] as TerminalBoard).agentSessionId).toBe('sess-1')
+  })
+
+  it('re-pushing identical metadata is a full no-op (same refs, nothing rewritten)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 })
+    patchBoardMeta(id, { agentSessionId: 's1', agentTranscriptPath: 'p' })
+    const boardsRef = get().boards
+    const pastRef = get().past
+    patchBoardMeta(id, { agentSessionId: 's1', agentTranscriptPath: 'p' })
+    expect(get().boards).toBe(boardsRef)
+    expect(get().past).toBe(pastRef)
+  })
+
+  it('never lands on a non-terminal board', () => {
+    const id = get().addBoard('browser', { x: 0, y: 0 })
+    patchBoardMeta(id, { agentSessionId: 's1' })
+    expect((get().boards[0] as unknown as Record<string, unknown>).agentSessionId).toBeUndefined()
+  })
+})
+
+describe('project switch lock (BUG-009)', () => {
+  it('only one switch pipeline can hold the lock; release re-opens it', () => {
+    expect(acquireProjectSwitchLock()).toBe(true)
+    expect(acquireProjectSwitchLock()).toBe(false) // a concurrent switch is rejected
+    releaseProjectSwitchLock()
+    expect(acquireProjectSwitchLock()).toBe(true) // released → next switch may start
+    releaseProjectSwitchLock()
   })
 })

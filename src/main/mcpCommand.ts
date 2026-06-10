@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 
@@ -43,7 +44,7 @@ const ACK_TIMEOUT_MS = 2000
  * handler-registration convention.
  */
 export function sendMcpCommand(
-  bus: Pick<IpcMain, 'once' | 'removeListener'>,
+  bus: Pick<IpcMain, 'on' | 'removeListener'>,
   getWin: () => BrowserWindow | null,
   command: McpCommand,
   timeoutMs: number = ACK_TIMEOUT_MS
@@ -54,7 +55,9 @@ export function sendMcpCommand(
     return Promise.resolve({ ok: false, error: 'no-window' })
   }
   return new Promise<McpCommandAck>((resolve) => {
-    const replyChannel = `mcp:command:ack:${Date.now()}:${Math.random().toString(36).slice(2)}`
+    // 🔒 CSPRNG channel id — matches the BUG-022/BUG-038 hardening sweep (BUG-031).
+    // Date.now()+Math.random() is predictable (~48 bits); randomUUID() is not.
+    const replyChannel = `mcp:command:ack:${randomUUID()}`
     let done = false
     const finish = (ack: McpCommandAck): void => {
       if (done) return
@@ -72,7 +75,9 @@ export function sendMcpCommand(
       )
     }
     const timer = setTimeout(() => finish({ ok: false, error: 'timeout' }), timeoutMs)
-    bus.once(replyChannel, onReply)
+    // 🔒 Use bus.on (not bus.once) so a foreign-frame event does NOT consume the listener
+    // before the genuine renderer ack arrives (BUG-030). finish() calls removeListener.
+    bus.on(replyChannel, onReply)
     try {
       wc.send('mcp:command', { command, replyChannel })
     } catch {

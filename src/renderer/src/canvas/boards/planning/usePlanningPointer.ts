@@ -150,6 +150,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
   // ── Element drag (select tool): grab → move in board-local space ─────────────
   const startElementDrag = useCallback(
     (e: PointerEvent, id: string) => {
+      if (e.button !== 0) return // right/middle: ignore, let contextmenu handle it
       const el = elements.find((x) => x.id === id)
       if (!el || isLocked(el)) return // a locked element can't initiate a drag
       // Do NOT checkpoint here: a zero-movement grab (plain click) would push a
@@ -186,6 +187,11 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
   const onWellPointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
+      // Only react to primary-button (left) presses. Right/middle clicks are owned
+      // by the browser context-menu path (onWellContextMenu) — letting them through
+      // would erase/create/move on a right-press and clear the selection on a
+      // right-click on empty space, undermining the BUG-013 context-menu fix.
+      if (e.button !== 0) return
       // In select mode, only react to a press on the EMPTY well (element presses
       // are owned by the cards). In a DRAW mode the press may have fallen through
       // a card (cards no longer stop it — #6), so proceed regardless of target and
@@ -238,7 +244,9 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         // snapshot (the move/draw paths defer for the same reason; WB-1 class). The
         // checkpoint is taken in onWellPointerUp only if something was erased.
         const removed = new Set<string>()
-        for (const el of elements) if (!isLocked(el) && eraseHitTest(el, p)) removed.add(el.id)
+        for (const el of elements)
+          if (!isLocked(el) && eraseHitTest(el, p, undefined, measuredRef.current))
+            removed.add(el.id)
         drag.current = { mode: 'erase', removed }
         setPendingErase(new Set(removed))
         e.currentTarget.setPointerCapture(e.pointerId)
@@ -257,7 +265,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       // select tool, empty press → place a text caret on double interactions is
       // handled per-element; a single empty press just does nothing here.
     },
-    [tool, elements, commit, toBoard, beginChange, setTool]
+    [tool, elements, commit, toBoard, beginChange, setTool, measuredRef]
   )
 
   const onWellPointerMove = useCallback(
@@ -304,7 +312,11 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       } else if (d.mode === 'erase') {
         let grew = false
         for (const el of elements) {
-          if (!d.removed.has(el.id) && !isLocked(el) && eraseHitTest(el, p)) {
+          if (
+            !d.removed.has(el.id) &&
+            !isLocked(el) &&
+            eraseHitTest(el, p, undefined, measuredRef.current)
+          ) {
             d.removed.add(el.id)
             grew = true
           }
@@ -345,7 +357,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       const p = toBoard(e)
       // Topmost hit under the cursor (later elements render above; reuse the erase
       // hit-test, which already covers every kind incl. arrows/strokes).
-      const hits = elements.filter((el) => eraseHitTest(el, p))
+      const hits = elements.filter((el) => eraseHitTest(el, p, undefined, measuredRef.current))
       const targetId = hits.length > 0 ? hits[hits.length - 1].id : null
       // Compute the EFFECTIVE selection synchronously (React state is async, so we can't
       // read it back after setSelectedIds): a right-click on an element already in the
@@ -371,7 +383,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         setContextMenu({ x: e.clientX, y: e.clientY, entries: buildMenuEntries(effective) })
       }
     },
-    [elements, toBoard, selectedIds, buildMenuEntries, setSelectedIds, setContextMenu]
+    [elements, toBoard, selectedIds, buildMenuEntries, setSelectedIds, setContextMenu, measuredRef]
   )
 
   const onWellPointerUp = useCallback(

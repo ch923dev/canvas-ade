@@ -15,7 +15,6 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { TerminalConfig } from './TerminalConfig'
-import { Terminal } from '@xterm/xterm'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
@@ -30,6 +29,7 @@ import { resumeCommand } from './terminal/resumeCommand'
 import { BrowserPickPanel, NEW_BROWSER } from './terminal/BrowserPickPanel'
 import { usePickerDismiss } from './terminal/usePickerDismiss'
 import { useTerminalSpawn } from './terminal/useTerminalSpawn'
+import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
 import {
@@ -40,34 +40,6 @@ import {
   MIN_TERMINAL_FONT,
   MAX_TERMINAL_FONT
 } from './terminal/terminalFont'
-
-/**
- * Smart paste: if the clipboard holds an image, stage it to a temp file and inject the
- * quoted path; otherwise inject the clipboard text. Uses `term.paste` so multiline
- * content gets bracketed-paste markers when the agent enabled them (no per-line submit).
- * Exported for the decision-seam unit test (TerminalBoard.paste.test.ts) — a non-component
- * export from a component module, so react-refresh's only-export-components is moot here.
- */
-// eslint-disable-next-line react-refresh/only-export-components
-export async function pasteIntoTerminal(term: Terminal, boardId: string): Promise<void> {
-  // Staging can fail (ENOSPC disk full, EPERM antivirus lock, read-only .canvas/tmp).
-  // The IPC handler now returns null on those errors, but guard the await itself too
-  // so any unexpected rejection falls through to the text-paste branch rather than
-  // propagating to the `void` call site and silently dropping the paste entirely.
-  let path: string | null = null
-  try {
-    path = await window.api.stageClipboardImage(boardId)
-  } catch {
-    path = null
-  }
-  if (term.element === undefined) return // disposed during the await
-  if (path) {
-    term.paste(`"${path}" `)
-    return
-  }
-  const text = await window.api.clipboard.readText()
-  if (text && term.element !== undefined) term.paste(text)
-}
 
 export function TerminalBoard({
   board,
@@ -232,6 +204,7 @@ export function TerminalBoard({
     if (!el) return
     const onWheel = (e: WheelEvent): void => {
       if (!e.ctrlKey) return
+      if (e.deltaY === 0) return // tilt-wheel / horizontal trackpad pan: no font change
       e.preventDefault()
       e.stopPropagation()
       fontStepRef.current(e.deltaY < 0 ? 1 : -1)
@@ -429,7 +402,7 @@ export function TerminalBoard({
               label: 'Paste',
               onSelect: () => {
                 const t = termRef.current
-                if (t) void pasteIntoTerminal(t, board.id)
+                if (t) void pasteIntoTerminal(t, board.id, () => termRef.current === t)
               }
             },
             {
@@ -511,7 +484,9 @@ export function TerminalBoard({
               // Skip interactive chrome (dock buttons, pickers/menus, the editable label) so a
               // double-click on a control never also flips the board.
               if (
-                (e.target as HTMLElement).closest('button, input, .ca-port-picker, [data-no-flip]')
+                (e.target as HTMLElement).closest(
+                  'button, input, select, label, .ca-port-picker, [data-no-flip]'
+                )
               )
                 return
               e.stopPropagation() // stop RF's node-double-click (focusBoard) from also firing
@@ -553,6 +528,7 @@ export function TerminalBoard({
                 <div
                   className="ca-preview-note"
                   role="status"
+                  data-no-flip
                   onMouseDown={(e) => e.stopPropagation()}
                 >
                   {previewNote}

@@ -17,11 +17,12 @@ import writeFileAtomic from 'write-file-atomic'
 export const DEFAULT_MAX_CALLS_PER_DAY = 200
 
 /**
- * Upper bound for a persisted `calls` value (BUG-004). The running count can never legitimately
- * exceed any reasonable cap, so an on-disk value beyond 10× the default is corrupt/tampered and
- * is rejected (→ reset to 0) rather than trusted — closing the overflow-DoS / cap-wedge class.
+ * Upper bound for a persisted `calls` value when no configured cap is known (BUG-004 / BUG-038).
+ * Used as the rejection threshold in read() when the actual cap is unavailable. The read-time
+ * check is deliberately conservative: 10× the default (2000) guards against obvious corruption.
+ * tryConsume() computes its own bound from the live cap so configured caps above 2000 work.
  */
-const MAX_PERSISTED_CALLS = DEFAULT_MAX_CALLS_PER_DAY * 10
+const MAX_PERSISTED_CALLS_DEFAULT = DEFAULT_MAX_CALLS_PER_DAY * 10
 
 /** Injected clock so the day boundary is deterministic in tests. */
 export type Clock = () => Date
@@ -55,7 +56,14 @@ export function dayKey(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-function read(userDataDir: string): BudgetState | null {
+/**
+ * Read the persisted budget state. Accepts calls up to `maxCap` (the live configured cap) so
+ * caps above MAX_PERSISTED_CALLS_DEFAULT are not spuriously rejected as corrupt. When no live
+ * cap is known (read-time callers like current()) the conservative default ceiling is used.
+ * BUG-038: without the cap parameter, a persisted count of 2001 for a configured cap of 5000
+ * was rejected as corrupt and reset to 0, creating a 0->2001->0 counter cycle.
+ */
+function read(userDataDir: string, maxCap?: number): BudgetState | null {
   const f = fileFor(userDataDir)
   if (!existsSync(f)) return null
   try {
@@ -65,17 +73,22 @@ function read(userDataDir: string): BudgetState | null {
     // floats (cap-boundary drift), Infinity (note: JSON.parse('{"calls":1e309}') === Infinity →
     // wedges the budget at cap all day), and MAX_SAFE_INTEGER (overflow DoS — every call blocked
     // until midnight). Anything outside the bound falls through to the warn + reset-to-0 path.
+    // BUG-038: the upper bound is max(configured cap, default ceiling) so a legitimate count for
+    // a high cap (e.g. 5000) is not rejected as corrupt. MAX_SAFE_INTEGER is still excluded.
+    const ceiling = Math.max(maxCap ?? 0, MAX_PERSISTED_CALLS_DEFAULT)
     if (
       typeof p.day === 'string' &&
       typeof p.calls === 'number' &&
       Number.isInteger(p.calls) &&
       p.calls >= 0 &&
-      p.calls <= MAX_PERSISTED_CALLS
+      p.calls <= ceiling
     ) {
       return { day: p.day, calls: p.calls }
     }
     // Malformed shape → today's count resets to 0. Trace it so an unexpected budget reset
     // (e.g. a OneDrive/network-share write conflict truncating the file) isn't invisible (M2).
+    // BUG-038: only log this warning for genuinely malformed data, not for a valid count that
+    // merely exceeds the old hard-coded 2000 ceiling.
     console.warn('[llmBudget] budget file has an invalid shape — resetting day count')
     return null
   } catch {
@@ -90,21 +103,29 @@ function write(userDataDir: string, state: BudgetState): void {
 }
 
 export function createBudgetStore(userDataDir: string, clock: Clock): BudgetStore {
+  // BUG-038: track the largest cap seen by tryConsume so peek() can use the same ceiling and
+  // avoids falsely rejecting a legitimate high count (e.g. 2001 for cap=5000) as corrupt.
+  let knownCap: number | undefined
+
   /** Today's state, resetting a stale (prior-day) or missing/corrupt counter to zero. */
-  function current(): BudgetState {
+  function current(maxCap?: number): BudgetState {
     const today = dayKey(clock())
-    const stored = read(userDataDir)
+    // BUG-038: pass the live cap so read() does not reject a legitimate high count as corrupt.
+    const stored = read(userDataDir, maxCap)
     if (!stored || stored.day !== today) return { day: today, calls: 0 }
     return stored
   }
   return {
-    peek: current,
+    peek: () => current(knownCap),
     tryConsume(cap) {
-      // Read→check→write is fully SYNCHRONOUS (no await): single-threaded Node cannot
-      // interleave two tryConsume calls, so the summaryLoop and the llm:summarize IPC path —
-      // which each hold their own store over this same file — can never double-spend a slot.
+      // Read->check->write is fully SYNCHRONOUS (no await): single-threaded Node cannot
+      // interleave two tryConsume calls, so the summaryLoop and the llm:summarize IPC path --
+      // which each hold their own store over this same file -- can never double-spend a slot.
       // Cross-process double-spend is precluded by Electron's single-instance lock.
-      const state = current()
+      // BUG-038: pass cap to current() so a persisted count within [MAX_PERSISTED_CALLS_DEFAULT+1,
+      // cap] is accepted rather than treated as corrupt and reset to 0.
+      if (knownCap === undefined || cap > knownCap) knownCap = cap
+      const state = current(knownCap)
       if (state.calls >= cap) return false
       write(userDataDir, { day: state.day, calls: state.calls + 1 })
       return true

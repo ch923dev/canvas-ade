@@ -86,6 +86,33 @@ describe('createAutosaver', () => {
     await a.flush()
     expect(onError).toHaveBeenCalledTimes(1)
   })
+
+  // BUG-008: a failed save must re-arm dirty, or every later flush (blur, beforeunload,
+  // MAIN's project:flush quit handshake) no-ops on the `!dirty` gate and the tail edits
+  // are permanently lost even after the disk recovers.
+  it('BUG-008: a rejected save re-arms dirty so a later flush retries the write', async () => {
+    vi.useRealTimers()
+    const onError = vi.fn()
+    const save = vi.fn().mockRejectedValueOnce(new Error('EBUSY')).mockResolvedValue(true)
+    const a = createAutosaver({ save, getStatus: () => 'open', onError })
+    a.schedule()
+    await a.flush() // transient lock: first attempt fails
+    expect(onError).toHaveBeenCalledTimes(1)
+    await a.flush() // the quit-flush handshake must retry, not no-op
+    expect(save).toHaveBeenCalledTimes(2)
+  })
+
+  it('BUG-008: a save resolving false re-arms dirty so a later flush retries', async () => {
+    vi.useRealTimers()
+    const save = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true)
+    const a = createAutosaver({ save, getStatus: () => 'open' })
+    a.schedule()
+    await a.flush()
+    await a.flush()
+    expect(save).toHaveBeenCalledTimes(2)
+    await a.flush() // after a SUCCESSFUL save, dirty is clear → no third write
+    expect(save).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('active-autosaver registry (PERSIST-B)', () => {
