@@ -17,8 +17,15 @@ export const TERMINAL_HINT_KEY = 'ca.terminal.hintDismissed'
 
 const subs = new Set<() => void>()
 
+// In-memory fallback, set ONLY when the sticky write fails (quota path): without it,
+// the lazy re-read below would return false after a failed setItem and the × click
+// would visibly do nothing. Never set on the success path — the lazy-read e2e reset
+// affordance (clear the key, no reload) stays intact.
+let sessionFallback = false
+
 /** True once the user has dismissed the hint anywhere (sticky, app-wide). */
 export function isHintDismissed(): boolean {
+  if (sessionFallback) return true
   try {
     return window.localStorage.getItem(TERMINAL_HINT_KEY) === '1'
   } catch {
@@ -31,9 +38,14 @@ export function dismissHint(): void {
   try {
     window.localStorage.setItem(TERMINAL_HINT_KEY, '1')
   } catch {
-    // Storage write failed → the pill still hides for this session via the emit below.
+    sessionFallback = true // write failed — still hide for this session (in-memory)
   }
   subs.forEach((fn) => fn())
+}
+
+/** Test-only: clear the in-memory write-failure fallback (module state). */
+export function resetHintSessionFallbackForTest(): void {
+  sessionFallback = false
 }
 
 /** `useSyncExternalStore` subscribe contract. */

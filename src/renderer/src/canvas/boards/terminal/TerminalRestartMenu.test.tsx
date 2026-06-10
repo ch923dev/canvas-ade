@@ -10,19 +10,30 @@ import { TerminalRestartMenu } from './TerminalRestartMenu'
 
 afterEach(cleanup)
 
+// cleanup() unmounts the React tree but not these hand-appended anchor spans —
+// remove them too so they don't accumulate across tests (jsdom hygiene).
+const anchors: HTMLElement[] = []
+function makeAnchor(): HTMLElement {
+  const anchor = document.createElement('span')
+  document.body.appendChild(anchor)
+  anchors.push(anchor)
+  return anchor
+}
+afterEach(() => {
+  anchors.splice(0).forEach((a) => a.remove())
+})
+
 function renderMenu(): {
   onResume: ReturnType<typeof vi.fn>
   onNew: ReturnType<typeof vi.fn>
   onClose: ReturnType<typeof vi.fn>
 } {
-  const anchor = document.createElement('span')
-  document.body.appendChild(anchor)
   const onResume = vi.fn()
   const onNew = vi.fn()
   const onClose = vi.fn()
   render(
     <TerminalRestartMenu
-      anchor={{ current: anchor }}
+      anchor={{ current: makeAnchor() }}
       onResume={onResume}
       onNew={onNew}
       onClose={onClose}
@@ -41,11 +52,9 @@ describe('TerminalRestartMenu (shared Menu shell)', () => {
 
   it('picking Resume closes first, then fires the action', () => {
     const calls: string[] = []
-    const anchor = document.createElement('span')
-    document.body.appendChild(anchor)
     render(
       <TerminalRestartMenu
-        anchor={{ current: anchor }}
+        anchor={{ current: makeAnchor() }}
         onResume={() => calls.push('resume')}
         onNew={() => calls.push('new')}
         onClose={() => calls.push('close')}
