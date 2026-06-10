@@ -246,11 +246,16 @@ export function registerLlmHandlers(
       }
       // Preserve an already-configured cap when the caller omits it (the Settings modal does):
       // otherwise every Save silently wipes maxCallsPerDay back to the 200 default (F-B).
+      // BUG-040: same preserve-when-omitted rule for baseUrl — the Settings modal sends
+      // `baseUrl: undefined` for non-local providers, so writing `a.baseUrl` unconditionally
+      // wiped the stored local baseUrl on every non-local Save (local → openrouter → local
+      // left the local provider permanently unconfigured). baseUrl is local-only (llmConfig),
+      // so preserving it across non-local saves is loss-free.
       const existing = readLlmConfig(userDataDir)
       const cfg: LlmConfig = {
         provider: a.provider,
         model: a.model,
-        baseUrl: a.baseUrl,
+        baseUrl: a.baseUrl ?? existing.baseUrl,
         maxCallsPerDay: a.maxCallsPerDay ?? existing.maxCallsPerDay
       }
       writeLlmConfig(userDataDir, cfg)

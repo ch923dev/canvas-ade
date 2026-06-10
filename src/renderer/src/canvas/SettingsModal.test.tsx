@@ -371,6 +371,40 @@ describe('Agent recaps toggle', () => {
     await waitFor(() => expect(toggle.checked).toBe(false))
   })
 
+  it('BUG-065: reverts the toggle and shows an error on a resolved {ok:false}', async () => {
+    useCanvasStore.setState({
+      project: { dir: '/some/project', name: 'my-project', status: 'open' }
+    })
+    recap.getConsent.mockResolvedValue('enabled')
+    recap.setConsent.mockResolvedValue({ ok: false })
+    render(<SettingsModal onClose={() => {}} />)
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.checked).toBe(true))
+    fireEvent.click(toggle) // untick — but MAIN reports nothing was persisted
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/agent recaps/i))
+    // The optimistic untick was reverted: the hook is still installed, the UI must say so.
+    expect(toggle.checked).toBe(true)
+  })
+
+  it('BUG-065: a setConsent rejection reverts the toggle without an unhandledRejection', async () => {
+    useCanvasStore.setState({
+      project: { dir: '/some/project', name: 'my-project', status: 'open' }
+    })
+    recap.getConsent.mockResolvedValue('declined')
+    recap.setConsent.mockRejectedValue(new Error('ENOSPC'))
+    const unhandled = vi.fn()
+    window.addEventListener('unhandledrejection', unhandled)
+    render(<SettingsModal onClose={() => {}} />)
+    const toggle = await findToggle()
+    await waitFor(() => expect(toggle.disabled).toBe(false))
+    fireEvent.click(toggle) // tick — but the write throws (disk full)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/agent recaps/i))
+    expect(toggle.checked).toBe(false) // reverted — recaps were never enabled
+    await new Promise((r) => setTimeout(r, 10))
+    expect(unhandled).not.toHaveBeenCalled()
+    window.removeEventListener('unhandledrejection', unhandled)
+  })
+
   it('re-reads consent when the open project changes (projectDir dep)', async () => {
     // Start with no project (dir:null) — getConsent is called once on mount.
     recap.getConsent.mockResolvedValue('declined')

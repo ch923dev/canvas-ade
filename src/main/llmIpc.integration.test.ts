@@ -260,6 +260,33 @@ describe('registerLlmHandlers — key channels', () => {
     expect(readLlmConfig(dir).maxCallsPerDay).toBe(7)
   })
 
+  // BUG-040: a non-local Save (the Settings modal sends baseUrl: undefined) must NOT wipe the
+  // stored local baseUrl — same preserve-when-omitted rule as maxCallsPerDay (F-B).
+  it('setConfig preserves the stored local baseUrl across a non-local save (BUG-040)', async () => {
+    const { cap, dir } = setupKeyed(fakeEncryptor())
+    await cap.invoke('llm:setConfig', {
+      provider: 'local',
+      model: 'local-model',
+      baseUrl: 'http://127.0.0.1:1234/v1'
+    })
+    // Switch to openrouter — the modal omits baseUrl for non-local providers.
+    await cap.invoke('llm:setConfig', { provider: 'openrouter', model: 'm' })
+    expect(readLlmConfig(dir).baseUrl).toBe('http://127.0.0.1:1234/v1')
+    // Switching back to local finds the provider still configured.
+    await cap.invoke('llm:setConfig', { provider: 'local', model: 'local-model' })
+    const s = (await cap.invoke('llm:status')) as LlmStatus
+    expect(s.baseUrl).toBe('http://127.0.0.1:1234/v1')
+    expect(s.hasProvider).toBe(true)
+    // An explicitly sent baseUrl still overwrites the stored one.
+    await cap.invoke('llm:setConfig', {
+      provider: 'local',
+      model: 'local-model',
+      baseUrl: 'http://127.0.0.1:5678/v1'
+    })
+    expect(readLlmConfig(dir).baseUrl).toBe('http://127.0.0.1:5678/v1')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('status echoes the configured baseUrl for the local provider', async () => {
     const { cap } = setupKeyed(fakeEncryptor())
     await cap.invoke('llm:setConfig', {
