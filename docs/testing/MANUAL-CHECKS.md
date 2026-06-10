@@ -32,6 +32,17 @@ is part of every check.
 - [ ] Paste an image / drag a file in -> the path or image reaches the agent.
 - [ ] Font resize (if touched): persists per board + sticky default; **no PTY respawn** (scrollback survives).
 - [ ] Kill the board -> the child process tree dies (no zombie agent), no console error.
+- [ ] Config popover (D2-B guard): edit the launch command, press Esc or click away -> "Unsaved
+      changes" row arms (no silent discard); Discard closes without persisting; an edit or second
+      Esc returns to editing; a clean popover closes straight through.
+- [ ] Bare-shell terminal (no launchCommand) -> the first-run hint pill shows bottom-left; clicking
+      it opens config; X dismisses it on EVERY board, forever (sticky across restarts).
+- [ ] While `starting`, the top sliver runs in its slow/dim variant, then switches to the normal
+      run sliver on `running` (static under reduced motion).
+- [ ] Restart (with a resumable session) -> menu auto-closes on Esc / outside click / re-click;
+      arrow keys walk Resume/New.
+- [ ] Flip to recap -> keys/focus land on the recap face (typing does NOT reach the hidden
+      terminal); flip back -> typing resumes in xterm without a click.
 
 ## Browser preview board
 
