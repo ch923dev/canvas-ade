@@ -2,7 +2,7 @@
  * First-run launchCommand hint pill (design-audit D2-B, 🎨 artifact signed off
  * 2026-06-11): one dismissible line bottom-left of a bare-shell terminal well —
  * "Set a launch command (e.g. `claude`) ⚙ ×". The text is the action (opens the
- * config popover); × dismisses app-wide forever (see terminalHint.ts). The parent
+ * config popover); × dismisses app-wide forever (see hintDismissal.ts). The parent
  * renders this only while `board.launchCommand` is empty, so setting a command
  * hides it without any state here. Styling: `.ca-term-hint` block in index.css
  * (raised surface, subtle border, accent gear — calm, no glow).

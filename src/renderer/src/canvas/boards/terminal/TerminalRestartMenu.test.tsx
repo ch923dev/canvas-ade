@@ -64,12 +64,20 @@ describe('TerminalRestartMenu (shared Menu shell)', () => {
     expect(calls).toEqual(['close', 'resume'])
   })
 
-  it('New session fires onNew + onClose; Escape auto-closes (shell behavior)', () => {
+  it('New session fires onNew + onClose', () => {
     const { onNew, onClose } = renderMenu()
     fireEvent.click(screen.getByText('New session'))
     expect(onNew).toHaveBeenCalledTimes(1)
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  // Isolated from the pick cases: in production the first onClose unmounts the menu,
+  // so a combined case would exercise Escape against an already-closed menu.
+  it('Escape auto-closes (shell behavior)', () => {
+    const { onResume, onNew, onClose } = renderMenu()
     fireEvent.keyDown(window, { key: 'Escape' })
-    expect(onClose).toHaveBeenCalledTimes(2)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(onResume).not.toHaveBeenCalled()
+    expect(onNew).not.toHaveBeenCalled()
   })
 })
