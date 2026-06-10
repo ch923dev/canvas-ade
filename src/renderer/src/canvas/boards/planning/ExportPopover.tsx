@@ -39,8 +39,10 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
           console.error('whiteboard export failed:', res.error)
           // Fixed copy: res.error is a raw OS/API string (paths, ENOENT) and the toast
           // is read aloud by the alert region; the console line above keeps the detail.
-          // D1-A: failures route to the app toast channel (was a board-anchored note).
+          // D1-A: failures route to the app toast channel (was a board-anchored note);
+          // board-keyed so a quick retry replaces the toast instead of stacking.
           showToast({
+            id: `export-failed-${board.id}`,
             kind: 'error',
             message: res.error
               ? 'Export failed — check file permissions and disk space'
@@ -50,7 +52,7 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('whiteboard export failed', err)
-        showToast({ kind: 'error', message: 'Export failed' })
+        showToast({ id: `export-failed-${board.id}`, kind: 'error', message: 'Export failed' })
       }
     },
     [board]

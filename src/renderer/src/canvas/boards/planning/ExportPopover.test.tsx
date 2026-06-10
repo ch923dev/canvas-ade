@@ -93,8 +93,28 @@ describe('ExportPopover — failure feedback routes to the toast channel (D1-A)'
 
     const { toasts } = useToastStore.getState()
     expect(toasts).toHaveLength(1)
+    expect(toasts[0].id).toBe('export-failed-b1') // board-keyed: repeats replace in place
     expect(toasts[0].kind).toBe('error')
     expect(toasts[0].message).toBe('Export failed — check file permissions and disk space')
+  })
+
+  it('a repeat failure replaces the keyed toast instead of stacking', async () => {
+    const save = vi.fn(async () => ({ ok: false, canceled: false, error: 'EACCES' }))
+    ;(window as unknown as { api: unknown }).api = { export: { save } }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<ExportPopover board={board()} />)
+
+    clickExportSvg()
+    await settleExport(save)
+    clickExportSvg()
+    for (let i = 0; i < 50 && save.mock.calls.length < 2; i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
+      })
+    }
+
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(useToastStore.getState().toasts).toHaveLength(1)
   })
 
   it('an explicit user cancel stays silent', async () => {
