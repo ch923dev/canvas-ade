@@ -90,7 +90,9 @@ test.describe('terminal polish (D2-B)', () => {
       // A terminal WITH a launch command never shows the pill (independent of dismissal).
       await evalIn(page, `localStorage.removeItem(${JSON.stringify(HINT_KEY)})`)
       const id2 = await seed(page, 'terminal', { launchCommand: 'echo HINTLESS' })
-      await page.waitForTimeout(300)
+      // Anchor on the board chrome first: a bare toHaveCount(0) would pass trivially
+      // before the seeded board even renders (asserting absence of everything).
+      await expect(page.locator(node(id2))).toBeVisible()
       await expect(page.locator(`${node(id2)} [data-test="terminal-hint"]`)).toHaveCount(0)
     } finally {
       // Never ratchet later specs/runs: leave the key absent (the pre-dismissal state).
