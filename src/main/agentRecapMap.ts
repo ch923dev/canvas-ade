@@ -98,7 +98,10 @@ export function installRecapHook(opts: InstallOpts): void {
               '/d',
               '/s',
               '/c',
-              `${pairs.map(([k, v]) => `set ${k}=${v}&& `).join('')}${invocation}`
+              // `set "K=V"` (quotes around the WHOLE assignment — cmd strips them and the
+              // value keeps metacharacters/spaces literal). NOT `set K="V"`, which would
+              // store the quotes INTO the value.
+              `${pairs.map(([k, v]) => `set "${k}=${v}"&& `).join('')}${invocation}`
             ]
           }
         : {

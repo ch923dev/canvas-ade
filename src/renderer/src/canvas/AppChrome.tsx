@@ -142,7 +142,10 @@ export function ProjectSwitcher(): ReactElement {
       //    'loading', so a swallowed false here loses the outgoing project's tail edits with
       //    no signal (PERSIST-A / the SAVE-1 silent-loss class). Surface it and abort the
       //    switch so the outgoing project stays open and editable for a retry.
-      const saved = await window.api.project.save(toObject())
+      const saved = await window.api.project.save(
+        toObject(),
+        useCanvasStore.getState().project.dir ?? undefined
+      )
       if (saved === false) {
         // eslint-disable-next-line no-console
         console.error('project switch: final flush failed; aborting switch to avoid data loss')
