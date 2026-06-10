@@ -99,6 +99,15 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
+  // BUG-005: child WebContentsViews are NOT destroyed automatically with their
+  // window (Electron docs mandate closing them in a 'closed' handler). Without
+  // this, the preview module's stale views/owner/attached state survives a macOS
+  // close -> activate reopen — attach() then skips addChildView on the NEW window
+  // (blank Browser boards) — and the preview renderer processes leak while no
+  // window exists. Close every preview view on window destruction; the recreated
+  // window's renderer re-opens fresh views per persisted board.
+  mainWindow.on('closed', () => disposeAllPreviews())
+
   // External links open in the OS browser, never in-app. The scheme is allowlisted
   // (Bug #23) so a stray window.open of file:/smb:/custom-protocol is dropped, not
   // handed to the OS handler.

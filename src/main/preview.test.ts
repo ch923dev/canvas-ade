@@ -5,7 +5,8 @@ import {
   isAllowedPreviewUrl,
   isAllowedExternal,
   registerPreviewNavGuards,
-  registerLoadLatch
+  registerLoadLatch,
+  createOpenExternalLimiter
 } from './preview'
 
 // Bug #5: a dead/refused URL loads a Chromium error page whose did-finish-load must
@@ -256,6 +257,47 @@ describe('registerLoadLatch (failed-latch lifecycle)', () => {
     wc.emit('did-fail-load', {}, -102, 'ERR_FAILED', 'http://localhost:5173/sub', false) // subframe
     expect(latch.failed).toBe(false)
     expect(hooks.onFail).not.toHaveBeenCalled()
+  })
+})
+
+// BUG-029: Electron has no popup blocker — gesture-free window.open floods from
+// untrusted preview content would otherwise tab-bomb the OS browser. The per-view
+// token bucket (burst 3, +1 token/10s) must allow legitimate single opens but cap
+// a setInterval(window.open, 50) flood. Driven with an injected fake clock.
+describe('createOpenExternalLimiter (BUG-029)', () => {
+  it('allows a small burst then blocks a gesture-free flood', () => {
+    let t = 0
+    const allow = createOpenExternalLimiter(3, 10_000, () => t)
+    expect(allow()).toBe(true)
+    expect(allow()).toBe(true)
+    expect(allow()).toBe(true)
+    // setInterval(() => window.open(...), 50): every subsequent call is dropped.
+    for (let i = 0; i < 100; i++) {
+      t += 50
+      expect(allow()).toBe(false)
+    }
+  })
+
+  it('refills one token per interval so a later legitimate click still opens', () => {
+    let t = 0
+    const allow = createOpenExternalLimiter(3, 10_000, () => t)
+    allow()
+    allow()
+    allow()
+    expect(allow()).toBe(false)
+    t += 10_000
+    expect(allow()).toBe(true) // one refilled token
+    expect(allow()).toBe(false) // but only one
+  })
+
+  it('caps the bucket at capacity after a long idle period', () => {
+    let t = 0
+    const allow = createOpenExternalLimiter(3, 10_000, () => t)
+    t += 1_000_000 // idle far longer than capacity * refill
+    expect(allow()).toBe(true)
+    expect(allow()).toBe(true)
+    expect(allow()).toBe(true)
+    expect(allow()).toBe(false) // never accumulates beyond the burst cap
   })
 })
 
