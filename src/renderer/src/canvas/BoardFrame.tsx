@@ -188,7 +188,13 @@ function BoardTitle({
   }
   return (
     <span
-      className="board-title nodrag nopan"
+      // `nopan` only (NOT nodrag): it excludes the dblclick from d3's dblclick-zoom,
+      // while the span stays part of the title-bar drag handle — it is flex:1 (most of
+      // the bar), so dragging a board by its title text must keep working. A clean
+      // double-click has no movement, so RF's drag threshold never engages between
+      // the two clicks. The INPUT keeps nodrag: text-selection drags must not move
+      // the board.
+      className="board-title nopan"
       title={boardId ? 'Rename: double-click or F2' : undefined}
       onDoubleClick={
         boardId
