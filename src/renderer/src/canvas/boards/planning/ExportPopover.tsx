@@ -54,7 +54,11 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
         if (!res.ok && !res.canceled) {
           // eslint-disable-next-line no-console
           console.error('whiteboard export failed:', res.error)
-          showNote(res.error ? `Export failed — ${res.error}` : 'Export failed')
+          // Fixed copy: res.error is a raw OS/API string (paths, ENOENT) and the note
+          // is read aloud by the alert region; the console line above keeps the detail.
+          showNote(
+            res.error ? 'Export failed — check file permissions and disk space' : 'Export failed'
+          )
         }
       } catch (err) {
         // eslint-disable-next-line no-console

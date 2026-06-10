@@ -185,7 +185,11 @@ export function BrowserBoard({
         if (!ok) showNote('Cannot open that URL in a browser')
       })
       // D0-5: an IPC rejection (teardown race, channel gone) was silent before.
-      .catch(() => showNote('Cannot open that URL in a browser'))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('openExternalPreview failed', err)
+        showNote('Cannot open that URL in a browser')
+      })
   }
 
   const showNote = (msg: string): void => {
@@ -203,7 +207,9 @@ export function BrowserBoard({
         if (!res.ok) showNote('Open the preview to screenshot it')
         else if (res.assetId) showNote('Screenshot copied + saved to assets/')
         else showNote('Screenshot copied to clipboard')
-      } catch {
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('screenshotPreview failed', err)
         showNote('Screenshot failed — try again')
       }
     })()
