@@ -68,6 +68,13 @@ export function startLocalServer(): Promise<LocalServer> {
     server.once('error', onError)
     server.listen(0, '127.0.0.1', () => {
       server.removeListener('error', onError)
+      // BUG-027: keep a permanent 'error' handler for accept-time failures (EMFILE/ENFILE)
+      // that arrive after listen() succeeds. Without it, an 'error' event with no listener
+      // throws synchronously into the uncaughtException sink -> crashShutdown(1) -> app.exit(1),
+      // killing all live PTY sessions. Log and degrade instead.
+      server.on('error', (err: Error) => {
+        console.error('[localServer] accept error (continuing):', err)
+      })
       const addr = server.address()
       const port = typeof addr === 'object' && addr ? addr.port : 0
       resolve({

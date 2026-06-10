@@ -20,9 +20,15 @@ export interface InstallOpts {
   scriptPath: string
   /** Absolute path to the mapping JSONL file (app-owned, in userData) */
   mapPath: string
+  /**
+   * BUG-003: extra env vars merged into the hook command block.
+   * Set { ELECTRON_RUN_AS_NODE: '1' } in packaged builds so the app exe
+   * acts as node when the Claude SessionStart hook invokes it.
+   */
+  env?: Record<string, string>
 }
 
-type HookCmd = { type: string; command: string; args?: string[] }
+type HookCmd = { type: string; command: string; args?: string[]; env?: Record<string, string> }
 type HookBlock = { matcher?: string; hooks: HookCmd[] }
 type SettingsCfg = { hooks?: { SessionStart?: HookBlock[] } } & Record<string, unknown>
 
@@ -62,10 +68,17 @@ export function installRecapHook(opts: InstallOpts): void {
   const cfg = readSettings(opts.projectDir)
   cfg.hooks ??= {}
   cfg.hooks.SessionStart ??= []
-  cfg.hooks.SessionStart.push({
-    matcher: '',
-    hooks: [{ type: 'command', command: opts.nodePath, args: [opts.scriptPath, opts.mapPath] }]
-  })
+  const hookCmd: HookCmd = {
+    type: 'command',
+    command: opts.nodePath,
+    args: [opts.scriptPath, opts.mapPath]
+  }
+  // BUG-003: bake ELECTRON_RUN_AS_NODE=1 into the hook so the app exe acts as node in
+  // packaged builds (where process.execPath is the Electron app binary, not a plain node).
+  if (opts.env && Object.keys(opts.env).length > 0) {
+    hookCmd.env = opts.env
+  }
+  cfg.hooks.SessionStart.push({ matcher: '', hooks: [hookCmd] })
   writeSettings(opts.projectDir, cfg)
 }
 
@@ -79,8 +92,20 @@ export function removeRecapHook(projectDir: string, scriptPath: string): void {
   const cfg = readSettings(projectDir)
   const blocks = cfg.hooks?.SessionStart
   if (!blocks) return
+  // BUG-032: guard against malformed settings.local.json (hand-edited or third-party-written)
+  // where a SessionStart block is not an array or has a non-array `hooks` field. Mirror the
+  // defensiveness of isRecapHookInstalled (b.hooks?.some). Without this, a TypeError escapes
+  // the ipcMain.handle callback, leaving consent persisted as 'declined' while the hook stays
+  // installed (no retry path on the decline side).
+  if (!Array.isArray(blocks)) return
   const kept = blocks
-    .map((b) => ({ ...b, hooks: b.hooks.filter((h) => !h.args?.includes(scriptPath)) }))
+    .filter((b) => b && typeof b === 'object')
+    .map((b) => ({
+      ...b,
+      hooks: Array.isArray(b.hooks)
+        ? b.hooks.filter((h: HookCmd) => !h.args?.includes(scriptPath))
+        : []
+    }))
     .filter((b) => b.hooks.length > 0)
   // Prune empty containers so removing our last hook leaves a clean file, not a dangling
   // `{ hooks: { SessionStart: [] } }`.

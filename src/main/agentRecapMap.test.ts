@@ -132,6 +132,110 @@ describe('recap hook install/merge', () => {
   })
 })
 
+describe('removeRecapHook BUG-032: tolerates malformed settings.local.json', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'recap-malformed-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('does not throw when SessionStart block has a non-array hooks field', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { matcher: '', hooks: 'not-an-array' } // malformed: hooks is a string, not array
+          ]
+        }
+      })
+    )
+    expect(() => removeRecapHook(dir, '/app/recordSession.js')).not.toThrow()
+  })
+
+  it('does not throw when SessionStart is not an array', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: 'not-an-array' // malformed: should be an array of blocks
+        }
+      })
+    )
+    expect(() => removeRecapHook(dir, '/app/recordSession.js')).not.toThrow()
+  })
+
+  it('still removes a valid hook when valid blocks coexist with malformed ones', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { matcher: '', hooks: 'not-an-array' }, // malformed block
+            {
+              matcher: '',
+              hooks: [{ type: 'command', command: '/usr/bin/node', args: ['/app/recordSession.js', '/u/map.jsonl'] }]
+            }
+          ]
+        }
+      })
+    )
+    removeRecapHook(dir, '/app/recordSession.js')
+    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(false)
+  })
+})
+
+describe('installRecapHook BUG-003: env field', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'recap-env-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('writes env into the hook command block when provided', () => {
+    installRecapHook({
+      projectDir: dir,
+      nodePath: '/usr/bin/node',
+      scriptPath: '/app/recordSession.js',
+      mapPath: '/u/map.jsonl',
+      env: { ELECTRON_RUN_AS_NODE: '1' }
+    })
+    const settings = join(dir, '.claude', 'settings.local.json')
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    const blocks = cfg.hooks.SessionStart
+    const hook = blocks.flatMap((b: { hooks: unknown[] }) => b.hooks).find(
+      (h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')
+    ) as { env?: Record<string, string> }
+    expect(hook?.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+  })
+
+  it('omits env from the hook command block when not provided', () => {
+    installRecapHook({
+      projectDir: dir,
+      nodePath: '/usr/bin/node',
+      scriptPath: '/app/recordSession.js',
+      mapPath: '/u/map.jsonl'
+    })
+    const settings = join(dir, '.claude', 'settings.local.json')
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    const blocks = cfg.hooks.SessionStart
+    const hook = blocks.flatMap((b: { hooks: unknown[] }) => b.hooks).find(
+      (h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')
+    ) as { env?: Record<string, string> }
+    expect(hook?.env).toBeUndefined()
+  })
+})
+
 describe('watchRecapMap (first-session discovery)', () => {
   let dir: string
   beforeEach(() => {

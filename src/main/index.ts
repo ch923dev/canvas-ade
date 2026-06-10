@@ -16,7 +16,7 @@ import {
 } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
-import { readBoardResult, recordBoardResult } from './boardResults'
+import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
 import {
   buildMainWindowWebPreferences,
@@ -53,6 +53,7 @@ import { makeFlushChannel, makeFlushFinish } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
 import {
   watchRecapMap,
+  readRecapMap,
   installRecapHook,
   removeRecapHook,
   type RecapMapEntry
@@ -198,7 +199,21 @@ app.whenReady().then(async () => {
   // external `node <path>` Claude hook has a real on-disk file at runtime (see Step 6).
   const userData = app.getPath('userData')
   const recapMapPath = join(userData, 'recap', 'session-map.jsonl')
-  const recordScript = join(__dirname, 'hooks', 'recordSession.js')
+  // BUG-003 (path half): in a packaged build __dirname resolves inside app.asar; electron-builder
+  // asarUnpacks recordSession.js to app.asar.unpacked, but the baked path still points into the
+  // archive unless we rewrite it. Apply the standard app.asar -> app.asar.unpacked substitution
+  // when the app is packaged so the external `node <path>` process can actually read the file.
+  const recordScriptRaw = join(__dirname, 'hooks', 'recordSession.js')
+  const recordScript = app.isPackaged
+    ? recordScriptRaw.replace('app.asar', 'app.asar.unpacked')
+    : recordScriptRaw
+  // BUG-003 (nodePath half): in a packaged build process.execPath is the app executable; running
+  // it with a .js positional arg (without ELECTRON_RUN_AS_NODE=1) boots a second app instance
+  // instead of executing the script. Bake ELECTRON_RUN_AS_NODE=1 into the hook env so Electron
+  // acts as Node. In dev, process.execPath is already a real node binary — no env needed.
+  const recapHookEnv: Record<string, string> | undefined = app.isPackaged
+    ? { ELECTRON_RUN_AS_NODE: '1' }
+    : undefined
   let recapMap = new Map<string, RecapMapEntry>()
 
   // ── Recap env provider (Task 10 Step 2): consent-gated ──────────────────────────────
@@ -314,6 +329,11 @@ app.whenReady().then(async () => {
     // Defensive + read-only: a missing/untrusted path / read error / parse failure → undefined,
     // and the loop falls back to its config+runtime summary (no action surface, never throws past this).
     getAgentMilestones: (boardId, board) => {
+      // BUG-002: gate the egress path on consent. readConsent is already checked at PTY-spawn
+      // time and at hook-install, but the actual transcript read + LLM egress path was never
+      // gated, so revoking consent did not stop ongoing summary-loop recap egress.
+      const dir = getCurrentDir()
+      if (!dir || readConsent(userData, dir) !== 'enabled') return undefined
       const path =
         (board as { agentTranscriptPath?: string })?.agentTranscriptPath ??
         recapMap.get(boardId)?.transcriptPath
@@ -353,14 +373,29 @@ app.whenReady().then(async () => {
           projectDir: dir,
           nodePath: process.execPath,
           scriptPath: recordScript,
-          mapPath: recapMapPath
+          mapPath: recapMapPath,
+          env: recapHookEnv
         })
       }
     },
     // Terminal recap: prune transcript watchers to the live board set on every save/open/switch,
     // so a deleted terminal (or a switched-away project's boards) doesn't leak its fs.watch handle
     // until quit. watchRecapMap re-tracks only boards still present in the app-owned map.
-    (liveBoardIds) => recapWatcher?.retain(liveBoardIds)
+    // BUG-035: also prune boardResults so stale (and potentially colliding cross-project)
+    // results are not served via canvas://board/{id}/result after a project switch or deletion.
+    // BUG-006: re-arm recap transcript watchers for boards that are live in the current project
+    // but whose watchers were torn down by a prior retain() call (switch-away path).
+    (liveBoardIds) => {
+      recapWatcher?.retain(liveBoardIds)
+      pruneBoardResults(liveBoardIds)
+      // Re-arm watchers for live boards that the in-memory recapMap knows about but whose
+      // fs.watch handle was disposed when we switched away from this project.
+      for (const [boardId, entry] of recapMap.entries()) {
+        if (liveBoardIds.has(boardId)) {
+          recapWatcher?.track(boardId, entry.transcriptPath)
+        }
+      }
+    }
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
 
@@ -380,10 +415,40 @@ app.whenReady().then(async () => {
           projectDir: projectPath,
           nodePath: process.execPath,
           scriptPath: recordScript,
-          mapPath: recapMapPath
+          mapPath: recapMapPath,
+          env: recapHookEnv
         })
       } else {
         removeRecapHook(projectPath, recordScript)
+        // BUG-002: on decline, stop all in-flight recap activity for this project's boards
+        // so transcript content stops egressing to the LLM even while a claude session runs.
+        // 1. Derive the current project's live board ids from the board mirror.
+        const projectBoardIds = new Set(listBoardMirror().map((b) => b.id))
+        // 2. Untrack each board's transcript watcher so mtime changes no longer debounce into
+        //    summaryLoop.onIntent (the "hands-free auto-refresh" path).
+        for (const boardId of projectBoardIds) {
+          recapWatcher?.untrack(boardId)
+        }
+        // 3. Drop in-memory recapMap entries for this project's boards so getAgentMilestones
+        //    can't read them even if it somehow bypasses the consent check.
+        for (const boardId of projectBoardIds) {
+          recapMap.delete(boardId)
+        }
+        // 4. Rewrite session-map.jsonl, removing entries for this project's boards, so a future
+        //    app restart does not re-track them via the watchRecapMap prime fire.
+        try {
+          const allEntries = readRecapMap(recapMapPath)
+          const kept: string[] = []
+          for (const [boardId, entry] of allEntries.entries()) {
+            if (!projectBoardIds.has(boardId)) {
+              kept.push(JSON.stringify({ boardId, ...entry }))
+            }
+          }
+          writeFileSync(recapMapPath, kept.length > 0 ? kept.join('\n') + '\n' : '')
+        } catch {
+          // Non-fatal: the consent gate in getAgentMilestones still blocks egress even if
+          // the map file could not be rewritten.
+        }
       }
     }
   )
@@ -485,8 +550,13 @@ function shutdown(): Promise<void> {
  */
 function flushRenderer(timeoutMs = 1500): Promise<void> {
   const win = mainWindow
-  const wc = win?.webContents
-  if (!win || !wc || wc.isDestroyed()) return Promise.resolve()
+  // BUG-001: accessing .webContents on a destroyed BrowserWindow throws "Object has been
+  // destroyed". Guard isDestroyed() BEFORE dereferencing .webContents so the close-then-quit
+  // path (Win/Linux: window close -> window-all-closed -> before-quit -> flushRenderer) cannot
+  // throw into the uncaughtException sink and short-circuit the guarded-quit chain.
+  if (!win || win.isDestroyed()) return Promise.resolve()
+  const wc = win.webContents
+  if (!wc || wc.isDestroyed()) return Promise.resolve()
   return new Promise<void>((resolve) => {
     // 🔒 BUG-038: use CSPRNG randomUUID() (not predictable Date.now()/Math.random).
     const replyChannel = makeFlushChannel()
@@ -499,8 +569,12 @@ function flushRenderer(timeoutMs = 1500): Promise<void> {
       onResolve: resolve
     })
     // 🔒 BUG-038: `finish` accepts IpcMainEvent and guards against foreign-frame senders.
+    // BUG-019: use ipcMain.on (not once) so a foreign-frame message that isForeignSender
+    // correctly ignores does not consume the listener before the legitimate reply arrives.
+    // onCleanup calls removeAllListeners(replyChannel) when finish resolves, so cleanup
+    // still happens exactly once regardless of how many messages arrive on the channel.
     const timer = setTimeout(forceFinish, timeoutMs)
-    ipcMain.once(replyChannel, finish)
+    ipcMain.on(replyChannel, finish)
     try {
       wc.send('project:flush', replyChannel)
     } catch {

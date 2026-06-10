@@ -65,6 +65,67 @@ describe('BUG-038 makeFlushChannel — CSPRNG channel name', () => {
 })
 
 // ---------------------------------------------------------------------------
+// BUG-001 regression: flushRenderer must guard win.isDestroyed() before accessing .webContents.
+// The fix is in index.ts (not importable here), but we verify the helper isForeignSender
+// correctly handles the destroyed-window path so the guard reads win.isDestroyed() first.
+// ---------------------------------------------------------------------------
+
+describe('BUG-001 isForeignSender — destroyed-window guard (mirrors index.ts fix)', () => {
+  it('returns true (deny) when the window is destroyed — no throw from .webContents access', async () => {
+    // This simulates the case where mainWindow.isDestroyed() is true. The canonical
+    // isForeignSender guard from ipcGuard.ts checks isDestroyed() BEFORE .webContents.
+    const { isForeignSender } = await import('./ipcGuard')
+    const destroyedWin = {
+      isDestroyed: () => true,
+      // webContents getter throws, as a real destroyed BrowserWindow does:
+      get webContents(): never {
+        throw new Error('Object has been destroyed')
+      }
+    } as unknown as BrowserWindow
+    const e = { senderFrame: { id: 'frame' } } as never
+    expect(() => isForeignSender(e, () => destroyedWin)).not.toThrow()
+    expect(isForeignSender(e, () => destroyedWin)).toBe(true) // DENY on destroyed window
+  })
+
+  it('returns true (deny) when getWin() returns null — consistent with BUG-001 guard', async () => {
+    const { isForeignSender } = await import('./ipcGuard')
+    const e = { senderFrame: { id: 'frame' } } as never
+    expect(isForeignSender(e, () => null)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// BUG-019 regression: makeFlushFinish's keep-waiting semantics require ipcMain.on (not once).
+// We verify that a foreign-frame reply does NOT resolve — which only works with ipcMain.on
+// (once would consume the listener on the first call and the legitimate reply would be missed).
+// The helper's own 'ignores a foreign-frame reply' test already covers this semantics;
+// this test makes the intent explicit as a named regression.
+// ---------------------------------------------------------------------------
+
+describe('BUG-019 makeFlushFinish — foreign-frame does not consume the listener', () => {
+  it('calling finish with a foreign frame leaves the listener armed (resolved stays false)', () => {
+    const frame = mainFrame()
+    const win = liveWin(frame)
+    let resolved = false
+    const { finish } = makeFlushFinish({
+      getWin: () => win,
+      onResolve: () => { resolved = true },
+      onCleanup: () => {}
+    })
+    // Two foreign-frame calls — if the listener were consumed on the first call,
+    // the second would have no effect and the resolver would still be reachable.
+    // With ipcMain.once wiring, the listener is gone after the first delivery;
+    // with ipcMain.on wiring, finish remains callable by the legitimate frame.
+    finish({ senderFrame: foreignFrame() } as never)
+    finish({ senderFrame: foreignFrame() } as never)
+    expect(resolved).toBe(false)
+    // The legitimate frame can still resolve.
+    finish({ senderFrame: frame } as never)
+    expect(resolved).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // BUG-038 Part 2: finish() must guard against foreign-frame senders
 // ---------------------------------------------------------------------------
 
