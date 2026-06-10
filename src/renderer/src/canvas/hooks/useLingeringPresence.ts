@@ -1,0 +1,42 @@
+/**
+ * D2-D: lingering presence for the LOD-boundary crossfade (design audit fix 3).
+ *
+ * Returns true while `active`, and for `ms` after it falls, so the leaving layer
+ * stays mounted long enough to fade out (CSS `ca-lod-fade-out`) over the already-
+ * mounted entering layer. Rising edges are instant — the entering layer mounts
+ * immediately and fades in via CSS, so the crossfade never delays anything that
+ * keys on the raw flag (preview detach/reattach stays on `isLod` — ADR 0002;
+ * this hook is a visual-only layer).
+ *
+ * Under prefers-reduced-motion the linger collapses and presence mirrors `active`
+ * exactly (§9: animated ops become instant). Read at the falling edge so a runtime
+ * preference change is honored.
+ */
+import { useEffect, useRef, useState } from 'react'
+import { prefersReducedMotion } from '../../lib/motion'
+
+/** LOD crossfade duration (ms) — keep in sync with the ca-lod-fade-* keyframes (§9). */
+export const LOD_FADE_MS = 100
+
+export function useLingeringPresence(active: boolean, ms: number = LOD_FADE_MS): boolean {
+  const [lingering, setLingering] = useState(false)
+  const prev = useRef(active)
+  useEffect(() => {
+    if (prev.current === active) return undefined
+    prev.current = active
+    if (active) {
+      // Rising edge: cancel any in-flight linger (rapid re-cross of the threshold)
+      // so the layer doesn't carry a stale fade-out timer back into presence.
+      // Edge-triggered timer state — it can't be derived during render (the timer
+      // arm/cancel must pair with it), so the sync set is intentional here.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLingering(false)
+      return undefined
+    }
+    if (prefersReducedMotion()) return undefined
+    setLingering(true)
+    const t = window.setTimeout(() => setLingering(false), ms)
+    return () => window.clearTimeout(t)
+  }, [active, ms])
+  return active || lingering
+}

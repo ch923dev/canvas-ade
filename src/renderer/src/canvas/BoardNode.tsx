@@ -32,6 +32,7 @@ import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
 import { MIN_BOARD_SIZE } from '../lib/boardSchema'
 import { isLod } from '../lib/canvasView'
 import { BoardFrame } from './BoardFrame'
+import { useLingeringPresence } from './hooks/useLingeringPresence'
 
 // §F code-split: each board type is its own lazy chunk so its heavy deps load only
 // when a board of that type first mounts — a no-terminal project never fetches xterm
@@ -137,6 +138,19 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const acts = useContext(BoardActionsContext)
   const fullViewHost = useContext(FullViewContext)
   const fullView = data.fullView ?? false
+  // D2-D: the LOD swap is a hard mount/unmount, which used to snap at the 40%
+  // threshold. Crossfade it by lingering the LEAVING layer ~100ms so the entering
+  // one fades in over it (zoom-out: card fades in over the still-mounted detail;
+  // zoom-in: card lingers fading out over the remounted detail). Visual-only —
+  // everything correctness-bearing (NodeResizer gating, preview detach/reattach,
+  // the hover-clear below) stays keyed on the raw `lod`/`cardActive` flags, so the
+  // snapshot pipeline timing is untouched (ADR 0002). Terminal boards never take
+  // this path (cardActive false): TerminalBoard owns its LOD card and keeps the
+  // full chrome mounted beneath it, so its card fade-in (ca-lod-card) is already
+  // a true crossfade; its zoom-in direction stays an instant reveal.
+  const cardActive = lod && board.type !== 'terminal' && !fullView
+  const showCard = useLingeringPresence(cardActive)
+  const showDetail = useLingeringPresence(!cardActive)
   const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
   const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
   const onDelete = acts ? (): void => acts.remove(board.id) : undefined
@@ -161,10 +175,10 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)
   // unmounts it. Unmounting under a stationary cursor fires no mouseLeave, so hover
   // would stay armed across the LOD boundary and paint a stale border + resize
-  // handles on zoom-in. Clear it on LOD entry — but ONLY for the types that take the
-  // LOD early-return below; terminal boards stay full-chrome at LOD (their hover div
-  // never unmounts), so they have no stale-hover bug and must keep normal hover
-  // behavior (#BUG-017, scoped per the card to non-terminal boards).
+  // handles on zoom-in. Clear it on LOD entry — but ONLY for the types whose detail
+  // render unmounts at steady LOD; terminal boards stay full-chrome at LOD (their
+  // hover div never unmounts), so they have no stale-hover bug and must keep normal
+  // hover behavior (#BUG-017, scoped per the card to non-terminal boards).
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (lod && board.type !== 'terminal') setHovered(false)
@@ -174,10 +188,9 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   // toggling full view never changes the fiber structure (which would remount the subtree
   // and kill a live PTY — bug 1). We RELOCATE this element in the DOM between the in-node
   // anchor and the modal host; React keeps rendering into the same node, so no remount.
-  // Declared BEFORE the LOD early-return so these hooks run on EVERY render path
-  // (rules-of-hooks); in the LOD early-return path anchorRef is null so the effect no-ops.
-  // useState (not useRef) so the host element is created render-safe and stable, and the
-  // portal target is read from a value, not a ref during render (react-hooks/refs).
+  // In the steady-LOD render path (showDetail false) anchorRef is null so the effect
+  // no-ops. useState (not useRef) so the host element is created render-safe and stable,
+  // and the portal target is read from a value, not a ref during render (react-hooks/refs).
   const [contentHost] = useState<HTMLDivElement>(() => {
     const d = document.createElement('div')
     d.style.position = 'absolute'
@@ -186,43 +199,28 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   })
   const anchorRef = useRef<HTMLDivElement>(null)
 
-  // `lod` is a dep because a non-terminal board UNMOUNTS its anchor on the LOD early-
-  // return below; when it returns to detail the anchor is a NEW element, so the effect
-  // must re-run to re-append contentHost — else the board's content stays orphaned
+  // `showDetail` is a dep because a non-terminal board UNMOUNTS its anchor at steady
+  // LOD; when it returns to detail the anchor is a NEW element, so the effect must
+  // re-run to re-append contentHost — else the board's content stays orphaned
   // (detached from the DOM) after a zoom-out→in and the board renders blank.
   useLayoutEffect(() => {
     const target = fullView && fullViewHost ? fullViewHost : anchorRef.current
     if (target && contentHost.parentNode !== target) target.appendChild(contentHost)
-  }, [contentHost, fullView, fullViewHost, lod])
+  }, [contentHost, fullView, fullViewHost, showDetail])
 
   // Terminal boards stay MOUNTED across the LOD boundary so the live PTY/agent
   // session survives zoom-out (the xterm/MessagePort/PTY would die on unmount).
   // TerminalBoard reads `lod` and swaps the xterm host for its own LOD card while
   // keeping the session alive. Other types are presentational at LOD — BoardNode
-  // renders their static LOD card and unmounts the heavy content.
+  // renders their static LOD card (the overlay below) and unmounts the heavy
+  // content once the crossfade settles (showDetail falls ~100ms after the cross).
   //
-  // EXCEPTION: a board in full view ALWAYS renders its real content (never the LOD
-  // card), even when the camera is zoomed out below LOD. The full-view board is
-  // portaled into the (untransformed) modal host, so its real `.bb-frame` must exist
-  // there for `fullViewBoundsFor` to read the modal rect; the LOD card has no
-  // `.bb-frame` and never portals, which would strand the native view at its
-  // camera-scaled canvas position (the full-view native-bounds bug).
-  if (lod && board.type !== 'terminal' && !fullView) {
-    return (
-      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-        <EdgeAnchors />
-        <BoardFrame
-          type={board.type}
-          title={board.title}
-          selected={selected}
-          dimmed={dimmed}
-          lod
-          status={lodPill}
-        />
-      </div>
-    )
-  }
-
+  // EXCEPTION (cardActive excludes fullView): a board in full view ALWAYS renders
+  // its real content (never the LOD card), even when the camera is zoomed out below
+  // LOD. The full-view board is portaled into the (untransformed) modal host, so its
+  // real `.bb-frame` must exist there for `fullViewBoundsFor` to read the modal
+  // rect; the LOD card has no `.bb-frame` and never portals, which would strand the
+  // native view at its camera-scaled canvas position (the full-view native-bounds bug).
   const common = { selected, hovered, dimmed }
   // Provide this board's full-view flag to its whole subtree so every board type's
   // BoardFrame lights the title-bar EXIT affordance when this board is the one in the
@@ -262,7 +260,9 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   return (
     <>
       <EdgeAnchors />
-      {/* Hidden in LOD: the design shows no resize handles on LOD cards. */}
+      {/* Hidden in LOD: the design shows no resize handles on LOD cards. Keyed on the
+          raw `lod` flag (not the lingering showDetail) so the handles drop the instant
+          the threshold is crossed — the crossfade is presentation-only. */}
       {!lod && (
         <NodeResizer
           minWidth={MIN_BOARD_SIZE.w}
@@ -287,9 +287,29 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
-      {/* In-node mount point; the stable content host is appended here when not full-view. */}
-      <div ref={anchorRef} style={{ position: 'absolute', inset: 0 }} />
-      {createPortal(subtree, contentHost)}
+      {/* In-node mount point; the stable content host is appended here when not full-view.
+          Unmounted only at steady LOD — it stays through the crossfade window. */}
+      {showDetail && <div ref={anchorRef} style={{ position: 'absolute', inset: 0 }} />}
+      {/* LOD card overlay (non-terminal). Mounts the instant the threshold is crossed and
+          fades in via ca-lod-card over the lingering detail beneath; on zoom-in it lingers
+          ~100ms with ca-lod-out fading over the remounted detail, then unmounts. Rendered
+          AFTER the anchor so it paints above the detail content during the overlap. */}
+      {showCard && (
+        <div
+          className={cardActive ? undefined : 'ca-lod-out'}
+          style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+        >
+          <BoardFrame
+            type={board.type}
+            title={board.title}
+            selected={selected}
+            dimmed={dimmed}
+            lod
+            status={lodPill}
+          />
+        </div>
+      )}
+      {showDetail && createPortal(subtree, contentHost)}
     </>
   )
 }
