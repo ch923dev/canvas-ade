@@ -247,6 +247,9 @@ export function TerminalConfig({
         </div>
       )}
       <div style={footer}>
+        {/* Always a DIRECT close, never requestClose: "Cancel" on a clean popover,
+            "Discard" while confirming — both are explicit user actions, so routing
+            them through the guard would just re-arm the confirm row forever. */}
         <button style={btnGhost} onClick={onClose}>
           {confirming ? 'Discard' : 'Cancel'}
         </button>

@@ -650,8 +650,10 @@ export function TerminalBoard({
                 <div ref={screenRef} style={screen} />
                 {/* D2-B 🎨 first-run hint (signed off 2026-06-11): a bare-shell terminal
                     (no launchCommand) shows one dismissible pill pointing at ⚙. Hidden at
-                    idle (the Start overlay covers that state) and gone forever once
-                    dismissed anywhere (terminalHint.ts) or a launch command is set. */}
+                    idle (the Start overlay covers that state); deliberately SHOWN for
+                    exited/spawn-failed too — those are natural moments to set a launch
+                    command and retry. Gone forever once dismissed anywhere
+                    (hintDismissal.ts) or a launch command is set. */}
                 {!board.launchCommand && state !== 'idle' && (
                   <TerminalHint onConfigure={() => setConfigOpen(true)} />
                 )}
