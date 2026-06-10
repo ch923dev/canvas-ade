@@ -31,7 +31,11 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
   'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-type DivProps = HTMLAttributes<HTMLDivElement> & { [key: `data-${string}`]: string | undefined }
+/** Pass-through attrs for the scrim/card divs. The handlers Modal itself owns (the scrim's
+ *  pointerdown dismiss, the card's Tab trap) are omitted so a caller can't silently lose one. */
+type DivProps = Omit<HTMLAttributes<HTMLDivElement>, 'onPointerDown' | 'onKeyDown'> & {
+  [key: `data-${string}`]: string | undefined
+}
 
 export interface ModalProps {
   /** Accessible dialog name (`aria-label`). */
