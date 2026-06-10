@@ -18,10 +18,43 @@ describe('eraseHitTest — cards (rect + tolerance)', () => {
     expect(eraseHitTest(cl, { x: cl.x + 10, y: cl.y + 40 })).toBe(true)
   })
 
-  it('uses a nominal box for auto-sized text', () => {
+  it('uses a nominal box for auto-sized text when no measured map is provided', () => {
     const t = makeText('t', { x: 50, y: 50 })
     expect(eraseHitTest(t, { x: 50 + TEXT_HIT.w / 2, y: 50 + TEXT_HIT.h / 2 })).toBe(true)
     expect(eraseHitTest(t, { x: 50 + TEXT_HIT.w + 50, y: 50 })).toBe(false)
+  })
+
+  it('BUG-015: text hit uses live measured dimensions when a measured map is provided', () => {
+    // A wide XL area text: measured w=500, h=80 (XL multi-line).
+    // Without the fix the hit box is the stale 160x24 nominal — most of the element is un-erasable.
+    const t = makeText('t', { x: 50, y: 50 })
+    const measured = new Map([['t', { w: 500, h: 80 }]])
+    // Point inside the measured box but outside the nominal box
+    expect(eraseHitTest(t, { x: 50 + 300, y: 50 + 50 }, undefined, measured)).toBe(true)
+    // Point outside both boxes
+    expect(eraseHitTest(t, { x: 50 + 600, y: 50 }, undefined, measured)).toBe(false)
+    // Nominal box still works when no measurement
+    expect(eraseHitTest(t, { x: 50 + TEXT_HIT.w / 2, y: 50 + TEXT_HIT.h / 2 })).toBe(true)
+  })
+
+  it('BUG-015: text hit phantom band: a SHORT text does not erase at wide measured box extents when measurement is provided', () => {
+    // A short text (measured w=40, h=16). The old 160x24 nominal box created a phantom 128px band.
+    const t = makeText('t', { x: 50, y: 50 })
+    const measured = new Map([['t', { w: 40, h: 16 }]])
+    // Point inside the measured box
+    expect(eraseHitTest(t, { x: 60, y: 58 }, undefined, measured)).toBe(true)
+    // Point outside the measured box but inside the old 160x24 nominal (phantom band)
+    expect(eraseHitTest(t, { x: 50 + 130, y: 50 + 8 }, undefined, measured)).toBe(false)
+  })
+
+  it('BUG-015: note hit uses measured height when provided', () => {
+    // A one-line note renders ~34px tall; el.h is 96 (phantom band below).
+    const n = makeNote('n', { x: 100, y: 100 }, 0) // h:96 in schema, but rendered ~34px
+    const measured = new Map([['n', { w: 156, h: 34 }]])
+    // Point inside measured height
+    expect(eraseHitTest(n, { x: 180, y: 120 }, undefined, measured)).toBe(true)
+    // Point below measured height but inside schema h=96 (old phantom band)
+    expect(eraseHitTest(n, { x: 180, y: 160 }, undefined, measured)).toBe(false)
   })
 })
 

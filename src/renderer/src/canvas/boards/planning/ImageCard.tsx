@@ -13,6 +13,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactElement
@@ -37,7 +38,7 @@ function useAssetUrl(assetId: string): string | null {
 
   // useLayoutEffect runs synchronously during the layout phase — BEFORE any sibling
   // component's useEffect cleanup fires in the same commit batch. By incrementing
-  // the ref here (on cache hit), we prevent the following race:
+  // the ref here (on cache hit), we prevent the following race (BUG-036 guarantee):
   //
   //   1. This component renders, reading a shared blob URL from the cache.
   //   2. A sibling that shares the same assetId unmounts in the same batch.
@@ -47,26 +48,38 @@ function useAssetUrl(assetId: string): string | null {
   //
   // With the useLayoutEffect claim below, step 3 sees refs=2 (not 1), so it goes to
   // refs=1 — no revocation. The useEffect cleanup handles the final decrement/revoke.
+  //
+  // The two effects are kept SEPARATE (not collapsed into one) to preserve the
+  // BUG-036 sibling-ordering guarantee: layout claims run in layout phase;
+  // cleanup must run in the passive phase so a newly mounting sibling's layout
+  // effect can claim BEFORE this cleanup fires (same batch ordering we rely on).
+  //
+  // `layoutClaimedRef` tracks whether THIS layout-effect run made a claim so
+  // the passive cleanup never decrements a ref it did not take (BUG-051 fix).
+  const layoutClaimedRef = useRef(false)
+
   useLayoutEffect(() => {
     const cached = assetUrlCache.get(assetId)
     if (cached) {
       cached.refs++
+      layoutClaimedRef.current = true
+    } else {
+      layoutClaimedRef.current = false
     }
     // No cleanup here: the useEffect cleanup below owns ref decrement + revocation.
-    // Keeping cleanup in useEffect (not here) is intentional: it ensures that a newly
-    // mounting sibling's useLayoutEffect runs and claims its ref BEFORE this cleanup
-    // decrements — the same guarantee we rely on above, but for the next mount.
+    // Keeping cleanup in useEffect (not here) is intentional — see above.
   }, [assetId])
 
   useEffect(() => {
     let cancelled = false
+    // Whether THIS passive-effect run made a claim that the cleanup must release.
+    // Initialised from the layout-effect result: if layout already claimed, the
+    // passive effect inherits that claim and is responsible for releasing it.
+    let passiveClaimed = layoutClaimedRef.current
+
     const cached = assetUrlCache.get(assetId)
     if (!cached) {
-      // Cache miss: either first mount (no prior holder) or the entry was evicted
-      // before the layout effect ran (possible if no prior card existed at layout time).
-      // Start an async read to populate the cache and establish our ref.
-      // (Cache-hit needs nothing here: useLayoutEffect already claimed the ref and the
-      // render reads the live cache entry directly, so no synchronous setState is needed.)
+      // Cache miss at layout time AND still a miss now: start an async read.
       void window.api.asset
         .read(assetId)
         .then((bytes) => {
@@ -77,7 +90,10 @@ function useAssetUrl(assetId: string): string | null {
           }
           const again = assetUrlCache.get(assetId)
           if (again) {
+            // A sibling's read resolved between our layout miss and now.
+            // Claim the existing entry (BUG-051: mark as claimed so cleanup releases it).
             again.refs++
+            passiveClaimed = true
             setLoadedUrl(again.url)
             return
           }
@@ -85,17 +101,28 @@ function useAssetUrl(assetId: string): string | null {
           const mime = MIME_BY_EXT[ext] ?? 'application/octet-stream'
           const objUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }))
           assetUrlCache.set(assetId, { url: objUrl, refs: 1 })
+          passiveClaimed = true
           setLoadedUrl(objUrl)
         })
         .catch(() => {
           if (!cancelled) setLoadedUrl(null)
         })
+    } else if (!passiveClaimed) {
+      // BUG-051 path (b): layout saw a miss but by the time the passive effect
+      // runs a sibling's read has populated the cache. The render already reads
+      // the cache URL via line `return assetUrlCache.get(…)?.url ?? loadedUrl`,
+      // so we must claim a ref here so cleanup can release it correctly.
+      cached.refs++
+      passiveClaimed = true
     }
+    // If cached && passiveClaimed: layout already claimed — nothing more to do here.
+
     return () => {
       cancelled = true
-      // Decrement the ref that was claimed either by useLayoutEffect (cache-hit path)
-      // or by the async read above (cache-miss path). Revoke only when the last holder
-      // releases.
+      // BUG-051: only release a ref this instance actually claimed. An unclaimed
+      // cleanup (cancelled read, or a layout-miss + passive-miss race) must never
+      // steal another live card's ref and trigger a premature URL revocation.
+      if (!passiveClaimed) return
       const entry = assetUrlCache.get(assetId)
       if (entry) {
         entry.refs--
@@ -152,6 +179,9 @@ export function ImageCard({
         // In a draw mode let the press fall through to the well (a stroke can start
         // over the image); in select mode this is the drag handle.
         if (!interactive) return
+        // Only the primary button initiates a drag; right/middle buttons fall
+        // through to the browser context-menu / OS default (primary-button guard).
+        if (e.button !== 0) return
         e.stopPropagation()
         onSelect?.(image.id, e.shiftKey)
         onDragStart(e, image.id)

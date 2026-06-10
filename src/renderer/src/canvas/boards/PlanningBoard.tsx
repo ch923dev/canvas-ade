@@ -15,7 +15,7 @@
  * Owns this file + everything under `boards/planning/`; the shared surface
  * (`BoardFrame`, schema, store) is consumed, never modified.
  */
-import { useCallback, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
@@ -127,6 +127,10 @@ export function PlanningBoard({
     [toggleSel]
   )
   const wellRef = useRef<HTMLDivElement>(null)
+  // BUG-052: ref that mirrors the live dragPos from usePlanningPointer so
+  // growForChecklist can gate on it without a forward-reference (the useCallback
+  // is defined before usePlanningPointer is called in the component body).
+  const dragPosRef = useRef<{ ids: string[]; dx: number; dy: number; alt: boolean } | null>(null)
   const elements = board.elements
 
   // Right-click element context menu (W3): raw screen coords + the entries built at
@@ -274,7 +278,12 @@ export function PlanningBoard({
   const TITLEBAR_H = 34
   const WELL_PAD = 14
   const growForChecklist = useCallback(
-    (_elId: string, bottom: number) => {
+    (elId: string, bottom: number) => {
+      // BUG-052: skip __ghost__ alt-drag copies and any element mid-drag — drag
+      // positions are uncommitted, and growBoardHeight is untracked + only-grows,
+      // so a cancelled/zero-net drag would permanently inflate the board height.
+      if (elId.startsWith('__ghost__')) return
+      if (dragPosRef.current?.ids.includes(elId)) return
       const needed = Math.ceil(bottom + TITLEBAR_H + WELL_PAD)
       // Untracked layout-only grow (#BUG-024): a measured content-fit bump is not a
       // user edit, so it routes through a dedicated store action that NEVER touches the
@@ -282,7 +291,7 @@ export function PlanningBoard({
       // branch. Only-grows; a no-op when the board is already tall enough.
       if (needed > board.h) useCanvasStore.getState().growBoardHeight(board.id, needed)
     },
-    [board.id, board.h]
+    [board.id, board.h, dragPosRef]
   )
 
   // Build the right-click menu entries off an explicit selection set (the
@@ -445,6 +454,9 @@ export function PlanningBoard({
     buildMenuEntries,
     setContextMenu
   })
+
+  // Mirror dragPos into the ref so growForChecklist (defined earlier) reads it lazily.
+  useEffect(() => void (dragPosRef.current = dragPos), [dragPos])
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
@@ -676,6 +688,7 @@ export function PlanningBoard({
                 onEditStart={beginChange}
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
+                onMeasure={reportMeasure}
               />
             )
           }

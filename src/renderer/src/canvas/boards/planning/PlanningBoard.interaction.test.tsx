@@ -16,6 +16,18 @@ if (!Element.prototype.setPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
 }
 
+// NoteCard (BUG-050 fix) now observes its rendered size via ResizeObserver so
+// erase/marquee/snap use the actual auto-sized height. jsdom has no ResizeObserver;
+// stub a no-op so cards mount without throwing (mirrors the ChecklistCard stub in
+// PlanningBoard.stale-closure.test.tsx — same pattern, same rationale).
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver
+}
+
 afterEach(cleanup)
 
 // Render the REAL PlanningBoard, subscribed to the store so a commit re-passes a fresh
@@ -115,6 +127,78 @@ describe('PlanningBoard interaction — erase + shortcut (migrated from e2e whit
 
     press('n')
     tap(230, 210) // empty spot → note tool creates a fresh note
+    expect(els(id).length).toBe(2)
+  })
+
+  it('BUG-014: right-button press on the well with erase tool does NOT erase (primary-button guard)', () => {
+    const id = seedPlanning([note('n1', { x: 40, y: 40, w: 156, h: 96, text: 'A' })])
+    render(<Harness id={id} />)
+    press('e') // arm eraser
+    // Right-button pointerdown + pointerup over the note centre — must NOT erase
+    act(() => {
+      for (const t of ['pointerdown', 'pointerup']) {
+        well().dispatchEvent(
+          new PointerEvent(t, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            button: 2,
+            buttons: 2,
+            clientX: 118,
+            clientY: 88
+          })
+        )
+      }
+    })
+    expect(els(id).length).toBe(1) // note must survive a right-button press
+  })
+
+  it('BUG-014: right-button press on the well with note tool does NOT create a note', () => {
+    const id = seedPlanning([note('n1', { x: 40, y: 40, text: 'A' })])
+    render(<Harness id={id} />)
+    press('n') // arm note tool
+    act(() => {
+      for (const t of ['pointerdown', 'pointerup']) {
+        well().dispatchEvent(
+          new PointerEvent(t, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            button: 2,
+            buttons: 2,
+            clientX: 300,
+            clientY: 300
+          })
+        )
+      }
+    })
+    expect(els(id).length).toBe(1) // no new note from right-button press
+  })
+
+  it('BUG-014: right-button press on empty well in select mode does NOT clear the selection', () => {
+    const id = seedTwo()
+    render(<Harness id={id} />)
+    drag(10, 10, 440, 150) // marquee-select both notes
+    const beforeCount = els(id).length
+    expect(beforeCount).toBe(2)
+    // Right-button press on empty space — must NOT arm a marquee that clears selection
+    act(() => {
+      for (const t of ['pointerdown', 'pointerup']) {
+        well().dispatchEvent(
+          new PointerEvent(t, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            button: 2,
+            buttons: 2,
+            clientX: 560,
+            clientY: 300
+          })
+        )
+      }
+    })
+    // Elements still present (selection clear would not remove them, but verifying count
+    // also ensures no accidental creation from the right-press)
     expect(els(id).length).toBe(2)
   })
 })

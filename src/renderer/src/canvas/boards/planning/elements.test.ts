@@ -249,9 +249,18 @@ describe('checklist mutations + live progress', () => {
 })
 
 describe('elementBBox (per-kind, ± measured) — W2', () => {
-  it('note uses schema x/y/w/h', () => {
+  it('note uses schema x/y/w/h when no measurement', () => {
     const n = makeNote('n', { x: 100, y: 100 }, 0)
     expect(elementBBox(n)).toEqual({ x: n.x, y: n.y, w: n.w, h: n.h })
+  })
+  it('BUG-050: note uses measured h when positive, falls back to schema h when 0 or absent', () => {
+    const n = makeNote('n', { x: 100, y: 100 }, 0) // h:96 schema default
+    // Measured height > 0: use it (one-line note ~34px)
+    expect(elementBBox(n, { w: 156, h: 34 }).h).toBe(34)
+    // Measured height = 0: fall back to schema h (no layout yet)
+    expect(elementBBox(n, { w: 156, h: 0 }).h).toBe(96)
+    // No measurement: fall back to schema h
+    expect(elementBBox(n, undefined).h).toBe(96)
   })
   it('text falls back to TEXT_NOMINAL, or uses measured when given', () => {
     const t = makeText('t', { x: 10, y: 20 })
