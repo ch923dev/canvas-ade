@@ -231,12 +231,12 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
 > - **Status:** Skipped from active fix queue; expected to be resolved by this phase.
 > - **Ref:** `docs/reviews/2026-06-10-full-app-audit.md` (raw card `bug-hunt-findings/skipped-roadmap.md`, git history).
 
-> 🔗 **Related bug-hunt finding:** BUG-003 touches this area but is not fully resolved by this
-> work — see `docs/reviews/2026-06-10-full-app-audit.md` (raw card in git history).
-> *(Packaged-build recap hook: `src/main/index.ts:354` bakes `process.execPath` without
-> `ELECTRON_RUN_AS_NODE` — launches a second app instance — and the hook script path points inside
-> `app.asar`. Packaged-only; Phase 5 packaging work touches the area but the hook code fix is not in
-> its scope.)*
+> 🔗 **Related bug-hunt finding:** BUG-003 (packaged-build recap hook) — **code fix landed in #107**
+> (`src/main/index.ts` ~208-225: `app.asar` → `app.asar.unpacked` path substitution +
+> `ELECTRON_RUN_AS_NODE=1` baked into the hook env; amendment `81365b6`). What remains is
+> **packaged-only verification**: the fix has never run in a real packaged build (no packaged smoke
+> exists pre-Phase 5). Verify the hook end-to-end when this phase produces installers. See
+> `docs/reviews/2026-06-10-full-app-audit.md` (raw card in git history).*
 
 > 🔗 **Related bug-hunt finding:** BUG-071 touches this area but is not fully resolved by this
 > work — see `docs/reviews/2026-06-10-full-app-audit.md` (raw card in git history).
