@@ -33,7 +33,10 @@ export interface BoardStatus {
  *  spinner glyph re-renders every 80ms and the elapsed timer every second — so the
  *  polite region would otherwise announce continuously. Drop the glyph and map the
  *  timer suffix to a constant word; the text then changes only on real transitions
- *  (`claude · starting` → `claude · running` → `claude · exited`). */
+ *  (`claude · starting` → `claude · running` → `claude · exited`).
+ *  The `MM:SS → running` rewrite is safe because statusFor (terminalState.ts) appends
+ *  the timer suffix ONLY in its `running` arm — `exited`/`idle`/`spawn-failed` labels
+ *  never carry a trailing timestamp. */
 function srStatusText(label: string): string {
   return label
     .replace(/[⠀-⣿]\s*/g, '')

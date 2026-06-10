@@ -20,8 +20,10 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
   })
   // D0-5: a failed export gets a visible transient note (the W5 follow-up "silent
   // export-failure feedback" gap). Interim surface reusing .ca-preview-note; final
-  // home is the D1 toast channel.
-  const [note, setNote] = useState<string | null>(null)
+  // home is the D1 toast channel. Held as an OBJECT so a repeated identical failure
+  // still yields a fresh reference — the position effect below re-measures (the board
+  // may have moved between failures).
+  const [note, setNote] = useState<{ text: string } | null>(null)
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(
     () => () => {
@@ -31,7 +33,7 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
   )
   const showNote = (msg: string): void => {
     if (noteTimer.current) clearTimeout(noteTimer.current)
-    setNote(msg)
+    setNote({ text: msg })
     noteTimer.current = setTimeout(() => setNote(null), 4000)
   }
   const runExport = useCallback(
@@ -159,7 +161,7 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            {note}
+            {note.text}
             <button className="ca-preview-dismiss" onClick={() => setNote(null)}>
               Dismiss
             </button>

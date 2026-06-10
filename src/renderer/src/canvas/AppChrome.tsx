@@ -135,6 +135,10 @@ export function ProjectSwitcher(): ReactElement {
     const el = menuRef.current
     if (!el) return
     const PAD = 8
+    // Reset before measuring: this effect re-runs while open (recents load), and
+    // measuring with a previously-applied shift would compound the offset.
+    el.style.left = ''
+    el.style.maxHeight = ''
     const r = el.getBoundingClientRect()
     el.style.maxHeight = `${Math.max(80, window.innerHeight - r.top - PAD)}px`
     el.style.overflowY = 'auto'
@@ -252,19 +256,25 @@ export function ProjectSwitcher(): ReactElement {
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
-      {/* D0-8: visible save-failure chip (SAVE-1 class). role="alert" — a failed save is
-          the one state worth announcing assertively. Click = retry; cleared by the next
-          successful save. Interim surface; final home is the D1 toast channel. */}
+      {/* D0-8: visible save-failure chip (SAVE-1 class). A failed save is the one state
+          worth announcing assertively — but `alert` is not an allowed role on an
+          interactive element (SRs ignore it or double-announce), so the live region is a
+          visually-hidden SIBLING and the button stays a plain button. Click = retry;
+          cleared by the next successful save. Interim surface; final home = D1 toast. */}
       {saveFailure && (
-        <button
-          className="proj-save-chip"
-          role="alert"
-          title={`${saveFailure} — click to retry`}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => void retrySave()}
-        >
-          ⚠ Save failed — retry
-        </button>
+        <>
+          <span role="alert" className="sr-only">
+            {saveFailure}
+          </span>
+          <button
+            className="proj-save-chip"
+            title={`${saveFailure} — click to retry`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => void retrySave()}
+          >
+            ⚠ Save failed — retry
+          </button>
+        </>
       )}
       {open && (
         // Inside pointerdowns must not reach the document outside-close listener, so a menu-item

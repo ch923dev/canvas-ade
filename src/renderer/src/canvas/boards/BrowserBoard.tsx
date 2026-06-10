@@ -147,6 +147,19 @@ export function BrowserBoard({
     []
   )
 
+  // D0-6 (A9): live-region text for the connection dot. Starts EMPTY and fills only on
+  // the first status TRANSITION — a region inserted with content can announce on mount,
+  // which would speak "not connected" for every board on project load.
+  const [srConn, setSrConn] = useState('')
+  const firstStatus = useRef(true)
+  useEffect(() => {
+    if (firstStatus.current) {
+      firstStatus.current = false
+      return
+    }
+    setSrConn(connWord(runtime.status))
+  }, [runtime.status])
+
   const commitUrl = (): void => {
     const next = draftUrl.trim()
     if (!next || next === board.url) {
@@ -268,7 +281,7 @@ export function BrowserBoard({
             style={{ background: connDot(runtime.status) }}
           />
           <span className="sr-only" role="status" aria-live="polite">
-            {connWord(runtime.status)}
+            {srConn}
           </span>
           <input
             className="bb-url-input"
