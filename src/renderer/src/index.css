@@ -1073,9 +1073,9 @@ body {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  /* Above modal scrims (RecapConsent/Confirm sit at 1000) — a save-failure toast must
-     surface even while a modal is up. */
-  z-index: 1200;
+  /* Above every modal scrim (Settings 300 · RecapConsent 1000 · Confirm 10000) — a
+     save-failure toast must surface even while a modal is up. */
+  z-index: 10100;
   display: flex;
   flex-direction: column;
   gap: 8px;
