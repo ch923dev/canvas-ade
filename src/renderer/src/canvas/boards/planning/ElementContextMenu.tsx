@@ -152,7 +152,7 @@ const MENU_CSS = `
 }
 [data-w3-menu] .w3-mi:hover:not(:disabled) { background: var(--surface-raised); }
 [data-w3-menu] .w3-mi.danger { color: var(--err); }
-[data-w3-menu] .w3-mi.danger:hover:not(:disabled) { background: rgba(242, 84, 91, 0.12); }
+[data-w3-menu] .w3-mi.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 12%, transparent); }
 [data-w3-menu] .w3-mi:disabled { color: var(--text-faint); cursor: default; }
 [data-w3-menu] .w3-row { display: flex; align-items: center; gap: 6px; padding: 5px 8px; }
 [data-w3-menu] .w3-row-label { color: var(--text-2); font-size: 12px; min-width: 60px; }

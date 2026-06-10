@@ -5,6 +5,7 @@
  */
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
+import { useSaveStatusStore } from './saveStatusStore'
 
 type ProjectStatus = 'welcome' | 'loading' | 'open' | 'error'
 
@@ -92,20 +93,32 @@ export function useAutosave(): void {
     const saver = createAutosaver({
       // BUG-009: pass the project dir this doc belongs to, so MAIN can reject the write
       // if a project switch raced the save (currentDir would point at the new project).
+      // D0-8: a successful save clears any standing failure chip — the surface tracks
+      // the CURRENT disk health, not a sticky history (clear is a no-op when clean).
       save: async () => {
         const s = useCanvasStore.getState()
-        return window.api.project.save(s.toObject(), s.project.dir ?? undefined)
+        const ok = await window.api.project.save(s.toObject(), s.project.dir ?? undefined)
+        if (ok) useSaveStatusStore.getState().clearSaveFailure()
+        return ok
       },
       // The `project` slice is added in a later task; read it defensively so the hook
       // compiles + no-ops (status 'welcome' → gate closed) until that slice exists.
       getStatus: () =>
         (useCanvasStore.getState() as { project?: { status?: ProjectStatus } }).project?.status ??
         'welcome',
-      // SAVE-1: a swallowed autosave failure means silent data loss. Log it so a
-      // failing disk is at least visible in diagnostics (a non-blocking toast can hang
-      // off this hook later without re-plumbing the autosaver).
-      // eslint-disable-next-line no-console
-      onError: (e) => console.error('autosave failed', e)
+      // SAVE-1: a swallowed autosave failure means silent data loss. Log it AND raise
+      // the visible save-failure chip in the project switcher (D0-8); the chip's final
+      // home is the D1 toast channel.
+      onError: (e) => {
+        // eslint-disable-next-line no-console
+        console.error('autosave failed', e)
+        // Fixed user-facing string: raw messages here are internal ('autosave:
+        // project:save returned false') or OS-technical (ENOSPC), and the chip's
+        // alert region + tooltip read them aloud. The console line keeps the detail.
+        useSaveStatusStore
+          .getState()
+          .setSaveFailure('Auto-save failed — check disk space and permissions')
+      }
     })
 
     // Save when boards, connectors, or camera change (skip pure selection/tool churn).

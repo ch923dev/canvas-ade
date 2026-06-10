@@ -26,6 +26,8 @@ import { runDetectPorts, type DetectedUrl, type Gesture } from './terminalPrevie
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { quotePathsForPaste } from './terminal/terminalDrop'
 import { resumeCommand } from './terminal/resumeCommand'
+import { BrowserPickPanel, NEW_BROWSER } from './terminal/BrowserPickPanel'
+import { usePickerDismiss } from './terminal/usePickerDismiss'
 import { useTerminalSpawn } from './terminal/useTerminalSpawn'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { RecapView } from '../RecapView'
@@ -239,12 +241,12 @@ export function TerminalBoard({
   const [previewNote, setPreviewNote] = useState<string | null>(null)
   // Multi-select connect picker (long-press, or tap with nothing linked): pick one or more
   // browsers (B + C) and/or a fresh spawn to wire to this terminal and push the url to each.
+  // The panel (checkboxes + sever warning) lives in BrowserPickPanel; its transient checked
+  // state resets by unmounting.
   const [browserPick, setBrowserPick] = useState<{
     url: string
     candidates: PreviewCandidate[]
   } | null>(null)
-  const NEW_BROWSER = ' new' // sentinel checkbox key for "+ New browser"
-  const [checked, setChecked] = useState<Set<string>>(new Set())
 
   // Route a resolved url by gesture. Tap + linked browser(s) → refresh them. Otherwise
   // (long-press, or tap with nothing linked) open the multi-select connect picker over the
@@ -263,7 +265,6 @@ export function TerminalBoard({
         onPushPreviewTo?.(url, { kind: 'spawn' }) // nothing to choose between → fresh browser
         return
       }
-      setChecked(new Set())
       setBrowserPick({ url, candidates })
     },
     [board.id, onPushPreviewTo]
@@ -284,19 +285,26 @@ export function TerminalBoard({
   // Apply the multi-select connect picker: wire every checked browser to this terminal
   // (re-pointing its previewSourceId, severing any prior link) + push the url; spawn a
   // fresh browser if "+ New browser" is checked.
-  const confirmBrowserPick = useCallback(() => {
-    if (!browserPick) return
-    const { url } = browserPick
-    checked.forEach((key) => {
-      if (key === NEW_BROWSER) onPushPreviewTo?.(url, { kind: 'spawn' })
-      else onPushPreviewTo?.(url, { kind: 'existing', id: key })
-    })
-    setBrowserPick(null)
-  }, [browserPick, checked, onPushPreviewTo])
+  const confirmBrowserPick = useCallback(
+    (checked: Set<string>) => {
+      if (!browserPick) return
+      const { url } = browserPick
+      checked.forEach((key) => {
+        if (key === NEW_BROWSER) onPushPreviewTo?.(url, { kind: 'spawn' })
+        else onPushPreviewTo?.(url, { kind: 'existing', id: key })
+      })
+      setBrowserPick(null)
+    },
+    [browserPick, onPushPreviewTo]
+  )
 
-  const severCount = browserPick
-    ? [...checked].filter((k) => browserPick.candidates.find((c) => c.id === k)?.connectedTo).length
-    : 0
+  // D0-4: Escape / outside-pointerdown dismissal for the two pickers (they were
+  // Cancel-only). The picker divs stop their own pointerdown.
+  const dismissPickers = useCallback((): void => {
+    setPortChoices(null)
+    setBrowserPick(null)
+  }, [])
+  usePickerDismiss(!!portChoices || !!browserPick, dismissPickers)
 
   // Effective font for the disabled-at-bound state: mirror the apply effect's fallback (born font,
   // NOT live sticky) so the buttons track the size this board actually renders at, not another
@@ -530,7 +538,11 @@ export function TerminalBoard({
                 </div>
               )}
               {portChoices && portChoices.urls.length > 1 && (
-                <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
+                <div
+                  className="ca-port-picker nodrag"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
                   <div className="ca-port-picker-title">Multiple servers — choose one:</div>
                   {portChoices.urls.map((u) => (
                     <button
@@ -551,67 +563,11 @@ export function TerminalBoard({
                 </div>
               )}
               {browserPick && (
-                <div className="ca-port-picker nodrag" onMouseDown={(e) => e.stopPropagation()}>
-                  <div className="ca-port-picker-title">Push to which browser(s)?</div>
-                  {browserPick.candidates.map((c) => (
-                    <label key={c.id} className="ca-browser-choice" title={c.url}>
-                      <input
-                        type="checkbox"
-                        checked={checked.has(c.id)}
-                        onChange={(e) =>
-                          setChecked((prev) => {
-                            const next = new Set(prev)
-                            if (e.target.checked) next.add(c.id)
-                            else next.delete(c.id)
-                            return next
-                          })
-                        }
-                      />
-                      <span className="ca-browser-choice-label">{c.title}</span>
-                      {c.connectedTo && (
-                        <span
-                          className="ca-browser-choice-warn"
-                          title={`Connected to ${c.connectedTo.title}`}
-                        >
-                          ⚠ on {c.connectedTo.title}
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                  <label className="ca-browser-choice">
-                    <input
-                      type="checkbox"
-                      checked={checked.has(NEW_BROWSER)}
-                      onChange={(e) =>
-                        setChecked((prev) => {
-                          const next = new Set(prev)
-                          if (e.target.checked) next.add(NEW_BROWSER)
-                          else next.delete(NEW_BROWSER)
-                          return next
-                        })
-                      }
-                    />
-                    <span className="ca-browser-choice-label">+ New browser</span>
-                  </label>
-                  {severCount > 0 && (
-                    <div className="ca-browser-sever">
-                      ⚠ Disconnects {severCount} browser{severCount > 1 ? 's' : ''} from{' '}
-                      {severCount > 1 ? 'their' : 'its'} current terminal.
-                    </div>
-                  )}
-                  <div className="ca-browser-actions">
-                    <button className="ca-preview-dismiss" onClick={() => setBrowserPick(null)}>
-                      Cancel
-                    </button>
-                    <button
-                      className="ca-browser-connect"
-                      disabled={checked.size === 0}
-                      onClick={confirmBrowserPick}
-                    >
-                      Connect{checked.size > 0 ? ` ${checked.size}` : ''}
-                    </button>
-                  </div>
-                </div>
+                <BrowserPickPanel
+                  candidates={browserPick.candidates}
+                  onCancel={() => setBrowserPick(null)}
+                  onConfirm={confirmBrowserPick}
+                />
               )}
               {/* Live xterm screen fills the whole well — a plain terminal (--inset bg).
               `nodrag nowheel` stops React Flow from treating clicks as a node drag or

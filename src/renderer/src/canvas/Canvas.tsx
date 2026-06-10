@@ -319,9 +319,11 @@ function CanvasInner(): ReactElement {
   // state via pure helpers (previewEdges / orchestrationEdges, dangling-skipped); Canvas
   // only decorates them with the marker, selection state, and the delete callback.
   const edges = useMemo(() => {
+    // Marker colors are CSS vars (D0-3): React Flow passes the color into the marker
+    // polyline's inline style and quotes the marker-id url, so var() resolves cleanly.
     const preview = previewEdges(boards, runningIds).map((e) => ({
       ...e,
-      markerEnd: { type: MarkerType.ArrowClosed, color: '#4f8cff', width: 16, height: 16 }
+      markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--accent)', width: 16, height: 16 }
     }))
     const orchestration = orchestrationEdges(connectors, boards).map((e) => ({
       ...e,
@@ -329,7 +331,7 @@ function CanvasInner(): ReactElement {
       data: { onDelete: () => removeConnector(e.id) },
       markerEnd: {
         type: MarkerType.ArrowClosed,
-        color: e.id === selectedConnectorId ? '#e6e6e6' : '#5a6573',
+        color: e.id === selectedConnectorId ? 'var(--connector-selected)' : 'var(--connector)',
         width: 16,
         height: 16
       }

@@ -29,7 +29,8 @@ export function EmptyState({ onAdd }: { onAdd: (type: BoardType) => void }): Rea
               <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
                 <TypeGlyph type={type} />
               </span>
-              <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)', fontSize: 13 }}>
+              {/* D0-2: a readable affordance hint — faint is disabled-only */}
+              <span style={{ color: 'var(--text-3)', fontFamily: 'var(--mono)', fontSize: 13 }}>
                 +
               </span>
               {type[0].toUpperCase() + type.slice(1)}
@@ -52,7 +53,7 @@ const styles: Record<string, CSSProperties> = {
   },
   inner: { textAlign: 'center', pointerEvents: 'auto', marginTop: -40 },
   mark: {
-    color: 'var(--text-faint)',
+    color: 'var(--text-3)', // D0-2 (A1): watermark must read — faint is disabled-only
     display: 'flex',
     justifyContent: 'center',
     marginBottom: 20,

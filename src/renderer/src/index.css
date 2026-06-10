@@ -47,10 +47,13 @@
   --border: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.16);
 
-  /* §2 Text */
+  /* §2 Text. --text-3 lightened #6a6a70 → #7b7b81 (design-audit D0-2, approved
+     2026-06-10): the old value sat ~4.0:1 on --surface-raised, failing AA at the 10px
+     micro tags. --text-faint (~2.8:1) is DISABLED-ONLY — readable hints/meta/done
+     states use --text-3 or brighter. */
   --text: #ededee;
   --text-2: #9b9ba1;
-  --text-3: #6a6a70;
+  --text-3: #7b7b81;
   --text-faint: #46464b;
 
   /* §2 Accent + status (one functional accent; status = 8px dots / 1px rings) */
@@ -60,6 +63,18 @@
   --ok: #3ecf8e;
   --warn: #e8b339;
   --err: #f2545b;
+
+  /* §2 Overlay + one-off chrome colors (design-audit D0-3) */
+  /* Modal scrim (Confirm/RecapConsent/Settings migrate onto this in D1-B). The
+     full-view scrim stays its own darker 0.66 — a full-bleed workspace overlay,
+     intentionally heavier than a modal (approved 2026-06-10). */
+  --scrim: rgba(0, 0, 0, 0.5);
+  /* Orchestration-connector arrowheads (Canvas.tsx markers; the cable stroke itself
+     is --border-strong / --text in OrchestrationEdge). */
+  --connector: #5a6573;
+  --connector-selected: #e6e6e6;
+  /* Browser device-frame notch (§7.2 device chrome, darker than any surface). */
+  --notch: #15161a;
 
   /* §3 Type scale — size / line-height / weight / tracking per role.
      micro=section labels & board-type tag · meta=mono meta/status/breadcrumb ·
@@ -468,7 +483,7 @@ body {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--text-3); /* D0-2: interactive at rest — faint is disabled-only */
   transition: color 0.1s;
 }
 .bb-navbtn:not(:disabled):hover {
@@ -507,7 +522,7 @@ body {
   padding: 0;
 }
 .bb-url-input::placeholder {
-  color: var(--text-faint);
+  color: var(--text-3); /* D0-2: a readable hint — faint is disabled-only */
 }
 .bb-dims {
   flex: none;
@@ -555,7 +570,7 @@ body {
   width: 34%;
   max-width: 150px;
   height: 7px;
-  background: #15161a;
+  background: var(--notch);
   border-radius: 0 0 8px 8px;
   z-index: 1;
 }
@@ -588,7 +603,7 @@ body {
 .bb-state-sub {
   font-family: var(--mono);
   font-size: 10.5px;
-  color: var(--text-faint);
+  color: var(--text-3); /* D0-2: error/state detail must read — faint is disabled-only */
   max-width: 90%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -603,7 +618,7 @@ body {
    affordance, and disabling native textarea/scrollbar chrome. Elements live in
    board-local coordinates; the well itself is the pointer-gesture surface. */
 .pl-well ::placeholder {
-  color: var(--text-faint);
+  color: var(--text-3); /* D0-2: a readable hint — faint is disabled-only */
 }
 .pl-well textarea,
 .pl-well input {
@@ -716,6 +731,12 @@ body {
   letter-spacing: var(--tr-h);
   margin: 0;
 }
+/* D0-7: shown while a project load / switch pipeline is in flight. */
+.welcome-loading {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  margin: 0;
+}
 .welcome-error {
   color: var(--err);
   font-size: var(--fs-meta);
@@ -794,6 +815,51 @@ body {
 .project-switcher {
   position: relative;
 }
+/* D0-8: save-failure chip beside the project pill (SAVE-1 interim surface; final
+   home = the D1 toast channel). Err-derived washes keep the one-accent rule. */
+.proj-save-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-family: var(--ui);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--err) 35%, transparent);
+  cursor: pointer;
+}
+.proj-save-chip:hover {
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+}
+
+/* D0-7: generic spin for busy glyphs (project switch). Reuses digest-spin's tempo. */
+.ca-spin {
+  animation: digest-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ca-spin {
+    animation: none;
+  }
+}
+
+/* D0-6: visually-hidden live-region text (standard clip pattern) — status words for
+   screen readers next to color-only dots. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .project-switcher-menu {
   position: absolute;
   top: 100%;
@@ -897,6 +963,46 @@ body {
 }
 .fullview-scrim[data-open] {
   opacity: 1;
+}
+/* D0-9: transient "Esc to exit" hint — bottom-center pill, first full-view entry per
+   session. Fades with the same curve as the scrim; reduced-motion shows it instantly
+   (the JS hold-then-hide timer still runs). */
+.fullview-hint {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-ctl);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  color: var(--text-2);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.fullview-hint[data-show] {
+  opacity: 1;
+}
+.fullview-hint kbd {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fullview-hint {
+    transition: none;
+  }
 }
 .fullview-frame {
   flex: 1;

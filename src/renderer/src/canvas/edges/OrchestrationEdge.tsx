@@ -34,7 +34,8 @@ export function OrchestrationEdge({
         markerEnd={markerEnd}
         style={{
           // Neutral, calm — distinct from the accent preview edge (DESIGN §7.3).
-          stroke: selected ? 'var(--text-1)' : 'var(--border-strong)',
+          // D0-1: was the ghost token --text-1 (never defined → fallback ink).
+          stroke: selected ? 'var(--text)' : 'var(--border-strong)',
           strokeWidth: selected ? 2.5 : 2
         }}
       />

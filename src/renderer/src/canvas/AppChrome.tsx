@@ -22,6 +22,7 @@ import {
   type RecentProject
 } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
+import { useSaveStatusStore } from '../store/saveStatusStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { cancelActiveAutosave } from '../store/useAutosave'
 import type { BoardType } from '../lib/boardSchema'
@@ -97,6 +98,16 @@ export function ProjectSwitcher(): ReactElement {
   const toObject = useCanvasStore((s) => s.toObject)
   const [open, setOpen] = useState(false)
   const [recents, setRecents] = useState<RecentProject[]>([])
+  // D0-7: a project switch in flight (flush → dispose → load). The pill dims + spins so
+  // the multi-step teardown never reads as a hang; once status flips to 'loading' this
+  // component unmounts and WelcomeScreen carries the loading presentation.
+  const [switching, setSwitching] = useState(false)
+  // D0-8: the last failed save, surfaced as a visible chip (set by the autosave hook's
+  // onError and the flush-failure path below; cleared by the next successful save).
+  const saveFailure = useSaveStatusStore((s) => s.failure)
+  const setSaveFailure = useSaveStatusStore((s) => s.setSaveFailure)
+  const clearSaveFailure = useSaveStatusStore((s) => s.clearSaveFailure)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   // project-switcher-no-outside-close: dismiss the dropdown on an outside pointerdown /
   // Escape / resize, matching BoardMenu and the layout-preset picker below.
@@ -121,6 +132,26 @@ export function ProjectSwitcher(): ReactElement {
     setOpen((v) => !v)
   }
 
+  // D0-4: clamp the dropdown into the viewport (BoardMenu/TidyMenu parity). The menu is
+  // CSS-anchored under the pill; a long recents list can run past the bottom edge (cap +
+  // scroll) and a long project name past the right edge (pull left).
+  useLayoutEffect(() => {
+    if (!open) return
+    const el = menuRef.current
+    if (!el) return
+    const PAD = 8
+    // Reset before measuring: this effect re-runs while open (recents load), and
+    // measuring with a previously-applied shift would compound the offset.
+    el.style.left = ''
+    el.style.maxHeight = ''
+    const r = el.getBoundingClientRect()
+    el.style.maxHeight = `${Math.max(80, window.innerHeight - r.top - PAD)}px`
+    el.style.overflowY = 'auto'
+    if (r.right > window.innerWidth - PAD) {
+      el.style.left = `${window.innerWidth - PAD - r.right}px`
+    }
+  }, [open, recents])
+
   const switchTo = async (load: () => Promise<unknown>): Promise<void> => {
     setOpen(false)
     // BUG-009: one switch pipeline at a time, ACROSS surfaces. The lock is module-level
@@ -131,6 +162,10 @@ export function ProjectSwitcher(): ReactElement {
     // renderer can settle on project B while MAIN's currentDir points at C, after which
     // autosave writes B's canvas into C's canvas.json.
     if (!acquireProjectSwitchLock()) return
+    // D0-7: dim + spin the pill for the whole pipeline. The finally also covers the
+    // post-unmount path (status flips to 'loading' mid-await): React 18 treats setState
+    // on an unmounted component as a no-op.
+    setSwitching(true)
     try {
       // PERSIST-B: kill any pending debounced autosave armed editing the outgoing project.
       // The explicit flush below is the authoritative final write; a leftover timer would
@@ -149,8 +184,14 @@ export function ProjectSwitcher(): ReactElement {
       if (saved === false) {
         // eslint-disable-next-line no-console
         console.error('project switch: final flush failed; aborting switch to avoid data loss')
+        // D0-8: the abort must be VISIBLE — raise the save-failure chip, not console-only.
+        setSaveFailure('Project could not be saved — switch cancelled to avoid losing edits')
         return
       }
+      // D0-8 symmetry: the flush SUCCEEDED — clear any standing failure chip now, or
+      // the global store carries the old project's stale message into the new one
+      // (the chip would flash on the next project until its first autosave).
+      clearSaveFailure()
       // 2. Suppress autosave + dispose native views/PTYs.
       setProjectLoading()
       await disposeLiveResources()
@@ -170,6 +211,29 @@ export function ProjectSwitcher(): ReactElement {
       }
     } finally {
       releaseProjectSwitchLock()
+      setSwitching(false)
+    }
+  }
+
+  // D0-8: manual retry from the chip. A success clears the chip; a `false` return (the
+  // IPC write failed without throwing) refreshes the message so the click visibly
+  // registered — otherwise the chip looks dead; a rejection logs + refreshes likewise.
+  const retrySave = async (): Promise<void> => {
+    try {
+      // BUG-009 parity: pin the write to the current project dir so a racing switch
+      // can't land this doc in the wrong canvas.json.
+      const ok = await window.api.project.save(
+        toObject(),
+        useCanvasStore.getState().project.dir ?? undefined
+      )
+      if (ok) clearSaveFailure()
+      else setSaveFailure('Save failed again — check disk space and permissions')
+    } catch (err) {
+      // Fixed user-facing string (same rationale as useAutosave::onError) — raw OS
+      // rejections are opaque + read aloud by the alert region; console keeps detail.
+      // eslint-disable-next-line no-console
+      console.error('project save retry failed', err)
+      setSaveFailure('Save failed again — check disk space and permissions')
     }
   }
 
@@ -197,7 +261,10 @@ export function ProjectSwitcher(): ReactElement {
     <div style={styles.tl} className="project-switcher">
       <button
         className="project-switcher-trigger"
-        style={styles.proj}
+        // D0-7: dim + disable the pill while a switch pipeline runs (flush → dispose → load)
+        // so the multi-step teardown never reads as a hang.
+        style={switching ? { ...styles.proj, opacity: 0.6, cursor: 'default' } : styles.proj}
+        disabled={switching}
         // Stop the trigger's own pointerdown from reaching the document outside-close listener,
         // or re-clicking to close would close-then-reopen (BoardMenu parity).
         onPointerDown={(e) => e.stopPropagation()}
@@ -208,19 +275,43 @@ export function ProjectSwitcher(): ReactElement {
           <Icon name="diamond" size={15} />
         </span>
         <span className="t-label" style={{ color: 'var(--text)' }}>
-          {name ?? 'canvas-ade'}
+          {switching ? 'Loading…' : (name ?? 'canvas-ade')}
         </span>
-        <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
-          <Icon name="chevron" size={13} />
+        <span
+          className={switching ? 'ca-spin' : undefined}
+          style={{ color: 'var(--text-3)', display: 'inline-flex' }}
+        >
+          <Icon name={switching ? 'refresh' : 'chevron'} size={13} />
         </span>
       </button>
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
+      {/* D0-8: visible save-failure chip (SAVE-1 class). A failed save is the one state
+          worth announcing assertively — but `alert` is not an allowed role on an
+          interactive element (SRs ignore it or double-announce), so the live region is a
+          visually-hidden SIBLING and the button stays a plain button. Click = retry;
+          cleared by the next successful save. Interim surface; final home = D1 toast. */}
+      {saveFailure && (
+        <>
+          <span role="alert" className="sr-only">
+            {saveFailure}
+          </span>
+          <button
+            className="proj-save-chip"
+            title={`${saveFailure} — click to retry`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => void retrySave()}
+          >
+            ⚠ Save failed — retry
+          </button>
+        </>
+      )}
       {open && (
         // Inside pointerdowns must not reach the document outside-close listener, so a menu-item
         // click isn't pre-empted by an unmount (BoardMenu parity).
         <div
+          ref={menuRef}
           className="project-switcher-menu"
           role="menu"
           onPointerDown={(e) => e.stopPropagation()}
@@ -514,6 +605,10 @@ function DockBtn({
   const label = type[0].toUpperCase() + type.slice(1)
   return (
     <button
+      // D0-4: the dock was the only chrome cluster without tooltips — explain the
+      // arm-then-place model (click arms the tool; the canvas turns a click into a
+      // default-size board, a drag into a sized one).
+      title={`Add ${label} board — click to place, drag to size`}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -548,7 +643,8 @@ function DockBtn({
       </span>
       <span
         style={{
-          color: active || hover ? 'var(--accent)' : 'var(--text-faint)',
+          // D0-2: a readable affordance hint — faint is disabled-only
+          color: active || hover ? 'var(--accent)' : 'var(--text-3)',
           fontFamily: 'var(--mono)'
         }}
       >

@@ -2,8 +2,9 @@
  * Checklist element (DESIGN.md §7.3) — a `--surface-raised` card with a title +
  * `done/total` mono count, a 3px `--accent` progress bar, and rows of togglable
  * items. Per the design: checkbox = 16px `--r-ctl`; checked = filled `--accent` +
- * `--void` check glyph; the item label goes `--text-faint` + strikethrough when
- * done. Toggling is LIVE (writes straight back through `onToggle` to the store).
+ * `--void` check glyph; the item label goes `--text-3` + strikethrough when
+ * done (D0-2: was `--text-faint`, below AA — faint is disabled-only now).
+ * Toggling is LIVE (writes straight back through `onToggle` to the store).
  *
  * Lives entirely inside the Planning board's content well in board-local
  * coordinates; stops pointer propagation so toggling/editing never starts a node
@@ -300,9 +301,10 @@ export function ChecklistCard({
                 fontSize: 12,
                 lineHeight: '16px',
                 padding: 0,
-                color: item.done ? 'var(--text-faint)' : 'var(--text-2)',
+                // D0-2 (A1): done items must stay readable — faint is disabled-only
+                color: item.done ? 'var(--text-3)' : 'var(--text-2)',
                 textDecoration: item.done ? 'line-through' : 'none',
-                textDecorationColor: 'var(--text-faint)',
+                textDecorationColor: 'var(--text-3)',
                 cursor: interactive ? 'text' : 'default'
               }}
             />

@@ -155,6 +155,19 @@ export function BrowserBoard({
     []
   )
 
+  // D0-6 (A9): live-region text for the connection dot. Starts EMPTY and fills only on
+  // the first status TRANSITION — a region inserted with content can announce on mount,
+  // which would speak "not connected" for every board on project load.
+  const [srConn, setSrConn] = useState('')
+  const firstStatus = useRef(true)
+  useEffect(() => {
+    if (firstStatus.current) {
+      firstStatus.current = false
+      return
+    }
+    setSrConn(connWord(runtime.status))
+  }, [runtime.status])
+
   const commitUrl = (): void => {
     const next = draftUrl.trim()
     // BUG-059: an unedited blur must not commit — the draft may be a STALE value an
@@ -178,9 +191,17 @@ export function BrowserBoard({
   }
 
   const openExternal = (): void => {
-    void window.api.openExternalPreview(runtime.liveUrl ?? board.url).then((ok) => {
-      if (!ok) showNote('Cannot open that URL in a browser')
-    })
+    void window.api
+      .openExternalPreview(runtime.liveUrl ?? board.url)
+      .then((ok) => {
+        if (!ok) showNote('Cannot open that URL in a browser')
+      })
+      // D0-5: an IPC rejection (teardown race, channel gone) was silent before.
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('openExternalPreview failed', err)
+        showNote('Cannot open that URL in a browser')
+      })
   }
 
   const showNote = (msg: string): void => {
@@ -191,18 +212,26 @@ export function BrowserBoard({
 
   const takeScreenshot = (): void => {
     void (async () => {
-      const res = await window.api.screenshotPreview(board.id)
-      // BUG-028: main reports whether the clipboard write actually landed.
-      const clipOk = res.ok && res.clipboardOk
-      if (!res.ok) showNote('Open the preview to screenshot it')
-      else if (res.assetId)
-        showNote(
-          clipOk
-            ? 'Screenshot copied + saved to assets/'
-            : 'Screenshot saved to assets/ (clipboard unavailable)'
-        )
-      else if (clipOk) showNote('Screenshot copied to clipboard')
-      else showNote('Screenshot failed: clipboard unavailable and nothing saved')
+      // D0-5: the IPC can also REJECT (capture race, channel teardown) — without the
+      // catch that path was a silent no-op while the success/false branches spoke.
+      try {
+        const res = await window.api.screenshotPreview(board.id)
+        // BUG-028: main reports whether the clipboard write actually landed.
+        const clipOk = res.ok && res.clipboardOk
+        if (!res.ok) showNote('Open the preview to screenshot it')
+        else if (res.assetId)
+          showNote(
+            clipOk
+              ? 'Screenshot copied + saved to assets/'
+              : 'Screenshot saved to assets/ (clipboard unavailable)'
+          )
+        else if (clipOk) showNote('Screenshot copied to clipboard')
+        else showNote('Screenshot failed: clipboard unavailable and nothing saved')
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('screenshotPreview failed', err)
+        showNote('Screenshot failed — try again')
+      }
     })()
   }
 
@@ -242,7 +271,8 @@ export function BrowserBoard({
     >
       {/* URL / route bar (DESIGN.md §7.2) — pinned to the top of the content slot. */}
       <div className="bb-urlbar" style={{ height: URLBAR_H }}>
-        <div style={{ display: 'flex', gap: 2, color: 'var(--text-faint)' }}>
+        {/* D0-2: interactive cluster at rest — faint is disabled-only */}
+        <div style={{ display: 'flex', gap: 2, color: 'var(--text-3)' }}>
           <NavBtn
             name="back"
             title="Back"
@@ -269,7 +299,16 @@ export function BrowserBoard({
           <NavBtn name="external" title="Open in browser" onClick={openExternal} />
         </div>
         <div className="bb-url-field">
-          <span className="bb-conn-dot" style={{ background: connDot(runtime.status) }} />
+          {/* D0-6 (A9): the dot is color-only — pair it with a hover word and a polite
+              live region so connection-state changes are announced. */}
+          <span
+            className="bb-conn-dot"
+            title={connWord(runtime.status)}
+            style={{ background: connDot(runtime.status) }}
+          />
+          <span className="sr-only" role="status" aria-live="polite">
+            {srConn}
+          </span>
           <input
             className="bb-url-input"
             value={draftUrl}
@@ -438,4 +477,12 @@ function connDot(status: ReturnType<ReturnType<typeof selectRuntime>>['status'])
   if (status === 'load-failed') return 'var(--err)'
   if (status === 'connecting') return 'var(--warn)'
   return 'var(--text-3)'
+}
+
+/** D0-6 (A9): the dot's meaning as a word — tooltip + live-region text. */
+function connWord(status: ReturnType<ReturnType<typeof selectRuntime>>['status']): string {
+  if (status === 'connected') return 'connected'
+  if (status === 'load-failed') return 'failed to load'
+  if (status === 'connecting') return 'connecting'
+  return 'not connected'
 }

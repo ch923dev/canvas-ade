@@ -211,7 +211,7 @@ export function ImageCard({
             justifyContent: 'center',
             border: '1px dashed var(--border)',
             borderRadius: 'var(--r-inner)',
-            color: 'var(--text-faint)',
+            color: 'var(--text-3)', // D0-2: a readable state — faint is disabled-only
             fontFamily: 'var(--ui)',
             fontSize: 11,
             pointerEvents: 'none'
