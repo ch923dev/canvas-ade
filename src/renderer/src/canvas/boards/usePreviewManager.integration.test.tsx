@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, cleanup, act } from '@testing-library/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
+import { useToastStore } from '../../store/toastStore'
 
 // ── Mock @xyflow/react ────────────────────────────────────────────────────────
 // usePreviewManager imports ONLY `useReactFlow` (for getViewport) and
@@ -126,6 +127,7 @@ beforeEach(() => {
   // Fresh stores.
   useCanvasStore.setState({ boards: [], connectors: [], selectedId: null, past: [], future: [] })
   usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+  useToastStore.getState().clearToasts()
 })
 
 afterEach(() => {
@@ -379,6 +381,50 @@ describe('usePreviewManager — reconcile re-push during full view (BUG-058)', (
       expect(calls.attachArgs.slice(before).filter((a) => a.id === id)).toEqual([])
     } finally {
       document.body.removeChild(host)
+    }
+  })
+})
+
+describe('usePreviewManager — toast island joins the chrome-exclusion zones (D1-A)', () => {
+  it('demotes a live view overlapping the visible toast island, and restores it on dismiss', async () => {
+    renderManager()
+    // Board at (1200,1200) 700×500 → screen 1200..1900 × 1200..1700 (zoom 1, vp 0,0):
+    // clear of the dock band + top-right cluster, overlapping the island rect below.
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 1200, y: 1200 }, { exact: true })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+
+    // A visible toast island over the board (the real ToastIsland is App-mounted and
+    // unit-tested separately; resolveChromeZones only reads [data-test=toast-island]'s
+    // live DOM rect — the digest-panel pattern).
+    const islandEl = document.createElement('div')
+    islandEl.setAttribute('data-test', 'toast-island')
+    islandEl.getBoundingClientRect = () =>
+      ({ left: 1500, top: 1500, width: 300, height: 120, right: 1800, bottom: 1620 }) as DOMRect
+    document.body.appendChild(islandEl)
+    try {
+      const toastId = await act(async () => useToastStore.getState().showToast({ message: 'm' }))
+      await flush()
+      // The demote parks at its (held) detach — release so the state settles.
+      await act(async () => {
+        releaseDetach?.()
+      })
+      await flush()
+      expect(usePreviewStore.getState().byId[id]?.live).toBe(false)
+
+      // Dismissing the last toast unmounts the island (querySelector misses here once
+      // removed) → the zone disappears → the board re-attaches.
+      document.body.removeChild(islandEl)
+      await act(async () => {
+        useToastStore.getState().dismissToast(toastId)
+      })
+      await flush()
+      expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+    } finally {
+      if (islandEl.parentNode) document.body.removeChild(islandEl)
     }
   })
 })

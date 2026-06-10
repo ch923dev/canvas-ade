@@ -9,6 +9,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchema'
+import { showToast } from '../../../store/toastStore'
 import { IconBtn } from '../../BoardFrame'
 
 export function ExportPopover({ board }: { board: PlanningBoardData }): ReactElement {
@@ -18,24 +19,6 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
     top: -9999,
     left: -9999
   })
-  // D0-5: a failed export gets a visible transient note (the W5 follow-up "silent
-  // export-failure feedback" gap). Interim surface reusing .ca-preview-note; final
-  // home is the D1 toast channel. Held as an OBJECT so a repeated identical failure
-  // still yields a fresh reference — the position effect below re-measures (the board
-  // may have moved between failures).
-  const [note, setNote] = useState<{ text: string } | null>(null)
-  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (noteTimer.current) clearTimeout(noteTimer.current)
-    },
-    []
-  )
-  const showNote = (msg: string): void => {
-    if (noteTimer.current) clearTimeout(noteTimer.current)
-    setNote({ text: msg })
-    noteTimer.current = setTimeout(() => setNote(null), 4000)
-  }
   const runExport = useCallback(
     async (format: 'png' | 'svg') => {
       setExportOpen(false)
@@ -54,16 +37,22 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
         if (!res.ok && !res.canceled) {
           // eslint-disable-next-line no-console
           console.error('whiteboard export failed:', res.error)
-          // Fixed copy: res.error is a raw OS/API string (paths, ENOENT) and the note
+          // Fixed copy: res.error is a raw OS/API string (paths, ENOENT) and the toast
           // is read aloud by the alert region; the console line above keeps the detail.
-          showNote(
-            res.error ? 'Export failed — check file permissions and disk space' : 'Export failed'
-          )
+          // D1-A: failures route to the app toast channel (was a board-anchored note);
+          // board-keyed so a quick retry replaces the toast instead of stacking.
+          showToast({
+            id: `export-failed-${board.id}`,
+            kind: 'error',
+            message: res.error
+              ? 'Export failed — check file permissions and disk space'
+              : 'Export failed'
+          })
         }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('whiteboard export failed', err)
-        showNote('Export failed')
+        showToast({ id: `export-failed-${board.id}`, kind: 'error', message: 'Export failed' })
       }
     },
     [board]
@@ -94,21 +83,6 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
     const left = Math.max(PAD, Math.min(t.right - W, window.innerWidth - W - PAD))
     setExportPos({ top: t.bottom + 4, left })
   }, [exportOpen])
-  // D0-5: same measure-and-clamp pass for the failure note (it outlives the menu).
-  const [notePos, setNotePos] = useState<{ top: number; left: number }>({
-    top: -9999,
-    left: -9999
-  })
-  useLayoutEffect(() => {
-    if (!note) return
-    const t = exportTriggerRef.current?.getBoundingClientRect()
-    if (!t) return
-    const W = 240
-    const PAD = 8
-    const left = Math.max(PAD, Math.min(t.right - W, window.innerWidth - W - PAD))
-    setNotePos({ top: t.bottom + 4, left })
-  }, [note])
-
   return (
     <div ref={exportTriggerRef} style={{ position: 'relative', display: 'inline-flex' }}>
       <IconBtn
@@ -143,31 +117,6 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
             </button>
             <button className="board-menu-item" onClick={() => void runExport('svg')}>
               Export SVG
-            </button>
-          </div>,
-          document.body
-        )}
-      {/* D0-5: transient export-failure note. Portaled + fixed (the title bar is
-          overflow:hidden, so an in-place note would clip); .ca-preview-note's absolute
-          board-overlay anchoring is overridden to the measured trigger position. */}
-      {note &&
-        createPortal(
-          <div
-            className="ca-preview-note"
-            role="alert"
-            style={{
-              position: 'fixed',
-              top: notePos.top,
-              left: notePos.left,
-              right: 'auto',
-              width: 240,
-              zIndex: 50
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            {note.text}
-            <button className="ca-preview-dismiss" onClick={() => setNote(null)}>
-              Dismiss
             </button>
           </div>,
           document.body

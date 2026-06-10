@@ -6,8 +6,25 @@
  * `onPreview` callback, injecting its IPC and state-setter collaborators.
  */
 
+import { showToast, dismissToast } from '../../store/toastStore'
+
 export type DetectedUrl = { url: string; host: string; port: number }
 export type Gesture = 'tap' | 'hold'
+
+/**
+ * D1-A: the `setPreviewNote` collaborator, backed by the app toast channel instead of
+ * a board-anchored note. Board-keyed so runDetectPorts's leading `setPreviewNote(null)`
+ * clears only THIS board's previous note, and a repeat failure replaces in place
+ * rather than stacking. Info kind: both copies are guidance ("start it, then try
+ * again"), not a data-loss failure.
+ */
+export function makePortDetectNote(boardId: string): (msg: string | null) => void {
+  const id = `port-detect-${boardId}`
+  return (msg) => {
+    if (msg === null) dismissToast(id)
+    else showToast({ id, message: msg, kind: 'info' })
+  }
+}
 
 /**
  * Core detect-ports logic for the globe button.

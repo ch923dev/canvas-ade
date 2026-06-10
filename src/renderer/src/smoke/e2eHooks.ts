@@ -29,6 +29,8 @@ import { makeChecklist } from '../canvas/boards/planning/elements'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
 import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
 import { disposeLiveResources } from '../store/disposeLiveResources'
+import { useToastStore } from '../store/toastStore'
+import { useSaveStatusStore } from '../store/saveStatusStore'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
 interface RuntimeProbe {
@@ -550,6 +552,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         selectedIds: [],
         project: { dir: null, name: 'e2e', status: 'open' }
       })
+      // D1-A: toasts + the save-failure state are global ephemeral stores too — a toast
+      // left standing (the sticky save-failure especially) would occlude the next spec's
+      // bottom-right region AND register a chrome-exclusion zone that demotes any live
+      // board under it (the island joins resolveChromeZones while visible).
+      useToastStore.getState().clearToasts()
+      useSaveStatusStore.getState().clearSaveFailure()
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()

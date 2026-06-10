@@ -1,6 +1,7 @@
 import { render, act } from '@testing-library/react'
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ExportPopover } from './ExportPopover'
+import { useToastStore } from '../../../store/toastStore'
 import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchema'
 
 // Mock the dynamic export module: SVG path only (PNG's offscreen rasterize needs the
@@ -25,6 +26,10 @@ function board(): PlanningBoardData {
     elements: []
   } as unknown as PlanningBoardData
 }
+
+beforeEach(() => {
+  useToastStore.getState().clearToasts()
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -71,5 +76,72 @@ describe('ExportPopover — SVG export wires buildExport → export.save', () =>
       ext: 'svg',
       defaultName: 'wb'
     })
+    // Success is silent — no toast.
+    expect(useToastStore.getState().toasts).toEqual([])
+  })
+})
+
+describe('ExportPopover — failure feedback routes to the toast channel (D1-A)', () => {
+  it('a write failure raises an error toast (fixed copy, raw OS error kept off-screen)', async () => {
+    const save = vi.fn(async () => ({ ok: false, canceled: false, error: 'EACCES: /tmp/x.svg' }))
+    ;(window as unknown as { api: unknown }).api = { export: { save } }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<ExportPopover board={board()} />)
+
+    clickExportSvg()
+    await settleExport(save)
+
+    const { toasts } = useToastStore.getState()
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0].id).toBe('export-failed-b1') // board-keyed: repeats replace in place
+    expect(toasts[0].kind).toBe('error')
+    expect(toasts[0].message).toBe('Export failed — check file permissions and disk space')
+  })
+
+  it('a repeat failure replaces the keyed toast instead of stacking', async () => {
+    const save = vi.fn(async () => ({ ok: false, canceled: false, error: 'EACCES' }))
+    ;(window as unknown as { api: unknown }).api = { export: { save } }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<ExportPopover board={board()} />)
+
+    clickExportSvg()
+    await settleExport(save)
+    clickExportSvg()
+    for (let i = 0; i < 50 && save.mock.calls.length < 2; i++) {
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0))
+      })
+    }
+
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(useToastStore.getState().toasts).toHaveLength(1)
+  })
+
+  it('an explicit user cancel stays silent', async () => {
+    const save = vi.fn(async () => ({ ok: false, canceled: true }))
+    ;(window as unknown as { api: unknown }).api = { export: { save } }
+    render(<ExportPopover board={board()} />)
+
+    clickExportSvg()
+    await settleExport(save)
+
+    expect(useToastStore.getState().toasts).toEqual([])
+  })
+
+  it('a thrown export error raises the generic error toast', async () => {
+    const save = vi.fn(async () => {
+      throw new Error('ipc gone')
+    })
+    ;(window as unknown as { api: unknown }).api = { export: { save } }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<ExportPopover board={board()} />)
+
+    clickExportSvg()
+    await settleExport(save)
+
+    const { toasts } = useToastStore.getState()
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0].kind).toBe('error')
+    expect(toasts[0].message).toBe('Export failed')
   })
 })

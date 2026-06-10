@@ -5,6 +5,7 @@ import type { ReactElement } from 'react'
 import { BrowserBoard } from './BrowserBoard'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
+import { useToastStore } from '../../store/toastStore'
 import type { BrowserBoard as BrowserBoardData } from '../../lib/boardSchema'
 
 // jsdom has no ResizeObserver (BoardFrame/board chrome may observe size).
@@ -38,6 +39,7 @@ function boardUrl(id: string): string {
 let screenshotPreview: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
+  useToastStore.getState().clearToasts()
   screenshotPreview = vi.fn(async () => ({ ok: true, assetId: null, clipboardOk: true }))
   ;(window as unknown as { api: unknown }).api = {
     screenshotPreview,
@@ -114,8 +116,9 @@ describe('BrowserBoard — URL draft vs external writers (BUG-059)', () => {
   })
 })
 
-describe('BrowserBoard — screenshot toast honesty (BUG-028)', () => {
-  async function shoot(id: string): Promise<string> {
+describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel since D1-A)', () => {
+  // The board no longer renders its own note — feedback goes to the app toast store.
+  async function shoot(id: string): Promise<{ message: string; kind: string }> {
     // The camera button is enabled only while the native view is live.
     act(() => {
       usePreviewStore.getState().patch(id, { live: true })
@@ -126,16 +129,18 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028)', () => {
       fireEvent.click(btn)
       await Promise.resolve()
     })
-    return document.querySelector('.ca-preview-note')?.textContent ?? ''
+    const t = useToastStore.getState().toasts.at(-1)
+    return { message: t?.message ?? '', kind: t?.kind ?? '' }
   }
 
   it('reports failure when the clipboard write failed and nothing was saved', async () => {
     const id = seedBrowser()
     screenshotPreview.mockResolvedValue({ ok: true, assetId: null, clipboardOk: false })
     render(<Harness id={id} />)
-    const note = await shoot(id)
-    expect(note).toContain('Screenshot failed')
-    expect(note).not.toContain('copied to clipboard')
+    const t = await shoot(id)
+    expect(t.message).toContain('Screenshot failed')
+    expect(t.message).not.toContain('copied to clipboard')
+    expect(t.kind).toBe('error')
   })
 
   it('reports partial success when saved to assets but the clipboard failed', async () => {
@@ -146,16 +151,39 @@ describe('BrowserBoard — screenshot toast honesty (BUG-028)', () => {
       clipboardOk: false
     })
     render(<Harness id={id} />)
-    const note = await shoot(id)
-    expect(note).toContain('saved to assets/')
-    expect(note).not.toContain('copied')
+    const t = await shoot(id)
+    expect(t.message).toContain('saved to assets/')
+    expect(t.message).not.toContain('copied')
+    expect(t.kind).toBe('ok')
   })
 
   it('still reports the clipboard success toast when the copy landed', async () => {
     const id = seedBrowser()
     screenshotPreview.mockResolvedValue({ ok: true, assetId: null, clipboardOk: true })
     render(<Harness id={id} />)
-    const note = await shoot(id)
-    expect(note).toContain('Screenshot copied to clipboard')
+    const t = await shoot(id)
+    expect(t.message).toContain('Screenshot copied to clipboard')
+    expect(t.kind).toBe('ok')
+  })
+
+  it('routes the open-external failure to a board-keyed error toast (repeats collapse)', async () => {
+    const id = seedBrowser()
+    ;(window.api as unknown as { openExternalPreview: unknown }).openExternalPreview = vi.fn(
+      async () => false
+    )
+    render(<Harness id={id} />)
+    const btn = document.querySelector<HTMLButtonElement>('button[title="Open in browser"]')
+    if (!btn) throw new Error('open-external button not found')
+    // Rapid double-click on a broken URL must REPLACE the keyed toast, not stack two.
+    await act(async () => {
+      fireEvent.click(btn)
+      fireEvent.click(btn)
+      await Promise.resolve()
+    })
+    const { toasts } = useToastStore.getState()
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0].id).toBe(`browser-external-${id}`)
+    expect(toasts[0].message).toBe('Cannot open that URL in a browser')
+    expect(toasts[0].kind).toBe('error')
   })
 })

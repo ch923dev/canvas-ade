@@ -817,27 +817,6 @@ body {
 .project-switcher {
   position: relative;
 }
-/* D0-8: save-failure chip beside the project pill (SAVE-1 interim surface; final
-   home = the D1 toast channel). Err-derived washes keep the one-accent rule. */
-.proj-save-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 999px;
-  font-family: var(--ui);
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  color: var(--err);
-  background: color-mix(in srgb, var(--err) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--err) 35%, transparent);
-  cursor: pointer;
-}
-.proj-save-chip:hover {
-  background: color-mix(in srgb, var(--err) 18%, transparent);
-}
-
 /* D0-7: generic spin for busy glyphs (project switch). Reuses digest-spin's tempo. */
 .ca-spin {
   animation: digest-spin 0.8s linear infinite;
@@ -1030,8 +1009,8 @@ body {
   min-height: 0;
 }
 
-/* Slice C′ — preview port note + picker (Terminal board overlay). */
-.ca-preview-note,
+/* Slice C′ — preview port picker (Terminal board overlay). The companion
+   .ca-preview-note is gone — transient notes route to the toast channel (D1-A). */
 .ca-port-picker {
   position: absolute;
   top: 8px;
@@ -1081,6 +1060,97 @@ body {
   background: transparent;
   border: none;
   cursor: pointer;
+}
+
+/* D1-A toast island — the single transient feedback channel (DESIGN.md §8 floating
+   island, bottom-right; status-dot variant signed off 2026-06-10). While visible, its
+   rect joins the preview manager's chrome-exclusion zones so a live native view never
+   paints over it (ADR 0002 — usePreviewManager.resolveChromeZones reads
+   [data-test=toast-island]). */
+.toast-island {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  /* Above every modal scrim (Settings 300 · RecapConsent 1000 · Confirm 10000) — a
+     save-failure toast must surface even while a modal is up. */
+  z-index: 10100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: 360px;
+}
+.toast-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+  color: var(--text-2);
+  animation: toast-in 140ms ease-out;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-item {
+    animation: none;
+  }
+}
+.toast-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  background: var(--text-3);
+}
+.toast-item[data-kind='error'] .toast-dot {
+  background: var(--err);
+}
+.toast-item[data-kind='ok'] .toast-dot {
+  background: var(--ok);
+}
+.toast-msg {
+  flex: 1;
+  line-height: 1.45;
+}
+.toast-action {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.toast-action:hover,
+.toast-action:focus-visible {
+  color: var(--accent-hover);
+}
+.toast-dismiss {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.toast-dismiss:hover,
+.toast-dismiss:focus-visible {
+  color: var(--text);
 }
 
 /* Multi-select connect picker (Terminal globe long-press → choose browser(s)). */
