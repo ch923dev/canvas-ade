@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Modal } from './Modal'
 
 /**
  * 🔒 Human-confirm modal (T4.2). MAIN posts a confirm request over `mcp:confirm`
@@ -8,7 +9,10 @@ import { useCallback, useEffect, useState } from 'react'
  * approve as a deny (fail-closed, see `mcpConfirm.ts`).
  *
  * Requests queue (FIFO) so two dispatches can't race a single modal; the head shows,
- * and answering advances to the next. Esc / clicking the backdrop denies.
+ * and answering advances to the next. Esc / a backdrop pointerdown denies (both routed
+ * through the shared Modal's onClose). `confirmGate` marks the scrim with
+ * `[data-confirm-active]` so the full-view capture-phase Esc listener in
+ * useCanvasKeybindings yields Esc to this modal — it must DENY first (BUG-005).
  */
 
 interface ConfirmRequest {
@@ -43,105 +47,65 @@ export default function ConfirmModal(): React.ReactElement | null {
     })
   }, [])
 
-  // Esc denies the head (only while a modal is showing). Re-registers when the head
-  // changes so the listener always reflects whether a modal is up.
-  useEffect(() => {
-    if (!current) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        answer(false)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [current, answer])
-
   if (!current) return null
 
   return (
-    <div
-      data-testid="confirm-backdrop"
-      // Marks an active human-confirm gate so other window-level Esc handlers (e.g. the
-      // full-view capture-phase listener in useCanvasKeybindings) can detect it and refrain
-      // from stealing Esc — Esc must reach this modal's bubble listener to DENY first (BUG-005).
-      data-confirm-active=""
-      onClick={() => answer(false)}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 10000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: 'rgba(0,0,0,0.5)'
-      }}
+    <Modal
+      label={current.title}
+      // Esc and the backdrop both DENY (fail-safe direction).
+      onClose={() => answer(false)}
+      zIndex={10000}
+      confirmGate
+      scrimProps={{ 'data-testid': 'confirm-backdrop' }}
+      cardProps={{ 'data-testid': 'confirm-modal' }}
+      cardStyle={{ width: 420, maxWidth: '90vw', padding: 20 }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={current.title}
-        data-testid="confirm-modal"
-        onClick={(e) => e.stopPropagation()}
+      <h2
         style={{
-          width: 420,
-          maxWidth: '90vw',
-          background: 'var(--surface-overlay)',
-          border: '1px solid var(--border)',
-          borderRadius: 10,
-          padding: 20,
-          fontFamily: 'var(--ui)',
-          color: 'var(--text)',
-          boxShadow: '0 16px 48px rgba(0,0,0,0.5)'
+          margin: 0,
+          fontSize: 'var(--fs-label)',
+          fontWeight: 600,
+          letterSpacing: 'var(--tr-label)'
         }}
       >
-        <h2
+        {current.title}
+      </h2>
+      <p
+        style={{
+          margin: '10px 0 18px',
+          fontSize: 'var(--fs-body)',
+          lineHeight: 'var(--lh-body)',
+          color: 'var(--text-2)',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word'
+        }}
+      >
+        {current.body}
+      </p>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button
+          type="button"
+          data-testid="confirm-deny"
+          onClick={() => answer(false)}
+          style={{ ...btn, color: 'var(--text-2)', background: 'var(--surface-raised)' }}
+        >
+          {current.denyLabel ?? 'Deny'}
+        </button>
+        <button
+          type="button"
+          data-testid="confirm-approve"
+          onClick={() => answer(true)}
           style={{
-            margin: 0,
-            fontSize: 'var(--fs-label)',
-            fontWeight: 600,
-            letterSpacing: 'var(--tr-label)'
+            ...btn,
+            color: 'var(--text)',
+            background: 'var(--accent)',
+            borderColor: 'var(--accent)'
           }}
         >
-          {current.title}
-        </h2>
-        <p
-          style={{
-            margin: '10px 0 18px',
-            fontSize: 'var(--fs-body)',
-            lineHeight: 'var(--lh-body)',
-            color: 'var(--text-2)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word'
-          }}
-        >
-          {current.body}
-        </p>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button
-            type="button"
-            data-testid="confirm-deny"
-            onClick={() => answer(false)}
-            style={{ ...btn, color: 'var(--text-2)', background: 'var(--surface-raised)' }}
-          >
-            {current.denyLabel ?? 'Deny'}
-          </button>
-          <button
-            type="button"
-            data-testid="confirm-approve"
-            onClick={() => answer(true)}
-            style={{
-              ...btn,
-              color: '#fff',
-              background: 'var(--accent)',
-              borderColor: 'var(--accent)'
-            }}
-          >
-            {current.confirmLabel ?? 'Approve'}
-          </button>
-        </div>
+          {current.confirmLabel ?? 'Approve'}
+        </button>
       </div>
-    </div>
+    </Modal>
   )
 }
 
