@@ -15,7 +15,7 @@ authoritative *UX/visual* contract is `../design-reference/`.
 | [`roadmap-drawio.md`](roadmap-drawio.md) | Separate feature track — draw.io diagram/dev-tooling integration (D1.1 shipped; D1.2/D2/D3 open). Shapes epic deferred. | ✅ live |
 | [`feature-proposals.md`](feature-proposals.md) | Research-backed feature ideas (proposals only, nothing committed). | ✅ live |
 | [`decisions/`](decisions/) | ADRs (durable contract) — stack, preview gate, LLM egress, … one file per decision. | ✅ live |
-| [`reviews/`](reviews/) | All code reviews & bug hunts. [`reviews/README.md`](reviews/README.md) is the index; the newest dated file holds the current open backlog (none open as of 2026-06-10). | ✅ live |
+| [`reviews/`](reviews/) | All code reviews & bug hunts. [`reviews/README.md`](reviews/README.md) is the index; the newest dated file holds the current open backlog (as of 2026-06-10: only the design/UX audit waves D2-D4 remain open). | ✅ live |
 | [`research/`](research/) | Standalone research notes feeding the **open** feature tracks only. Shipped research is collapsed (git history). | ✅ live |
 | [`superpowers/`](superpowers/) | Per-slice specs/plans/handoffs for **in-flight** work only. Shipped slices are collapsed to `archive/build-history.md` + git history. | ✅ live |
 | [`contributing/`](contributing/) | Working agreements — [`file-size-doctrine.md`](contributing/file-size-doctrine.md) (the eslint `max-lines` ratchet). | ✅ live |
