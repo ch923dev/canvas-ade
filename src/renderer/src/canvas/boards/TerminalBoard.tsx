@@ -128,9 +128,12 @@ export function TerminalBoard({
 
   // D2-B (audit A6): flipping moves focus WITH the visible face — the recap wrapper on
   // flip, xterm back on flip-back. Without this, focus stayed on the hidden xterm behind
-  // the opaque recap (keystrokes typed "into nothing"). Deferred one macrotask: the swap
-  // lands mid-fold/mid-commit, where xterm's helper textarea can be transiently
-  // unfocusable and focus() is a SILENT no-op (the Menu.tsx focus-restore lesson).
+  // the opaque recap (keystrokes typed "into nothing"). RETRIED across the fold, not a
+  // single deferred shot: `flipped` swaps at the 90° edge MID-FOLD, and during the
+  // unfold's commits xterm's helper textarea can be transiently unfocusable — focus()
+  // is then a SILENT no-op (the Menu.tsx lesson) and a one-shot attempt loses the race
+  // under load (caught by terminalPolish.e2e on a slow run). Bounded: ~14 ticks ≈ the
+  // 2×150ms fold + margin, then gives up; cleanup cancels on re-flip/unmount.
   const recapRef = useRef<HTMLDivElement>(null)
   const flipFocusInit = useRef(true)
   useEffect(() => {
@@ -138,10 +141,22 @@ export function TerminalBoard({
       flipFocusInit.current = false // mount is not a flip — don't steal focus on load
       return
     }
-    const t = window.setTimeout(() => {
-      if (flip.flipped) recapRef.current?.focus()
-      else termRef.current?.focus()
-    }, 0)
+    let tries = 0
+    let t: number
+    const attempt = (): void => {
+      let landed = false
+      if (flip.flipped) {
+        const w = recapRef.current
+        w?.focus()
+        landed = !!w && (document.activeElement === w || w.contains(document.activeElement))
+      } else {
+        const term = termRef.current
+        term?.focus()
+        landed = !!term?.textarea && document.activeElement === term.textarea
+      }
+      if (!landed && ++tries < 14) t = window.setTimeout(attempt, 25)
+    }
+    t = window.setTimeout(attempt, 0)
     return () => window.clearTimeout(t)
   }, [flip.flipped, termRef])
 
