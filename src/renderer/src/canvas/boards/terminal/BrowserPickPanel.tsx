@@ -78,7 +78,7 @@ export function BrowserPickPanel({
         <button
           className="ca-browser-connect"
           disabled={checked.size === 0}
-          onClick={() => onConfirm(checked)}
+          onClick={() => onConfirm(new Set(checked))}
         >
           Connect{checked.size > 0 ? ` ${checked.size}` : ''}
         </button>

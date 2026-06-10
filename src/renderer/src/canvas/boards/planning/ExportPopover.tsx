@@ -150,7 +150,7 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
         createPortal(
           <div
             className="ca-preview-note"
-            role="status"
+            role="alert"
             style={{
               position: 'fixed',
               top: notePos.top,
