@@ -188,9 +188,7 @@ describe('BrowserBoard — URL sanity check (D2-C inline error)', () => {
     fireEvent.change(input, { target: { value: 'not a url' } })
     fireEvent.blur(input)
     expect(boardUrl(id)).toBe(original)
-    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-invalid')).toBe(
-      true
-    )
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-invalid')).toBe(true)
     expect(document.querySelector('.bb-url-error')?.textContent).toBeTruthy()
     // The rejected draft stays visible so the user can fix it in place.
     expect(urlInput().value).toBe('not a url')
@@ -249,9 +247,7 @@ describe('BrowserBoard — auto-push URL accent flash (D2-C)', () => {
     act(() => {
       vi.advanceTimersByTime(700)
     })
-    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-flash')).toBe(
-      false
-    )
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-flash')).toBe(false)
   })
 
   it("does NOT flash on the user's own committed edit", () => {
@@ -262,9 +258,7 @@ describe('BrowserBoard — auto-push URL accent flash (D2-C)', () => {
     fireEvent.change(input, { target: { value: 'http://localhost:8080' } })
     fireEvent.blur(input)
     expect(boardUrl(id)).toBe('http://localhost:8080')
-    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-flash')).toBe(
-      false
-    )
+    expect(document.querySelector('.bb-url-field')?.classList.contains('bb-url-flash')).toBe(false)
   })
 })
 

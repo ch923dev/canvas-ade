@@ -398,9 +398,7 @@ describe('usePreviewManager — over-cap eviction marks the runtime evicted (D2-
       ids.push(useCanvasStore.getState().addBoard('browser', { x: 60, y: 200 }, { exact: true }))
       ids.push(useCanvasStore.getState().addBoard('browser', { x: 1260, y: 200 }, { exact: true }))
       ids.push(useCanvasStore.getState().addBoard('browser', { x: 60, y: 1400 }, { exact: true }))
-      ids.push(
-        useCanvasStore.getState().addBoard('browser', { x: 1260, y: 1400 }, { exact: true })
-      )
+      ids.push(useCanvasStore.getState().addBoard('browser', { x: 1260, y: 1400 }, { exact: true }))
     })
     await flush()
     const far = ids[3]

@@ -147,17 +147,17 @@ export function BrowserBoard({
   const [urlError, setUrlError] = useState<string | null>(null)
   // D2-C: an EXTERNAL writer (auto-connect detect push, terminal push-to-preview,
   // MCP) just rewrote board.url — flash the URL field with the accent wash for 600ms
-  // so the silent background mutation is noticeable. A self-commit must not flash.
+  // so the silent background mutation is noticeable. A self-commit never reaches
+  // this branch: commitUrl pre-syncs lastUrl/draft to the committed value, so only
+  // a url the user did NOT just type can mismatch here.
   const [urlFlash, setUrlFlash] = useState(false)
-  const selfCommit = useRef(false)
   if (board.url !== lastUrl) {
     setLastUrl(board.url)
     if (!editingUrl) {
       setDraftUrl(board.url)
       setUrlError(null) // the synced board.url supersedes a stale inline error
-      if (!selfCommit.current) setUrlFlash(true)
+      setUrlFlash(true)
     }
-    selfCommit.current = false
   }
   useEffect(() => {
     if (!urlFlash) return
@@ -198,7 +198,10 @@ export function BrowserBoard({
     }
     urlDirty.current = false
     setUrlError(null)
-    selfCommit.current = true
+    // Pre-sync the mirrors to the committed value so the render-adjust branch above
+    // sees no mismatch — the accent flash fires only for EXTERNAL writers.
+    setLastUrl(next)
+    setDraftUrl(next)
     // One undo checkpoint per committed URL edit (also clears any armed redo branch).
     beginChange()
     updateBoard(board.id, { url: next })
@@ -343,9 +346,7 @@ export function BrowserBoard({
         </div>
         <div
           className={
-            'bb-url-field' +
-            (urlError ? ' bb-url-invalid' : '') +
-            (urlFlash ? ' bb-url-flash' : '')
+            'bb-url-field' + (urlError ? ' bb-url-invalid' : '') + (urlFlash ? ' bb-url-flash' : '')
           }
         >
           {/* D0-6 (A9): the dot is color-only — D2-C pairs it with an ALWAYS-VISIBLE
@@ -515,7 +516,11 @@ function DeviceContent({
           Preview crashed
         </div>
         <div className="bb-state-sub">{runtime.error || url}</div>
-        <button className="bb-reload-btn" onClick={onReload} onMouseDown={(e) => e.stopPropagation()}>
+        <button
+          className="bb-reload-btn"
+          onClick={onReload}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           Reload
         </button>
       </div>
