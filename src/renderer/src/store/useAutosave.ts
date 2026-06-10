@@ -98,9 +98,12 @@ export function useAutosave(): void {
       onError: (e) => {
         // eslint-disable-next-line no-console
         console.error('autosave failed', e)
+        // Fixed user-facing string: raw messages here are internal ('autosave:
+        // project:save returned false') or OS-technical (ENOSPC), and the chip's
+        // alert region + tooltip read them aloud. The console line keeps the detail.
         useSaveStatusStore
           .getState()
-          .setSaveFailure(e instanceof Error ? e.message : 'project save failed')
+          .setSaveFailure('Auto-save failed — check disk space and permissions')
       }
     })
 
