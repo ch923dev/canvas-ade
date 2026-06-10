@@ -79,4 +79,19 @@ describe('useLingeringPresence', () => {
     const { result } = renderHook(() => useLingeringPresence(false))
     expect(result.current).toBe(false)
   })
+
+  it('respects a custom ms override', () => {
+    const { result, rerender } = renderHook(({ a }) => useLingeringPresence(a, 50), {
+      initialProps: { a: true }
+    })
+    rerender({ a: false })
+    act(() => {
+      vi.advanceTimersByTime(49)
+    })
+    expect(result.current).toBe(true)
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(result.current).toBe(false)
+  })
 })
