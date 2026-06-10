@@ -8,23 +8,31 @@
  */
 import { createPortal } from 'react-dom'
 import { useEffect, useState, type ReactElement } from 'react'
+import { showToast } from '../store/toastStore'
 
 export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactElement {
   const [busy, setBusy] = useState(false)
   const [showSnippet, setShowSnippet] = useState(false)
 
-  const [error, setError] = useState(false)
+  // D1-A: the save-failure message is a keyed error toast (repeat failures replace in
+  // place), not an inline note. The modal still stays open for the retry.
+  const saveError = (): void => {
+    showToast({
+      id: 'recap-consent-save',
+      kind: 'error',
+      message: "Couldn't save your choice. Please try again."
+    })
+  }
 
   const decide = async (decision: 'enabled' | 'declined'): Promise<void> => {
     setBusy(true)
-    setError(false)
     try {
       // BUG-066: a MAIN-side dir desync / frame guard replies with a RESOLVED { ok: false }
       // (nothing persisted, no hook installed) — treat it like a rejection, never close on it.
       const r = await window.api.recap.setConsent(decision)
       if (!r.ok) {
         setBusy(false)
-        setError(true)
+        saveError()
         return
       }
       onClose() // close ONLY once the decision is durably persisted
@@ -34,7 +42,7 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
       // eslint-disable-next-line no-console
       console.error('[recap] setConsent failed; keeping the modal open to retry', err)
       setBusy(false)
-      setError(true)
+      saveError()
     }
   }
 
@@ -92,14 +100,6 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
             <li>File contents and command output are never sent.</li>
           </ul>
         </div>
-        {error && (
-          <p
-            style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--danger, #e5484d)' }}
-            role="alert"
-          >
-            Couldn&apos;t save your choice. Please try again.
-          </p>
-        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
           <button
             disabled={busy}

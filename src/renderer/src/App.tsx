@@ -3,6 +3,7 @@ import Canvas from './canvas/Canvas'
 import WelcomeScreen from './canvas/WelcomeScreen'
 import AuditLogViewer from './canvas/AuditLogViewer'
 import ConfirmModal from './canvas/ConfirmModal'
+import { ToastIsland } from './canvas/Toast'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
@@ -86,6 +87,10 @@ function App(): React.ReactElement {
       {status === 'open' ? <Canvas /> : <WelcomeScreen />}
       {status === 'open' && <AuditLogViewer />}
       <ConfirmModal />
+      {/* D1-A: app-level so toasts survive a project switch and show on the welcome
+          screen too (a failed final flush aborts the switch — its toast must outlive
+          whatever surface raised it). */}
+      <ToastIsland />
     </div>
   )
 }
