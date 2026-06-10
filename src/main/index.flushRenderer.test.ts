@@ -109,7 +109,9 @@ describe('BUG-019 makeFlushFinish — foreign-frame does not consume the listene
     let resolved = false
     const { finish } = makeFlushFinish({
       getWin: () => win,
-      onResolve: () => { resolved = true },
+      onResolve: () => {
+        resolved = true
+      },
       onCleanup: () => {}
     })
     // Two foreign-frame calls — if the listener were consumed on the first call,

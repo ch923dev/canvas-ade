@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { Z_MIN, Z_MAX, LOD_ZOOM, GRID_GAP, isLod, gridDotOpacity, FIT_FRAME, OVERVIEW_FRAME } from './canvasView'
+import {
+  Z_MIN,
+  Z_MAX,
+  LOD_ZOOM,
+  GRID_GAP,
+  isLod,
+  gridDotOpacity,
+  FIT_FRAME,
+  OVERVIEW_FRAME
+} from './canvasView'
 
 describe('camera constants', () => {
   it('pins the zoom range and LOD threshold (DESIGN.md §5)', () => {

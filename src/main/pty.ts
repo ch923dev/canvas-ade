@@ -510,7 +510,8 @@ export function cleanupCore(
   // against a recycled PID can harm an unrelated process tree. Skip killTree on
   // the natural-exit path only. An explicit pty:kill (proc === undefined, no caller
   // proc pinning) always goes through because it may tear down a still-running proc.
-  const done = s.state === 'exited' && proc !== undefined ? Promise.resolve() : deps.killTree(s.proc)
+  const done =
+    s.state === 'exited' && proc !== undefined ? Promise.resolve() : deps.killTree(s.proc)
   try {
     s.port.close()
   } catch {

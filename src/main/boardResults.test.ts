@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { __resetBoardResults, pruneBoardResults, readBoardResult, recordBoardResult } from './boardResults'
+import {
+  __resetBoardResults,
+  pruneBoardResults,
+  readBoardResult,
+  recordBoardResult
+} from './boardResults'
 
 afterEach(() => __resetBoardResults())
 

@@ -4,9 +4,7 @@ import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 describe('sanitizeDispatchText (🔒 one dispatch = one command line, HIGH)', () => {
   it('passes ordinary single-line text through unchanged', () => {
     expect(sanitizeDispatchText('echo hi')).toBe('echo hi')
-    expect(sanitizeDispatchText("git commit -m 'héllo wörld'")).toBe(
-      "git commit -m 'héllo wörld'"
-    )
+    expect(sanitizeDispatchText("git commit -m 'héllo wörld'")).toBe("git commit -m 'héllo wörld'")
     expect(sanitizeDispatchText('')).toBe('')
   })
 

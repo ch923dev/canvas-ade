@@ -530,13 +530,7 @@ describe('adoptCore BUG-024 (symmetric Bug #13 guard)', () => {
     const killTree = vi.fn(() => Promise.resolve())
     const newChannel = vi.fn(() => ({ port1, port2 }))
 
-    const res = adoptCore(
-      't',
-      sessions,
-      parked,
-      { newChannel, killTree } as any,
-      (() => {}) as any
-    )
+    const res = adoptCore('t', sessions, parked, { newChannel, killTree } as any, (() => {}) as any)
 
     // The adopt must succeed and use the parked proc.
     expect(res).toEqual({ adopted: true, pid: 501 })

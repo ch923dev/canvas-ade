@@ -96,7 +96,10 @@ describe('registerAuditHandler', () => {
     const log = fakeLog(entries)
     const ipc = fakeIpc()
     registerAuditHandler(ipc.bus, () => win, log)
-    await ipc.invoke({ senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] }, { limit: 0 })
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: 0 }
+    )
     // limit:0 must NOT be forwarded to log.read as 0 (would trigger slice(-0) = full log);
     // the handler should forward undefined (use log's default) instead.
     expect(log.reads[0]).toBeUndefined()
@@ -106,7 +109,10 @@ describe('registerAuditHandler', () => {
     const log = fakeLog(entries)
     const ipc = fakeIpc()
     registerAuditHandler(ipc.bus, () => win, log)
-    await ipc.invoke({ senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] }, { limit: -5 })
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: -5 }
+    )
     expect(log.reads[0]).toBeUndefined()
   })
 
@@ -114,7 +120,10 @@ describe('registerAuditHandler', () => {
     const log = fakeLog(entries)
     const ipc = fakeIpc()
     registerAuditHandler(ipc.bus, () => win, log)
-    await ipc.invoke({ senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] }, { limit: 5 })
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: 5 }
+    )
     expect((log.reads[0] as { limit: number }).limit).toBe(5)
   })
 
@@ -122,7 +131,10 @@ describe('registerAuditHandler', () => {
     const log = fakeLog(entries)
     const ipc = fakeIpc()
     registerAuditHandler(ipc.bus, () => win, log)
-    await ipc.invoke({ senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] }, { limit: 999_999 })
+    await ipc.invoke(
+      { senderFrame: FRAME as unknown as IpcMainInvokeEvent['senderFrame'] },
+      { limit: 999_999 }
+    )
     expect((log.reads[0] as { limit: number }).limit).toBe(1000)
   })
 })

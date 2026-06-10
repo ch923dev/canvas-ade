@@ -132,8 +132,15 @@ export function registerLlmHandlers(
     // builds a malformed provider body the provider rejects with 400 AFTER a budget slot is
     // irrevocably consumed. Also cap both fields: a giant string is JSON.stringify'd synchronously
     // in MAIN and egressed at API cost.
-    if (input.system !== undefined && (typeof input.system !== 'string' || input.system.length === 0))
-      return { ok: false, reason: 'provider-error', message: 'invalid input: system must be a non-empty string' }
+    if (
+      input.system !== undefined &&
+      (typeof input.system !== 'string' || input.system.length === 0)
+    )
+      return {
+        ok: false,
+        reason: 'provider-error',
+        message: 'invalid input: system must be a non-empty string'
+      }
     if (input.text.length > MAX_SUMMARIZE_TEXT_LEN)
       return { ok: false, reason: 'provider-error', message: 'invalid input: text too long' }
     if (typeof input.system === 'string' && input.system.length > MAX_SUMMARIZE_TEXT_LEN)
@@ -213,7 +220,11 @@ export function registerLlmHandlers(
         return { ok: false, reason: 'invalid-model' }
       // BUG-036: cap baseUrl length before the loopback check — a multi-MB path passes the
       // hostname-only isLoopbackBaseUrl check and would be synchronously written to disk in MAIN.
-      if (a.baseUrl !== undefined && typeof a.baseUrl === 'string' && a.baseUrl.length > MAX_BASE_URL_LEN)
+      if (
+        a.baseUrl !== undefined &&
+        typeof a.baseUrl === 'string' &&
+        a.baseUrl.length > MAX_BASE_URL_LEN
+      )
         return { ok: false, reason: 'invalid-baseUrl' }
       // BUG-001 (SSRF): reject a non-loopback baseUrl BEFORE it is persisted, so a renderer
       // caller can't point LLM egress at file://, IMDS (169.254.169.254), or internal hosts.

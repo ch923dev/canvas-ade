@@ -182,7 +182,13 @@ describe('removeRecapHook BUG-032: tolerates malformed settings.local.json', () 
             { matcher: '', hooks: 'not-an-array' }, // malformed block
             {
               matcher: '',
-              hooks: [{ type: 'command', command: '/usr/bin/node', args: ['/app/recordSession.js', '/u/map.jsonl'] }]
+              hooks: [
+                {
+                  type: 'command',
+                  command: '/usr/bin/node',
+                  args: ['/app/recordSession.js', '/u/map.jsonl']
+                }
+              ]
             }
           ]
         }
@@ -213,9 +219,11 @@ describe('installRecapHook BUG-003: env field', () => {
     const settings = join(dir, '.claude', 'settings.local.json')
     const cfg = JSON.parse(readFileSync(settings, 'utf8'))
     const blocks = cfg.hooks.SessionStart
-    const hook = blocks.flatMap((b: { hooks: unknown[] }) => b.hooks).find(
-      (h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')
-    ) as { env?: Record<string, string> }
+    const hook = blocks
+      .flatMap((b: { hooks: unknown[] }) => b.hooks)
+      .find((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')) as {
+      env?: Record<string, string>
+    }
     expect(hook?.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
   })
 
@@ -229,9 +237,11 @@ describe('installRecapHook BUG-003: env field', () => {
     const settings = join(dir, '.claude', 'settings.local.json')
     const cfg = JSON.parse(readFileSync(settings, 'utf8'))
     const blocks = cfg.hooks.SessionStart
-    const hook = blocks.flatMap((b: { hooks: unknown[] }) => b.hooks).find(
-      (h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')
-    ) as { env?: Record<string, string> }
+    const hook = blocks
+      .flatMap((b: { hooks: unknown[] }) => b.hooks)
+      .find((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')) as {
+      env?: Record<string, string>
+    }
     expect(hook?.env).toBeUndefined()
   })
 })

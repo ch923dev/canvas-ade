@@ -169,10 +169,9 @@ describe('registerBoardRegistryHandler BUG-033 sender guard', () => {
     const win = makeWin({ destroyed: true })
     registerBoardRegistryHandler(ipcMain, () => win)
     expect(() =>
-      emit(
-        { senderFrame: { id: 'some-frame' } } as unknown as IpcMainEvent,
-        [{ id: 'y', type: 'browser', title: 'Y' }]
-      )
+      emit({ senderFrame: { id: 'some-frame' } } as unknown as IpcMainEvent, [
+        { id: 'y', type: 'browser', title: 'Y' }
+      ])
     ).not.toThrow()
     expect(listBoardMirror()).toEqual([])
   })
