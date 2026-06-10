@@ -400,9 +400,10 @@ function PresetThumb({ preset }: { preset: LayoutPreset }): ReactElement {
             top: `${z.y * 100}%`,
             width: `${z.w * 100}%`,
             height: `${z.h * 100}%`,
-            borderRadius: 2,
-            background: 'var(--text-3)',
-            transition: 'background .1s'
+            borderRadius: 2
+            // rest background + hover transition live on .ca-zone in index.css — an
+            // inline background would out-specify the .ca-tidy-preset:hover accent rule
+            // (it was dead until moved); transition class-level for A12 gating.
           }}
         />
       ))}
@@ -507,6 +508,8 @@ function ToolBtn({
   const [hover, setHover] = useState(false)
   return (
     <button
+      // ca-t-ctl (A12): hover transition via class so reduced-motion can suppress it.
+      className="ca-t-ctl"
       title={title}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
@@ -524,8 +527,7 @@ function ToolBtn({
           : hover
             ? 'var(--surface-overlay)'
             : 'transparent',
-        color: active ? 'var(--accent)' : hover ? 'var(--text)' : 'var(--text-3)',
-        transition: 'color .1s, background .1s'
+        color: active ? 'var(--accent)' : hover ? 'var(--text)' : 'var(--text-3)'
       }}
     >
       <Icon name={name} size={16} />
@@ -546,6 +548,8 @@ function DockBtn({
   const label = type[0].toUpperCase() + type.slice(1)
   return (
     <button
+      // ca-t-ctl (A12): hover transition via class so reduced-motion can suppress it.
+      className="ca-t-ctl"
       // D0-4: the dock was the only chrome cluster without tooltips — explain the
       // arm-then-place model (click arms the tool; the canvas turns a click into a
       // default-size board, a drag into a sized one).
@@ -570,8 +574,7 @@ function DockBtn({
         color: active ? 'var(--accent)' : hover ? 'var(--text)' : 'var(--text-2)',
         fontSize: 12.5,
         fontWeight: 500,
-        fontFamily: 'var(--ui)',
-        transition: 'color .1s, background .1s'
+        fontFamily: 'var(--ui)'
       }}
     >
       <span

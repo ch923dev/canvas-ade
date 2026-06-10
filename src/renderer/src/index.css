@@ -238,17 +238,85 @@
   }
 }
 
+/* D2-D: LOD-boundary crossfade (audit fix 3). The entering LOD card fades in over
+   the still-mounted detail render; on the way back the leaving card lingers ~100ms
+   (BoardNode useLingeringPresence) fading out over the remounted detail. Visual-only:
+   preview detach/reattach stays keyed on the raw LOD flag (ADR 0002). The opacity
+   transition is the 120ms focus-dim ease (§9's ring duration/curve — audit fix 3). */
+.ca-lod-card {
+  animation: ca-lod-fade-in 100ms ease-out;
+  transition: opacity 0.12s ease-out;
+}
+.ca-lod-out {
+  animation: ca-lod-fade-out 100ms ease-out forwards;
+}
+@keyframes ca-lod-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ca-lod-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Board chrome shell: focus-dim opacity + select ring at §9's 120ms ease-out, hover
+   border at 100ms. A class (not an inline style) so the reduced-motion block below
+   can suppress it — inline transitions win over the @media rule (A12). */
+.ca-board-shell {
+  transition:
+    opacity 0.12s ease-out,
+    border-color 0.1s,
+    box-shadow 0.12s ease-out;
+}
+
+/* A12: transition utilities for inline-styled chrome. ca-t-ctl: icon/dock button
+   hover · ca-t-glyph: board status-glyph tint · ca-t-check: checklist checkbox
+   fill · ca-t-fill: checklist progress-bar width. */
+.ca-t-ctl {
+  transition:
+    color 0.1s,
+    background 0.1s;
+}
+.ca-t-glyph {
+  transition: color 0.12s;
+}
+.ca-t-check {
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+.ca-t-fill {
+  transition: width 0.18s;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-progress-bar,
   .ca-blink,
   .ca-caret-run,
   .ca-pulse,
+  .ca-lod-card,
+  .ca-lod-out,
   .react-flow__resize-control.handle {
     animation: none !important;
   }
   /* Slice 5: full-view enter/exit collapses to instant (mirrors lib/motion.ts). */
+  /* D2-D/A12: board-shell + chrome/checklist/hover transitions collapse to instant. */
   .fullview-scrim,
-  .fullview-frame {
+  .fullview-frame,
+  .ca-board-shell,
+  .ca-lod-card,
+  .ca-t-ctl,
+  .ca-t-glyph,
+  .ca-t-check,
+  .ca-t-fill,
+  .ca-zone,
+  .ca-tidy-preset,
+  .bb-navbtn,
+  .bb-state,
+  .welcome-actions button,
+  .welcome-recents button {
     transition: none !important;
   }
 }
@@ -1019,6 +1087,13 @@ body {
 }
 .ca-tidy-preset span {
   color: var(--text-2);
+}
+/* The preset thumbnail zones (AppChrome ca-zone divs). Rest background lives HERE,
+   not inline — an inline background out-specifies the :hover accent rule below and
+   kept it dead. Transition at class level so reduced-motion can suppress it (A12). */
+.ca-zone {
+  background: var(--text-3);
+  transition: background 0.1s;
 }
 .ca-tidy-preset:hover {
   background: var(--surface-raised);

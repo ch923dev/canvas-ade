@@ -115,6 +115,21 @@ sweep covers the shell; spot-check at least two different menus per item.
 - [ ] Raise >3 toasts -> only 3 visible; a queued one surfaces (with its own full read time) as a
       slot frees.
 
+## Motion (LOD crossfade + reduced-motion, D2-D)
+
+- [ ] Zoom slowly across the 40% LOD threshold over a browser/planning board -> the card/detail
+      swap is a ~100ms fade in BOTH directions, not a snap; rapid wheel back-and-forth across the
+      threshold never strands a half-faded layer or a blank board.
+- [ ] Zoom out over a live terminal -> the LOD card fades in over the chrome; zoom back in -> the
+      session is alive (typing works). Terminal zoom-in is an instant reveal (accepted asymmetry).
+- [ ] Focus a board (full view / grouped focus) -> other boards dim with a soft ~120ms ease, and
+      un-dim the same way; works at LOD zoom too.
+- [ ] With OS reduced-motion ON (Settings > Accessibility): the LOD swap is instant (no fade, no
+      lingering overlay), focus-dim is instant, button/dock hovers don't ease, the checklist
+      progress bar jumps (no width animation), and the checkbox fill doesn't ease.
+- [ ] Reduced-motion must NOT break correctness: previews still detach to snapshots during motion
+      and reattach on settle; resize handles still drop the instant LOD is entered.
+
 ## Persistence / migration
 
 - [ ] Open a project saved at an older `schemaVersion` -> migration runs, no data loss, re-saves at current version.

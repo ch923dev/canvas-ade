@@ -8,7 +8,6 @@
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { BoardType } from '../lib/boardSchema'
-import { prefersReducedMotion } from '../lib/motion'
 import { useCanvasStore } from '../store/canvasStore'
 import { BoardFullViewContext } from './fullViewContext'
 import { Icon, type IconName } from './Icon'
@@ -302,6 +301,9 @@ export function IconBtn({
         : restColor
   return (
     <button
+      // ca-t-ctl (A12): hover colour/background transition via class, not inline,
+      // so prefers-reduced-motion can suppress it (index.css media block).
+      className="ca-t-ctl"
       title={title}
       disabled={disabled}
       onClick={handleClick}
@@ -343,7 +345,6 @@ export function IconBtn({
         color,
         outline: 'none',
         boxShadow: focus ? '0 0 0 1.5px var(--accent)' : 'none',
-        transition: 'color .1s, background .1s',
         ...(disabled ? { opacity: 0.35 } : {})
       }}
     >
@@ -515,7 +516,12 @@ export function BoardFrame({
   const isFullView = fullView || ctxFullView
   if (lod) {
     return (
+      // ca-lod-card (D2-D): 100ms fade-in on mount — the entering half of the LOD
+      // crossfade (BoardNode/TerminalBoard keep the detail render beneath it during
+      // the overlap) — plus the 120ms ease on the focus-dim opacity. Both suppressed
+      // by the reduced-motion media block in index.css.
       <div
+        className="ca-lod-card"
         style={{
           position: 'absolute',
           inset: 0,
@@ -582,7 +588,12 @@ export function BoardFrame({
   }
 
   return (
+    // ca-board-shell (D2-D): the select-ring (box-shadow, §9 120ms ease-out), hover
+    // border, and focus-dim opacity (now the same 120ms ease-out — audit fix 3, was
+    // an off-contract .15s) transitions live in a CSS class so the reduced-motion
+    // media block can suppress them (an inline transition wins over the @media rule).
     <div
+      className="ca-board-shell"
       style={{
         position: 'absolute',
         inset: 0,
@@ -597,13 +608,7 @@ export function BoardFrame({
           : 'var(--shadow-board)',
         opacity: dimmed ? 0.55 : 1,
         display: 'flex',
-        flexDirection: 'column',
-        // §9: board select ring animates 120ms ease-out (the ring is the box-shadow).
-        // An inline transition can't be suppressed by the CSS reduced-motion @media, so
-        // drop the box-shadow segment here when reduced motion is requested.
-        transition: prefersReducedMotion()
-          ? 'opacity .15s, border-color .1s'
-          : 'opacity .15s, border-color .1s, box-shadow .12s ease-out'
+        flexDirection: 'column'
       }}
     >
       {(running || spawning) && (
@@ -642,12 +647,12 @@ export function BoardFrame({
         {/* The type glyph carries status: tinted to the status colour (green running /
             red failed / neutral idle). */}
         <span
-          className={status?.dot === 'var(--ok)' && running ? 'ca-pulse' : ''}
+          // ca-t-glyph (A12): the status-tint colour transition, reduced-motion gated.
+          className={`ca-t-glyph${status?.dot === 'var(--ok)' && running ? ' ca-pulse' : ''}`}
           style={{
             color: status ? status.dot : selected ? 'var(--text-2)' : 'var(--text-3)',
             display: 'inline-flex',
-            flex: 'none',
-            transition: 'color .12s'
+            flex: 'none'
           }}
         >
           <TypeGlyph type={type} running={running} />

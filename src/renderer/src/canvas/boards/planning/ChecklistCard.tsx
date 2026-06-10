@@ -46,6 +46,9 @@ export interface ChecklistCardProps {
 function Checkbox({ done }: { done: boolean }): ReactElement {
   return (
     <span
+      // ca-t-check (A12): the toggle fill/border transition lives in a class so
+      // prefers-reduced-motion can suppress it (index.css media block).
+      className="ca-t-check"
       style={{
         width: 16,
         height: 16,
@@ -55,8 +58,7 @@ function Checkbox({ done }: { done: boolean }): ReactElement {
         placeItems: 'center',
         border: `1.5px solid ${done ? 'var(--accent)' : 'var(--border-strong)'}`,
         background: done ? 'var(--accent)' : 'transparent',
-        color: 'var(--void)',
-        transition: 'background .12s, border-color .12s'
+        color: 'var(--void)'
       }}
     >
       {done && <Icon name="check" size={11} sw={2.4} />}
@@ -217,11 +219,12 @@ export function ChecklistCard({
         }}
       >
         <div
+          // ca-t-fill (A12): the progress-width animation, reduced-motion gated.
+          className="ca-t-fill"
           style={{
             width: `${pct}%`,
             height: '100%',
-            background: 'var(--accent)',
-            transition: 'width .18s'
+            background: 'var(--accent)'
           }}
         />
       </div>
