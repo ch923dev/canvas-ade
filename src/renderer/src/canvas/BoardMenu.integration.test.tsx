@@ -126,6 +126,18 @@ describe('BoardMenu — migrated chrome/menu contracts (from e2e menu probes)', 
     expect(onDelete).toHaveBeenCalledTimes(1)
   })
 
+  // D1-C: the ⋯ menu renders through the shared Menu shell — items carry menuitem
+  // roles, the first item takes focus on open, and arrow keys walk the roving stop.
+  it('D1-C: items are menuitems; ArrowDown walks the roving focus', () => {
+    render(<BoardMenu onDuplicate={() => {}} onDelete={() => {}} onFull={() => {}} />)
+    fireEvent.click(screen.getByTitle('More'))
+    const items = screen.getAllByRole('menuitem')
+    expect(items.map((b) => b.textContent?.trim())).toEqual(['Full view', 'Duplicate', 'Delete'])
+    expect(document.activeElement).toBe(items[0])
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items[1])
+  })
+
   it('renders the More (⋯) glyph with a visible stroke width (≥ 2)', () => {
     render(<BoardMenu onDuplicate={() => {}} onDelete={() => {}} onFull={() => {}} />)
     const svg = screen.getByTitle('More').querySelector('svg') as SVGElement

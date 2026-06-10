@@ -55,6 +55,22 @@ is part of every check.
 - [ ] Multi-select boards -> Ctrl+G makes a named group box + tab; the tab is clickable (rename / focus / manage).
 - [ ] Grouped focus frames the group; add-to-group reflows + animates; remove works.
 
+## Menus / popovers (shared `<Menu>` shell - D1-C)
+
+All six menus run through `canvas/Menu.tsx` (board ⋯ · Tidy picker · project switcher ·
+group tab right-click · planning element right-click · terminal well right-click), so one
+sweep covers the shell; spot-check at least two different menus per item.
+
+- [ ] Open near the right/bottom screen edge -> the popover flips/clamps fully on-screen (never clipped).
+- [ ] ArrowDown/ArrowUp walk the items with a visible focus ring, wrapping at the ends and
+      skipping disabled rows; Home/End jump; Enter activates the focused item.
+- [ ] Escape closes; clicking outside closes; re-clicking the trigger (⋯ / Tidy / switcher pill)
+      closes instead of flickering closed-then-open.
+- [ ] Open any menu OVER a live Browser board -> the native view detaches to its snapshot while
+      the menu is open and reattaches live on close (the menu is never painted under the preview).
+- [ ] Close a menu opened from the terminal well -> focus returns to the terminal (typing resumes
+      without a click).
+
 ## Persistence / migration
 
 - [ ] Open a project saved at an older `schemaVersion` -> migration runs, no data loss, re-saves at current version.
