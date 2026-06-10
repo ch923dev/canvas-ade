@@ -271,6 +271,12 @@ interface CrashReadyTarget {
  * "Preview crashed" state) and reports the crash reason; a later reload's
  * finish-load restores it. `onReady` re-shows an attached view; `onCrashed` hides
  * the view + emits the lifecycle event.
+ *
+ * `isFailed` reads the load latch (Bug #5): a FAILED load's finish-load is
+ * Chromium's error page laying out, NOT real content — marking ready there would
+ * re-show the view as a blank error page over the board's load-failed state
+ * (crash → reload → server-still-down). The latch-clearing nav-start + a real
+ * successful finish-load restore `ready` as usual.
  */
 export function registerCrashReadyGate(
   wc: CrashReadyTarget,
@@ -278,9 +284,11 @@ export function registerCrashReadyGate(
   hooks: {
     onReady: () => void
     onCrashed: (reason: string) => void
+    isFailed: () => boolean
   }
 ): void {
   wc.on('did-finish-load', () => {
+    if (hooks.isFailed()) return
     holder.ready = true
     hooks.onReady()
   })
@@ -406,6 +414,9 @@ function ensure(id: string, win: BrowserWindow): Entry {
     //  • render-process-gone hides the (now dead) layer and pushes the crash to the
     //    renderer, which shows status `crashed` + a Reload CTA. A reload relaunches
     //    the renderer; its finish-load flows back through the ready path above.
+    //  • isFailed reads the Bug #5 latch: a failed load's finish-load is Chromium's
+    //    error page — it must NOT mark ready/re-show, or a crash-reload against a
+    //    still-down server paints a blank error page over the load-failed state.
     registerCrashReadyGate(wc, e, {
       onReady: () => {
         const cur = views.get(id)
@@ -419,12 +430,13 @@ function ensure(id: string, win: BrowserWindow): Entry {
       },
       onCrashed: (reason) => {
         try {
-          e!.view.setVisible(false)
+          views.get(id)?.view.setVisible(false)
         } catch {
           /* view gone */
         }
         emit({ id, type: 'render-process-gone', reason })
-      }
+      },
+      isFailed: () => e!.failed
     })
     // Surface navigation so the renderer can update the URL bar + back/fwd state.
     // An error page navigates with httpResponseCode 0 (or ≥400 for HTTP errors) →
@@ -488,6 +500,10 @@ function attach(e: Entry, bounds?: Rectangle, zoomFactor?: number): void {
   // content (D2-C snapshot-until-ready). A fresh/relaunched renderer is a blank
   // white layer until its first did-finish-load; keeping it hidden lets the HTML
   // snapshot underneath carry the gap (registerCrashReadyGate re-shows on ready).
+  // NOTE: any attach() while `ready` is false (preview:attach mid crash-reload, the
+  // per-frame setBoundsBatch positioning an attached-but-not-ready view) is
+  // INTENTIONALLY a no-show — bounds keep tracking so the reveal lands in place,
+  // but only the ready flip (or a ready re-attach) makes the layer visible.
   e.view.setVisible(e.ready)
   applyZoom(e, zoomFactor)
   if (bounds) e.view.setBounds(round(bounds))

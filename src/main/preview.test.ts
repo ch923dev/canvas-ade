@@ -284,7 +284,7 @@ describe('registerCrashReadyGate (D2-C snapshot-until-ready + crash)', () => {
     }
   }
 
-  function setup(): {
+  function setup(failed: { failed: boolean } = { failed: false }): {
     wc: ReturnType<typeof fakeWc>
     holder: { ready: boolean }
     hooks: { onReady: ReturnType<typeof vi.fn>; onCrashed: ReturnType<typeof vi.fn> }
@@ -292,7 +292,7 @@ describe('registerCrashReadyGate (D2-C snapshot-until-ready + crash)', () => {
     const wc = fakeWc()
     const holder = { ready: false }
     const hooks = { onReady: vi.fn(), onCrashed: vi.fn() }
-    registerCrashReadyGate(wc as never, holder, hooks)
+    registerCrashReadyGate(wc as never, holder, { ...hooks, isFailed: () => failed.failed })
     return { wc, holder, hooks }
   }
 
@@ -321,6 +321,25 @@ describe('registerCrashReadyGate (D2-C snapshot-until-ready + crash)', () => {
     wc.emit('did-finish-load')
     expect(holder.ready).toBe(true)
     expect(hooks.onReady).toHaveBeenCalledTimes(2)
+  })
+
+  it("a FAILED load's error-page finish-load does NOT mark ready (stays hidden)", () => {
+    // Crash → reload while the dev server is still down: did-fail-load latches
+    // `failed`, then Chromium's error page fires its own did-finish-load. Without
+    // the failed gate that finish re-shows the view — the user sees Chromium's
+    // blank error page through the frame instead of the board's load-failed state.
+    const failed = { failed: false }
+    const { wc, holder, hooks } = setup(failed)
+    wc.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 5 })
+    failed.failed = true // the reload's did-fail-load latched (registerLoadLatch)
+    wc.emit('did-finish-load') // Chromium error page lays out
+    expect(holder.ready).toBe(false)
+    expect(hooks.onReady).not.toHaveBeenCalled()
+    // Server comes back: a fresh nav clears the latch; the real page promotes.
+    failed.failed = false
+    wc.emit('did-finish-load')
+    expect(holder.ready).toBe(true)
+    expect(hooks.onReady).toHaveBeenCalledTimes(1)
   })
 })
 

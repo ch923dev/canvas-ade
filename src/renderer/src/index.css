@@ -540,7 +540,12 @@ body {
 }
 /* D2-C: an external writer (port detect / push-to-preview / MCP) rewrote the URL —
    a 600ms accent wash makes the silent background mutation noticeable. Color-only
-   (no movement), so it stays outside the reduced-motion gate. */
+   (no movement), so it stays outside the reduced-motion gate.
+   MUTUALLY EXCLUSIVE with .bb-url-invalid by construction: the render-time external
+   url sync clears urlError before arming the flash, and a flash is never armed while
+   the user edits. If the flash path is ever extended, keep that exclusion — this
+   later rule's border-color keyframes would override the invalid red at equal
+   specificity. */
 .bb-url-flash {
   animation: bb-url-flash 0.6s ease-out;
 }

@@ -61,7 +61,9 @@ export function usePreviewEvents(params: {
         if (!recs.current.get(ev.id)?.exists) return
         const cur = usePreviewStore.getState().byId[ev.id]?.status
         // D2-C: `crashed` clears the same way — the Reload CTA's wc.reload() relaunches
-        // the renderer and fires a fresh main-frame nav-start.
+        // the renderer and fires a fresh main-frame nav-start. Any OTHER status
+        // (connecting/connected/idle) intentionally falls through to the return with
+        // no patch: only the two terminal-failure latches need explicit clearing.
         if (cur === 'load-failed' || cur === 'crashed')
           patchRuntime(ev.id, { status: 'connecting', error: null })
         return
