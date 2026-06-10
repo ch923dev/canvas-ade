@@ -55,6 +55,16 @@ is part of every check.
 - [ ] Multi-select boards -> Ctrl+G makes a named group box + tab; the tab is clickable (rename / focus / manage).
 - [ ] Grouped focus frames the group; add-to-group reflows + animates; remove works.
 
+## Board chrome - inline title edit (D2-A)
+
+- [ ] Double-click a board title (each of the 3 types) -> input swaps in, text preselected; type +
+      Enter commits; the new title persists across reload; Ctrl+Z restores the old one.
+- [ ] Esc while editing discards the draft (title unchanged); click-away commits like Enter.
+- [ ] F2 with one board selected opens the editor; F2 while typing in the terminal (or any
+      input/URL bar) does NOT - the key reaches the agent/field instead.
+- [ ] Double-click on the title neither drags the board nor double-click-zooms the canvas;
+      empty/whitespace text cancels instead of committing.
+
 ## Menus / popovers (shared `<Menu>` shell - D1-C)
 
 All six menus run through `canvas/Menu.tsx` (board ⋯ · Tidy picker · project switcher ·
