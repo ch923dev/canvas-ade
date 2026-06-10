@@ -73,6 +73,28 @@ describe('projectStore', () => {
     expect(onDisk).toHaveProperty('connectors')
   })
 
+  // BUG-042: createProject on a folder where BOTH canvas.json and .bak are unparseable
+  // (the natural retry-after-"Could not open project" flow) must rename the corrupt
+  // files aside — their bytes are often hand-recoverable — instead of silently
+  // overwriting the primary with a fresh empty doc.
+  it('BUG-042: createProject renames unparseable canvas.json/.bak aside instead of destroying their bytes', async () => {
+    writeFileSync(join(dir, 'canvas.json'), '{ truncated-by-sync-tool')
+    writeFileSync(join(dir, 'canvas.json.bak'), 'garbled')
+    const r = await createProject(dir, 'p', {})
+    expect(r.ok).toBe(true)
+    // A fresh doc was written through the guarded path.
+    const onDisk = JSON.parse(readFileSync(join(dir, 'canvas.json'), 'utf8'))
+    expect(onDisk.boards).toEqual([])
+    // The corrupt bytes survive in rename-aside siblings, byte-identical.
+    const files = readdirSync(dir)
+    const primaryAside = files.find((f) => /^canvas\.json\.corrupt-\d+$/.test(f))
+    const bakAside = files.find((f) => /^canvas\.json\.bak\.corrupt-\d+$/.test(f))
+    expect(primaryAside).toBeDefined()
+    expect(bakAside).toBeDefined()
+    expect(readFileSync(join(dir, primaryAside!), 'utf8')).toBe('{ truncated-by-sync-tool')
+    expect(readFileSync(join(dir, bakAside!), 'utf8')).toBe('garbled')
+  })
+
   it('createProject scaffolds the .canvas memory tree', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'projmem-'))
     try {
@@ -113,6 +135,26 @@ describe('projectStore', () => {
     // write-file-atomic writes a temp sibling then renames; on success nothing is left behind.
     const stray = readdirSync(dir).filter((f) => f !== 'canvas.json' && f !== 'canvas.json.bak')
     expect(stray).toEqual([])
+  })
+
+  // BUG-007: writeProject must make the NEW primary durable BEFORE rotating the prior
+  // primary into .bak. The pre-fix order (rotate first) destroyed the last-good .bak in
+  // the T5 recovery flow — the prior primary is envelope-valid but deep-corrupt there,
+  // so a crash/write-failure between the rotation and the primary write left BOTH files
+  // corrupt: total on-disk project loss.
+  it('BUG-007: a failed primary write never clobbers the last-good .bak (first save after T5 recovery)', async () => {
+    const corrupt = JSON.stringify({ schemaVersion: 8, viewport: null, boards: [{ id: 123 }] })
+    const good = JSON.stringify({ schemaVersion: 8, viewport: null, boards: [{ ok: true }] })
+    writeFileSync(join(dir, 'canvas.json'), corrupt) // envelope-valid, deep-corrupt
+    writeFileSync(join(dir, 'canvas.json.bak'), good) // the only good snapshot
+    // Envelope-valid doc whose serialization throws (circular ref) — the primary write
+    // fails at exactly the point that sat AFTER the pre-fix rotation.
+    const evil: Record<string, unknown> = { schemaVersion: 8, viewport: null, boards: [] }
+    evil.self = evil
+    await expect(writeProject(dir, evil)).rejects.toThrow()
+    // Pre-fix the .bak now held the deep-corrupt primary; it must stay the good snapshot.
+    expect(readFileSync(join(dir, 'canvas.json.bak'), 'utf8')).toBe(good)
+    expect(readFileSync(join(dir, 'canvas.json'), 'utf8')).toBe(corrupt)
   })
 
   it('falls back to .bak when canvas.json is corrupt', async () => {

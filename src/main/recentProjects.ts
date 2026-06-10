@@ -53,11 +53,13 @@ function pathExists(p: string): Promise<boolean> {
 }
 
 /**
- * Read the list, pruning any entry whose folder no longer exists.
- * BUG-010: async so the IPC thread is never blocked by a synchronous existsSync on a
- * stale UNC/network share. Each entry is checked via pathExists (async + timeout).
+ * Read + shape-validate the stored list WITHOUT any existence filtering.
+ * BUG-044: this is the persistence-side read — touchRecent must build its written list
+ * from the raw stored entries, because the pathExists timeout in listRecents is a
+ * DISPLAY concern: a transiently-slow (>500ms) network-share path would otherwise be
+ * permanently deleted from the MRU file by the next touch.
  */
-export async function listRecents(userDataDir: string): Promise<RecentProject[]> {
+function readStoredRecents(userDataDir: string): RecentProject[] {
   const file = fileFor(userDataDir)
   if (!existsSync(file)) return []
   let raw: RecentProject[]
@@ -67,14 +69,23 @@ export async function listRecents(userDataDir: string): Promise<RecentProject[]>
   } catch {
     return []
   }
-  // Validate shape, then check each entry's path asynchronously (non-blocking).
-  const shaped = raw.filter(
+  return raw.filter(
     (r) =>
       r &&
       typeof r.path === 'string' &&
       typeof r.name === 'string' &&
       typeof r.lastOpenedAt === 'number'
   )
+}
+
+/**
+ * Read the list, pruning any entry whose folder no longer exists.
+ * BUG-010: async so the IPC thread is never blocked by a synchronous existsSync on a
+ * stale UNC/network share. Each entry is checked via pathExists (async + timeout).
+ * The prune is read-time/display only — it is never persisted back (BUG-044).
+ */
+export async function listRecents(userDataDir: string): Promise<RecentProject[]> {
+  const shaped = readStoredRecents(userDataDir)
   const exists = await Promise.all(shaped.map((r) => pathExists(r.path)))
   return shaped.filter((_, i) => exists[i])
 }
@@ -87,7 +98,11 @@ export async function touchRecent(
   at: number
 ): Promise<void> {
   mkdirSync(userDataDir, { recursive: true })
-  const others = (await listRecents(userDataDir)).filter((r) => r.path !== path)
+  // BUG-044: persist from the UNFILTERED stored list — never from listRecents' output.
+  // listRecents drops any path whose access() probe exceeds the 500ms timeout (a cold
+  // SMB/UNC share routinely does); writing that filtered list back would permanently
+  // delete a merely-slow entry from the MRU file on every open of any other project.
+  const others = readStoredRecents(userDataDir).filter((r) => r.path !== path)
   const next = [{ path, name, lastOpenedAt: at }, ...others].slice(0, RECENT_LIMIT)
   // Atomic write (mirrors projectStore): a torn writeFileSync could zero the MRU,
   // making listRecents silently return [] (BUG-L5). write-file-atomic stages to a

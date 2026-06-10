@@ -62,4 +62,23 @@ describe('recentProjects', () => {
     expect((await listRecents(userData)).map((r) => r.path)).toEqual([live])
     rmSync(live, { recursive: true, force: true })
   })
+
+  // BUG-044: listRecents' existence prune (incl. the 500ms pathExists timeout for slow
+  // UNC/SMB shares) is a DISPLAY concern. touchRecent must persist from the unfiltered
+  // stored list, or a transiently-slow recent path is permanently deleted from the MRU
+  // file the next time ANY project is opened.
+  it('BUG-044: an entry hidden by the display prune survives a later touchRecent', async () => {
+    const slow = join(tmpdir(), 'transiently-slow-share-' + Math.random())
+    const live = mkdtempSync(join(tmpdir(), 'proj-live44-'))
+    await touchRecent(userData, slow, 'slow', 1)
+    await touchRecent(userData, live, 'live', 2) // opening another project re-persists
+    // Display prunes the unreachable path...
+    expect((await listRecents(userData)).map((r) => r.path)).toEqual([live])
+    // ...but the persisted MRU file still carries it (prune is read-time only).
+    const onDisk = JSON.parse(readFileSync(join(userData, 'recent-projects.json'), 'utf8')) as {
+      projects: { path: string }[]
+    }
+    expect(onDisk.projects.map((p) => p.path)).toEqual([live, slow])
+    rmSync(live, { recursive: true, force: true })
+  })
 })

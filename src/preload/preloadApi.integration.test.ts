@@ -109,6 +109,13 @@ describe('preload api → project / asset / dialog / export channels', () => {
       (a: CanvasApi) => a.project.save({ schemaVersion: 2 }),
       ['project:save', { schemaVersion: 2 }]
     ],
+    [
+      // BUG-009: the optional expectedDir is forwarded so MAIN can reject a save that
+      // raced a project switch (doc belongs to a no-longer-current project).
+      'project.save (expectedDir)',
+      (a: CanvasApi) => a.project.save({ schemaVersion: 2 }, 'C:\\p'),
+      ['project:save', { schemaVersion: 2 }, 'C:\\p']
+    ],
     ['project.recents', (a: CanvasApi) => a.project.recents(), ['project:recents']],
     ['project.current', (a: CanvasApi) => a.project.current(), ['project:current']],
     [

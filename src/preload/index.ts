@@ -207,7 +207,13 @@ const api = {
     // deep-corrupt (MAIN's own .bak fallback only covers parse/envelope failures).
     reopenFromBak: (dir: string): Promise<ProjectResult> =>
       ipcRenderer.invoke('project:reopenFromBak', dir),
-    save: (doc: unknown): Promise<boolean> => ipcRenderer.invoke('project:save', doc),
+    // BUG-009: optional expectedDir — when supplied, MAIN rejects the write unless it
+    // still matches the current open dir (guards autosave racing a project switch).
+    // Forwarded only when present so dir-less call sites keep their exact IPC shape.
+    save: (doc: unknown, expectedDir?: string): Promise<boolean> =>
+      expectedDir === undefined
+        ? ipcRenderer.invoke('project:save', doc)
+        : ipcRenderer.invoke('project:save', doc, expectedDir),
     recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
     current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current'),
     /**

@@ -226,28 +226,41 @@ export function registerProjectHandlers(
     }
   )
 
-  ipcMain.handle('project:save', async (e, doc: unknown): Promise<boolean> => {
-    if (guard(e)) return false
-    const dir = getCurrentDir()
-    if (!dir) return false
-    // SAVE-1: a write failure (disk full, permission denied, envelope-invalid doc)
-    // must report failure to the renderer, not reject opaquely. The renderer's
-    // autosaver surfaces a `false`/rejection via its onError hook so a failing disk
-    // is visible instead of silently swallowed.
-    try {
-      await writeProject(dir, doc)
-      try {
-        memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
-        onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
-      } catch (err) {
-        console.warn('[memoryEngine] observe failed (non-fatal)', err)
+  ipcMain.handle(
+    'project:save',
+    async (e, doc: unknown, expectedDir?: unknown): Promise<boolean> => {
+      if (guard(e)) return false
+      const dir = getCurrentDir()
+      if (!dir) return false
+      // BUG-009: the doc carries no dir association, so a save raced against a project
+      // switch would silently write project B's canvas into project C's canvas.json
+      // (currentDir is set synchronously at each open's start). Callers that know their
+      // project dir (the autosaver) pass it; a mismatch means the doc belongs to a project
+      // that is no longer current — reject instead of cross-writing. Optional so existing
+      // call sites without the arg keep working.
+      if (typeof expectedDir === 'string' && expectedDir !== dir) {
+        console.warn('[project:save] rejected: doc is for', expectedDir, 'but current dir is', dir)
+        return false
       }
-      return true
-    } catch (err) {
-      console.error('project:save failed', err)
-      return false
+      // SAVE-1: a write failure (disk full, permission denied, envelope-invalid doc)
+      // must report failure to the renderer, not reject opaquely. The renderer's
+      // autosaver surfaces a `false`/rejection via its onError hook so a failing disk
+      // is visible instead of silently swallowed.
+      try {
+        await writeProject(dir, doc)
+        try {
+          memoryEngine.observe(doc) // T-M2: detect meaningful change (best-effort; never fails a save)
+          onBoardsObserved(boardIdsOf(doc)) // recap: prune watchers for boards deleted this save
+        } catch (err) {
+          console.warn('[memoryEngine] observe failed (non-fatal)', err)
+        }
+        return true
+      } catch (err) {
+        console.error('project:save failed', err)
+        return false
+      }
     }
-  })
+  )
 
   ipcMain.handle('project:recents', async (e): Promise<RecentProject[]> => {
     if (guard(e)) return []
