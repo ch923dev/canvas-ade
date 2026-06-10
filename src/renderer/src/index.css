@@ -517,6 +517,48 @@ body {
   flex: none;
   border-radius: 999px;
 }
+/* D2-C: always-visible status word beside the dot (Linear pattern — colorblind-safe,
+   zero layout cost; audit §3.4 / §5). */
+.bb-conn-word {
+  flex: none;
+  font-family: var(--ui);
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+/* D2-C: the committed URL failed the sanity check — red field + inline message. After
+   :focus-within so the error border wins while the field is still focused. */
+.bb-url-field.bb-url-invalid {
+  border-color: var(--err);
+}
+.bb-url-error {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--err);
+  white-space: nowrap;
+}
+/* D2-C: an external writer (port detect / push-to-preview / MCP) rewrote the URL —
+   a 600ms accent wash makes the silent background mutation noticeable. Color-only
+   (no movement), so it stays outside the reduced-motion gate.
+   MUTUALLY EXCLUSIVE with .bb-url-invalid by construction: the render-time external
+   url sync clears urlError before arming the flash, and a flash is never armed while
+   the user edits. If the flash path is ever extended, keep that exclusion — this
+   later rule's border-color keyframes would override the invalid red at equal
+   specificity. */
+.bb-url-flash {
+  animation: bb-url-flash 0.6s ease-out;
+}
+@keyframes bb-url-flash {
+  0% {
+    background: var(--accent-wash);
+    border-color: var(--accent);
+  }
+  100% {
+    background: var(--inset);
+    border-color: var(--border-subtle);
+  }
+}
 .bb-url-input {
   flex: 1;
   min-width: 0;
@@ -615,6 +657,40 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* D2-C: crashed-state Reload CTA (the only recovery path — crashes never auto-loop). */
+.bb-reload-btn {
+  margin-top: 6px;
+  padding: 3px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.bb-reload-btn:hover {
+  border-color: var(--accent);
+}
+/* D2-C: evicted (renderer freed) badge — distinguishes a dead-but-snapshot board from
+   a transient motion/LOD detach. Overlays the snapshot; no live native view exists
+   while it shows, so it can never be occluded (ADR 0002). */
+.bb-paused-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 /* ── Planning board whiteboard (Phase 2.3) ────────────────────────────────────

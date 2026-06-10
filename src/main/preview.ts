@@ -19,6 +19,9 @@ export type PreviewEvent =
   // Esc pressed while the native view's web content owns focus. The renderer window
   // never sees this keydown, so forward it to let the renderer exit full view.
   | { id: string; type: 'escape' }
+  // The preview's renderer process died (D2-C). The board freezes silently without
+  // this — the renderer shows a "Preview crashed" state with a Reload CTA.
+  | { id: string; type: 'render-process-gone'; reason: string }
 
 /**
  * PreviewManager (1-E): N native WebContentsViews keyed by board id, synced to the
@@ -42,6 +45,15 @@ interface Entry {
    * clobber the `load-failed` state. Reset on each main-frame navigation start.
    */
   failed: boolean
+  /**
+   * The webContents has composited real content at least once since (re)creation
+   * (D2-C snapshot-until-ready). A freshly-opened or crash-relaunched renderer
+   * paints a blank white frame until its first `did-finish-load`; while `ready` is
+   * false, `attach()` keeps the native layer hidden so the HTML snapshot / state
+   * underneath stays painted. Set by the first finish-load, cleared on
+   * `render-process-gone`.
+   */
+  ready: boolean
 }
 
 const views = new Map<string, Entry>()
@@ -236,6 +248,56 @@ export function registerLoadLatch(
   })
 }
 
+/** A holder for the mutable `ready` flag (the live `Entry` satisfies this). */
+interface ReadyHolder {
+  ready: boolean
+}
+/** The minimal webContents surface the crash/ready gate listens on (testable). */
+interface CrashReadyTarget {
+  on(event: 'did-finish-load', listener: () => void): unknown
+  on(
+    event: 'render-process-gone',
+    listener: (ev: unknown, details: { reason: string }) => void
+  ): unknown
+}
+
+/**
+ * Snapshot-until-ready + crashed-renderer recovery (D2-C), extracted so it can be
+ * unit-tested without Electron (mirrors `registerLoadLatch`). A freshly-created or
+ * crash-relaunched preview renderer paints a BLANK WHITE frame until its first
+ * `did-finish-load`; `holder.ready` gates the native view's visibility in `attach()`
+ * so the HTML snapshot/state underneath carries the gap. `render-process-gone`
+ * clears `ready` (the view is now a dead layer that must not cover the renderer's
+ * "Preview crashed" state) and reports the crash reason; a later reload's
+ * finish-load restores it. `onReady` re-shows an attached view; `onCrashed` hides
+ * the view + emits the lifecycle event.
+ *
+ * `isFailed` reads the load latch (Bug #5): a FAILED load's finish-load is
+ * Chromium's error page laying out, NOT real content — marking ready there would
+ * re-show the view as a blank error page over the board's load-failed state
+ * (crash → reload → server-still-down). The latch-clearing nav-start + a real
+ * successful finish-load restore `ready` as usual.
+ */
+export function registerCrashReadyGate(
+  wc: CrashReadyTarget,
+  holder: ReadyHolder,
+  hooks: {
+    onReady: () => void
+    onCrashed: (reason: string) => void
+    isFailed: () => boolean
+  }
+): void {
+  wc.on('did-finish-load', () => {
+    if (hooks.isFailed()) return
+    holder.ready = true
+    hooks.onReady()
+  })
+  wc.on('render-process-gone', (_ev, details) => {
+    holder.ready = false
+    hooks.onCrashed(details.reason)
+  })
+}
+
 function round(b: Rectangle): Rectangle {
   return {
     x: Math.round(b.x),
@@ -275,7 +337,7 @@ function ensure(id: string, win: BrowserWindow): Entry {
         partition: `preview-${id}`
       }
     })
-    e = { view, attached: false, zoom: 1, failed: false }
+    e = { view, attached: false, zoom: 1, failed: false, ready: false }
     views.set(id, e)
     const wc = view.webContents
     // Deny-by-default permission policy on this view's session (Bug: no-permission-
@@ -343,6 +405,39 @@ function ensure(id: string, win: BrowserWindow): Entry {
       onFail: (errorCode, errorDescription, validatedURL) =>
         emit({ id, type: 'did-fail-load', url: validatedURL, errorCode, errorDescription })
     })
+    // Snapshot-until-ready + crash recovery (D2-C), via the extracted, unit-tested
+    // `registerCrashReadyGate`:
+    //  • the first did-finish-load after (re)creation marks the view `ready` and
+    //    re-shows it if attached — until then attach() keeps the native layer hidden
+    //    so the HTML snapshot/state underneath stays painted instead of a blank
+    //    white renderer frame (the evicted-reattach 50–300ms blank, audit §3.4).
+    //  • render-process-gone hides the (now dead) layer and pushes the crash to the
+    //    renderer, which shows status `crashed` + a Reload CTA. A reload relaunches
+    //    the renderer; its finish-load flows back through the ready path above.
+    //  • isFailed reads the Bug #5 latch: a failed load's finish-load is Chromium's
+    //    error page — it must NOT mark ready/re-show, or a crash-reload against a
+    //    still-down server paints a blank error page over the load-failed state.
+    registerCrashReadyGate(wc, e, {
+      onReady: () => {
+        const cur = views.get(id)
+        if (cur?.attached) {
+          try {
+            cur.view.setVisible(true)
+          } catch {
+            /* view gone */
+          }
+        }
+      },
+      onCrashed: (reason) => {
+        try {
+          views.get(id)?.view.setVisible(false)
+        } catch {
+          /* view gone */
+        }
+        emit({ id, type: 'render-process-gone', reason })
+      },
+      isFailed: () => e!.failed
+    })
     // Surface navigation so the renderer can update the URL bar + back/fwd state.
     // An error page navigates with httpResponseCode 0 (or ≥400 for HTTP errors) →
     // treat it as a failure latch even if did-fail-load didn't fire.
@@ -401,8 +496,15 @@ function attach(e: Entry, bounds?: Rectangle, zoomFactor?: number): void {
     e.attached = true
   }
   // Re-show: detach hides the view (see below) to kill the frozen-frame ghost, so a
-  // reattach must make it visible again.
-  e.view.setVisible(true)
+  // reattach must make it visible again — but ONLY once the webContents has real
+  // content (D2-C snapshot-until-ready). A fresh/relaunched renderer is a blank
+  // white layer until its first did-finish-load; keeping it hidden lets the HTML
+  // snapshot underneath carry the gap (registerCrashReadyGate re-shows on ready).
+  // NOTE: any attach() while `ready` is false (preview:attach mid crash-reload, the
+  // per-frame setBoundsBatch positioning an attached-but-not-ready view) is
+  // INTENTIONALLY a no-show — bounds keep tracking so the reveal lands in place,
+  // but only the ready flip (or a ready re-attach) makes the layer visible.
+  e.view.setVisible(e.ready)
   applyZoom(e, zoomFactor)
   if (bounds) e.view.setBounds(round(bounds))
 }
@@ -690,6 +792,24 @@ export async function debugCaptureViewPng(id: string): Promise<Buffer | null> {
 /** E2E ONLY — ids of every native preview view currently created. */
 export function debugViewIds(): string[] {
   return [...views.keys()]
+}
+
+/**
+ * E2E ONLY — forcefully crash a board's preview renderer process (the D2-C
+ * crashed-state probe). Drives the REAL `render-process-gone` path: hide the dead
+ * layer, emit the lifecycle event, renderer shows the Reload CTA. Returns false when
+ * no view exists. Read-only over the Map + a Chromium debug call; exposes nothing a
+ * misbehaving previewed page couldn't already do to itself.
+ */
+export function debugCrashView(id: string): boolean {
+  const e = views.get(id)
+  if (!e) return false
+  try {
+    e.view.webContents.forcefullyCrashRenderer()
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**

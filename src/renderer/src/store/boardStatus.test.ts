@@ -11,6 +11,7 @@ describe('boardStatusBucket', () => {
   it('a browser maps its preview load state to a bucket', () => {
     expect(boardStatusBucket('browser', { preview: 'connecting' })).toBe('running')
     expect(boardStatusBucket('browser', { preview: 'load-failed' })).toBe('failed')
+    expect(boardStatusBucket('browser', { preview: 'crashed' })).toBe('failed') // D2-C
     expect(boardStatusBucket('browser', { preview: 'connected' })).toBe('idle')
     expect(boardStatusBucket('browser', { preview: 'idle' })).toBe('idle')
     expect(boardStatusBucket('browser', {})).toBe('idle')
