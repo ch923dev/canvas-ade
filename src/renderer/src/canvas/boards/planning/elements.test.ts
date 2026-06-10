@@ -31,7 +31,8 @@ import {
   nominalChecklistHeight,
   TEXT_NOMINAL,
   makeImage,
-  fitImageSize
+  fitImageSize,
+  setArrowEndpoint
 } from './elements'
 import { TINT_CYCLE } from './tints'
 
@@ -547,5 +548,40 @@ describe('W4 image helpers', () => {
       assetId: 'assets/a.png'
     }
     expect(shiftElement(el, 10, -3)).toMatchObject({ x: 15, y: 3, w: 30, h: 40 })
+  })
+})
+
+describe('setArrowEndpoint (D3-B endpoint editing)', () => {
+  const arrow = (): PlanningElement => ({ id: 'a1', kind: 'arrow', x: 10, y: 20, x2: 110, y2: 220 })
+
+  it("moves only the 'start' endpoint (x/y); the head stays fixed", () => {
+    const next = setArrowEndpoint([arrow()], 'a1', 'start', 50, 60)
+    expect(next[0]).toMatchObject({ x: 50, y: 60, x2: 110, y2: 220 })
+  })
+
+  it("moves only the 'end' endpoint (x2/y2); the tail stays fixed", () => {
+    const next = setArrowEndpoint([arrow()], 'a1', 'end', 300, 40)
+    expect(next[0]).toMatchObject({ x: 10, y: 20, x2: 300, y2: 40 })
+  })
+
+  it('is immutable: the input element object is untouched', () => {
+    const a = arrow()
+    setArrowEndpoint([a], 'a1', 'end', 300, 40)
+    expect(a).toMatchObject({ x: 10, y: 20, x2: 110, y2: 220 })
+  })
+
+  it('no-ops on a missing id and on a non-arrow kind (same refs back)', () => {
+    const a = arrow()
+    const n = makeNote('n1', { x: 0, y: 0 }, 0)
+    expect(setArrowEndpoint([a, n], 'nope', 'end', 1, 2)[0]).toBe(a)
+    expect(setArrowEndpoint([a, n], 'n1', 'end', 1, 2)[1]).toBe(n)
+  })
+
+  it('leaves untargeted siblings by reference (render-cache friendly)', () => {
+    const a = arrow()
+    const s = makeStroke('s1', [0, 0, 5, 5])
+    const next = setArrowEndpoint([a, s], 'a1', 'start', 1, 2)
+    expect(next[1]).toBe(s)
+    expect(next[0]).not.toBe(a)
   })
 })

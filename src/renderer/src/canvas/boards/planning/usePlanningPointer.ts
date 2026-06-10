@@ -38,7 +38,9 @@ import {
   unionBBox,
   isLocked,
   expandGroups,
-  duplicateElements
+  duplicateElements,
+  setArrowEndpoint,
+  type ArrowEnd
 } from './elements'
 import { tokenFromHeight, MIN_TEXT_WIDTH_PX } from './textStyle'
 
@@ -63,6 +65,8 @@ export interface PlanningPointerDeps {
 
 export interface PlanningPointerApi {
   startElementDrag: (e: PointerEvent, id: string) => void
+  /** Begin dragging ONE endpoint of a selected arrow (D3-B endpoint editing). */
+  startEndpointDrag: (e: PointerEvent, id: string, end: ArrowEnd) => void
   onWellPointerDown: (e: PointerEvent<HTMLDivElement>) => void
   onWellPointerMove: (e: PointerEvent<HTMLDivElement>) => void
   onWellDoubleClick: (e: MouseEvent<HTMLDivElement>) => void
@@ -76,6 +80,8 @@ export interface PlanningPointerApi {
   draftTextBox: { x: number; y: number; w: number; h: number } | null
   pendingErase: Set<string> | null
   snapGuides: Guide[] | null
+  /** Live endpoint-drag preview (board-local); null when idle. Transient, never serialized. */
+  endpointDrag: { id: string; end: ArrowEnd; x: number; y: number } | null
 }
 
 export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerApi {
@@ -119,6 +125,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
   const drag = useRef<
     | { mode: 'move'; ids: string[]; grabX: number; grabY: number; alt: boolean }
     | { mode: 'arrow'; id: string }
+    | { mode: 'arrowEnd'; id: string; end: ArrowEnd; sx: number; sy: number; moved: boolean }
     | { mode: 'pen'; points: number[] }
     | { mode: 'erase'; removed: Set<string> }
     | { mode: 'marquee'; startX: number; startY: number; additive: boolean }
@@ -146,6 +153,16 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
   // elements are hidden from the render (immediate feedback) and committed as ONE
   // checkpoint on pointer-up. Null when not erasing.
   const [pendingErase, setPendingErase] = useState<Set<string> | null>(null)
+
+  // Live endpoint-drag preview (D3-B): the board renders the arrow with this end
+  // substituted (via setArrowEndpoint) so the bezier + arrowhead re-bow live, like
+  // draftArrow. Committed ONCE on pointer-up; null when idle. Never serialized.
+  const [endpointDrag, setEndpointDrag] = useState<{
+    id: string
+    end: ArrowEnd
+    x: number
+    y: number
+  } | null>(null)
 
   // ── Element drag (select tool): grab → move in board-local space ─────────────
   const startElementDrag = useCallback(
@@ -182,6 +199,28 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       wellRef.current?.setPointerCapture(e.pointerId)
     },
     [elements, toBoard, selectedIds, wellRef]
+  )
+
+  // ── Arrow endpoint drag (select tool, D3-B): grab a handle → move one end ────
+  const startEndpointDrag = useCallback(
+    (e: PointerEvent, id: string, end: ArrowEnd) => {
+      if (e.button !== 0) return // right/middle: ignore, let contextmenu handle it
+      const el = elements.find((x) => x.id === id)
+      if (!el || el.kind !== 'arrow' || isLocked(el)) return
+      // No checkpoint here — taken lazily on pointer-up, only if the endpoint
+      // actually travelled (>4 screen px), so a tap on a handle pushes no phantom
+      // undo snapshot (#11 / WB-1 discipline, mirrors move + arrow-create).
+      // `moved` is tracked on the drag record (screen-px, zoom-independent like the
+      // textbox threshold) so pointer-cancel/up can decide without a pointer event.
+      drag.current = { mode: 'arrowEnd', id, end, sx: e.clientX, sy: e.clientY, moved: false }
+      setEndpointDrag(
+        end === 'start' ? { id, end, x: el.x, y: el.y } : { id, end, x: el.x2, y: el.y2 }
+      )
+      // Capture on the WELL (not the handle) so move/up route to the well handlers
+      // even when the cursor leaves the handle during a fast drag.
+      wellRef.current?.setPointerCapture(e.pointerId)
+    },
+    [elements, wellRef]
   )
 
   // ── Whiteboard pointer-down: tool-dependent create / draw ────────────────────
@@ -306,6 +345,9 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         setDragPos({ ids: d.ids, dx, dy, alt: d.alt })
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
+      } else if (d.mode === 'arrowEnd') {
+        if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4) d.moved = true
+        setEndpointDrag({ id: d.id, end: d.end, x: p.x, y: p.y })
       } else if (d.mode === 'pen') {
         d.points = pushBoardPoint(d.points, p)
         setDraftStroke(d.points)
@@ -427,6 +469,16 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
           commit([...elements, a])
         }
         setTool('select')
+      } else if (d.mode === 'arrowEnd') {
+        const ep = endpointDrag
+        setEndpointDrag(null)
+        // Commit ONCE, only if the pointer actually travelled (>4 screen px) and the
+        // arrow still exists — a tap pushes no phantom undo step, and a mid-drag
+        // delete (eraser can't run concurrently, but defensive) commits nothing.
+        if (d.moved && ep && elements.some((el) => el.id === ep.id && el.kind === 'arrow')) {
+          beginChange()
+          commit(setArrowEndpoint(elements, ep.id, ep.end, ep.x, ep.y))
+        }
       } else if (d.mode === 'pen') {
         const pts = d.points
         setDraftStroke(null)
@@ -499,6 +551,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       draftArrow,
       draftTextBox,
       dragPos,
+      endpointDrag,
       commit,
       elements,
       beginChange,
@@ -531,11 +584,20 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       setDraftTextBox(null)
       return
     }
+    if (drag.current?.mode === 'arrowEnd') {
+      // Discard the in-flight endpoint edit (the store still holds the committed
+      // arrow) — an OS cancel mid-edit must not commit a half-finished change
+      // (mirrors the marquee/textbox discard, not the move fall-through).
+      drag.current = null
+      setEndpointDrag(null)
+      return
+    }
     onWellPointerUp()
   }, [onWellPointerUp])
 
   return {
     startElementDrag,
+    startEndpointDrag,
     onWellPointerDown,
     onWellPointerMove,
     onWellDoubleClick,
@@ -548,6 +610,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     marqueeRect,
     draftTextBox,
     pendingErase,
-    snapGuides
+    snapGuides,
+    endpointDrag
   }
 }

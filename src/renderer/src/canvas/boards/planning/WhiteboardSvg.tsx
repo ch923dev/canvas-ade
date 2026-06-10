@@ -10,6 +10,7 @@
 import { useMemo, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
+import { isLocked, setArrowEndpoint, type ArrowEnd } from './elements'
 
 /**
  * Per-stroke outline cache keyed on the `points` array identity (#BUG-028). A
@@ -58,6 +59,14 @@ export interface WhiteboardSvgProps {
    * guards. Selection/drag of vectors stays available in select mode.
    */
   drawing?: boolean
+  /**
+   * Live endpoint-drag preview (D3-B, board-local) from usePlanningPointer; the
+   * dragged arrow renders with this end substituted so the bezier + arrowhead +
+   * handle re-bow under the cursor. Null when idle.
+   */
+  endpointDrag?: { id: string; end: ArrowEnd; x: number; y: number } | null
+  /** Begin dragging one endpoint of the selected arrow ('start' = tail, 'end' = head). */
+  onEndpointDragStart?: (e: PointerEvent, id: string, end: ArrowEnd) => void
 }
 
 export function WhiteboardSvg({
@@ -71,9 +80,25 @@ export function WhiteboardSvg({
   guides,
   onSelect,
   onDragStart,
-  drawing = false
+  drawing = false,
+  endpointDrag,
+  onEndpointDragStart
 }: WhiteboardSvgProps): ReactElement {
   const markerId = arrowheadMarkerId(boardId)
+  // Live endpoint substitution (D3-B): render the dragged arrow with the draft
+  // endpoint — the same pure transform the pointer-up commit uses, so preview and
+  // commit can never disagree. The store is written once, on pointer-up.
+  const viewArrows = endpointDrag
+    ? setArrowEndpoint(arrows, endpointDrag.id, endpointDrag.end, endpointDrag.x, endpointDrag.y)
+    : arrows
+  // Endpoint handles show for exactly ONE selected element that is an unlocked
+  // arrow, in select mode only (`drawing` covers every non-select tool). Looked up
+  // in the substituted/translated view so the handles track a live drag.
+  const soleSelectedId = selectedIds?.size === 1 ? [...selectedIds][0] : null
+  const endpointArrow =
+    soleSelectedId && !drawing
+      ? viewArrows.find((a) => a.id === soleSelectedId && !isLocked(a))
+      : undefined
   // Memoize the (potentially heavy) outline math PER STROKE via the module-level
   // points-keyed cache. The parent derives `strokes` via .filter() (new array every
   // render) and translateElement returns the SAME element object (same `points` ref)
@@ -113,7 +138,7 @@ export function WhiteboardSvg({
         </marker>
       </defs>
 
-      {arrows.map((a) => (
+      {viewArrows.map((a) => (
         <path
           key={a.id}
           d={arrowPath(a)}
@@ -157,6 +182,42 @@ export function WhiteboardSvg({
         ) : null
       )}
       {draftPath && <path d={draftPath} fill="var(--text-2)" />}
+
+      {/* Endpoint handles (D3-B): hollow accent rings on the single selected arrow.
+          Visible ring r=7 (signed-off artifact); a transparent r=12 circle on top is
+          the hit target so the grab tolerance is ~12px board-local (scales with the
+          camera like all well content). */}
+      {endpointArrow &&
+        (['start', 'end'] as const).map((end) => {
+          const cx = end === 'start' ? endpointArrow.x : endpointArrow.x2
+          const cy = end === 'start' ? endpointArrow.y : endpointArrow.y2
+          return (
+            <g key={end}>
+              <circle
+                cx={cx}
+                cy={cy}
+                r={7}
+                fill="var(--void)"
+                stroke="var(--accent)"
+                strokeWidth={1.5}
+                style={{ pointerEvents: 'none' }}
+              />
+              <circle
+                data-arrow-endpoint={end}
+                cx={cx}
+                cy={cy}
+                r={12}
+                fill="transparent"
+                style={{ pointerEvents: 'all', cursor: 'crosshair' }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return // right/middle: let contextmenu handle it
+                  e.stopPropagation()
+                  onEndpointDragStart?.(e, endpointArrow.id, end)
+                }}
+              />
+            </g>
+          )
+        })}
 
       {marquee && (marquee.w > 0 || marquee.h > 0) && (
         <rect

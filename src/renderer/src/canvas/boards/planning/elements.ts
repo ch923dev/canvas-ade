@@ -395,6 +395,33 @@ export function translateMany(
   return els.map((el) => (set.has(el.id) ? shiftElement(el, dx, dy) : el))
 }
 
+// ── D3-B: arrow endpoint editing ────────────────────────────────────────────────
+
+/** Which end of an arrow a transform targets: 'start' = the tail (x/y), 'end' = the head (x2/y2). */
+export type ArrowEnd = 'start' | 'end'
+
+/**
+ * Move ONE endpoint of an arrow to a new board-local point; the other endpoint is
+ * untouched, so the bezier re-bows around the fixed end. No-op (same element refs
+ * back) when the id is absent or not an arrow. Immutable. Powers both the live
+ * drag preview and the pointer-up commit so the two can never disagree.
+ */
+export function setArrowEndpoint<E extends PlanningElement>(
+  els: E[],
+  id: string,
+  end: ArrowEnd,
+  x: number,
+  y: number
+): E[] {
+  return els.map((el) =>
+    el.id === id && el.kind === 'arrow'
+      ? end === 'start'
+        ? { ...el, x, y }
+        : { ...el, x2: x, y2: y }
+      : el
+  )
+}
+
 // ── W3: lock + group + duplicate ───────────────────────────────────────────────
 
 /** The single lock predicate. Absent flag ⇒ unlocked. */
