@@ -209,9 +209,9 @@ is summarized in **`docs/archive/build-history.md`** (originals in git history).
 history + the current open backlog** is in **`docs/reviews/`** (`README.md` = index; newest dated
 file = open findings).
 
-**Current state:** `main` @ `7bdb998` (2026-06-10). Phases 0-4 + all board types, MCP M0-M5, the
-Context subsystem, Whiteboard W1-W5, Testing T0-T5, the Electron 33->42 bump (T9), and review Waves
-0-5 are all shipped on `main`. **The release blocker is Phase 5 (packaging/signing).** Open
+**Current state:** `main` @ `1230b7f` (2026-06-10). Phases 0-4 + all board types, MCP M0-M5, the
+Context subsystem, Whiteboard W1-W5, Testing T0-T5, the Electron 33->42 bump (T9), review Waves
+0-5, and the 2026-06-10 full-app audit fix run (#107, 72/72 findings) are all shipped on `main`. **The release blocker is Phase 5 (packaging/signing).** Open
 candidates and "start here next" live in `docs/roadmap.md`.
 
 **Live state is deliberately NOT tracked in this file.** The per-PR landing log and the in-flight
