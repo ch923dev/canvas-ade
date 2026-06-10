@@ -3,6 +3,7 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
 import { writeFileSync, mkdtempSync, existsSync } from 'fs'
+import writeFileAtomic from 'write-file-atomic'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
   registerPtyHandlers,
@@ -457,7 +458,9 @@ app.whenReady().then(async () => {
               kept.push(JSON.stringify({ boardId, ...entry }))
             }
           }
-          writeFileSync(recapMapPath, kept.length > 0 ? kept.join('\n') + '\n' : '')
+          // Atomic like every other persistence path: a torn write would otherwise leave a
+          // partial JSONL that readRecapMap absorbs as an empty map (silent entry loss).
+          writeFileAtomic.sync(recapMapPath, kept.length > 0 ? kept.join('\n') + '\n' : '')
         } catch {
           // Non-fatal: the consent gate in getAgentMilestones still blocks egress even if
           // the map file could not be rewritten.

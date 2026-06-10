@@ -30,7 +30,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     if [ -z "$base" ]; then
       # Cannot determine a safe base — run the full matrix rather than skip.
       echo "[pre-push] WARNING: could not find merge-base for new branch '$local_ref' — running full e2e matrix."
-      changed="${changed}force-full"
+      changed="${changed}force-full
+"
       continue
     fi
     range="$base..$local_sha"
@@ -42,7 +43,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # the hook never silently succeeds due to set -e swallowing 2>/dev/null errors.
   diff_out="$(git diff --name-only --diff-filter=ACMRD "$range" 2>/dev/null)" || {
     echo "[pre-push] WARNING: git diff failed for range '$range' (remote tip may not be local) — running full e2e matrix."
-    changed="${changed}force-full"
+    changed="${changed}force-full
+"
     continue
   }
   changed="$changed$diff_out
