@@ -22,7 +22,10 @@ export interface ScreenshotDeps {
 }
 
 export type ScreenshotResult =
-  | { ok: true; assetId: string | null }
+  // BUG-028: `clipboardOk` reports whether the clipboard write actually landed —
+  // previously a thrown writeImage was swallowed and `{ ok:true, assetId:null }`
+  // read as "copied to clipboard" even when nothing was saved anywhere.
+  | { ok: true; assetId: string | null; clipboardOk: boolean }
   | { ok: false; reason: 'not-live' | 'forbidden' }
 
 function realDeps(): ScreenshotDeps {
@@ -43,21 +46,25 @@ export function registerPreviewScreenshotHandler(
     if (isForeignSender(e, getWin)) return { ok: false, reason: 'forbidden' }
     const png = await deps.capture(String(id))
     if (!png) return { ok: false, reason: 'not-live' }
+    let clipboardOk = true
     try {
       deps.writeImage(png)
     } catch {
-      // Clipboard unavailable (headless / Wayland / locked session): non-fatal, still try to save.
+      // Clipboard unavailable (headless / Wayland / locked session): non-fatal, still try
+      // to save — but report it honestly (BUG-028).
+      clipboardOk = false
     }
     const dir = deps.currentDir()
-    if (!dir) return { ok: true, assetId: null }
+    if (!dir) return { ok: true, assetId: null, clipboardOk }
     try {
       const { assetId } = await deps.saveAsset(dir, png, 'png')
-      return { ok: true, assetId }
+      return { ok: true, assetId, clipboardOk }
     } catch (err) {
-      // Disk full / locked / read-only: the clipboard copy already succeeded, so report success
-      // with no path rather than failing the whole action. Log so it's diagnosable.
-      console.warn('[preview:screenshot] asset save failed (clipboard copy succeeded):', err)
-      return { ok: true, assetId: null }
+      // Disk full / locked / read-only: report success with no path rather than failing the
+      // whole action (the clipboard copy may still have landed — `clipboardOk` says).
+      // Log so it's diagnosable.
+      console.warn('[preview:screenshot] asset save failed:', err)
+      return { ok: true, assetId: null, clipboardOk }
     }
   })
 }

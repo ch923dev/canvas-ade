@@ -990,7 +990,38 @@ export function usePreviewManager(props: LayerProps): void {
       // back down rather than left painting over the modal scrim.
       if ((selChanged || fullViewIdRef.current !== null) && !gestureRef.current) applyLiveness()
     })
-    return unsub
+    // BUG-049: an explicit same-URL push (applyPush 'existing') bumps reloadNonce, but the
+    // updateBoard that follows is value-identical → the `boards` ref never changes, so the
+    // boards-gated subscription above never reconciles: no reload happens now, and the
+    // unread nonce later fires a surprise re-navigate on the next unrelated boards
+    // mutation. Consume a nonce bump directly: when any OPEN view's nonce went stale,
+    // re-run reconcile (its existing branch navigates + adopts the nonce). Deferred one
+    // microtask so a push that DOES change the url lands its updateBoard first (the
+    // boards subscription then consumes url + nonce together — no double navigate).
+    let cancelled = false
+    let noncePending = false
+    const unsubNonce = usePreviewStore.subscribe(() => {
+      if (noncePending) return
+      noncePending = true
+      queueMicrotask(() => {
+        noncePending = false
+        if (cancelled) return
+        for (const [id, r] of recs.current) {
+          if (
+            r.exists &&
+            (usePreviewStore.getState().byId[id]?.reloadNonce ?? 0) !== r.lastReloadNonce
+          ) {
+            reconcile(toGeom(useCanvasStore.getState().boards))
+            return
+          }
+        }
+      })
+    })
+    return () => {
+      cancelled = true
+      unsub()
+      unsubNonce()
+    }
   }, [reconcile, applyLiveness])
 
   // paneOffset: the RF pane top-left in window CSS px. Once per layout (ResizeObserver

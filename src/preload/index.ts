@@ -61,12 +61,13 @@ export interface DetectedUrl {
 }
 
 /** Mirrors main `ScreenshotResult` (preview:screenshot). assetId is the relative
- *  `assets/<sha1>.png` path, or null when copied to clipboard but not saved.
+ *  `assets/<sha1>.png` path, or null when nothing was saved. `clipboardOk` reports
+ *  whether the clipboard copy actually landed (BUG-028: the write can throw).
  *  `ok:false` with reason `not-live` means the view is detached or off-screen so
  *  `capturePage()` would return a blank image; reason `forbidden` means the sender
  *  was not the trusted app renderer (should never occur from normal app flow). */
 export type PreviewScreenshotResult =
-  | { ok: true; assetId: string | null }
+  | { ok: true; assetId: string | null; clipboardOk: boolean }
   | { ok: false; reason: 'not-live' | 'forbidden' }
 
 /**

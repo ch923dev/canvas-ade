@@ -44,12 +44,13 @@ interface ApiCalls {
   attach: string[]
   attachArgs: AttachArg[]
   detach: string[]
+  navigate: Array<{ id: string; url: string }>
 }
 let calls: ApiCalls
 let releaseDetach: (() => void) | null = null
 
 function stubApi(): void {
-  calls = { attach: [], attachArgs: [], detach: [] }
+  calls = { attach: [], attachArgs: [], detach: [], navigate: [] }
   releaseDetach = null
   ;(window as unknown as { api: unknown }).api = {
     capturePreview: vi.fn(async () => null),
@@ -68,7 +69,10 @@ function stubApi(): void {
     ),
     closePreview: vi.fn(async () => true),
     closeAllPreviews: vi.fn(async () => true),
-    navigatePreview: vi.fn(async () => true),
+    navigatePreview: vi.fn(async (id: string, url: string) => {
+      calls.navigate.push({ id, url })
+      return true
+    }),
     setPreviewBoundsBatch: vi.fn(async () => true),
     onPreviewEvent: vi.fn(() => () => {})
   }
@@ -278,6 +282,60 @@ describe('usePreviewManager — attach-during-direct-demote race (BUG-017)', () 
     expect(live && !reAttached).toBe(false)
     expect(reAttached).toBe(true)
     expect(live).toBe(true)
+  })
+})
+
+describe('usePreviewManager — same-URL push consumes the reload nonce (BUG-049)', () => {
+  it('re-navigates immediately on a reloadNonce bump with NO boards mutation, and leaves no stale nonce', async () => {
+    renderManager()
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 400, y: 400 })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+    const b = useCanvasStore.getState().boards.find((x) => x.id === id)
+    const boardUrl = b && b.type === 'browser' ? b.url : ''
+
+    // Explicit same-URL push (applyPush 'existing'): requestReload bumps the nonce, but
+    // the value-identical updateBoard leaves the boards ref unchanged → the boards-gated
+    // reconcile never runs. The bug: no reload now; the unread nonce later fires a
+    // surprise re-navigate on the next unrelated boards mutation.
+    const before = calls.navigate.length
+    await act(async () => {
+      usePreviewStore.getState().requestReload(id)
+    })
+    await flush()
+    expect(calls.navigate.slice(before)).toEqual([{ id, url: boardUrl }])
+
+    // No deferred surprise: an unrelated boards mutation must NOT re-navigate.
+    const afterPush = calls.navigate.length
+    await act(async () => {
+      useCanvasStore.getState().addBoard('planning', { x: 1600, y: 1600 })
+    })
+    await flush()
+    expect(calls.navigate.length).toBe(afterPush)
+  })
+
+  it('does not double-navigate when the push also changes the url', async () => {
+    renderManager()
+    let id = ''
+    await act(async () => {
+      id = useCanvasStore.getState().addBoard('browser', { x: 400, y: 400 })
+    })
+    await flush()
+    expect(usePreviewStore.getState().byId[id]?.live).toBe(true)
+
+    // applyPush ordering: nonce bump FIRST, then the url-changing updateBoard in the
+    // same tick. The boards subscription consumes url + nonce together; the deferred
+    // nonce check must then find nothing stale (exactly ONE navigate, to the new url).
+    const before = calls.navigate.length
+    await act(async () => {
+      usePreviewStore.getState().requestReload(id)
+      useCanvasStore.getState().updateBoard(id, { url: 'http://localhost:9999' })
+    })
+    await flush()
+    expect(calls.navigate.slice(before)).toEqual([{ id, url: 'http://localhost:9999' }])
   })
 })
 
