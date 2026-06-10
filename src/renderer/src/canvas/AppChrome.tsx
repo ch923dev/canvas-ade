@@ -400,9 +400,10 @@ function PresetThumb({ preset }: { preset: LayoutPreset }): ReactElement {
             top: `${z.y * 100}%`,
             width: `${z.w * 100}%`,
             height: `${z.h * 100}%`,
-            borderRadius: 2,
-            background: 'var(--text-3)'
-            // hover transition lives on .ca-zone in index.css (A12: reduced-motion gated)
+            borderRadius: 2
+            // rest background + hover transition live on .ca-zone in index.css — an
+            // inline background would out-specify the .ca-tidy-preset:hover accent rule
+            // (it was dead until moved); transition class-level for A12 gating.
           }}
         />
       ))}

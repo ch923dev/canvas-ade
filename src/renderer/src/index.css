@@ -1088,9 +1088,11 @@ body {
 .ca-tidy-preset span {
   color: var(--text-2);
 }
-/* The preset thumbnail zones (AppChrome ca-zone divs) — hover tint via class so the
-   reduced-motion block above can suppress it (A12). */
+/* The preset thumbnail zones (AppChrome ca-zone divs). Rest background lives HERE,
+   not inline — an inline background out-specifies the :hover accent rule below and
+   kept it dead. Transition at class level so reduced-motion can suppress it (A12). */
 .ca-zone {
+  background: var(--text-3);
   transition: background 0.1s;
 }
 .ca-tidy-preset:hover {
