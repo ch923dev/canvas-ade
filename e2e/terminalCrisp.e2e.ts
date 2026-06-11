@@ -53,20 +53,23 @@ test.describe('terminal crisp-zoom policy', () => {
   test('zoom cycles never accumulate renderer canvases (failed GL attaches are swept)', async ({
     page
   }) => {
-    // Runs on BOTH legs: with working GL there is exactly the one live canvas; with
-    // broken GL (the Linux container) every cycle retries the attach and the sweep
-    // must remove what the failed attempt appended — pre-sweep this grew 1 → 2 → 3.
+    // Baseline-relative on purpose — the legitimate canvas population differs by GL
+    // state (working GL: the addon's render canvas + its xterm-link-layer = 2;
+    // broken GL post-sweep: 0), so the contract is NO GROWTH across cycles. With
+    // broken GL (the Linux container) every settle-at-100% retries the attach and
+    // the sweep must remove what the failed attempt appended — pre-sweep this grew
+    // by one canvas per cycle.
     const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 10_000)
-    for (const z of [1, 1.3, 1, 1.3, 1]) {
+    await zoomTo(page, 1)
+    await page.waitForTimeout(800) // first settle + attach (or failed attach + sweep)
+    const baseline = await evalIn<number>(page, canvasCount(id))
+    for (const z of [1.3, 1, 1.3, 1]) {
       await zoomTo(page, z)
       await page.waitForTimeout(500) // let the settle (250ms) + renderer swap land
     }
     const count = await evalIn<number>(page, canvasCount(id))
-    expect(
-      count,
-      'at most the one live WebGL canvas after repeated zoom cycles'
-    ).toBeLessThanOrEqual(1)
+    expect(count, 'canvas count did not grow across zoom cycles').toBeLessThanOrEqual(baseline)
   })
 
   test('a settled zoom inside the snap band lands on exactly 100%', async ({ page }) => {
