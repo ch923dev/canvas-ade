@@ -9,7 +9,7 @@
  * window-handler interplay — is pinned by e2e/planningKeyboard.e2e.ts.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { render, cleanup, act } from '@testing-library/react'
+import { render, screen, cleanup, act } from '@testing-library/react'
 import { ReactFlowProvider } from '@xyflow/react'
 import type { ReactElement } from 'react'
 import { PlanningBoard } from '../PlanningBoard'
@@ -328,6 +328,10 @@ describe('planning keyboard — Ctrl+G / Ctrl+Shift+G (D3-C)', () => {
     expect(a.groupId).not.toBe('g1') // a fresh group id
     expect(b.groupId).toBe(a.groupId)
     expect(c.groupId).toBe(a.groupId) // the sibling rode along, not stranded
+    // The selection ring must expand with it (openMenuAtSelection parity): kc's
+    // card shows the accent outline, not just a silent store-side membership.
+    const cCard = screen.getByDisplayValue('C').closest<HTMLElement>('.pl-note')
+    expect(cCard?.style.outline).toContain('var(--accent)')
   })
 
   it('meta (⌘) works like ctrl for the chord', () => {

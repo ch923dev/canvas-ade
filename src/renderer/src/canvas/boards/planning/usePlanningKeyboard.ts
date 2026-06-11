@@ -197,6 +197,10 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
         if (expanded.size >= 2 && !isOneGroup) {
           beginChange()
           commit(groupElements(elements, expanded, newId()))
+          // Ring follows the group (openMenuAtSelection parity): a silent sibling
+          // that rode along via expansion must show selected, not leave the ring
+          // on the partial subset of a now-atomic group.
+          if (expanded.size !== selectedIds.size) setSelectedIds(expanded)
         }
         return
       }
@@ -264,6 +268,7 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
     [
       elements,
       selectedIds,
+      setSelectedIds,
       tool,
       beginChange,
       commit,
