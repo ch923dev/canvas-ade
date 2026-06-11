@@ -12,6 +12,7 @@ import { useCanvasStore } from '../store/canvasStore'
 import { BoardFullViewContext } from './fullViewContext'
 import { Icon, type IconName } from './Icon'
 import { Menu } from './Menu'
+import { usePaletteIntentStore } from './palette/paletteIntentStore'
 import { TypeGlyph } from './TypeGlyph'
 
 const TYPE_TAG: Record<BoardType, string> = {
@@ -161,6 +162,17 @@ function BoardTitle({
       inputRef.current?.select()
     }
   }, [editing])
+
+  // D4-A: the command palette's "Rename board" posts a one-shot intent (it can't call
+  // startEdit directly). Consume by board id — the palette already closed and restored
+  // focus a macrotask earlier, so the title input's focus grab below wins cleanly.
+  const paletteIntent = usePaletteIntentStore((s) => s.intent)
+  useEffect(() => {
+    if (!paletteIntent || paletteIntent.kind !== 'rename') return
+    if (paletteIntent.boardId !== boardId) return
+    usePaletteIntentStore.getState().consume(paletteIntent.nonce)
+    startEdit()
+  }, [paletteIntent, boardId, startEdit])
 
   if (editing) {
     return (

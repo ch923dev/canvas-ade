@@ -1444,6 +1444,199 @@ body {
   color: var(--text);
 }
 
+/* ── D4-A command palette island (signed off 2026-06-11) ──────────────────────
+   One floating island, two views (Ctrl+K commands · ? shortcuts), rendered on the
+   shared Modal (scrim/trap/Esc). Chips reuse the .fullview-hint kbd recipe via the
+   island's own kbd rule. Active row = the .pl-tt-btn.is-active accent-wash grammar. */
+.cp-island {
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+  font-family: var(--ui);
+  animation: cp-in 120ms ease-out;
+}
+@keyframes cp-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cp-island {
+    animation: none;
+  }
+}
+.cp-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px 9px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cp-back {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.cp-back:hover,
+.cp-back:focus-visible {
+  color: var(--text);
+}
+.cp-back:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.cp-title {
+  flex: 1;
+  font-size: var(--fs-h);
+  line-height: var(--lh-h);
+  font-weight: var(--fw-h);
+  letter-spacing: var(--tr-h);
+  color: var(--text);
+}
+.cp-search {
+  flex: none;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.cp-glass {
+  color: var(--text-3);
+  font-size: 14px;
+}
+.cp-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-family: var(--ui);
+  font-size: var(--fs-body);
+  color: var(--text);
+}
+.cp-search input::placeholder {
+  color: var(--text-3);
+}
+.cp-island kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.cp-list {
+  flex: 1;
+  min-height: 0;
+  padding: 4px;
+  overflow-y: auto;
+  /* Thin dark scrollbar — the bright native bar read as a defect on the mock. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.cp-section {
+  padding: 8px 10px 3px;
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.cp-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--r-ctl);
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+.cp-row:hover {
+  background: var(--surface-overlay);
+}
+.cp-row[data-active] {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.cp-glyph {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.cp-row[data-active] .cp-glyph {
+  color: var(--accent);
+}
+.cp-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-chips {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cp-chips kbd,
+.cp-esc {
+  color: var(--text-3);
+}
+.cp-chip-sep {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.cp-srow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 28px;
+  padding: 2px 8px;
+  border-radius: var(--r-ctl);
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.cp-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--fs-body);
+}
+.cp-footer {
+  flex: none;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+}
+.cp-footer-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
 /* Multi-select connect picker (Terminal globe long-press → choose browser(s)). */
 .ca-browser-choice {
   display: flex;

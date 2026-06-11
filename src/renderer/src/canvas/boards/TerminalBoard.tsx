@@ -37,6 +37,7 @@ import { useTerminalSpawn } from './terminal/useTerminalSpawn'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
 import { TerminalRestartMenu } from './terminal/TerminalRestartMenu'
+import { usePaletteRestart } from './terminal/usePaletteRestart'
 import { RecapView } from '../RecapView'
 import { useTerminalFlip } from './useTerminalFlip'
 import {
@@ -125,6 +126,9 @@ export function TerminalBoard({
   const [restartMenu, setRestartMenu] = useState(false)
   const restartBtnRef = useRef<HTMLSpanElement>(null)
   const canResume = !!board.agentSessionId
+  // D4-A: consume palette restart intents for this board (resume/new — same launch
+  // override + respawn path as the Restart menu below).
+  usePaletteRestart(board.id, board.agentSessionId, launchOverrideRef, restart)
 
   // D2-B (audit A6): flipping moves focus WITH the visible face — the recap wrapper on
   // flip, xterm back on flip-back. Without this, focus stayed on the hidden xterm behind
