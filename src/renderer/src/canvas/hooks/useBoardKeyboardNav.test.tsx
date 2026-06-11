@@ -107,6 +107,18 @@ describe('useBoardKeyboardNav', () => {
     expect(get().selectedIds).toEqual([b])
   })
 
+  it('cycleBoard exits focus mode (no stale dim/camera keyed on the previous board)', () => {
+    const a = seed('terminal', 0, 0)
+    seed('terminal', 500, 0)
+    get().selectBoard(a)
+    const { result, setFocusedId } = setup()
+    act(() => {
+      result.current.focusSelectedBoard() // Enter-focus: focusedId = a
+      result.current.cycleBoard(1) // Tab: selection moves on → focus mode must clear
+    })
+    expect(setFocusedId).toHaveBeenLastCalledWith(null)
+  })
+
   it('cycleBoard returns false on an empty canvas (key falls through natively)', () => {
     const { result } = setup()
     let acted = true

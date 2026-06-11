@@ -147,12 +147,16 @@ export function useBoardKeyboardNav(deps: BoardKeyboardNavDeps): BoardKeyboardNa
       const s = useCanvasStore.getState()
       const nextId = nextBoardId(s.boards, s.selectedId, dir)
       if (nextId === null) return false
+      // Exit focus mode: Tab moves the selection, so a camera-fit + dim still keyed on
+      // the PREVIOUS board would show a stale visual (ring on B, dim centred on A).
+      // No-op (same-value setState) when not in focus mode.
+      setFocusedId(null)
       s.selectBoard(nextId)
       const next = s.boards.find((b) => b.id === nextId)
       if (next) ensureVisible(next)
       return true
     },
-    [ensureVisible]
+    [ensureVisible, setFocusedId]
   )
 
   const moveSelectedBoards = useCallback((dx: number, dy: number): boolean => {

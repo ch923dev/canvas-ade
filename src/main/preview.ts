@@ -378,8 +378,8 @@ function ensure(id: string, win: BrowserWindow): Entry {
     // traps keyboard focus in the native view with no way back to app chrome. Hand OS
     // focus back to the host window's webContents here (only MAIN can move focus between
     // webContents); the renderer side (usePreviewEvents) selects the board so the
-    // keyboard context lands visibly where the user was. Focus moves AFTER the key was
-    // queued to the page, so a page that uses Esc still receives it.
+    // keyboard context lands visibly where the user was. The page still receives the Esc
+    // key because we never call preventDefault on the before-input-event.
     wc.on('before-input-event', (_ev, input) => {
       if (input.type === 'keyDown' && input.key === 'Escape') {
         emit({ id, type: 'escape' })

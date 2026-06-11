@@ -175,7 +175,11 @@ describe('chip ↔ resolveCanvasKeyAction drift guard', () => {
       // The command must exist and carry chips (the claim list mirrors the registry).
       const cmd = cmds.find((c) => c.id === claim.id)
       expect(cmd?.chips?.length, claim.id).toBeTruthy()
-      const action = resolveCanvasKeyAction(claim.chord, { typing: false, bareKeyAllowed: true })
+      const action = resolveCanvasKeyAction(claim.chord, {
+        typing: false,
+        bareKeyAllowed: true,
+        boardNavAllowed: false
+      })
       expect(action?.kind, claim.id).toBe(claim.kind)
     }
   })
@@ -185,7 +189,7 @@ describe('chip ↔ resolveCanvasKeyAction drift guard', () => {
     expect(cmds.find((c) => c.id === 'focus-group-g')?.chips).toContain('F')
     const action = resolveCanvasKeyAction(
       { key: 'f', ctrlKey: false, metaKey: false, altKey: false, shiftKey: false },
-      { typing: false, bareKeyAllowed: true }
+      { typing: false, bareKeyAllowed: true, boardNavAllowed: false }
     )
     expect(action?.kind).toBe('focusGroup')
   })

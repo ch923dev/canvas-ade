@@ -72,9 +72,9 @@ export const BOARD_NUDGE_SHIFT_PX = 10
  */
 export function resolveCanvasKeyAction(
   e: KeyChord,
-  ctx: { typing: boolean; bareKeyAllowed: boolean; boardNavAllowed?: boolean }
+  ctx: { typing: boolean; bareKeyAllowed: boolean; boardNavAllowed: boolean }
 ): CanvasKeyAction | null {
-  const { typing, bareKeyAllowed, boardNavAllowed = false } = ctx
+  const { typing, bareKeyAllowed, boardNavAllowed } = ctx
   const mod = (e.ctrlKey || e.metaKey) && !e.altKey
   const k = e.key.toLowerCase()
   // Undo/redo first (early-return in the original, so they win over the Esc/d/1/0/t chain).
