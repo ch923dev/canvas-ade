@@ -111,3 +111,78 @@ describe('resolveCanvasKeyAction', () => {
     expect(resolveCanvasKeyAction(chord('Enter'), FREE)).toBeNull()
   })
 })
+
+// D4-B board nav: gated on the stricter boardNavAllowed whitelist (focus on body/pane).
+const NAV = { typing: false, bareKeyAllowed: true, boardNavAllowed: true }
+const NO_NAV = { typing: false, bareKeyAllowed: true, boardNavAllowed: false }
+
+describe('resolveCanvasKeyAction — D4-B board nav', () => {
+  it('Tab cycles forward, Shift+Tab backward — only when boardNavAllowed', () => {
+    expect(resolveCanvasKeyAction(chord('Tab'), NAV)).toEqual({ kind: 'cycleBoard', dir: 1 })
+    expect(resolveCanvasKeyAction(chord('Tab', { shiftKey: true }), NAV)).toEqual({
+      kind: 'cycleBoard',
+      dir: -1
+    })
+    expect(resolveCanvasKeyAction(chord('Tab'), NO_NAV)).toBeNull()
+    // boardNavAllowed omitted (legacy ctx) behaves as false.
+    expect(resolveCanvasKeyAction(chord('Tab'), FREE)).toBeNull()
+  })
+
+  it('Ctrl/Alt/Meta+Tab are not bindings (OS / future surfaces)', () => {
+    expect(resolveCanvasKeyAction(chord('Tab', { ctrlKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Tab', { altKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Tab', { metaKey: true }), NAV)).toBeNull()
+  })
+
+  it('Enter focuses the selected board — bare only, gated', () => {
+    expect(resolveCanvasKeyAction(chord('Enter'), NAV)).toEqual({ kind: 'focusBoard' })
+    expect(resolveCanvasKeyAction(chord('Enter', { shiftKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Enter', { ctrlKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Enter'), NO_NAV)).toBeNull()
+  })
+
+  it('arrows move 1px, Shift = 10px, in the right directions', () => {
+    expect(resolveCanvasKeyAction(chord('ArrowLeft'), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: -1,
+      dy: 0
+    })
+    expect(resolveCanvasKeyAction(chord('ArrowRight'), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: 1,
+      dy: 0
+    })
+    expect(resolveCanvasKeyAction(chord('ArrowUp', { shiftKey: true }), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: 0,
+      dy: -10
+    })
+    expect(resolveCanvasKeyAction(chord('ArrowDown', { shiftKey: true }), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: 0,
+      dy: 10
+    })
+  })
+
+  it('Alt+arrows resize by the same 1/10 steps', () => {
+    expect(resolveCanvasKeyAction(chord('ArrowRight', { altKey: true }), NAV)).toEqual({
+      kind: 'resizeBoard',
+      dw: 1,
+      dh: 0
+    })
+    expect(
+      resolveCanvasKeyAction(chord('ArrowLeft', { altKey: true, shiftKey: true }), NAV)
+    ).toEqual({ kind: 'resizeBoard', dw: -10, dh: 0 })
+    expect(resolveCanvasKeyAction(chord('ArrowDown', { altKey: true }), NAV)).toEqual({
+      kind: 'resizeBoard',
+      dw: 0,
+      dh: 1
+    })
+  })
+
+  it('arrows are gated by boardNavAllowed and ignore Ctrl/Meta chords', () => {
+    expect(resolveCanvasKeyAction(chord('ArrowLeft'), NO_NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('ArrowLeft', { ctrlKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('ArrowLeft', { metaKey: true }), NAV)).toBeNull()
+  })
+})

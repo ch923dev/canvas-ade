@@ -16,7 +16,7 @@ import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } 
 import type { ReactFlowInstance } from '@xyflow/react'
 import { cameraAnim } from '../../lib/motion'
 import { FIT_FRAME, RESET_FRAME } from '../../lib/canvasView'
-import { shouldFireCameraShortcut } from '../cameraShortcut'
+import { shouldFireBoardNavKey, shouldFireCameraShortcut } from '../cameraShortcut'
 
 /** The keydown fields the main-keymap resolver reads (a subset of KeyboardEvent). */
 export interface KeyChord {
@@ -40,20 +40,41 @@ export type CanvasKeyAction =
   | { kind: 'focusGroup' }
   | { kind: 'palette' }
   | { kind: 'shortcuts' }
+  | { kind: 'cycleBoard'; dir: 1 | -1 }
+  | { kind: 'moveBoard'; dx: number; dy: number }
+  | { kind: 'resizeBoard'; dw: number; dh: number }
+  | { kind: 'focusBoard' }
+
+/** Arrow-key → unit delta for the board move/resize chords (D4-B). A Map so an
+ *  exotic e.key can never hit an inherited Object key (the D3-C discipline). */
+const BOARD_ARROW_DELTA = new Map<string, readonly [number, number]>([
+  ['ArrowLeft', [-1, 0]],
+  ['ArrowRight', [1, 0]],
+  ['ArrowUp', [0, -1]],
+  ['ArrowDown', [0, 1]]
+])
+
+/** Per-keypress board nudge distance (world px); Shift steps by the coarse value —
+ *  the same 1/10 grammar as the planning-element nudge (D3-C). */
+export const BOARD_NUDGE_PX = 1
+export const BOARD_NUDGE_SHIFT_PX = 10
 
 /**
  * Pure: map a bubble-phase keydown to its canvas action, preserving the EXACT precedence of
  * the original else-if chain. `typing` = focus is in an INPUT/TEXTAREA/contenteditable;
  * `bareKeyAllowed` = the shared bare-key guard (`shouldFireCameraShortcut`: not typing AND the
  * target is not inside a `.react-flow__node`), gating the 1/0/t shortcuts so they never fire
- * from a focusable board surface like the pen well. Esc-in-full-view is handled separately in
+ * from a focusable board surface like the pen well. `boardNavAllowed` = the stricter D4-B
+ * whitelist (`shouldFireBoardNavKey`: focus is on body / the pane — nothing else owns it),
+ * gating Tab/arrows/Enter so they can never shadow a focus trap, the planning well's own
+ * arrows, or native Tab order inside chrome. Esc-in-full-view is handled separately in
  * the capture-phase listener.
  */
 export function resolveCanvasKeyAction(
   e: KeyChord,
-  ctx: { typing: boolean; bareKeyAllowed: boolean }
+  ctx: { typing: boolean; bareKeyAllowed: boolean; boardNavAllowed?: boolean }
 ): CanvasKeyAction | null {
-  const { typing, bareKeyAllowed } = ctx
+  const { typing, bareKeyAllowed, boardNavAllowed = false } = ctx
   const mod = (e.ctrlKey || e.metaKey) && !e.altKey
   const k = e.key.toLowerCase()
   // Undo/redo first (early-return in the original, so they win over the Esc/d/1/0/t chain).
@@ -80,6 +101,22 @@ export function resolveCanvasKeyAction(
   // excluded — only Ctrl/⌘/Alt chords are.
   if (e.key === '?' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey)
     return { kind: 'shortcuts' }
+  // ── D4-B board nav (audit A3/A4) — whitelist-gated: only when focus is on body/pane. ──
+  // Tab cycles board selection (Shift reverses). No Ctrl/⌘/Alt: Ctrl+Tab stays free for
+  // a future surface and Alt+Tab belongs to the OS.
+  if (e.key === 'Tab' && boardNavAllowed && !e.ctrlKey && !e.metaKey && !e.altKey)
+    return { kind: 'cycleBoard', dir: e.shiftKey ? -1 : 1 }
+  // Enter focuses the selected board (the double-click camera-fit path; Esc exits).
+  if (e.key === 'Enter' && boardNavAllowed && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey)
+    return { kind: 'focusBoard' }
+  // Arrows move the selected board(s) 1px (Shift = 10); Alt+arrows resize by the same
+  // steps. Ctrl/⌘+arrows stay unbound (word-nav muscle memory; macOS Mission Control).
+  const delta = BOARD_ARROW_DELTA.get(e.key)
+  if (delta && boardNavAllowed && !e.ctrlKey && !e.metaKey) {
+    const step = e.shiftKey ? BOARD_NUDGE_SHIFT_PX : BOARD_NUDGE_PX
+    if (e.altKey) return { kind: 'resizeBoard', dw: delta[0] * step, dh: delta[1] * step }
+    return { kind: 'moveBoard', dx: delta[0] * step, dy: delta[1] * step }
+  }
   return null
 }
 
@@ -104,6 +141,13 @@ export interface CanvasKeybindingDeps {
   focusGroup?: () => void
   /** Open/toggle the command palette (Ctrl/⌘+K → 'commands', `?` → 'shortcuts'). D4-A. */
   openPalette?: (view: 'commands' | 'shortcuts') => void
+  /** D4-B board nav (useBoardKeyboardNav). Each returns true if it ACTED — only then is
+   *  the key swallowed (preventDefault), so e.g. Tab on an empty canvas falls through to
+   *  native focus order and the chrome stays keyboard-reachable. */
+  cycleBoard?: (dir: 1 | -1) => boolean
+  moveSelectedBoards?: (dx: number, dy: number) => boolean
+  resizeSelectedBoards?: (dw: number, dh: number) => boolean
+  focusSelectedBoard?: () => boolean
 }
 
 export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
@@ -124,7 +168,11 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     snapSuppressRef,
     groupSelection,
     focusGroup,
-    openPalette
+    openPalette,
+    cycleBoard,
+    moveSelectedBoards,
+    resizeSelectedBoards,
+    focusSelectedBoard
   } = deps
 
   // 1. While an orchestration connector is selected, Delete/Backspace removes it. Selecting a
@@ -156,7 +204,8 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
         !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
       const action = resolveCanvasKeyAction(e, {
         typing,
-        bareKeyAllowed: shouldFireCameraShortcut(t, typing)
+        bareKeyAllowed: shouldFireCameraShortcut(t, typing),
+        boardNavAllowed: shouldFireBoardNavKey(t, typing)
       })
       if (!action) return
       switch (action.kind) {
@@ -204,6 +253,20 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
           e.preventDefault()
           openPalette?.('shortcuts')
           break
+        // D4-B board nav: swallow the key ONLY when the handler acted, so an idle
+        // Tab/Enter/arrow (no boards, empty selection) keeps its native behavior.
+        case 'cycleBoard':
+          if (cycleBoard?.(action.dir)) e.preventDefault()
+          break
+        case 'moveBoard':
+          if (moveSelectedBoards?.(action.dx, action.dy)) e.preventDefault()
+          break
+        case 'resizeBoard':
+          if (resizeSelectedBoards?.(action.dw, action.dh)) e.preventDefault()
+          break
+        case 'focusBoard':
+          if (focusSelectedBoard?.()) e.preventDefault()
+          break
       }
     }
     window.addEventListener('keydown', onKey)
@@ -217,7 +280,11 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     setDiag,
     groupSelection,
     focusGroup,
-    openPalette
+    openPalette,
+    cycleBoard,
+    moveSelectedBoards,
+    resizeSelectedBoards,
+    focusSelectedBoard
   ])
 
   // 3. Esc ALWAYS exits full view — even when a board's own input owns focus. Must run in the

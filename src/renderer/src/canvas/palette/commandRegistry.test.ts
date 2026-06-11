@@ -189,6 +189,49 @@ describe('chip ↔ resolveCanvasKeyAction drift guard', () => {
     )
     expect(action?.kind).toBe('focusGroup')
   })
+
+  /** D4-B: the board-nav rows in the ? sheet claim live chords too — feed each into the
+   *  resolver (boardNavAllowed mirrors the real whitelist guard) and pin the row exists,
+   *  so the sheet can never drift from the keymap. */
+  const NAV_ROWS: { label: string; chord: KeyChord; kind: CanvasKeyAction['kind'] }[] = [
+    { label: 'Cycle board selection', chord: key('Tab'), kind: 'cycleBoard' },
+    { label: 'Cycle board selection', chord: key('Tab', { shiftKey: true }), kind: 'cycleBoard' },
+    { label: 'Move selected boards', chord: key('ArrowRight'), kind: 'moveBoard' },
+    {
+      label: 'Move selected boards',
+      chord: key('ArrowDown', { shiftKey: true }),
+      kind: 'moveBoard'
+    },
+    {
+      label: 'Resize selected boards',
+      chord: key('ArrowUp', { altKey: true }),
+      kind: 'resizeBoard'
+    },
+    { label: 'Focus board', chord: key('Enter'), kind: 'focusBoard' }
+  ]
+
+  it('every board-nav sheet row resolves to its action (D4-B drift guard)', () => {
+    for (const row of NAV_ROWS) {
+      expect(
+        SHORTCUT_ROWS.some((r) => r.section === 'Boards' && r.label === row.label),
+        row.label
+      ).toBe(true)
+      const action = resolveCanvasKeyAction(row.chord, {
+        typing: false,
+        bareKeyAllowed: true,
+        boardNavAllowed: true
+      })
+      expect(action?.kind, row.label).toBe(row.kind)
+    }
+  })
+
+  it('the A3 focus-return row is on the sheet (Esc — handled main-side, not a resolver chord)', () => {
+    expect(
+      SHORTCUT_ROWS.some(
+        (r) => r.section === 'Boards' && /preview/i.test(r.label) && r.chips.includes('Esc')
+      )
+    ).toBe(true)
+  })
 })
 
 describe('SHORTCUT_ROWS + displayChip', () => {

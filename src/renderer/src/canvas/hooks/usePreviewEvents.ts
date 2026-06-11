@@ -21,6 +21,7 @@
  */
 import { useEffect, type MutableRefObject } from 'react'
 import { usePreviewStore } from '../../store/previewStore'
+import { useCanvasStore } from '../../store/canvasStore'
 import type { BoardRec } from '../boards/usePreviewManager'
 
 /** The store's `patch` / `patchIfPresent` action signatures, taken straight off the store so
@@ -45,8 +46,15 @@ export function usePreviewEvents(params: {
       // before-input-event). The renderer window never receives this keydown, so close
       // full view here when the event's board is the full-view one — parity with the
       // window Esc handler that already exits full view for terminals/notes.
+      // D4-B (audit A3): outside full view the same Esc is the focus-return gesture —
+      // main already handed OS focus back to this window's webContents; select the
+      // board (existence-gated) so the keyboard context lands visibly where the user
+      // was, and Tab/arrows/Enter/F2 continue from it. The next Esc (now reaching the
+      // window keymap) clears the selection — one Esc, one layer out.
       if ((ev.type as string) === 'escape') {
         if (ev.id === fullViewIdRef.current) onCloseFullViewRef.current()
+        else if (useCanvasStore.getState().boards.some((b) => b.id === ev.id))
+          useCanvasStore.getState().selectBoard(ev.id)
         return
       }
       // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).

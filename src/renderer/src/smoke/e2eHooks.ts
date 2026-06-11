@@ -45,6 +45,10 @@ export interface CanvasE2E {
   getBoards: () => Board[]
   /** Set the multi-selection (group create path). */
   setSelection: (ids: string[]) => void
+  /** Current selection (D4-B Tab-cycle probe asserts on it). */
+  getSelection: () => string[]
+  /** Live camera viewport (D4-B Enter-focus probe asserts the camera moved). */
+  getViewport: () => { x: number; y: number; zoom: number }
   /** Named groups (plain data — serializable). */
   getGroups: () => { id: string; name: string; boardIds: string[] }[]
   /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
@@ -283,6 +287,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     setSelection(ids) {
       useCanvasStore.getState().setSelection(ids)
+    },
+    getSelection() {
+      return useCanvasStore.getState().selectedIds
+    },
+    getViewport() {
+      return rf.getViewport()
     },
     getGroups() {
       return useCanvasStore.getState().groups

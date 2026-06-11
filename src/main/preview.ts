@@ -374,8 +374,21 @@ function ensure(id: string, win: BrowserWindow): Entry {
     // double-fire on the keyUp) so the renderer can close full view — matching the
     // Esc-exits-full-view behaviour terminals/notes get from the window handler. We don't
     // preventDefault: the page may also use Esc, and full view is gated renderer-side.
+    // D4-B (audit A3): Esc is ALSO the focus-return gesture — a clicked preview otherwise
+    // traps keyboard focus in the native view with no way back to app chrome. Hand OS
+    // focus back to the host window's webContents here (only MAIN can move focus between
+    // webContents); the renderer side (usePreviewEvents) selects the board so the
+    // keyboard context lands visibly where the user was. Focus moves AFTER the key was
+    // queued to the page, so a page that uses Esc still receives it.
     wc.on('before-input-event', (_ev, input) => {
-      if (input.type === 'keyDown' && input.key === 'Escape') emit({ id, type: 'escape' })
+      if (input.type === 'keyDown' && input.key === 'Escape') {
+        emit({ id, type: 'escape' })
+        try {
+          owner?.webContents.focus()
+        } catch {
+          /* window gone */
+        }
+      }
     })
     // The `failed`-latch lifecycle (Bug #5), wired via the extracted, unit-tested
     // `registerLoadLatch` (TEST T5):
@@ -843,5 +856,42 @@ export function debugViewBounds(id: string): { attached: boolean; bounds: Rectan
     return { attached: e.attached, bounds: e.view.getBounds() }
   } catch {
     return null
+  }
+}
+
+/**
+ * E2E ONLY — give a board's native view OS keyboard focus (the state a user reaches by
+ * clicking inside the preview). The D4-B/A3 focus-return probe arms this, then drives a
+ * real Esc through the view (debugSendInputToView) and asserts focus came back to the
+ * host. Returns false when no view exists.
+ */
+export function debugFocusView(id: string): boolean {
+  const e = views.get(id)
+  if (!e) return false
+  try {
+    e.view.webContents.focus()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * E2E ONLY — real OS input through a board's native view's webContents (the
+ * `sendInput` sibling for preview views). The A3 probe sends Esc HERE — to the view,
+ * not the host window — so the before-input-event forward + focus-return run the
+ * exact production path.
+ */
+export function debugSendInputToView(
+  id: string,
+  evt: Parameters<Electron.WebContents['sendInputEvent']>[0]
+): boolean {
+  const e = views.get(id)
+  if (!e) return false
+  try {
+    e.view.webContents.sendInputEvent(evt)
+    return true
+  } catch {
+    return false
   }
 }
