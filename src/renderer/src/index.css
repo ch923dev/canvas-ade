@@ -500,6 +500,104 @@ body {
 [data-backdrop] .react-flow {
   background: transparent;
 }
+
+/* Backdrop picker popover (camera cluster — Tidy's sibling; Menu shell chrome). */
+.bd-trigger {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-3);
+}
+.bd-trigger:hover {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+.bd-trigger[data-active] {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.bd-head {
+  font: 600 11px var(--ui);
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 8px 12px 6px;
+}
+.bd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 220px;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: 12.5px var(--ui);
+  text-align: left;
+  cursor: pointer;
+}
+.bd-row:hover,
+.bd-row:focus-visible {
+  background: var(--surface-overlay);
+}
+.bd-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  flex: none;
+}
+.bd-dot[data-on] {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2.5px var(--surface-raised);
+}
+.bd-tag {
+  margin-left: auto;
+  font: 10px var(--mono, monospace);
+  color: var(--text-3);
+}
+.bd-sep {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--border-subtle);
+}
+.bd-slider,
+.bd-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font: 12px var(--ui);
+  color: var(--text-2);
+}
+.bd-slider > span:first-child {
+  width: 62px;
+  flex: none;
+}
+.bd-slider input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.bd-val {
+  width: 38px;
+  text-align: right;
+  font: 11px var(--mono, monospace);
+  color: var(--text-3);
+}
+.bd-slider[data-disabled],
+.bd-check[data-disabled] {
+  opacity: 0.45;
+}
+.bd-check input {
+  accent-color: var(--accent);
+}
 .react-flow__node-smoke {
   background: var(--surface-raised);
   border: 1px solid var(--border);
