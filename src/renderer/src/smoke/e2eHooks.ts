@@ -600,6 +600,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         future: [],
         selectedId: null,
         selectedIds: [],
+        // Backdrop is per-project document state — a spec that set a wallpaper/scene
+        // must not leave it painting under every later spec (same isolation class as
+        // connectors above).
+        background: null,
         project: { dir: null, name: 'e2e', status: 'open' }
       })
       // D1-A: toasts + the save-failure state are global ephemeral stores too — a toast

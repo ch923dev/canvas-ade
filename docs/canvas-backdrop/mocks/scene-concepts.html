@@ -1,255 +1,607 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-<meta charset="utf-8">
-<title>Backdrop scene concepts - vote mock</title>
-<style>
-  body { background:#0e0e10; color:#e8e8ea; font:13px "Segoe UI",sans-serif; margin:0; padding:28px 32px 48px; }
-  h1 { font-size:16px; font-weight:600; margin:0 0 4px; }
-  h2 { font-size:13px; font-weight:600; color:#a0a0a6; margin:30px 0 10px; text-transform:uppercase; letter-spacing:.08em; }
-  .sub { color:#7b7b81; font-size:12px; margin:0 0 18px; }
-  .grid { display:grid; grid-template-columns:repeat(3, 560px); gap:20px; }
-  .panel { background:#141416; border:1px solid #232328; border-radius:8px; overflow:hidden; }
-  .panel canvas { display:block; }
-  .label { padding:9px 12px 10px; border-top:1px solid #232328; }
-  .label b { font-size:12.5px; font-weight:600; }
-  .label span { display:block; color:#7b7b81; font-size:11.5px; margin-top:2px; }
-  .tag { float:right; font:10px "Cascadia Mono",monospace; color:#4f8cff; background:rgba(79,140,255,.1); border-radius:3px; padding:2px 6px; margin-top:1px; }
-</style>
-</head>
-<body>
-<h1>Backdrop scene concepts</h1>
-<p class="sub">Static frames of procedural scenes (each would animate subtly in-app, &le;30fps, paused when hidden / reduced-motion). Same registry + dim/saturation controls as the approved Blossom River. Default dim 0.25 NOT applied here so you see the raw art.</p>
+  <head>
+    <meta charset="utf-8" />
+    <title>Backdrop scene concepts - vote mock</title>
+    <style>
+      body {
+        background: #0e0e10;
+        color: #e8e8ea;
+        font:
+          13px 'Segoe UI',
+          sans-serif;
+        margin: 0;
+        padding: 28px 32px 48px;
+      }
+      h1 {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 13px;
+        font-weight: 600;
+        color: #a0a0a6;
+        margin: 30px 0 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .sub {
+        color: #7b7b81;
+        font-size: 12px;
+        margin: 0 0 18px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 560px);
+        gap: 20px;
+      }
+      .panel {
+        background: #141416;
+        border: 1px solid #232328;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .panel canvas {
+        display: block;
+      }
+      .label {
+        padding: 9px 12px 10px;
+        border-top: 1px solid #232328;
+      }
+      .label b {
+        font-size: 12.5px;
+        font-weight: 600;
+      }
+      .label span {
+        display: block;
+        color: #7b7b81;
+        font-size: 11.5px;
+        margin-top: 2px;
+      }
+      .tag {
+        float: right;
+        font:
+          10px 'Cascadia Mono',
+          monospace;
+        color: #4f8cff;
+        background: rgba(79, 140, 255, 0.1);
+        border-radius: 3px;
+        padding: 2px 6px;
+        margin-top: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Backdrop scene concepts</h1>
+    <p class="sub">
+      Static frames of procedural scenes (each would animate subtly in-app, &le;30fps, paused when
+      hidden / reduced-motion). Same registry + dim/saturation controls as the approved Blossom
+      River. Default dim 0.25 NOT applied here so you see the raw art.
+    </p>
 
-<div class="grid" id="scenes"></div>
+    <div class="grid" id="scenes"></div>
 
-<h2>World grid variants (separate axis - the lattice that pans/zooms WITH the canvas)</h2>
-<p class="sub">Today the canvas always shows the 24px dot lattice. React Flow natively supports two more variants - this would just be a 3-way choice in the backdrop picker's "grid on top" row. Shown over plain void with a board for context.</p>
+    <h2>World grid variants (separate axis - the lattice that pans/zooms WITH the canvas)</h2>
+    <p class="sub">
+      Today the canvas always shows the 24px dot lattice. React Flow natively supports two more
+      variants - this would just be a 3-way choice in the backdrop picker's "grid on top" row. Shown
+      over plain void with a board for context.
+    </p>
 
-<div class="grid" id="grids"></div>
+    <div class="grid" id="grids"></div>
 
-<script>
-function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
-var W=560,H=315;
+    <script>
+      function mulberry32(a) {
+        return function () {
+          a |= 0
+          a = (a + 0x6d2b79f5) | 0
+          var t = Math.imul(a ^ (a >>> 15), 1 | a)
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+        }
+      }
+      var W = 560,
+        H = 315
 
-function aurora(x,R){
-  var g=x.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'#04060e'); g.addColorStop(.6,'#081421'); g.addColorStop(1,'#0d1d2b');
-  x.fillStyle=g; x.fillRect(0,0,W,H);
-  for(var i=0;i<170;i++){ x.globalAlpha=.15+R()*.65; x.fillStyle='#cfe2ff';
-    x.beginPath(); x.arc(R()*W,R()*H*.72,R()<.93?.7:1.5,0,7); x.fill(); }
-  x.globalAlpha=1; x.globalCompositeOperation='lighter';
-  var bands=[
-    {c:'rgba(64,224,160,', y:H*.34, amp:24, wl:.013, ph:.5, len:120, a:.16},
-    {c:'rgba(90,208,200,', y:H*.46, amp:32, wl:.009, ph:2.4, len:150, a:.12},
-    {c:'rgba(140,120,255,', y:H*.27, amp:18, wl:.016, ph:4.4, len:95, a:.09}];
-  for(var b=0;b<bands.length;b++){ var bd=bands[b];
-    for(var px=0;px<W;px+=3){
-      var yT=bd.y+Math.sin(px*bd.wl+bd.ph)*bd.amp+Math.sin(px*.004+bd.ph)*34;
-      var gr=x.createLinearGradient(0,yT,0,yT+bd.len);
-      gr.addColorStop(0,bd.c+'0)'); gr.addColorStop(.35,bd.c+bd.a+')'); gr.addColorStop(1,bd.c+'0)');
-      x.fillStyle=gr; x.fillRect(px,yT,3,bd.len);
-    } }
-  x.globalCompositeOperation='source-over';
-  x.fillStyle='#05080d'; x.beginPath(); x.moveTo(0,H);
-  var y=H*.84;
-  for(var px2=0;px2<=W;px2+=8){ y+=(R()-.5)*11; y=Math.max(H*.72,Math.min(H*.93,y)); x.lineTo(px2,y); }
-  x.lineTo(W,H); x.closePath(); x.fill();
-}
+      function aurora(x, R) {
+        var g = x.createLinearGradient(0, 0, 0, H)
+        g.addColorStop(0, '#04060e')
+        g.addColorStop(0.6, '#081421')
+        g.addColorStop(1, '#0d1d2b')
+        x.fillStyle = g
+        x.fillRect(0, 0, W, H)
+        for (var i = 0; i < 170; i++) {
+          x.globalAlpha = 0.15 + R() * 0.65
+          x.fillStyle = '#cfe2ff'
+          x.beginPath()
+          x.arc(R() * W, R() * H * 0.72, R() < 0.93 ? 0.7 : 1.5, 0, 7)
+          x.fill()
+        }
+        x.globalAlpha = 1
+        x.globalCompositeOperation = 'lighter'
+        var bands = [
+          { c: 'rgba(64,224,160,', y: H * 0.34, amp: 24, wl: 0.013, ph: 0.5, len: 120, a: 0.16 },
+          { c: 'rgba(90,208,200,', y: H * 0.46, amp: 32, wl: 0.009, ph: 2.4, len: 150, a: 0.12 },
+          { c: 'rgba(140,120,255,', y: H * 0.27, amp: 18, wl: 0.016, ph: 4.4, len: 95, a: 0.09 }
+        ]
+        for (var b = 0; b < bands.length; b++) {
+          var bd = bands[b]
+          for (var px = 0; px < W; px += 3) {
+            var yT =
+              bd.y + Math.sin(px * bd.wl + bd.ph) * bd.amp + Math.sin(px * 0.004 + bd.ph) * 34
+            var gr = x.createLinearGradient(0, yT, 0, yT + bd.len)
+            gr.addColorStop(0, bd.c + '0)')
+            gr.addColorStop(0.35, bd.c + bd.a + ')')
+            gr.addColorStop(1, bd.c + '0)')
+            x.fillStyle = gr
+            x.fillRect(px, yT, 3, bd.len)
+          }
+        }
+        x.globalCompositeOperation = 'source-over'
+        x.fillStyle = '#05080d'
+        x.beginPath()
+        x.moveTo(0, H)
+        var y = H * 0.84
+        for (var px2 = 0; px2 <= W; px2 += 8) {
+          y += (R() - 0.5) * 11
+          y = Math.max(H * 0.72, Math.min(H * 0.93, y))
+          x.lineTo(px2, y)
+        }
+        x.lineTo(W, H)
+        x.closePath()
+        x.fill()
+      }
 
-function nebula(x,R){
-  x.fillStyle='#05050b'; x.fillRect(0,0,W,H);
-  x.globalCompositeOperation='lighter';
-  var cols=['123,91,214','199,91,158','58,167,160','91,124,214'];
-  for(var i=0;i<16;i++){
-    var t=i/16, bx=t*W+(R()-.5)*120, by=H*.15+t*H*.6+(R()-.5)*70, r=55+R()*95;
-    var g=x.createRadialGradient(bx,by,0,bx,by,r);
-    var c=cols[(R()*cols.length)|0];
-    g.addColorStop(0,'rgba('+c+',.14)'); g.addColorStop(1,'rgba('+c+',0)');
-    x.fillStyle=g; x.beginPath(); x.arc(bx,by,r,0,7); x.fill();
-  }
-  x.globalCompositeOperation='source-over';
-  for(var s=0;s<300;s++){
-    var sx=R()*W, sy=R()*H;
-    var onBand=Math.abs((sy/H)-(sx/W)*.6-.18)<.18;
-    if(!onBand && R()<.45) continue;
-    x.globalAlpha=.2+R()*.75; x.fillStyle=R()<.85?'#dfe8ff':'#ffe9c9';
-    x.beginPath(); x.arc(sx,sy,R()<.9?.8:1.6,0,7); x.fill();
-  }
-  x.globalAlpha=1;
-  for(var f=0;f<5;f++){
-    var fx=R()*W, fy=R()*H, fr=3+R()*4;
-    x.strokeStyle='rgba(230,240,255,.5)'; x.lineWidth=.8;
-    x.beginPath(); x.moveTo(fx-fr,fy); x.lineTo(fx+fr,fy); x.moveTo(fx,fy-fr); x.lineTo(fx,fy+fr); x.stroke();
-    x.fillStyle='#fff'; x.beginPath(); x.arc(fx,fy,1.1,0,7); x.fill();
-  }
-}
+      function nebula(x, R) {
+        x.fillStyle = '#05050b'
+        x.fillRect(0, 0, W, H)
+        x.globalCompositeOperation = 'lighter'
+        var cols = ['123,91,214', '199,91,158', '58,167,160', '91,124,214']
+        for (var i = 0; i < 16; i++) {
+          var t = i / 16,
+            bx = t * W + (R() - 0.5) * 120,
+            by = H * 0.15 + t * H * 0.6 + (R() - 0.5) * 70,
+            r = 55 + R() * 95
+          var g = x.createRadialGradient(bx, by, 0, bx, by, r)
+          var c = cols[(R() * cols.length) | 0]
+          g.addColorStop(0, 'rgba(' + c + ',.14)')
+          g.addColorStop(1, 'rgba(' + c + ',0)')
+          x.fillStyle = g
+          x.beginPath()
+          x.arc(bx, by, r, 0, 7)
+          x.fill()
+        }
+        x.globalCompositeOperation = 'source-over'
+        for (var s = 0; s < 300; s++) {
+          var sx = R() * W,
+            sy = R() * H
+          var onBand = Math.abs(sy / H - (sx / W) * 0.6 - 0.18) < 0.18
+          if (!onBand && R() < 0.45) continue
+          x.globalAlpha = 0.2 + R() * 0.75
+          x.fillStyle = R() < 0.85 ? '#dfe8ff' : '#ffe9c9'
+          x.beginPath()
+          x.arc(sx, sy, R() < 0.9 ? 0.8 : 1.6, 0, 7)
+          x.fill()
+        }
+        x.globalAlpha = 1
+        for (var f = 0; f < 5; f++) {
+          var fx = R() * W,
+            fy = R() * H,
+            fr = 3 + R() * 4
+          x.strokeStyle = 'rgba(230,240,255,.5)'
+          x.lineWidth = 0.8
+          x.beginPath()
+          x.moveTo(fx - fr, fy)
+          x.lineTo(fx + fr, fy)
+          x.moveTo(fx, fy - fr)
+          x.lineTo(fx, fy + fr)
+          x.stroke()
+          x.fillStyle = '#fff'
+          x.beginPath()
+          x.arc(fx, fy, 1.1, 0, 7)
+          x.fill()
+        }
+      }
 
-function sunset(x,R){
-  var hz=H*.62;
-  var g=x.createLinearGradient(0,0,0,hz);
-  g.addColorStop(0,'#241335'); g.addColorStop(.45,'#6e2b50'); g.addColorStop(.82,'#d96a3e'); g.addColorStop(1,'#ffb061');
-  x.fillStyle=g; x.fillRect(0,0,W,hz);
-  var sx=W*.6, sy=hz-16;
-  var glow=x.createRadialGradient(sx,sy,0,sx,sy,90);
-  glow.addColorStop(0,'rgba(255,225,160,.55)'); glow.addColorStop(1,'rgba(255,225,160,0)');
-  x.fillStyle=glow; x.fillRect(sx-90,sy-90,180,180);
-  x.fillStyle='#ffe9b0'; x.beginPath(); x.arc(sx,sy,24,0,7); x.fill();
-  x.fillStyle='rgba(38,16,48,.75)';
-  var clouds=[[.1,.2,150,10],[.32,.3,110,8],[.62,.16,170,11],[.78,.34,90,7]];
-  for(var i=0;i<clouds.length;i++){ var cl=clouds[i];
-    rr(x, cl[0]*W, cl[1]*hz, cl[2], cl[3], 5); }
-  var sea=x.createLinearGradient(0,hz,0,H);
-  sea.addColorStop(0,'#2a1840'); sea.addColorStop(1,'#0d0e22');
-  x.fillStyle=sea; x.fillRect(0,hz,W,H-hz);
-  for(var d=0;d<150;d++){
-    var dy=hz+4+R()*(H-hz-8), t=(dy-hz)/(H-hz);
-    var dx=R()*W, len=6+R()*22;
-    var nearPath=Math.abs(dx-sx)< (22+t*60);
-    x.globalAlpha=nearPath? .25+R()*.45 : .06+R()*.12;
-    x.strokeStyle=nearPath? '#ffd28f' : '#8f7ab8';
-    x.lineWidth=1+t*1.4;
-    x.beginPath(); x.moveTo(dx-len/2,dy); x.lineTo(dx+len/2,dy); x.stroke();
-  }
-  x.globalAlpha=1;
-}
+      function sunset(x, R) {
+        var hz = H * 0.62
+        var g = x.createLinearGradient(0, 0, 0, hz)
+        g.addColorStop(0, '#241335')
+        g.addColorStop(0.45, '#6e2b50')
+        g.addColorStop(0.82, '#d96a3e')
+        g.addColorStop(1, '#ffb061')
+        x.fillStyle = g
+        x.fillRect(0, 0, W, hz)
+        var sx = W * 0.6,
+          sy = hz - 16
+        var glow = x.createRadialGradient(sx, sy, 0, sx, sy, 90)
+        glow.addColorStop(0, 'rgba(255,225,160,.55)')
+        glow.addColorStop(1, 'rgba(255,225,160,0)')
+        x.fillStyle = glow
+        x.fillRect(sx - 90, sy - 90, 180, 180)
+        x.fillStyle = '#ffe9b0'
+        x.beginPath()
+        x.arc(sx, sy, 24, 0, 7)
+        x.fill()
+        x.fillStyle = 'rgba(38,16,48,.75)'
+        var clouds = [
+          [0.1, 0.2, 150, 10],
+          [0.32, 0.3, 110, 8],
+          [0.62, 0.16, 170, 11],
+          [0.78, 0.34, 90, 7]
+        ]
+        for (var i = 0; i < clouds.length; i++) {
+          var cl = clouds[i]
+          rr(x, cl[0] * W, cl[1] * hz, cl[2], cl[3], 5)
+        }
+        var sea = x.createLinearGradient(0, hz, 0, H)
+        sea.addColorStop(0, '#2a1840')
+        sea.addColorStop(1, '#0d0e22')
+        x.fillStyle = sea
+        x.fillRect(0, hz, W, H - hz)
+        for (var d = 0; d < 150; d++) {
+          var dy = hz + 4 + R() * (H - hz - 8),
+            t = (dy - hz) / (H - hz)
+          var dx = R() * W,
+            len = 6 + R() * 22
+          var nearPath = Math.abs(dx - sx) < 22 + t * 60
+          x.globalAlpha = nearPath ? 0.25 + R() * 0.45 : 0.06 + R() * 0.12
+          x.strokeStyle = nearPath ? '#ffd28f' : '#8f7ab8'
+          x.lineWidth = 1 + t * 1.4
+          x.beginPath()
+          x.moveTo(dx - len / 2, dy)
+          x.lineTo(dx + len / 2, dy)
+          x.stroke()
+        }
+        x.globalAlpha = 1
+      }
 
-function snow(x,R){
-  var g=x.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'#0a0f18'); g.addColorStop(1,'#18222f');
-  x.fillStyle=g; x.fillRect(0,0,W,H);
-  var mx=W*.78,my=H*.2;
-  var halo=x.createRadialGradient(mx,my,0,mx,my,60);
-  halo.addColorStop(0,'rgba(214,228,255,.35)'); halo.addColorStop(1,'rgba(214,228,255,0)');
-  x.fillStyle=halo; x.fillRect(mx-60,my-60,120,120);
-  x.fillStyle='#dce6f5'; x.beginPath(); x.arc(mx,my,15,0,7); x.fill();
-  var ridges=[{c:'#121b29',b:.62,a:30},{c:'#0d1420',b:.74,a:36},{c:'#070c14',b:.88,a:42}];
-  for(var r0=0;r0<ridges.length;r0++){ var rd=ridges[r0];
-    x.fillStyle=rd.c; x.beginPath(); x.moveTo(0,H);
-    var y=H*rd.b;
-    for(var px=0;px<=W;px+=10){ y+=(R()-.5)*rd.a*.45; y=Math.max(H*(rd.b-.14),Math.min(H*(rd.b+.1),y)); x.lineTo(px,y); }
-    x.lineTo(W,H); x.closePath(); x.fill();
-    if(r0===2){ x.fillStyle='#04070c';
-      for(var p=0;p<26;p++){ var tx=R()*W, th=10+R()*22, ty=H*rd.b+(R()-.5)*16;
-        x.beginPath(); x.moveTo(tx,ty-th); x.lineTo(tx-th*.32,ty); x.lineTo(tx+th*.32,ty); x.closePath(); x.fill(); } }
-  }
-  for(var s=0;s<150;s++){ x.globalAlpha=.25+R()*.65; x.fillStyle='#eef4ff';
-    x.beginPath(); x.arc(R()*W,R()*H,(.7+R()*1.8),0,7); x.fill(); }
-  x.globalAlpha=1;
-}
+      function snow(x, R) {
+        var g = x.createLinearGradient(0, 0, 0, H)
+        g.addColorStop(0, '#0a0f18')
+        g.addColorStop(1, '#18222f')
+        x.fillStyle = g
+        x.fillRect(0, 0, W, H)
+        var mx = W * 0.78,
+          my = H * 0.2
+        var halo = x.createRadialGradient(mx, my, 0, mx, my, 60)
+        halo.addColorStop(0, 'rgba(214,228,255,.35)')
+        halo.addColorStop(1, 'rgba(214,228,255,0)')
+        x.fillStyle = halo
+        x.fillRect(mx - 60, my - 60, 120, 120)
+        x.fillStyle = '#dce6f5'
+        x.beginPath()
+        x.arc(mx, my, 15, 0, 7)
+        x.fill()
+        var ridges = [
+          { c: '#121b29', b: 0.62, a: 30 },
+          { c: '#0d1420', b: 0.74, a: 36 },
+          { c: '#070c14', b: 0.88, a: 42 }
+        ]
+        for (var r0 = 0; r0 < ridges.length; r0++) {
+          var rd = ridges[r0]
+          x.fillStyle = rd.c
+          x.beginPath()
+          x.moveTo(0, H)
+          var y = H * rd.b
+          for (var px = 0; px <= W; px += 10) {
+            y += (R() - 0.5) * rd.a * 0.45
+            y = Math.max(H * (rd.b - 0.14), Math.min(H * (rd.b + 0.1), y))
+            x.lineTo(px, y)
+          }
+          x.lineTo(W, H)
+          x.closePath()
+          x.fill()
+          if (r0 === 2) {
+            x.fillStyle = '#04070c'
+            for (var p = 0; p < 26; p++) {
+              var tx = R() * W,
+                th = 10 + R() * 22,
+                ty = H * rd.b + (R() - 0.5) * 16
+              x.beginPath()
+              x.moveTo(tx, ty - th)
+              x.lineTo(tx - th * 0.32, ty)
+              x.lineTo(tx + th * 0.32, ty)
+              x.closePath()
+              x.fill()
+            }
+          }
+        }
+        for (var s = 0; s < 150; s++) {
+          x.globalAlpha = 0.25 + R() * 0.65
+          x.fillStyle = '#eef4ff'
+          x.beginPath()
+          x.arc(R() * W, R() * H, 0.7 + R() * 1.8, 0, 7)
+          x.fill()
+        }
+        x.globalAlpha = 1
+      }
 
-function rain(x,R){
-  x.fillStyle='#090c12'; x.fillRect(0,0,W,H);
-  x.globalCompositeOperation='lighter';
-  var cols=['255,179,107','86,200,192','90,140,255','255,126,103'];
-  for(var i=0;i<30;i++){
-    var bx=R()*W, by=H*.35+R()*H*.6, r=16+R()*52;
-    var c=cols[(R()*cols.length)|0];
-    var g=x.createRadialGradient(bx,by,0,bx,by,r);
-    g.addColorStop(0,'rgba('+c+',.30)'); g.addColorStop(.7,'rgba('+c+',.10)'); g.addColorStop(1,'rgba('+c+',0)');
-    x.fillStyle=g; x.beginPath(); x.arc(bx,by,r,0,7); x.fill();
-  }
-  x.globalCompositeOperation='source-over';
-  x.fillStyle='rgba(5,8,14,.38)'; x.fillRect(0,0,W,H);
-  for(var st=0;st<46;st++){
-    var sx2=R()*W, sl=24+R()*90;
-    x.globalAlpha=.04+R()*.06; x.strokeStyle='#cfe0ff'; x.lineWidth=1;
-    var sy2=R()*H;
-    x.beginPath(); x.moveTo(sx2,sy2); x.lineTo(sx2,sy2+sl); x.stroke();
-  }
-  for(var d=0;d<80;d++){
-    var dx=R()*W, dy=R()*H, dr=1+R()*2.6;
-    x.globalAlpha=.5;
-    x.fillStyle='rgba(170,195,235,.30)'; x.beginPath(); x.arc(dx,dy,dr,0,7); x.fill();
-    x.fillStyle='rgba(240,248,255,.55)'; x.beginPath(); x.arc(dx-dr*.3,dy-dr*.3,dr*.32,0,7); x.fill();
-  }
-  x.globalAlpha=1;
-}
+      function rain(x, R) {
+        x.fillStyle = '#090c12'
+        x.fillRect(0, 0, W, H)
+        x.globalCompositeOperation = 'lighter'
+        var cols = ['255,179,107', '86,200,192', '90,140,255', '255,126,103']
+        for (var i = 0; i < 30; i++) {
+          var bx = R() * W,
+            by = H * 0.35 + R() * H * 0.6,
+            r = 16 + R() * 52
+          var c = cols[(R() * cols.length) | 0]
+          var g = x.createRadialGradient(bx, by, 0, bx, by, r)
+          g.addColorStop(0, 'rgba(' + c + ',.30)')
+          g.addColorStop(0.7, 'rgba(' + c + ',.10)')
+          g.addColorStop(1, 'rgba(' + c + ',0)')
+          x.fillStyle = g
+          x.beginPath()
+          x.arc(bx, by, r, 0, 7)
+          x.fill()
+        }
+        x.globalCompositeOperation = 'source-over'
+        x.fillStyle = 'rgba(5,8,14,.38)'
+        x.fillRect(0, 0, W, H)
+        for (var st = 0; st < 46; st++) {
+          var sx2 = R() * W,
+            sl = 24 + R() * 90
+          x.globalAlpha = 0.04 + R() * 0.06
+          x.strokeStyle = '#cfe0ff'
+          x.lineWidth = 1
+          var sy2 = R() * H
+          x.beginPath()
+          x.moveTo(sx2, sy2)
+          x.lineTo(sx2, sy2 + sl)
+          x.stroke()
+        }
+        for (var d = 0; d < 80; d++) {
+          var dx = R() * W,
+            dy = R() * H,
+            dr = 1 + R() * 2.6
+          x.globalAlpha = 0.5
+          x.fillStyle = 'rgba(170,195,235,.30)'
+          x.beginPath()
+          x.arc(dx, dy, dr, 0, 7)
+          x.fill()
+          x.fillStyle = 'rgba(240,248,255,.55)'
+          x.beginPath()
+          x.arc(dx - dr * 0.3, dy - dr * 0.3, dr * 0.32, 0, 7)
+          x.fill()
+        }
+        x.globalAlpha = 1
+      }
 
-function city(x,R){
-  var g=x.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'#060912'); g.addColorStop(.75,'#0b1322'); g.addColorStop(1,'#101a2e');
-  x.fillStyle=g; x.fillRect(0,0,W,H);
-  for(var s=0;s<130;s++){ x.globalAlpha=.15+R()*.55; x.fillStyle='#cfe0ff';
-    x.beginPath(); x.arc(R()*W,R()*H*.5,R()<.94?.7:1.3,0,7); x.fill(); }
-  x.globalAlpha=1;
-  var hg=x.createRadialGradient(W*.5,H*.95,0,W*.5,H*.95,W*.55);
-  hg.addColorStop(0,'rgba(50,80,140,.30)'); hg.addColorStop(1,'rgba(50,80,140,0)');
-  x.fillStyle=hg; x.fillRect(0,0,W,H);
-  var bx=0;
-  while(bx<W){ var bw=26+R()*38, bh=H*(.3+R()*.22);
-    x.fillStyle='#0a101c'; x.fillRect(bx,H-bh,bw,bh); bx+=bw+(R()*8); }
-  bx=-10;
-  while(bx<W){ var bw2=34+R()*52, bh2=H*(.42+R()*.3), by2=H-bh2;
-    x.fillStyle='#070b13'; x.fillRect(bx,by2,bw2,bh2);
-    if(R()<.5){ x.fillStyle='#070b13'; x.fillRect(bx+bw2*.5-1,by2-10-R()*14,2,12+R()*14);
-      x.fillStyle='rgba(255,90,90,.9)'; x.beginPath(); x.arc(bx+bw2*.5,by2-12-R()*10,1.4,0,7); x.fill(); }
-    for(var wy=by2+8;wy<H-8;wy+=9){ for(var wx=bx+5;wx<bx+bw2-6;wx+=8){
-      if(R()<.16){ x.fillStyle=R()<.7?'rgba(255,201,126,.85)':'rgba(158,196,255,.6)'; x.fillRect(wx,wy,3.2,4); } } }
-    bx+=bw2+2+R()*16; }
-}
+      function city(x, R) {
+        var g = x.createLinearGradient(0, 0, 0, H)
+        g.addColorStop(0, '#060912')
+        g.addColorStop(0.75, '#0b1322')
+        g.addColorStop(1, '#101a2e')
+        x.fillStyle = g
+        x.fillRect(0, 0, W, H)
+        for (var s = 0; s < 130; s++) {
+          x.globalAlpha = 0.15 + R() * 0.55
+          x.fillStyle = '#cfe0ff'
+          x.beginPath()
+          x.arc(R() * W, R() * H * 0.5, R() < 0.94 ? 0.7 : 1.3, 0, 7)
+          x.fill()
+        }
+        x.globalAlpha = 1
+        var hg = x.createRadialGradient(W * 0.5, H * 0.95, 0, W * 0.5, H * 0.95, W * 0.55)
+        hg.addColorStop(0, 'rgba(50,80,140,.30)')
+        hg.addColorStop(1, 'rgba(50,80,140,0)')
+        x.fillStyle = hg
+        x.fillRect(0, 0, W, H)
+        var bx = 0
+        while (bx < W) {
+          var bw = 26 + R() * 38,
+            bh = H * (0.3 + R() * 0.22)
+          x.fillStyle = '#0a101c'
+          x.fillRect(bx, H - bh, bw, bh)
+          bx += bw + R() * 8
+        }
+        bx = -10
+        while (bx < W) {
+          var bw2 = 34 + R() * 52,
+            bh2 = H * (0.42 + R() * 0.3),
+            by2 = H - bh2
+          x.fillStyle = '#070b13'
+          x.fillRect(bx, by2, bw2, bh2)
+          if (R() < 0.5) {
+            x.fillStyle = '#070b13'
+            x.fillRect(bx + bw2 * 0.5 - 1, by2 - 10 - R() * 14, 2, 12 + R() * 14)
+            x.fillStyle = 'rgba(255,90,90,.9)'
+            x.beginPath()
+            x.arc(bx + bw2 * 0.5, by2 - 12 - R() * 10, 1.4, 0, 7)
+            x.fill()
+          }
+          for (var wy = by2 + 8; wy < H - 8; wy += 9) {
+            for (var wx = bx + 5; wx < bx + bw2 - 6; wx += 8) {
+              if (R() < 0.16) {
+                x.fillStyle = R() < 0.7 ? 'rgba(255,201,126,.85)' : 'rgba(158,196,255,.6)'
+                x.fillRect(wx, wy, 3.2, 4)
+              }
+            }
+          }
+          bx += bw2 + 2 + R() * 16
+        }
+      }
 
-function rr(x,px,py,w,h,r){ x.beginPath(); x.moveTo(px+r,py); x.arcTo(px+w,py,px+w,py+h,r);
-  x.arcTo(px+w,py+h,px,py+h,r); x.arcTo(px,py+h,px,py,r); x.arcTo(px,py,px+w,py,r); x.closePath(); x.fill(); }
+      function rr(x, px, py, w, h, r) {
+        x.beginPath()
+        x.moveTo(px + r, py)
+        x.arcTo(px + w, py, px + w, py + h, r)
+        x.arcTo(px + w, py + h, px, py + h, r)
+        x.arcTo(px, py + h, px, py, r)
+        x.arcTo(px, py, px + w, py, r)
+        x.closePath()
+        x.fill()
+      }
 
-var SCENES=[
-  {id:'aurora-night', name:'Aurora Night', desc:'Teal-green curtains drifting over a star field; ridge silhouette. Animation: bands sway ~20s period.', paint:aurora, seed:11},
-  {id:'starfield-nebula', name:'Starfield Nebula', desc:'Deep-space band of nebula color + twinkling stars. Animation: slow twinkle only, near-static.', paint:nebula, seed:23},
-  {id:'sunset-ocean', name:'Sunset Ocean', desc:'Flat-vector dusk sea with a sun path shimmer. Animation: ripple dashes drift; closest cousin to Blossom River.', paint:sunset, seed:5},
-  {id:'snowfall-ridge', name:'Snowfall Ridge', desc:'Moonlit pines + layered ridges, falling snow. Animation: snow drifts down slowly.', paint:snow, seed:17},
-  {id:'rainy-window', name:'Rainy Window', desc:'City bokeh behind dark glass, droplets + streaks. Animation: drops slide; lofi-coding mood.', paint:rain, seed:29},
-  {id:'city-lights', name:'City Lights', desc:'Night skyline, lit windows, blinking antennas. Animation: windows flicker on/off occasionally.', paint:city, seed:41}
-];
+      var SCENES = [
+        {
+          id: 'aurora-night',
+          name: 'Aurora Night',
+          desc: 'Teal-green curtains drifting over a star field; ridge silhouette. Animation: bands sway ~20s period.',
+          paint: aurora,
+          seed: 11
+        },
+        {
+          id: 'starfield-nebula',
+          name: 'Starfield Nebula',
+          desc: 'Deep-space band of nebula color + twinkling stars. Animation: slow twinkle only, near-static.',
+          paint: nebula,
+          seed: 23
+        },
+        {
+          id: 'sunset-ocean',
+          name: 'Sunset Ocean',
+          desc: 'Flat-vector dusk sea with a sun path shimmer. Animation: ripple dashes drift; closest cousin to Blossom River.',
+          paint: sunset,
+          seed: 5
+        },
+        {
+          id: 'snowfall-ridge',
+          name: 'Snowfall Ridge',
+          desc: 'Moonlit pines + layered ridges, falling snow. Animation: snow drifts down slowly.',
+          paint: snow,
+          seed: 17
+        },
+        {
+          id: 'rainy-window',
+          name: 'Rainy Window',
+          desc: 'City bokeh behind dark glass, droplets + streaks. Animation: drops slide; lofi-coding mood.',
+          paint: rain,
+          seed: 29
+        },
+        {
+          id: 'city-lights',
+          name: 'City Lights',
+          desc: 'Night skyline, lit windows, blinking antennas. Animation: windows flicker on/off occasionally.',
+          paint: city,
+          seed: 41
+        }
+      ]
 
-var host=document.getElementById('scenes');
-for(var i=0;i<SCENES.length;i++){ (function(s){
-  var p=document.createElement('div'); p.className='panel';
-  var c=document.createElement('canvas'); c.width=W; c.height=H; p.appendChild(c);
-  var l=document.createElement('div'); l.className='label';
-  l.innerHTML='<span class="tag">scene</span><b>'+s.name+'</b><span>'+s.desc+'</span>';
-  p.appendChild(l); host.appendChild(p);
-  s.paint(c.getContext('2d'), mulberry32(s.seed));
-})(SCENES[i]); }
+      var host = document.getElementById('scenes')
+      for (var i = 0; i < SCENES.length; i++) {
+        ;(function (s) {
+          var p = document.createElement('div')
+          p.className = 'panel'
+          var c = document.createElement('canvas')
+          c.width = W
+          c.height = H
+          p.appendChild(c)
+          var l = document.createElement('div')
+          l.className = 'label'
+          l.innerHTML =
+            '<span class="tag">scene</span><b>' + s.name + '</b><span>' + s.desc + '</span>'
+          p.appendChild(l)
+          host.appendChild(p)
+          s.paint(c.getContext('2d'), mulberry32(s.seed))
+        })(SCENES[i])
+      }
 
-/* ---- grid variants ---- */
-var GW=560, GH=200, GAP=24;
-function board(x){
-  x.fillStyle='#141416'; rr(x, GW*.32, GH*.2, GW*.36, GH*.6, 7);
-  x.strokeStyle='#232328'; x.lineWidth=1; x.beginPath();
-  x.moveTo(GW*.32, GH*.2+24); x.lineTo(GW*.32+GW*.36, GH*.2+24); x.stroke();
-  x.strokeStyle='#232328';
-  x.beginPath(); x.moveTo(GW*.32+.5,GH*.2+.5); x.lineTo(GW*.32+GW*.36-.5,GH*.2+.5);
-  x.lineTo(GW*.32+GW*.36-.5,GH*.8-.5); x.lineTo(GW*.32+.5,GH*.8-.5); x.closePath(); x.stroke();
-  x.fillStyle='#7b7b81'; x.font='10px Cascadia Mono,monospace';
-  x.fillText('>_ TERMINAL  agent - api', GW*.32+10, GH*.2+15);
-  x.fillStyle='#3a3a40';
-  x.fillRect(GW*.32+10, GH*.2+38, GW*.2, 4); x.fillRect(GW*.32+10, GH*.2+50, GW*.26, 4);
-  x.fillRect(GW*.32+10, GH*.2+62, GW*.15, 4);
-}
-var GRIDS=[
-  {name:'Dots (current)', desc:'The shipped 24px dot lattice - size 1, fades out below ~30% zoom.', draw:function(x){
-    x.fillStyle='#202022';
-    for(var gx=GAP/2;gx<GW;gx+=GAP) for(var gy=GAP/2;gy<GH;gy+=GAP){ x.beginPath(); x.arc(gx,gy,1,0,7); x.fill(); } }},
-  {name:'Lines', desc:'Full hairline grid (React Flow BackgroundVariant.Lines) - graph-paper feel, reads stronger.', draw:function(x){
-    x.strokeStyle='#151517'; x.lineWidth=1;
-    for(var gx=GAP/2;gx<GW;gx+=GAP){ x.beginPath(); x.moveTo(gx+.5,0); x.lineTo(gx+.5,GH); x.stroke(); }
-    for(var gy=GAP/2;gy<GH;gy+=GAP){ x.beginPath(); x.moveTo(0,gy+.5); x.lineTo(GW,gy+.5); x.stroke(); } }},
-  {name:'Cross', desc:'Small + marks at intersections (BackgroundVariant.Cross) - blueprint feel, between dots and lines.', draw:function(x){
-    x.strokeStyle='#1e1e21'; x.lineWidth=1;
-    for(var gx=GAP/2;gx<GW;gx+=GAP) for(var gy=GAP/2;gy<GH;gy+=GAP){
-      x.beginPath(); x.moveTo(gx-3.5,gy+.5); x.lineTo(gx+3.5,gy+.5); x.moveTo(gx+.5,gy-3.5); x.lineTo(gx+.5,gy+3.5); x.stroke(); } }}
-];
-var ghost=document.getElementById('grids');
-for(var g2=0;g2<GRIDS.length;g2++){ (function(gd){
-  var p=document.createElement('div'); p.className='panel';
-  var c=document.createElement('canvas'); c.width=GW; c.height=GH; p.appendChild(c);
-  var x=c.getContext('2d');
-  x.fillStyle='#0a0a0b'; x.fillRect(0,0,GW,GH);
-  gd.draw(x); board(x);
-  var l=document.createElement('div'); l.className='label';
-  l.innerHTML='<span class="tag">grid</span><b>'+gd.name+'</b><span>'+gd.desc+'</span>';
-  p.appendChild(l); ghost.appendChild(p);
-})(GRIDS[g2]); }
-</script>
-</body>
+      /* ---- grid variants ---- */
+      var GW = 560,
+        GH = 200,
+        GAP = 24
+      function board(x) {
+        x.fillStyle = '#141416'
+        rr(x, GW * 0.32, GH * 0.2, GW * 0.36, GH * 0.6, 7)
+        x.strokeStyle = '#232328'
+        x.lineWidth = 1
+        x.beginPath()
+        x.moveTo(GW * 0.32, GH * 0.2 + 24)
+        x.lineTo(GW * 0.32 + GW * 0.36, GH * 0.2 + 24)
+        x.stroke()
+        x.strokeStyle = '#232328'
+        x.beginPath()
+        x.moveTo(GW * 0.32 + 0.5, GH * 0.2 + 0.5)
+        x.lineTo(GW * 0.32 + GW * 0.36 - 0.5, GH * 0.2 + 0.5)
+        x.lineTo(GW * 0.32 + GW * 0.36 - 0.5, GH * 0.8 - 0.5)
+        x.lineTo(GW * 0.32 + 0.5, GH * 0.8 - 0.5)
+        x.closePath()
+        x.stroke()
+        x.fillStyle = '#7b7b81'
+        x.font = '10px Cascadia Mono,monospace'
+        x.fillText('>_ TERMINAL  agent - api', GW * 0.32 + 10, GH * 0.2 + 15)
+        x.fillStyle = '#3a3a40'
+        x.fillRect(GW * 0.32 + 10, GH * 0.2 + 38, GW * 0.2, 4)
+        x.fillRect(GW * 0.32 + 10, GH * 0.2 + 50, GW * 0.26, 4)
+        x.fillRect(GW * 0.32 + 10, GH * 0.2 + 62, GW * 0.15, 4)
+      }
+      var GRIDS = [
+        {
+          name: 'Dots (current)',
+          desc: 'The shipped 24px dot lattice - size 1, fades out below ~30% zoom.',
+          draw: function (x) {
+            x.fillStyle = '#202022'
+            for (var gx = GAP / 2; gx < GW; gx += GAP)
+              for (var gy = GAP / 2; gy < GH; gy += GAP) {
+                x.beginPath()
+                x.arc(gx, gy, 1, 0, 7)
+                x.fill()
+              }
+          }
+        },
+        {
+          name: 'Lines',
+          desc: 'Full hairline grid (React Flow BackgroundVariant.Lines) - graph-paper feel, reads stronger.',
+          draw: function (x) {
+            x.strokeStyle = '#151517'
+            x.lineWidth = 1
+            for (var gx = GAP / 2; gx < GW; gx += GAP) {
+              x.beginPath()
+              x.moveTo(gx + 0.5, 0)
+              x.lineTo(gx + 0.5, GH)
+              x.stroke()
+            }
+            for (var gy = GAP / 2; gy < GH; gy += GAP) {
+              x.beginPath()
+              x.moveTo(0, gy + 0.5)
+              x.lineTo(GW, gy + 0.5)
+              x.stroke()
+            }
+          }
+        },
+        {
+          name: 'Cross',
+          desc: 'Small + marks at intersections (BackgroundVariant.Cross) - blueprint feel, between dots and lines.',
+          draw: function (x) {
+            x.strokeStyle = '#1e1e21'
+            x.lineWidth = 1
+            for (var gx = GAP / 2; gx < GW; gx += GAP)
+              for (var gy = GAP / 2; gy < GH; gy += GAP) {
+                x.beginPath()
+                x.moveTo(gx - 3.5, gy + 0.5)
+                x.lineTo(gx + 3.5, gy + 0.5)
+                x.moveTo(gx + 0.5, gy - 3.5)
+                x.lineTo(gx + 0.5, gy + 3.5)
+                x.stroke()
+              }
+          }
+        }
+      ]
+      var ghost = document.getElementById('grids')
+      for (var g2 = 0; g2 < GRIDS.length; g2++) {
+        ;(function (gd) {
+          var p = document.createElement('div')
+          p.className = 'panel'
+          var c = document.createElement('canvas')
+          c.width = GW
+          c.height = GH
+          p.appendChild(c)
+          var x = c.getContext('2d')
+          x.fillStyle = '#0a0a0b'
+          x.fillRect(0, 0, GW, GH)
+          gd.draw(x)
+          board(x)
+          var l = document.createElement('div')
+          l.className = 'label'
+          l.innerHTML =
+            '<span class="tag">grid</span><b>' + gd.name + '</b><span>' + gd.desc + '</span>'
+          p.appendChild(l)
+          ghost.appendChild(p)
+        })(GRIDS[g2])
+      }
+    </script>
+  </body>
 </html>
