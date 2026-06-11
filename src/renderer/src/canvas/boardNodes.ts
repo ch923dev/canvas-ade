@@ -59,6 +59,12 @@ export function buildBoardNodes(
       id: b.id,
       type: 'board',
       position: { x: b.x, y: b.y },
+      // Explicit dimensions BESIDE the style sizing (D4-C): in this controlled flow
+      // nodes are rebuilt from the store on every change, so RF's `measured` never
+      // sticks to the user node — consumers that gate on user-node dimensions (the
+      // minimap's nodeHasDimensions) would render nothing without these.
+      width: b.w,
+      height: b.h,
       style: { width: b.w, height: b.h },
       data: { board: b, dimmed, fullView },
       selected,
