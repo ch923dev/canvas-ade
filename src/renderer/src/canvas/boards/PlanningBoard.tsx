@@ -48,7 +48,6 @@ import {
   removeItem,
   setItemLabel,
   isLocked,
-  expandGroups,
   setNoteTint
 } from './planning/elements'
 import { buildContextMenuEntries } from './planning/contextMenuEntries'
