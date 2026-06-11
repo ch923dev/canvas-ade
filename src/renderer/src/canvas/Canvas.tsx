@@ -86,6 +86,8 @@ import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
 import { useGroupInteractions } from './hooks/useGroupInteractions'
 import { useZoomSettle } from './hooks/useZoomSettle'
 import { TypeGlyph } from './TypeGlyph'
+import { MinimapIsland } from './wayfinding/MinimapIsland'
+import { useWayfindingStore } from '../store/wayfindingStore'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
 const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
@@ -703,6 +705,8 @@ function CanvasInner(): ReactElement {
     groupSelection,
     focusGroup,
     openPalette,
+    // D4-C: bare `m` toggles the wayfinding minimap (zustand action — identity-stable).
+    toggleMinimap: useWayfindingStore((s) => s.toggleMinimap),
     cycleBoard,
     moveSelectedBoards,
     resizeSelectedBoards,
@@ -851,6 +855,10 @@ function CanvasInner(): ReactElement {
               onRequestCloseFullView={closeFullView}
               digestOpen={digestOpen}
             />
+            {/* D4-C wayfinding minimap (§8 bottom-right island, toggled via `m`/palette).
+            Inside <ReactFlow> — RF's <MiniMap> reads nodes + viewport from the RF store.
+            Board click = the SAME focus path as Enter/double-click (focusBoardById). */}
+            <MinimapIsland onJumpToBoard={focusBoardById} />
           </ReactFlow>
 
           <AlignmentGuides guides={guides} overlaps={overlaps} />

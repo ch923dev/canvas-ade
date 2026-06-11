@@ -52,6 +52,7 @@ import {
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
 import { useToastStore } from '../../store/toastStore'
+import { useWayfindingStore } from '../../store/wayfindingStore'
 import { usePreviewEvents } from '../hooks/usePreviewEvents'
 import type { BrowserBoard, BrowserViewport } from '../../lib/boardSchema'
 
@@ -173,6 +174,10 @@ export function usePreviewManager(props: LayerProps): void {
   // toast island is HTML a native view would paint over; its rect joins the chrome
   // zones in resolveChromeZones while visible). ADR 0002.
   const toastCount = useToastStore((s) => s.toasts.length)
+  // D4-C: minimap visibility — toggling the bottom-right island grows/shrinks the
+  // covered region, so any flip re-runs the liveness pass (the toast pattern; the
+  // island's rect itself is read live in resolveChromeZones). ADR 0002.
+  const minimapVisible = useWayfindingStore((s) => s.minimapVisible)
 
   // Live ref for the main-driven `escape` event handler so its subscription (below) need
   // not re-bind when the close callback identity changes. (The full-view id it checks
@@ -322,6 +327,16 @@ export function usePreviewManager(props: LayerProps): void {
     const toastEl = document.querySelector('[data-test=toast-island]')
     if (toastEl) {
       const r = toastEl.getBoundingClientRect()
+      if (r.width > 0) {
+        chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
+      }
+    }
+    // D4-C: the wayfinding minimap island (bottom-right RF panel) — same treatment.
+    // The island unmounts when hidden, so a missed querySelector IS the hidden state;
+    // the re-pass on toggle comes from the minimapVisible dep on the focus effect.
+    const mapEl = document.querySelector('.react-flow__minimap')
+    if (mapEl) {
+      const r = mapEl.getBoundingClientRect()
       if (r.width > 0) {
         chromeZones.push({ x: r.left, y: r.top, width: r.width, height: r.height })
       }
@@ -787,8 +802,18 @@ export function usePreviewManager(props: LayerProps): void {
     applyLiveness()
     // toastCount: every queue change can grow/shrink/remove the toast island, so the
     // covered region changes — re-reconcile (resolveChromeZones reads the island's
-    // live DOM rect, already committed when this effect runs).
-  }, [focusedId, fullViewId, fullViewHost, fullViewMotion, digestOpen, toastCount, applyLiveness])
+    // live DOM rect, already committed when this effect runs). minimapVisible (D4-C):
+    // the minimap island toggling on/off changes the covered region the same way.
+  }, [
+    focusedId,
+    fullViewId,
+    fullViewHost,
+    fullViewMotion,
+    digestOpen,
+    toastCount,
+    minimapVisible,
+    applyLiveness
+  ])
 
   // Full view: the camera never moves, so the camera-driven rAF pump (startPump, fired
   // by useOnViewportChange) never runs — yet the full-view board's native bounds must

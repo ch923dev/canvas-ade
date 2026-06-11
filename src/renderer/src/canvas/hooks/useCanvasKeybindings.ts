@@ -4,7 +4,7 @@
  * keydown concerns as one cohesive hook:
  *   1. selected-connector Delete/Backspace (bubble)
  *   2. the main keymap: undo/redo · Esc-clear · diag toggle · 1 fit / 0 reset · t tidy ·
- *      Ctrl/⌘+K palette / ? shortcuts (D4-A) (bubble)
+ *      Ctrl/⌘+K palette / ? shortcuts (D4-A) · m minimap (D4-C) (bubble)
  *   3. Esc-always-exits-full-view (CAPTURE phase — must beat xterm's stopPropagation)
  *   4. Ctrl/⌘ snap-suppress tracking (keydown+keyup, reset on blur/visibilitychange)
  *
@@ -40,6 +40,7 @@ export type CanvasKeyAction =
   | { kind: 'focusGroup' }
   | { kind: 'palette' }
   | { kind: 'shortcuts' }
+  | { kind: 'toggleMinimap' }
   | { kind: 'cycleBoard'; dir: 1 | -1 }
   | { kind: 'moveBoard'; dx: number; dy: number }
   | { kind: 'resizeBoard'; dw: number; dh: number }
@@ -96,6 +97,9 @@ export function resolveCanvasKeyAction(
   if (k === 't' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey) return { kind: 'tidy' }
   if (k === 'f' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey)
     return { kind: 'focusGroup' }
+  // `m` toggles the wayfinding minimap island (D4-C) — same bare-key grammar as t/f.
+  if (k === 'm' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey)
+    return { kind: 'toggleMinimap' }
   // `?` opens the palette's shortcuts view. Bare-key guarded like 1/0/t (never from
   // an input or a focusable board surface); `?` arrives as Shift+/ so shiftKey is NOT
   // excluded — only Ctrl/⌘/Alt chords are.
@@ -141,6 +145,8 @@ export interface CanvasKeybindingDeps {
   focusGroup?: () => void
   /** Open/toggle the command palette (Ctrl/⌘+K → 'commands', `?` → 'shortcuts'). D4-A. */
   openPalette?: (view: 'commands' | 'shortcuts') => void
+  /** Toggle the wayfinding minimap island (bare `m`). D4-C. */
+  toggleMinimap?: () => void
   /** D4-B board nav (useBoardKeyboardNav). Each returns true if it ACTED — only then is
    *  the key swallowed (preventDefault), so e.g. Tab on an empty canvas falls through to
    *  native focus order and the chrome stays keyboard-reachable. */
@@ -169,6 +175,7 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     groupSelection,
     focusGroup,
     openPalette,
+    toggleMinimap,
     cycleBoard,
     moveSelectedBoards,
     resizeSelectedBoards,
@@ -253,6 +260,10 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
           e.preventDefault()
           openPalette?.('shortcuts')
           break
+        // No preventDefault — bare letters keep their default like t/f above.
+        case 'toggleMinimap':
+          toggleMinimap?.()
+          break
         // D4-B board nav: swallow the key ONLY when the handler acted, so an idle
         // Tab/Enter/arrow (no boards, empty selection) keeps its native behavior.
         case 'cycleBoard':
@@ -281,6 +292,7 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     groupSelection,
     focusGroup,
     openPalette,
+    toggleMinimap,
     cycleBoard,
     moveSelectedBoards,
     resizeSelectedBoards,

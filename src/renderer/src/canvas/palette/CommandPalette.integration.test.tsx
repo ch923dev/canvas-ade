@@ -48,6 +48,7 @@ function verbsMock(): CommandPaletteProps['verbs'] {
     tidy: vi.fn(),
     fitAll: vi.fn(),
     resetZoom: vi.fn(),
+    toggleMinimap: vi.fn(),
     undo: vi.fn(),
     redo: vi.fn()
   }

@@ -11,6 +11,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useWayfindingStore } from '../../store/wayfindingStore'
 import { cameraAnim } from '../../lib/motion'
 import { FIT_FRAME, RESET_FRAME, Z_MAX } from '../../lib/canvasView'
 import { runBoardExport } from '../boards/planning/runExport'
@@ -109,6 +110,9 @@ export function usePaletteController(deps: PaletteControllerDeps): PaletteContro
       // Recenter content at 100% rather than zoomTo(1)-in-place (#41) — same frame the
       // keymap's `0` uses.
       resetZoom: () => void rf.fitView(cameraAnim(RESET_FRAME)),
+      // D4-C: same store action the bare `m` chord dispatches (wayfindingStore owns
+      // the sticky visibility) — read at call time, no subscription needed here.
+      toggleMinimap: () => useWayfindingStore.getState().toggleMinimap(),
       undo: doUndo,
       redo: doRedo
     }),

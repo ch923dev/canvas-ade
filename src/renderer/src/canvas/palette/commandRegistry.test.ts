@@ -29,6 +29,7 @@ function verbsMock(): PaletteVerbs {
     tidy: vi.fn(),
     fitAll: vi.fn(),
     resetZoom: vi.fn(),
+    toggleMinimap: vi.fn(),
     undo: vi.fn(),
     redo: vi.fn(),
     showShortcuts: vi.fn()
@@ -54,6 +55,7 @@ describe('buildCommands — visibility matrix', () => {
       'tidy',
       'fit',
       'reset-zoom',
+      'toggle-minimap',
       'shortcuts'
     ])
   })
@@ -157,6 +159,7 @@ describe('chip ↔ resolveCanvasKeyAction drift guard', () => {
     { id: 'tidy', chord: key('t'), kind: 'tidy' },
     { id: 'fit', chord: key('1'), kind: 'fit' },
     { id: 'reset-zoom', chord: key('0'), kind: 'reset' },
+    { id: 'toggle-minimap', chord: key('m'), kind: 'toggleMinimap' },
     { id: 'group-selection', chord: key('g', { ctrlKey: true }), kind: 'group' },
     { id: 'undo', chord: key('z', { ctrlKey: true }), kind: 'undo' },
     { id: 'redo', chord: key('z', { ctrlKey: true, shiftKey: true }), kind: 'redo' }
@@ -227,6 +230,20 @@ describe('chip ↔ resolveCanvasKeyAction drift guard', () => {
       })
       expect(action?.kind, row.label).toBe(row.kind)
     }
+  })
+
+  it('the D4-C minimap row is on the sheet and M resolves to toggleMinimap', () => {
+    expect(
+      SHORTCUT_ROWS.some(
+        (r) => r.section === 'Canvas' && r.label === 'Toggle minimap' && r.chips.includes('M')
+      )
+    ).toBe(true)
+    const action = resolveCanvasKeyAction(key('m'), {
+      typing: false,
+      bareKeyAllowed: true,
+      boardNavAllowed: false
+    })
+    expect(action?.kind).toBe('toggleMinimap')
   })
 
   it('the A3 focus-return row is on the sheet (Esc — handled main-side, not a resolver chord)', () => {
