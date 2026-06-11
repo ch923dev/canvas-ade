@@ -1,0 +1,470 @@
+<!doctype html>
+<!-- THROWAWAY design mock for D4-A sign-off. Tokens copied verbatim from
+     src/renderer/src/index.css §2-4. Not shipped; deleted with this folder on merge. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        --mono: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --scrim: rgba(0, 0, 0, 0.5);
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+        --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        background: var(--void);
+        font-family: var(--ui);
+      }
+
+      /* ── faux canvas backdrop (grounding only) ── */
+      .stage {
+        position: relative;
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+        background-color: var(--void);
+        background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+        background-size: 24px 24px;
+      }
+      .board {
+        position: absolute;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-board);
+        box-shadow: var(--shadow-board);
+      }
+      .board .bar {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border-subtle);
+        border-radius: var(--r-board) var(--r-board) 0 0;
+        color: var(--text-2);
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .board .bar .glyph {
+        color: var(--text-3);
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .board .bar .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--ok);
+        margin-left: auto;
+      }
+      .chrome-pill {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 34px;
+        padding: 0 12px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border-subtle);
+        border-radius: 9px;
+        box-shadow: var(--shadow-pop);
+        color: var(--text-2);
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .chrome-pill .mono {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-3);
+      }
+
+      /* ── scrim ── */
+      .scrim {
+        position: absolute;
+        inset: 0;
+        background: var(--scrim);
+      }
+
+      /* ── the palette island ── */
+      .palette {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        top: 128px; /* ~16vh of 800 */
+        width: 560px;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface-raised);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-board);
+        box-shadow: var(--shadow-pop);
+        overflow: hidden;
+      }
+      .p-search {
+        flex: none;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .p-search .glass {
+        color: var(--text-3);
+        font-size: 14px;
+      }
+      .p-search input {
+        flex: 1;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        font-family: var(--ui);
+        font-size: 13px;
+        color: var(--text);
+      }
+      .p-search input::placeholder {
+        color: var(--text-3);
+      }
+      kbd {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      .p-list {
+        padding: 4px;
+        overflow-y: auto;
+        max-height: 352px;
+      }
+      .p-section {
+        padding: 8px 10px 3px;
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
+      .p-row {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 30px;
+        padding: 0 8px;
+        border-radius: var(--r-ctl);
+        color: var(--text-2);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .p-row .glyph {
+        width: 16px;
+        text-align: center;
+        color: var(--text-3);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .p-row .chips {
+        margin-left: auto;
+        display: flex;
+        gap: 4px;
+      }
+      .p-row .chips kbd {
+        color: var(--text-3);
+      }
+      .p-row:hover {
+        background: var(--surface-overlay);
+      }
+      .p-row[data-active] {
+        background: var(--accent-wash);
+        color: var(--text);
+      }
+      .p-row[data-active] .glyph {
+        color: var(--accent);
+      }
+      .p-row .dim {
+        color: var(--text-3);
+      }
+      .p-footer {
+        flex: none;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 12px;
+        border-top: 1px solid var(--border-subtle);
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-3);
+      }
+      .p-footer .right {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      /* shortcuts view extras */
+      .p-head {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 11px 12px 9px;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .p-head .back {
+        color: var(--text-3);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .p-head .title {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+      }
+      .s-row {
+        display: flex;
+        align-items: center;
+        height: 28px;
+        padding: 0 8px;
+        border-radius: var(--r-ctl);
+        color: var(--text-2);
+        font-size: 12.5px;
+      }
+      .s-row .chips {
+        margin-left: auto;
+        display: flex;
+        gap: 4px;
+      }
+      .s-row .chips kbd {
+        color: var(--text-3);
+      }
+
+      .label-tag {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-3);
+        background: var(--surface-raised);
+        border: 1px solid var(--border-subtle);
+        padding: 4px 8px;
+        border-radius: 6px;
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ════ STATE 1: command view, empty query (the discoverability state) ════ -->
+    <div class="stage" id="state-1">
+      <div class="label-tag">state 1 — Ctrl+K · command view</div>
+
+      <!-- faux canvas -->
+      <div class="board" style="left: 90px; top: 140px; width: 340px; height: 240px">
+        <div class="bar"><span class="glyph">&gt;_</span> agent-1 <span class="dot"></span></div>
+      </div>
+      <div class="board" style="left: 480px; top: 300px; width: 300px; height: 330px">
+        <div class="bar"><span class="glyph">▦</span> plan: sprint-12</div>
+      </div>
+      <div class="board" style="left: 850px; top: 120px; width: 330px; height: 260px">
+        <div class="bar"><span class="glyph">◻</span> preview :5173</div>
+      </div>
+      <div class="chrome-pill" style="left: 14px; top: 12px">
+        <span style="color: var(--accent)">◇</span> canvas-ade <span class="mono">· 3 boards</span>
+      </div>
+      <div class="chrome-pill" style="right: 14px; top: 12px">
+        <span class="mono">⤢ fit</span><span class="mono">− 100% +</span><span class="mono">⊞</span>
+      </div>
+      <div class="chrome-pill" style="left: 50%; bottom: 16px; transform: translateX(-50%)">
+        ▦ select <span class="mono">+ Terminal</span><span class="mono">+ Browser</span
+        ><span class="mono">+ Planning</span>
+      </div>
+
+      <div class="scrim"></div>
+
+      <div class="palette">
+        <div class="p-search">
+          <span class="glass">⌕</span>
+          <input placeholder="Type a command or search…" />
+          <kbd>esc</kbd>
+        </div>
+        <div class="p-list">
+          <div class="p-section">Boards</div>
+          <div class="p-row" data-active><span class="glyph">+</span> New terminal board</div>
+          <div class="p-row"><span class="glyph">+</span> New browser board</div>
+          <div class="p-row"><span class="glyph">+</span> New planning board</div>
+          <div class="p-row">
+            <span class="glyph">&gt;_</span> Go to board: <span class="dim">agent-1</span>
+          </div>
+          <div class="p-row">
+            <span class="glyph">▦</span> Go to board: <span class="dim">plan: sprint-12</span>
+          </div>
+          <div class="p-section">Selected board</div>
+          <div class="p-row">
+            <span class="glyph">✎</span> Rename board <span class="chips"><kbd>F2</kbd></span>
+          </div>
+          <div class="p-row"><span class="glyph">⧉</span> Duplicate board</div>
+          <div class="p-row"><span class="glyph">⤢</span> Open full view</div>
+          <div class="p-row"><span class="glyph">↻</span> Restart terminal: resume session</div>
+          <div class="p-section">Canvas</div>
+          <div class="p-row">
+            <span class="glyph">⊟</span> Tidy boards <span class="chips"><kbd>T</kbd></span>
+          </div>
+          <div class="p-row">
+            <span class="glyph">⤢</span> Fit all boards <span class="chips"><kbd>1</kbd></span>
+          </div>
+          <div class="p-row">
+            <span class="glyph">◎</span> Reset zoom to 100% <span class="chips"><kbd>0</kbd></span>
+          </div>
+          <div class="p-section">Edit</div>
+          <div class="p-row">
+            <span class="glyph">↶</span> Undo <span class="chips"><kbd>Ctrl</kbd><kbd>Z</kbd></span>
+          </div>
+          <div class="p-section">Help</div>
+          <div class="p-row">
+            <span class="glyph">?</span> Keyboard shortcuts <span class="chips"><kbd>?</kbd></span>
+          </div>
+        </div>
+        <div class="p-footer">
+          ↑↓ navigate · ↵ run · esc close <span class="right"><kbd>ctrl</kbd><kbd>K</kbd></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ STATE 2: filtered query ════ -->
+    <div class="stage" id="state-2">
+      <div class="label-tag">state 2 — filtered ("gr")</div>
+      <div class="board" style="left: 90px; top: 140px; width: 340px; height: 240px">
+        <div class="bar"><span class="glyph">&gt;_</span> agent-1 <span class="dot"></span></div>
+      </div>
+      <div class="board" style="left: 480px; top: 300px; width: 300px; height: 330px">
+        <div class="bar"><span class="glyph">▦</span> plan: sprint-12</div>
+      </div>
+      <div class="scrim"></div>
+      <div class="palette">
+        <div class="p-search">
+          <span class="glass">⌕</span>
+          <input value="gr" />
+          <kbd>esc</kbd>
+        </div>
+        <div class="p-list">
+          <div class="p-section">Groups</div>
+          <div class="p-row" data-active>
+            <span class="glyph">⬚</span> Group selected boards
+            <span class="chips"><kbd>Ctrl</kbd><kbd>G</kbd></span>
+          </div>
+          <div class="p-row">
+            <span class="glyph">◉</span> Focus group: <span class="dim">feature-x</span>
+            <span class="chips"><kbd>F</kbd></span>
+          </div>
+          <div class="p-row">
+            <span class="glyph">⬚</span> Ungroup: <span class="dim">feature-x</span>
+          </div>
+        </div>
+        <div class="p-footer">
+          ↑↓ navigate · ↵ run · esc close <span class="right"><kbd>ctrl</kbd><kbd>K</kbd></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ STATE 3: shortcuts view (`?`) ════ -->
+    <div class="stage" id="state-3">
+      <div class="label-tag">state 3 — ? · shortcuts view</div>
+      <div class="board" style="left: 90px; top: 140px; width: 340px; height: 240px">
+        <div class="bar"><span class="glyph">&gt;_</span> agent-1 <span class="dot"></span></div>
+      </div>
+      <div class="board" style="left: 850px; top: 120px; width: 330px; height: 260px">
+        <div class="bar"><span class="glyph">◻</span> preview :5173</div>
+      </div>
+      <div class="scrim"></div>
+      <div class="palette">
+        <div class="p-head">
+          <span class="back">←</span>
+          <span class="title">Keyboard shortcuts</span>
+          <span style="margin-left: auto"><kbd>esc</kbd></span>
+        </div>
+        <div class="p-search" style="height: 36px">
+          <span class="glass">⌕</span>
+          <input placeholder="Filter shortcuts…" />
+        </div>
+        <div class="p-list" style="max-height: 320px">
+          <div class="p-section">Canvas</div>
+          <div class="s-row">
+            Fit all boards <span class="chips"><kbd>1</kbd></span>
+          </div>
+          <div class="s-row">
+            Reset zoom to 100% <span class="chips"><kbd>0</kbd></span>
+          </div>
+          <div class="s-row">
+            Tidy boards <span class="chips"><kbd>T</kbd></span>
+          </div>
+          <div class="s-row">
+            Group selection <span class="chips"><kbd>Ctrl</kbd><kbd>G</kbd></span>
+          </div>
+          <div class="s-row">
+            Undo / redo
+            <span class="chips"
+              ><kbd>Ctrl</kbd><kbd>Z</kbd><kbd>·</kbd><kbd>Ctrl</kbd><kbd>⇧</kbd><kbd>Z</kbd></span
+            >
+          </div>
+          <div class="s-row">
+            Delete selected board <span class="chips"><kbd>Del</kbd></span>
+          </div>
+          <div class="s-row">
+            Disable snapping while dragging <span class="chips"><kbd>hold Ctrl</kbd></span>
+          </div>
+          <div class="p-section">Boards</div>
+          <div class="s-row">
+            Rename board <span class="chips"><kbd>F2</kbd></span>
+          </div>
+          <div class="s-row">
+            Focus board <span class="chips"><kbd>double-click</kbd></span>
+          </div>
+          <div class="p-section">Terminal</div>
+          <div class="s-row">
+            Newline without submitting <span class="chips"><kbd>⇧</kbd><kbd>Enter</kbd></span>
+          </div>
+          <div class="p-section">Planning</div>
+          <div class="s-row">
+            Nudge selected elements <span class="chips"><kbd>←↑↓→</kbd><kbd>⇧ = 10px</kbd></span>
+          </div>
+          <div class="s-row">
+            Element context menu <span class="chips"><kbd>⇧</kbd><kbd>F10</kbd></span>
+          </div>
+        </div>
+        <div class="p-footer">
+          ↑↓ scroll · esc close <span class="right"><kbd>?</kbd></span>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
