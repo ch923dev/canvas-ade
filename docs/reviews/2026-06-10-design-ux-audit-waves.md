@@ -79,6 +79,11 @@ duplicate) is the stretch lane — spec + artifact first; absorbs D3-A's picker 
 | D4-B | **Keyboard-first canvas** — Tab-cycle boards, arrow move/resize, Enter=focus, F2=rename (needs D2-A), focus-return from native preview (A3, A4) | L |
 | D4-C 🎨 | **Wayfinding** — minimap (spec §8 optional) vs board list: present both as wireframes, user picks | M-L |
 
+> ⚠ Camera note for D4-C+ (post-#122, 2026-06-11): a SETTLED zoom inside **[0.95, 1.06] snaps to
+> exactly 1** ~250ms after the camera rests (terminal raster fix — `useZoomSettle`/`snapZoom`).
+> Camera-asserting e2e must not park a zoom inside that band expecting the raw value back; any
+> programmatic camera driver (minimap drag, board-list jump) inherits the snap by design.
+
 ## Sequencing + status
 
 ```
