@@ -472,6 +472,34 @@ body {
 .react-flow {
   background: var(--void);
 }
+
+/* ── Canvas backdrop — screen-fixed wallpaper layer (docs/canvas-backdrop) ────────
+   Sibling rendered BEFORE <ReactFlow> inside the pane; pointer-events:none keeps every
+   canvas gesture intact. While a backdrop is active ([data-backdrop] on the pane) the
+   RF surface goes transparent so the layer shows through; backdrop-less projects keep
+   the opaque void above — pixel-identical to pre-v9. */
+.backdrop-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.backdrop-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Void-colored dim veil above the media; alpha = background.dim (readability knob). */
+.backdrop-dim {
+  position: absolute;
+  inset: 0;
+  background: var(--void);
+}
+[data-backdrop] .react-flow {
+  background: transparent;
+}
 .react-flow__node-smoke {
   background: var(--surface-raised);
   border: 1px solid var(--border);
