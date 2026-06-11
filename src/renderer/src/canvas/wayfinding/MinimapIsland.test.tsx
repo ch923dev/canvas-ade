@@ -54,15 +54,19 @@ describe('MinimapIsland (D4-C)', () => {
     expect(miniMapProps.ariaLabel).toBe('Canvas minimap')
   })
 
-  it('board-rect click jumps via the injected focus path and stops propagation', () => {
+  it('board-rect click jumps via the injected focus path (one macrotask deferred) and stops propagation', async () => {
     useWayfindingStore.setState({ minimapVisible: true })
     const onJumpToBoard = vi.fn()
     render(<MinimapIsland onJumpToBoard={onJumpToBoard} />)
     const stopPropagation = vi.fn()
     const onNodeClick = miniMapProps.onNodeClick as (e: unknown, node: { id: string }) => void
     onNodeClick({ stopPropagation } as unknown as MouseEvent, { id: 'b1' })
-    expect(onJumpToBoard).toHaveBeenCalledWith('b1')
     expect(stopPropagation).toHaveBeenCalled() // svg-level teleport must NOT also fire
+    // The jump is DEFERRED one macrotask past the click's d3 gesture work — a
+    // same-task fitView could be interrupted by the pannable drag-end viewport write.
+    expect(onJumpToBoard).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(onJumpToBoard).toHaveBeenCalledWith('b1')
     expect(setCenter).not.toHaveBeenCalled()
   })
 

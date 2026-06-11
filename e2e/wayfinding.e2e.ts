@@ -110,24 +110,26 @@ test.describe('D4-C wayfinding minimap (real OS input)', () => {
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
     await evalIn(page, 'window.__canvasE2E.setZoom(1)')
     // Park the board's stage over the bottom-right corner (where the island mounts):
-    // pan so the board's center sits 140px in from the corner, then let the camera rest.
-    await page.evaluate((boardId) => {
-      const g = globalThis as unknown as {
-        innerWidth: number
-        innerHeight: number
-        __canvasE2E: {
-          getBoards: () => { id: string; x: number; y: number; w: number; h: number }[]
-          getViewport: () => { x: number; y: number; zoom: number }
-          panBy: (dx: number, dy: number) => void
-        }
-      }
-      const board = g.__canvasE2E.getBoards().find((bd) => bd.id === boardId)
-      if (!board) return
-      const vp = g.__canvasE2E.getViewport()
-      const cx = (board.x + board.w / 2) * vp.zoom + vp.x
-      const cy = (board.y + board.h / 2) * vp.zoom + vp.y
-      g.__canvasE2E.panBy(g.innerWidth - 140 - cx, g.innerHeight - 140 - cy)
-    }, id)
+    // pan so the board's center sits 140px in from the corner. POLLED, re-applying the
+    // pan each iteration (the whiteboard fitted-poll pattern) — under full-suite load a
+    // one-shot pan can race a not-yet-finished camera op and get wiped (matrix catch).
+    const parked = await pollEval(
+      page,
+      `(() => {
+         const g = globalThis;
+         const board = g.__canvasE2E.getBoards().find((bd) => bd.id === ${JSON.stringify(id)});
+         if (!board) return false;
+         const vp = g.__canvasE2E.getViewport();
+         const cx = (board.x + board.w / 2) * vp.zoom + vp.x;
+         const cy = (board.y + board.h / 2) * vp.zoom + vp.y;
+         const dx = g.innerWidth - 140 - cx, dy = g.innerHeight - 140 - cy;
+         if (Math.hypot(dx, dy) < 4) return true;
+         g.__canvasE2E.panBy(dx, dy);
+         return false;
+       })()`,
+      5000
+    )
+    expect(parked, 'board parked over the bottom-right corner').toBe(true)
     await page.waitForTimeout(300)
     const liveBefore = await pollEval(page, runtimeLive(id), 8000)
     expect(liveBefore, 'live before the minimap shows').toBe(true)

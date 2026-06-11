@@ -40,7 +40,13 @@ function MinimapIslandImpl({ onJumpToBoard }: MinimapIslandProps): ReactElement 
   const onNodeClick = useCallback(
     (e: MouseEvent, node: Node): void => {
       e.stopPropagation()
-      onJumpToBoard(node.id)
+      // Deferred one macrotask: `pannable` runs d3-drag on this svg, and a click is a
+      // zero-distance drag — its end-of-gesture viewport write can land AFTER the jump's
+      // fitView starts and interrupt the camera tween at frame 0 (caught by the e2e
+      // matrix under load). Starting the jump on a clean macrotask sequences it after
+      // ALL of the click's gesture work, for real clicks as much as for the harness.
+      const id = node.id
+      window.setTimeout(() => onJumpToBoard(id), 0)
     },
     [onJumpToBoard]
   )
