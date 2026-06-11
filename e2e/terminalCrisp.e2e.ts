@@ -26,8 +26,25 @@ const domRowsActive = (id: string): string =>
   `!!document.querySelector(${JSON.stringify(`${screenSel(id)} .xterm-rows`)})`
 const canvasCount = (id: string): string =>
   `document.querySelectorAll(${JSON.stringify(`${screenSel(id)} canvas`)}).length`
-const csOf = (id: string): string =>
-  `window.__canvasE2E.terminalCounterScale(${JSON.stringify(id)})`
+/** Counter-scale probe via Playwright's native argument-passing evaluate — NO code
+ *  construction (CodeQL js/bad-code-sanitization: building eval source around dynamic
+ *  values is flagged; a function callback with an argument carries no such risk). */
+interface CsProbe {
+  effectiveFont: number
+  cols: number
+  rows: number
+  netScale: number | null
+  hSlack: number | null
+  vSlack: number | null
+}
+function readCs(page: Parameters<typeof evalIn>[0], id: string): Promise<CsProbe | null> {
+  return page.evaluate((bid) => {
+    const g = globalThis as unknown as {
+      __canvasE2E?: { terminalCounterScale(b: string): CsProbe | null }
+    }
+    return g.__canvasE2E?.terminalCounterScale(bid) ?? null
+  }, id)
+}
 
 /** Drive the camera to `z` and wait for the live zoom to land there. */
 async function zoomTo(page: Parameters<typeof evalIn>[0], z: number): Promise<void> {
@@ -43,11 +60,15 @@ async function settleAt(
   id: string,
   expectedFont: number
 ): Promise<void> {
-  await pollEval(
-    page,
-    `(() => { const f = (${csOf(id)})?.effectiveFont; return f <= ${expectedFont} + 0.01 && f >= ${expectedFont} * 0.85 })()`,
-    5_000
-  )
+  // Non-throwing on timeout (mirrors pollEval): the caller's asserts then fail with a
+  // readable diagnostic instead of a poll-timeout stack.
+  const deadline = Date.now() + 5_000
+  for (;;) {
+    const f = (await readCs(page, id))?.effectiveFont ?? 0
+    if (f <= expectedFont + 0.01 && f >= expectedFont * 0.85) return
+    if (Date.now() > deadline) return
+    await page.waitForTimeout(100)
+  }
 }
 
 async function seedSettled(page: Parameters<typeof evalIn>[0]): Promise<string> {
@@ -90,18 +111,13 @@ test.describe('terminal native re-raster (FREEZE)', () => {
 
   test('counter-scale: net scale 1 + effective font pin×z + FROZEN cols/rows', async ({ page }) => {
     const id = await seedSettled(page)
-    const base = await evalIn<{ effectiveFont: number; cols: number; rows: number }>(page, csOf(id))
+    const base = (await readCs(page, id))!
     expect(base.effectiveFont).toBeCloseTo(12.5, 2)
 
     for (const z of [1.3, 0.8, 0.6]) {
       await zoomTo(page, z)
       await settleAt(page, id, 12.5 * z)
-      const cs = await evalIn<{
-        effectiveFont: number
-        cols: number
-        rows: number
-        netScale: number | null
-      }>(page, csOf(id))
+      const cs = (await readCs(page, id))!
       expect(cs.effectiveFont, `effective font tracks pin×z at z=${z}`).toBeCloseTo(12.5 * z, 2)
       expect(cs.cols, `cols frozen across zoom (z=${z})`).toBe(base.cols)
       expect(cs.rows, `rows frozen across zoom (z=${z})`).toBe(base.rows)
@@ -112,7 +128,7 @@ test.describe('terminal native re-raster (FREEZE)', () => {
     // Back to 100%: the effective font returns to the pin and the grid never moved.
     await zoomTo(page, 1)
     await settleAt(page, id, 12.5)
-    const back = await evalIn<{ cols: number; rows: number }>(page, csOf(id))
+    const back = (await readCs(page, id))!
     expect(back.cols, 'cols unchanged after the round trip').toBe(base.cols)
     expect(back.rows, 'rows unchanged after the round trip').toBe(base.rows)
   })
@@ -126,12 +142,15 @@ test.describe('terminal native re-raster (FREEZE)', () => {
     for (const z of [0.82, 0.7, 1.3, 0.6]) {
       await zoomTo(page, z)
       await settleAt(page, id, 12.5 * z)
-      const fits = await pollEval(
-        page,
-        `(() => { const c = ${csOf(id)}; return !!c && c.hSlack !== null && c.hSlack >= -0.5 && c.vSlack !== null && c.vSlack >= -0.5 })()`,
-        4_000
-      )
-      const cs = await evalIn<{ hSlack: number; vSlack: number; cols: number }>(page, csOf(id))
+      const deadline = Date.now() + 4_000
+      let cs = await readCs(page, id)
+      const fitsNow = (c: CsProbe | null): boolean =>
+        !!c && c.hSlack !== null && c.hSlack >= -0.5 && c.vSlack !== null && c.vSlack >= -0.5
+      while (!fitsNow(cs) && Date.now() < deadline) {
+        await page.waitForTimeout(100)
+        cs = await readCs(page, id)
+      }
+      const fits = fitsNow(cs)
       expect(fits, `grid fits the well at settled z=${z} (slack ${JSON.stringify(cs)})`).toBe(true)
     }
   })
@@ -142,12 +161,12 @@ test.describe('terminal native re-raster (FREEZE)', () => {
     const id = await seedSettled(page)
     await zoomTo(page, 0.8)
     await settleAt(page, id, 10)
-    const before = await evalIn<{ effectiveFont: number; rows: number }>(page, csOf(id))
+    const before = (await readCs(page, id))!
     // Pin 12.5 → 18 at settled 0.8: effective = 18 × 0.8 = 14.4 AND the grid refits
     // (taller cells ⇒ fewer rows) — the FREEZE applies to zoom changes only.
     await evalIn(page, `window.__canvasE2E.setBoardFont(${JSON.stringify(id)}, 18)`)
     await settleAt(page, id, 18 * 0.8)
-    const after = await evalIn<{ effectiveFont: number; rows: number }>(page, csOf(id))
+    const after = (await readCs(page, id))!
     expect(after.rows, 'rows dropped under the bigger pin').toBeLessThan(before.rows)
   })
 
