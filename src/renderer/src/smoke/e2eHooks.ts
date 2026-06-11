@@ -32,6 +32,7 @@ import { disposeLiveResources } from '../store/disposeLiveResources'
 import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
+import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
 interface RuntimeProbe {
@@ -578,6 +579,16 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // non-1 zoom would seed the next spec's terminals with a stale crisp/suspend value
       // for the first ~SETTLE_MS (same isolation class as the toasts above).
       useSettledZoomStore.getState().setSettledZoom(1)
+      // D4-C: the minimap island is STICKY (localStorage, persistent userData) — a spec
+      // that toggled it on would leave a bottom-right island + chrome-exclusion zone for
+      // every later spec AND for the next run (the self-ratchet class). Hide + clear the
+      // sticky key so each test starts from the shipped first-run default (hidden).
+      useWayfindingStore.getState().setMinimapVisible(false)
+      try {
+        window.localStorage.removeItem(MINIMAP_VISIBLE_KEY)
+      } catch {
+        // storage unavailable — nothing sticky to clear
+      }
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()

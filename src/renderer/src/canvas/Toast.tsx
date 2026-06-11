@@ -13,6 +13,7 @@
  */
 import { useEffect, type ReactElement } from 'react'
 import { useToastStore, type Toast } from '../store/toastStore'
+import { useWayfindingStore } from '../store/wayfindingStore'
 
 /** Visible stack cap — older toasts hold the slots; newer ones queue behind. */
 const MAX_VISIBLE = 3
@@ -20,10 +21,17 @@ export const TOAST_AUTO_DISMISS_MS = 5000
 
 export function ToastIsland(): ReactElement | null {
   const toasts = useToastStore((s) => s.toasts)
+  // D4-C: both islands live bottom-right — lift the toast stack above a visible
+  // minimap so neither covers the other (CSS modifier; rect changes feed the
+  // exclusion zones automatically via the live getBoundingClientRect read).
+  const lifted = useWayfindingStore((s) => s.minimapVisible)
   const visible = toasts.slice(0, MAX_VISIBLE)
   if (visible.length === 0) return null
   return (
-    <div className="toast-island" data-test="toast-island">
+    <div
+      className={lifted ? 'toast-island toast-island--lifted' : 'toast-island'}
+      data-test="toast-island"
+    >
       {visible.map((t) => (
         <ToastItem key={t.id} toast={t} />
       ))}

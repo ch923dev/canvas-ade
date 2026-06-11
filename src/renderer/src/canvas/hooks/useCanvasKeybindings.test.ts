@@ -121,6 +121,22 @@ describe('resolveCanvasKeyAction', () => {
     expect(resolveCanvasKeyAction(chord('f', { ctrlKey: true }), FREE)).toBeNull()
   })
 
+  it('bare m resolves to toggleMinimap only when bare keys are allowed (D4-C)', () => {
+    expect(resolveCanvasKeyAction(chord('m'), FREE)).toEqual({ kind: 'toggleMinimap' })
+    expect(resolveCanvasKeyAction(chord('M'), FREE)).toEqual({ kind: 'toggleMinimap' })
+    // Never from an input / focusable board surface (xterm, planning well, traps).
+    expect(
+      resolveCanvasKeyAction(chord('m'), {
+        typing: false,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
+    ).toBeNull()
+    // Modified m is not the bare toggle key (Ctrl+M / Alt+M stay free).
+    expect(resolveCanvasKeyAction(chord('m', { ctrlKey: true }), FREE)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('m', { altKey: true }), FREE)).toBeNull()
+  })
+
   it('Ctrl/Cmd+K opens the palette — EVEN while typing (D4-A sign-off), not with Shift/Alt', () => {
     expect(resolveCanvasKeyAction(chord('k', { ctrlKey: true }), FREE)).toEqual({ kind: 'palette' })
     expect(resolveCanvasKeyAction(chord('K', { metaKey: true }), FREE)).toEqual({ kind: 'palette' })

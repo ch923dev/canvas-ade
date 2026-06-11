@@ -84,8 +84,16 @@ export function NoteCard({
   // Focus a freshly-dropped empty note so the user can type immediately, AND so
   // leaving it untouched blurs → prunes it instead of leaving an orphan (#29).
   // Runs once on mount; existing (loaded) notes have content so won't grab focus.
+  // DEFERRED one macrotask (the D1-C focus discipline): when the spawning
+  // pointerdown's React flush mounts this card synchronously (it does once the RF
+  // node carries initialWidth/Height — no measure pass splits the flush, D4-C), a
+  // same-task focus() lands BEFORE the browser's native mousedown default action,
+  // which then re-focuses the pressed well — blurring the empty textarea and
+  // tripping the #29 prune, so the note dies the instant the note tool places it.
   useEffect(() => {
-    if (interactive && note.text === '') ref.current?.focus()
+    if (!(interactive && note.text === '')) return
+    const id = window.setTimeout(() => ref.current?.focus(), 0)
+    return () => window.clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

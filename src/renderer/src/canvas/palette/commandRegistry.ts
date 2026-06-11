@@ -52,6 +52,7 @@ export interface PaletteVerbs {
   tidy: () => void
   fitAll: () => void
   resetZoom: () => void
+  toggleMinimap: () => void
   undo: () => void
   redo: () => void
   showShortcuts: () => void
@@ -244,6 +245,15 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
       glyph: '◎',
       chips: ['0'],
       run: () => verbs.resetZoom()
+    },
+    {
+      id: 'toggle-minimap',
+      section: 'Canvas',
+      title: 'Toggle minimap',
+      keywords: 'map overview wayfinding navigate show hide',
+      glyph: '◳',
+      chips: ['M'],
+      run: () => verbs.toggleMinimap()
     }
   )
 
@@ -305,6 +315,7 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { section: 'Canvas', label: 'Reset zoom to 100%', chips: ['0'] },
   { section: 'Canvas', label: 'Tidy boards', chips: ['T'] },
   { section: 'Canvas', label: 'Focus group', chips: ['F'] },
+  { section: 'Canvas', label: 'Toggle minimap', chips: ['M'] },
   { section: 'Canvas', label: 'Group selected boards', chips: ['Ctrl', 'G'] },
   { section: 'Canvas', label: 'Undo', chips: ['Ctrl', 'Z'] },
   { section: 'Canvas', label: 'Redo', chips: ['Ctrl', 'Shift', 'Z', '·', 'Ctrl', 'Y'] },

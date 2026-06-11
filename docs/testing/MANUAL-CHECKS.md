@@ -196,6 +196,24 @@ sweep covers the shell; spot-check at least two different menus per item.
       work immediately; in full view the same Esc exits full view. A page that listens for Esc
       (e.g. closes its own dialog) still receives the key.
 
+## Wayfinding minimap (D4-C)
+
+- [ ] Press `M` on the canvas -> the minimap island fades in bottom-right (raised surface, board
+      rects, accent viewport ring); `M` again hides it. Quit + relaunch -> the choice persisted.
+- [ ] Ctrl+K -> "Toggle minimap" does the same; the `?` sheet lists the `M` row.
+- [ ] Click a board's rect in the minimap -> the camera fits that board (same focus as
+      double-click/Enter: others dim, terminal/browser cap at 100%); click empty map space ->
+      the camera teleports there at the current zoom; drag the viewport ring -> live pan.
+- [ ] With reduced motion ON: the fade-in is instant and minimap jumps/teleports don't animate.
+- [ ] Park a LIVE browser preview over the bottom-right corner, press `M` -> the preview demotes
+      to its snapshot under the island (no native paint-over); hide the minimap -> live again.
+- [ ] Trigger a toast (e.g. export a planning board) with the minimap visible -> the toast stack
+      sits ABOVE the island, neither covers the other.
+- [ ] Negative gates: `M` typed in a board title edit, a note, a focused xterm, or the palette
+      search does NOT toggle the island.
+- [ ] Esc layering unchanged: with the minimap up, Esc still clears selection / exits full view
+      on the first press; the island never closes on Esc (persistent chrome).
+
 ## Persistence / migration
 
 - [ ] Open a project saved at an older `schemaVersion` -> migration runs, no data loss, re-saves at current version.
