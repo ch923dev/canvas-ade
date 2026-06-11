@@ -61,11 +61,13 @@ async function settleAt(
   expectedFont: number
 ): Promise<void> {
   // Non-throwing on timeout (mirrors pollEval): the caller's asserts then fail with a
-  // readable diagnostic instead of a poll-timeout stack.
+  // readable diagnostic instead of a poll-timeout stack. Lower bound derivation: the
+  // no-clip correction steps the font by at most x0.97 four times (0.97^4 ~= 0.885), so
+  // any corrected value sits above expectedFont * 0.88; below that is a real failure.
   const deadline = Date.now() + 5_000
   for (;;) {
     const f = (await readCs(page, id))?.effectiveFont ?? 0
-    if (f <= expectedFont + 0.01 && f >= expectedFont * 0.85) return
+    if (f <= expectedFont + 0.01 && f >= expectedFont * 0.88) return
     if (Date.now() > deadline) return
     await page.waitForTimeout(100)
   }

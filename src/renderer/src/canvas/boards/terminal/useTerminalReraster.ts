@@ -98,12 +98,25 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
         const g = screenEl.getBoundingClientRect()
         const w = wellEl.getBoundingClientRect()
         if (g.width === 0 || (g.right <= w.right + 0.5 && g.bottom <= w.bottom + 0.5)) return
+        // Budget exhausted with residual overflow: stop SILENTLY by design — the measured
+        // worst case needs ONE step (a single integer cell-step), so four ×0.97 steps
+        // (~11.5% of font) is already past any reachable geometry; an unbounded loop
+        // risks oscillation if cell metrics misreport mid-layout.
         if (tries <= 0) return
         t.options.fontSize = (t.options.fontSize ?? effective) * 0.97
         stepDown(tries - 1)
       })
     }
     stepDown(4)
+    // Cleanup: bump the token so any in-flight rAF chain from THIS run dies on unmount /
+    // re-run (the in-callback guards already make it side-effect-free; this makes the
+    // cancellation explicit instead of relying on them).
+    return () => {
+      // Monotonic counter ref, not a DOM node: cancellation MUST mutate the live value at
+      // cleanup time (a captured copy would defeat the rAF callbacks' supersede check).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      correctTokenRef.current++
+    }
     // termRef/fitWhole/liveFontRef are stable (refs + a []-useCallback from useTerminalSpawn);
     // listed because exhaustive-deps no longer treats destructured hook refs as stable (#98).
   }, [pinnedFontSize, bornFont, counterScale, fitWhole, termRef, liveFontRef])

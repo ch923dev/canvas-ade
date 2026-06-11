@@ -565,9 +565,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // fire leaves the key unchanged and is skipped wholesale.
     let lastWrapKey: string | null = null
     const ro = new ResizeObserver(() => {
+      // A detached `el` (no parent) yields no key: fall through to the (cheap, guarded)
+      // refit rather than skip — a null key must never satisfy the gate, or two fires
+      // while detached would compare null === null and silently drop a real refit.
       const wrap = el.parentElement
       const key = wrap ? `${wrap.clientWidth}x${wrap.clientHeight}` : null
-      if (key === lastWrapKey) return // zoom-driven layout change — FREEZE: no refit
+      if (key !== null && key === lastWrapKey) return // zoom-driven layout change — FREEZE: no refit
       lastWrapKey = key
       fitWholeRef.current() // whole-cell fit (clip-free); swallows the not-laid-out throw itself
       // First good fit after a hidden/LOD mount spawns the deferred PTY at the

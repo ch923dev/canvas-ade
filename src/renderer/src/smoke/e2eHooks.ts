@@ -145,8 +145,6 @@ export interface CanvasE2E {
     wellBottom: number
     overflow: number
   }
-  /** Raw xterm option setter (raster-tuning probes — letterSpacing/lineHeight studies). */
-  terminalSetOption: (id: string, key: string, value: unknown) => boolean
   /** FREEZE re-raster probe: the live render-state the counter-scale drives. `netScale`
    *  is the .xterm-screen rendered-vs-layout width ratio (1 at rest under the wrapper);
    *  `effectiveFont` is the live xterm render font (≈ pinned × counterScale, possibly
@@ -448,12 +446,6 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         wellBottom: well.bottom,
         overflow: grid.bottom - well.bottom // > 0 => the grid spills past the clip boundary
       }
-    },
-    terminalSetOption(id, key, value) {
-      const term = e2eTerminals.get(id)
-      if (!term) return false
-      ;(term.options as unknown as Record<string, unknown>)[key] = value
-      return true
     },
     terminalCounterScale(id) {
       const term = e2eTerminals.get(id)
