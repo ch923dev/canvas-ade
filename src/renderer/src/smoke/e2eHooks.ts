@@ -31,6 +31,7 @@ import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
+import { useSettledZoomStore } from '../store/settledZoomStore'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
 interface RuntimeProbe {
@@ -124,6 +125,8 @@ export interface CanvasE2E {
   getTool: () => Tool
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
+  /** Current live camera zoom (asserts the settled-zoom snap, terminalCrisp.e2e). */
+  getZoom: () => number
   /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
   panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
@@ -396,6 +399,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })
     },
+    getZoom() {
+      return rf.getViewport().zoom
+    },
     panBy(dx, dy) {
       const vp = rf.getViewport()
       void rf.setViewport({ x: vp.x + dx, y: vp.y + dy, zoom: vp.zoom }, { duration: 0 })
@@ -568,6 +574,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // board under it (the island joins resolveChromeZones while visible).
       useToastStore.getState().clearToasts()
       useSaveStatusStore.getState().clearSaveFailure()
+      // The settled-zoom store is global ephemeral state too — a spec that left it at a
+      // non-1 zoom would seed the next spec's terminals with a stale crisp/suspend value
+      // for the first ~SETTLE_MS (same isolation class as the toasts above).
+      useSettledZoomStore.getState().setSettledZoom(1)
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()

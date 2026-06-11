@@ -18,7 +18,7 @@
  *   - startLaunchRef    — the idle "Start" button fires the current mount's launch()
  *   - fitWhole          — the font apply + dpr effects reflow the live grid through it
  *   - restart           — the Restart action / Resume-or-New menu
- * Everything else (fitRef, pendingRespawnRef, fontSizeRef, lodRef, getZoom, webgl, the
+ * Everything else (fitRef, pendingRespawnRef, fontSizeRef, suspendWebglRef, getZoom, webgl, the
  * spawn/respawn callbacks, the spawn effect) is INTERNAL.
  */
 import {
@@ -48,6 +48,8 @@ import { installSelectionShim } from './terminalSelection'
 import { useTerminalWebgl } from './useTerminalWebgl'
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
+import { useSettledZoomStore } from '../../../store/settledZoomStore'
+import { isCrispZoom } from '../../../lib/canvasView'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -118,7 +120,8 @@ export interface TerminalSpawnDeps {
   board: TerminalBoardData
   /** Open project folder — a board with no explicit cwd spawns here, not os.homedir(). */
   projectDir: string | null | undefined
-  /** Global LOD (zoom-out) flag. Read for the initial WebGL attach; NEVER respawns the PTY. */
+  /** Global LOD (zoom-out) flag. Feeds the WebGL suspension policy (with the settled
+   *  crisp-zoom check); NEVER respawns the PTY. */
   lod: boolean
   /** The xterm host div, planted by the host's render (term.open() mounts into it). */
   screenRef: RefObject<HTMLDivElement>
@@ -166,14 +169,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // launcher that flips `spawnAllowed` and fires; null while no live term exists.
   const startLaunchRef = useRef<(() => void) | null>(null)
   // board.fontSize for the spawn closure's INITIAL xterm construction, read via a ref so
-  // a size change never becomes a spawn dep (which would respawn the PTY). Mirrors lodRef.
+  // a size change never becomes a spawn dep (which would respawn the PTY). Mirrors
+  // suspendWebglRef below.
   const fontSizeRef = useRef<number | undefined>(board.fontSize)
-  // `lod` read by the spawn effect (initial WebGL attach) without making it a spawn
-  // dep — `lod` must NOT respawn the PTY (the session survives zoom-out by design).
-  const lodRef = useRef(lod)
-  useEffect(() => {
-    lodRef.current = lod
-  }, [lod])
 
   // Keep the spawn closure's initial-font ref synced (read on construction only; never a spawn dep).
   useEffect(() => {
@@ -201,6 +199,21 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     [rfStore]
   )
 
+  // WebGL suspension policy: hold a GL context only in detail view at CRISP settled
+  // zoom. The GL canvas is a fixed-dpr bitmap the camera transform resamples — blurry
+  // at any settled zoom ≠ 1 — while the detached fallback (xterm's DOM renderer)
+  // re-rasters sharp at rest at every zoom (docs/research/2026-06-11-terminal-font-blur.md).
+  // Full view renders the board portaled OUTSIDE ReactFlow at visual scale 1, so it
+  // keeps WebGL regardless of the camera. The spawn effect reads this through a ref
+  // (mirrors fontSizeRef) so a zoom settle / LOD flip NEVER respawns the PTY — the
+  // session survives zoom by design.
+  const settledCrisp = useSettledZoomStore((s) => isCrispZoom(s.zoom))
+  const suspendWebgl = lod || (!isFullView && !settledCrisp)
+  const suspendWebglRef = useRef(suspendWebgl)
+  useEffect(() => {
+    suspendWebglRef.current = suspendWebgl
+  }, [suspendWebgl])
+
   const [state, setState] = useState<TerminalState>('spawning')
 
   // Publish live PTY state so the preview-link edge can render stale when this
@@ -211,7 +224,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   }, [board.id, state])
   useEffect(() => () => useTerminalRuntimeStore.getState().clear(board.id), [board.id])
 
-  const { attachWebgl, detachWebgl } = useTerminalWebgl(board.id, lod, lodRef, termRef)
+  const { attachWebgl, detachWebgl } = useTerminalWebgl(
+    board.id,
+    suspendWebgl,
+    suspendWebglRef,
+    termRef
+  )
 
   // Fit, then guarantee the grid is a WHOLE number of CURRENTLY-RENDERED cells tall. FitAddon
   // computes rows from the well height but IGNORES the screen div's CSS padding (measured: it
@@ -249,7 +267,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   }, [screenRef])
 
   // Route the in-spawn fit calls through a ref so `spawn`'s dependency array stays byte-identical
-  // (fitWhole is itself stable [], but the ref mirrors the fontStepRef/lodRef/attachWebglRef
+  // (fitWhole is itself stable [], but the ref mirrors the fontStepRef/suspendWebglRef/attachWebglRef
   // pattern and removes any exhaustive-deps churn risk). Kept in sync below.
   const fitWholeRef = useRef<() => void>(() => {})
   useEffect(() => {
@@ -331,9 +349,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     term.open(el)
     termRef.current = term
     fitRef.current = fit
-    // Attach a GL context only when mounting in detail view; a board mounted at LOD
-    // runs on the DOM renderer until it returns to detail (see the LOD effect above).
-    if (!lodRef.current) attachWebgl(term)
+    // Attach a GL context only when mounting un-suspended (detail view at crisp
+    // settled zoom); otherwise the board runs on the DOM renderer until the
+    // suspension lifts (see the suspend effect in useTerminalWebgl).
+    if (!suspendWebglRef.current) attachWebgl(term)
     // Whole-cell mount fit (clip-free). Routed through the ref so spawn's deps stay byte-identical.
     fitWholeRef.current()
     if (isE2E()) e2eTerminals.set(board.id, term)

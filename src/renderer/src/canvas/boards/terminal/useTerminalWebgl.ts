@@ -37,18 +37,21 @@ function releaseWebglSlot(id: string): void {
 
 export function useTerminalWebgl(
   boardId: string,
-  lod: boolean,
-  lodRef: RefObject<boolean>,
+  suspend: boolean,
+  suspendRef: RefObject<boolean>,
   termRef: RefObject<Terminal | null>
 ): { attachWebgl: (term: Terminal) => void; detachWebgl: () => void } {
   const webglRef = useRef<WebglAddon | null>(null)
 
-  // ── WebGL renderer pooling (#10/#12/#29) ─────────────────────────────────────
+  // ── WebGL renderer pooling (#10/#12/#29) + crisp-zoom policy ─────────────────
   // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
   // Flow) and silently drops the OLDEST under churn. We (1) hold a GL context only
-  // for DETAIL-view terminals — a board at LOD releases so on-screen terminals keep
-  // theirs — AND (2) enforce a hard renderer-wide cap (WEBGL_BUDGET) via the
-  // module-level registry, since `lod` is global zoom-only and never bounds the
+  // while the host doesn't `suspend` — it suspends at LOD AND at any non-crisp
+  // settled zoom: the GL canvas is a fixed-dpr bitmap the camera transform
+  // resamples (blurry at z ≠ 1), while the DOM renderer re-rasters sharp at every
+  // zoom at rest (docs/research/2026-06-11-terminal-font-blur.md) — AND (2)
+  // enforce a hard renderer-wide cap (WEBGL_BUDGET) via the module-level registry,
+  // since suspension is global zoom-only and never bounds the
   // many-visible-terminals case. Over the cap a terminal stays on the DOM renderer
   // and registers a retry that fires when a slot frees. The PTY session is
   // independent of the renderer, so this is purely a perf/quality lever.
@@ -66,11 +69,20 @@ export function useTerminalWebgl(
       if (!acquireWebglSlot(boardId)) {
         wantWebgl.set(boardId, () => {
           const t = termRef.current
-          if (!lodRef.current && t) attachWebglRef.current(t)
+          if (!suspendRef.current && t) attachWebglRef.current(t)
         })
         return
       }
       wantWebgl.delete(boardId)
+      // A failed activation can throw AFTER the addon appended its canvas: the
+      // WebglRenderer constructor passes its GL2 check, appends to .xterm-screen,
+      // then can still die in shader/atlas setup (deterministic on the Linux e2e
+      // leg's software GL) — and xterm does not unwind the append. Without a sweep
+      // every retry leaks one dead canvas (e2e-caught: canvases grew per zoom
+      // cycle). Snapshot the screen's canvases and remove only what THIS attempt
+      // added, so a sibling renderer's canvas is never touched.
+      const screenEl = term.element?.querySelector('.xterm-screen') ?? null
+      const beforeCanvases = screenEl ? new Set(screenEl.querySelectorAll('canvas')) : null
       try {
         const webgl = new WebglAddon()
         webgl.onContextLoss(() => {
@@ -82,17 +94,22 @@ export function useTerminalWebgl(
           releaseWebglSlot(boardId)
           setTimeout(() => {
             const t = termRef.current
-            if (!lodRef.current && t) attachWebglRef.current(t)
+            if (!suspendRef.current && t) attachWebglRef.current(t)
           }, 0)
         })
         term.loadAddon(webgl)
         webglRef.current = webgl
       } catch {
-        /* GL unavailable — xterm falls back to the DOM/canvas renderer */
+        /* GL unavailable — xterm falls back to the DOM renderer */
         releaseWebglSlot(boardId)
+        if (screenEl && beforeCanvases) {
+          for (const c of screenEl.querySelectorAll('canvas')) {
+            if (!beforeCanvases.has(c)) c.remove()
+          }
+        }
       }
     },
-    [boardId, lodRef, termRef]
+    [boardId, suspendRef, termRef]
   )
 
   const detachWebgl = useCallback((): void => {
@@ -111,14 +128,15 @@ export function useTerminalWebgl(
     attachWebglRef.current = attachWebgl
   }, [attachWebgl])
 
-  // Release the GL context at LOD; re-acquire on return to detail view. Guarded by
-  // a live terminal (the spawn effect owns mount/unmount of `term` itself).
+  // Release the GL context while suspended (LOD or a non-crisp settled zoom);
+  // re-acquire when the host un-suspends. Guarded by a live terminal (the spawn
+  // effect owns mount/unmount of `term` itself).
   useEffect(() => {
     const term = termRef.current
     if (!term) return
-    if (lod) detachWebgl()
+    if (suspend) detachWebgl()
     else attachWebgl(term)
-  }, [lod, attachWebgl, detachWebgl, termRef])
+  }, [suspend, attachWebgl, detachWebgl, termRef])
 
   return { attachWebgl, detachWebgl }
 }
