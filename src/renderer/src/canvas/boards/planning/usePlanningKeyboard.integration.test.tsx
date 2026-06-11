@@ -301,6 +301,35 @@ describe('planning keyboard — Ctrl+G / Ctrl+Shift+G (D3-C)', () => {
     expect(elById(id, 'ka')!.groupId).toBeDefined() // back to grouped
   })
 
+  it('Ctrl+G expands a partial group selection first — no stranded sibling (#119 review)', () => {
+    // G1 = {ka, kc}; user selects only ka + the ungrouped kb. Grouping must produce
+    // ONE group {ka, kb, kc} (right-click parity), not a new {ka, kb} stranding kc.
+    const id = seedPlanning([
+      note('ka', { x: 40, y: 40, text: 'A' }),
+      note('kb', { x: 260, y: 40, text: 'B' }),
+      note('kc', { x: 40, y: 160, text: 'C' })
+    ])
+    useCanvasStore.getState().updateBoard(id, {
+      elements: [
+        { ...elById(id, 'ka')!, groupId: 'g1' },
+        elById(id, 'kb')!,
+        { ...elById(id, 'kc')!, groupId: 'g1' }
+      ]
+    } as never)
+    useCanvasStore.setState({ past: [], future: [] })
+    render(<Harness id={id} />)
+    selectNote(0, { x: 60, y: 60 })
+    selectNote(1, { x: 280, y: 60 }, { shift: true })
+    down('g', { ctrl: true })
+    const a = elById(id, 'ka')!
+    const b = elById(id, 'kb')!
+    const c = elById(id, 'kc')!
+    expect(a.groupId).toBeDefined()
+    expect(a.groupId).not.toBe('g1') // a fresh group id
+    expect(b.groupId).toBe(a.groupId)
+    expect(c.groupId).toBe(a.groupId) // the sibling rode along, not stranded
+  })
+
   it('meta (⌘) works like ctrl for the chord', () => {
     const id = seedTwo()
     render(<Harness id={id} />)

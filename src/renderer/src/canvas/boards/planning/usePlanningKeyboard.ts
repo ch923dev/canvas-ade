@@ -109,6 +109,9 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
 
   /** Keyboard-open the element context menu at the selection's union-bbox center. */
   const openMenuAtSelection = useCallback(() => {
+    // Self-guarded (not just at the call site): the element menu is a select-tool
+    // surface; a future second caller must not be able to open it mid-pen/erase.
+    if (tool !== 'select') return
     // Select-then-act parity with the right-click path: act on whole groups.
     const effective = expandGroups(elements, selectedIds)
     if (effective.size === 0) return
@@ -129,6 +132,7 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
       entries: buildMenuEntries(effective)
     })
   }, [
+    tool,
     elements,
     selectedIds,
     setSelectedIds,
@@ -173,22 +177,26 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'g') {
         e.stopPropagation()
         e.preventDefault()
-        const selEls = elements.filter((el) => selectedIds.has(el.id))
+        // Group-expand FIRST (right-click parity): the menu path always acts on the
+        // expanded effective set, so grouping {A,B} where A∈G1={A,C} must produce
+        // ONE group {A,B,C} — not a new {A,B} that strands C alone in G1.
+        const expanded = expandGroups(elements, selectedIds)
+        const selEls = elements.filter((el) => expanded.has(el.id))
         if (e.shiftKey) {
           // Same enable rule as the menu's Ungroup entry: any selected member grouped.
           if (selEls.some((el) => !!el.groupId)) {
             beginChange()
-            commit(ungroupElements(elements, selectedIds))
+            commit(ungroupElements(elements, expanded))
           }
           return
         }
         // Same enable rule as the menu's Group entry: ≥2 selected, not already one group.
         const groupIds = new Set(selEls.map((el) => el.groupId).filter(Boolean))
         const isOneGroup =
-          selectedIds.size >= 2 && groupIds.size === 1 && selEls.every((el) => !!el.groupId)
-        if (selectedIds.size >= 2 && !isOneGroup) {
+          expanded.size >= 2 && groupIds.size === 1 && selEls.every((el) => !!el.groupId)
+        if (expanded.size >= 2 && !isOneGroup) {
           beginChange()
-          commit(groupElements(elements, selectedIds, newId()))
+          commit(groupElements(elements, expanded, newId()))
         }
         return
       }
@@ -231,8 +239,7 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
         // coordinates and could open the pointer-path menu on a stray element.
         e.stopPropagation()
         e.preventDefault()
-        if (tool !== 'select' || selectedIds.size === 0) return
-        openMenuAtSelection()
+        openMenuAtSelection() // self-guards tool + empty selection
         return
       }
 
