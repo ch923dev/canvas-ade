@@ -17,7 +17,7 @@
  *   selection's union-bbox center (keyboard parity for right-click, A4). preventDefault
  *   suppresses Chromium's synthesized `contextmenu` event so the pointer path
  *   (onWellContextMenu, which needs a hit under the cursor) never double-fires.
- * - Tool-shortcut letters (s/n/t/c/a/p/e) — unchanged, moved verbatim from the board.
+ * - Tool-shortcut letters (s/n/c/a/p/e) — unchanged, moved verbatim from the board.
  *
  * All three returned handlers are React props on the well (attached once at the React
  * root, read at dispatch time) — NOT effect-registered window/document listeners — so the
