@@ -1,8 +1,11 @@
 # Spec — Canvas Backdrop (wallpaper mode)
 
 > **Status:** direction + design artifact SIGNED OFF by the user 2026-06-11 (mock v2 + blossom-river
-> scene, see `mocks/`). Implementation queued **after design-audit waves D3/D4** merge.
-> **Branch:** `feat/canvas-backdrop` · two PRs (PR 1 core + user wallpaper · PR 2 bundled scene).
+> scene, see `mocks/`). Implementation queued **after design-audit waves D3/D4** merge (D3/D4 closed
+> 2026-06-12 — unblocked). **Addendum 2026-06-12:** preset library (8 more scenes) + world-grid
+> variants SIGNED OFF by user vote on `mocks/scene-concepts.html` — see `addendum-presets.md`;
+> now four PRs (PR 1 core + wallpaper · PR 2 blossom-river · PR 3 preset library · PR 4 grid variants).
+> **Branch:** `feat/canvas-backdrop`.
 > **Doc lifecycle:** this folder is per-slice — DELETE it in the PR that merges PR 2 (build-history
 > line is the residue).
 
@@ -72,6 +75,9 @@ boards — defaults above bias dim to 0.25 for long-session readability; confirm
   a sibling void-colored overlay div carries the dim alpha.
 - `useBackdropMedia.ts` — `assetId` → `asset.read` bytes → Blob URL; revokes on
   change/unmount/project-switch; exposes load-state (drives missing-file fallback + toast).
+- `sceneRegistry.ts` — preset extensibility seam (lands PR 1, even while it only registers
+  `blossom-river`): scene id validation, palette variants, picker/palette-verb derivation. Shape +
+  roster: `addendum-presets.md` §2.
 - `scenes/blossomRiver.ts` *(PR 2)* — port of the mock renderer (`buildScene`/`renderScene`,
   seed fixed at 7); self-stopping ≤30fps rAF; full stop + one static frame under
   `prefersReducedMotion()` (live `change` listener) and on `visibilitychange`.
@@ -97,12 +103,16 @@ boards — defaults above bias dim to 0.25 for long-session readability; confirm
 // boardSchema.ts — CanvasDoc, v9
 background?: {
   kind: 'none' | 'file' | 'scene'
-  assetId?: string        // kind 'file': 'assets/<sha>.<ext>'
-  scene?: 'blossom-river' // kind 'scene'
-  dim: number             // clamp [0, 0.85]
-  saturation: number      // clamp [0.2, 1.2]
-  gridDots: boolean
+  assetId?: string         // kind 'file': 'assets/<sha>.<ext>'
+  scene?: string           // kind 'scene': SCENE_IDS-validated; unknown => none + toast
+  sceneVariant?: string    // optional palette variant; unknown => scene default
+  dim: number              // clamp [0, 0.85]
+  saturation: number       // clamp [0.2, 1.2]
+  gridDots: boolean        // grid-on-top toggle
+  gridStyle?: 'dots' | 'lines' | 'cross'  // default 'dots'; consumed by PR 4
 }
+// Superseding note (addendum 2026-06-12): scene widened from the 'blossom-river' literal to a
+// registry-validated string; sceneVariant + gridStyle minted now so PR 3/4 need no migration.
 ```
 
 - Migration `8 → 9`: identity bump (field optional; absent ⇒ none). `fromObject` validates kind,
@@ -149,6 +159,15 @@ action + `toObject` round-trip · `useBackdropMedia` URL lifecycle (jsdom, mocke
 **PR 2 — bundled scene**
 - S6 port `blossomRiver.ts` + picker row
 - S7 reduced-motion/hidden gating + e2e probe 3
+
+**PR 3 — preset library** *(addendum 2026-06-12; full detail `addendum-presets.md` §4)*
+- S8 gallery picker upgrade (tier-grouped thumbnails; 🎨 in-app screenshot before merge)
+- S9 revive `drift` + `current` (approved ambient mock numbers)
+- S10 six voted scenes, one commit per scene + in-app screenshot
+- S11 registry drift-guard test + preset persistence e2e
+
+**PR 4 — world-grid variants** *(addendum 2026-06-12)*
+- S12 `gridStyle` dots/lines/cross in the picker grid row (RF `BackgroundVariant` native; no schema bump)
 
 **Out of scope (recorded follow-ups):** board translucency/glass-blur · drag-drop-to-set-wallpaper
 (conflicts with planning-image drop zones) · scene variants (dusk recolor) · asset GC · video
