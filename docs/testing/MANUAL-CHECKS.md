@@ -172,6 +172,26 @@ sweep covers the shell; spot-check at least two different menus per item.
 - [ ] Reduced-motion must NOT break correctness: previews still detach to snapshots during motion
       and reattach on settle; resize handles still drop the instant LOD is entered.
 
+## Keyboard-first canvas (D4-B)
+
+- [ ] Click empty canvas, press Tab repeatedly -> selection ring walks the boards in reading order
+      (top-to-bottom, left-to-right) and wraps; Shift+Tab reverses. An off-screen target scrolls
+      into view (camera centers, zoom kept).
+- [ ] With a board selected: arrows move it 1px, Shift+arrows 10px; HOLD an arrow (key-repeat),
+      release, then Ctrl+Z once -> the WHOLE burst undoes in one step.
+- [ ] Alt+arrows resize (right/down grow, left/up shrink; Shift = 10px); shrinking stops at the
+      240x160 minimum; Ctrl+Z restores in one step per burst.
+- [ ] Enter on a selected board -> the double-click focus fit (camera fits, others dim; terminal/
+      browser cap at 100% zoom); Esc exits focus + clears selection; F2 renames (single selection).
+- [ ] The `?` sheet lists the Boards rows: cycle / move / resize / focus / preview focus-return.
+- [ ] Negative gates: Tab or arrows pressed while typing in an input, in a focused xterm, in a
+      focused planning well (element nudge fires instead), or with a Modal/Menu open -> board
+      selection and geometry never change; native Tab order inside chrome/menus keeps working.
+- [ ] A3 focus-return: click INTO a live browser preview page (keyboard now goes to the page),
+      press Esc -> focus returns to the app, the board shows the selection ring, and Tab/arrows
+      work immediately; in full view the same Esc exits full view. A page that listens for Esc
+      (e.g. closes its own dialog) still receives the key.
+
 ## Persistence / migration
 
 - [ ] Open a project saved at an older `schemaVersion` -> migration runs, no data loss, re-saves at current version.

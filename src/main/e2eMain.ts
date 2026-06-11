@@ -16,6 +16,8 @@ import {
   debugCaptureView,
   debugCaptureViewPng,
   debugCrashView,
+  debugFocusView,
+  debugSendInputToView,
   debugViewBounds,
   debugViewIds,
   debugViewWebContentsId
@@ -45,6 +47,15 @@ export interface E2EMain {
   ): { attached: boolean; bounds: { x: number; y: number; width: number; height: number } } | null
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
+  /** D4-B/A3: give a board's native preview view OS keyboard focus (= clicking into it). */
+  focusView(id: string): boolean
+  /** D4-B/A3: real input through a board's native VIEW (Esc runs the focus-return path). */
+  sendInputToView(
+    id: string,
+    evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]
+  ): boolean
+  /** True when the HOST window's webContents is the focused one (A3 focus-return assert). */
+  hostFocused(): boolean
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
   createTempProject(prefix: string, name: string): Promise<string>
   /** Clear the current dir + delete the temp project (best-effort). */
@@ -159,6 +170,11 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     viewBounds: debugViewBounds,
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)
+    },
+    focusView: debugFocusView,
+    sendInputToView: debugSendInputToView,
+    hostFocused() {
+      return win.webContents.isFocused()
     },
     async createTempProject(prefix, name) {
       const tmp = mkdtempSync(join(tmpdir(), prefix))

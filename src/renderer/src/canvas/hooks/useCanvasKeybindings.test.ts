@@ -10,7 +10,7 @@ const chord = (key: string, mods: Partial<KeyChord> = {}): KeyChord => ({
   ...mods
 })
 
-const FREE = { typing: false, bareKeyAllowed: true }
+const FREE = { typing: false, bareKeyAllowed: true, boardNavAllowed: false }
 
 describe('resolveCanvasKeyAction', () => {
   it('Ctrl+Z / Cmd+Z → undo', () => {
@@ -35,14 +35,22 @@ describe('resolveCanvasKeyAction', () => {
 
   it('undo/redo are suppressed while typing', () => {
     expect(
-      resolveCanvasKeyAction(chord('z', { ctrlKey: true }), { typing: true, bareKeyAllowed: false })
+      resolveCanvasKeyAction(chord('z', { ctrlKey: true }), {
+        typing: true,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
     ).toBeNull()
   })
 
   it('Escape clears selection (only when not typing)', () => {
     expect(resolveCanvasKeyAction(chord('Escape'), FREE)).toEqual({ kind: 'clearSelection' })
     expect(
-      resolveCanvasKeyAction(chord('Escape'), { typing: true, bareKeyAllowed: false })
+      resolveCanvasKeyAction(chord('Escape'), {
+        typing: true,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
     ).toBeNull()
   })
 
@@ -57,22 +65,44 @@ describe('resolveCanvasKeyAction', () => {
   it('1 fits / 0 resets the camera — but not inside a board node or while typing', () => {
     expect(resolveCanvasKeyAction(chord('1'), FREE)).toEqual({ kind: 'fit' })
     expect(resolveCanvasKeyAction(chord('0'), FREE)).toEqual({ kind: 'reset' })
-    expect(resolveCanvasKeyAction(chord('1'), { typing: false, bareKeyAllowed: false })).toBeNull()
-    expect(resolveCanvasKeyAction(chord('0'), { typing: true, bareKeyAllowed: false })).toBeNull()
+    expect(
+      resolveCanvasKeyAction(chord('1'), {
+        typing: false,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
+    ).toBeNull()
+    expect(
+      resolveCanvasKeyAction(chord('0'), {
+        typing: true,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
+    ).toBeNull()
   })
 
   it('t tidies — only with no modifier, not typing, not inside a node', () => {
     expect(resolveCanvasKeyAction(chord('t'), FREE)).toEqual({ kind: 'tidy' })
     expect(resolveCanvasKeyAction(chord('T'), FREE)).toEqual({ kind: 'tidy' })
     expect(resolveCanvasKeyAction(chord('t', { ctrlKey: true }), FREE)).toBeNull()
-    expect(resolveCanvasKeyAction(chord('t'), { typing: false, bareKeyAllowed: false })).toBeNull()
+    expect(
+      resolveCanvasKeyAction(chord('t'), {
+        typing: false,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
+    ).toBeNull()
   })
 
   it('Ctrl/Cmd+G resolves to group (not while typing)', () => {
     expect(resolveCanvasKeyAction(chord('g', { ctrlKey: true }), FREE)).toEqual({ kind: 'group' })
     expect(resolveCanvasKeyAction(chord('g', { metaKey: true }), FREE)).toEqual({ kind: 'group' })
     expect(
-      resolveCanvasKeyAction(chord('g', { ctrlKey: true }), { typing: true, bareKeyAllowed: false })
+      resolveCanvasKeyAction(chord('g', { ctrlKey: true }), {
+        typing: true,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
     ).toBeNull()
     // Alt+Ctrl+G is a different chord — not group.
     expect(resolveCanvasKeyAction(chord('g', { ctrlKey: true, altKey: true }), FREE)).toBeNull()
@@ -80,7 +110,13 @@ describe('resolveCanvasKeyAction', () => {
 
   it('bare f resolves to focusGroup only when bare keys are allowed', () => {
     expect(resolveCanvasKeyAction(chord('f'), FREE)).toEqual({ kind: 'focusGroup' })
-    expect(resolveCanvasKeyAction(chord('f'), { typing: false, bareKeyAllowed: false })).toBeNull()
+    expect(
+      resolveCanvasKeyAction(chord('f'), {
+        typing: false,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
+    ).toBeNull()
     // Modified f is not the bare focus key.
     expect(resolveCanvasKeyAction(chord('f', { ctrlKey: true }), FREE)).toBeNull()
   })
@@ -89,7 +125,11 @@ describe('resolveCanvasKeyAction', () => {
     expect(resolveCanvasKeyAction(chord('k', { ctrlKey: true }), FREE)).toEqual({ kind: 'palette' })
     expect(resolveCanvasKeyAction(chord('K', { metaKey: true }), FREE)).toEqual({ kind: 'palette' })
     expect(
-      resolveCanvasKeyAction(chord('k', { ctrlKey: true }), { typing: true, bareKeyAllowed: false })
+      resolveCanvasKeyAction(chord('k', { ctrlKey: true }), {
+        typing: true,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
     ).toEqual({ kind: 'palette' })
     expect(resolveCanvasKeyAction(chord('k', { ctrlKey: true, shiftKey: true }), FREE)).toBeNull()
     expect(resolveCanvasKeyAction(chord('k', { ctrlKey: true, altKey: true }), FREE)).toBeNull()
@@ -102,12 +142,93 @@ describe('resolveCanvasKeyAction', () => {
       kind: 'shortcuts'
     })
     expect(resolveCanvasKeyAction(chord('?'), FREE)).toEqual({ kind: 'shortcuts' })
-    expect(resolveCanvasKeyAction(chord('?'), { typing: false, bareKeyAllowed: false })).toBeNull()
+    expect(
+      resolveCanvasKeyAction(chord('?'), {
+        typing: false,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
+    ).toBeNull()
     expect(resolveCanvasKeyAction(chord('?', { ctrlKey: true }), FREE)).toBeNull()
   })
 
   it('returns null for unbound keys', () => {
     expect(resolveCanvasKeyAction(chord('a'), FREE)).toBeNull()
     expect(resolveCanvasKeyAction(chord('Enter'), FREE)).toBeNull()
+  })
+})
+
+// D4-B board nav: gated on the stricter boardNavAllowed whitelist (focus on body/pane).
+const NAV = { typing: false, bareKeyAllowed: true, boardNavAllowed: true }
+const NO_NAV = { typing: false, bareKeyAllowed: true, boardNavAllowed: false }
+
+describe('resolveCanvasKeyAction — D4-B board nav', () => {
+  it('Tab cycles forward, Shift+Tab backward — only when boardNavAllowed', () => {
+    expect(resolveCanvasKeyAction(chord('Tab'), NAV)).toEqual({ kind: 'cycleBoard', dir: 1 })
+    expect(resolveCanvasKeyAction(chord('Tab', { shiftKey: true }), NAV)).toEqual({
+      kind: 'cycleBoard',
+      dir: -1
+    })
+    expect(resolveCanvasKeyAction(chord('Tab'), NO_NAV)).toBeNull()
+    // boardNavAllowed omitted (legacy ctx) behaves as false.
+    expect(resolveCanvasKeyAction(chord('Tab'), FREE)).toBeNull()
+  })
+
+  it('Ctrl/Alt/Meta+Tab are not bindings (OS / future surfaces)', () => {
+    expect(resolveCanvasKeyAction(chord('Tab', { ctrlKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Tab', { altKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Tab', { metaKey: true }), NAV)).toBeNull()
+  })
+
+  it('Enter focuses the selected board — bare only, gated', () => {
+    expect(resolveCanvasKeyAction(chord('Enter'), NAV)).toEqual({ kind: 'focusBoard' })
+    expect(resolveCanvasKeyAction(chord('Enter', { shiftKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Enter', { ctrlKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('Enter'), NO_NAV)).toBeNull()
+  })
+
+  it('arrows move 1px, Shift = 10px, in the right directions', () => {
+    expect(resolveCanvasKeyAction(chord('ArrowLeft'), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: -1,
+      dy: 0
+    })
+    expect(resolveCanvasKeyAction(chord('ArrowRight'), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: 1,
+      dy: 0
+    })
+    expect(resolveCanvasKeyAction(chord('ArrowUp', { shiftKey: true }), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: 0,
+      dy: -10
+    })
+    expect(resolveCanvasKeyAction(chord('ArrowDown', { shiftKey: true }), NAV)).toEqual({
+      kind: 'moveBoard',
+      dx: 0,
+      dy: 10
+    })
+  })
+
+  it('Alt+arrows resize by the same 1/10 steps', () => {
+    expect(resolveCanvasKeyAction(chord('ArrowRight', { altKey: true }), NAV)).toEqual({
+      kind: 'resizeBoard',
+      dw: 1,
+      dh: 0
+    })
+    expect(
+      resolveCanvasKeyAction(chord('ArrowLeft', { altKey: true, shiftKey: true }), NAV)
+    ).toEqual({ kind: 'resizeBoard', dw: -10, dh: 0 })
+    expect(resolveCanvasKeyAction(chord('ArrowDown', { altKey: true }), NAV)).toEqual({
+      kind: 'resizeBoard',
+      dw: 0,
+      dh: 1
+    })
+  })
+
+  it('arrows are gated by boardNavAllowed and ignore Ctrl/Meta chords', () => {
+    expect(resolveCanvasKeyAction(chord('ArrowLeft'), NO_NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('ArrowLeft', { ctrlKey: true }), NAV)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('ArrowLeft', { metaKey: true }), NAV)).toBeNull()
   })
 })

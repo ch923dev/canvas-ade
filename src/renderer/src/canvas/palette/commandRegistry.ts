@@ -313,11 +313,19 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { section: 'Canvas', label: 'Disable snapping while dragging', chips: ['hold Ctrl'] },
   { section: 'Canvas', label: 'Toggle diagnostics', chips: ['Ctrl', 'Shift', 'D'] },
   { section: 'Boards', label: 'Rename board', chips: ['F2', '·', 'double-click title'] },
-  { section: 'Boards', label: 'Focus board', chips: ['double-click'] },
+  { section: 'Boards', label: 'Cycle board selection', chips: ['Tab', '·', 'Shift', 'Tab'] },
+  { section: 'Boards', label: 'Move selected boards', chips: ['←↑↓→', 'Shift', '10px'] },
+  { section: 'Boards', label: 'Resize selected boards', chips: ['Alt', '←↑↓→'] },
+  { section: 'Boards', label: 'Focus board', chips: ['Enter', '·', 'double-click'] },
   {
     section: 'Boards',
     label: 'Multi-select boards',
     chips: ['Shift', 'drag', '·', 'Ctrl', 'click']
+  },
+  {
+    section: 'Boards',
+    label: 'Return focus from a clicked preview to the canvas',
+    chips: ['Esc']
   },
   { section: 'Terminal', label: 'Newline without submitting', chips: ['Shift', 'Enter'] },
   {

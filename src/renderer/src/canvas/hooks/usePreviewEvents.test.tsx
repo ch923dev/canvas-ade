@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, cleanup } from '@testing-library/react'
 import { usePreviewStore, type PreviewRuntime } from '../../store/previewStore'
+import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewEvents } from './usePreviewEvents'
 import type { BoardRec } from '../boards/usePreviewManager'
 
@@ -83,6 +84,7 @@ function seedStatus(
 beforeEach(() => {
   stubApi()
   usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+  useCanvasStore.setState({ boards: [], selectedId: null, selectedIds: [], past: [], future: [] })
   recs = { current: new Map() }
   fullViewIdRef = { current: 'board-fv' }
   onCloseFullViewRef = { current: vi.fn<() => void>() }
@@ -116,6 +118,34 @@ describe('usePreviewEvents', () => {
       renderEvents()
       emit({ id: 'other', type: 'escape' })
       expect(onCloseFullViewRef.current).not.toHaveBeenCalled()
+    })
+
+    // D4-B (audit A3): outside full view, Esc-in-preview is the focus-return gesture —
+    // main hands OS focus back to the host window; this handler selects the board so
+    // the keyboard context lands visibly where the user was.
+    it('selects the board (focus-return) when the board is NOT the full-view one', () => {
+      const id = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
+      useCanvasStore.getState().selectBoard(null)
+      renderEvents()
+      emit({ id, type: 'escape' })
+      expect(onCloseFullViewRef.current).not.toHaveBeenCalled()
+      expect(useCanvasStore.getState().selectedId).toBe(id)
+    })
+
+    it('focus-return is existence-gated: a deleted board is never resurrected into selection', () => {
+      renderEvents()
+      emit({ id: 'gone', type: 'escape' })
+      expect(useCanvasStore.getState().selectedId).toBeNull()
+    })
+
+    it('the full-view board closes full view WITHOUT re-selecting via the focus-return branch', () => {
+      const id = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
+      useCanvasStore.getState().selectBoard(null)
+      fullViewIdRef.current = id
+      renderEvents()
+      emit({ id, type: 'escape' })
+      expect(onCloseFullViewRef.current).toHaveBeenCalledTimes(1)
+      expect(useCanvasStore.getState().selectedId).toBeNull()
     })
   })
 

@@ -41,7 +41,6 @@ import {
   type BoardType
 } from '../lib/boardSchema'
 import { FIT_FRAME, GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
-import { cameraAnim } from '../lib/motion'
 import {
   computeAlignment,
   computeResizeSnap,
@@ -77,6 +76,7 @@ import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
 import { useCanvasKeybindings } from './hooks/useCanvasKeybindings'
+import { useBoardKeyboardNav } from './hooks/useBoardKeyboardNav'
 import { useBoardActions } from './hooks/useBoardActions'
 import { CommandPalette } from './palette/CommandPalette'
 import { usePaletteController } from './palette/usePaletteController'
@@ -91,8 +91,8 @@ const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: Orchestratio
 // Fit/reset framing now lives in lib/canvasView (FIT_FRAME / RESET_FRAME) so the
 // camera-cluster buttons in AppChrome share the exact same presets. Used instant for
 // fit-on-load & initial mount; user-triggered fit/reset wrap them in `cameraAnim`.
-/** Single-board focus framing (DESIGN.md §5/§9: ~70px pad). Animated via `cameraAnim`. */
-const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX } as const
+// Single-board focus framing moved to useBoardKeyboardNav (D4-B): Enter and
+// double-click share its focusBoardById, so the two paths can never drift.
 
 /** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5). */
 function FadingDots(): ReactElement {
@@ -521,21 +521,23 @@ function CanvasInner(): ReactElement {
   // draws the ghost rect and commits addBoard on release.
   const { armed, ghost, startPlacement } = useBoardPlacement(rf)
 
+  // D4-B keyboard-first board nav: Tab cycle · arrow move / Alt+arrow resize (one undo
+  // step per burst) · Enter focus. focusBoardById is the SAME camera-fit + dim path the
+  // double-click gesture uses (onNodeDoubleClick delegates below). Handlers dispatch via
+  // useCanvasKeybindings (resolver-driven, drift-guarded against the ? sheet).
+  const {
+    cycleBoard,
+    moveSelectedBoards,
+    resizeSelectedBoards,
+    focusSelectedBoard,
+    focusBoardById
+  } = useBoardKeyboardNav({ rf, paneRef, setFocusedId })
+
   // Double-click = focus: fit the camera to the board and dim the others. Distinct
   // from Full view (Phase 3), which is a modal layer that doesn't move the camera.
   const focusBoard = useCallback(
-    (_e: MouseEvent, node: BoardFlowNode) => {
-      setFocusedId(node.id)
-      selectBoard(node.id)
-      // Terminal/browser content is a raster bitmap (xterm WebGL/canvas, native-view
-      // snapshot) that the camera transform UPSCALES past 100% → blurry text. Cap their
-      // focus zoom at 1 so a focused board lands pixel-crisp; vector boards (planning
-      // notes/pen) re-rasterize sharp at any zoom and may fill the viewport (Z_MAX).
-      const raster = node.data.board.type === 'terminal' || node.data.board.type === 'browser'
-      const maxZoom = raster ? 1 : Z_MAX
-      void rf.fitView(cameraAnim({ ...FOCUS_OPTIONS, maxZoom, nodes: [{ id: node.id }] }))
-    },
-    [rf, selectBoard]
+    (_e: MouseEvent, node: BoardFlowNode) => focusBoardById(node.id),
+    [focusBoardById]
   )
 
   // Drag start: checkpoint for undo + detach live preview views (snapshot carries
@@ -699,7 +701,11 @@ function CanvasInner(): ReactElement {
     snapSuppressRef,
     groupSelection,
     focusGroup,
-    openPalette
+    openPalette,
+    cycleBoard,
+    moveSelectedBoards,
+    resizeSelectedBoards,
+    focusSelectedBoard
   })
 
   // E2E (CANVAS_E2E): expose the imperative test hook once the canvas (and its
@@ -809,6 +815,12 @@ function CanvasInner(): ReactElement {
             panOnScroll
             zoomActivationKeyCode={['Meta', 'Control']}
             deleteKeyCode={['Backspace', 'Delete']}
+            // D4-B: React Flow's built-in node keyboard a11y is replaced by the
+            // useBoardKeyboardNav model. The built-in put tabIndex=0 on every node (Tab
+            // walked raw DOM order, not the canvas) and its node-level arrow-move
+            // committed position changes with NO undo checkpoint — every keyboard move
+            // silently merged into the previous undo step. deleteKeyCode is unaffected.
+            disableKeyboardA11y
             proOptions={{ hideAttribution: true }}
             style={{ width: '100%', height: '100%' }}
           >
