@@ -50,13 +50,15 @@ export const OVERVIEW_FRAME: FitViewOptions = { padding: 0.3, maxZoom: 1 }
 /** Below this camera zoom a board renders as an LOD card (glyph + title + dot). */
 export const LOD_ZOOM = 0.4
 
-// ── Settled-zoom snap band + crisp-zoom predicate (terminal raster fix) ────────
-// The xterm WebGL canvas is a fixed-dpr bitmap: at any camera zoom ≠ 1 the
-// compositor resamples it (blurry), and Chromium's at-rest re-raster rescues DOM
-// text but never canvases. See docs/research/2026-06-11-terminal-font-blur.md.
-// Two levers ride on these: useZoomSettle snaps a SETTLED zoom inside the band to
-// exactly 100% (the working band lands pixel-exact), and useTerminalWebgl holds a
-// GL context only at crisp zoom (DOM renderer re-rasters sharp everywhere else).
+// ── Settled-zoom snap band (terminal raster fix) ───────────────────────────────
+// useZoomSettle snaps a SETTLED zoom inside the band to exactly 100%: an almost-1
+// settle is almost never intentional, and exactly-1 is the nicest terminal state
+// (integer-ish effective font, zero counter-scale slack). The settled zoom also
+// drives the terminal FREEZE re-raster (counter-scale + effective font — see
+// useTerminalSpawn), which keeps the terminal crisp at EVERY settled zoom; the
+// snap is a comfort lever on top, no longer the crispness mechanism.
+// History: docs/research/2026-06-11-terminal-font-blur.md (#122) +
+// docs/research/2026-06-12-terminal-native-reraster-audit.md.
 
 /** Snap band, asymmetric: a 5% undershoot or 6% overshoot around 100% is almost
  *  never an intentional zoom level, while 0.9 / 1.1 plausibly are. */
@@ -67,12 +69,6 @@ export const ZOOM_SNAP_HI = 1.06
  *  Never applied mid-gesture — only after the camera comes to rest. */
 export function snapZoom(zoom: number): number {
   return zoom >= ZOOM_SNAP_LO && zoom <= ZOOM_SNAP_HI ? 1 : zoom
-}
-
-/** True when a settled zoom renders raster content (the WebGL terminal canvas)
- *  pixel-exact — i.e. the camera scale is 1 within float tolerance. */
-export function isCrispZoom(zoom: number): boolean {
-  return Math.abs(zoom - 1) < 1e-3
 }
 
 /** Dot-grid lattice spacing in world px. */

@@ -42,3 +42,17 @@ export function writeStickyFont(n: number): void {
 export function resolveInitialFont(boardFontSize: number | undefined): number {
   return boardFontSize != null ? clampTerminalFont(boardFontSize) : readStickyFont()
 }
+
+/**
+ * Effective RENDER font under the settled-zoom counter-scale (FREEZE re-raster):
+ * pinned × counterScale, deliberately FRACTIONAL and deliberately UNCLAMPED — the
+ * [MIN, MAX] bounds are pinned-space UX bounds, while proportionality is the FREEZE
+ * invariant (grid px ≈ wrapper px at any zoom; clamping the effective value would
+ * desync the grid from the counter-scaled wrapper). This value is ephemeral render
+ * state: it is written ONLY to `term.options.fontSize`, NEVER to `board.fontSize` /
+ * the store / undo (the fromObject clamp would destroy a persisted effective value).
+ */
+export function effectiveTerminalFont(pinned: number, counterScale: number): number {
+  const cs = Number.isFinite(counterScale) && counterScale > 0 ? counterScale : 1
+  return clampTerminalFont(pinned) * cs
+}

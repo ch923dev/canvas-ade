@@ -48,6 +48,7 @@ import {
   MIN_TERMINAL_FONT,
   MAX_TERMINAL_FONT
 } from './terminal/terminalFont'
+import { useTerminalReraster } from './terminal/useTerminalReraster'
 
 export function TerminalBoard({
   board,
@@ -97,16 +98,24 @@ export function TerminalBoard({
   // to avoid a host↔hook import cycle). The returned refs/`fitWhole`/`restart` are listed
   // in every consuming dep array below; destructuring a hook's refs/setters otherwise
   // strips exhaustive-deps' stable-identity recognition (the useGroupInteractions lesson).
-  const { state, termRef, portRef, launchOverrideRef, startLaunchRef, fitWhole, restart } =
-    useTerminalSpawn({
-      board,
-      projectDir,
-      lod,
-      screenRef,
-      fontStepRef,
-      fontResetRef,
-      pasteIntoTerminal
-    })
+  const {
+    state,
+    termRef,
+    portRef,
+    launchOverrideRef,
+    startLaunchRef,
+    fitWhole,
+    restart,
+    counterScale
+  } = useTerminalSpawn({
+    board,
+    projectDir,
+    lod,
+    screenRef,
+    fontStepRef,
+    fontResetRef,
+    pasteIntoTerminal
+  })
 
   const [configOpen, setConfigOpen] = useState(false)
   // D2-B unsaved-changes guard: while the config popover is open, the ⚙ trigger does
@@ -201,27 +210,19 @@ export function TerminalBoard({
     fontResetRef.current = resetFont
   }, [nudgeFont, resetFont])
 
-  // Apply a persisted font change to the LIVE term + reflow the grid (→ PTY resize). Keyed on
-  // board.fontSize (NOT a spawn dep) so resizing never respawns the PTY. Falls back to the BORN
-  // font (frozen at mount) for an unpinned board — bornFont is stable so this still runs only when
-  // board.fontSize actually changes.
-  useEffect(() => {
-    // Unpinned board falls back to the BORN font (frozen at mount), not the live sticky — a live
-    // sticky would have drifted under this board's own nudges and so undo-to-unpinned would not
-    // revert. Sync the authoritative ref FIRST (even before the term mounts) so a nudge after an
-    // external change (undo / project load) steps from the truth.
-    const fs = clampTerminalFont(board.fontSize ?? bornFont)
-    liveFontRef.current = fs
-    const term = termRef.current
-    if (!term) return
-    if (term.options.fontSize === fs) return
-    term.options.fontSize = fs
-    // A bigger font means taller cells -> the row count must drop; whole-cell fit keeps it
-    // clip-free. (Unfitted well: fitWhole swallows the not-laid-out throw; next RO fit applies.)
-    fitWhole()
-    // termRef/fitWhole are stable (a ref + a []-useCallback from useTerminalSpawn); listed
-    // because exhaustive-deps no longer treats the destructured hook refs as stable (#98).
-  }, [board.fontSize, bornFont, fitWhole, termRef])
+  // Settled-zoom native re-raster (FREEZE): the single font seam (the ONLY writer of
+  // term.options.fontSize — pinned × counterScale, never routed through updateBoard/
+  // undo) + the counter-scale wrapper style for the xterm host. All the wiring and
+  // its invariants live in useTerminalReraster.
+  const screenStyle = useTerminalReraster({
+    pinnedFontSize: board.fontSize,
+    bornFont,
+    counterScale,
+    termRef,
+    fitWhole,
+    liveFontRef,
+    identityStyle: screen
+  })
 
   // Refit when devicePixelRatio changes (e.g. the window moved to a monitor with different scaling) —
   // the host doesn't resize, so the ResizeObserver never fires, but the cell height changed.
@@ -361,7 +362,8 @@ export function TerminalBoard({
 
   // Effective font for the disabled-at-bound state: mirror the apply effect's fallback (born font,
   // NOT live sticky) so the buttons track the size this board actually renders at, not another
-  // board's sticky drift.
+  // board's sticky drift. PINNED-space deliberately — the [MIN, MAX] bounds are pinned-space, so
+  // the ± buttons disable at the same pin regardless of zoom (the render font is pin × cs).
   const effectiveFont = clampTerminalFont(board.fontSize ?? bornFont)
   const actions = (
     <>
@@ -651,7 +653,7 @@ export function TerminalBoard({
                   if (payload) termRef.current?.paste(payload)
                 }}
               >
-                <div ref={screenRef} style={screen} />
+                <div ref={screenRef} style={screenStyle} />
                 {/* D2-B 🎨 first-run hint (signed off 2026-06-11): a bare-shell terminal
                     (no launchCommand) shows one dismissible pill pointing at ⚙. Hidden at
                     idle (the Start overlay covers that state); deliberately SHOWN for
@@ -746,6 +748,8 @@ const screenWrap: React.CSSProperties = {
   background: 'var(--inset)'
 }
 
+/** Identity (counterScale = 1) layout for the xterm host; the counter-scaled variant is
+ *  computed inline in render (screenStyle) and reduces to exactly this at cs = 1. */
 const screen: React.CSSProperties = {
   position: 'absolute',
   inset: 0,

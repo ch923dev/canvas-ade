@@ -18,6 +18,7 @@
  *   - startLaunchRef    — the idle "Start" button fires the current mount's launch()
  *   - fitWhole          — the font apply + dpr effects reflow the live grid through it
  *   - restart           — the Restart action / Resume-or-New menu
+ *   - counterScale      — the settled-zoom FREEZE re-raster factor (host wrapper + font seam)
  * Everything else (fitRef, pendingRespawnRef, fontSizeRef, suspendWebglRef, getZoom, webgl, the
  * spawn/respawn callbacks, the spawn effect) is INTERNAL.
  */
@@ -49,7 +50,6 @@ import { useTerminalWebgl } from './useTerminalWebgl'
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
 import { useSettledZoomStore } from '../../../store/settledZoomStore'
-import { isCrispZoom } from '../../../lib/canvasView'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
 const THEME = {
@@ -120,8 +120,8 @@ export interface TerminalSpawnDeps {
   board: TerminalBoardData
   /** Open project folder — a board with no explicit cwd spawns here, not os.homedir(). */
   projectDir: string | null | undefined
-  /** Global LOD (zoom-out) flag. Feeds the WebGL suspension policy (with the settled
-   *  crisp-zoom check); NEVER respawns the PTY. */
+  /** Global LOD (zoom-out) flag. Sole driver of the WebGL suspension policy (the
+   *  counter-scale keeps GL crisp at every settled zoom); NEVER respawns the PTY. */
   lod: boolean
   /** The xterm host div, planted by the host's render (term.open() mounts into it). */
   screenRef: RefObject<HTMLDivElement>
@@ -147,6 +147,14 @@ export interface TerminalSpawnApi {
   startLaunchRef: MutableRefObject<(() => void) | null>
   fitWhole: () => void
   restart: () => void
+  /**
+   * Settled-zoom counter-scale factor (FREEZE re-raster): the host lays the xterm
+   * well out at `boardContent × counterScale` with `transform: scale(1/counterScale)`
+   * and drives the effective render font (pinned × counterScale). 1 in full view and
+   * whenever the settled zoom is unusable. Updates once per camera settle, never per
+   * gesture frame.
+   */
+  counterScale: number
 }
 
 /** Requires ReactFlowProvider (useStoreApi) + BoardFullViewContext in the render tree. */
@@ -194,21 +202,44 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   useEffect(() => {
     fullViewRef.current = isFullView
   }, [isFullView])
+
+  // ── Settled-zoom native re-raster (FREEZE variant) ───────────────────────────
+  // At settled camera zoom z the host lays the xterm well out at `boardContent × z`
+  // and counter-scales it by 1/z (net visual scale 1), while THIS hook drives the
+  // effective render font (pinned × z). The xterm backing store then maps 1:1 to
+  // device pixels at every settled zoom — no camera resample, no defeated hinting
+  // (docs/research/2026-06-12-terminal-native-reraster-audit.md). FREEZE: cols/rows
+  // NEVER change from a zoom settle (see the ResizeObserver gate in the spawn
+  // effect), so the PTY/TUI never reflows on zoom. Full view portals the board
+  // OUTSIDE ReactFlow at visual scale 1 → counter-scale must be identity there.
+  const settledZoom = useSettledZoomStore((s) => s.zoom)
+  const counterScale =
+    isFullView || !Number.isFinite(settledZoom) || settledZoom <= 0 ? 1 : settledZoom
+  // Ref mirror for the spawn closure (initial font) + getZoom — NEVER a spawn dep,
+  // so a zoom settle cannot respawn the PTY (mirrors fontSizeRef).
+  const counterScaleRef = useRef(counterScale)
+  useEffect(() => {
+    counterScaleRef.current = counterScale
+  }, [counterScale])
+
+  // Net visual scale of the xterm element, for the selection shim: the camera
+  // applies scale(z'), the counter-scale wrapper applies scale(1/cs) — at rest
+  // z' === cs so the net is exactly 1 (the shim no-ops); mid-gesture it corrects
+  // by the live ratio. Full view renders outside the camera at scale 1.
   const getZoom = useCallback(
-    (): number => (fullViewRef.current ? 1 : rfStore.getState().transform[2]),
+    (): number =>
+      fullViewRef.current ? 1 : rfStore.getState().transform[2] / counterScaleRef.current,
     [rfStore]
   )
 
-  // WebGL suspension policy: hold a GL context only in detail view at CRISP settled
-  // zoom. The GL canvas is a fixed-dpr bitmap the camera transform resamples — blurry
-  // at any settled zoom ≠ 1 — while the detached fallback (xterm's DOM renderer)
-  // re-rasters sharp at rest at every zoom (docs/research/2026-06-11-terminal-font-blur.md).
-  // Full view renders the board portaled OUTSIDE ReactFlow at visual scale 1, so it
-  // keeps WebGL regardless of the camera. The spawn effect reads this through a ref
-  // (mirrors fontSizeRef) so a zoom settle / LOD flip NEVER respawns the PTY — the
-  // session survives zoom by design.
-  const settledCrisp = useSettledZoomStore((s) => isCrispZoom(s.zoom))
-  const suspendWebgl = lod || (!isFullView && !settledCrisp)
+  // WebGL suspension policy: LOD only. Under the counter-scale the GL canvas backing
+  // store maps 1:1 to device pixels at EVERY settled zoom, so the #122 "release GL at
+  // non-crisp zoom" valve is gone — the renderer no longer swaps on zoom at all. The
+  // WEBGL_BUDGET cap in useTerminalWebgl still bounds the many-terminals case; an
+  // over-budget board falls back to the DOM renderer, which is ALSO crisp at net
+  // scale 1 (perf-only degradation). Read through a ref so a LOD flip NEVER respawns
+  // the PTY — the session survives zoom by design.
+  const suspendWebgl = lod
   const suspendWebglRef = useRef(suspendWebgl)
   useEffect(() => {
     suspendWebglRef.current = suspendWebgl
@@ -337,7 +368,9 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
 
     const term = new Terminal({
       fontFamily: mono,
-      fontSize: resolveInitialFont(fontSizeRef.current),
+      // Effective render font = pinned × counter-scale (FREEZE): the well is laid out
+      // at boardContent × cs, so the initial fit lands the same cols/rows at any zoom.
+      fontSize: resolveInitialFont(fontSizeRef.current) * counterScaleRef.current,
       lineHeight: 1.2,
       cursorBlink: true,
       theme: THEME,
@@ -349,19 +382,21 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     term.open(el)
     termRef.current = term
     fitRef.current = fit
-    // Attach a GL context only when mounting un-suspended (detail view at crisp
-    // settled zoom); otherwise the board runs on the DOM renderer until the
-    // suspension lifts (see the suspend effect in useTerminalWebgl).
+    // Attach a GL context only when mounting un-suspended (not under LOD);
+    // otherwise the board runs on the DOM renderer until the suspension lifts
+    // (see the suspend effect in useTerminalWebgl).
     if (!suspendWebglRef.current) attachWebgl(term)
     // Whole-cell mount fit (clip-free). Routed through the ref so spawn's deps stay byte-identical.
     fitWholeRef.current()
     if (isE2E()) e2eTerminals.set(board.id, term)
 
-    // Scale-correct selection (F2a): the board renders inside React Flow's scaled
-    // viewport, so xterm's native cell math is off by the camera zoom. The capture-phase
-    // shim feeds xterm coordinates corrected for the live zoom (no-op at z = 1). The
-    // `.xterm-screen` element exists once `term.open(el)` ran; `el.parentElement` is the
-    // nodrag/nowheel screenWrap that owns the mouse surface.
+    // Scale-correct selection (F2a): xterm's native cell math is off by the element's
+    // NET visual scale. Under the counter-scale that net is camera-z / counterScale —
+    // exactly 1 at rest (the shim no-ops), the live ratio mid-gesture. getZoom returns
+    // that net (NOT the raw camera z — feeding the camera z here double-corrects, the
+    // audit's proven selection bug). The `.xterm-screen` element exists once
+    // `term.open(el)` ran; `el.parentElement` is the nodrag/nowheel screenWrap that
+    // owns the mouse surface.
     const screenEl = el.querySelector('.xterm-screen') as HTMLElement | null
     const wrapEl = el.parentElement
     const selectionDisp =
@@ -521,7 +556,22 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       }
     })
 
+    // FREEZE gate: a zoom settle changes `el`'s LAYOUT size (the counter-scale wrapper
+    // is boardContent × cs), so the ResizeObserver fires — but a zoom must NEVER refit
+    // (cols/rows are frozen across zoom; the effective font scales instead). The
+    // screenWrap parent is z-INVARIANT (its layout is the board content size in world
+    // px), so its size keys exactly the refits we want: mount (0/undefined → W), real
+    // board resize, LOD/display:none exit, full-view portal in/out. A zoom-only RO
+    // fire leaves the key unchanged and is skipped wholesale.
+    let lastWrapKey: string | null = null
     const ro = new ResizeObserver(() => {
+      // A detached `el` (no parent) yields no key: fall through to the (cheap, guarded)
+      // refit rather than skip — a null key must never satisfy the gate, or two fires
+      // while detached would compare null === null and silently drop a real refit.
+      const wrap = el.parentElement
+      const key = wrap ? `${wrap.clientWidth}x${wrap.clientHeight}` : null
+      if (key !== null && key === lastWrapKey) return // zoom-driven layout change — FREEZE: no refit
+      lastWrapKey = key
       fitWholeRef.current() // whole-cell fit (clip-free); swallows the not-laid-out throw itself
       // First good fit after a hidden/LOD mount spawns the deferred PTY at the
       // board's true width; later fits no-op (`spawned` guard) and just resize.
@@ -622,5 +672,14 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     }
   }, [respawn, board.id, fitWhole])
 
-  return { state, termRef, portRef, launchOverrideRef, startLaunchRef, fitWhole, restart }
+  return {
+    state,
+    termRef,
+    portRef,
+    launchOverrideRef,
+    startLaunchRef,
+    fitWhole,
+    restart,
+    counterScale
+  }
 }

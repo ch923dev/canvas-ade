@@ -145,6 +145,19 @@ export interface CanvasE2E {
     wellBottom: number
     overflow: number
   }
+  /** FREEZE re-raster probe: the live render-state the counter-scale drives. `netScale`
+   *  is the .xterm-screen rendered-vs-layout width ratio (1 at rest under the wrapper);
+   *  `effectiveFont` is the live xterm render font (≈ pinned × counterScale, possibly
+   *  stepped down by the no-clip correction); `hSlack`/`vSlack` are the rendered px
+   *  between the grid's right/bottom edge and the well's (negative ⇒ the grid CLIPS). */
+  terminalCounterScale: (id: string) => null | {
+    effectiveFont: number
+    cols: number
+    rows: number
+    netScale: number | null
+    hSlack: number | null
+    vSlack: number | null
+  }
   /** Drive a REAL board resize (store -> React Flow -> the well ResizeObserver -> fit). */
   setBoardSize: (id: string, w: number, h: number) => void
   /** Pin a terminal's font size (drives the reactive apply + refit). For the clip x font matrix. */
@@ -432,6 +445,26 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         gridBottom: grid.bottom,
         wellBottom: well.bottom,
         overflow: grid.bottom - well.bottom // > 0 => the grid spills past the clip boundary
+      }
+    },
+    terminalCounterScale(id) {
+      const term = e2eTerminals.get(id)
+      if (!term) return null
+      // Resolve via the LIVE xterm's own element (full-view-portal safe, like
+      // terminalCellPoint) — not a node-scoped DOM query.
+      const s = term.element?.querySelector('.xterm-screen') as HTMLElement | null
+      const well = term.element?.closest('.nowheel') as HTMLElement | null
+      const netScale =
+        s && s.offsetWidth > 0 ? s.getBoundingClientRect().width / s.offsetWidth : null
+      const g = s?.getBoundingClientRect()
+      const w = well?.getBoundingClientRect()
+      return {
+        effectiveFont: term.options.fontSize ?? 0,
+        cols: term.cols,
+        rows: term.rows,
+        netScale,
+        hSlack: g && w ? w.right - g.right : null,
+        vSlack: g && w ? w.bottom - g.bottom : null
       }
     },
     setBoardSize(id, w, h) {

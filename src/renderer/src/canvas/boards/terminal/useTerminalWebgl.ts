@@ -43,18 +43,19 @@ export function useTerminalWebgl(
 ): { attachWebgl: (term: Terminal) => void; detachWebgl: () => void } {
   const webglRef = useRef<WebglAddon | null>(null)
 
-  // ── WebGL renderer pooling (#10/#12/#29) + crisp-zoom policy ─────────────────
+  // ── WebGL renderer pooling (#10/#12/#29) ─────────────────────────────────────
   // Chromium caps live WebGL2 contexts (~16, shared with Browser views + React
   // Flow) and silently drops the OLDEST under churn. We (1) hold a GL context only
-  // while the host doesn't `suspend` — it suspends at LOD AND at any non-crisp
-  // settled zoom: the GL canvas is a fixed-dpr bitmap the camera transform
-  // resamples (blurry at z ≠ 1), while the DOM renderer re-rasters sharp at every
-  // zoom at rest (docs/research/2026-06-11-terminal-font-blur.md) — AND (2)
+  // while the host doesn't `suspend` — LOD only since the FREEZE re-raster: the
+  // settled-zoom counter-scale keeps the GL backing store 1:1 with device pixels at
+  // EVERY settled zoom, so the old "release GL at non-crisp zoom" valve is gone
+  // (docs/research/2026-06-12-terminal-native-reraster-audit.md) — AND (2)
   // enforce a hard renderer-wide cap (WEBGL_BUDGET) via the module-level registry,
   // since suspension is global zoom-only and never bounds the
   // many-visible-terminals case. Over the cap a terminal stays on the DOM renderer
-  // and registers a retry that fires when a slot frees. The PTY session is
-  // independent of the renderer, so this is purely a perf/quality lever.
+  // — ALSO crisp at net scale 1 — and registers a retry that fires when a slot
+  // frees. The PTY session is independent of the renderer, so this is purely a
+  // perf lever.
   //
   // The over-budget retry (wantWebgl) and onContextLoss re-acquire closures must
   // re-invoke attachWebgl, but a useCallback can't reference its own binding from its
@@ -128,9 +129,9 @@ export function useTerminalWebgl(
     attachWebglRef.current = attachWebgl
   }, [attachWebgl])
 
-  // Release the GL context while suspended (LOD or a non-crisp settled zoom);
-  // re-acquire when the host un-suspends. Guarded by a live terminal (the spawn
-  // effect owns mount/unmount of `term` itself).
+  // Release the GL context while suspended (LOD); re-acquire when the host
+  // un-suspends. Guarded by a live terminal (the spawn effect owns mount/unmount
+  // of `term` itself).
   useEffect(() => {
     const term = termRef.current
     if (!term) return
