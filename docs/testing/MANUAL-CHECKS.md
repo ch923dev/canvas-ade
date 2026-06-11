@@ -31,6 +31,10 @@ is part of every check.
 - [ ] Copy a mouse-drag selection and paste it back; **Shift+Enter inserts a newline (LF)**, does not submit.
 - [ ] Paste an image / drag a file in -> the path or image reaches the agent.
 - [ ] Font resize (if touched): persists per board + sticky default; **no PTY respawn** (scrollback survives).
+- [ ] Crisp zoom (terminal raster fix): wheel-zoom to ~0.97 and release -> the zoom snaps to exactly
+      100% (status % shows 100) and terminal text is pixel-crisp. Zoom to 1.3 / 0.8 and stop -> text
+      re-sharpens once the camera settles (DOM renderer takes over; transient blur DURING the
+      gesture is expected). Scrollback + the live session survive every zoom change (no respawn).
 - [ ] Kill the board -> the child process tree dies (no zombie agent), no console error.
 - [ ] Config popover (D2-B guard): edit the launch command, press Esc or click away -> "Unsaved
       changes" row arms (no silent discard); Discard closes without persisting; an edit or second

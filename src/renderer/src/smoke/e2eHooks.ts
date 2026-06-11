@@ -124,6 +124,8 @@ export interface CanvasE2E {
   getTool: () => Tool
   /** Set the absolute camera zoom (z < LOD_ZOOM forces LOD on every board). */
   setZoom: (z: number) => void
+  /** Current live camera zoom (asserts the settled-zoom snap, terminalCrisp.e2e). */
+  getZoom: () => number
   /** Pan the camera by a screen-pixel delta (used to push a board's chrome past a window edge). Bug 14. */
   panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
@@ -395,6 +397,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     getTool: () => useCanvasStore.getState().tool,
     setZoom(z) {
       void rf.zoomTo(z, { duration: 0 })
+    },
+    getZoom() {
+      return rf.getViewport().zoom
     },
     panBy(dx, dy) {
       const vp = rf.getViewport()

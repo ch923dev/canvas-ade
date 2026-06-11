@@ -84,6 +84,7 @@ import { useTidyTile } from './hooks/useTidyTile'
 import { useFullView } from './hooks/useFullView'
 import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
 import { useGroupInteractions } from './hooks/useGroupInteractions'
+import { useZoomSettle } from './hooks/useZoomSettle'
 import { TypeGlyph } from './TypeGlyph'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
@@ -764,6 +765,10 @@ function CanvasInner(): ReactElement {
       setViewport({ x: t[0], y: t[1], zoom: t[2] })
     })
   }, [storeApi, setViewport])
+
+  // Settle watcher riding the mirror above: snaps a settled zoom near 100% to exactly
+  // 1 + publishes settled zoom for the terminal WebGL policy (useZoomSettle docs).
+  useZoomSettle()
 
   // Apply the stored camera when a project becomes `open` (restore on load/switch);
   // fall back to fitView when there's no persisted viewport (fit-on-load).

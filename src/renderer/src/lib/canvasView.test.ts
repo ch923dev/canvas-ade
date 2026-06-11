@@ -4,8 +4,12 @@ import {
   Z_MAX,
   LOD_ZOOM,
   GRID_GAP,
+  ZOOM_SNAP_LO,
+  ZOOM_SNAP_HI,
   isLod,
   gridDotOpacity,
+  snapZoom,
+  isCrispZoom,
   FIT_FRAME,
   OVERVIEW_FRAME
 } from './canvasView'
@@ -67,5 +71,50 @@ describe('gridDotOpacity', () => {
       expect(op).toBeGreaterThanOrEqual(0.15)
       expect(op).toBeLessThanOrEqual(1)
     }
+  })
+})
+
+// Terminal raster fix (docs/research/2026-06-11-terminal-font-blur.md): the snap band
+// lands the everyday working zoom pixel-exact for the xterm WebGL canvas; isCrispZoom
+// is the renderer-policy predicate (WebGL only at crisp settled zoom).
+describe('snapZoom', () => {
+  it('snaps the whole band (inclusive bounds) to exactly 1', () => {
+    expect(snapZoom(ZOOM_SNAP_LO)).toBe(1)
+    expect(snapZoom(0.97)).toBe(1)
+    expect(snapZoom(1)).toBe(1)
+    expect(snapZoom(1.03)).toBe(1)
+    expect(snapZoom(ZOOM_SNAP_HI)).toBe(1)
+  })
+
+  it('passes through zooms outside the band untouched', () => {
+    expect(snapZoom(0.9499)).toBe(0.9499)
+    expect(snapZoom(1.0601)).toBe(1.0601)
+    expect(snapZoom(0.5)).toBe(0.5)
+    expect(snapZoom(2)).toBe(2)
+    expect(snapZoom(Z_MIN)).toBe(Z_MIN)
+    expect(snapZoom(Z_MAX)).toBe(Z_MAX)
+  })
+
+  it('band is asymmetric around 1 and sits inside plausibly-intentional levels', () => {
+    expect(ZOOM_SNAP_LO).toBeGreaterThan(0.9) // 0.9 stays a reachable zoom level
+    expect(ZOOM_SNAP_HI).toBeLessThan(1.1) // 1.1 stays a reachable zoom level
+    expect(ZOOM_SNAP_LO).toBeLessThan(1)
+    expect(ZOOM_SNAP_HI).toBeGreaterThan(1)
+  })
+})
+
+describe('isCrispZoom', () => {
+  it('is true only at 1 within float tolerance', () => {
+    expect(isCrispZoom(1)).toBe(true)
+    expect(isCrispZoom(1 + 1e-4)).toBe(true) // d3-zoom float residue
+    expect(isCrispZoom(1 - 1e-4)).toBe(true)
+  })
+
+  it('is false at any real zoom level away from 1 (including inside the snap band)', () => {
+    expect(isCrispZoom(0.97)).toBe(false) // pre-snap value — only the SNAPPED zoom is crisp
+    expect(isCrispZoom(1.03)).toBe(false)
+    expect(isCrispZoom(0.8)).toBe(false)
+    expect(isCrispZoom(1.3)).toBe(false)
+    expect(isCrispZoom(2)).toBe(false)
   })
 })
