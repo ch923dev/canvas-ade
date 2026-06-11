@@ -98,6 +98,23 @@ is part of every check.
 - [ ] A screen reader (or DOM inspect) announces checklist toggles as checkboxes with checked
       state (`role="checkbox"` + `aria-checked`), labelled by the item text.
 
+## Command palette (D4-A)
+
+- [ ] Ctrl+K opens the palette focused; typing filters; Enter runs the active row (e.g. "New
+      terminal board" creates + selects a board); Esc closes; Ctrl+K again toggles closed.
+- [ ] Ctrl+K still opens while typing in a note/URL/title input — but a FOCUSED terminal keeps
+      Ctrl+K for the agent (click the xterm well first to verify it does NOT open).
+- [ ] `?` (canvas focus) opens the shortcuts sheet; filter narrows; ← / Backspace-on-empty
+      returns to commands; chips match the real keys (spot-check 2-3 listed chords).
+- [ ] Selected-board rows appear only with a single selection (rename/duplicate/delete/full
+      view; restart rows on a terminal; export rows on a planning board); "Restart: resume"
+      only when the board has a known agent session.
+- [ ] With full view open: Ctrl+K -> palette; first Esc closes the PALETTE (full view stays),
+      second Esc exits full view.
+- [ ] With a live preview on screen: palette open -> native view drops to its snapshot;
+      close -> live again (ADR 0002).
+- [ ] "Rename board" verb: palette closes, the title editor opens FOCUSED; Enter commits.
+
 ## Board groups
 
 - [ ] Multi-select boards -> Ctrl+G makes a named group box + tab; the tab is clickable (rename / focus / manage).
