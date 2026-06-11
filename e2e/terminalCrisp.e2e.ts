@@ -17,19 +17,24 @@ test.describe('terminal crisp-zoom policy', () => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 10_000)
     await evalIn(page, `window.__canvasE2E.setZoom(1)`)
+    await pollEval(page, `window.__canvasE2E.getZoom() === 1`, 3_000)
 
     // GL may be genuinely unavailable in a software-GL environment (the addon's
     // try/catch falls back to the DOM renderer) — then the policy is unobservable
-    // here; skip rather than fail on the environment.
-    const glAvailable = await pollEval(page, hasGlCanvas(id), 5_000)
+    // here; skip rather than fail on the environment. Generous window: the swap
+    // waits out the settle debounce, and software GL under cold-container load
+    // (the Linux Docker leg) can take seconds to mint a context.
+    const glAvailable = await pollEval(page, hasGlCanvas(id), 10_000)
     test.skip(!glAvailable, 'WebGL unavailable in this environment — renderer policy unobservable')
 
     await evalIn(page, `window.__canvasE2E.setZoom(1.3)`)
-    const released = await pollEval(page, `!(${hasGlCanvas(id)})`, 5_000)
+    await pollEval(page, `window.__canvasE2E.getZoom() !== 1`, 3_000)
+    const released = await pollEval(page, `!(${hasGlCanvas(id)})`, 10_000)
     expect(released, 'GL canvas released at settled zoom 1.3 (DOM renderer takes over)').toBe(true)
 
     await evalIn(page, `window.__canvasE2E.setZoom(1)`)
-    const reattached = await pollEval(page, hasGlCanvas(id), 5_000)
+    await pollEval(page, `window.__canvasE2E.getZoom() === 1`, 3_000)
+    const reattached = await pollEval(page, hasGlCanvas(id), 10_000)
     expect(reattached, 'GL canvas re-attached once the zoom settled back at 1').toBe(true)
   })
 
