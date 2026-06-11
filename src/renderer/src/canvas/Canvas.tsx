@@ -59,9 +59,9 @@ import { PreviewEdge } from './edges/PreviewEdge'
 import { OrchestrationEdge } from './edges/OrchestrationEdge'
 import { previewEdges } from '../lib/previewEdges'
 import { orchestrationEdges } from '../lib/orchestrationEdges'
-import { applyPush, planFullViewAction, planNodeRemovalCleanup } from '../lib/canvasDecisions'
+import { planNodeRemovalCleanup } from '../lib/canvasDecisions'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
-import { BoardActionsContext, type BoardActions } from './boardActions'
+import { BoardActionsContext } from './boardActions'
 import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
@@ -77,6 +77,9 @@ import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
 import { useCanvasKeybindings } from './hooks/useCanvasKeybindings'
+import { useBoardActions } from './hooks/useBoardActions'
+import { CommandPalette } from './palette/CommandPalette'
+import { usePaletteController } from './palette/usePaletteController'
 import { useTidyTile } from './hooks/useTidyTile'
 import { useFullView } from './hooks/useFullView'
 import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
@@ -582,69 +585,11 @@ function CanvasInner(): ReactElement {
     setSelectedConnectorId(null)
   }, [selectBoard])
 
-  // Board-level actions handed to every BoardNode (via context) so the shared ⋯ menu
-  // / maximize button can call them per-id: Full view opens the modal layer (no camera
-  // move), Duplicate clones offset 36px + selects the copy, Delete parks a terminal's
-  // live session then removes the board (mirrors the React Flow delete path).
-  const boardActions = useMemo<BoardActions>(() => {
-    return {
-      // Maximize (⤢) toggles full view. Planning uses a CAMERA fit (Option A — keeps the
-      // board in the canvas under one transform so add/drag stay correct); Browser/Terminal
-      // use the portal modal (they need it to keep live native content alive).
-      requestFullView: (id) => {
-        const type = useCanvasStore.getState().boards.find((b) => b.id === id)?.type
-        const steps = planFullViewAction(
-          type,
-          id,
-          fullViewIdRef.current,
-          cameraFullViewIdRef.current
-        )
-        for (const step of steps) {
-          if (step === 'exitCameraFullView') exitCameraFullView()
-          else if (step === 'enterCameraFullView') enterCameraFullView(id)
-          else if (step === 'closeFullView') closeFullView()
-          else openFullView(id)
-        }
-      },
-      duplicate: (id) => {
-        hardCloseFullView()
-        if (cameraFullViewIdRef.current === id) exitCameraFullView()
-        // Exit focus so the clone isn't born dimmed (mirrors addCentered, #14 / STATE-1).
-        setFocusedId(null)
-        duplicateBoard(id)
-      },
-      remove: (id) => {
-        const removed = useCanvasStore.getState().boards.find((x) => x.id === id)
-        if (removed?.type === 'terminal') void window.api.parkTerminal(id)
-        if (fullViewIdRef.current === id) hardCloseFullView()
-        if (cameraFullViewIdRef.current === id) exitCameraFullView()
-        removeBoard(id)
-        setFocusedId((f) => (f === id ? null : f))
-      },
-      pushPreviewTo: (fromBoardId, url, target) => {
-        const st = useCanvasStore.getState()
-        const from = st.boards.find((b) => b.id === fromBoardId)
-        if (!from) return
-        applyPush(
-          { store: st, clearFocus: () => setFocusedId(null), hardCloseFullView },
-          from,
-          url,
-          target
-        )
-      },
-      // M2: begin a connector drag — arm the ephemeral gesture; the window pointer
-      // listeners (effect below) track the rubber-band + resolve the drop target on release.
-      startConnect: (fromBoardId) => {
-        setSelectedConnectorId(null)
-        setConnectPointer(null)
-        setConnectFromId(fromBoardId)
-      },
-      // S6: ⋯ menu → add this board to a group, animating the cluster re-pack.
-      addToGroup: (boardId, groupId) => reflowAddToGroup(groupId, [boardId]),
-      // S6: ⋯ menu → remove this board from every group it belongs to, in one undo step.
-      removeFromGroup: (boardId) => removeBoardFromAllGroups(boardId)
-    }
-  }, [
+  // Board-level actions handed to every BoardNode (via context) — full view /
+  // duplicate / delete / push-preview / connect / group ops. Extracted verbatim to
+  // useBoardActions (D4-A ratchet payment); the command palette routes its
+  // selected-board verbs through the same object.
+  const boardActions = useBoardActions({
     duplicateBoard,
     removeBoard,
     openFullView,
@@ -655,8 +600,12 @@ function CanvasInner(): ReactElement {
     fullViewIdRef,
     cameraFullViewIdRef,
     reflowAddToGroup,
-    removeBoardFromAllGroups
-  ])
+    removeBoardFromAllGroups,
+    setFocusedId,
+    setSelectedConnectorId,
+    setConnectPointer,
+    setConnectFromId
+  })
 
   // Undo/redo clears store selection (canvasStore) but focus is local component
   // state — clearing it here keeps focus following selection so undo/redo can't
@@ -711,9 +660,28 @@ function CanvasInner(): ReactElement {
   // placement gesture's sibling hook) with the #BUG-048 Esc/blur/pointercancel abort.
   useConnectorDrag({ rf, connectFromId, setConnectFromId, setConnectPointer, addConnector })
 
+  // D4-A command palette: open/close state + the verb adapters, owned by the
+  // controller hook so Canvas stays thin (779-pin). Ctrl+K / `?` route here via
+  // useCanvasKeybindings' openPalette dep.
+  const { paletteView, openPalette, closePalette, paletteVerbs } = usePaletteController({
+    rf,
+    boardActions,
+    addCentered,
+    selectBoard,
+    setFocusedId,
+    groupSelection,
+    fitGroup,
+    selectGroupMembers,
+    removeGroup,
+    tidyAndFit,
+    doUndo,
+    doRedo
+  })
+
   // Canvas keyboard bindings (Wave-5 B5): selected-connector Delete/Backspace · the main keymap
-  // (undo/redo · Esc-clear · diag toggle · 1 fit / 0 reset · t tidy) · the capture-phase
-  // Esc-always-exits-full-view · Ctrl/⌘ snap-suppress tracking — all in useCanvasKeybindings.
+  // (undo/redo · Esc-clear · diag toggle · 1 fit / 0 reset · t tidy · Ctrl/⌘+K palette /
+  // ? shortcuts) · the capture-phase Esc-always-exits-full-view · Ctrl/⌘ snap-suppress
+  // tracking — all in useCanvasKeybindings.
   useCanvasKeybindings({
     rf,
     clearSelection,
@@ -730,7 +698,8 @@ function CanvasInner(): ReactElement {
     exitCameraFullView,
     snapSuppressRef,
     groupSelection,
-    focusGroup
+    focusGroup,
+    openPalette
   })
 
   // E2E (CANVAS_E2E): expose the imperative test hook once the canvas (and its
@@ -1017,6 +986,9 @@ function CanvasInner(): ReactElement {
             onExited={handleFullViewExited}
             onHost={setFullViewHost}
           />
+        )}
+        {paletteView && (
+          <CommandPalette initialView={paletteView} verbs={paletteVerbs} onClose={closePalette} />
         )}
       </FullViewContext.Provider>
     </BoardActionsContext.Provider>

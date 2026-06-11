@@ -1,0 +1,84 @@
+// @vitest-environment jsdom
+/**
+ * Palette intent consumers (D4-A): the one-shot intent channel must reach the
+ * components that own the verb implementations — BoardFrame's inline title edit
+ * (rename) and the terminal spawn hook's restart (via usePaletteRestart). Pins the
+ * by-id targeting, the consume-once semantics, and the resume/new launch override.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { render, screen, cleanup, act, renderHook } from '@testing-library/react'
+import { useRef, type MutableRefObject } from 'react'
+import { BoardFrame } from '../BoardFrame'
+import { useCanvasStore } from '../../store/canvasStore'
+import { sendPaletteIntent, usePaletteIntentStore } from './paletteIntentStore'
+import { usePaletteRestart } from '../boards/terminal/usePaletteRestart'
+
+afterEach(cleanup)
+beforeEach(() => {
+  usePaletteIntentStore.setState({ intent: null })
+  useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null, selectedIds: [] })
+})
+
+describe('rename intent → BoardFrame title edit', () => {
+  it('opens the editor on the matching board only, and consumes the intent', () => {
+    const id = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    useCanvasStore.getState().updateBoard(id, { title: 'agent' })
+    render(
+      <>
+        <BoardFrame type="terminal" boardId={id} title="agent" />
+        <BoardFrame type="planning" boardId="other" title="plan" />
+      </>
+    )
+    expect(screen.queryByLabelText('Board title')).toBeNull()
+    act(() => sendPaletteIntent(id, 'rename'))
+    const inputs = screen.getAllByLabelText('Board title')
+    expect(inputs).toHaveLength(1) // only the targeted board swapped to an input
+    expect((inputs[0] as HTMLInputElement).value).toBe('agent')
+    expect(usePaletteIntentStore.getState().intent).toBeNull() // consumed
+  })
+
+  it('ignores restart intents (wrong kind for this consumer)', () => {
+    const id = useCanvasStore.getState().addBoard('terminal', { x: 0, y: 0 })
+    render(<BoardFrame type="terminal" boardId={id} title="t" />)
+    act(() => sendPaletteIntent(id, 'restart-new'))
+    expect(screen.queryByLabelText('Board title')).toBeNull()
+    // Left for the terminal consumer — NOT consumed by BoardFrame.
+    expect(usePaletteIntentStore.getState().intent?.kind).toBe('restart-new')
+  })
+})
+
+describe('restart intents → usePaletteRestart', () => {
+  function mount(
+    boardId: string,
+    agentSessionId?: string
+  ): {
+    restart: ReturnType<typeof vi.fn>
+    ref: MutableRefObject<string | undefined>
+  } {
+    const restart = vi.fn()
+    const { result } = renderHook(() => {
+      const ref = useRef<string | undefined>(undefined)
+      usePaletteRestart(boardId, agentSessionId, ref, restart)
+      return ref
+    })
+    return { restart, ref: result.current }
+  }
+
+  it('resume: writes the sanitised claude --resume override and restarts', () => {
+    const { restart, ref } = mount('t1', 'sess-42')
+    act(() => sendPaletteIntent('t1', 'restart-resume'))
+    expect(ref.current).toBe('claude --resume sess-42')
+    expect(restart).toHaveBeenCalledTimes(1)
+    expect(usePaletteIntentStore.getState().intent).toBeNull()
+  })
+
+  it('new: clears the override; intents for other boards are ignored', () => {
+    const { restart, ref } = mount('t1', 'sess-42')
+    ref.current = 'stale'
+    act(() => sendPaletteIntent('t2', 'restart-new'))
+    expect(restart).not.toHaveBeenCalled()
+    act(() => sendPaletteIntent('t1', 'restart-new'))
+    expect(ref.current).toBeUndefined()
+    expect(restart).toHaveBeenCalledTimes(1)
+  })
+})

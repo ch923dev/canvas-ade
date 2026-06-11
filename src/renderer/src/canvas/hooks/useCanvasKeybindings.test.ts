@@ -85,6 +85,27 @@ describe('resolveCanvasKeyAction', () => {
     expect(resolveCanvasKeyAction(chord('f', { ctrlKey: true }), FREE)).toBeNull()
   })
 
+  it('Ctrl/Cmd+K opens the palette — EVEN while typing (D4-A sign-off), not with Shift/Alt', () => {
+    expect(resolveCanvasKeyAction(chord('k', { ctrlKey: true }), FREE)).toEqual({ kind: 'palette' })
+    expect(resolveCanvasKeyAction(chord('K', { metaKey: true }), FREE)).toEqual({ kind: 'palette' })
+    expect(
+      resolveCanvasKeyAction(chord('k', { ctrlKey: true }), { typing: true, bareKeyAllowed: false })
+    ).toEqual({ kind: 'palette' })
+    expect(resolveCanvasKeyAction(chord('k', { ctrlKey: true, shiftKey: true }), FREE)).toBeNull()
+    expect(resolveCanvasKeyAction(chord('k', { ctrlKey: true, altKey: true }), FREE)).toBeNull()
+    // Bare k is not a binding.
+    expect(resolveCanvasKeyAction(chord('k'), FREE)).toBeNull()
+  })
+
+  it('? opens the shortcuts view — bare-key guarded like 1/0/t, Shift implied by the char', () => {
+    expect(resolveCanvasKeyAction(chord('?', { shiftKey: true }), FREE)).toEqual({
+      kind: 'shortcuts'
+    })
+    expect(resolveCanvasKeyAction(chord('?'), FREE)).toEqual({ kind: 'shortcuts' })
+    expect(resolveCanvasKeyAction(chord('?'), { typing: false, bareKeyAllowed: false })).toBeNull()
+    expect(resolveCanvasKeyAction(chord('?', { ctrlKey: true }), FREE)).toBeNull()
+  })
+
   it('returns null for unbound keys', () => {
     expect(resolveCanvasKeyAction(chord('a'), FREE)).toBeNull()
     expect(resolveCanvasKeyAction(chord('Enter'), FREE)).toBeNull()

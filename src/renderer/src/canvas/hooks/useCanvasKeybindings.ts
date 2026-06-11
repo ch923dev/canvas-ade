@@ -1,8 +1,10 @@
 /**
- * Canvas keyboard bindings, extracted from Canvas.tsx (Wave-5 B5 god-file split). Owns
- * the four keydown concerns as one cohesive hook — behavior-preserving, no new bindings:
+ * Canvas keyboard bindings, extracted from Canvas.tsx (Wave-5 B5 god-file split; the
+ * extraction was behavior-preserving — D3-C/D4-A added bindings since). Owns the four
+ * keydown concerns as one cohesive hook:
  *   1. selected-connector Delete/Backspace (bubble)
- *   2. the main keymap: undo/redo · Esc-clear · diag toggle · 1 fit / 0 reset · t tidy (bubble)
+ *   2. the main keymap: undo/redo · Esc-clear · diag toggle · 1 fit / 0 reset · t tidy ·
+ *      Ctrl/⌘+K palette / ? shortcuts (D4-A) (bubble)
  *   3. Esc-always-exits-full-view (CAPTURE phase — must beat xterm's stopPropagation)
  *   4. Ctrl/⌘ snap-suppress tracking (keydown+keyup, reset on blur/visibilitychange)
  *
@@ -36,6 +38,8 @@ export type CanvasKeyAction =
   | { kind: 'tidy' }
   | { kind: 'group' }
   | { kind: 'focusGroup' }
+  | { kind: 'palette' }
+  | { kind: 'shortcuts' }
 
 /**
  * Pure: map a bubble-phase keydown to its canvas action, preserving the EXACT precedence of
@@ -55,6 +59,11 @@ export function resolveCanvasKeyAction(
   // Undo/redo first (early-return in the original, so they win over the Esc/d/1/0/t chain).
   if (mod && k === 'z' && !typing) return { kind: e.shiftKey ? 'redo' : 'undo' }
   if (mod && k === 'y' && !e.shiftKey && !typing) return { kind: 'redo' }
+  // Ctrl/⌘+K opens (toggles) the command palette — deliberately NO typing guard
+  // (D4-A sign-off: the chord is never text entry, Linear/VS Code convention). A
+  // focused xterm never lets this bubble (stopPropagation), so a terminal keeps
+  // Ctrl+K for the agent automatically.
+  if (mod && k === 'k' && !e.shiftKey) return { kind: 'palette' }
   // Ctrl/⌘+G groups the current selection (no Alt — different chord). Wins over the bare-key
   // chain like undo/redo. Guarded against firing while typing in a field.
   if (mod && k === 'g' && !e.shiftKey && !typing) return { kind: 'group' }
@@ -66,6 +75,11 @@ export function resolveCanvasKeyAction(
   if (k === 't' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey) return { kind: 'tidy' }
   if (k === 'f' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey)
     return { kind: 'focusGroup' }
+  // `?` opens the palette's shortcuts view. Bare-key guarded like 1/0/t (never from
+  // an input or a focusable board surface); `?` arrives as Shift+/ so shiftKey is NOT
+  // excluded — only Ctrl/⌘/Alt chords are.
+  if (e.key === '?' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey)
+    return { kind: 'shortcuts' }
   return null
 }
 
@@ -88,6 +102,8 @@ export interface CanvasKeybindingDeps {
   groupSelection?: () => void
   /** Focus a group (bare `f`). Optional: real impl wired by Canvas in S4. */
   focusGroup?: () => void
+  /** Open/toggle the command palette (Ctrl/⌘+K → 'commands', `?` → 'shortcuts'). D4-A. */
+  openPalette?: (view: 'commands' | 'shortcuts') => void
 }
 
 export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
@@ -107,7 +123,8 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     exitCameraFullView,
     snapSuppressRef,
     groupSelection,
-    focusGroup
+    focusGroup,
+    openPalette
   } = deps
 
   // 1. While an orchestration connector is selected, Delete/Backspace removes it. Selecting a
@@ -179,11 +196,29 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
         case 'focusGroup':
           focusGroup?.()
           break
+        case 'palette':
+          e.preventDefault()
+          openPalette?.('commands')
+          break
+        case 'shortcuts':
+          e.preventDefault()
+          openPalette?.('shortcuts')
+          break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [rf, clearSelection, doUndo, doRedo, tidyAndFit, setDiag, groupSelection, focusGroup])
+  }, [
+    rf,
+    clearSelection,
+    doUndo,
+    doRedo,
+    tidyAndFit,
+    setDiag,
+    groupSelection,
+    focusGroup,
+    openPalette
+  ])
 
   // 3. Esc ALWAYS exits full view — even when a board's own input owns focus. Must run in the
   // CAPTURE phase (window → target): xterm calls stopPropagation() on keydown, so a bubble-phase
@@ -199,6 +234,10 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
         // leave the confirm unanswered (fail-open). Bail so Esc reaches the modal's bubble
         // listener; a second Esc then exits full-view.
         if (document.querySelector('[data-confirm-active]')) return
+        // D4-A: an open command palette owns the next Esc layer (after the confirm gate,
+        // never before it) — bail so Esc bubbles to the palette's Modal listener and
+        // closes it; the following Esc then exits full view. One Esc, one layer.
+        if (document.querySelector('[data-palette-open]')) return
         e.preventDefault()
         e.stopPropagation()
         if (cameraFullViewId) exitCameraFullView()

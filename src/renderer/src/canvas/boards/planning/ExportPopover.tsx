@@ -9,7 +9,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchema'
-import { showToast } from '../../../store/toastStore'
+import { runBoardExport } from './runExport'
 import { IconBtn } from '../../BoardFrame'
 
 export function ExportPopover({ board }: { board: PlanningBoardData }): ReactElement {
@@ -19,41 +19,12 @@ export function ExportPopover({ board }: { board: PlanningBoardData }): ReactEle
     top: -9999,
     left: -9999
   })
+  // Build → save → toast-on-failure lives in runBoardExport (shared with the
+  // command palette's export verbs since D4-A).
   const runExport = useCallback(
     async (format: 'png' | 'svg') => {
       setExportOpen(false)
-      try {
-        const { buildExport } = await import('./exportBoard')
-        const { bytes, ext } = await buildExport(board, format)
-        // export:save RETURNS a discriminated result — it never throws on a write failure,
-        // so the catch below alone would let a real failure (permission denied / disk full)
-        // look like a user cancel. Inspect the result: surface a genuine error, but stay
-        // silent on an explicit cancel (the user dismissed the save dialog).
-        const res = await window.api.export.save({
-          bytes,
-          ext,
-          defaultName: board.title || 'whiteboard'
-        })
-        if (!res.ok && !res.canceled) {
-          // eslint-disable-next-line no-console
-          console.error('whiteboard export failed:', res.error)
-          // Fixed copy: res.error is a raw OS/API string (paths, ENOENT) and the toast
-          // is read aloud by the alert region; the console line above keeps the detail.
-          // D1-A: failures route to the app toast channel (was a board-anchored note);
-          // board-keyed so a quick retry replaces the toast instead of stacking.
-          showToast({
-            id: `export-failed-${board.id}`,
-            kind: 'error',
-            message: res.error
-              ? 'Export failed — check file permissions and disk space'
-              : 'Export failed'
-          })
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('whiteboard export failed', err)
-        showToast({ id: `export-failed-${board.id}`, kind: 'error', message: 'Export failed' })
-      }
+      await runBoardExport(board, format)
     },
     [board]
   )
