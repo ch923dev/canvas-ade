@@ -95,6 +95,7 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 | Browser board scale | Scales WITH the camera (snapshot scales as a unit), not 1:1. Locked in 1-D. |
 | Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session syncs all presets. ADR 0002. |
 | Checklist | A Planning **element** (card inside a Planning board), not a 4th board type / dock button. Decided 2026-05-29. |
+| Canvas backdrop | Per-project **screen-fixed** wallpaper layer behind RF (none / user file / bundled scene), dim+saturation, schema **v9** `background`, settings-class (never undoable). Scene ids registry-resolved at render (unknown ⇒ void+toast, preserved). ADR 0006. |
 | Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/archive/build-history.md`. |
 | Build matrix | Full: win + mac + linux × x64/arm64 (CI). Local verify = Windows x64 only here. |
 | Target | Single-user desktop (no multiplayer). |

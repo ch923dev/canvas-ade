@@ -32,7 +32,7 @@ dropped from scope; revivable later as just another bundled scene).
 | Animation policy | Video: muted loop. Scene: rAF ≤30fps. Both pause on `document.hidden`; freeze to a still under reduced-motion. |
 | Persistence | `canvas.json` schema **v8 → v9**, optional `background` field. NOT undoable (settings-class, like `viewport`). |
 | Native previews | Live Browser boards stay opaque over the backdrop (inherent — ADR 0002). Accepted. |
-| Contract | Recorded as **ADR 0003** + a CLAUDE.md Locked-decisions row (`design-reference/` is read-only; amendments live in the ADR, as with the D0 token deltas). |
+| Contract | Recorded as **ADR 0006** (spec originally said 0003 — taken by llm-egress) + a CLAUDE.md Locked-decisions row (`design-reference/` is read-only; amendments live in the ADR, as with the D0 token deltas). |
 
 ## 3. UX spec
 
