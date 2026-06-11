@@ -29,7 +29,7 @@ import type {
 } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { screenToBoard, screenScale } from '../../lib/pen'
-import { BoardFrame, IconBtn } from '../BoardFrame'
+import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
@@ -55,20 +55,7 @@ import { buildContextMenuEntries } from './planning/contextMenuEntries'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
 import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
-import { ExportPopover } from './planning/ExportPopover'
-
-const TOOLS: ReadonlyArray<{
-  tool: PlanTool
-  icon: 'select' | 'note' | 'text' | 'check' | 'arrow' | 'pen' | 'erase'
-}> = [
-  { tool: 'select', icon: 'select' },
-  { tool: 'note', icon: 'note' },
-  { tool: 'text', icon: 'text' },
-  { tool: 'check', icon: 'check' },
-  { tool: 'arrow', icon: 'arrow' },
-  { tool: 'pen', icon: 'pen' },
-  { tool: 'erase', icon: 'erase' }
-]
+import { PlanningToolbar } from './planning/PlanningToolbar'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -334,6 +321,7 @@ export function PlanningBoard({
   // menu builder) are threaded in here.
   const {
     startElementDrag,
+    startEndpointDrag,
     onWellPointerDown,
     onWellPointerMove,
     onWellDoubleClick,
@@ -346,7 +334,8 @@ export function PlanningBoard({
     marqueeRect,
     draftTextBox,
     pendingErase,
-    snapGuides
+    snapGuides,
+    endpointDrag
   } = usePlanningPointer({
     tool,
     setTool,
@@ -372,58 +361,16 @@ export function PlanningBoard({
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1,
-        padding: 2,
-        background: 'var(--inset)',
-        borderRadius: 'var(--r-inner)',
-        border: '1px solid var(--border-subtle)',
-        marginRight: 2
+    <PlanningToolbar
+      board={board}
+      tool={tool}
+      snapEnabled={snapEnabled}
+      onPickTool={(t) => {
+        setTool(t)
+        clearSel()
       }}
-      // Keep tool clicks from starting the title-bar drag.
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      {TOOLS.map(({ tool: t, icon }) => (
-        <IconBtn
-          key={t}
-          name={icon}
-          title={t}
-          size={15}
-          active={tool === t}
-          onClick={() => {
-            setTool(t)
-            clearSel()
-          }}
-        />
-      ))}
-      <div
-        style={{
-          width: 1,
-          alignSelf: 'stretch',
-          background: 'var(--border-subtle)',
-          margin: '0 2px'
-        }}
-      />
-      <IconBtn
-        name="magnet"
-        title={snapEnabled ? 'Snapping on' : 'Snapping off'}
-        size={15}
-        active={snapEnabled}
-        onClick={() => setSnapEnabled((v) => !v)}
-      />
-      <div
-        style={{
-          width: 1,
-          alignSelf: 'stretch',
-          background: 'var(--border-subtle)',
-          margin: '0 2px'
-        }}
-      />
-      <ExportPopover board={board} />
-    </div>
+      onToggleSnap={() => setSnapEnabled((v) => !v)}
+    />
   ) : undefined
 
   // While a move is in flight, render the dragged element shifted by its transient
@@ -584,6 +531,8 @@ export function PlanningBoard({
             wellRef.current?.focus()
           }}
           onDragStart={startElementDrag}
+          endpointDrag={endpointDrag}
+          onEndpointDragStart={startEndpointDrag}
         />
 
         {/* DOM elements: notes, free text, checklists. */}
