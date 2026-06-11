@@ -1,6 +1,8 @@
-import { it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { it, expect, vi, afterEach } from 'vitest'
+import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { ChecklistCard } from './ChecklistCard'
+
+afterEach(cleanup)
 
 const el = {
   id: 'c1',
@@ -31,4 +33,24 @@ it('starts a drag when the header (e.g. the count badge) is pressed', () => {
   // the old `e.target === e.currentTarget` guard wrongly excluded it.
   fireEvent.pointerDown(screen.getByText('0/1'))
   expect(onDragStart).toHaveBeenCalledTimes(1)
+})
+
+it('A10: the item toggle is announced as a checkbox (role + aria-checked) and toggles on click', () => {
+  const onToggle = vi.fn()
+  render(
+    <ChecklistCard
+      element={{ ...el, items: [{ id: 'i1', label: 'a', done: true }] }}
+      interactive
+      onDragStart={() => {}}
+      onToggle={onToggle}
+      onChangeTitle={() => {}}
+      onChangeItem={() => {}}
+      onAddItem={() => {}}
+      onRemoveItem={() => {}}
+    />
+  )
+  const box = screen.getByRole('checkbox', { name: 'a' })
+  expect(box.getAttribute('aria-checked')).toBe('true')
+  fireEvent.click(box)
+  expect(onToggle).toHaveBeenCalledWith('c1', 'i1')
 })

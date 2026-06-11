@@ -46,6 +46,8 @@ export interface ChecklistCardProps {
 function Checkbox({ done }: { done: boolean }): ReactElement {
   return (
     <span
+      // Decorative — the owning button carries role="checkbox" + aria-checked (A10).
+      aria-hidden
       // ca-t-check (A12): the toggle fill/border transition lives in a class so
       // prefers-reduced-motion can suppress it (index.css media block).
       className="ca-t-check"
@@ -237,7 +239,17 @@ export function ChecklistCard({
           >
             <button
               type="button"
+              // A10: announced as a real checkbox (role + checked state); the visible
+              // square below is purely decorative. Stays a <button> so Space/Enter
+              // toggling and focusability come free.
+              role="checkbox"
+              aria-checked={item.done}
+              aria-label={item.label || 'Checklist item'}
               title={item.done ? 'Mark not done' : 'Mark done'}
+              // Keys pressed on a focused checkbox stay out of the well's handlers —
+              // an arrow would nudge the whole card mid-AT-exploration (D3-C). Matches
+              // the title/item inputs; Space/Enter activation is native, not bubbled.
+              onKeyDown={(e) => e.stopPropagation()}
               // Block the press only in select mode; a draw gesture may begin over
               // the checkbox and should reach the well (#6). Toggling is a click.
               onPointerDown={(e) => {

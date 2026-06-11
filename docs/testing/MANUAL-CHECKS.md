@@ -84,6 +84,20 @@ is part of every check.
 - [ ] Works zoomed in/out (handles scale with the camera; the drop lands under the cursor) and
       after dragging the whole arrow first.
 
+## Planning keyboard (D3-C)
+
+- [ ] Click a note's grip ring -> arrows nudge it 1px, Shift+arrow 10px; press-and-hold then ONE
+      Ctrl+Z restores the pre-burst position (a burst = one undo step).
+- [ ] Nudge a grouped element -> the whole group moves; a locked member stays put.
+- [ ] Marquee two elements -> Ctrl+G groups, Ctrl+Shift+G ungroups; with the well focused the
+      canvas-level BOARD-group Ctrl+G must NOT fire; with canvas focus (click empty canvas,
+      multi-select boards) board-grouping still works.
+- [ ] With an element selected, Shift+F10 (or the Menu key) opens the element context menu near
+      the selection; arrows walk the items; Escape closes and the well keeps focus.
+- [ ] Arrows while typing in a note/checklist/text field move the CARET, never the element.
+- [ ] A screen reader (or DOM inspect) announces checklist toggles as checkboxes with checked
+      state (`role="checkbox"` + `aria-checked`), labelled by the item text.
+
 ## Board groups
 
 - [ ] Multi-select boards -> Ctrl+G makes a named group box + tab; the tab is clickable (rename / focus / manage).

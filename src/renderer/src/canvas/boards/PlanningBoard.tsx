@@ -38,7 +38,7 @@ import { SIZE_PX, tokenFromHeight } from './planning/textStyle'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { ImageCard } from './planning/ImageCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
-import { shortcutTool, type PlanTool } from './planning/tools'
+import { type PlanTool } from './planning/tools'
 import {
   patchElement,
   translateMany,
@@ -48,11 +48,11 @@ import {
   removeItem,
   setItemLabel,
   isLocked,
-  expandGroups,
   setNoteTint
 } from './planning/elements'
 import { buildContextMenuEntries } from './planning/contextMenuEntries'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
+import { usePlanningKeyboard } from './planning/usePlanningKeyboard'
 import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
 import { PlanningToolbar } from './planning/PlanningToolbar'
@@ -315,6 +315,27 @@ export function PlanningBoard({
     [elements, beginChange, commit, clearSel, board.w, board.h]
   )
 
+  // ── Well keyboard handlers (D3-C extraction) ─────────────────────────────────
+  // Delete/Backspace, arrow-key nudge, Ctrl+G/Ctrl+Shift+G group/ungroup,
+  // Shift+F10/ContextMenu menu-open, and the tool-shortcut letters all live in
+  // usePlanningKeyboard; the well below wires its three handlers.
+  const { onWellKeyDown, onWellKeyUp, onWellBlur } = usePlanningKeyboard({
+    tool,
+    setTool,
+    elements,
+    selectedIds,
+    setSelectedIds,
+    clearSel,
+    commit,
+    beginChange,
+    zoom,
+    wellRef,
+    measuredRef,
+    buildMenuEntries,
+    setContextMenu,
+    newId
+  })
+
   // ── Whiteboard pointer state machine (Wave-5 B5 extraction) ──────────────────
   // The gesture handlers + transient gesture render-state live in usePlanningPointer;
   // the inputs it can't own (selection, store commit/undo, the well/measure refs, the
@@ -452,45 +473,9 @@ export function PlanningBoard({
         onContextMenu={onWellContextMenu}
         onDrop={onWellDrop}
         onDragOver={onWellDragOver}
-        onKeyDown={(e) => {
-          if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
-            e.stopPropagation()
-            e.preventDefault()
-            // Group precedence then lock precedence: expand to whole groups, then keep
-            // only the unlocked members (lock wins over group). One checkpoint, and
-            // none if nothing was removable.
-            const expanded = expandGroups(elements, selectedIds)
-            const removable = new Set(
-              [...expanded].filter((rid) => {
-                const el = elements.find((x) => x.id === rid)
-                return el !== undefined && !isLocked(el)
-              })
-            )
-            if (removable.size > 0) {
-              beginChange()
-              commit(elements.filter((el) => !removable.has(el.id)))
-            }
-            clearSel()
-            return
-          }
-          const next = shortcutTool(e.key, {
-            ctrl: e.ctrlKey,
-            meta: e.metaKey,
-            alt: e.altKey
-          })
-          if (next) {
-            // Keep a handled tool key from also reaching the global Canvas
-            // window-keydown handler. Our letters (s/n/c/a/p/e) don't collide with
-            // today's bare-key globals (1/0/t), but the global typing-guard only
-            // suppresses INPUT/TEXTAREA/contentEditable — NOT this focusable div — so
-            // this native stop (React dispatches at the root container) future-proofs
-            // against a new bare-letter global silently double-firing here.
-            e.stopPropagation()
-            e.preventDefault()
-            setTool(next)
-            clearSel()
-          }
-        }}
+        onKeyDown={onWellKeyDown}
+        onKeyUp={onWellKeyUp}
+        onBlur={onWellBlur}
         style={{
           position: 'absolute',
           inset: 0,
