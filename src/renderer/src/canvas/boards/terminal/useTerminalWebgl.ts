@@ -74,6 +74,15 @@ export function useTerminalWebgl(
         return
       }
       wantWebgl.delete(boardId)
+      // A failed activation can throw AFTER the addon appended its canvas: the
+      // WebglRenderer constructor passes its GL2 check, appends to .xterm-screen,
+      // then can still die in shader/atlas setup (deterministic on the Linux e2e
+      // leg's software GL) — and xterm does not unwind the append. Without a sweep
+      // every retry leaks one dead canvas (e2e-caught: canvases grew per zoom
+      // cycle). Snapshot the screen's canvases and remove only what THIS attempt
+      // added, so a sibling renderer's canvas is never touched.
+      const screenEl = term.element?.querySelector('.xterm-screen') ?? null
+      const beforeCanvases = screenEl ? new Set(screenEl.querySelectorAll('canvas')) : null
       try {
         const webgl = new WebglAddon()
         webgl.onContextLoss(() => {
@@ -91,8 +100,13 @@ export function useTerminalWebgl(
         term.loadAddon(webgl)
         webglRef.current = webgl
       } catch {
-        /* GL unavailable — xterm falls back to the DOM/canvas renderer */
+        /* GL unavailable — xterm falls back to the DOM renderer */
         releaseWebglSlot(boardId)
+        if (screenEl && beforeCanvases) {
+          for (const c of screenEl.querySelectorAll('canvas')) {
+            if (!beforeCanvases.has(c)) c.remove()
+          }
+        }
       }
     },
     [boardId, suspendRef, termRef]
