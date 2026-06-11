@@ -63,6 +63,10 @@ test.describe('D4-C wayfinding minimap (real OS input)', () => {
 
     await page.keyboard.press('m')
     await expect(minimap(page)).toBeVisible()
+    // Let the island's 120ms entrance fade fully settle before measuring/clicking —
+    // a click raced into the fade is what Playwright's "element is not stable"
+    // retries were absorbing (the matrix first-try flake window).
+    await page.waitForTimeout(200)
     const rects = page.locator('.react-flow__minimap-node')
     await expect(rects).toHaveCount(2)
     // B is the bottom-right board, so its minimap rect is the further-right one —
