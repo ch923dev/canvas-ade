@@ -243,9 +243,12 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
           <input
             ref={inputRef}
             data-test="palette-input"
-            role="combobox"
-            aria-expanded="true"
-            aria-controls={listboxId}
+            // Combobox semantics belong to the COMMANDS view only (review r1): in the
+            // shortcuts view the list is read-only prose with no option children, so a
+            // combobox pointing at it would be invalid ARIA — there it's a plain filter.
+            role={view === 'commands' ? 'combobox' : undefined}
+            aria-expanded={view === 'commands' ? 'true' : undefined}
+            aria-controls={view === 'commands' ? listboxId : undefined}
             aria-activedescendant={
               view === 'commands' && active ? `${baseId}-opt-${active.id}` : undefined
             }
@@ -263,7 +266,10 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
         <div
           className="cp-list"
           ref={listRef}
-          role="listbox"
+          // Listbox only while options exist (commands view). The shortcuts sheet stays
+          // role-less plain content — `list` would be invalid too (its rows aren't
+          // listitem children; group wrappers intervene). Review r1.
+          role={view === 'commands' ? 'listbox' : undefined}
           id={listboxId}
           data-test="palette-list"
         >

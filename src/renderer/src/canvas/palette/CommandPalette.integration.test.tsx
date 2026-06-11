@@ -197,6 +197,11 @@ describe('shortcuts view', () => {
   it('? opens straight to the sheet; filter narrows rows; back returns to commands', () => {
     open({ initialView: 'shortcuts' })
     expect(screen.getByText('Fit all boards')).toBeTruthy()
+    // Review r1 (ARIA): the read-only sheet has no option children, so neither the
+    // combobox nor the listbox role may be present in this view.
+    expect(input().getAttribute('role')).toBeNull()
+    expect(input().getAttribute('aria-controls')).toBeNull()
+    expect(screen.getByTestId('palette-list').getAttribute('role')).toBeNull()
     fireEvent.change(input(), { target: { value: 'nudge' } })
     expect(screen.getByText('Nudge selected elements')).toBeTruthy()
     expect(screen.queryByText('Fit all boards')).toBeNull()

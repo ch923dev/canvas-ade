@@ -8,7 +8,7 @@
  * switches nothing (bare keys die in the palette input's typing guard), so it only
  * ever opens from the canvas.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { cameraAnim } from '../../lib/motion'
@@ -79,36 +79,53 @@ export function usePaletteController(deps: PaletteControllerDeps): PaletteContro
     [rf, selectBoard, setFocusedId]
   )
 
-  const paletteVerbs: Omit<PaletteVerbs, 'showShortcuts'> = {
-    newBoard: addCentered,
-    goToBoard,
-    // Rename/restart are implemented inside BoardFrame / the terminal spawn hook —
-    // routed via the one-shot intent channel (sent AFTER the palette closed; the
-    // palette defers run() one macrotask past onClose).
-    renameBoard: (id) => sendPaletteIntent(id, 'rename'),
-    restartTerminal: (id, mode) =>
-      sendPaletteIntent(id, mode === 'resume' ? 'restart-resume' : 'restart-new'),
-    duplicateBoard: (id) => boardActions.duplicate(id),
-    deleteBoard: (id) => boardActions.remove(id),
-    openFullView: (id) => boardActions.requestFullView(id),
-    exportPlanning: (id, format) => {
-      const board = useCanvasStore.getState().boards.find((b) => b.id === id)
-      if (board?.type === 'planning') void runBoardExport(board, format)
-    },
-    groupSelection,
-    focusGroup: (id) => {
-      selectGroupMembers(id)
-      fitGroup(id)
-    },
-    ungroup: removeGroup,
-    tidy: tidyAndFit,
-    fitAll: () => void rf.fitView(cameraAnim(FIT_FRAME)),
-    // Recenter content at 100% rather than zoomTo(1)-in-place (#41) — same frame the
-    // keymap's `0` uses.
-    resetZoom: () => void rf.fitView(cameraAnim(RESET_FRAME)),
-    undo: doUndo,
-    redo: doRedo
-  }
+  // Memoised (review r1): a per-render literal would cascade through CommandPalette's
+  // verbs-keyed memos and re-run buildCommands on every Canvas re-render while open.
+  const paletteVerbs = useMemo<Omit<PaletteVerbs, 'showShortcuts'>>(
+    () => ({
+      newBoard: addCentered,
+      goToBoard,
+      // Rename/restart are implemented inside BoardFrame / the terminal spawn hook —
+      // routed via the one-shot intent channel (sent AFTER the palette closed; the
+      // palette defers run() one macrotask past onClose).
+      renameBoard: (id) => sendPaletteIntent(id, 'rename'),
+      restartTerminal: (id, mode) =>
+        sendPaletteIntent(id, mode === 'resume' ? 'restart-resume' : 'restart-new'),
+      duplicateBoard: (id) => boardActions.duplicate(id),
+      deleteBoard: (id) => boardActions.remove(id),
+      openFullView: (id) => boardActions.requestFullView(id),
+      exportPlanning: (id, format) => {
+        const board = useCanvasStore.getState().boards.find((b) => b.id === id)
+        if (board?.type === 'planning') void runBoardExport(board, format)
+      },
+      groupSelection,
+      focusGroup: (id) => {
+        selectGroupMembers(id)
+        fitGroup(id)
+      },
+      ungroup: removeGroup,
+      tidy: tidyAndFit,
+      fitAll: () => void rf.fitView(cameraAnim(FIT_FRAME)),
+      // Recenter content at 100% rather than zoomTo(1)-in-place (#41) — same frame the
+      // keymap's `0` uses.
+      resetZoom: () => void rf.fitView(cameraAnim(RESET_FRAME)),
+      undo: doUndo,
+      redo: doRedo
+    }),
+    [
+      addCentered,
+      goToBoard,
+      boardActions,
+      groupSelection,
+      selectGroupMembers,
+      fitGroup,
+      removeGroup,
+      tidyAndFit,
+      rf,
+      doUndo,
+      doRedo
+    ]
+  )
 
   return { paletteView, openPalette, closePalette, paletteVerbs }
 }
