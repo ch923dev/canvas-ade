@@ -6,15 +6,15 @@ collapsed into a dated summary here once every finding is fixed). To recover a
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
-**Current open findings:** none Critical/High on `main` — the 2026-06-10 full-app audit (72
-findings) is fully remediated (#107 + #109), as are all prior rounds. The only partially-open track
-is the **2026-06-10 design/UX audit** below (Waves D0 #108 + D1 #111/#112/#113 + D2 #114/#116/#117/#115
-+ D3 #120/#118/#119 merged; Wave D4 pending per its wave plan). When the next review run happens, add a dated file here and update this line.
+**Current open findings: NONE.** Every review/bug-hunt round on `main` is fully remediated — the
+2026-06-10 full-app audit (72 findings, #107 + #109) and the **2026-06-10 design/UX audit umbrella,
+COMPLETE 2026-06-12** (D0 #108 · D1 #111/#112/#113 · D2 #114/#115/#116/#117 · D3 #118/#119/#120 ·
+D4 #121/#123/#124). When the next review run happens, add a dated file here and update this line.
 
 | # | File / status |
 |---|---|
 | Full-app audit (2026-06-10) | [`2026-06-10-full-app-audit.md`](2026-06-10-full-app-audit.md) — 72 confirmed (0 Crit · 4 High · 14 Med · 54 Low), **all fixed** #107 (`cd1ac61`) + BUG-069 re-land #109. Raw package: `bug-hunt-findings/` at repo root, collapsed to git history. |
-| Design/UX audit (2026-06-10) | [`2026-06-10-design-ux-audit.md`](2026-06-10-design-ux-audit.md) — 6-agent full-renderer design review vs the DESIGN.md contract: 1 data-loss-class High (silent save failure), discoverability + feedback-channel gaps, 13 a11y items, token-violation cluster in modals, ghost token `--text-1`. **PARTIALLY OPEN** — wave plan: [`2026-06-10-design-ux-audit-waves.md`](2026-06-10-design-ux-audit-waves.md); D0 quick wins merged #108 (`146fc76`), D1 primitives (Toast/Modal/Menu) merged #112/#111/#113, D2 board-type polish (title edit / terminal / browser / motion) merged #114/#116/#117/#115, D3 whiteboard gaps (tint / arrow endpoints / keyboard+a11y) merged #120/#118/#119; D4 pending. |
+| Design/UX audit (2026-06-10) | [`2026-06-10-design-ux-audit.md`](2026-06-10-design-ux-audit.md) — 6-agent full-renderer design review vs the DESIGN.md contract: 1 data-loss-class High (silent save failure), discoverability + feedback-channel gaps, 13 a11y items, token-violation cluster in modals, ghost token `--text-1`. **PARTIALLY OPEN** — wave plan: [`2026-06-10-design-ux-audit-waves.md`](2026-06-10-design-ux-audit-waves.md); D0 quick wins merged #108 (`146fc76`), D1 primitives (Toast/Modal/Menu) merged #112/#111/#113, D2 board-type polish (title edit / terminal / browser / motion) merged #114/#116/#117/#115, D3 whiteboard gaps (tint / arrow endpoints / keyboard+a11y) merged #120/#118/#119, D4 discoverability (palette #121 / keyboard canvas #123 / wayfinding minimap #124) merged. **CLOSED — umbrella complete 2026-06-12.** |
 | Bug hunt (2026-06-07) | 42 confirmed (6 Med · 36 Low), **all fixed** #85 (`aede88f`). Raw package: `bug-hunt-findings/` at repo root at the time, git history (`ae807dc` = findings, `d25305a`/`1d9b155`/`3c6a8b1` = fix batches). No separate summary file — commit messages are the record. |
 | In-depth — MCP layer (2026-06-05) | [`2026-06-05-mcp-indepth-review.md`](2026-06-05-mcp-indepth-review.md) — healthy, no open Crit/High/Med; all 2026-06-04 MCP fixes verified real + merged; Host-header gap closed; 3 new LOW/INFO (APP-N1/N2/N3 → #68). |
 | Kickoffs (2026-06-05, historical) | `post-t9` · `remaining` · `wave5-b4-b5` — point-in-time tackle plans, **fully executed** (#53/#59/#60/#61–67) and collapsed to git history 2026-06-10. |
