@@ -46,6 +46,7 @@ export function useZoomSettle(): void {
         // Re-anchor so the world point at the pane center stays put across the snap
         // (a bare zoomTo would anchor at the viewport origin and visibly shift content).
         const { width, height } = storeApi.getState()
+        if (!width || !height) return // pane not laid out yet — skip this snap attempt
         const cx = width / 2
         const cy = height / 2
         void rf.setViewport(

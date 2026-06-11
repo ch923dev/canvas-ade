@@ -82,7 +82,10 @@ test.describe('terminal crisp-zoom policy', () => {
 
   test('a settled zoom outside the band is left untouched', async ({ page }) => {
     await evalIn(page, `window.__canvasE2E.setZoom(1.3)`)
-    // Wait past the settle window, then assert the zoom did NOT move.
+    // A "did NOT change" assertion is inherently time-bounded — there is no event to
+    // await for a snap that must never fire. 800ms is >3x the 250ms settle debounce
+    // (which starts from the synchronous zoomTo above, not from test scheduling), so
+    // a late timer still lands well inside the window.
     await page.waitForTimeout(800)
     const zoom = await evalIn<number>(page, `window.__canvasE2E.getZoom()`)
     expect(zoom).toBeCloseTo(1.3, 5)
