@@ -92,7 +92,9 @@
       "node-pty"
     ],
     "overrides": {
-      "tar": ">=7.5.8"
+      "tar": ">=7.5.8",
+      "esbuild": ">=0.28.1",
+      "postcss": ">=8.5.10"
     }
   }
 }
