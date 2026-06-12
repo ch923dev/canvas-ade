@@ -160,3 +160,70 @@ describe('project:save expectedDir guard (BUG-009)', () => {
     expect(await handlers.get('project:save')!(synthetic, doc)).toBe(true)
   })
 })
+
+describe('project:removeRecent / project:clearRecents handlers', () => {
+  const tmp: string[] = []
+  const mkTmp = (p: string): string => {
+    const d = mkdtempSync(join(tmpdir(), p))
+    tmp.push(d)
+    return d
+  }
+  afterEach(() => {
+    vi.restoreAllMocks()
+    while (tmp.length) rmSync(tmp.pop()!, { recursive: true, force: true })
+  })
+
+  type Handler = (e: IpcMainInvokeEvent, ...args: unknown[]) => unknown
+  const register = (userDataDir: string): Map<string, Handler> => {
+    const handlers = new Map<string, Handler>()
+    const ipcMain = {
+      handle: (ch: string, fn: Handler) => handlers.set(ch, fn)
+    } as unknown as IpcMain
+    registerProjectHandlers(
+      ipcMain,
+      () => null,
+      userDataDir,
+      () => 1
+    )
+    return handlers
+  }
+  const synthetic = {} as IpcMainInvokeEvent
+
+  it('removeRecent drops the entry and returns the fresh list', async () => {
+    const userDataDir = mkTmp('canvas-ud-')
+    const a = mkTmp('canvas-proj-a-')
+    const b = mkTmp('canvas-proj-b-')
+    await touchRecent(userDataDir, a, 'a', 1)
+    await touchRecent(userDataDir, b, 'b', 2)
+    const handlers = register(userDataDir)
+
+    const list = (await handlers.get('project:removeRecent')!(synthetic, b)) as {
+      path: string
+    }[]
+
+    expect(list.map((r) => r.path)).toEqual([a])
+  })
+
+  it('removeRecent ignores a non-string path and returns the unchanged list', async () => {
+    const userDataDir = mkTmp('canvas-ud-')
+    const a = mkTmp('canvas-proj-a-')
+    await touchRecent(userDataDir, a, 'a', 1)
+    const handlers = register(userDataDir)
+
+    const list = (await handlers.get('project:removeRecent')!(synthetic, 42)) as {
+      path: string
+    }[]
+
+    expect(list.map((r) => r.path)).toEqual([a])
+  })
+
+  it('clearRecents wipes the list and returns []', async () => {
+    const userDataDir = mkTmp('canvas-ud-')
+    const a = mkTmp('canvas-proj-a-')
+    await touchRecent(userDataDir, a, 'a', 1)
+    const handlers = register(userDataDir)
+
+    expect(await handlers.get('project:clearRecents')!(synthetic)).toEqual([])
+    expect(await handlers.get('project:recents')!(synthetic)).toEqual([])
+  })
+})

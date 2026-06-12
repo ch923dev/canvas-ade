@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { listRecents, touchRecent, RECENT_LIMIT } from './recentProjects'
+import {
+  listRecents,
+  touchRecent,
+  removeRecent,
+  clearRecents,
+  RECENT_LIMIT
+} from './recentProjects'
 
 let userData: string
 
@@ -80,5 +86,65 @@ describe('recentProjects', () => {
     }
     expect(onDisk.projects.map((p) => p.path)).toEqual([live, slow])
     rmSync(live, { recursive: true, force: true })
+  })
+
+  it('removeRecent drops only the target and persists; the folder on disk is untouched', async () => {
+    const a = mkdtempSync(join(tmpdir(), 'proj-rm-a-'))
+    const b = mkdtempSync(join(tmpdir(), 'proj-rm-b-'))
+    await touchRecent(userData, a, 'a', 1)
+    await touchRecent(userData, b, 'b', 2)
+    await removeRecent(userData, b)
+    expect((await listRecents(userData)).map((r) => r.path)).toEqual([a])
+    // Persisted, not just display-filtered.
+    const onDisk = JSON.parse(readFileSync(join(userData, 'recent-projects.json'), 'utf8')) as {
+      projects: { path: string }[]
+    }
+    expect(onDisk.projects.map((p) => p.path)).toEqual([a])
+    // LIST-ONLY: the removed entry's folder still exists on disk.
+    expect(existsSync(b)).toBe(true)
+    rmSync(a, { recursive: true, force: true })
+    rmSync(b, { recursive: true, force: true })
+  })
+
+  it('removeRecent of an unknown path is a no-op (BUG-044: never rewrites the stored list)', async () => {
+    const slow = join(tmpdir(), 'transiently-slow-share-' + Math.random())
+    await touchRecent(userData, slow, 'slow', 1)
+    // Removing a path that is not stored must NOT persist the display-pruned list
+    // (which would permanently delete the merely-slow entry).
+    await removeRecent(userData, join(tmpdir(), 'never-stored-' + Math.random()))
+    const onDisk = JSON.parse(readFileSync(join(userData, 'recent-projects.json'), 'utf8')) as {
+      projects: { path: string }[]
+    }
+    expect(onDisk.projects.map((p) => p.path)).toEqual([slow])
+  })
+
+  it('removeRecent can remove an entry the display prune is hiding', async () => {
+    const slow = join(tmpdir(), 'transiently-slow-share-' + Math.random())
+    const live = mkdtempSync(join(tmpdir(), 'proj-rm-live-'))
+    await touchRecent(userData, slow, 'slow', 1)
+    await touchRecent(userData, live, 'live', 2)
+    await removeRecent(userData, slow) // not visible in listRecents, but stored
+    const onDisk = JSON.parse(readFileSync(join(userData, 'recent-projects.json'), 'utf8')) as {
+      projects: { path: string }[]
+    }
+    expect(onDisk.projects.map((p) => p.path)).toEqual([live])
+    rmSync(live, { recursive: true, force: true })
+  })
+
+  it('clearRecents empties the stored list; project folders are untouched', async () => {
+    const a = mkdtempSync(join(tmpdir(), 'proj-clear-a-'))
+    const b = mkdtempSync(join(tmpdir(), 'proj-clear-b-'))
+    await touchRecent(userData, a, 'a', 1)
+    await touchRecent(userData, b, 'b', 2)
+    await clearRecents(userData)
+    expect(await listRecents(userData)).toEqual([])
+    const onDisk = JSON.parse(readFileSync(join(userData, 'recent-projects.json'), 'utf8')) as {
+      projects: { path: string }[]
+    }
+    expect(onDisk.projects).toEqual([])
+    expect(existsSync(a)).toBe(true)
+    expect(existsSync(b)).toBe(true)
+    rmSync(a, { recursive: true, force: true })
+    rmSync(b, { recursive: true, force: true })
   })
 })

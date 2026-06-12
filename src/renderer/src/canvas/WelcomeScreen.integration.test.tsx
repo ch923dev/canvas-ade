@@ -211,3 +211,82 @@ describe('WelcomeScreen IPC rejection recovery (BUG-030)', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Recents removal: per-row ✕ + Clear all (list-only — never opens or deletes)
+// ---------------------------------------------------------------------------
+describe('WelcomeScreen recents removal', () => {
+  it('row ✕ calls removeRecent (NOT open) and re-renders from the returned list', async () => {
+    const openMock = vi.fn()
+    const removeMock = vi.fn().mockResolvedValue([{ path: '/proj/beta', name: 'beta' }])
+    ;(window as unknown as { api: unknown }).api = {
+      project: {
+        recents: vi.fn().mockResolvedValue([
+          { path: '/proj/alpha', name: 'alpha' },
+          { path: '/proj/beta', name: 'beta' }
+        ]),
+        open: openMock,
+        removeRecent: removeMock
+      },
+      dialog: { openFolder: vi.fn() }
+    }
+
+    render(<WelcomeScreen />)
+    await waitFor(() => expect(screen.getByText('alpha')).toBeTruthy())
+
+    fireEvent.click(screen.getByLabelText('Remove alpha from recent projects'))
+
+    await waitFor(() => expect(screen.queryByText('alpha')).toBeNull())
+    expect(screen.getByText('beta')).toBeTruthy()
+    expect(removeMock).toHaveBeenCalledWith('/proj/alpha')
+    // Removing must never start an open pipeline.
+    expect(openMock).not.toHaveBeenCalled()
+    expect(useCanvasStore.getState().project.status).toBe('welcome')
+  })
+
+  it('Clear all empties the list (and the whole recents section unmounts)', async () => {
+    const clearMock = vi.fn().mockResolvedValue([])
+    ;(window as unknown as { api: unknown }).api = {
+      project: {
+        recents: vi.fn().mockResolvedValue([{ path: '/proj/alpha', name: 'alpha' }]),
+        open: vi.fn(),
+        clearRecents: clearMock
+      },
+      dialog: { openFolder: vi.fn() }
+    }
+
+    render(<WelcomeScreen />)
+    await waitFor(() => expect(screen.getByText('alpha')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('Clear all'))
+
+    await waitFor(() => expect(screen.queryByText('alpha')).toBeNull())
+    expect(clearMock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Clear all')).toBeNull()
+  })
+
+  it('remove + Clear all are disabled while a project load is in flight', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      project: {
+        recents: vi.fn().mockResolvedValue([{ path: '/proj/alpha', name: 'alpha' }]),
+        open: vi.fn().mockImplementation(() => new Promise(() => {})), // never resolves
+        removeRecent: vi.fn(),
+        clearRecents: vi.fn()
+      },
+      dialog: { openFolder: vi.fn() }
+    }
+
+    render(<WelcomeScreen />)
+    await waitFor(() => expect(screen.getByText('alpha')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('alpha').closest('button')!)
+    await waitFor(() => expect(useCanvasStore.getState().project.status).toBe('loading'))
+
+    const removeBtn = screen.getByLabelText(
+      'Remove alpha from recent projects'
+    ) as HTMLButtonElement
+    const clearBtn = screen.getByText('Clear all') as HTMLButtonElement
+    expect(removeBtn.disabled).toBe(true)
+    expect(clearBtn.disabled).toBe(true)
+  })
+})

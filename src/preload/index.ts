@@ -219,6 +219,11 @@ const api = {
         ? ipcRenderer.invoke('project:save', doc)
         : ipcRenderer.invoke('project:save', doc, expectedDir),
     recents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:recents'),
+    // Both are LIST-ONLY mutations (never touch the project folder) and return the
+    // fresh list so the caller can re-render without a second recents() round-trip.
+    removeRecent: (path: string): Promise<RecentProject[]> =>
+      ipcRenderer.invoke('project:removeRecent', path),
+    clearRecents: (): Promise<RecentProject[]> => ipcRenderer.invoke('project:clearRecents'),
     current: (): Promise<ProjectResult | null> => ipcRenderer.invoke('project:current'),
     /**
      * Register a handler that main invokes (`project:flush`) right before it hard-exits
