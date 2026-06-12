@@ -35,6 +35,12 @@ function pickFile(f: File): void {
 }
 
 describe('BackdropPicker', () => {
+  it('the popover carries the bd-menu panel chrome (opaque over bright scenes)', () => {
+    render(<BackdropPicker />)
+    openPicker()
+    expect(screen.getByRole('menu').className).toBe('bd-menu')
+  })
+
   it('None is checked by default; choosing it writes kind none', () => {
     render(<BackdropPicker />)
     openPicker()
