@@ -34,9 +34,12 @@ import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/
  *   backfill). #84 took v6 first, so this slice rebased v6 → v7 (ADR 0004).
  * - **v8 = optional TextElement.width** (area-text wrap-box width in board px). All-optional
  *   → identity bump; an existing text with no width renders as point text, byte-identical.
+ * - **v9 = optional root `background`** (canvas backdrop — wallpaper/scene + dim/saturation/grid,
+ *   see `docs/canvas-backdrop/`). Optional + defaulted-at-read → identity bump; absent reads as
+ *   "none" (today's flat void, byte-identical for existing projects).
  *   Do not silently reuse a version for a new shape.
  */
-export const SCHEMA_VERSION = 8
+export const SCHEMA_VERSION = 9
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
@@ -208,6 +211,44 @@ export interface CanvasViewport {
   zoom: number
 }
 
+// ── Canvas backdrop (schema v9) ────────────────────────────────────────────────
+
+export type BackgroundKind = 'none' | 'file' | 'scene'
+/** World-grid lattice style (PR 4 consumes `lines`/`cross`; absent reads as `dots`). */
+export type GridStyle = 'dots' | 'lines' | 'cross'
+
+export const BACKGROUND_DIM_RANGE = { min: 0, max: 0.85 } as const
+export const BACKGROUND_SATURATION_RANGE = { min: 0.2, max: 1.2 } as const
+export const DEFAULT_BACKGROUND_DIM = 0.25
+export const DEFAULT_BACKGROUND_SATURATION = 0.7
+
+/**
+ * Per-project canvas backdrop (screen-fixed wallpaper layer, `docs/canvas-backdrop/`).
+ * SETTINGS-CLASS state: persisted like `viewport`, NEVER on the undo rail. `scene` is a
+ * registry id resolved at RENDER time (`canvas/backdrop/sceneRegistry`) — an id this build
+ * does not know is preserved verbatim (forward-compat with newer preset packs) and the
+ * layer renders plain void + a toast instead. Malformed backgrounds DEGRADE on load
+ * (clamp / default / fall back to `none`) rather than failing the document — a cosmetic
+ * field must never send a whole project to `.bak` recovery.
+ */
+export interface CanvasBackground {
+  kind: BackgroundKind
+  /** kind 'file': relative blob path `assets/<sha1>.<ext>` (same shape as ImageElement). */
+  assetId?: string
+  /** kind 'scene': bundled-scene registry id (e.g. 'blossom-river'). */
+  scene?: string
+  /** Optional palette variant of the scene; unknown values fall back to the scene default. */
+  sceneVariant?: string
+  /** Void-colored dim overlay alpha, clamped to [0, 0.85]. */
+  dim: number
+  /** CSS saturate() on the media/scene, clamped to [0.2, 1.2]. */
+  saturation: number
+  /** Keep the FadingDots grid above the backdrop. */
+  gridDots: boolean
+  /** Lattice style for the grid (PR 4); absent ⇒ 'dots'. */
+  gridStyle?: GridStyle
+}
+
 /** The whole-canvas serialized document (root of `canvas.json`). */
 export interface CanvasDoc {
   schemaVersion: number
@@ -224,6 +265,11 @@ export interface CanvasDoc {
    * the v5→v6 migration backfills `[]` and `fromObject` always returns a present array.
    */
   groups?: NamedGroup[]
+  /**
+   * Canvas backdrop (schema v9). Optional — absent means "none" (flat void), so older
+   * docs and backdrop-less projects serialize byte-identically to pre-v9.
+   */
+  background?: CanvasBackground
 }
 
 // ── Sizes ─────────────────────────────────────────────────────────────────────
@@ -329,14 +375,17 @@ export function toObject(
   boards: Board[],
   viewport: CanvasViewport | null,
   connectors: Connector[] = [],
-  groups: NamedGroup[] = []
+  groups: NamedGroup[] = [],
+  background: CanvasBackground | null = null
 ): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,
     viewport: viewport ? { ...viewport } : null,
     boards: structuredClone(boards),
     connectors: structuredClone(connectors),
-    groups: structuredClone(groups)
+    groups: structuredClone(groups),
+    // Omit when unset so a backdrop-less project's canvas.json stays byte-identical to v8.
+    ...(background ? { background: structuredClone(background) } : {})
   }
 }
 
@@ -364,7 +413,10 @@ const MIGRATIONS: Record<number, Migration> = {
   6: (doc) => ({ ...doc, schemaVersion: 7 }),
   // v8: optional TextElement.width (area-text wrap box). All-optional → identity bump;
   // an existing text with no width renders as point text, byte-identical.
-  7: (doc) => ({ ...doc, schemaVersion: 8 })
+  7: (doc) => ({ ...doc, schemaVersion: 8 }),
+  // v9: optional root `background` (canvas backdrop). Optional + defaulted-at-read →
+  // identity bump; absent reads as "none" so existing projects render unchanged.
+  8: (doc) => ({ ...doc, schemaVersion: 9 })
 }
 
 /**
@@ -640,6 +692,57 @@ function reconcileConnectors(doc: CanvasDoc): Connector[] {
   return kept
 }
 
+const BACKGROUND_KINDS: readonly BackgroundKind[] = ['none', 'file', 'scene']
+const GRID_STYLES: readonly GridStyle[] = ['dots', 'lines', 'cross']
+
+const clampTo = (v: number, r: { min: number; max: number }): number =>
+  Math.min(r.max, Math.max(r.min, v))
+
+/**
+ * Reconcile a migrated doc's backdrop. DEGRADES instead of failing: the backdrop is
+ * cosmetic, so a malformed value must never reject the document (boards always win) —
+ * unlike assertBoard/assertConnector this never throws. Rules:
+ * - not a record / unknown kind → undefined (renders as "none")
+ * - kind 'file' without a non-empty string assetId → kind 'none' (assetId dropped)
+ * - kind 'scene' without a non-empty string scene id → kind 'none'; a WELL-FORMED but
+ *   unrecognized scene id is preserved verbatim (forward-compat — the render layer
+ *   resolves unknown ids to void + toast, see CanvasBackground docs)
+ * - dim/saturation non-finite → defaults; out-of-band → clamped
+ * - gridDots non-boolean → false; gridStyle outside the union → dropped (reads as 'dots')
+ */
+function reconcileBackground(doc: CanvasDoc): CanvasBackground | undefined {
+  const raw = (doc as { background?: unknown }).background
+  if (raw === undefined || raw === null) return undefined
+  if (!isRecord(raw)) return undefined
+  if (!BACKGROUND_KINDS.includes(raw.kind as BackgroundKind)) return undefined
+
+  let kind = raw.kind as BackgroundKind
+  const assetId =
+    typeof raw.assetId === 'string' && raw.assetId.length > 0 ? raw.assetId : undefined
+  const scene = typeof raw.scene === 'string' && raw.scene.length > 0 ? raw.scene : undefined
+  const sceneVariant =
+    typeof raw.sceneVariant === 'string' && raw.sceneVariant.length > 0
+      ? raw.sceneVariant
+      : undefined
+  if (kind === 'file' && !assetId) kind = 'none'
+  if (kind === 'scene' && !scene) kind = 'none'
+
+  return {
+    kind,
+    ...(kind === 'file' && assetId ? { assetId } : {}),
+    ...(kind === 'scene' && scene ? { scene } : {}),
+    ...(kind === 'scene' && scene && sceneVariant ? { sceneVariant } : {}),
+    dim: isFiniteNum(raw.dim) ? clampTo(raw.dim, BACKGROUND_DIM_RANGE) : DEFAULT_BACKGROUND_DIM,
+    saturation: isFiniteNum(raw.saturation)
+      ? clampTo(raw.saturation, BACKGROUND_SATURATION_RANGE)
+      : DEFAULT_BACKGROUND_SATURATION,
+    gridDots: typeof raw.gridDots === 'boolean' ? raw.gridDots : false,
+    ...(GRID_STYLES.includes(raw.gridStyle as GridStyle)
+      ? { gridStyle: raw.gridStyle as GridStyle }
+      : {})
+  }
+}
+
 /** Parse + migrate an unknown value into a current-version document. */
 export function fromObject(doc: unknown): CanvasDoc {
   if (!isCanvasDoc(doc)) {
@@ -684,6 +787,11 @@ export function fromObject(doc: unknown): CanvasDoc {
   // Reconcile groups (v6): validate, prune dangling boardIds, keep named-empty groups.
   // Runs post-migrate so a v5 doc's freshly-backfilled `[]` is handled like a v6 doc's.
   migrated.groups = reconcileGroups(migrated)
+  // Reconcile the backdrop (v9): degrade-don't-reject (see reconcileBackground). Delete
+  // the key entirely when it degrades to nothing so the doc matches a backdrop-less save.
+  const background = reconcileBackground(migrated)
+  if (background) migrated.background = background
+  else delete migrated.background
   // A corrupt camera shouldn't fail the whole load — drop to fit-on-load.
   if (!isValidViewport(migrated.viewport)) migrated.viewport = null
   return migrated

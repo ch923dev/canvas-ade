@@ -3,12 +3,15 @@ import {
   SCHEMA_VERSION,
   MIN_BOARD_SIZE,
   DEFAULT_BOARD_SIZE,
+  DEFAULT_BACKGROUND_DIM,
+  DEFAULT_BACKGROUND_SATURATION,
   createBoard,
   toObject,
   fromObject,
   migrate,
   previewConnectorsFor,
   type Board,
+  type CanvasBackground,
   type Connector,
   type PlanningBoard,
   type TerminalBoard,
@@ -498,13 +501,13 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 8', () => {
-    expect(SCHEMA_VERSION).toBe(8)
+  it('SCHEMA_VERSION is 9', () => {
+    expect(SCHEMA_VERSION).toBe(9)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 8, viewport: vp, boards: [], connectors: [], groups: [] })
+    expect(doc).toEqual({ schemaVersion: 9, viewport: vp, boards: [], connectors: [], groups: [] })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {
@@ -514,7 +517,7 @@ describe('schema v2 — viewport', () => {
   it('migrates a v1 doc (no viewport) to v8 (via v2–v7) with viewport=null', () => {
     const v1 = { schemaVersion: 1, boards: [] } as unknown
     const out = fromObject(v1)
-    expect(out.schemaVersion).toBe(8)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect(out.viewport).toBeNull()
   })
 
@@ -684,8 +687,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 8', () => {
-    expect(SCHEMA_VERSION).toBe(8)
+  it('SCHEMA_VERSION is 9', () => {
+    expect(SCHEMA_VERSION).toBe(9)
   })
 
   it('round-trips a valid image element', () => {
@@ -725,7 +728,7 @@ describe('W4 image element', () => {
       ]
     }
     const doc = fromObject(v3)
-    expect(doc.schemaVersion).toBe(8)
+    expect(doc.schemaVersion).toBe(SCHEMA_VERSION)
     const el = (doc.boards[0] as { elements: Array<{ assetId: string; w: number }> }).elements[0]
     expect(el.assetId).toBe('assets/y.png')
     expect(el.w).toBe(50)
@@ -738,8 +741,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 8', () => {
-    expect(SCHEMA_VERSION).toBe(8)
+  it('SCHEMA_VERSION is 9', () => {
+    expect(SCHEMA_VERSION).toBe(9)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -990,7 +993,7 @@ describe('M2 connectors (schema v5)', () => {
 describe('schema v8 — TextElement.width', () => {
   it('migrates v7 → v8 as an identity bump (text without width passes through)', () => {
     const v7 = { schemaVersion: 7, viewport: null, boards: [], connectors: [], groups: [] }
-    expect(migrate(v7 as never).schemaVersion).toBe(8)
+    expect(migrate(v7 as never).schemaVersion).toBe(SCHEMA_VERSION)
   })
 
   it('a v7 text element with no width survives migration to v8 unchanged (point text)', () => {
@@ -1013,7 +1016,7 @@ describe('schema v8 — TextElement.width', () => {
       ]
     }
     const out = migrate(doc as never)
-    expect(out.schemaVersion).toBe(8)
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect((out.boards[0] as never as { elements: unknown[] }).elements[0]).toEqual({
       id: 't',
       kind: 'text',
@@ -1228,5 +1231,129 @@ describe('schema v7 — text typography fields', () => {
     const back = fromObject(JSON.parse(JSON.stringify(doc)))
     const got = (back.boards[0] as { elements: unknown[] }).elements[0]
     expect(got).toEqual(el)
+  })
+})
+
+// ── Canvas backdrop (schema v9) ─────────────────────────────────────────────────
+// Optional root `background` (wallpaper/scene + dim/saturation/grid). Settings-class:
+// degrade-don't-reject on load — a malformed backdrop must never send the document to
+// .bak recovery (boards always win). See reconcileBackground in boardSchema.ts.
+describe('schema v9 — canvas backdrop', () => {
+  const v8doc = (background?: unknown): unknown => ({
+    schemaVersion: 8,
+    viewport: null,
+    boards: [],
+    connectors: [],
+    groups: [],
+    ...(background !== undefined ? { background } : {})
+  })
+  const valid: CanvasBackground = {
+    kind: 'scene',
+    scene: 'blossom-river',
+    dim: 0.25,
+    saturation: 0.7,
+    gridDots: false
+  }
+
+  it('migrates a v8 doc to current with no background (identity bump)', () => {
+    const migrated = migrate(v8doc() as never)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(migrated.background).toBeUndefined()
+  })
+
+  it('toObject omits the background key when unset (backdrop-less save is byte-identical)', () => {
+    expect('background' in toObject([], null)).toBe(false)
+    expect('background' in toObject([], null, [], [], null)).toBe(false)
+  })
+
+  it('toObject embeds a deep-cloned background when set', () => {
+    const doc = toObject([], null, [], [], valid)
+    expect(doc.background).toEqual(valid)
+    expect(doc.background).not.toBe(valid)
+  })
+
+  it('round-trips a valid scene background through JSON', () => {
+    const doc = toObject([], null, [], [], valid)
+    const back = fromObject(JSON.parse(JSON.stringify(doc)))
+    expect(back.background).toEqual(valid)
+  })
+
+  it('round-trips a file background with sceneVariant-free shape', () => {
+    const bg: CanvasBackground = {
+      kind: 'file',
+      assetId: 'assets/' + 'a'.repeat(40) + '.png',
+      dim: 0.5,
+      saturation: 1,
+      gridDots: true,
+      gridStyle: 'cross'
+    }
+    const back = fromObject(toObject([], null, [], [], bg))
+    expect(back.background).toEqual(bg)
+  })
+
+  it('preserves an unrecognized scene id verbatim (forward-compat with newer preset packs)', () => {
+    const back = fromObject(v8doc({ ...valid, scene: 'not-shipped-yet' }))
+    expect(back.background?.scene).toBe('not-shipped-yet')
+  })
+
+  it('preserves sceneVariant only on a scene background', () => {
+    const back = fromObject(v8doc({ ...valid, sceneVariant: 'dusk' }))
+    expect(back.background?.sceneVariant).toBe('dusk')
+  })
+
+  it('clamps out-of-band dim and saturation', () => {
+    const back = fromObject(v8doc({ ...valid, dim: 2, saturation: 0 }))
+    expect(back.background?.dim).toBe(0.85)
+    expect(back.background?.saturation).toBe(0.2)
+  })
+
+  it('defaults non-finite dim/saturation and non-boolean gridDots', () => {
+    const back = fromObject(v8doc({ ...valid, dim: 'x', saturation: NaN, gridDots: 'yes' }))
+    expect(back.background?.dim).toBe(DEFAULT_BACKGROUND_DIM)
+    expect(back.background?.saturation).toBe(DEFAULT_BACKGROUND_SATURATION)
+    expect(back.background?.gridDots).toBe(false)
+  })
+
+  it('drops an out-of-union gridStyle (reads as dots)', () => {
+    const back = fromObject(v8doc({ ...valid, gridStyle: 'hex' }))
+    expect(back.background?.gridStyle).toBeUndefined()
+  })
+
+  it('degrades kind file without an assetId to none (no document rejection)', () => {
+    const back = fromObject(v8doc({ kind: 'file', dim: 0.3, saturation: 1, gridDots: false }))
+    expect(back.background?.kind).toBe('none')
+    expect(back.background?.assetId).toBeUndefined()
+  })
+
+  it('degrades kind scene without a scene id to none', () => {
+    const back = fromObject(v8doc({ kind: 'scene', dim: 0.3, saturation: 1, gridDots: false }))
+    expect(back.background?.kind).toBe('none')
+  })
+
+  it('drops a non-record background entirely (renders as none)', () => {
+    for (const bad of ['wallpaper', 7, true, null]) {
+      const back = fromObject(v8doc(bad))
+      expect(back.background).toBeUndefined()
+    }
+  })
+
+  it('drops a background with an unknown kind entirely', () => {
+    const back = fromObject(v8doc({ ...valid, kind: 'video-wall' }))
+    expect(back.background).toBeUndefined()
+  })
+
+  it('never lets a malformed background reject a document that has boards', () => {
+    const board = createBoard('terminal', { id: 't1', x: 0, y: 0 })
+    const doc = {
+      schemaVersion: 8,
+      viewport: null,
+      boards: [board],
+      connectors: [],
+      groups: [],
+      background: { kind: 'file' } // malformed: no assetId, no numbers
+    }
+    const back = fromObject(doc)
+    expect(back.boards).toHaveLength(1)
+    expect(back.background?.kind).toBe('none')
   })
 })

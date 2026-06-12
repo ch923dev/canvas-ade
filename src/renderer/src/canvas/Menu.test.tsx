@@ -157,6 +157,24 @@ describe('Menu shell', () => {
     expect(screen.getByTestId('i2').tabIndex).toBe(0)
   })
 
+  it('menuitemradio rows join the roving focus order (selection menus, e.g. Backdrop)', () => {
+    render(
+      <Menu anchor={{ x: 20, y: 20 }} onClose={() => {}} label="Radio menu">
+        <button role="menuitemradio" aria-checked="true" data-testid="r1">
+          A
+        </button>
+        <button role="menuitemradio" aria-checked="false" data-testid="r2">
+          B
+        </button>
+      </Menu>
+    )
+    expect(document.activeElement).toBe(screen.getByTestId('r1'))
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(screen.getByTestId('r2'))
+    expect(screen.getByTestId('r2').tabIndex).toBe(0)
+    expect(screen.getByTestId('r1').tabIndex).toBe(-1)
+  })
+
   it('ArrowDown/ArrowUp wrap and skip disabled items', () => {
     render(<Harness onClose={() => {}} />)
     const menu = screen.getByRole('menu')

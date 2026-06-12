@@ -28,6 +28,7 @@ export type IconName =
   | 'chevron'
   | 'search'
   | 'diamond'
+  | 'wallpaper'
   | 'grid'
   | 'maximize'
   | 'minimize'
@@ -86,6 +87,7 @@ const PATHS: Record<IconName, string> = {
   check: 'M5 12.5l4.5 4.5L19 7',
   trash: 'M5 7h14M10 7V5h4v2M6 7l1 13h10l1-13',
   settings: 'M4 8h7M15 8h5M4 16h5M13 16h7M13 6v4M9 14v4',
+  wallpaper: 'M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4M15.5 9h.01',
   globe:
     'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18',
   external: 'M14 5h5v5M19 5l-7 7M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',

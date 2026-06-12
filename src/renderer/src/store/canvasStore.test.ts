@@ -28,7 +28,8 @@ beforeEach(() => {
     selectedId: null,
     tool: 'select',
     past: [],
-    future: []
+    future: [],
+    background: null
   })
 })
 
@@ -1769,5 +1770,75 @@ describe('project switch lock (BUG-009)', () => {
     releaseProjectSwitchLock()
     expect(acquireProjectSwitchLock()).toBe(true) // released → next switch may start
     releaseProjectSwitchLock()
+  })
+})
+
+// ── Canvas backdrop (schema v9) — settings-class store state ───────────────────
+describe('setBackground', () => {
+  it('starts null (feature untouched — flat void, omitted from the doc)', () => {
+    expect(get().background).toBeNull()
+    expect('background' in get().toObject()).toBe(false)
+  })
+
+  it('first touch materializes the defaults under the patch', () => {
+    get().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    expect(get().background).toEqual({
+      kind: 'scene',
+      scene: 'blossom-river',
+      dim: 0.25,
+      saturation: 0.7,
+      gridDots: false
+    })
+  })
+
+  it('merges partials over the current value (slider keeps source settings)', () => {
+    get().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    get().setBackground({ dim: 0.5 })
+    expect(get().background).toMatchObject({ kind: 'scene', scene: 'blossom-river', dim: 0.5 })
+  })
+
+  it("drops the other kind's fields on a source switch (canvas.json stays clean)", () => {
+    get().setBackground({ kind: 'scene', scene: 'blossom-river', sceneVariant: 'dusk' })
+    get().setBackground({ kind: 'file', assetId: 'assets/wall.png' })
+    expect(get().background).not.toHaveProperty('scene')
+    expect(get().background).not.toHaveProperty('sceneVariant')
+    expect(get().background).toMatchObject({ kind: 'file', assetId: 'assets/wall.png' })
+    get().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    expect(get().background).not.toHaveProperty('assetId')
+  })
+
+  it('no-ops on an identical-value patch (does not mint a new state ref)', () => {
+    get().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    const before = get().background
+    get().setBackground({ dim: 0.25 })
+    expect(get().background).toBe(before)
+  })
+
+  it('never touches the undo rail (settings-class, like setViewport)', () => {
+    get().addBoard('terminal', { x: 0, y: 0 })
+    const pastLen = get().past.length
+    get().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    get().setBackground({ dim: 0.4 })
+    expect(get().past.length).toBe(pastLen)
+    expect(get().future.length).toBe(0)
+  })
+
+  it('round-trips through toObject and is restored by loadObject', () => {
+    get().setBackground({ kind: 'scene', scene: 'blossom-river', gridDots: true })
+    const doc = get().toObject()
+    expect(doc.background).toMatchObject({ kind: 'scene', scene: 'blossom-river' })
+    get().setBackground({ kind: 'none' })
+    get().loadObject(doc)
+    expect(get().background).toMatchObject({
+      kind: 'scene',
+      scene: 'blossom-river',
+      gridDots: true
+    })
+  })
+
+  it('loadObject of a backdrop-less doc clears a live backdrop (project switch)', () => {
+    get().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    get().loadObject(toObject([], null))
+    expect(get().background).toBeNull()
   })
 })

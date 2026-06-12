@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas wallpaper — S0 design mock v2</title>
+    <style>
+      /* Tokens mirrored from src/renderer/src/index.css (DESIGN.md §2-4). */
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --ok: #3ecf8e;
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+        --r-board: 8px;
+        --r-ctl: 5px;
+        /* live-tuned */
+        --board-alpha: 0.82;
+        --glass-blur: 0px;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: var(--void);
+        color: var(--text);
+        font-family: var(--ui);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 8px 16px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border-subtle);
+        flex: none;
+        z-index: 5;
+      }
+      header h1 {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-2);
+      }
+      header .hint {
+        font-size: 11px;
+        font-family: var(--mono);
+        color: var(--text-3);
+      }
+      #stage {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        min-height: 0;
+      }
+      /* wallpaper stack: media → dim scrim → dots */
+      .wp {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      #wpPlaceholder {
+        display: block;
+      }
+      #wpImg,
+      #wpVid {
+        display: none;
+      }
+      #dim {
+        position: absolute;
+        inset: 0;
+        background: var(--void);
+        pointer-events: none;
+      }
+      #dots {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      #dropHint {
+        position: absolute;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        z-index: 4;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-2);
+        background: rgba(10, 10, 11, 0.6);
+        border: 1px dashed var(--border-strong);
+        border-radius: var(--r-ctl);
+        padding: 6px 14px;
+        pointer-events: none;
+      }
+      body.dragging #stage::after {
+        content: 'drop to set wallpaper';
+        position: absolute;
+        inset: 12px;
+        z-index: 9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--text);
+        border: 2px dashed var(--accent);
+        border-radius: 12px;
+        background: rgba(10, 10, 11, 0.55);
+      }
+      /* boards */
+      .board {
+        position: absolute;
+        z-index: 2;
+        overflow: hidden;
+        background: rgba(20, 20, 22, var(--board-alpha));
+        backdrop-filter: blur(var(--glass-blur));
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-board);
+        box-shadow: var(--shadow-board);
+      }
+      .tb {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        background: rgba(26, 26, 29, calc(var(--board-alpha) + 0.08));
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .tb .glyph {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-3);
+      }
+      .tb .type {
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
+      .tb .title {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-2);
+      }
+      .tb .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--ok);
+        margin-left: auto;
+      }
+      .bb {
+        padding: 10px 12px;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 19px;
+        color: var(--text-2);
+      }
+      .bb .dim2 {
+        color: var(--text-3);
+      }
+      .bb .ok {
+        color: var(--ok);
+      }
+      /* controls */
+      footer {
+        flex: none;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 22px;
+        align-items: center;
+        padding: 10px 16px;
+        background: var(--surface-raised);
+        border-top: 1px solid var(--border-subtle);
+        z-index: 5;
+      }
+      .grp {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .grp .gl {
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+        width: 64px;
+      }
+      .ctl {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .ctl label {
+        font-size: 11px;
+        color: var(--text-3);
+      }
+      .ctl output {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-2);
+        min-width: 34px;
+        text-align: right;
+      }
+      input[type='range'] {
+        width: 90px;
+        accent-color: var(--accent);
+      }
+      input[type='checkbox'] {
+        accent-color: var(--accent);
+      }
+      button,
+      .filebtn {
+        font-family: var(--ui);
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-2);
+        background: var(--surface-overlay);
+        border: 1px solid var(--border);
+        border-radius: var(--r-ctl);
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      button:hover,
+      .filebtn:hover {
+        color: var(--text);
+        border-color: var(--border-strong);
+      }
+      #file {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Canvas wallpaper — S0 mock v2</h1>
+      <span class="hint"
+        >drop YOUR wallpaper (image or video loop) anywhere · tune dim / saturation / board glass
+        below · “Copy settings” locks the numbers</span
+      >
+    </header>
+    <div id="stage">
+      <canvas id="wpPlaceholder" class="wp"></canvas>
+      <img id="wpImg" class="wp" alt="" />
+      <video id="wpVid" class="wp" muted loop playsinline></video>
+      <div id="dim"></div>
+      <canvas id="dots"></canvas>
+      <span id="dropHint"
+        >drag &amp; drop an image / .webm / .mp4 here — placeholder scene shown until you do</span
+      >
+
+      <div class="board" style="left: 6%; top: 10%; width: 430px; height: 430px">
+        <div class="tb">
+          <span class="glyph">&gt;_</span><span class="type">Terminal</span
+          ><span class="title">agent · api</span><span class="dot"></span>
+        </div>
+        <div class="bb">
+          claude<br />
+          <span class="dim2">⏺ Reading src/routes/auth.ts…</span><br />
+          <span class="dim2">⏺ Editing src/routes/auth.ts</span><br />
+          <span class="ok">✓ pnpm typecheck — green</span><br />
+          <span class="dim2">⏺ Running tests… 214 passed</span><br /><br />
+          &gt; add rate limiting to the login route<br />
+          <span class="dim2">⏺ Planning approach…</span>
+        </div>
+      </div>
+      <div class="board" style="left: 42%; top: 22%; width: 380px; height: 330px">
+        <div class="tb">
+          <span class="glyph">&gt;_</span><span class="type">Terminal</span
+          ><span class="title">agent · ui</span><span class="dot"></span>
+        </div>
+        <div class="bb">
+          claude<br />
+          <span class="dim2">⏺ Building LoginForm.tsx…</span><br />
+          <span class="ok">✓ green</span>
+        </div>
+      </div>
+      <div class="board" style="left: 72%; top: 56%; width: 330px; height: 240px">
+        <div class="tb">
+          <span class="glyph">◫</span><span class="type">Planning</span
+          ><span class="title">sprint notes</span>
+        </div>
+        <div class="bb">
+          <span class="dim2"
+            >— wire login flow<br />— port detection<br />— rate limit ← in progress</span
+          >
+        </div>
+      </div>
+    </div>
+    <footer id="controls"></footer>
+    <input type="file" id="file" accept="image/*,video/webm,video/mp4" />
+    <script>
+      'use strict'
+      const DEFAULTS = {
+        dim: 0.45, // void overlay alpha over the wallpaper
+        saturation: 0.85, // tames busy art so the accent/status colors stay the loudest thing
+        boardAlpha: 0.82, // board body opacity (1 = today's opaque surface)
+        glass: 0, // backdrop blur px (0 = off; >0 = glassmorphism — contract change!)
+        dots: false, // grid dots over the wallpaper
+        reduced: false // pause video (reduced-motion preview)
+      }
+      const LS_KEY = 'wallpaper-mock-settings'
+      let S = { ...DEFAULTS }
+      try {
+        Object.assign(S, JSON.parse(localStorage.getItem(LS_KEY) || '{}'))
+      } catch {
+        /* fresh */
+      }
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) S.reduced = true
+
+      const $ = (id) => document.getElementById(id)
+      const stage = $('stage'),
+        ph = $('wpPlaceholder'),
+        img = $('wpImg'),
+        vid = $('wpVid')
+      let mediaKind = 'placeholder' // placeholder | image | video
+
+      /* ---------- controls ---------- */
+      const SLIDERS = [
+        {
+          g: 'Wallpaper',
+          k: 'dim',
+          l: 'Dim',
+          min: 0,
+          max: 0.85,
+          step: 0.05,
+          fmt: (v) => Math.round(v * 100) + '%'
+        },
+        {
+          g: 'Wallpaper',
+          k: 'saturation',
+          l: 'Saturation',
+          min: 0.2,
+          max: 1.2,
+          step: 0.05,
+          fmt: (v) => v.toFixed(2)
+        },
+        {
+          g: 'Boards',
+          k: 'boardAlpha',
+          l: 'Opacity',
+          min: 0.45,
+          max: 1,
+          step: 0.01,
+          fmt: (v) => v.toFixed(2)
+        },
+        { g: 'Boards', k: 'glass', l: 'Glass blur', min: 0, max: 16, step: 1, fmt: (v) => v + 'px' }
+      ]
+      const footer = $('controls')
+      const groups = {}
+      for (const s of SLIDERS) {
+        if (!groups[s.g]) {
+          const div = document.createElement('div')
+          div.className = 'grp'
+          div.innerHTML = `<span class="gl">${s.g}</span>`
+          footer.appendChild(div)
+          groups[s.g] = div
+        }
+        const ctl = document.createElement('span')
+        ctl.className = 'ctl'
+        ctl.innerHTML = `<label>${s.l}</label>
+    <input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${S[s.k]}" data-k="${s.k}">
+    <output>${s.fmt(S[s.k])}</output>`
+        const inp = ctl.querySelector('input'),
+          out = ctl.querySelector('output')
+        inp.addEventListener('input', () => {
+          S[s.k] = parseFloat(inp.value)
+          out.textContent = s.fmt(S[s.k])
+          save()
+          apply()
+        })
+        groups[s.g].appendChild(ctl)
+      }
+      const tg = document.createElement('div')
+      tg.className = 'grp'
+      tg.innerHTML = `<span class="gl">Toggles</span>
+  <span class="ctl"><label><input type="checkbox" id="tDots" ${S.dots ? 'checked' : ''}> grid dots on top</label></span>
+  <span class="ctl"><label><input type="checkbox" id="tReduced" ${S.reduced ? 'checked' : ''}> reduced motion (pause)</label></span>
+  <label class="filebtn" for="file">Choose wallpaper…</label>
+  <button id="bReset">Reset</button>
+  <button id="bCopy">Copy settings</button>`
+      footer.appendChild(tg)
+      $('tDots').addEventListener('change', (e) => {
+        S.dots = e.target.checked
+        save()
+        apply()
+      })
+      $('tReduced').addEventListener('change', (e) => {
+        S.reduced = e.target.checked
+        save()
+        apply()
+      })
+      $('bReset').addEventListener('click', () => {
+        localStorage.removeItem(LS_KEY)
+        location.reload()
+      })
+      $('bCopy').addEventListener('click', async () => {
+        const lock = { ...S, media: mediaKind }
+        await navigator.clipboard.writeText(JSON.stringify(lock, null, 2))
+        const b = $('bCopy')
+        b.textContent = 'Copied ✓'
+        setTimeout(() => {
+          b.textContent = 'Copy settings'
+        }, 1200)
+      })
+      function save() {
+        localStorage.setItem(LS_KEY, JSON.stringify(S))
+      }
+
+      /* ---------- file drop / pick ---------- */
+      function setMedia(file) {
+        const url = URL.createObjectURL(file)
+        if (file.type.startsWith('video/')) {
+          vid.src = url
+          vid.style.display = 'block'
+          img.style.display = 'none'
+          ph.style.display = 'none'
+          mediaKind = 'video'
+        } else if (file.type.startsWith('image/')) {
+          img.src = url
+          img.style.display = 'block'
+          vid.pause()
+          vid.style.display = 'none'
+          ph.style.display = 'none'
+          mediaKind = 'image'
+        } else {
+          return
+        }
+        $('dropHint').style.display = 'none'
+        apply()
+      }
+      $('file').addEventListener('change', (e) => {
+        if (e.target.files[0]) setMedia(e.target.files[0])
+      })
+      let dragDepth = 0
+      window.addEventListener('dragenter', (e) => {
+        e.preventDefault()
+        dragDepth++
+        document.body.classList.add('dragging')
+      })
+      window.addEventListener('dragleave', (e) => {
+        e.preventDefault()
+        if (--dragDepth <= 0) {
+          dragDepth = 0
+          document.body.classList.remove('dragging')
+        }
+      })
+      window.addEventListener('dragover', (e) => e.preventDefault())
+      window.addEventListener('drop', (e) => {
+        e.preventDefault()
+        dragDepth = 0
+        document.body.classList.remove('dragging')
+        if (e.dataTransfer.files[0]) setMedia(e.dataTransfer.files[0])
+      })
+
+      /* ---------- apply tuned values ---------- */
+      function apply() {
+        $('dim').style.opacity = String(S.dim)
+        const f = `saturate(${S.saturation})`
+        ph.style.filter = f
+        img.style.filter = f
+        vid.style.filter = f
+        document.documentElement.style.setProperty('--board-alpha', String(S.boardAlpha))
+        document.documentElement.style.setProperty('--glass-blur', S.glass + 'px')
+        $('dots').style.display = S.dots ? 'block' : 'none'
+        if (S.dots) drawDots()
+        if (mediaKind === 'video') {
+          if (S.reduced) vid.pause()
+          else vid.play().catch(() => {})
+        }
+      }
+
+      /* ---------- grid dots overlay ---------- */
+      function drawDots() {
+        const c = $('dots'),
+          dpr = window.devicePixelRatio || 1
+        const r = stage.getBoundingClientRect()
+        c.width = Math.round(r.width * dpr)
+        c.height = Math.round(r.height * dpr)
+        const ctx = c.getContext('2d'),
+          gap = 24 * dpr,
+          d = Math.max(1, Math.round(dpr))
+        ctx.fillStyle = 'rgba(255,255,255,0.10)'
+        for (let y = gap / 2; y < c.height; y += gap)
+          for (let x = gap / 2; x < c.width; x += gap) ctx.fillRect(x - d / 2, y - d / 2, d, d)
+      }
+
+      /* ---------- procedural placeholder scene (until a real wallpaper is dropped):
+   dusk ridgeline over slow water — stands in for "your art here" ---------- */
+      function ridge(ctx, w, h, base, amp, f, phase, color) {
+        ctx.fillStyle = color
+        ctx.beginPath()
+        ctx.moveTo(0, h)
+        for (let x = 0; x <= w; x += 4) {
+          const y =
+            base + Math.sin(x * f + phase) * amp + Math.sin(x * f * 2.7 + phase * 1.6) * amp * 0.4
+          ctx.lineTo(x, y)
+        }
+        ctx.lineTo(w, h)
+        ctx.closePath()
+        ctx.fill()
+      }
+      function drawPlaceholder(t) {
+        const dpr = window.devicePixelRatio || 1
+        const r = stage.getBoundingClientRect()
+        const w = Math.round(r.width * dpr),
+          h = Math.round(r.height * dpr)
+        if (ph.width !== w || ph.height !== h) {
+          ph.width = w
+          ph.height = h
+        }
+        const ctx = ph.getContext('2d')
+        // dusk sky
+        const sky = ctx.createLinearGradient(0, 0, 0, h * 0.6)
+        sky.addColorStop(0, '#101826')
+        sky.addColorStop(1, '#0b1016')
+        ctx.fillStyle = sky
+        ctx.fillRect(0, 0, w, h * 0.6)
+        // moon
+        ctx.fillStyle = 'rgba(220,228,240,0.85)'
+        ctx.beginPath()
+        ctx.arc(w * 0.78, h * 0.16, 14 * dpr, 0, Math.PI * 2)
+        ctx.fill()
+        // ridges
+        ridge(ctx, w, h, h * 0.34, 26 * dpr, 0.0021 / dpr, 0.8, '#10181c')
+        ridge(ctx, w, h, h * 0.44, 34 * dpr, 0.0016 / dpr, 2.1, '#0d1316')
+        ridge(ctx, w, h, h * 0.52, 24 * dpr, 0.0026 / dpr, 4.4, '#0a0f11')
+        // water
+        ctx.fillStyle = '#0b1219'
+        ctx.fillRect(0, h * 0.55, w, h * 0.45)
+        // moon track + drifting shimmer strokes
+        for (let i = 0; i < 90; i++) {
+          const yy = h * 0.57 + (i / 90) * h * 0.4
+          const drift = (t * (8 + (i % 5)) * dpr) % (w * 1.2)
+          const xx = ((i * 137.5 * dpr + drift) % (w * 1.2)) - w * 0.1
+          const nearMoon = Math.max(0, 1 - Math.abs(xx - w * 0.78) / (w * 0.18))
+          const a = 0.025 + nearMoon * 0.1 + 0.02 * Math.sin(t * 0.9 + i)
+          ctx.strokeStyle = `rgba(190,205,225,${Math.max(0.012, a).toFixed(3)})`
+          ctx.lineWidth = Math.max(1, dpr)
+          ctx.beginPath()
+          ctx.moveTo(xx, yy)
+          ctx.lineTo(xx + (24 + (i % 4) * 14) * dpr, yy)
+          ctx.stroke()
+        }
+      }
+      let phLast = 0
+      function loop(now) {
+        if (mediaKind === 'placeholder' && !S.reduced && now - phLast > 33) {
+          // ~30fps is plenty
+          phLast = now
+          drawPlaceholder(now / 1000)
+        }
+        requestAnimationFrame(loop)
+      }
+      if (S.reduced) drawPlaceholder(0)
+      apply()
+      requestAnimationFrame(loop)
+      window.addEventListener('resize', () => {
+        if (S.dots) drawDots()
+        if (S.reduced && mediaKind === 'placeholder') drawPlaceholder(0)
+      })
+    </script>
+  </body>
+</html>

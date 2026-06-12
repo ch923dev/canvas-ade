@@ -7,7 +7,8 @@
  * over a live device stage would render under it; ADR 0002, token-keyed per PREV-C).
  *
  * Purely a shell: callers render their own items — any element carrying
- * `role="menuitem"` joins the roving focus order (disabled items are skipped) — and keep
+ * `role="menuitem"` or `role="menuitemradio"` (mutually-exclusive selection rows, e.g.
+ * the Backdrop picker) joins the roving focus order (disabled items are skipped) — and keep
  * their own item styling. The container stops pointer/mouse/click propagation so canvas
  * gestures (React Flow drag, planning pointer tools) never see menu interactions.
  */
@@ -184,12 +185,12 @@ export function Menu({
     }
   }, [])
 
-  /** Enabled menuitems in DOM order — the roving focus ring. */
+  /** Enabled menuitems (incl. menuitemradio selection rows) in DOM order — the roving focus ring. */
   const items = (): HTMLElement[] =>
     ref.current
-      ? Array.from(ref.current.querySelectorAll<HTMLElement>('[role="menuitem"]')).filter(
-          (el) => !(el as HTMLElement & { disabled?: boolean }).disabled
-        )
+      ? Array.from(
+          ref.current.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]')
+        ).filter((el) => !(el as HTMLElement & { disabled?: boolean }).disabled)
       : []
 
   const setRoving = (active: HTMLElement | null): void => {
@@ -264,7 +265,8 @@ export function Menu({
       onKeyDown={onKeyDown}
       onFocus={(e) => {
         const t = e.target as HTMLElement
-        if (t.getAttribute('role') === 'menuitem') setRoving(t)
+        const role = t.getAttribute('role')
+        if (role === 'menuitem' || role === 'menuitemradio') setRoving(t)
       }}
     >
       {children}

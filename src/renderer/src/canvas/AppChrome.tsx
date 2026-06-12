@@ -31,6 +31,7 @@ import { Icon, type IconName } from './Icon'
 import { Menu } from './Menu'
 import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
+import { BackdropPicker } from './BackdropPicker'
 import { RecapConsentModal } from './RecapConsentModal'
 
 export interface AppChromeProps {
@@ -353,6 +354,8 @@ function CameraCluster({
             templates) that arranges the boards then fits. Keyboard `t` = Smart. See
             Canvas.tidyAndFit. */}
         <TidyMenu onTidy={onTidy} />
+        {/* Backdrop wallpaper picker (docs/canvas-backdrop spec §3) — Tidy's sibling. */}
+        <BackdropPicker />
         <span style={styles.divider} />
         <ToolBtn name="settings" title="Settings" onClick={onSettings} />
       </div>

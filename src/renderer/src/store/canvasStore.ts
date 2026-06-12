@@ -12,6 +12,7 @@ import { create } from 'zustand'
 import {
   type Board,
   type BoardType,
+  type CanvasBackground,
   type CanvasDoc,
   type CanvasViewport,
   type Connector,
@@ -22,7 +23,9 @@ import {
   toObject,
   previewConnectorsFor,
   MIN_BOARD_SIZE,
-  DEFAULT_BOARD_SIZE
+  DEFAULT_BOARD_SIZE,
+  DEFAULT_BACKGROUND_DIM,
+  DEFAULT_BACKGROUND_SATURATION
 } from '../lib/boardSchema'
 import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
@@ -96,6 +99,12 @@ export interface CanvasState {
   future: CanvasSnapshot[]
   /** Persisted camera transform (null = not yet captured / fit on load). */
   viewport: CanvasViewport | null
+  /**
+   * Canvas backdrop (schema v9). SETTINGS-CLASS like `viewport`: persisted in the doc,
+   * NEVER on the undo rail (a wallpaper change must not eat a Ctrl+Z). `null` = the
+   * feature is untouched — today's flat void, omitted from the serialized doc.
+   */
+  background: CanvasBackground | null
   /** Current project lifecycle (welcome/loading/open/error). */
   project: ProjectState
   /**
@@ -180,6 +189,12 @@ export interface CanvasState {
   growBoardHeight: (id: string, h: number) => void
   /** Set the camera transform. UNTRACKED — never touches undo/redo (like growBoardHeight). */
   setViewport: (vp: CanvasViewport) => void
+  /**
+   * Merge a partial backdrop change over the current value (or the defaults when unset).
+   * UNTRACKED — settings-class, like setViewport. Live slider drags ride the debounced
+   * autosave; no dedicated save path.
+   */
+  setBackground: (patch: Partial<CanvasBackground>) => void
   selectBoard: (id: string | null) => void
   /** Replace the whole multi-selection (RF marquee/multi-click fold). Primary = last id, or
    *  null when empty. The single source for writing `selectedIds` (no per-id toggle action —
@@ -351,6 +366,7 @@ function applyLoadedDoc(
     connectors: d.connectors,
     groups: d.groups ?? [],
     viewport: d.viewport,
+    background: d.background ?? null,
     selectedId: null,
     selectedIds: [],
     past: [],
@@ -507,6 +523,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   past: [],
   future: [],
   viewport: null,
+  background: null,
   project: { dir: null, name: null, status: 'welcome' },
 
   addBoard: (type, at, opts) => {
@@ -711,6 +728,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return { viewport: vp }
     }),
 
+  setBackground: (patch) =>
+    set((s) => {
+      // First touch materializes the defaults (kind none / dim 0.25 / sat 0.70 / no grid)
+      // so slider state survives source toggles. Identical-value merges no-op (slider
+      // drags fire continuously — don't notify subscribers for nothing, #BUG L2 class).
+      const base: CanvasBackground = s.background ?? {
+        kind: 'none',
+        dim: DEFAULT_BACKGROUND_DIM,
+        saturation: DEFAULT_BACKGROUND_SATURATION,
+        gridDots: false
+      }
+      const src = patch as Record<string, unknown>
+      const cur = base as unknown as Record<string, unknown>
+      let diff = s.background === null
+      for (const k in src) if (cur[k] !== src[k]) diff = true
+      if (!diff) return s
+      // Keep kind-specific fields only for the active kind, so a source switch never
+      // serializes dead keys into canvas.json (mirrors reconcileBackground's load-time
+      // pruning in boardSchema.ts — the live doc and a reloaded doc agree on shape).
+      const next: CanvasBackground = { ...base, ...patch }
+      if (next.kind !== 'file') delete next.assetId
+      if (next.kind !== 'scene') {
+        delete next.scene
+        delete next.sceneVariant
+      }
+      return { background: next }
+    }),
+
   selectBoard: (id) => set({ selectedId: id, selectedIds: id ? [id] : [] }),
   setSelection: (ids) => {
     const selectedIds = [...new Set(ids)]
@@ -795,7 +840,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       get().boards,
       get().viewport,
       [...previewConnectorsFor(get().boards), ...get().connectors],
-      get().groups
+      get().groups,
+      get().background
     ),
   loadObject: (doc) => {
     // Guard the deep-validation throw (corrupt board/element or too-new schemaVersion):

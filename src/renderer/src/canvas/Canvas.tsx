@@ -64,6 +64,7 @@ import { BoardActionsContext } from './boardActions'
 import { FullViewModal } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
+import { BackdropLayer } from './backdrop/BackdropLayer'
 import { GroupBoxLayer } from './GroupBoxLayer'
 import { GroupNamePopover } from './GroupNamePopover'
 import { GroupFocusPicker } from './GroupFocusPicker'
@@ -97,9 +98,13 @@ const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: Orchestratio
 // Single-board focus framing moved to useBoardKeyboardNav (D4-B): Enter and
 // double-click share its focusBoardById, so the two paths can never drift.
 
-/** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5). */
-function FadingDots(): ReactElement {
+/** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5).
+ *  With a backdrop active the grid is opt-in via the picker's toggle (spec §3 —
+ *  background.gridDots); backdrop-less ("none"/null) keeps today's always-on grid. */
+function FadingDots(): ReactElement | null {
   const zoom = useStore((s) => s.transform[2])
+  const background = useCanvasStore((s) => s.background)
+  if (background !== null && background.kind !== 'none' && !background.gridDots) return null
   return (
     <Background
       variant={BackgroundVariant.Dots}
@@ -118,6 +123,10 @@ const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
 function CanvasInner(): ReactElement {
   const boards = useCanvasStore((s) => s.boards)
+  // Boolean-projected so camera frames / unrelated writes never re-render on it.
+  const backdropActive = useCanvasStore(
+    (s) => s.background !== null && s.background.kind !== 'none'
+  )
   const selectedIds = useCanvasStore((s) => s.selectedIds)
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const resizeBoard = useCanvasStore((s) => s.resizeBoard)
@@ -794,7 +803,16 @@ function CanvasInner(): ReactElement {
   return (
     <BoardActionsContext.Provider value={boardActions}>
       <FullViewContext.Provider value={fullViewHost}>
-        <div ref={paneRef} className={reflowing ? 'reflowing' : undefined} style={paneStyle}>
+        <div
+          ref={paneRef}
+          className={reflowing ? 'reflowing' : undefined}
+          style={paneStyle}
+          data-backdrop={backdropActive ? '' : undefined}
+        >
+          {/* Screen-fixed wallpaper layer (docs/canvas-backdrop). Sibling BEFORE
+              <ReactFlow> ⇒ paints beneath it; [data-backdrop] turns the RF surface
+              transparent so the layer shows through ("none" stays pixel-identical). */}
+          <BackdropLayer />
           <ReactFlow
             nodes={nodes}
             edges={edges}

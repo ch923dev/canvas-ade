@@ -18,6 +18,7 @@ import {
   fromObject,
   type Board,
   type BoardType,
+  type CanvasBackground,
   type Connector,
   type ConnectorKind
 } from '../lib/boardSchema'
@@ -51,6 +52,10 @@ export interface CanvasE2E {
   getSelection: () => string[]
   /** Live camera viewport (D4-B Enter-focus probe asserts the camera moved). */
   getViewport: () => { x: number; y: number; zoom: number }
+  /** S4: patch the canvas backdrop through the real store action (settings-class, untracked). */
+  setBackground: (patch: Partial<CanvasBackground>) => void
+  /** S4: the live backdrop settings (plain data — serializable), or null when never set. */
+  getBackground: () => CanvasBackground | null
   /** Named groups (plain data — serializable). */
   getGroups: () => { id: string; name: string; boardIds: string[] }[]
   /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
@@ -310,6 +315,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getViewport() {
       return rf.getViewport()
+    },
+    setBackground(patch) {
+      useCanvasStore.getState().setBackground(patch)
+    },
+    getBackground() {
+      return useCanvasStore.getState().background
     },
     getGroups() {
       return useCanvasStore.getState().groups
@@ -600,6 +611,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         future: [],
         selectedId: null,
         selectedIds: [],
+        // Backdrop is per-project document state — a spec that set a wallpaper/scene
+        // must not leave it painting under every later spec (same isolation class as
+        // connectors above).
+        background: null,
         project: { dir: null, name: 'e2e', status: 'open' }
       })
       // D1-A: toasts + the save-failure state are global ephemeral stores too — a toast
