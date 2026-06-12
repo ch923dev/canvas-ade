@@ -458,20 +458,31 @@ const MIGRATIONS: Record<number, Migration> = {
  * passthrough. Only a doc whose compat floor is above us (a true breaking change —
  * or a pre-floor doc with no `minReaderVersion`) is refused.
  */
+/**
+ * Refuse a doc whose compat floor is above this build (or a newer doc with no floor —
+ * pre-ADR-0007 strict behavior). Shared by migrate() AND fromObject's early gate:
+ * fromObject must run this BEFORE deep validation, or a breaking-change doc carrying a
+ * new board type dies in assertBoard ("unknown type") and the user never sees the
+ * actionable update-the-app message (review r1 finding on #134).
+ */
+function assertReadableVersion(doc: CanvasDoc): void {
+  if (doc.schemaVersion <= SCHEMA_VERSION) return
+  const floor = typeof doc.minReaderVersion === 'number' ? doc.minReaderVersion : doc.schemaVersion
+  if (floor > SCHEMA_VERSION) {
+    throw new Error(
+      `migrate: document schemaVersion ${doc.schemaVersion} (requires reader ≥ ${floor}) ` +
+        `is newer than supported ${SCHEMA_VERSION} — this project was saved by a newer ` +
+        `version of the app; update the app to open it`
+    )
+  }
+}
+
 export function migrate(doc: CanvasDoc): CanvasDoc {
   if (typeof doc?.schemaVersion !== 'number') {
     throw new Error('migrate: document is missing an integer schemaVersion')
   }
   if (doc.schemaVersion > SCHEMA_VERSION) {
-    const floor =
-      typeof doc.minReaderVersion === 'number' ? doc.minReaderVersion : doc.schemaVersion
-    if (floor > SCHEMA_VERSION) {
-      throw new Error(
-        `migrate: document schemaVersion ${doc.schemaVersion} (requires reader ≥ ${floor}) ` +
-          `is newer than supported ${SCHEMA_VERSION} — this project was saved by a newer ` +
-          `version of the app; update the app to open it`
-      )
-    }
+    assertReadableVersion(doc)
     // Forward-compatible open: keep the doc untouched (including its newer version
     // stamp — truthful until the next save re-stamps it at OUR version).
     return doc
@@ -791,6 +802,10 @@ export function fromObject(doc: unknown): CanvasDoc {
   if (!isCanvasDoc(doc)) {
     throw new Error('fromObject: value is not a CanvasDoc (need numeric schemaVersion + boards[])')
   }
+  // ADR 0007: refuse an above-floor doc BEFORE deep validation, so a breaking-change
+  // doc (e.g. a new board type from a future schema) surfaces the actionable
+  // "update the app" message instead of assertBoard's "unknown type" (#134 review r1).
+  assertReadableVersion(doc)
   doc.boards.forEach(assertBoard)
   // Own the data: deep-clone the input so the returned doc (and any store it feeds)
   // does not alias the caller's object — symmetric with toObject's structuredClone,

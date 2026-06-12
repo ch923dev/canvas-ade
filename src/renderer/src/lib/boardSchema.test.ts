@@ -541,6 +541,20 @@ describe('migrate', () => {
   it('throws when schemaVersion is missing', () => {
     expect(() => migrate({ boards: [] } as never)).toThrow()
   })
+
+  // #134 review r1: a breaking-change doc usually carries a NEW BOARD TYPE — the floor
+  // refuse must fire BEFORE deep validation in fromObject, or the user gets assertBoard's
+  // "unknown type" instead of the actionable update-the-app message.
+  it('fromObject surfaces the update-the-app message for an above-floor doc with an unknown board type', () => {
+    const futuristic = {
+      schemaVersion: SCHEMA_VERSION + 2,
+      minReaderVersion: SCHEMA_VERSION + 2,
+      viewport: null,
+      boards: [{ id: 'q1', type: 'quantum', x: 0, y: 0, w: 300, h: 200, title: 'Q' }],
+      connectors: []
+    }
+    expect(() => fromObject(futuristic)).toThrow(/newer than supported.*update the app/s)
+  })
 })
 
 describe('schema v2 — viewport', () => {
