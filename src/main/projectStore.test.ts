@@ -253,6 +253,20 @@ describe('W4 assets pipeline', () => {
     }
   })
 
+  it('writeAsset accepts backdrop video exts (webm/mp4 — renderer accept-list parity)', async () => {
+    const dir = tmp()
+    try {
+      const webm = await writeAsset(dir, bytes('vid-webm'), 'webm')
+      const mp4 = await writeAsset(dir, bytes('vid-mp4'), 'MP4') // case-normalized
+      expect(webm.assetId).toMatch(/^assets\/[a-f0-9]{40}\.webm$/)
+      expect(mp4.assetId).toMatch(/^assets\/[a-f0-9]{40}\.mp4$/)
+      expect(readAsset(dir, webm.assetId)).toEqual(bytes('vid-webm'))
+      expect(readAsset(dir, mp4.assetId)).toEqual(bytes('vid-mp4'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('readAsset returns bytes, null on missing, null on traversal', async () => {
     const dir = tmp()
     try {

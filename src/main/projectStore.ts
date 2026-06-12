@@ -191,7 +191,8 @@ export async function createProject(
 const ASSETS = 'assets'
 /** A safe stored assetId: exactly `assets/<40-hex sha1>.<ext>`; blocks any traversal. */
 const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
-const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+/** Keep in sync with the renderer accept lists (BackdropPicker VIDEO_EXTS + useBackdropMedia MIME_BY_EXT). */
+const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
 
 /**
  * Content-address `bytes` (sha1) into `<dir>/assets/<sha1>.<ext>` and return the
