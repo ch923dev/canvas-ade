@@ -277,11 +277,11 @@ export function registerProjectHandlers(
   // on disk is never touched. Both return the fresh (display-pruned) list so the renderer
   // can re-render without a second round-trip. A userData write failure is non-fatal
   // (same policy as touchRecent, BUG-026): log + return the current list.
-  ipcMain.handle('project:removeRecent', async (e, path: string): Promise<RecentProject[]> => {
+  ipcMain.handle('project:removeRecent', async (e, dir: string): Promise<RecentProject[]> => {
     if (guard(e)) return []
-    if (typeof path === 'string') {
+    if (typeof dir === 'string') {
       try {
-        await removeRecent(userDataDir, path)
+        await removeRecent(userDataDir, dir)
       } catch (err) {
         console.warn('[recentProjects] removeRecent failed (non-fatal)', err)
       }
