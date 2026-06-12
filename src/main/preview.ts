@@ -811,14 +811,29 @@ export function debugViewIds(): string[] {
  * E2E ONLY — forcefully crash a board's preview renderer process (the D2-C
  * crashed-state probe). Drives the REAL `render-process-gone` path: hide the dead
  * layer, emit the lifecycle event, renderer shows the Reload CTA. Returns false when
- * no view exists. Read-only over the Map + a Chromium debug call; exposes nothing a
- * misbehaving previewed page couldn't already do to itself.
+ * no view exists. Read-only over the Map + an OS process kill of the app's own child;
+ * exposes nothing a misbehaving previewed page couldn't already do to itself.
+ *
+ * Kill mechanism: SIGKILL the renderer's OS process instead of Chromium's
+ * `forcefullyCrashRenderer()`. The Chromium call is a SILENT NO-OP under some
+ * containerized kernels (found 2026-06-13: after a Docker Desktop/WSL2 update the
+ * Linux-Docker e2e leg's renderer survived it — no `render-process-gone`, no error,
+ * probe-proven) while the OS kill fires `render-process-gone` (`reason: 'killed'`)
+ * identically on every platform — Node maps SIGKILL to TerminateProcess on Windows.
+ * The renderer maps ANY `render-process-gone` to status `crashed`
+ * (usePreviewEvents.ts), so the observable app path is unchanged. Falls back to
+ * `forcefullyCrashRenderer()` when the pid is unavailable (renderer not started).
  */
 export function debugCrashView(id: string): boolean {
   const e = views.get(id)
   if (!e) return false
   try {
-    e.view.webContents.forcefullyCrashRenderer()
+    const pid = e.view.webContents.getOSProcessId()
+    if (pid > 0) {
+      process.kill(pid, 'SIGKILL')
+    } else {
+      e.view.webContents.forcefullyCrashRenderer()
+    }
     return true
   } catch {
     return false
