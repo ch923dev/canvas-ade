@@ -89,6 +89,19 @@ describe('BackdropPicker', () => {
     expect(write).not.toHaveBeenCalled()
   })
 
+  it('surfaces a read/IPC rejection as a toast (fire-and-forget caller, no silent failure)', async () => {
+    write.mockRejectedValue(new Error('ipc gone'))
+    render(<BackdropPicker />)
+    openPicker()
+    pickFile(fakeFile('wall.png', 10))
+    await waitFor(() =>
+      expect(
+        useToastStore.getState().toasts.some((t) => /failed to read backdrop file/i.test(t.message))
+      ).toBe(true)
+    )
+    expect(useCanvasStore.getState().background).toBeNull()
+  })
+
   it('surfaces an asset-write error as a toast (no silent failure)', async () => {
     write.mockResolvedValue({ error: 'disk full' })
     render(<BackdropPicker />)

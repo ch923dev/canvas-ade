@@ -60,8 +60,16 @@ export function BackdropPicker(): ReactElement {
       })
       return
     }
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    const res = await window.api.asset.write(bytes, ext)
+    // Caller fires-and-forgets (`void importFile(f)`) — an unguarded rejection here
+    // (fd gone between dialog close and read, IPC failure) would be swallowed silently.
+    let res: { assetId: string } | { error: string }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      res = await window.api.asset.write(bytes, ext)
+    } catch {
+      showToast({ id: 'backdrop-import', kind: 'error', message: 'Failed to read backdrop file' })
+      return
+    }
     if ('error' in res) {
       showToast({
         id: 'backdrop-import',
