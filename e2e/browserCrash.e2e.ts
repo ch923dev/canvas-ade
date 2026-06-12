@@ -1,6 +1,8 @@
 /**
  * D2-C: crashed-preview recovery. Drives the REAL render-process-gone path —
- * forcefullyCrashRenderer on the live native view's webContents — and asserts:
+ * SIGKILL on the live view's renderer OS process via debugCrashView (Chromium's
+ * forcefullyCrashRenderer is a silent no-op under some container kernels — the
+ * 2026-06-13 Linux-leg finding; see preview.ts) — and asserts:
  *  1. the board surfaces `crashed` (status word + Reload CTA) instead of freezing
  *     silently (the audit §3.4 Medium-High finding);
  *  2. the Reload CTA relaunches the renderer and the board reconnects;
