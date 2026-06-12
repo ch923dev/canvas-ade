@@ -4,7 +4,11 @@
 - **Status:** spec approved direction; implementation follows on this lane
 - **Design artifact:** the two-zone wireframe below — **approved by the user 2026-06-13** via the
   AskUserQuestion preview panel (option "Two-zone: glance + evidence"), plus "front-face status dot"
-  approved in the same exchange. Per CLAUDE.md "Design artifact before code".
+  approved in the same exchange. Then rendered as a token-faithful HTML mock
+  (`2026-06-13-recap-redesign-mock.html`, this folder — open in any browser; uses the repo's Geist
+  woff2 via relative path) showing both states (narrative+facts "waiting on you"; facts-only
+  "running") + the title-bar dot — **pixel render approved by the user 2026-06-13** ("looks good").
+  This mock is the S1 reference. Per CLAUDE.md "Design artifact before code".
 - **Doc lifecycle:** this file is a slice artifact — delete in the merge PR; residue =
   one line in `docs/archive/build-history.md`.
 
