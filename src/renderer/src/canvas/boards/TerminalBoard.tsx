@@ -685,7 +685,16 @@ export function TerminalBoard({
                 style={{ position: 'absolute', inset: 0, outline: 'none' }}
                 data-test={`recap-wrap-${board.id}`}
               >
-                <RecapView boardId={board.id} />
+                <RecapView
+                  boardId={board.id}
+                  canResume={canResume}
+                  onResume={() => {
+                    // Same resume routine as the Restart menu below: sanitized
+                    // `claude --resume <sessionId>` override, then the shared respawn.
+                    launchOverrideRef.current = resumeCommand(board.agentSessionId)
+                    restart()
+                  }}
+                />
               </div>
             )}
             {/* T-resume restart menu, on the shared Menu shell since D2-B (Escape/outside/

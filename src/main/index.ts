@@ -62,6 +62,7 @@ import {
 import { registerRecapHandlers, readConsent } from './recapConsent'
 import { extractMilestones, isTrustedTranscriptPath, readTranscriptTail } from './agentTranscript'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
+import { registerRecapIpc } from './recapIpc'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -364,6 +365,30 @@ app.whenReady().then(async () => {
   })
   const memoryEngine = createMemoryEngine({
     onIntent: (intent) => void summaryLoop.onIntent(intent)
+  })
+  // S1 (recap redesign): the recap face's read path. Facts are LOCAL-only (no egress ->
+  // no consent gate; trusted-path guard inside the handler). The transcript path resolves
+  // exactly like getAgentMilestones above: the board doc's persisted field, else the
+  // learned recap-map entry (the closure reads the live `recapMap` the watcher refreshes).
+  registerRecapIpc(ipcMain, {
+    getWin: () => mainWindow,
+    getCurrentDir,
+    getTranscriptPath: (boardId) => {
+      const dir = getCurrentDir()
+      if (dir) {
+        const r = readProject(dir)
+        if (r.ok) {
+          const boards = (r.doc as { boards?: unknown }).boards
+          const b = Array.isArray(boards)
+            ? (boards as { id?: unknown }[]).find((x) => x.id === boardId)
+            : undefined
+          const p = (b as { agentTranscriptPath?: unknown })?.agentTranscriptPath
+          if (typeof p === 'string' && p) return p
+        }
+      }
+      return recapMap.get(boardId)?.transcriptPath
+    },
+    getTerminalRuntime
   })
   registerProjectHandlers(
     ipcMain,
