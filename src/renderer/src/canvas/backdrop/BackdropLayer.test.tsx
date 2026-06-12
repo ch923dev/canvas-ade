@@ -41,6 +41,14 @@ describe('BackdropLayer', () => {
     expect(container.firstChild).toBeNull()
   })
 
+  it('registers no document listeners while no ready video is mounted', () => {
+    const spy = vi.spyOn(document, 'addEventListener')
+    render(<BackdropLayer />) // background null
+    useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'x' }) // re-render, still no video
+    expect(spy.mock.calls.some(([type]) => type === 'visibilitychange')).toBe(false)
+    spy.mockRestore()
+  })
+
   it('file backdrop: renders the image with the saturate filter + dim veil', async () => {
     read.mockResolvedValue(new Uint8Array([1]))
     useCanvasStore

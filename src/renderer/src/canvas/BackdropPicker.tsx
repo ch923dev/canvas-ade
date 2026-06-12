@@ -112,7 +112,7 @@ export function BackdropPicker(): ReactElement {
         >
           <div className="bd-head">Backdrop</div>
           <button
-            role="menuitem"
+            role="menuitemradio"
             className="bd-row"
             aria-checked={kind === 'none'}
             onClick={() => setBackground({ kind: 'none' })}
@@ -123,7 +123,7 @@ export function BackdropPicker(): ReactElement {
           {listScenes().map((s) => (
             <button
               key={s.id}
-              role="menuitem"
+              role="menuitemradio"
               className="bd-row"
               aria-checked={kind === 'scene' && background?.scene === s.id}
               onClick={() => setBackground({ kind: 'scene', scene: s.id })}
@@ -137,7 +137,7 @@ export function BackdropPicker(): ReactElement {
             </button>
           ))}
           <button
-            role="menuitem"
+            role="menuitemradio"
             className="bd-row"
             aria-checked={kind === 'file'}
             onClick={() => fileRef.current?.click()}

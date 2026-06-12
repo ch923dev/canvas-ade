@@ -60,10 +60,12 @@ export function BackdropLayer(): ReactElement | null {
 
   // Animation policy (spec §2): the wallpaper video pauses on document.hidden and
   // freezes (paused first frame = the still) under prefers-reduced-motion, live via
-  // the matchMedia change listener. Document-level listeners re-registered per media
-  // change — not the mid-dispatch-removal class (no React-commit-driven event here).
+  // the matchMedia change listener. Listeners exist only while a ready video is
+  // mounted (early exit below) — image/scene/none renders register nothing. Not the
+  // mid-dispatch-removal class (no React-commit-driven event here).
   const videoRef = useRef<HTMLVideoElement | null>(null)
   useEffect(() => {
+    if (media.status !== 'ready' || !media.video) return
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
     const sync = (): void => {
       const v = videoRef.current

@@ -38,7 +38,7 @@ describe('BackdropPicker', () => {
   it('None is checked by default; choosing it writes kind none', () => {
     render(<BackdropPicker />)
     openPicker()
-    const none = screen.getByRole('menuitem', { name: 'None' })
+    const none = screen.getByRole('menuitemradio', { name: 'None' })
     expect(none.getAttribute('aria-checked')).toBe('true')
     fireEvent.click(none)
     expect(useCanvasStore.getState().background?.kind).toBe('none')

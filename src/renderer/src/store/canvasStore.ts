@@ -744,7 +744,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       let diff = s.background === null
       for (const k in src) if (cur[k] !== src[k]) diff = true
       if (!diff) return s
-      return { background: { ...base, ...patch } }
+      // Keep kind-specific fields only for the active kind, so a source switch never
+      // serializes dead keys into canvas.json (mirrors reconcileBackground's load-time
+      // pruning in boardSchema.ts — the live doc and a reloaded doc agree on shape).
+      const next: CanvasBackground = { ...base, ...patch }
+      if (next.kind !== 'file') delete next.assetId
+      if (next.kind !== 'scene') {
+        delete next.scene
+        delete next.sceneVariant
+      }
+      return { background: next }
     }),
 
   selectBoard: (id) => set({ selectedId: id, selectedIds: id ? [id] : [] }),

@@ -1797,6 +1797,16 @@ describe('setBackground', () => {
     expect(get().background).toMatchObject({ kind: 'scene', scene: 'blossom-river', dim: 0.5 })
   })
 
+  it("drops the other kind's fields on a source switch (canvas.json stays clean)", () => {
+    get().setBackground({ kind: 'scene', scene: 'blossom-river', sceneVariant: 'dusk' })
+    get().setBackground({ kind: 'file', assetId: 'assets/wall.png' })
+    expect(get().background).not.toHaveProperty('scene')
+    expect(get().background).not.toHaveProperty('sceneVariant')
+    expect(get().background).toMatchObject({ kind: 'file', assetId: 'assets/wall.png' })
+    get().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    expect(get().background).not.toHaveProperty('assetId')
+  })
+
   it('no-ops on an identical-value patch (does not mint a new state ref)', () => {
     get().setBackground({ kind: 'scene', scene: 'blossom-river' })
     const before = get().background
