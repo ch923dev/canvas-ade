@@ -113,6 +113,17 @@ describe('BackdropPicker', () => {
     expect(useCanvasStore.getState().background).toBeNull()
   })
 
+  it('scene rows derive from the registry; picking Blossom River writes the store (AC-1)', () => {
+    render(<BackdropPicker />)
+    openPicker()
+    const row = screen.getByRole('menuitemradio', { name: /Blossom River/ })
+    fireEvent.click(row)
+    expect(useCanvasStore.getState().background).toMatchObject({
+      kind: 'scene',
+      scene: 'blossom-river'
+    })
+  })
+
   it('dim slider applies live through setBackground once a source is active', () => {
     useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'x' })
     render(<BackdropPicker />)

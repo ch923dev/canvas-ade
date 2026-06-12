@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, cleanup, waitFor } from '@testing-library/react'
+import { render, cleanup, waitFor, act } from '@testing-library/react'
 import {
   BackdropLayer,
   BACKDROP_MISSING_TOAST_ID,
@@ -8,6 +8,7 @@ import {
 } from './BackdropLayer'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useToastStore } from '../../store/toastStore'
+import { getScene } from './sceneRegistry'
 
 const read = vi.fn<(assetId: string) => Promise<Uint8Array | null>>()
 
@@ -97,5 +98,91 @@ describe('BackdropLayer', () => {
     const layer = container.querySelector('[data-test="backdrop-layer"]') as HTMLDivElement
     expect(layer.className).toBe('backdrop-layer')
     expect(layer.getAttribute('aria-hidden')).toBe('true')
+  })
+
+  describe('known scene lifecycle (S6/S7)', () => {
+    const def = getScene('blossom-river')!
+    const handle = { start: vi.fn(), stop: vi.fn(), renderStill: vi.fn() }
+    let createSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      handle.start.mockClear()
+      handle.stop.mockClear()
+      handle.renderStill.mockClear()
+      createSpy = vi.spyOn(def, 'create').mockReturnValue(handle)
+    })
+
+    afterEach(() => {
+      createSpy.mockRestore()
+      Reflect.deleteProperty(document, 'hidden')
+    })
+
+    it('mounts the canvas host with the saturate filter and STARTS the handle (AC-1/AC-5)', () => {
+      useCanvasStore
+        .getState()
+        .setBackground({ kind: 'scene', scene: 'blossom-river', saturation: 0.8 })
+      const { container } = render(<BackdropLayer />)
+      const canvas = container.querySelector(
+        'canvas[data-test="backdrop-scene"]'
+      ) as HTMLCanvasElement
+      expect(canvas).not.toBeNull()
+      expect(canvas.style.filter).toBe('saturate(0.8)')
+      expect(canvas.className).toBe('backdrop-media')
+      expect(createSpy).toHaveBeenCalledWith(canvas, { palette: undefined, reducedMotion: false })
+      expect(handle.start).toHaveBeenCalled()
+      expect(handle.renderStill).not.toHaveBeenCalled()
+      expect(toasts().some((t) => t.id === BACKDROP_UNKNOWN_SCENE_TOAST_ID)).toBe(false)
+    })
+
+    it('reduced motion: renders exactly one still, never starts the loop (AC-6)', () => {
+      window.matchMedia = vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn()
+      })) as never
+      useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'blossom-river' })
+      render(<BackdropLayer />)
+      expect(createSpy).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), {
+        palette: undefined,
+        reducedMotion: true
+      })
+      expect(handle.renderStill).toHaveBeenCalled()
+      expect(handle.start).not.toHaveBeenCalled()
+    })
+
+    it('document.hidden stops the loop; visible resumes it (AC-7)', () => {
+      useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'blossom-river' })
+      render(<BackdropLayer />)
+      handle.start.mockClear()
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(handle.stop).toHaveBeenCalled()
+      expect(handle.start).not.toHaveBeenCalled()
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      expect(handle.start).toHaveBeenCalled()
+    })
+
+    it('unmount stops the handle (no orphan rAF)', () => {
+      useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'blossom-river' })
+      const { unmount } = render(<BackdropLayer />)
+      unmount()
+      expect(handle.stop).toHaveBeenCalled()
+    })
+
+    it('switching to None tears the canvas down and stops the handle (AC-11)', () => {
+      useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'blossom-river' })
+      const { container } = render(<BackdropLayer />)
+      expect(container.querySelector('[data-test="backdrop-scene"]')).not.toBeNull()
+      act(() => {
+        useCanvasStore.getState().setBackground({ kind: 'none' })
+      })
+      expect(handle.stop).toHaveBeenCalled()
+      expect(container.querySelector('[data-test="backdrop-scene"]')).toBeNull()
+    })
   })
 })
