@@ -88,17 +88,24 @@ function smokeLog(line: string): void {
 }
 
 function createWindow(): void {
+  // Dev affordance for parallel worktree sessions: CANVAS_DEV_TITLE names this
+  // instance's window (e.g. "Canvas Backdrop") so simultaneous dev apps are
+  // tellable apart. Trusted-operator env only; unset = the normal product title.
+  const devTitle = process.env.CANVAS_DEV_TITLE
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0a0a0b',
-    title: 'Canvas ADE',
+    title: devTitle || 'Canvas ADE',
     webPreferences: buildMainWindowWebPreferences(join(__dirname, '../preload/index.js'))
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+
+  // The renderer's <title> would clobber the override on load — keep it pinned.
+  if (devTitle) mainWindow.on('page-title-updated', (e) => e.preventDefault())
 
   // BUG-005: child WebContentsViews are NOT destroyed automatically with their
   // window (Electron docs mandate closing them in a 'closed' handler). Without
