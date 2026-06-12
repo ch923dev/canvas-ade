@@ -25,8 +25,10 @@ import {
   MIN_BOARD_SIZE,
   DEFAULT_BOARD_SIZE,
   DEFAULT_BACKGROUND_DIM,
-  DEFAULT_BACKGROUND_SATURATION
+  DEFAULT_BACKGROUND_SATURATION,
+  SCHEMA_VERSION
 } from '../lib/boardSchema'
+import { showToast } from './toastStore'
 import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
 import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
@@ -857,6 +859,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
+    noticeIfNewerDoc(d)
     applyLoadedDoc(set, d)
   },
   setProjectLoading: () => set((s) => ({ project: { ...s.project, status: 'loading' } })),
@@ -888,6 +891,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       if (bak.ok) {
         try {
           const d2 = fromObject(bak.doc)
+          noticeIfNewerDoc(d2)
           applyLoadedDoc(set, d2, { dir: r.dir, name: r.name, status: 'open' })
           return
         } catch (bakErr) {
@@ -902,9 +906,28 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       set((s) => ({ project: { ...s.project, status: 'error', error: msg } }))
       return
     }
+    noticeIfNewerDoc(d)
     applyLoadedDoc(set, d, { dir: r.dir, name: r.name, status: 'open' })
   }
 }))
+
+/**
+ * ADR 0007 forward-compatible open: a doc written by a newer app (additive bump) opens
+ * fine, but the user should know features may be missing and that the next save
+ * re-stamps the file at THIS app's version. Non-blocking info toast, keyed so a
+ * project switch replaces rather than stacks it.
+ */
+function noticeIfNewerDoc(d: CanvasDoc): void {
+  if (d.schemaVersion > SCHEMA_VERSION) {
+    showToast({
+      id: 'schema-forward-open',
+      kind: 'info',
+      message:
+        `Project was saved by a newer version of the app (schema v${d.schemaVersion}). ` +
+        `Opened in compatibility mode — saving re-stamps it at v${SCHEMA_VERSION}.`
+    })
+  }
+}
 
 /**
  * Machine-driven board patch (#BUG-057): same type-filtered merge as updateBoard but

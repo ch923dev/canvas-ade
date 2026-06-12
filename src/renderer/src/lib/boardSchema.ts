@@ -41,6 +41,24 @@ import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/
  */
 export const SCHEMA_VERSION = 9
 
+/**
+ * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
+ * `minReaderVersion` — the lowest SCHEMA_VERSION an app needs to read what we write.
+ *
+ * - ADDITIVE change (new OPTIONAL fields, defaulted at read): bump SCHEMA_VERSION only.
+ *   Older readers (≥ this floor) still open the doc; unknown optional fields ride
+ *   through fromObject's structuredClone and survive a save round-trip.
+ * - BREAKING change (new board type / element kind, a semantic change an older
+ *   validator rejects or misreads, or a NEW DOC-LEVEL KEY — toObject rebuilds the root
+ *   object, so an older reader's save would DROP it): bump BOTH to the same value.
+ *
+ * Floor starts at 9: v9's root `background` key is exactly the doc-level case above — a
+ * v8 reader would open the doc but silently DROP the user's wallpaper on its next save,
+ * so v9 is the breaking baseline. Pre-9 apps keep their old strict refuse-on-newer
+ * behavior; every app from 9 on can read all future additive docs.
+ */
+export const MIN_READER_VERSION = 9
+
 export type BoardType = 'terminal' | 'browser' | 'planning'
 
 /** Browser responsive presets (widths live in cameraBounds/the Browser board). */
@@ -252,6 +270,14 @@ export interface CanvasBackground {
 /** The whole-canvas serialized document (root of `canvas.json`). */
 export interface CanvasDoc {
   schemaVersion: number
+  /**
+   * Two-tier versioning (ADR 0007): the LOWEST SCHEMA_VERSION an app must support to
+   * read this doc. Writers stamp MIN_READER_VERSION; an older app opens any doc whose
+   * minReaderVersion ≤ its own SCHEMA_VERSION (additive bumps stay openable — deep
+   * validation is the safety net). Optional: docs written before v8 lack it, and the
+   * reader then falls back to schemaVersion (the old strict behavior).
+   */
+  minReaderVersion?: number
   viewport: CanvasViewport | null
   boards: Board[]
   /**
@@ -380,6 +406,7 @@ export function toObject(
 ): CanvasDoc {
   return {
     schemaVersion: SCHEMA_VERSION,
+    minReaderVersion: MIN_READER_VERSION,
     viewport: viewport ? { ...viewport } : null,
     boards: structuredClone(boards),
     connectors: structuredClone(connectors),
@@ -422,16 +449,43 @@ const MIGRATIONS: Record<number, Migration> = {
 /**
  * Bring a document up to `SCHEMA_VERSION` by applying migrations in order. A doc
  * already at the current version passes through unchanged (no-op). Throws on a
- * missing version, a gap with no migration, or a doc newer than we support.
+ * missing version or a gap with no migration.
+ *
+ * NEWER docs (ADR 0007): a doc written by a newer app is OPENED AS-IS when its
+ * `minReaderVersion` ≤ our SCHEMA_VERSION — every version between ours and the
+ * writer's was additive, deep validation (fromObject) remains the safety net, and
+ * unknown optional fields survive a save round-trip via the structuredClone
+ * passthrough. Only a doc whose compat floor is above us (a true breaking change —
+ * or a pre-floor doc with no `minReaderVersion`) is refused.
  */
+/**
+ * Refuse a doc whose compat floor is above this build (or a newer doc with no floor —
+ * pre-ADR-0007 strict behavior). Shared by migrate() AND fromObject's early gate:
+ * fromObject must run this BEFORE deep validation, or a breaking-change doc carrying a
+ * new board type dies in assertBoard ("unknown type") and the user never sees the
+ * actionable update-the-app message (review r1 finding on #134).
+ */
+function assertReadableVersion(doc: CanvasDoc): void {
+  if (doc.schemaVersion <= SCHEMA_VERSION) return
+  const floor = typeof doc.minReaderVersion === 'number' ? doc.minReaderVersion : doc.schemaVersion
+  if (floor > SCHEMA_VERSION) {
+    throw new Error(
+      `migrate: document schemaVersion ${doc.schemaVersion} (requires reader ≥ ${floor}) ` +
+        `is newer than supported ${SCHEMA_VERSION} — this project was saved by a newer ` +
+        `version of the app; update the app to open it`
+    )
+  }
+}
+
 export function migrate(doc: CanvasDoc): CanvasDoc {
   if (typeof doc?.schemaVersion !== 'number') {
     throw new Error('migrate: document is missing an integer schemaVersion')
   }
   if (doc.schemaVersion > SCHEMA_VERSION) {
-    throw new Error(
-      `migrate: document schemaVersion ${doc.schemaVersion} is newer than supported ${SCHEMA_VERSION}`
-    )
+    assertReadableVersion(doc)
+    // Forward-compatible open: keep the doc untouched (including its newer version
+    // stamp — truthful until the next save re-stamps it at OUR version).
+    return doc
   }
   let d = doc
   while (d.schemaVersion < SCHEMA_VERSION) {
@@ -748,6 +802,10 @@ export function fromObject(doc: unknown): CanvasDoc {
   if (!isCanvasDoc(doc)) {
     throw new Error('fromObject: value is not a CanvasDoc (need numeric schemaVersion + boards[])')
   }
+  // ADR 0007: refuse an above-floor doc BEFORE deep validation, so a breaking-change
+  // doc (e.g. a new board type from a future schema) surfaces the actionable
+  // "update the app" message instead of assertBoard's "unknown type" (#134 review r1).
+  assertReadableVersion(doc)
   doc.boards.forEach(assertBoard)
   // Own the data: deep-clone the input so the returned doc (and any store it feeds)
   // does not alias the caller's object — symmetric with toObject's structuredClone,
