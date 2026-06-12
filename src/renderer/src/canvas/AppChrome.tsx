@@ -472,12 +472,74 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
 // Clicking a board button ARMS that type (sets the store `tool`); the canvas then
 // turns a click into a default-size board and a drag into a sized one
 // (useBoardPlacement). Select disarms. Exported for the dock arming integration test.
+//
+// Auto-hide (2026-06-13): the pill hides behind a slim handle bar so it never sits
+// over board content at awkward zooms; hovering the handle's hot zone reveals it.
+// Pinned open while a board type is armed (the pill is the only armed-mode
+// indicator), while the canvas is empty (EmptyState mirrors and points at it), and
+// while keyboard focus is inside (a hidden-but-focusable pill would tab blind).
+// The chromeExclusionZones dock band stays reserved even while hidden — see
+// previewPlan.chromeExclusionZones.
+
+/** Pointer-leave grace before the dock hides — forgives a brief overshoot. */
+const DOCK_HIDE_GRACE_MS = 400
+
 export function Dock(): ReactElement {
   const tool = useCanvasStore((s) => s.tool)
   const setTool = useCanvasStore((s) => s.setTool)
+  const empty = useCanvasStore((s) => s.boards.length === 0)
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const hideTimer = useRef<number | null>(null)
+  const revealed = hovered || focused || empty || tool !== 'select'
+
+  const enter = (): void => {
+    if (hideTimer.current !== null) {
+      window.clearTimeout(hideTimer.current)
+      hideTimer.current = null
+    }
+    setHovered(true)
+  }
+  const leave = (): void => {
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
+    hideTimer.current = window.setTimeout(() => {
+      hideTimer.current = null
+      setHovered(false)
+    }, DOCK_HIDE_GRACE_MS)
+  }
+  useEffect(
+    () => () => {
+      if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
+    },
+    []
+  )
+
   return (
-    <div style={styles.dock}>
-      <div style={{ ...styles.pill, padding: 4, gap: 3 }}>
+    // pointerEvents:none on the wrapper: while hidden, board content under the dock's
+    // footprint stays clickable — only the handle's hot zone (and the revealed pill)
+    // opt back in via CSS. Focus events are unaffected by pointer-events, so the
+    // focus-within pin works from the wrapper.
+    <div
+      style={styles.dock}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false)
+      }}
+    >
+      <div
+        className="ca-dock-handle"
+        data-revealed={revealed}
+        aria-hidden="true"
+        onPointerEnter={enter}
+        onPointerLeave={leave}
+      />
+      <div
+        className="ca-dock-pill"
+        data-revealed={revealed}
+        onPointerEnter={enter}
+        onPointerLeave={leave}
+        style={{ ...styles.pill, padding: 4, gap: 3 }}
+      >
         <ToolBtn
           name="select"
           title="Select"
@@ -618,7 +680,9 @@ const styles: Record<string, CSSProperties> = {
     top: 14,
     left: '50%',
     transform: 'translateX(-50%)',
-    zIndex: 50
+    zIndex: 50,
+    // Auto-hide: the wrapper must never hit-test — children opt back in (CSS).
+    pointerEvents: 'none'
   },
   proj: {
     display: 'inline-flex',

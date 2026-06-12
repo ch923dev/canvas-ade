@@ -291,6 +291,48 @@
   transition: width 0.18s;
 }
 
+/* Dock auto-hide (2026-06-13): the top-center pill hides behind a slim handle bar so it
+   never floats over board content; AppChrome.Dock pins it open (data-revealed) while a
+   tool is armed, the canvas is empty, or focus is inside. The wrapper is
+   pointer-events:none — these two children opt back in so the hidden dock's footprint
+   stays click-through to the canvas. */
+.ca-dock-pill {
+  pointer-events: auto;
+  transition:
+    opacity 0.12s ease-out,
+    transform 0.12s ease-out;
+}
+.ca-dock-pill[data-revealed='false'] {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+/* The handle: a 160×28 hover hot zone drawing a 56×6 grabber bar, overlaying the
+   hidden pill's top edge. Fades out under the revealed pill. */
+.ca-dock-handle {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 160px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  transition: opacity 0.12s ease-out;
+}
+.ca-dock-handle::after {
+  content: '';
+  width: 56px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.ca-dock-handle[data-revealed='true'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-progress-bar,
   .ca-blink,
@@ -311,6 +353,8 @@
   .ca-t-glyph,
   .ca-t-check,
   .ca-t-fill,
+  .ca-dock-pill,
+  .ca-dock-handle,
   .ca-zone,
   .ca-tidy-preset,
   .bb-navbtn,
