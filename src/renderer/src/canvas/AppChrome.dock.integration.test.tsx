@@ -35,13 +35,21 @@ describe('Dock arms a board type (drag-to-create)', () => {
   })
 })
 
-// Auto-hide: the pill hides behind the slim handle unless hovered, focused, armed,
-// or the canvas is empty. Asserted via data-revealed (the CSS carries the visuals).
-describe('Dock auto-hide (slim handle reveal)', () => {
+// Auto-hide: the pill hides behind the slim handle unless the mouse moves within the
+// top-center proximity zone, focus is inside, a tool is armed, or the canvas is empty.
+// Asserted via data-revealed (the CSS carries the visuals). jsdom geometry note: every
+// getBoundingClientRect is all-zeros here, so the zone resolves to x∈[-300,300],
+// y∈[-14,106] — IN_ZONE/OUT_ZONE below are chosen against that, not real layout.
+describe('Dock auto-hide (proximity-zone reveal)', () => {
   const pill = (c: HTMLElement): Element => c.querySelector('.ca-dock-pill')!
   const handle = (c: HTMLElement): Element => c.querySelector('.ca-dock-handle')!
   const seedBoard = (): void => {
     useCanvasStore.getState().addBoard('planning', { x: 0, y: 0 })
+  }
+  const IN_ZONE = { clientX: 0, clientY: 40 }
+  const OUT_ZONE = { clientX: 1200, clientY: 700 }
+  const moveTo = (pt: { clientX: number; clientY: number }): void => {
+    fireEvent.pointerMove(window, pt)
   }
 
   it('stays pinned open on an empty canvas (EmptyState mirrors it)', () => {
@@ -56,27 +64,50 @@ describe('Dock auto-hide (slim handle reveal)', () => {
     expect(handle(container).getAttribute('data-revealed')).toBe('false')
   })
 
-  it('reveals on handle hover and hides again after the leave grace delay', () => {
+  it('reveals after movement holds in the zone past the entrance delay', () => {
     vi.useFakeTimers()
     seedBoard()
     const { container } = render(<Dock />)
-    fireEvent.pointerEnter(handle(container))
+    moveTo(IN_ZONE)
+    // Not yet — the entrance delay is still running.
+    expect(pill(container).getAttribute('data-revealed')).toBe('false')
+    act(() => vi.advanceTimersByTime(100))
     expect(pill(container).getAttribute('data-revealed')).toBe('true')
-    fireEvent.pointerLeave(handle(container))
-    // Still revealed within the grace window…
-    expect(pill(container).getAttribute('data-revealed')).toBe('true')
-    act(() => vi.advanceTimersByTime(400))
+  })
+
+  it('a fast pass-through never flashes the dock', () => {
+    vi.useFakeTimers()
+    seedBoard()
+    const { container } = render(<Dock />)
+    moveTo(IN_ZONE)
+    moveTo(OUT_ZONE) // exits before the entrance delay elapses
+    act(() => vi.advanceTimersByTime(1000))
     expect(pill(container).getAttribute('data-revealed')).toBe('false')
   })
 
-  it('re-entering within the grace window cancels the pending hide', () => {
+  it('hides after the grace delay once the cursor exits the zone', () => {
     vi.useFakeTimers()
     seedBoard()
     const { container } = render(<Dock />)
-    fireEvent.pointerEnter(handle(container))
-    fireEvent.pointerLeave(handle(container))
-    fireEvent.pointerEnter(pill(container))
-    act(() => vi.advanceTimersByTime(1000))
+    moveTo(IN_ZONE)
+    act(() => vi.advanceTimersByTime(100))
+    expect(pill(container).getAttribute('data-revealed')).toBe('true')
+    moveTo(OUT_ZONE)
+    // Still revealed within the grace window…
+    expect(pill(container).getAttribute('data-revealed')).toBe('true')
+    act(() => vi.advanceTimersByTime(1500))
+    expect(pill(container).getAttribute('data-revealed')).toBe('false')
+  })
+
+  it('re-entering the zone within the grace window cancels the pending hide', () => {
+    vi.useFakeTimers()
+    seedBoard()
+    const { container } = render(<Dock />)
+    moveTo(IN_ZONE)
+    act(() => vi.advanceTimersByTime(100))
+    moveTo(OUT_ZONE)
+    moveTo(IN_ZONE)
+    act(() => vi.advanceTimersByTime(3000))
     expect(pill(container).getAttribute('data-revealed')).toBe('true')
   })
 

@@ -473,71 +473,128 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
 // turns a click into a default-size board and a drag into a sized one
 // (useBoardPlacement). Select disarms. Exported for the dock arming integration test.
 //
-// Auto-hide (2026-06-13): the pill hides behind a slim handle bar so it never sits
-// over board content at awkward zooms; hovering the handle's hot zone reveals it.
-// Pinned open while a board type is armed (the pill is the only armed-mode
-// indicator), while the canvas is empty (EmptyState mirrors and points at it), and
-// while keyboard focus is inside (a hidden-but-focusable pill would tab blind).
-// The chromeExclusionZones dock band stays reserved even while hidden — see
-// previewPlan.chromeExclusionZones.
+// Auto-hide (2026-06-13, v2 proximity): the pill hides behind a slim handle bar so
+// it never sits over board content at awkward zooms; it reveals when the mouse MOVES
+// within a generous top-center proximity zone (window-level pointermove — element
+// hover was a flicker trap: two small elements swapping pointer-events under a
+// stationary cursor). A short entrance delay keeps a fast pass-through from flashing
+// it; it hides a grace period after the cursor exits the zone. Pinned open while a
+// board type is armed (the pill is the only armed-mode indicator), while the canvas
+// is empty (EmptyState mirrors and points at it), and while keyboard focus is inside
+// (a hidden-but-focusable pill would tab blind). The chromeExclusionZones dock band
+// stays reserved even while hidden — see previewPlan.chromeExclusionZones.
 
-/** Pointer-leave grace before the dock hides — forgives a brief overshoot. */
-const DOCK_HIDE_GRACE_MS = 400
+/** Proximity zone (screen px), centred on the dock, anchored to the pane top. */
+const DOCK_ZONE_W = 600
+const DOCK_ZONE_H = 120
+/** Entrance delay — a cursor slung across the top shouldn't flash the dock. */
+const DOCK_REVEAL_DELAY_MS = 100
+/** Grace after the cursor exits the zone before the dock hides. */
+const DOCK_HIDE_DELAY_MS = 1500
 
 export function Dock(): ReactElement {
   const tool = useCanvasStore((s) => s.tool)
   const setTool = useCanvasStore((s) => s.setTool)
   const empty = useCanvasStore((s) => s.boards.length === 0)
-  const [hovered, setHovered] = useState(false)
+  const [inZone, setInZone] = useState(false)
   const [focused, setFocused] = useState(false)
-  const hideTimer = useRef<number | null>(null)
-  const revealed = hovered || focused || empty || tool !== 'select'
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const revealed = inZone || focused || empty || tool !== 'select'
 
-  const enter = (): void => {
-    if (hideTimer.current !== null) {
-      window.clearTimeout(hideTimer.current)
-      hideTimer.current = null
+  // Zone state machine, registered ONCE with all mutable state in closure locals:
+  // a deps-driven re-register can drop a window listener MID-DISPATCH and miss the
+  // very event being handled (the D1 Menu/Modal Escape class — see
+  // mid-dispatch-listener-removal). Only the committed `inZone` crosses into React.
+  useEffect(() => {
+    let zone: 'out' | 'pending' | 'in' = 'out'
+    let enterTimer: number | null = null
+    let hideTimer: number | null = null
+    let last = { x: NaN, y: NaN }
+
+    const inRect = (x: number, y: number): boolean => {
+      const el = wrapRef.current
+      if (!el) return false
+      const r = el.getBoundingClientRect()
+      const cx = r.left + r.width / 2
+      const top = r.top - 14 // the wrapper sits 14px below the pane top (styles.dock)
+      return Math.abs(x - cx) <= DOCK_ZONE_W / 2 && y >= top && y <= top + DOCK_ZONE_H
     }
-    setHovered(true)
-  }
-  const leave = (): void => {
-    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => {
-      hideTimer.current = null
-      setHovered(false)
-    }, DOCK_HIDE_GRACE_MS)
-  }
-  useEffect(
-    () => () => {
-      if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
-    },
-    []
-  )
+    const cancelEnter = (): void => {
+      if (enterTimer !== null) {
+        window.clearTimeout(enterTimer)
+        enterTimer = null
+      }
+    }
+    const cancelHide = (): void => {
+      if (hideTimer !== null) {
+        window.clearTimeout(hideTimer)
+        hideTimer = null
+      }
+    }
+    // Out-of-zone transition — shared by far-away moves and cursor-left-the-window
+    // (without the latter, exiting through the window's top edge leaves it stuck open).
+    const goOutside = (): void => {
+      if (zone === 'pending') {
+        cancelEnter()
+        zone = 'out'
+      } else if (zone === 'in' && hideTimer === null) {
+        hideTimer = window.setTimeout(() => {
+          hideTimer = null
+          zone = 'out'
+          setInZone(false)
+        }, DOCK_HIDE_DELAY_MS)
+      }
+    }
+    const onMove = (e: PointerEvent): void => {
+      last = { x: e.clientX, y: e.clientY }
+      if (inRect(e.clientX, e.clientY)) {
+        cancelHide()
+        if (zone === 'out') {
+          zone = 'pending'
+          enterTimer = window.setTimeout(() => {
+            enterTimer = null
+            // Commit only if the cursor is STILL in the zone when the delay elapses.
+            if (inRect(last.x, last.y)) {
+              zone = 'in'
+              setInZone(true)
+            } else {
+              zone = 'out'
+            }
+          }, DOCK_REVEAL_DELAY_MS)
+        }
+      } else {
+        goOutside()
+      }
+    }
+    window.addEventListener('pointermove', onMove, { passive: true })
+    document.addEventListener('mouseleave', goOutside)
+    window.addEventListener('blur', goOutside)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      document.removeEventListener('mouseleave', goOutside)
+      window.removeEventListener('blur', goOutside)
+      cancelEnter()
+      cancelHide()
+    }
+  }, [])
 
   return (
     // pointerEvents:none on the wrapper: while hidden, board content under the dock's
-    // footprint stays clickable — only the handle's hot zone (and the revealed pill)
-    // opt back in via CSS. Focus events are unaffected by pointer-events, so the
-    // focus-within pin works from the wrapper.
+    // footprint stays clickable — only the revealed pill opts back in via CSS (reveal
+    // is the window-level zone listener above, not element hover). Focus events are
+    // unaffected by pointer-events, so the focus-within pin works from the wrapper.
     <div
+      ref={wrapRef}
       style={styles.dock}
       onFocus={() => setFocused(true)}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false)
       }}
     >
-      <div
-        className="ca-dock-handle"
-        data-revealed={revealed}
-        aria-hidden="true"
-        onPointerEnter={enter}
-        onPointerLeave={leave}
-      />
+      <div className="ca-dock-handle" data-revealed={revealed} aria-hidden="true" />
       <div
         className="ca-dock-pill"
         data-revealed={revealed}
-        onPointerEnter={enter}
-        onPointerLeave={leave}
         style={{ ...styles.pill, padding: 4, gap: 3 }}
       >
         <ToolBtn
