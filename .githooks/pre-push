@@ -1,10 +1,17 @@
 #!/bin/sh
-# Pre-push e2e gate (2026-06-06). The full Windows-native + Linux-Docker e2e matrix
-# (Playwright `_electron`, `pnpm test:e2e:matrix`) runs HERE — only when pushing to
-# origin — instead of on every `git commit`. Why here and not pre-commit: `git commit`
-# carries no push-intent signal, so "gate only when work reaches origin" is inherently
-# a push concern. Local commits now skip e2e entirely; this fires once per push.
+# Pre-push e2e gate (2026-06-06; scoped 2026-06-13, dx-audit QW-4). The e2e suite
+# (Playwright `_electron`) runs HERE — only when pushing to origin — instead of on
+# every `git commit`. Why here and not pre-commit: `git commit` carries no push-intent
+# signal, so "gate only when work reaches origin" is inherently a push concern.
 # e2e was moved off GitHub Actions earlier (Actions billing) — this is the real gate.
+#
+# SCOPING (2026-06-13): the Windows-native leg runs on every code push; the Linux
+# Docker leg joins only when the diff touches cross-platform-sensitive surface (MAIN
+# process, e2e harness, build/test config — see LINUX_SENSITIVE below) or when forced
+# with E2E_FULL_MATRIX=1. The FULL matrix (`pnpm test:e2e:matrix`) remains MANDATORY
+# once per PR at the pre-merge gate (CLAUDE.md › parallel sessions). Rationale: the
+# Linux leg ≈ half the push cost; its unique catch surface is main-process/POSIX code;
+# and the merge gate already pays full cross-OS insurance exactly once.
 # Bypass a WIP push with:  git push --no-verify
 # Enabled by `core.hooksPath=.githooks` (set by the package.json `prepare` script).
 #
@@ -76,20 +83,29 @@ if ! printf '%s\n' "$changed" | grep -qvE '(^docs/|\.md$)'; then
 fi
 
 echo "[pre-push] REMINDER: run the manual checks in docs/testing/MANUAL-CHECKS.md for the areas you touched -- it catches what e2e/unit do not."
-echo "[pre-push] e2e matrix (Windows native + Linux Docker) — this takes ~2-3 min."
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "[pre-push] ERROR: pnpm not on PATH. Run 'corepack enable' first."
   exit 1
 fi
 
-# The Linux leg runs in Docker — fail early with a clear message if it is not up.
-if ! docker info >/dev/null 2>&1; then
-  echo "[pre-push] ERROR: Docker daemon not running — the Linux e2e leg needs it."
-  echo "           Start Docker Desktop, or bypass this push with: git push --no-verify"
-  exit 1
+# QW-4 scope decision: cross-platform-sensitive surface → FULL matrix (Windows +
+# Linux Docker); anything else (renderer-scoped diffs) → Windows leg only. The
+# `force-full` sentinel (BUG-018/068 fallbacks above) MUST land in the full branch,
+# so it is part of the pattern. Fail OPEN to full, never to skip.
+LINUX_SENSITIVE='^force-full$|^src/main/|^src/preload/|^e2e/|^Dockerfile\.e2e$|^\.dockerignore$|^package\.json$|^pnpm-lock\.yaml$|^playwright\.config\.ts$|^electron\.vite\.config\.ts$|^electron-builder\.yml$|^\.githooks/|^\.npmrc$'
+if [ "${E2E_FULL_MATRIX:-}" = "1" ] || printf '%s\n' "$changed" | grep -qE "$LINUX_SENSITIVE"; then
+  echo "[pre-push] e2e FULL matrix (Windows native + Linux Docker) — cross-platform-sensitive diff (or E2E_FULL_MATRIX=1). ~3-5 min."
+  # The Linux leg runs in Docker — fail early with a clear message if it is not up.
+  if ! docker info >/dev/null 2>&1; then
+    echo "[pre-push] ERROR: Docker daemon not running — the Linux e2e leg needs it."
+    echo "           Start Docker Desktop, or bypass this push with: git push --no-verify"
+    exit 1
+  fi
+  # E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
+  # documented browser-trio env flake doesn't false-block a push.
+  E2E_PRECOMMIT=1 pnpm test:e2e:matrix
+else
+  echo "[pre-push] renderer-scoped diff — Windows e2e leg only (Linux joins at the merge gate; force with E2E_FULL_MATRIX=1). ~1.5-2.5 min."
+  E2E_PRECOMMIT=1 pnpm test:e2e
 fi
-
-# E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
-# documented browser-trio env flake doesn't false-block a push.
-E2E_PRECOMMIT=1 pnpm test:e2e:matrix

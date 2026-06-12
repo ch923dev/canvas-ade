@@ -179,8 +179,10 @@ Get the user's nod on the artifact, THEN write the implementation plan. No UI de
   them on the board first. Your edits are auto-logged so the next session sees what you touched.
 - New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
   node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially,
-  re-running the full gate + e2e after EACH merge. (Native Agent Teams = broken on Windows; this is the
-  Windows-safe substitute.)
+  re-running the full gate + e2e after EACH merge — **the FULL e2e matrix (`pnpm test:e2e:matrix`,
+  both legs) is mandatory here**: since the 2026-06-13 pre-push scoping, renderer-scoped pushes pay
+  the Windows leg only, so the pre-merge gate is where cross-OS insurance is paid, exactly once per
+  PR. (Native Agent Teams = broken on Windows; this is the Windows-safe substitute.)
 - **Feature work lives on a worktree, not `main`. `main` is the stable version.** Anything scoped to a
   single feature / fix / refactor — its **docs (specs, plans, roadmaps, research) AND its
   implementation** — is created and committed on that work's `feat/*` (or `fix/*`) worktree branch, never
@@ -201,10 +203,14 @@ Get the user's nod on the artifact, THEN write the implementation plan. No UI de
 > **✅ E2E IS A LOCAL PRE-PUSH GATE (2026-06-03, T5; moved commit→push 2026-06-06).** The brittle
 > `CANVAS_SMOKE=e2e` harness is gone (replaced by Playwright `_electron`, T4). **e2e does NOT run in
 > GitHub Actions** — it was billing-blocked there, and the native/Docker e2e is cheaper + faster on
-> the dev box. The full **Windows-native + Linux-Docker matrix** now runs **locally as a `pre-push`
-> hook** (`.githooks/pre-push` → `pnpm test:e2e:matrix`, origin-only, skips docs-only pushes), NOT
-> pre-commit: `git commit` carries no push-intent signal, so gating "work that reaches origin" is a
-> push concern — local commits stay fast. **`pre-commit` is now the cheap trio only** (`typecheck ·
+> the dev box. The e2e gate runs **locally as a `pre-push` hook** (`.githooks/pre-push`,
+> origin-only, skips docs-only pushes), NOT pre-commit: `git commit` carries no push-intent signal,
+> so gating "work that reaches origin" is a push concern — local commits stay fast. **Scoped
+> 2026-06-13 (dx-audit QW-4):** renderer-scoped pushes run the **Windows leg only**
+> (`pnpm test:e2e`); the Linux Docker leg joins per-push only for cross-platform-sensitive diffs
+> (`src/main|preload`, `e2e/`, build/test config — `LINUX_SENSITIVE` in the hook) or
+> `E2E_FULL_MATRIX=1`; the **FULL matrix is mandatory once per PR at the pre-merge gate** (see
+> Parallel sessions). **`pre-commit` is now the cheap trio only** (`typecheck ·
 > lint · format:check`). Both enabled by the `prepare` script via `core.hooksPath`. Flake policy:
 > `retries:2` under `E2E_PRECOMMIT`, `workers:1`. Bypass with `git commit --no-verify` (cheap gate) /
 > `git push --no-verify` (e2e). **CI gate = the Actions `check` job only**
