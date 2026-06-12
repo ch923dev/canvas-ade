@@ -13,10 +13,14 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
  *     onto canvas content that a mis-stacked backdrop WOULD intercept.
  *  3. missing asset — a file backdrop whose asset is gone shows the keyed toast and
  *     reverts the stored kind to 'none' (never a silent black hole).
+ *  4. reduced-motion freeze (S7, PR 2) — the registered blossom-river scene animates
+ *     under normal motion (two strided pixel-hashes differ) and freezes to ONE
+ *     pixel-stable still when prefers-reduced-motion flips live via emulateMedia.
  *
- * The PR-1 scene registry is deliberately EMPTY (presets land in PR 2/3), so any scene
- * id renders the layer + dim veil via the unknown-scene forward-compat path — exactly
- * what these probes need (the id is preserved verbatim through save/load).
+ * Registry state: since PR 2 `blossom-river` is REGISTERED (probes 1 and 4 ride the
+ * real scene canvas); the passthrough probe's `probe-scene` id stays deliberately
+ * UNKNOWN to keep the PR-1 forward-compat path pinned (id preserved verbatim through
+ * save/load, layer renders the dim veil only).
  */
 test.describe('canvas backdrop (S4)', () => {
   test('persist-reload: a scene backdrop survives save -> reopen from disk', async ({
@@ -239,6 +243,55 @@ test.describe('canvas backdrop (S4)', () => {
     expect(res, 'arrow still in the store').not.toBeNull()
     expect(Math.abs(res!.x2 - t.bx), 'head x2 moved to the drop target').toBeLessThanOrEqual(8)
     expect(Math.abs(res!.y2 - t.by), 'head y2 moved to the drop target').toBeLessThanOrEqual(8)
+  })
+
+  test('reduced-motion: the scene freezes to one pixel-stable still (S7)', async ({ page }) => {
+    // Pin the starting preference — the counter-control below needs motion allowed.
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await evalIn(
+      page,
+      `window.__canvasE2E.setBackground({ kind: 'scene', scene: 'blossom-river', dim: 0.25, saturation: 0.7, gridDots: false })`
+    )
+    // The real scene canvas mounts (known-scene path, not the dim-veil fallback).
+    expect(
+      await pollEval(page, `!!document.querySelector('canvas[data-test="backdrop-scene"]')`, 2000),
+      'scene canvas mounted'
+    ).toBe(true)
+
+    // Strided pixel hash computed in-page (no MB-sized dataURLs over the wire). The
+    // stride (97) is coprime with the RGBA stride so samples rotate channels.
+    const HASH = `(() => {
+      const c = document.querySelector('canvas[data-test="backdrop-scene"]');
+      if (!c || c.width === 0) return null;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 0;
+      for (let i = 0; i < d.length; i += 97) h = (h * 31 + d[i]) | 0;
+      return h;
+    })()`
+    expect(await pollEval(page, `${HASH} !== null`, 4000), 'scene painted at least one frame').toBe(
+      true
+    )
+
+    // Counter-control: with motion allowed, samples 450ms apart must differ
+    // (clouds drift / shimmer / petals fall at <=30fps).
+    const a1 = await evalIn<number>(page, HASH)
+    await page.waitForTimeout(450)
+    const a2 = await evalIn<number>(page, HASH)
+    expect(a1 === a2, 'scene animates while motion is allowed').toBe(false)
+
+    // Flip the OS preference LIVE (matchMedia change listener -> the layer recreates
+    // the handle with reducedMotion baked in -> exactly one renderStill).
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.waitForTimeout(300)
+    const s1 = await evalIn<number | null>(page, HASH)
+    await page.waitForTimeout(450)
+    const s2 = await evalIn<number | null>(page, HASH)
+    expect(s1, 'still painted under reduced motion').not.toBeNull()
+    expect(s1 === s2, 'pixel-stable under reduced motion (one static frame)').toBe(true)
+
+    // Restore for any sibling probes.
+    await page.emulateMedia({ reducedMotion: null })
+    await evalIn(page, `window.__canvasE2E.setBackground({ kind: 'none' })`)
   })
 
   test('missing wallpaper asset: keyed toast + revert to none', async ({ page, electronApp }) => {
