@@ -109,3 +109,23 @@ export async function touchRecent(
   // temp file + rename, so a crash mid-write leaves the prior good file intact.
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
 }
+
+/**
+ * Remove a single entry from the stored list. LIST-ONLY: never touches the project
+ * folder on disk. Filters the UNFILTERED stored list (BUG-044 discipline — removing
+ * one entry must not silently drop a transiently-slow sibling the display prune is
+ * hiding). No-op (no write) if the path is not present.
+ */
+export async function removeRecent(userDataDir: string, path: string): Promise<void> {
+  const stored = readStoredRecents(userDataDir)
+  const next = stored.filter((r) => r.path !== path)
+  if (next.length === stored.length) return
+  mkdirSync(userDataDir, { recursive: true })
+  writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: next }, null, 2), 'utf8')
+}
+
+/** Wipe the stored list entirely. LIST-ONLY: project folders on disk are untouched. */
+export async function clearRecents(userDataDir: string): Promise<void> {
+  mkdirSync(userDataDir, { recursive: true })
+  writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify({ projects: [] }, null, 2), 'utf8')
+}

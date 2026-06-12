@@ -223,6 +223,16 @@ sweep covers the shell; spot-check at least two different menus per item.
 - [ ] Open a project saved at an older `schemaVersion` -> migration runs, no data loss, re-saves at current version.
 - [ ] Corrupt `canvas.json` -> the `.bak` fallback loads.
 
+## Welcome screen — recents removal
+
+- [ ] Hover a recent row -> the ✕ appears (only on the hovered row); click it -> the entry leaves
+      the list, the project folder on disk is UNTOUCHED, and no open pipeline starts.
+- [ ] Tab to a row's ✕ (keyboard only) -> it becomes visible on focus and Enter removes the row.
+- [ ] `Clear all` -> the whole recents section disappears; relaunch -> still empty; opening any
+      project re-adds it to the list.
+- [ ] Remove the MOST-RECENT entry, quit, relaunch -> the app no longer auto-reopens that project
+      (auto-reopen follows the new list head, or shows the welcome screen if empty).
+
 ## Context / MCP (if touched)
 
 - [ ] Reopen a board -> instant Tier-1 digest, then cached Tier-2 LLM prose (with a key set).

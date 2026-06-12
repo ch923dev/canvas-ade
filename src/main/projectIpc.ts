@@ -23,7 +23,13 @@ import {
   type ProjectResult
 } from './projectStore'
 import { scaffoldProjectMemory, createCanvasMemory, safeBoardId } from './canvasMemory'
-import { listRecents, touchRecent, type RecentProject } from './recentProjects'
+import {
+  listRecents,
+  touchRecent,
+  removeRecent,
+  clearRecents,
+  type RecentProject
+} from './recentProjects'
 import { createMemoryEngine, type MemoryEngine, type SummarizeIntent } from './memoryEngine'
 
 /**
@@ -264,6 +270,32 @@ export function registerProjectHandlers(
 
   ipcMain.handle('project:recents', async (e): Promise<RecentProject[]> => {
     if (guard(e)) return []
+    return listRecents(userDataDir)
+  })
+
+  // Remove one entry / wipe the recents list. LIST-ONLY mutations — the project folder
+  // on disk is never touched. Both return the fresh (display-pruned) list so the renderer
+  // can re-render without a second round-trip. A userData write failure is non-fatal
+  // (same policy as touchRecent, BUG-026): log + return the current list.
+  ipcMain.handle('project:removeRecent', async (e, dir: string): Promise<RecentProject[]> => {
+    if (guard(e)) return []
+    if (typeof dir === 'string') {
+      try {
+        await removeRecent(userDataDir, dir)
+      } catch (err) {
+        console.warn('[recentProjects] removeRecent failed (non-fatal)', err)
+      }
+    }
+    return listRecents(userDataDir)
+  })
+
+  ipcMain.handle('project:clearRecents', async (e): Promise<RecentProject[]> => {
+    if (guard(e)) return []
+    try {
+      await clearRecents(userDataDir)
+    } catch (err) {
+      console.warn('[recentProjects] clearRecents failed (non-fatal)', err)
+    }
     return listRecents(userDataDir)
   })
 

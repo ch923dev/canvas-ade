@@ -83,6 +83,28 @@ export default function WelcomeScreen(): React.ReactElement {
     }
   }
 
+  // Remove one entry / clear the whole recents list. LIST-ONLY (the project folder on
+  // disk is never touched); main returns the fresh list, so re-render from the reply.
+  // A rejected IPC keeps the current list (visible-but-removable beats a vanished list)
+  // and must not surface as an unhandled rejection from an event handler.
+  const onRemoveRecent = async (path: string): Promise<void> => {
+    try {
+      setRecents(await window.api.project.removeRecent(path))
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[WelcomeScreen] removeRecent failed; keeping the current list', err)
+    }
+  }
+
+  const onClearRecents = async (): Promise<void> => {
+    try {
+      setRecents(await window.api.project.clearRecents())
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[WelcomeScreen] clearRecents failed; keeping the current list', err)
+    }
+  }
+
   // D0-7: any in-flight load — this screen's own IPC (busy) or a switch pipeline that
   // unmounted Canvas (status 'loading') — disables the picker and says so.
   const loading = busy || status === 'loading'
@@ -105,16 +127,38 @@ export default function WelcomeScreen(): React.ReactElement {
         </button>
       </div>
       {recents.length > 0 && (
-        <ul className="welcome-recents">
-          {recents.map((r) => (
-            <li key={r.path}>
-              <button onClick={() => openDir(r.path)} title={r.path} disabled={loading}>
-                <span className="recent-name">{r.name}</span>
-                <span className="recent-path">{r.path}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="welcome-recents-wrap">
+          <div className="welcome-recents-head">
+            <span className="welcome-recents-label">Recent</span>
+            <button className="welcome-clear-recents" onClick={onClearRecents} disabled={loading}>
+              Clear all
+            </button>
+          </div>
+          <ul className="welcome-recents">
+            {recents.map((r) => (
+              <li key={r.path}>
+                <button
+                  className="recent-open"
+                  onClick={() => openDir(r.path)}
+                  title={r.path}
+                  disabled={loading}
+                >
+                  <span className="recent-name">{r.name}</span>
+                  <span className="recent-path">{r.path}</span>
+                </button>
+                <button
+                  className="recent-remove"
+                  onClick={() => onRemoveRecent(r.path)}
+                  disabled={loading}
+                  title="Remove from list"
+                  aria-label={`Remove ${r.name} from recent projects`}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   )

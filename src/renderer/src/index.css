@@ -316,7 +316,9 @@
   .bb-navbtn,
   .bb-state,
   .welcome-actions button,
-  .welcome-recents button {
+  .welcome-recents button,
+  .welcome-recents li,
+  .welcome-clear-recents {
     transition: none !important;
   }
 }
@@ -972,6 +974,7 @@ body {
 .pl-well textarea:focus-visible,
 .welcome-actions button:focus-visible,
 .welcome-recents button:focus-visible,
+.welcome-clear-recents:focus-visible,
 .bb-navbtn:not(:disabled):focus-visible,
 .project-switcher-menu button:focus-visible,
 .group-ctx-row:not(:disabled):focus-visible,
@@ -1097,15 +1100,54 @@ body {
   color: var(--accent-hover);
   border-color: var(--accent-hover);
 }
+.welcome-recents-wrap {
+  width: 420px;
+  max-width: 80vw;
+}
+/* Muted header row: "Recent" label + the quiet Clear-all text action (list-only). */
+.welcome-recents-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 12px 4px;
+}
+.welcome-recents-label {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-label);
+  color: var(--text-3);
+}
+.welcome-clear-recents {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.1s;
+}
+.welcome-clear-recents:hover {
+  color: var(--text);
+}
 .welcome-recents {
   list-style: none;
   padding: 0;
   margin: 0;
-  width: 420px;
-  max-width: 80vw;
-}
-.welcome-recents button {
   width: 100%;
+}
+/* Each row = open button (grows) + a hover-revealed ✕ remove (list-only, never deletes
+   the folder). Hover tint lives on the row so both controls share one highlight. */
+.welcome-recents li {
+  display: flex;
+  align-items: center;
+  border-radius: var(--r-inner);
+  transition: background 0.1s;
+}
+.welcome-recents li:hover {
+  background: var(--surface-overlay);
+}
+.recent-open {
+  flex: 1;
+  min-width: 0;
   text-align: left;
   display: flex;
   flex-direction: column;
@@ -1115,10 +1157,28 @@ body {
   color: var(--text-2);
   border-radius: var(--r-inner);
   cursor: pointer;
-  transition: background 0.1s;
 }
-.welcome-recents button:hover {
-  background: var(--surface-overlay);
+.recent-remove {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  line-height: 1;
+  padding: 6px 8px;
+  margin-right: 6px;
+  border-radius: var(--r-inner);
+  cursor: pointer;
+  /* Hidden until the row is hovered — but keep it keyboard-reachable: focus reveals it. */
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.welcome-recents li:hover .recent-remove,
+.recent-remove:focus-visible {
+  opacity: 1;
+}
+.recent-remove:hover {
+  color: var(--text);
 }
 .recent-name {
   font-weight: var(--fw-label);
