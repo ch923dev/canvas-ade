@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   SCHEMA_VERSION,
+  MIN_READER_VERSION,
   MIN_BOARD_SIZE,
   DEFAULT_BOARD_SIZE,
   DEFAULT_BACKGROUND_DIM,
@@ -487,10 +488,54 @@ describe('migrate', () => {
     expect(migrate(doc)).toEqual(doc)
   })
 
-  it('throws when the doc is newer than the supported version', () => {
+  it('throws when a newer doc has NO minReaderVersion (pre-floor strict behavior)', () => {
     expect(() =>
       migrate({ schemaVersion: SCHEMA_VERSION + 1, viewport: null, boards: [], connectors: [] })
-    ).toThrow()
+    ).toThrow(/newer than supported/)
+  })
+
+  // ADR 0007: an additive bump (writer kept the compat floor at/below us) opens as-is.
+  it('opens a NEWER doc as-is when minReaderVersion ≤ SCHEMA_VERSION (additive bump)', () => {
+    const newer: CanvasDoc = {
+      schemaVersion: SCHEMA_VERSION + 3,
+      minReaderVersion: SCHEMA_VERSION,
+      viewport: null,
+      boards: [],
+      connectors: []
+    }
+    expect(migrate(newer)).toEqual(newer)
+  })
+
+  it('refuses a newer doc whose minReaderVersion is above us (breaking change)', () => {
+    expect(() =>
+      migrate({
+        schemaVersion: SCHEMA_VERSION + 3,
+        minReaderVersion: SCHEMA_VERSION + 2,
+        viewport: null,
+        boards: [],
+        connectors: []
+      })
+    ).toThrow(/newer than supported.*update the app/s)
+  })
+
+  it('toObject stamps minReaderVersion = MIN_READER_VERSION (≤ SCHEMA_VERSION)', () => {
+    const doc = toObject([], null)
+    expect(doc.minReaderVersion).toBe(MIN_READER_VERSION)
+    expect(MIN_READER_VERSION).toBeLessThanOrEqual(SCHEMA_VERSION)
+  })
+
+  // The data-preservation claim behind ADR 0007: unknown OPTIONAL board fields from a
+  // newer schema ride through fromObject (structuredClone passthrough) so an old
+  // reader's save round-trip does not strip them.
+  it('fromObject preserves unknown optional board fields from a newer additive schema', () => {
+    const doc = toObject(sampleBoards(), null) as CanvasDoc & {
+      boards: (Board & { futureOptional?: string })[]
+    }
+    doc.schemaVersion = SCHEMA_VERSION + 1
+    doc.minReaderVersion = MIN_READER_VERSION
+    doc.boards[0].futureOptional = 'kept'
+    const out = fromObject(doc)
+    expect((out.boards[0] as Board & { futureOptional?: string }).futureOptional).toBe('kept')
   })
 
   it('throws when schemaVersion is missing', () => {
@@ -507,7 +552,14 @@ describe('schema v2 — viewport', () => {
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
-    expect(doc).toEqual({ schemaVersion: 9, viewport: vp, boards: [], connectors: [], groups: [] })
+    expect(doc).toEqual({
+      schemaVersion: 9,
+      minReaderVersion: 9,
+      viewport: vp,
+      boards: [],
+      connectors: [],
+      groups: []
+    })
   })
 
   it('toObject accepts a null viewport (fit-on-load)', () => {

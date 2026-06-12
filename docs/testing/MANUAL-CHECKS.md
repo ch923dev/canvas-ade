@@ -222,6 +222,11 @@ sweep covers the shell; spot-check at least two different menus per item.
 
 - [ ] Open a project saved at an older `schemaVersion` -> migration runs, no data loss, re-saves at current version.
 - [ ] Corrupt `canvas.json` -> the `.bak` fallback loads.
+- [ ] ADR 0007 forward-open: hand-edit a project's `canvas.json` to `schemaVersion`+1 (keep
+      `minReaderVersion`) -> opens with the "saved by a newer version" info toast, no error;
+      saving re-stamps it at the current version and it reopens cleanly.
+- [ ] ADR 0007 refuse: set `minReaderVersion` above the current version -> clean "update the
+      app" error on the welcome screen, never a black screen.
 
 ## Context / MCP (if touched)
 

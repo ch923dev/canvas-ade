@@ -16,6 +16,7 @@ import {
   type TerminalBoard
 } from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
+import { useToastStore } from './toastStore'
 
 const get = () => useCanvasStore.getState()
 
@@ -774,6 +775,30 @@ describe('canvasStore — project lifecycle', () => {
     const s = useCanvasStore.getState()
     expect(s.project.status).toBe('error')
     expect(s.project.error).toMatch(/newer than supported/)
+  })
+
+  // ADR 0007: a NEWER doc that carries a compat floor at/below our version is an
+  // additive bump — it OPENS (with the keyed info toast) instead of erroring.
+  it('applyOpenResult(ok) with a newer ADDITIVE doc (minReaderVersion ≤ ours) → status:open + info toast', async () => {
+    useToastStore.getState().clearToasts()
+    await useCanvasStore.getState().applyOpenResult({
+      ok: true,
+      dir: 'C:/p',
+      name: 'p',
+      doc: {
+        schemaVersion: SCHEMA_VERSION + 1,
+        minReaderVersion: SCHEMA_VERSION,
+        viewport: null,
+        boards: [],
+        connectors: []
+      }
+    })
+    const s = useCanvasStore.getState()
+    expect(s.project.status).toBe('open')
+    const toast = useToastStore.getState().toasts.find((t) => t.id === 'schema-forward-open')
+    expect(toast?.kind).toBe('info')
+    expect(toast?.message).toMatch(/newer version/)
+    useToastStore.getState().clearToasts()
   })
 
   // T5: primary deep-corrupt, but the .bak is a GOOD doc → recover to status:'open' with

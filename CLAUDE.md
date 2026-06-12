@@ -59,7 +59,7 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 
 ### Persistence
 - Project = a user-chosen folder. Whole canvas = single `canvas.json` at root + `canvas.json.bak` (parse-fail fallback). Heavy blobs in `assets/` by path, not inlined.
-- Atomic write (`write-file-atomic`), debounced autosave ~1s + sync flush on blur/`before-quit`. Root integer `schemaVersion` + migration pipeline.
+- Atomic write (`write-file-atomic`), debounced autosave ~1s + sync flush on blur/`before-quit`. Root integer `schemaVersion` + migration pipeline + `minReaderVersion` compat floor (two-tier versioning, ADR 0007: additive bumps stay openable by older apps; only breaking changes move the floor).
 - App config + recent-projects list live in `app.getPath('userData')`, NEVER in the project folder.
 - **Scene/session split (whiteboard + boards):** only `{schemaVersion, viewport, boards}` is
   serialized (`boardSchema.toObject`). Ephemeral session state — selected tool/element, in-flight
@@ -94,6 +94,7 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 | Preview liveness | Detach + snapshot while moving/LOD; cap ~4 live. |
 | Browser board scale | Scales WITH the camera (snapshot scales as a unit), not 1:1. Locked in 1-D. |
 | Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session syncs all presets. ADR 0002. |
+| Schema versioning | Two-tier (ADR 0007): `schemaVersion` (writer) + `minReaderVersion` (compat floor). Additive optional fields bump the writer only; breaking changes (new kinds/types, new DOC-LEVEL keys) bump both. Older apps open any doc whose floor ≤ their version. |
 | Checklist | A Planning **element** (card inside a Planning board), not a 4th board type / dock button. Decided 2026-05-29. |
 | Canvas backdrop | Per-project **screen-fixed** wallpaper layer behind RF (none / user file / bundled scene), dim+saturation, schema **v9** `background`, settings-class (never undoable). Scene ids registry-resolved at render (unknown ⇒ void+toast, preserved). ADR 0006. |
 | Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/archive/build-history.md`. |
