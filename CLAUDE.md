@@ -164,6 +164,12 @@ Get the user's nod on the artifact, THEN write the implementation plan. No UI de
   bare summary risks the reviewer re-raising the same point on the next push.
 - Post the summary disposition too if you like, but the **per-comment inline reply is the required
   one**. Never resolve by deleting the reviewer's comment.
+- **Scope of the mandate (noise contract, 2026-06-13):** the reviewer posts inline comments only at
+  `[critical]`/`[warning]` (max 5/review) — those all require inline replies as above. Items under
+  the summary's "Nits (non-blocking — no reply needed)" heading require **no** reply or disposition
+  (the reviewer will not re-raise them). Re-review rounds are **incremental** (delta since the last
+  reviewed head SHA, zero new nits) — so do not end a trailing-trivia round with another push; an
+  inline reply alone ends it.
 
 ### Parallel sessions (worktree coordination)
 - **One session per worktree; never two sessions in the same dir.** Main = integration/merge only.

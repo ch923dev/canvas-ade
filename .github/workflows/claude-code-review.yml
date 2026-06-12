@@ -1,25 +1,45 @@
 name: claude-review
 
-# Automated PR review + triage. On every (non-draft) PR open/push, Claude reviews
-# the diff, posts INLINE comments on the problem lines (anchored to file+line) plus
-# one summary comment, clears its OWN prior review first (so re-pushes never stack
-# stale duplicate threads), then applies this repo's existing labels and (only if one
-# clearly fits) a milestone. It never CREATES labels or milestones — it only chooses
-# from what already exists (see `gh label list` / the milestones API).
+# Automated PR review + triage. On every (non-draft) PR open/push that touches code,
+# Claude reviews the diff, posts INLINE comments on the problem lines (anchored to
+# file+line) plus one summary comment, clears its OWN prior review first (so re-pushes
+# never stack stale duplicate threads), then applies this repo's existing labels and
+# (only if one clearly fits) a milestone. It never CREATES labels or milestones — it
+# only chooses from what already exists (see `gh label list` / the milestones API).
 # Disposition-aware: before re-reviewing it reads the human replies on its own threads
 # and any author "Dispositions: …" summary, PRESERVES inline threads a human replied to
 # (never orphans a disposition), and does NOT re-flag a finding the author already fixed,
 # accepted, or declined-with-reason. This stops the re-flag-after-disposition loop seen
 # on PR #92.
+# Noise contract (DX audit 2026-06-13, QW-1/QW-2/QW-3):
+#   - SEVERITY FLOOR: inline comments are [critical]/[warning] only, max 5 per review;
+#     nits are summary-only (max 3, no reply needed) and never re-raised.
+#   - INCREMENTAL: the summary marker records the reviewed head SHA; later pushes review
+#     only LAST_REVIEWED_SHA..HEAD and post zero new nits (convergence — a one-line fix
+#     must not reach round seven).
+#   - PATHS-FILTERED: docs-only PRs (docs/** + *.md) do not trigger a review at all,
+#     mirroring the pre-push hook's docs-only skip.
 # Complements the deterministic `pr` gate (typecheck/lint/test/build) and `codeql`
 # (SAST): those say "is it green", this says "is it good".
 
 on:
   pull_request:
     types: [opened, synchronize]
-    # Optional: only review when certain files change
-    # paths:
-    #   - "src/**"
+    # QW-3: review only when code/config/test surface changes. A PR whose changed set
+    # is entirely docs/** + *.md matches nothing here, so the workflow never runs.
+    paths:
+      - 'src/**'
+      - 'e2e/**'
+      - 'scripts/**'
+      - '.github/**'
+      - '.githooks/**'
+      - '*.ts'
+      - '*.mjs'
+      - '*.json'
+      - '*.yml'
+      - '*.yaml'
+      - 'Dockerfile.e2e'
+      - '.npmrc'
 
 concurrency:
   # Cancel an in-progress review if a new push arrives on the same PR.
@@ -57,27 +77,46 @@ jobs:
           # Allowed gh api forms and why each is needed:
           #   gh api repos/.../pulls/.../comments    -- list inline comments (step 1 self-clear + step 2 dispositions)
           #   gh api -X DELETE repos/.../pulls/comments/...  -- delete own inline comment in self-clear (step 1)
-          #   gh api repos/.../issues/.../comments   -- list issue/summary comments (step 1 self-clear + step 2 dispositions)
+          #   gh api repos/.../issues/.../comments   -- list issue/summary comments (step 1 SHA-extract + self-clear, step 2 dispositions)
           #   gh api -X DELETE repos/.../issues/comments/... -- delete own summary comment in self-clear (step 1)
           #   gh api repos/.../milestones            -- list milestones (step 7)
+          # git diff / git merge-base are read-only local-history commands used by the
+          # incremental-review scope check (step 3).
           #
           # The allowlist uses prefix-match semantics: each entry covers calls whose
           # command string STARTS with that prefix. We explicitly exclude -X POST/PATCH
           # on pulls (no self-approval) and issues (no close/edit via this tool).
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(gh label list:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/pulls/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/issues/comments:*),Bash(gh api repos/${{ github.repository }}/milestones:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr edit:*),Bash(gh label list:*),Bash(git diff:*),Bash(git merge-base:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/pulls/comments:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/issues/comments:*),Bash(gh api repos/${{ github.repository }}/milestones:*)"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
+            HEAD SHA: ${{ github.event.pull_request.head.sha }}
 
-            Every comment you post (inline AND summary) MUST end with this exact hidden
-            marker on its own line so it can be found and cleared on the next push:
+            Every INLINE comment you post MUST end with this exact hidden marker on its
+            own line so it can be found and cleared on the next push:
             <!-- claude-code-review:auto -->
+            Your SUMMARY comment instead ends with this marker (it additionally records
+            the head SHA you reviewed, which the next run uses for incremental scope):
+            <!-- claude-code-review:auto head:${{ github.event.pull_request.head.sha }} -->
 
-            You are reviewing this pull request like a senior engineer on the Canvas ADE
-            (Expanse) Electron desktop app. Perform these tasks in order.
+            You are reviewing this pull request as a MERGE GATEKEEPER on the Canvas ADE
+            (Expanse) Electron desktop app — not as a thorough first-pass reviewer. The
+            deterministic CI gate (typecheck/lint/format/tests) and CodeQL already run;
+            your job is to catch what they cannot: real bugs, broken edge cases, security
+            holes, contract violations. The bar for every comment: "would a senior
+            engineer block the merge on this?" Perform these tasks in order.
 
-            ## 1. Clear your previous review (but PRESERVE dispositioned threads)
+            ## 1. Record the previous review state, then clear your previous review
+            FIRST — before deleting anything — find your previous summary comment and
+            extract the head SHA it recorded. Summary markers have the form
+            `claude-code-review:auto head:<sha>`:
+              gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate \
+                --jq '.[] | select(.body | contains("claude-code-review:auto")) | .body' \
+              | grep -o 'head:[0-9a-f]*' | tail -1
+            Call the result LAST_REVIEWED_SHA (empty if there is no previous summary, or
+            it predates the head: format). You will use it in step 3.
+
             This PR may have been reviewed by you on an earlier push. Delete your own prior
             comments (the ones carrying the marker above) so the review never accumulates
             stale duplicate threads — with ONE exception: NEVER delete an inline comment of
@@ -99,7 +138,7 @@ jobs:
                 done
 
             Delete your previous summary comment (summaries have no inline thread, so always
-            clear the old one):
+            clear the old one — you already extracted LAST_REVIEWED_SHA from it):
               gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --paginate \
                 --jq '.[] | select(.body | contains("claude-code-review:auto")) | .id' \
               | while read id; do
@@ -124,21 +163,40 @@ jobs:
             Treat all three as resolved; you will skip them in step 4. Match by file + line +
             topic, not exact wording (the author paraphrases).
 
-            ## 3. Review the code
-            Read the diff with `gh pr diff` and open the surrounding files in the working
-            directory to verify findings before posting. Look for:
-            - Code quality and best practices
+            ## 3. Determine the review scope, then review the code
+            Decide the scope FIRST:
+            - INCREMENTAL: if LAST_REVIEWED_SHA (step 1) is non-empty AND
+              `git merge-base --is-ancestor <LAST_REVIEWED_SHA> ${{ github.event.pull_request.head.sha }}`
+              exits 0, you already reviewed everything up to that SHA. Review ONLY the new
+              changes: `git diff <LAST_REVIEWED_SHA>..${{ github.event.pull_request.head.sha }}`.
+              Code unchanged since your last review is OUT OF SCOPE — do not post findings
+              on lines that diff does not touch, even if you notice something there (one
+              exception: a genuine [critical] anywhere may be raised once in the summary).
+            - FULL: otherwise (first review of this PR, or the ancestor check failed —
+              rebase/force-push). Read the whole diff with `gh pr diff`.
+
+            Open the surrounding files in the working directory to verify findings before
+            posting — every behavioral claim you make must cite the file:line you actually
+            read to verify it, never an inference from a name or a pattern. Look for:
             - Bugs and logic errors
             - Security concerns (this is an Electron app — sandbox/contextIsolation/IPC
               boundaries, PTY input trust, native WebContentsView handling all matter)
-            - Performance considerations
             - Broken edge cases and missing error handling
-            - Missing or inadequate tests
+            - Performance problems with real, observable impact
+            - Missing tests for a concrete, plausible failure case (name the case)
+            - A NEW e2e test for behavior provable at a lower tier per
+              docs/testing/TESTING.md's decision rule — that is a [warning], not a nit
+              (the e2e suite is a paid-per-push gate; it must stay thin)
 
             Read the repository's CLAUDE.md for the architecture, the locked decisions, and
-            the style/convention rules — hold the diff against them. Focus on real issues,
-            not style nitpicks the linter already enforces. If the PR is clean, say so
-            plainly rather than inventing concerns.
+            the style/convention rules — hold the diff against them. If the PR is clean, say
+            so plainly rather than inventing concerns.
+
+            Do NOT comment on (at any severity): anything ESLint/Prettier already enforce;
+            naming or style taste; comment phrasing or density; "consider adding a test"
+            without a concrete missed failure case; generated files or lockfiles; TODO
+            comments that are tracked elsewhere; speculative refactors of code the diff
+            does not touch.
 
             ## 4. Post inline comments on the problem lines
             Do NOT re-post any finding the human already dispositioned in step 2 (fixed,
@@ -148,11 +206,24 @@ jobs:
             not a nit), do not re-open the inline thread: mention it ONCE, briefly, in the
             step-5 summary and defer to the author.
 
-            For EACH NEW or still-unaddressed issue, post an inline comment anchored to the
-            exact file and line(s) using mcp__github_inline_comment__create_inline_comment with
+            SEVERITY FLOOR — inline comments are for [critical] and [warning] ONLY:
+            - [critical]: a real bug, security hole, data-loss path, or violation of a
+              locked CLAUDE.md decision that WILL bite.
+            - [warning]: a probable bug, broken edge case, missing error handling on a
+              plausible path, or a contract/test-tier violation worth blocking on.
+            - [nit] is NOT an inline severity. Nits (style preferences, minor cleanups,
+              optional polish) go in the step-5 summary only — never as inline comments.
+            Post AT MOST 5 inline comments, most important first. If you found more than 5
+            inline-worthy issues, list the remainder as one-line bullets in the summary.
+            CONVERGENCE RULE: on an INCREMENTAL review, post [critical]/[warning] findings
+            only and ZERO new nits — not even in the summary. Re-review rounds must
+            converge, not mint ever-smaller findings.
+
+            For each inline-worthy issue, post an inline comment anchored to the exact file
+            and line(s) using mcp__github_inline_comment__create_inline_comment with
             confirmed: true. In each comment:
-            - State the issue and its severity: [critical], [warning], or [nit]
-            - Explain why it's a problem (1-3 sentences)
+            - State the issue and its severity: [critical] or [warning]
+            - Explain why it's a problem (1-3 sentences), citing the code path you verified
             - For small, self-contained fixes (5 lines or fewer), include a committable
               GitHub suggestion block:
               ```suggestion
@@ -160,14 +231,19 @@ jobs:
               ```
               Only use a suggestion block if committing it fully fixes the issue. For
               larger or structural fixes, describe the fix in words instead.
-            - End the comment body with the hidden marker.
+            - End the comment body with the hidden inline marker.
 
             ## 5. Post a summary comment
             After all inline comments, post ONE summary with:
             gh pr comment ${{ github.event.pull_request.number }} --body "..."
-            Include: a 2-3 sentence overview of the PR, a short table of issues found by
-            severity, and what you checked. If you found no issues, post only this summary
-            saying the PR looks good. End the body with the hidden marker.
+            Include: a 2-3 sentence overview of the PR; the scope you reviewed (state
+            "Incremental review of <short-sha>..<short-sha>" when incremental); a short
+            table of inline issues by severity; any inline-worthy overflow beyond the
+            5-comment cap as one-line bullets; and what you checked. On a FULL review you
+            may add a section "Nits (non-blocking — no reply needed)" with AT MOST 3
+            one-line bullets; these need no disposition from the author and you will not
+            re-raise them. If you found no issues, post only this summary saying the PR
+            looks good. End the body with the summary marker (the head: form above).
 
             ## 6. Apply labels
             Run `gh label list` to see the labels that exist. This repo uses a STRUCTURED
