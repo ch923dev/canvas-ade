@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, safeStorage, Menu } from 'electron'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { tmpdir } from 'os'
 import { writeFileSync, mkdtempSync, existsSync } from 'fs'
@@ -88,15 +88,24 @@ function smokeLog(line: string): void {
 }
 
 function createWindow(): void {
+  // Parallel-session DX: in dev, stamp the window title with this checkout's identity
+  // (CANVAS_DEV_TITLE wins, else the worktree folder name) so simultaneous dev
+  // instances from different worktrees are tellable apart in the taskbar/alt-tab.
+  // Packaged builds keep the product title.
+  const devTitle = app.isPackaged
+    ? null
+    : process.env['CANVAS_DEV_TITLE'] || `${basename(process.cwd())} — Canvas ADE [dev]`
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0a0a0b',
-    title: 'Canvas ADE',
+    title: devTitle ?? 'Canvas ADE',
     webPreferences: buildMainWindowWebPreferences(join(__dirname, '../preload/index.js'))
   })
+  // The renderer's <title> overwrites the window title on load — keep the dev stamp.
+  if (devTitle) mainWindow.on('page-title-updated', (e) => e.preventDefault())
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
