@@ -50,4 +50,32 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     expect(board.launchCommand ?? null).toBeNull()
     expect(board.agentKind ?? null).toBeNull()
   })
+
+  test('command builder composes flags into the command + search filters the options', async ({
+    page
+  }) => {
+    const id = await evalIn<string>(page, 'window.__canvasE2E.seedConfigPendingTerminal()')
+    await expect(page.locator('[data-test="command-builder"]')).toBeVisible()
+
+    // Pick a model + a toggle → the command field recomposes (registry order).
+    await page.locator('[data-test="opt-model"]').selectOption('opus')
+    await page.locator('[data-test="opt-continue"]').click()
+    await expect(page.locator('[data-test="new-terminal-command"]')).toHaveValue(
+      'claude --model opus -c'
+    )
+
+    // Search narrows the option list (the model row drops out; permission stays).
+    await page.locator('[data-test="command-builder-search"]').fill('perm')
+    await expect(page.locator('[data-test="opt-permission-mode"]')).toBeVisible()
+    await expect(page.locator('[data-test="opt-model"]')).toHaveCount(0)
+
+    await page.locator('[data-test="new-terminal-create"]').click()
+    await expect(page.locator('[data-test="new-terminal-dialog"]')).toHaveCount(0)
+    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
+      page,
+      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
+    )
+    expect(board.launchCommand).toBe('claude --model opus -c')
+    expect(board.agentKind).toBe('claude')
+  })
 })

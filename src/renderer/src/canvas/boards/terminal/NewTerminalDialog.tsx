@@ -9,12 +9,14 @@
  * A1 ships the raw Command field (pre-filled per preset). The searchable per-agent command
  * builder is A2 — it composes into the same `launchCommand` string this field holds.
  */
-import { useCallback, useState, type CSSProperties, type ReactElement } from 'react'
+import { useCallback, useMemo, useState, type CSSProperties, type ReactElement } from 'react'
 import { Modal } from '../../Modal'
 import { Icon } from '../../Icon'
 import { useCanvasStore } from '../../../store/canvasStore'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import { AGENT_PRESETS, presetById } from './agentPresets'
+import { CommandBuilder } from './CommandBuilder'
+import { composeCommand, type OptionValues } from './composeCommand'
 import {
   MIN_TERMINAL_FONT,
   MAX_TERMINAL_FONT,
@@ -34,16 +36,31 @@ export function NewTerminalDialog({ board }: { board: TerminalBoardData }): Reac
   // A board dropped from the dock carries the default 'Terminal' title — start the Name
   // field empty (placeholder guides) rather than pre-filling that placeholder text.
   const [name, setName] = useState(board.title === 'Terminal' ? '' : board.title)
-  const [command, setCommand] = useState(presetById(DEFAULT_PRESET)?.bin ?? '')
+  // A2: structured builder values per option id; the command is composed from them. A manual
+  // edit of the command field sets `rawOverride` and wins until a builder control recomposes.
+  const [values, setValues] = useState<OptionValues>({})
+  const [rawOverride, setRawOverride] = useState<string | null>(null)
   const [cwd, setCwd] = useState(board.cwd ?? '')
   const [monitor, setMonitor] = useState(true)
   const seedFont = resolveInitialFont(board.fontSize)
   const [font, setFont] = useState(seedFont)
 
-  // Selecting a preset sets the identity and pre-fills the command (shell = empty → plain shell).
+  const preset = presetById(presetId) ?? AGENT_PRESETS[0]
+  const composed = useMemo(() => composeCommand(preset, values), [preset, values])
+  // The final launch command: a manual raw edit overrides the composed value.
+  const command = rawOverride ?? composed
+
+  // Switching preset resets the builder + any raw override (the new agent owns the command).
   const pickPreset = useCallback((id: string): void => {
     setPresetId(id)
-    setCommand(presetById(id)?.bin ?? '')
+    setValues({})
+    setRawOverride(null)
+  }, [])
+
+  // A builder control change recomposes from values — it takes back control from a manual edit.
+  const onBuilderChange = useCallback((next: OptionValues): void => {
+    setValues(next)
+    setRawOverride(null)
   }, [])
 
   const create = useCallback((): void => {
@@ -98,7 +115,7 @@ export function NewTerminalDialog({ board }: { board: TerminalBoardData }): Reac
                 key={p.id}
                 type="button"
                 onClick={() => pickPreset(p.id)}
-                style={preset}
+                style={presetBtn}
                 data-test={`preset-${p.id}`}
                 aria-pressed={sel}
               >
@@ -144,13 +161,16 @@ export function NewTerminalDialog({ board }: { board: TerminalBoardData }): Reac
               onBlur={ringOff}
             />
           </Field>
-          <Field label="Command">
+          {preset.options && (
+            <CommandBuilder preset={preset} values={values} onChange={onBuilderChange} />
+          )}
+          <Field label={preset.options ? 'Command (composed, editable)' : 'Command'}>
             <input
               style={{ ...fld, fontFamily: 'var(--mono)' }}
               placeholder="e.g. claude  (blank = shell only)"
               spellCheck={false}
               value={command}
-              onChange={(e) => setCommand(e.target.value)}
+              onChange={(e) => setRawOverride(e.target.value)}
               onFocus={ringOn}
               onBlur={ringOff}
               data-test="new-terminal-command"
@@ -263,7 +283,7 @@ const sectionLabel: CSSProperties = {
   marginBottom: 6
 }
 const presets: CSSProperties = { display: 'flex', gap: 8, justifyContent: 'space-between' }
-const preset: CSSProperties = {
+const presetBtn: CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',

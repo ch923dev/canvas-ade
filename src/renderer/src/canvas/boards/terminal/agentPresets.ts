@@ -110,15 +110,32 @@ const CLAUDE_OPTIONS: AgentOption[] = [
   }
 ]
 
-/** Minimal starter option sets (TODO A2: ground each from the tool's --help). */
-const MODEL_ONLY = (flag = '--model'): AgentOption[] => [
+// Starter schemas for the other agents, grounded in their docs/--help as of 2026-06-13
+// (model ids drift, so Codex/OpenCode use a free-text model field rather than a wrong enum).
+// Conservative on purpose — the composed command stays editable, so a missing flag is a quick
+// manual add, while a WRONG enum value would silently launch a broken command.
+const GEMINI_OPTIONS: AgentOption[] = [
   {
     id: 'model',
     kind: 'select',
     label: 'Model',
-    flag,
-    choices: [{ value: '', label: 'Default' }]
-  }
+    flag: '-m',
+    choices: [
+      { value: 'gemini-2.5-pro', label: '2.5 Pro' },
+      { value: 'gemini-2.5-flash', label: '2.5 Flash' }
+    ]
+  },
+  { id: 'yolo', kind: 'toggle', label: 'Auto-approve (YOLO)', flag: '--yolo', danger: true },
+  { id: 'sandbox', kind: 'toggle', label: 'Sandbox', flag: '--sandbox' }
+]
+const CODEX_OPTIONS: AgentOption[] = [
+  { id: 'model', kind: 'text', label: 'Model', flag: '-m', placeholder: 'e.g. gpt-5-codex' },
+  { id: 'full-auto', kind: 'toggle', label: 'Full auto', flag: '--full-auto', danger: true },
+  { id: 'search', kind: 'toggle', label: 'Web search', flag: '--search' }
+]
+const OPENCODE_OPTIONS: AgentOption[] = [
+  { id: 'model', kind: 'text', label: 'Model', flag: '--model', placeholder: 'provider/model' },
+  { id: 'continue', kind: 'toggle', label: 'Continue last session', flag: '-c' }
 ]
 
 export const AGENT_PRESETS: readonly AgentPreset[] = [
@@ -130,20 +147,14 @@ export const AGENT_PRESETS: readonly AgentPreset[] = [
     options: CLAUDE_OPTIONS,
     defaultRole: 'worker'
   },
-  { id: 'codex', label: 'Codex', bin: 'codex', glyph: 'agent-codex', options: MODEL_ONLY() },
-  {
-    id: 'gemini',
-    label: 'Gemini',
-    bin: 'gemini',
-    glyph: 'agent-gemini',
-    options: MODEL_ONLY('-m')
-  },
+  { id: 'codex', label: 'Codex', bin: 'codex', glyph: 'agent-codex', options: CODEX_OPTIONS },
+  { id: 'gemini', label: 'Gemini', bin: 'gemini', glyph: 'agent-gemini', options: GEMINI_OPTIONS },
   {
     id: 'opencode',
     label: 'OpenCode',
     bin: 'opencode',
     glyph: 'agent-opencode',
-    options: MODEL_ONLY()
+    options: OPENCODE_OPTIONS
   },
   { id: 'shell', label: 'Shell', bin: '', glyph: 'agent-shell' }
 ]
