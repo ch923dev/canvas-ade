@@ -20,7 +20,15 @@ beforeEach(() => {
     project: { save, onFlush: vi.fn(() => () => {}) }
   }
   useSaveStatusStore.getState().clearSaveFailure()
-  useCanvasStore.setState({ boards: [], connectors: [], selectedId: null, past: [], future: [] })
+  useCanvasStore.setState({
+    boards: [],
+    connectors: [],
+    groups: [],
+    background: null,
+    selectedId: null,
+    past: [],
+    future: []
+  })
 })
 
 afterEach(() => {
@@ -48,6 +56,40 @@ describe('useAutosave — dir-less project gate', () => {
     renderHook(() => useAutosave())
     act(() => {
       useCanvasStore.getState().addBoard('planning', { x: 100, y: 100 })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+    })
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Settings-class persisted state (groups v6, background v9) round-trips through
+// toObject but rode its OWN store ref — a change to it leaves boards/connectors/viewport
+// untouched. The subscription must watch those refs too, or a backdrop pick / group
+// rename with no board or camera edit before the next flush silently fails to persist.
+// These prove the wiring (subscription → schedule → save) the pure hasSavableChange
+// unit tests cannot — they were the untested gap that hid the bug.
+describe('useAutosave — settings-class persistence triggers', () => {
+  it('a backdrop-only change autosaves with no board/camera edit (v9 regression)', async () => {
+    useCanvasStore.setState({ project: { dir: 'C:/p', name: 'p', status: 'open' } })
+    renderHook(() => useAutosave())
+    act(() => {
+      useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'blossom-river' })
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+    })
+    expect(save).toHaveBeenCalledTimes(1)
+  })
+
+  it('a group-only change autosaves with no board/camera edit (v6 regression)', async () => {
+    useCanvasStore.setState({ project: { dir: 'C:/p', name: 'p', status: 'open' } })
+    renderHook(() => useAutosave())
+    act(() => {
+      useCanvasStore.getState().addGroup('Group A', [])
     })
     await act(async () => {
       vi.advanceTimersByTime(2000)
