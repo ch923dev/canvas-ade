@@ -31,16 +31,22 @@ deferred Feature Workspaces.
 
 ## 2. Design artifact (sign-off gate)
 
-- `mock.html` — throwaway, tokens copied verbatim from `src/renderer/src/index.css` (§2-4).
-- `mock-rendered.png` — rendered screenshot (served over localhost; `file:` is blocked).
+- **`mock-v2.html` / `mock-v2-rendered.png` — CURRENT artifact.** Adds (a) monochrome brand glyphs per
+  agent, (b) the structured + searchable command builder. (User feedback 2026-06-13.)
+- `mock.html` / `mock-rendered.png` — **superseded** v1 (neutral monograms + free-text command field).
+- Served over localhost (`file:` is blocked); tokens copied verbatim from `src/renderer/src/index.css`.
 
-Two states: **Details** tab (default) and **Appearance** tab, shown over a dimmed dropped board to
-convey the place-first flow. Notes baked into the mock footer.
+v2 states: **State 1** = Claude selected, full command builder; **State 2** = search "perm" filtering the
+option list. Notes baked into the mock footer.
 
 **Design-contract points honored:**
 - Built on the shared `Modal.tsx` (scrim + focus-trap + Esc + `prefers-reduced-motion`).
 - Single accent (`--accent` #4f8cff); `--surface-raised` card; `--shadow-pop`; `--r-ctl` radius.
-- Preset tiles are **neutral monograms**, NOT brand logos (DESIGN.md "functional, non-illustrative icons").
+- **Brand glyphs are MONOCHROME** (inherit `currentColor` → accent when selected), not full-color logos —
+  keeps the calm palette and sidesteps trademark/bundling concerns. This is a deliberate softening of the
+  DESIGN.md "functional, non-illustrative" rule (identity marks are functional here); glyph SVG paths are
+  added to `Icon.tsx`. Glyphs in the mock are recognizable approximations; the impl uses official-mark
+  silhouettes.
 - Segmented control reuses the `BrowserBoard` VpToggle pattern; fields reuse `TerminalConfig` styles.
 
 ## 3. The flow (place-first)
@@ -82,7 +88,7 @@ monitorActivity?: boolean  // absent ⇒ treated as true; false ⇒ out of swarm
 - `agentKind` is a free string (not a closed enum) so a custom preset / future agent doesn't require a
   schema bump. The renderer maps unknown kinds to a generic glyph.
 
-## 5. Preset registry (Phase A) — new pure module
+## 5. Preset registry + option schema (Phase A) — new pure module(s)
 
 `canvas/boards/terminal/agentPresets.ts`:
 
@@ -90,30 +96,80 @@ monitorActivity?: boolean  // absent ⇒ treated as true; false ⇒ out of swarm
 export interface AgentPreset {
   id: string            // stable key, also the persisted agentKind
   label: string         // 'Claude Code'
-  launchCommand: string // 'claude'  (shell = '')
-  glyph: string         // monogram, e.g. 'C' / 'Cx' / '>_'
+  bin: string           // base binary: 'claude' | 'codex' | … ('' for shell)
+  glyph: IconName       // monochrome brand-glyph icon (added to Icon.tsx)
+  options?: AgentOption[]  // the command-builder schema for this agent (absent ⇒ raw-only, e.g. Shell)
   defaultRole?: 'orchestrator' | 'worker'  // reserved for Phase C; unused in A/B
 }
 
-export const AGENT_PRESETS: readonly AgentPreset[]  // claude, codex, gemini, opencode, shell
+// One row in the builder. Renders by kind; composes to a CLI fragment.
+export type AgentOption =
+  | { id: string; kind: 'select'; label: string; flag: string; choices: { value: string; label: string }[]; default?: string }
+  | { id: string; kind: 'toggle'; label: string; flag: string }          // presence-only flag, e.g. -c
+  | { id: string; kind: 'text';   label: string; flag: string; placeholder?: string }
+
+export const AGENT_PRESETS: readonly AgentPreset[]   // claude, codex, gemini, opencode, shell
 export function presetById(id: string): AgentPreset | undefined
 ```
 
-- Fixed v1 list; designed for later user extension via config.
-- Pure → unit-tested (resolution by id; Shell resolves to empty launchCommand → plain shell).
-- **Exact launch strings are an open sub-decision** (trivially editable here): proposed
-  `claude` / `codex` / `gemini` / `opencode` / `` (shell).
+`canvas/boards/terminal/composeCommand.ts` (pure, unit-tested):
+
+```ts
+// values: { [optionId]: string | boolean }  → "claude --model opus --effort high -c"
+export function composeCommand(preset: AgentPreset, values: Record<string, string | boolean>): string
+// best-effort reverse so re-opening config re-hydrates the builder; unknown tokens ⇒ raw fallback
+export function parseCommand(preset: AgentPreset, raw: string): { values: Record<string, …>; extra: string }
+```
+
+**Claude option schema (grounded in real, current `claude` flags — verified via claude-code-guide
+2026-06-13; flags drift across CLI versions, so this is curated + maintainable, NOT exhaustive):**
+
+| Option | kind | flag | choices / notes |
+|---|---|---|---|
+| Model | select | `--model` | `sonnet` · `opus` · `haiku` · `fable` (or full id) |
+| **Effort** | select | `--effort` | `low` · `medium` · `high` · `xhigh` · `max` *(the user's "effort mode" — a real flag)* |
+| Permission mode | select | `--permission-mode` | `default` · `acceptEdits` · `plan` · `auto` · `dontAsk` · `bypassPermissions` |
+| Continue last session | toggle | `-c` | |
+| Resume a session | text | `--resume` | session id/name (blank ⇒ interactive picker) |
+| Skip permission prompts | toggle | `--dangerously-skip-permissions` | (danger-styled) |
+| Background session | toggle | `--bg` | |
+| Add directory | text | `--add-dir` | space-separated paths |
+| MCP config | text | `--mcp-config` | json path / inline |
+| Allowed / Disallowed tools | text | `--allowedTools` / `--disallowedTools` | rule lists |
+
+- Fixed v1 lists for claude/codex/gemini/opencode (codex/gemini/opencode schemas curated from their
+  `--help`; **TODO before impl: ground each the same way I grounded claude**). Shell has no `options` →
+  builder hidden, optional raw command only.
+- Designed for later **user extension via config** (the schema is plain data) — this keeps the locked
+  *agent-agnostic* decision: the builder is a convenience over a string, never a hard dependency.
+- Pure → unit-tested (compose for each kind; Shell → empty command → plain shell; parse round-trip).
 
 ## 6. Dialog component (Phase A) — `canvas/boards/terminal/NewTerminalDialog.tsx`
 
 - Renders inside the shared `Modal.tsx` (centered). Props: `boardId`, `onCreate(patch)`, `onCancel()`.
-- Quick Start tile row → selecting a preset sets `agentKind` + pre-fills the Command field (editable).
-- Details tab: Name (`title`), Command (`launchCommand`), Working dir (`cwd`), Monitor activity
+- Quick Start tile row → **monochrome brand glyph** per preset; selecting one sets `agentKind` and loads
+  that preset's option schema into the builder.
+- **Command builder** (`canvas/boards/terminal/CommandBuilder.tsx`) — replaces the free-text field for
+  agents that have an `options` schema:
+  - A **search box** filters the option list by label / flag (the user's "searchable list").
+  - Each option renders by `kind`: `select` → a pill dropdown (Model / Effort / Permission mode); `toggle`
+    → a checkbox (Continue / Skip-permissions / …); `text` → an inline input (Resume id / add-dir).
+  - A live **composed command** (`composeCommand`) shows below and **stays editable** — the raw escape
+    hatch. Editing it by hand sets a "raw override" flag so the builder doesn't clobber the user's text
+    (best-effort `parseCommand` re-hydrates known flags; unknown tokens stay in the raw tail).
+  - Shell (no `options`) → builder hidden; just an optional raw command input.
+- Details tab: Name (`title`), the command builder (above), Working dir (`cwd`), Monitor activity
   (`monitorActivity`).
 - Appearance tab: Font size stepper (reuses `MIN/MAX_TERMINAL_FONT` from `terminalFont.ts`); optional
-  accent tint (canvas-only; **only if we choose to add a board tint field** — otherwise drop for v1).
-- Create → `beginChange()` + `updateBoard(boardId, patch)` then trigger spawn (clear `configPending`).
+  accent tint (canvas-only — **only if we add a board tint field**; otherwise drop for v1).
+- Create → `beginChange()` + `updateBoard(boardId, { title, agentKind, launchCommand: <composed>, cwd,
+  monitorActivity })` then trigger spawn (clear `configPending`).
 - Cancel → clear `configPending` → spawn plain shell. Esc = Cancel (Modal handles it).
+
+**Source-of-truth note:** the persisted value is still the composed **`launchCommand` string** (+
+`agentKind`). The structured option *values* are NOT persisted to schema in v1 — on re-open, the builder
+re-hydrates via `parseCommand`. (Persisting `agentOptions` for lossless round-trip is an optional
+follow-up; keeps schema minimal now.)
 
 ## 7. Wiring (Phase A)
 
@@ -123,7 +179,16 @@ export function presetById(id: string): AgentPreset | undefined
 | `canvas/hooks/useBoardPlacement.ts` | on a **terminal** drop, set `configPending` + open the dialog (browser/planning unchanged). |
 | `canvas/boards/terminal/useTerminalSpawn.ts` | treat `configPending` as idle-on-mount (suppress auto-spawn until resolved). |
 | `canvas/boards/TerminalBoard.tsx` | identity pill reads `agentKind` (generic fallback for unknown/shell); host the dialog when `configPending`. |
-| `canvas/Icon.tsx` (maybe) | only if monograms need a glyph helper — prefer text monograms, no new icons. |
+| `canvas/Icon.tsx` | **add 5 monochrome brand glyphs** (`claude`/`codex`/`gemini`/`opencode`/`shell`) as `currentColor` single-path/group marks (24-unit viewBox, matches the existing style). |
+| `canvas/boards/terminal/CommandBuilder.tsx` | **new** — searchable option list + select/toggle/text controls + composed-command preview. |
+| `canvas/boards/terminal/composeCommand.ts` | **new** — pure compose/parse (§5). |
+
+**Phasing within Phase A** (so the skeleton can land before the builder):
+- **A1** — schema v10 + preset registry + brand glyphs + dialog shell + place-first wiring + **raw command
+  field** (no builder yet). Shippable.
+- **A2** — per-agent option schema + `CommandBuilder` + compose/parse search. Layers onto A1.
+- Then **Phase B** (MCP observation). The command builder is a meaningful sub-system (option schemas +
+  dynamic form + search + compose/parse) — A2 is roughly the weight of A1, plan accordingly.
 
 ## 8. MCP integration (Phase B — observation)
 
