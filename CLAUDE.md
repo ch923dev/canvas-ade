@@ -128,6 +128,7 @@ pnpm rebuild        # electron-rebuild -w node-pty (manual native rebuild)
 # headless smoke: $env:CANVAS_SMOKE='exit'; pnpm start   (prints SELFTEST_DONE / RENDERER_SMOKE)
 # board e2e smoke: pnpm build; $env:CANVAS_SMOKE='e2e'; pnpm start   (seeds each board, prints E2E_* / E2E_DONE, exits non-zero on fail) — FROZEN in CI, see Status
 # HTML screenshot:  $env:CANVAS_SHOT='C:\tmp\canvas.png'; pnpm start  (renderer DOM only, NOT the native preview view)
+# manual PR check:  $env:CANVAS_DEV_TITLE='PR#NNN <feature>'; pnpm dev  (stamps the window title so you can tell WHICH PR's build you're inspecting — see Conventions › Manual dev check)
 ```
 
 ## Conventions
@@ -152,6 +153,23 @@ built. Match the `design-reference/` tokens. Pick the lightest medium that conve
 - **Comparing options** -> side-by-side wireframes in the brainstorm (the AskUserQuestion preview panel
   renders ASCII mockups for exactly this).
 Get the user's nod on the artifact, THEN write the implementation plan. No UI design lands code-first.
+
+### Manual dev check on every PR (title-stamped build)
+Every PR MUST get a **manual dev check in a running app** before it is opened/merged — a green
+typecheck/lint/unit run is NOT "verified working" (the black-screen-regression class of bug). Launch
+the feature with `pnpm dev` and actually look at the change in the live app.
+- **The dev build MUST carry a distinguishing window title** so you can tell *which* PR/build you are
+  inspecting when several dev instances (or several feature checkouts) are open at once. Dev builds
+  already auto-stamp the title with the checkout's worktree folder name (`<folder> — Canvas ADE
+  [dev]`); set a per-PR stamp to make it unambiguous:
+  ```
+  $env:CANVAS_DEV_TITLE='PR#NNN <feature>'; pnpm dev
+  ```
+  `CANVAS_DEV_TITLE` wins over the folder default; packaged builds always keep the product title.
+  (Implemented in `src/main/index.ts` › `createWindow` — the renderer `<title>` is prevented from
+  overwriting the dev stamp.)
+- Before signing off the check, **confirm the window title (taskbar / alt-tab) reads this PR's
+  stamp** — that is your ground truth that you are testing *this* PR's code and not a stale instance.
 
 ### Responding to the Claude PR reviewer
 - When you check the automated reviewer's inline comments on a PR, you **MUST reply inline on
