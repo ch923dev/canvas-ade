@@ -1,6 +1,8 @@
 # Spec — New Terminal agent-preset dialog (+ MCP agent identity)
 
-- **Status:** DRAFT, awaiting design sign-off on `mock.html` / `mock-rendered.png`.
+- **Status:** Design signed off (mock-v2). **A1 IMPLEMENTED + GATE-GREEN** (commit `9838161`):
+  typecheck/lint/format · unit 2300 · build · Windows e2e 110/110 (incl. 2 new dialog tests).
+  **A2 (searchable command builder) + Phase B (MCP observation) remain.**
 - **Branch:** `feat/new-terminal-presets` (off `main` @ `d82acc6`).
 - **Schema:** claims **v10** (additive; `minReaderVersion` stays 9). Coordinate with in-flight
   `canvas-backdrop` (v9) — see Coordination.
