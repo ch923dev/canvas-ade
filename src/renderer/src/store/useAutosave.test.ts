@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createAutosaver, setActiveAutosaver, cancelActiveAutosave } from './useAutosave'
+import {
+  createAutosaver,
+  setActiveAutosaver,
+  cancelActiveAutosave,
+  SAVED_KEYS,
+  hasSavableChange
+} from './useAutosave'
+import type { CanvasState } from './canvasStore'
+import { toObject } from '../lib/boardSchema'
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
@@ -148,5 +156,67 @@ describe('active-autosaver registry (PERSIST-B)', () => {
     vi.advanceTimersByTime(1000)
     expect(saveB).not.toHaveBeenCalled() // current one cancelled
     expect(saveA).toHaveBeenCalledTimes(1) // the stale instance is no longer tracked
+  })
+})
+
+// The autosave dirty-trigger: a change to ANY persisted slice must arm a save, and a
+// change to ONLY ephemeral state (selection/tool/hover) must not. The bug this guards:
+// groups (v6) and background (v9) round-trip to canvas.json but were absent from the
+// subscription's watched set, so a group rename / backdrop pick with no board or camera
+// edit before the next flush was silently lost on reopen (the engine above was fine —
+// the subscription wiring was the gap, and it was untested).
+describe('hasSavableChange (autosave dirty-trigger)', () => {
+  const base: Pick<CanvasState, (typeof SAVED_KEYS)[number]> = {
+    boards: [],
+    connectors: [],
+    viewport: null,
+    groups: [],
+    background: null
+  }
+
+  it('does not arm on pure ephemeral churn (no persisted ref changed)', () => {
+    expect(hasSavableChange(base, { ...base })).toBe(false)
+  })
+
+  it('arms on a boards change', () => {
+    expect(hasSavableChange(base, { ...base, boards: [...base.boards] })).toBe(true)
+  })
+
+  it('arms on a connectors change (M2)', () => {
+    expect(hasSavableChange(base, { ...base, connectors: [...base.connectors] })).toBe(true)
+  })
+
+  it('arms on a viewport change', () => {
+    expect(hasSavableChange(base, { ...base, viewport: { x: 1, y: 2, zoom: 1 } })).toBe(true)
+  })
+
+  it('arms on a groups-only change (v6) — regression for the silent-loss bug', () => {
+    expect(hasSavableChange(base, { ...base, groups: [...base.groups] })).toBe(true)
+  })
+
+  it('arms on a background-only change (v9) — regression for the silent-loss bug', () => {
+    expect(
+      hasSavableChange(base, {
+        ...base,
+        background: { kind: 'none', dim: 0.25, saturation: 0.7, gridDots: false }
+      })
+    ).toBe(true)
+  })
+
+  // Drift guard: the watched set MUST equal every persisted content key toObject()
+  // writes (minus the version stamps). If a future schema adds a doc-level field to
+  // toObject without adding it here, this fails — closing the class of bug for good.
+  it('SAVED_KEYS mirrors every persisted field toObject() serializes (drift guard)', () => {
+    const doc = toObject([], { x: 0, y: 0, zoom: 1 }, [], [], {
+      kind: 'none',
+      dim: 0.25,
+      saturation: 0.7,
+      gridDots: false
+    })
+    const VERSION_KEYS = new Set(['schemaVersion', 'minReaderVersion'])
+    const persisted = Object.keys(doc)
+      .filter((k) => !VERSION_KEYS.has(k))
+      .sort()
+    expect([...SAVED_KEYS].sort()).toEqual(persisted)
   })
 })

@@ -4,7 +4,7 @@
  * window blur + beforeunload so at most ~1s of edits is ever at risk.
  */
 import { useEffect } from 'react'
-import { useCanvasStore } from './canvasStore'
+import { useCanvasStore, type CanvasState } from './canvasStore'
 import { useSaveStatusStore } from './saveStatusStore'
 
 type ProjectStatus = 'welcome' | 'loading' | 'open' | 'error'
@@ -22,6 +22,30 @@ export interface Autosaver {
   /** Flush any pending save NOW; resolves once the underlying save settles. */
   flush: () => Promise<void>
   cancel: () => void
+}
+
+/**
+ * The PERSISTED state slices whose change must arm autosave. This list MUST stay in
+ * lock-step with what `toObject()` serializes into canvas.json — boards, connectors,
+ * viewport, groups (v6) and background (v9). A field that round-trips to disk but is
+ * MISSING here is silently lost on a settings-only edit: a backdrop pick / dim drag
+ * (v9) or a group create/rename (v6) with no board or camera change before the next
+ * flush never armed `dirty`, so the blur/quit flush no-op'd and the change vanished on
+ * reopen. Selection / tool / hover / in-flight-draft churn is intentionally NOT here
+ * (that ephemeral state must never reach canvas.json). The drift-guard unit test pins
+ * this set to toObject's output so the next persisted field cannot re-open the gap.
+ */
+export const SAVED_KEYS = ['boards', 'connectors', 'viewport', 'groups', 'background'] as const
+
+/**
+ * True when any persisted slice changed by reference. Store updates are immutable, so a
+ * changed slice always carries a NEW ref — a cheap identity check, no deep compare.
+ */
+export function hasSavableChange(
+  prev: Pick<CanvasState, (typeof SAVED_KEYS)[number]>,
+  next: Pick<CanvasState, (typeof SAVED_KEYS)[number]>
+): boolean {
+  return SAVED_KEYS.some((k) => prev[k] !== next[k])
 }
 
 /** Pure debounce+gate engine (no React) — unit-tested directly. */
@@ -132,23 +156,14 @@ export function useAutosave(): void {
       }
     })
 
-    // Save when boards, connectors, or camera change (skip pure selection/tool churn).
-    // connectors (M2) ride their own ref — a connector add/remove leaves `boards`
-    // untouched, so it must be watched explicitly or a new cable wouldn't autosave.
-    let prevBoards = useCanvasStore.getState().boards
-    let prevConnectors = useCanvasStore.getState().connectors
-    let prevViewport = useCanvasStore.getState().viewport
-    const unsub = useCanvasStore.subscribe((s) => {
-      if (
-        s.boards !== prevBoards ||
-        s.connectors !== prevConnectors ||
-        s.viewport !== prevViewport
-      ) {
-        prevBoards = s.boards
-        prevConnectors = s.connectors
-        prevViewport = s.viewport
-        saver.schedule()
-      }
+    // Arm autosave when any PERSISTED slice changes (skip pure selection/tool/hover
+    // churn). Each slice rides its own ref — connectors (M2), groups (v6) and the
+    // backdrop (v9) all leave `boards` untouched, so every persisted field must be
+    // watched via SAVED_KEYS (kept in lock-step with toObject) or a settings-only edit
+    // silently fails to schedule a save. zustand hands the previous state as the 2nd
+    // listener arg, so there is no manual prev-tracking to drift out of sync.
+    const unsub = useCanvasStore.subscribe((s, prev) => {
+      if (hasSavableChange(prev, s)) saver.schedule()
     })
 
     const onBlur = (): void => void saver.flush()
