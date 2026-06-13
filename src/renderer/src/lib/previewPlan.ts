@@ -124,6 +124,9 @@ export interface PaneBox {
  *  • topRight — camera cluster (`top:14 right:16`, ~220×40) + the DiagOverlay below it
  *    (`top:12 right:12`, ~116×80 in dev/diag mode); one rect covers both.
  * Margins are padded for shadow/safety so the band fully clears the chrome.
+ * The dock band stays reserved even though the dock auto-hides (2026-06-13): the
+ * hover-reveal must paint instantly over a demoted snapshot — making the zone
+ * hover-dynamic would race the async detach IPC and flash the pill under a live view.
  */
 export function chromeExclusionZones(pane: PaneBox): Box[] {
   const right = pane.x + pane.w
