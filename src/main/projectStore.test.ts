@@ -253,6 +253,20 @@ describe('W4 assets pipeline', () => {
     }
   })
 
+  it('writeAsset accepts backdrop video exts (webm/mp4 — renderer accept-list parity)', async () => {
+    const dir = tmp()
+    try {
+      const webm = await writeAsset(dir, bytes('vid-webm'), 'webm')
+      const mp4 = await writeAsset(dir, bytes('vid-mp4'), 'MP4') // case-normalized
+      expect(webm.assetId).toMatch(/^assets\/[a-f0-9]{40}\.webm$/)
+      expect(mp4.assetId).toMatch(/^assets\/[a-f0-9]{40}\.mp4$/)
+      expect(readAsset(dir, webm.assetId)).toEqual(bytes('vid-webm'))
+      expect(readAsset(dir, mp4.assetId)).toEqual(bytes('vid-mp4'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('readAsset returns bytes, null on missing, null on traversal', async () => {
     const dir = tmp()
     try {
@@ -288,6 +302,40 @@ describe('W4 assets pipeline', () => {
       ]
     }
     expect(collectAssetIds(doc)).toEqual(new Set(['assets/a.png', 'assets/b.png']))
+  })
+
+  it('collectAssetIds includes the v9 background wallpaper assetId (image + video)', () => {
+    // Regression: gcAssets runs against this set on every project:open. A file
+    // wallpaper (image OR webm/mp4 video) lives at the v9 root background.assetId,
+    // NOT in any board element — omitting it swept the user's wallpaper to .trash on
+    // reopen, then useBackdropMedia read it as missing and reverted to kind:'none'.
+    const img = {
+      schemaVersion: 9,
+      viewport: null,
+      boards: [{ id: 'p1', type: 'planning', elements: [] }],
+      background: { kind: 'file', assetId: 'assets/wallpaper.png', dim: 0.4, saturation: 1 }
+    }
+    expect(collectAssetIds(img)).toEqual(new Set(['assets/wallpaper.png']))
+
+    // Video wallpaper, union with a board image element.
+    const vid = {
+      schemaVersion: 9,
+      viewport: null,
+      boards: [
+        { id: 'p1', type: 'planning', elements: [{ kind: 'image', assetId: 'assets/a.png' }] }
+      ],
+      background: { kind: 'file', assetId: 'assets/clip.webm' }
+    }
+    expect(collectAssetIds(vid)).toEqual(new Set(['assets/a.png', 'assets/clip.webm']))
+
+    // A scene/none background carries no assetId — nothing extra collected.
+    const scene = {
+      schemaVersion: 9,
+      viewport: null,
+      boards: [],
+      background: { kind: 'scene', scene: 'blossom-river' }
+    }
+    expect(collectAssetIds(scene)).toEqual(new Set())
   })
 
   it('gcAssets quarantine-moves orphans to .trash, keeps referenced, no-ops on absent assets/', async () => {

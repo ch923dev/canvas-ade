@@ -116,6 +116,7 @@ export function BackdropPicker(): ReactElement {
           align="right"
           gap={6}
           label="Backdrop"
+          className="bd-menu"
           onClose={() => setOpen(false)}
         >
           <div className="bd-head">Backdrop</div>

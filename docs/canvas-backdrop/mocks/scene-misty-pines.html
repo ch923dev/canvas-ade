@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Misty Pines — generated scene</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: #0a0a0b;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        font-family: system-ui, sans-serif;
+      }
+      #bar {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 16px;
+        background: #1a1a1d;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      #bar span {
+        font-size: 12px;
+        color: #9b9ba1;
+      }
+      #bar .meta {
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 11px;
+        color: #7b7b81;
+      }
+      button {
+        font-size: 11px;
+        font-weight: 500;
+        color: #9b9ba1;
+        background: #1e1e22;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 5px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        color: #ededee;
+        border-color: rgba(255, 255, 255, 0.16);
+      }
+      #wrap {
+        flex: 1;
+        position: relative;
+        min-height: 0;
+      }
+      canvas#view {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <span><b style="color: #ededee">Misty Pines</b> — code-painted scene</span>
+      <button id="dl1080">Download PNG 1920×1080</button>
+      <button id="dl4k">Download PNG 3840×2160</button>
+      <button id="rec">Record WebM (120s seamless loop)</button>
+      <button id="reseed">Reseed</button>
+      <span class="meta"
+        >animated: drifting fog · light rays · gliding birds · dust motes — all motion is periodic
+        over 120s, so the WebM loops seamlessly</span
+      >
+      <span class="meta" id="recst"></span>
+    </div>
+    <div id="wrap"><canvas id="view"></canvas></div>
+    <script>
+      'use strict'
+      /* All motion is periodic over LOOP_T seconds (every frequency is an integer
+   harmonic of LOOP_W, bird crossings = exactly one span per loop), so a LOOP_T
+   recording loops seamlessly. Harmonics chosen to match the original tuning. */
+      const LOOP_T = 120,
+        LOOP_W = (Math.PI * 2) / LOOP_T
+
+      /* Seeded RNG so the composition is stable (Reseed to explore variants) */
+      let SEED = parseInt(localStorage.getItem('misty-pines-seed') || '13', 10)
+      function mulberry32(a) {
+        return function () {
+          a |= 0
+          a = (a + 0x6d2b79f5) | 0
+          let t = Math.imul(a ^ (a >>> 15), 1 | a)
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+        }
+      }
+
+      /* ---------- palette ---------- */
+      const P = {
+        skyTop: '#27444f',
+        skyMid: '#5d8490',
+        skyLow: '#c4d6d0',
+        skyHorizon: '#f0debc',
+        sunCore: 'rgba(255,242,214,0.95)',
+        sunGlow: '255,222,168',
+        ray: '255,228,180',
+        fog: '230,240,242',
+        ridge: ['#b9cdd1', '#a2bac0', '#82a0a8', '#5f828c', '#3f5f6a', '#26404a'],
+        tree: ['#adc3c8', '#95aeb5', '#75949d', '#52757f', '#345460', '#1f3741'],
+        bird: 'rgba(38,54,60,0.85)',
+        mote: '255,238,205'
+      }
+
+      /* ---------- scene model (built once per seed/size) ---------- */
+      const RIDGE = [
+        { y0: 0.565, amp: 0.018, th: 0.012, gap: 24 },
+        { y0: 0.605, amp: 0.024, th: 0.016, gap: 28 },
+        { y0: 0.655, amp: 0.034, th: 0.024, gap: 34 },
+        { y0: 0.72, amp: 0.044, th: 0.042, gap: 46 },
+        { y0: 0.81, amp: 0.054, th: 0.08, gap: 66 },
+        { y0: 0.935, amp: 0.045, th: 0.155, gap: 96 }
+      ]
+
+      function buildScene(W, H, rnd) {
+        const sun = { x: W * 0.64, y: H * 0.555 }
+        // ridges: polyline (sum of sines) + pines planted along it
+        const ridges = RIDGE.map((d, i) => {
+          const f1 = 1.2 + rnd() * 1.4,
+            f2 = 2.6 + rnd() * 2.2,
+            f3 = 5 + rnd() * 4
+          const p1 = rnd() * 7,
+            p2 = rnd() * 7,
+            p3 = rnd() * 7
+          const pts = []
+          for (let px = 0; px <= W + 8; px += 8) {
+            const u = px / W
+            pts.push(
+              d.y0 * H +
+                d.amp *
+                  H *
+                  (0.55 * Math.sin(6.283 * f1 * u + p1) +
+                    0.3 * Math.sin(6.283 * f2 * u + p2) +
+                    0.15 * Math.sin(6.283 * f3 * u + p3))
+            )
+          }
+          const yAt = (px) => {
+            const k = Math.max(0, Math.min(pts.length - 2, Math.floor(px / 8)))
+            const f = px / 8 - k
+            return pts[k] * (1 - f) + pts[k + 1] * f
+          }
+          const trees = []
+          let tx = -20 + rnd() * d.gap
+          while (tx < W + 30) {
+            const h = d.th * H * (0.5 + rnd() * 1.0)
+            trees.push({ x: tx, y: yAt(tx) + h * 0.06, h })
+            // clumped spacing: occasional clearings break the uniform comb silhouette
+            tx += d.gap * (0.5 + rnd() * 0.9) + (rnd() < 0.18 ? d.gap * (1.5 + rnd() * 2.5) : 0)
+          }
+          return { pts, trees, col: P.ridge[i], treeCol: P.tree[i] }
+        })
+        // fog banks: one between each ridge pair + a deep valley layer in front.
+        // Blobs sway sinusoidally (loop-periodic) instead of streaming linearly.
+        const fogs = []
+        for (let i = 0; i < RIDGE.length; i++) {
+          const yNext = i < RIDGE.length - 1 ? RIDGE[i + 1].y0 : 1.04
+          const blobs = []
+          for (let b = 0; b < 5; b++) {
+            blobs.push({
+              u: rnd(),
+              rx: W * (0.15 + rnd() * 0.15),
+              amp: W * (0.03 + rnd() * 0.05), // sway reach ~60-150px at 1080p
+              k: 1 + Math.floor(rnd() * 2), // 1-2 sways per loop (60-120s period)
+              ph: rnd() * 7
+            })
+          }
+          fogs.push({
+            after: i,
+            y: ((RIDGE[i].y0 + yNext) / 2 + 0.012) * H,
+            h: H * (0.024 + i * 0.008),
+            alpha: 0.2 + i * 0.03,
+            blobs
+          })
+        }
+        // bird flocks (loose V formations, long slow crossings)
+        const flocks = []
+        for (let i = 0; i < 2; i++) {
+          const dir = i % 2 ? -1 : 1
+          const members = []
+          const n = 5 + Math.floor(rnd() * 3)
+          for (let k = 0; k < n; k++) {
+            const side = k % 2 ? 1 : -1,
+              rank = Math.ceil(k / 2)
+            members.push({
+              dx: -dir * rank * (24 + rnd() * 8),
+              dy: rank * side * (9 + rnd() * 5),
+              ph: rnd() * 7
+            })
+          }
+          // exactly one full span per loop -> the crossing wraps seamlessly (~27px/s at 1080p)
+          flocks.push({
+            y: H * (0.2 + rnd() * 0.14),
+            dir,
+            speed: (W * 1.7) / LOOP_T,
+            off: rnd() * W * 1.7,
+            members
+          })
+        }
+        // dust motes, brighter near the sun; drift is a slow loop-periodic wander
+        const motes = []
+        for (let i = 0; i < 46; i++) {
+          const mx = rnd() * W,
+            my = H * (0.28 + rnd() * 0.48)
+          const dist = Math.hypot(mx - sun.x, my - sun.y)
+          motes.push({
+            x: mx,
+            y: my,
+            r: 0.8 + rnd() * 1.5,
+            amp: W * (0.015 + rnd() * 0.02),
+            k: 2 + Math.floor(rnd() * 3),
+            ph: rnd() * 7,
+            a: 0.3 * Math.max(0.15, 1 - dist / (W * 0.55))
+          })
+        }
+        return { W, H, sun, ridges, fogs, flocks, motes }
+      }
+
+      /* ---------- painters ---------- */
+      function paintSky(x, S) {
+        const g = x.createLinearGradient(0, 0, 0, S.H * 0.62)
+        g.addColorStop(0, P.skyTop)
+        g.addColorStop(0.55, P.skyMid)
+        g.addColorStop(0.86, P.skyLow)
+        g.addColorStop(1, P.skyHorizon)
+        x.fillStyle = g
+        x.fillRect(0, 0, S.W, S.H * 0.62)
+      }
+      function paintSunGlow(x, S, strength) {
+        const { sun, W } = S
+        const g = x.createRadialGradient(sun.x, sun.y, 0, sun.x, sun.y, W * 0.32)
+        g.addColorStop(0, 'rgba(' + P.sunGlow + ',' + 0.55 * strength + ')')
+        g.addColorStop(0.4, 'rgba(' + P.sunGlow + ',' + 0.18 * strength + ')')
+        g.addColorStop(1, 'rgba(' + P.sunGlow + ',0)')
+        x.fillStyle = g
+        x.fillRect(sun.x - W * 0.32, sun.y - W * 0.32, W * 0.64, W * 0.64)
+        if (strength > 0.9) {
+          x.fillStyle = P.sunCore
+          x.beginPath()
+          x.arc(sun.x, sun.y, W * 0.016, 0, 7)
+          x.fill()
+        }
+      }
+      function paintPine(x, px, py, h, col) {
+        x.fillStyle = col
+        if (h < 18) {
+          // far ridges: simple spike
+          x.beginPath()
+          x.moveTo(px - h * 0.32, py)
+          x.lineTo(px, py - h)
+          x.lineTo(px + h * 0.32, py)
+          x.closePath()
+          x.fill()
+          return
+        }
+        if (h > 60) x.fillRect(px - h * 0.018, py - h * 0.06, h * 0.036, h * 0.12)
+        const tiers = h > 60 ? 4 : 2
+        for (let i = 0; i < tiers; i++) {
+          const base = py - i * h * 0.21
+          const hw = h * 0.21 * (1 - i / (tiers + 0.8))
+          x.beginPath()
+          x.moveTo(px - hw, base)
+          x.lineTo(px, base - h * 0.42)
+          x.lineTo(px + hw, base)
+          x.closePath()
+          x.fill()
+        }
+      }
+      function paintRidge(x, S, r) {
+        const { W, H } = S
+        x.fillStyle = r.col
+        x.beginPath()
+        x.moveTo(0, r.pts[0])
+        for (let k = 1; k < r.pts.length; k++) x.lineTo(k * 8, r.pts[k])
+        x.lineTo(W, H)
+        x.lineTo(0, H)
+        x.closePath()
+        x.fill()
+        for (const t of r.trees) paintPine(x, t.x, t.y, t.h, r.treeCol)
+      }
+      function paintFog(x, S, f, t) {
+        const { W } = S
+        const g = x.createLinearGradient(0, f.y - f.h, 0, f.y + f.h)
+        g.addColorStop(0, 'rgba(' + P.fog + ',0)')
+        g.addColorStop(0.5, 'rgba(' + P.fog + ',' + (f.alpha * 0.5).toFixed(3) + ')')
+        g.addColorStop(1, 'rgba(' + P.fog + ',0)')
+        x.fillStyle = g
+        x.fillRect(0, f.y - f.h, W, f.h * 2)
+        for (const b of f.blobs) {
+          const span = W + 2 * b.rx
+          // no modulo wrap: the sway is bounded, and a blob sliding partly offscreen
+          // just clips (the linear band underlay keeps full-width coverage)
+          const bx = b.u * span - b.rx + b.amp * Math.sin(LOOP_W * b.k * t + b.ph)
+          const g2 = x.createRadialGradient(bx, f.y, 0, bx, f.y, b.rx)
+          g2.addColorStop(0, 'rgba(' + P.fog + ',' + f.alpha.toFixed(3) + ')')
+          g2.addColorStop(1, 'rgba(' + P.fog + ',0)')
+          x.save()
+          x.translate(bx, f.y)
+          x.scale(1, (f.h * 1.4) / b.rx)
+          x.translate(-bx, -f.y)
+          x.fillStyle = g2
+          x.fillRect(bx - b.rx, f.y - b.rx, b.rx * 2, b.rx * 2)
+          x.restore()
+        }
+      }
+      function paintRays(x, S, t) {
+        const { sun, W } = S
+        for (let i = 0; i < 6; i++) {
+          const a = Math.PI * (0.76 + i * 0.036) + 0.012 * Math.sin(LOOP_W * t + i * 1.7)
+          const alpha = Math.max(0, 0.045 + 0.03 * Math.sin(LOOP_W * 2 * t + i * 1.3))
+          if (alpha < 0.01) continue
+          const L = W * 0.78,
+            hw = 0.01 + (i % 3) * 0.006
+          const ex = sun.x + Math.cos(a) * L,
+            ey = sun.y + Math.sin(a) * L
+          const g = x.createLinearGradient(sun.x, sun.y, ex, ey)
+          g.addColorStop(0, 'rgba(' + P.ray + ',' + alpha.toFixed(3) + ')')
+          g.addColorStop(1, 'rgba(' + P.ray + ',0)')
+          x.fillStyle = g
+          x.beginPath()
+          x.moveTo(sun.x, sun.y)
+          x.lineTo(sun.x + Math.cos(a - hw) * L, sun.y + Math.sin(a - hw) * L)
+          x.lineTo(sun.x + Math.cos(a + hw) * L, sun.y + Math.sin(a + hw) * L)
+          x.closePath()
+          x.fill()
+        }
+      }
+      function paintBirds(x, S, t) {
+        const { W } = S
+        x.strokeStyle = P.bird
+        x.lineWidth = Math.max(1.4, S.H / 620)
+        x.lineCap = 'round'
+        for (const fl of S.flocks) {
+          const span = W * 1.7
+          let head = (t * fl.speed * fl.dir + fl.off) % span
+          if (head < 0) head += span
+          head -= W * 0.35
+          for (const m of fl.members) {
+            // bob/flap at harmonics 13 and 31 of the loop base (~0.68 / ~1.62 rad/s,
+            // matching the original 0.7 / 1.6 tuning)
+            const mx = head + m.dx,
+              my = fl.y + m.dy + Math.sin(LOOP_W * 13 * t + m.ph) * 4
+            if (mx < -30 || mx > W + 30) continue
+            const flap = 3.5 + 2.5 * Math.sin(LOOP_W * 31 * t + m.ph)
+            const s = 7
+            x.beginPath()
+            x.moveTo(mx - s, my - flap * 0.55)
+            x.quadraticCurveTo(mx - s * 0.4, my + 1, mx, my)
+            x.quadraticCurveTo(mx + s * 0.4, my + 1, mx + s, my - flap * 0.55)
+            x.stroke()
+          }
+        }
+      }
+      function paintMotes(x, S, t) {
+        const { W } = S
+        for (const m of S.motes) {
+          // wander/bob/twinkle at harmonics k, 8, 17 (~0.42 / ~0.89 rad/s vs the
+          // original 0.4 / 0.9 tuning)
+          const xx = m.x + m.amp * Math.sin(LOOP_W * m.k * t + m.ph)
+          const yy = m.y + Math.sin(LOOP_W * 8 * t + m.ph) * 9
+          const a = m.a * (0.5 + 0.5 * Math.sin(LOOP_W * 17 * t + m.ph * 2))
+          if (a < 0.02) continue
+          x.fillStyle = 'rgba(' + P.mote + ',' + a.toFixed(3) + ')'
+          x.beginPath()
+          x.arc(xx, yy, m.r, 0, 7)
+          x.fill()
+        }
+      }
+      function paintVignette(x, S) {
+        const { W, H } = S
+        const g = x.createRadialGradient(W / 2, H * 0.52, H * 0.42, W / 2, H * 0.52, H * 1.05)
+        g.addColorStop(0, 'rgba(12,22,27,0)')
+        g.addColorStop(1, 'rgba(12,22,27,0.26)')
+        x.fillStyle = g
+        x.fillRect(0, 0, W, H)
+      }
+
+      /* ---------- compose ---------- */
+      function renderScene(x, W, H, t, S) {
+        paintSky(x, S)
+        paintSunGlow(x, S, 1)
+        for (let i = 0; i < S.ridges.length; i++) {
+          paintRidge(x, S, S.ridges[i])
+          if (i === 1) paintSunGlow(x, S, 0.3) // atmospheric re-glow over the far ridges
+          paintFog(x, S, S.fogs[i], t)
+          if (i === 3) paintRays(x, S, t) // rays wash the valley, foreground stays crisp
+        }
+        paintBirds(x, S, t)
+        paintMotes(x, S, t)
+        paintVignette(x, S)
+      }
+
+      /* ---------- view loop ---------- */
+      const view = document.getElementById('view')
+      const VW = 1920,
+        VH = 1080
+      view.width = VW
+      view.height = VH
+      const vx = view.getContext('2d')
+      let scene = buildScene(VW, VH, mulberry32(SEED))
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      let lastDraw = 0
+      function loop(now) {
+        if (!reduced && now - lastDraw > 33) {
+          lastDraw = now
+          renderScene(vx, VW, VH, now / 1000, scene)
+        }
+        requestAnimationFrame(loop)
+      }
+      renderScene(vx, VW, VH, 0, scene)
+      requestAnimationFrame(loop)
+
+      /* ---------- export + reseed ---------- */
+      function download(w, h) {
+        const c = document.createElement('canvas')
+        c.width = w
+        c.height = h
+        const sc = buildScene(w, h, mulberry32(SEED))
+        renderScene(c.getContext('2d'), w, h, 24.6, sc) // a pleasant fog/ray phase
+        c.toBlob((b) => {
+          const a = document.createElement('a')
+          a.href = URL.createObjectURL(b)
+          a.download = `misty-pines-${SEED}-${w}x${h}.png`
+          a.click()
+        }, 'image/png')
+      }
+      document.getElementById('dl1080').addEventListener('click', () => download(1920, 1080))
+      document.getElementById('dl4k').addEventListener('click', () => download(3840, 2160))
+
+      /* ---------- WebM loop recording (canvas.captureStream + MediaRecorder) ---------- */
+      const recBtn = document.getElementById('rec')
+      const recSt = document.getElementById('recst')
+      let recording = false
+      recBtn.addEventListener('click', () => {
+        if (recording) return
+        recording = true
+        recBtn.disabled = true
+        const stream = view.captureStream(30)
+        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+          ? 'video/webm;codecs=vp9'
+          : 'video/webm'
+        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 3_000_000 })
+        const chunks = []
+        rec.ondataavailable = (e) => {
+          if (e.data.size) chunks.push(e.data)
+        }
+        rec.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' })
+          const a = document.createElement('a')
+          a.href = URL.createObjectURL(blob)
+          a.download = `misty-pines-${SEED}-loop${LOOP_T}s.webm`
+          a.click()
+          recSt.textContent = 'saved (' + (blob.size / 1048576).toFixed(1) + ' MB)'
+          recording = false
+          recBtn.disabled = false
+        }
+        rec.start(1000)
+        const t0 = performance.now()
+        const tick = setInterval(() => {
+          const left = LOOP_T - (performance.now() - t0) / 1000
+          if (left <= 0) {
+            clearInterval(tick)
+            recSt.textContent = 'encoding...'
+            rec.stop()
+          } else recSt.textContent = 'recording ' + Math.ceil(left) + 's left'
+        }, 500)
+      })
+      document.getElementById('reseed').addEventListener('click', () => {
+        SEED = (SEED * 16807 + 11) % 2147483647
+        localStorage.setItem('misty-pines-seed', String(SEED))
+        scene = buildScene(VW, VH, mulberry32(SEED))
+        renderScene(vx, VW, VH, 0, scene)
+      })
+    </script>
+  </body>
+</html>

@@ -191,7 +191,8 @@ export async function createProject(
 const ASSETS = 'assets'
 /** A safe stored assetId: exactly `assets/<40-hex sha1>.<ext>`; blocks any traversal. */
 const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
-const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
+/** Keep in sync with the renderer accept lists (BackdropPicker VIDEO_EXTS + useBackdropMedia MIME_BY_EXT). */
+const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
 
 /**
  * Content-address `bytes` (sha1) into `<dir>/assets/<sha1>.<ext>` and return the
@@ -227,21 +228,32 @@ export function readAsset(dir: string, assetId: string): Uint8Array | null {
   }
 }
 
-/** Every assetId referenced by a doc's planning image elements (version-independent). */
+/**
+ * Every assetId a doc references (version-independent), from two sources:
+ *  - planning `image` elements (`boards[].elements[].assetId`, since W4)
+ *  - the v9 root `background.assetId` — a `kind:'file'` wallpaper (image OR webm/mp4
+ *    video). MUST be included: `gcAssets` runs at every project:open against this set,
+ *    so omitting the backdrop asset sweeps the user's wallpaper to `.trash` on reopen,
+ *    which `useBackdropMedia` then reads as missing and silently reverts to `kind:'none'`.
+ */
 export function collectAssetIds(doc: unknown): Set<string> {
   const ids = new Set<string>()
   const boards = (doc as { boards?: unknown })?.boards
-  if (!Array.isArray(boards)) return ids
-  for (const b of boards) {
-    const els = (b as { elements?: unknown })?.elements
-    if (!Array.isArray(els)) continue
-    for (const el of els) {
-      if (el && (el as { kind?: unknown }).kind === 'image') {
-        const a = (el as { assetId?: unknown }).assetId
-        if (typeof a === 'string' && a.length > 0) ids.add(a)
+  if (Array.isArray(boards)) {
+    for (const b of boards) {
+      const els = (b as { elements?: unknown })?.elements
+      if (!Array.isArray(els)) continue
+      for (const el of els) {
+        if (el && (el as { kind?: unknown }).kind === 'image') {
+          const a = (el as { assetId?: unknown }).assetId
+          if (typeof a === 'string' && a.length > 0) ids.add(a)
+        }
       }
     }
   }
+  // v9 root background wallpaper (kind:'file'); scenes carry no assetId.
+  const bgId = (doc as { background?: { assetId?: unknown } })?.background?.assetId
+  if (typeof bgId === 'string' && bgId.length > 0) ids.add(bgId)
   return ids
 }
 

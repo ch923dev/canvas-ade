@@ -15,11 +15,12 @@
  *   stored kind to 'none' + keyed toast (spec §3).
  * - Unknown scene id (a newer build's preset opened here): the SETTING is preserved
  *   (forward-compat — boardSchema keeps the id verbatim), this layer renders plain
- *   void + a keyed toast. PR 2 mounts the actual scene <canvas> host (S6/S7).
+ *   void + a keyed toast. Known scene ids mount the <canvas> host below (S6/S7).
  */
-import { useEffect, useRef, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { showToast } from '../../store/toastStore'
+import { prefersReducedMotion } from '../../lib/motion'
 import { useBackdropMedia } from './useBackdropMedia'
 import { getScene } from './sceneRegistry'
 
@@ -49,7 +50,8 @@ export function BackdropLayer(): ReactElement | null {
 
   // Unknown scene id → plain void + toast, setting preserved (forward-compat).
   const sceneId = active && background.kind === 'scene' ? background.scene : undefined
-  const sceneKnown = sceneId !== undefined && getScene(sceneId) !== undefined
+  const sceneDef = sceneId !== undefined ? getScene(sceneId) : undefined
+  const sceneKnown = sceneDef !== undefined
   useEffect(() => {
     if (!sceneId || sceneKnown) return
     showToast({
@@ -57,6 +59,41 @@ export function BackdropLayer(): ReactElement | null {
       message: 'Backdrop scene is not available in this version'
     })
   }, [sceneId, sceneKnown])
+
+  // Scene lifecycle (S6/S7). reducedMotion is baked into SceneOpts, so the handle is
+  // recreated when the preference flips (live matchMedia listener below) — start()
+  // no-ops under reduced motion, which makes a visibility resume on a frozen scene
+  // harmless by construction. The rAF loop FULLY stops on hidden and on unmount
+  // (spec §2 animation policy); a parked still re-paints on visible. Both listeners
+  // exist only while a KNOWN scene is mounted; deps change on settings flips, never
+  // mid-dispatch of the events they handle.
+  const [reduced, setReduced] = useState(prefersReducedMotion)
+  const sceneCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    if (sceneDef === undefined) return
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const onChange = (): void => setReduced(mq.matches)
+    onChange() // re-sync: the preference may have changed while no scene was mounted
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [sceneDef])
+  const sceneVariant = active && background.kind === 'scene' ? background.sceneVariant : undefined
+  useEffect(() => {
+    const canvas = sceneCanvasRef.current
+    if (sceneDef === undefined || canvas === null) return
+    const handle = sceneDef.create(canvas, { palette: sceneVariant, reducedMotion: reduced })
+    const sync = (): void => {
+      if (document.hidden) handle.stop()
+      else if (reduced) handle.renderStill()
+      else handle.start()
+    }
+    sync()
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      document.removeEventListener('visibilitychange', sync)
+      handle.stop()
+    }
+  }, [sceneDef, sceneVariant, reduced])
 
   // Animation policy (spec §2): the wallpaper video pauses on document.hidden and
   // freezes (paused first frame = the still) under prefers-reduced-motion, live via
@@ -104,8 +141,14 @@ export function BackdropLayer(): ReactElement | null {
         ) : (
           <img className="backdrop-media" src={media.url} alt="" style={{ filter }} />
         ))}
-      {/* kind 'scene': the <canvas> host + SceneHandle lifecycle land in PR 2 (S6/S7);
-          until then a scene background shows tinted void (toast above when unknown). */}
+      {background.kind === 'scene' && sceneKnown && (
+        <canvas
+          ref={sceneCanvasRef}
+          className="backdrop-media"
+          style={{ filter }}
+          data-test="backdrop-scene"
+        />
+      )}
       <div className="backdrop-dim" style={{ opacity: background.dim }} />
     </div>
   )

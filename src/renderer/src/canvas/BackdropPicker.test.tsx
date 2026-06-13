@@ -35,6 +35,12 @@ function pickFile(f: File): void {
 }
 
 describe('BackdropPicker', () => {
+  it('the popover carries the bd-menu panel chrome (opaque over bright scenes)', () => {
+    render(<BackdropPicker />)
+    openPicker()
+    expect(screen.getByRole('menu').className).toBe('bd-menu')
+  })
+
   it('None is checked by default; choosing it writes kind none', () => {
     render(<BackdropPicker />)
     openPicker()
@@ -111,6 +117,17 @@ describe('BackdropPicker', () => {
       expect(useToastStore.getState().toasts.some((t) => /disk full/.test(t.message))).toBe(true)
     )
     expect(useCanvasStore.getState().background).toBeNull()
+  })
+
+  it('scene rows derive from the registry; picking Blossom River writes the store (AC-1)', () => {
+    render(<BackdropPicker />)
+    openPicker()
+    const row = screen.getByRole('menuitemradio', { name: /Blossom River/ })
+    fireEvent.click(row)
+    expect(useCanvasStore.getState().background).toMatchObject({
+      kind: 'scene',
+      scene: 'blossom-river'
+    })
   })
 
   it('dim slider applies live through setBackground once a source is active', () => {

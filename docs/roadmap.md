@@ -213,7 +213,7 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
   see `reviews/2026-06-10-full-app-audit.md`) · **design Wave D0 quick wins** (#108).
 
 **Queued (open PRs):**
-- **Canvas backdrop** (`feat/canvas-backdrop`, schema v9) — PR 1 core+wallpaper in flight; PR 2 blossom-river · PR 3 preset library (8 voted scenes) · PR 4 grid variants follow. Spec + addendum: `docs/canvas-backdrop/` (ADR 0006).
+- **Canvas backdrop** (`feat/canvas-backdrop`, schema v9) — PR 1 core+wallpaper MERGED (#126); PR 2 blossom-river in review; PR 3 preset library (9 scenes incl. misty-pines) · PR 4 grid variants follow. Spec + addendum + PR 2 acceptance: `docs/canvas-backdrop/` (ADR 0006).
 - **Rebrand Canvas ADE → Expanse** (PR #17, `chore/rebrand-expanse`) — merges last; needs rebase onto current `main`.
 - **Design/UX audit waves D1+** — on `feat/design-audit` (D0 merged #108).
 - Dependabot: **#77 react HELD — CI-RED** (React major, own slice; #76/#78/#79/#80 merged 2026-06-08).

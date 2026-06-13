@@ -1,14 +1,15 @@
 /**
  * Bundled-scene registry — the backdrop's extensibility seam (docs/canvas-backdrop/
- * addendum-presets.md §2). PR 1 ships the seam EMPTY: PR 2 registers `blossom-river`,
- * PR 3 the voted preset roster — adding a scene is one module under `scenes/` plus one
- * row here, and the picker / palette verbs / drift-guard tests all derive from this list.
+ * addendum-presets.md §2). PR 2 registers `blossom-river`; PR 3 adds the voted preset
+ * roster — adding a scene is one module under `scenes/` plus one row here, and the
+ * picker / palette verbs / drift-guard tests all derive from this list.
  *
  * `background.scene` ids are persisted VERBATIM (boardSchema preserves well-formed
  * unknown ids); resolution happens here at render time, so an id this build does not
  * know degrades to plain void + a toast (forward-compat with newer preset packs)
  * instead of being destroyed at parse time.
  */
+import { blossomRiver } from './scenes/blossomRiver'
 
 export interface SceneOpts {
   /** Palette-variant key (background.sceneVariant); unknown ⇒ the scene default. */
@@ -44,8 +45,9 @@ export interface SceneDef {
 
 /** Registration order = picker display order within a tier. */
 const SCENES: readonly SceneDef[] = [
-  // PR 2: blossom-river · PR 3: drift, current, aurora-night, starfield-nebula,
-  // sunset-ocean, snowfall-ridge, rainy-window, city-lights (addendum §3).
+  // PR 3 adds: drift, current, aurora-night, starfield-nebula, sunset-ocean,
+  // snowfall-ridge, rainy-window, city-lights, misty-pines (addendum §3).
+  blossomRiver
 ]
 
 export function listScenes(): readonly SceneDef[] {

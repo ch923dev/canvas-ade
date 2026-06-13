@@ -569,6 +569,16 @@ body {
   background: var(--accent-wash);
   color: var(--accent);
 }
+.bd-menu {
+  min-width: 232px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-pop);
+}
 .bd-head {
   font: 600 11px var(--ui);
   color: var(--text-2);
