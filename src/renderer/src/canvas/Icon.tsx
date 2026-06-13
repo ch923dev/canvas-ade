@@ -13,7 +13,6 @@ export type IconName =
   | 'stop'
   | 'more'
   | 'fit'
-  | 'overview'
   | 'plus'
   | 'minus'
   | 'select'
@@ -62,7 +61,6 @@ const PATHS: Record<IconName, string> = {
   stop: 'M7 7h10v10H7z',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
   fit: 'M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4',
-  overview: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
   plus: 'M12 5v14M5 12h14',
   minus: 'M5 12h14',
   select: 'M5 4l14 6.5-6 1.8-2.2 5.7z',

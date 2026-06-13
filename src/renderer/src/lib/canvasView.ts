@@ -40,13 +40,6 @@ export const FIT_FRAME: FitViewOptions = { padding: '64px', maxZoom: 2 }
  *  pan/zoom can't strand every board off-screen (#41). */
 export const RESET_FRAME: FitViewOptions = { padding: '64px', maxZoom: 1, minZoom: 1 }
 
-/** "Overview": frame all boards with extra breathing room (intentionally airier
- *  than fit — a bird's-eye, not a tight crop). Proportional pad scales with the pane.
- *  maxZoom is capped at FIT_FRAME's limit (2) so Overview never frames TIGHTER than
- *  Fit for small clusters (without a cap the flow's Z_MAX 2.5 applies and the
- *  bird's-eye button can zoom in 25% past the tight-crop button). */
-export const OVERVIEW_FRAME: FitViewOptions = { padding: 0.3, maxZoom: 1 }
-
 /** Below this camera zoom a board renders as an LOD card (glyph + title + dot). */
 export const LOD_ZOOM = 0.4
 
