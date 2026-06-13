@@ -228,21 +228,32 @@ export function readAsset(dir: string, assetId: string): Uint8Array | null {
   }
 }
 
-/** Every assetId referenced by a doc's planning image elements (version-independent). */
+/**
+ * Every assetId a doc references (version-independent), from two sources:
+ *  - planning `image` elements (`boards[].elements[].assetId`, since W4)
+ *  - the v9 root `background.assetId` — a `kind:'file'` wallpaper (image OR webm/mp4
+ *    video). MUST be included: `gcAssets` runs at every project:open against this set,
+ *    so omitting the backdrop asset sweeps the user's wallpaper to `.trash` on reopen,
+ *    which `useBackdropMedia` then reads as missing and silently reverts to `kind:'none'`.
+ */
 export function collectAssetIds(doc: unknown): Set<string> {
   const ids = new Set<string>()
   const boards = (doc as { boards?: unknown })?.boards
-  if (!Array.isArray(boards)) return ids
-  for (const b of boards) {
-    const els = (b as { elements?: unknown })?.elements
-    if (!Array.isArray(els)) continue
-    for (const el of els) {
-      if (el && (el as { kind?: unknown }).kind === 'image') {
-        const a = (el as { assetId?: unknown }).assetId
-        if (typeof a === 'string' && a.length > 0) ids.add(a)
+  if (Array.isArray(boards)) {
+    for (const b of boards) {
+      const els = (b as { elements?: unknown })?.elements
+      if (!Array.isArray(els)) continue
+      for (const el of els) {
+        if (el && (el as { kind?: unknown }).kind === 'image') {
+          const a = (el as { assetId?: unknown }).assetId
+          if (typeof a === 'string' && a.length > 0) ids.add(a)
+        }
       }
     }
   }
+  // v9 root background wallpaper (kind:'file'); scenes carry no assetId.
+  const bgId = (doc as { background?: { assetId?: unknown } })?.background?.assetId
+  if (typeof bgId === 'string' && bgId.length > 0) ids.add(bgId)
   return ids
 }
 
