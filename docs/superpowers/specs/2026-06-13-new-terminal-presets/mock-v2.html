@@ -6,309 +6,789 @@
   Tokens copied verbatim from src/renderer/src/index.css. Pixel sign-off only.
 -->
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>New Terminal — design mock v2</title>
-<style>
-  :root {
-    --ui: 'Geist', system-ui, -apple-system, sans-serif;
-    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-    --void: #0a0a0b; --surface: #141416; --surface-raised: #1a1a1d; --surface-overlay: #1e1e22;
-    --inset: #0e0e10;
-    --border-subtle: rgba(255,255,255,0.06); --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
-    --text: #ededee; --text-2: #9b9ba1; --text-3: #7b7b81; --text-faint: #46464b;
-    --accent: #4f8cff; --accent-hover: #6ea0ff; --accent-wash: rgba(79,140,255,0.14);
-    --ok: #3ecf8e; --warn: #e8b339; --err: #f2545b; --scrim: rgba(0,0,0,0.5);
-    --r-board: 8px; --r-inner: 6px; --r-ctl: 5px; --r-pill: 999px;
-    --shadow-pop: 0 8px 24px -6px rgba(0,0,0,0.7);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; }
-  body {
-    background-color: var(--void);
-    background-image: radial-gradient(circle, #202022 1px, transparent 1px);
-    background-size: 22px 22px;
-    font-family: var(--ui); color: var(--text); -webkit-font-smoothing: antialiased; padding: 36px;
-  }
-  .stage { display: flex; gap: 48px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
-  .col { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .state-cap { font-size: 10px; line-height: 14px; font-weight: 500; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--text-3); }
+  <head>
+    <meta charset="utf-8" />
+    <title>New Terminal — design mock v2</title>
+    <style>
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --void: #0a0a0b;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #e8b339;
+        --err: #f2545b;
+        --scrim: rgba(0, 0, 0, 0.5);
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --r-pill: 999px;
+        --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        background-color: var(--void);
+        background-image: radial-gradient(circle, #202022 1px, transparent 1px);
+        background-size: 22px 22px;
+        font-family: var(--ui);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        padding: 36px;
+      }
+      .stage {
+        display: flex;
+        gap: 48px;
+        align-items: flex-start;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+      .state-cap {
+        font-size: 10px;
+        line-height: 14px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
 
-  .dlg {
-    width: 396px; background: var(--surface-raised); border: 1px solid var(--border-subtle);
-    border-radius: var(--r-ctl); box-shadow: var(--shadow-pop); padding: 18px;
-    display: flex; flex-direction: column; gap: 13px;
-  }
-  .dlg-title { text-align: center; font-size: 15px; line-height: 22px; font-weight: 600; letter-spacing: -0.01em; }
-  .section-label { font-size: 10px; line-height: 14px; font-weight: 500; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+      .dlg {
+        width: 396px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-ctl);
+        box-shadow: var(--shadow-pop);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 13px;
+      }
+      .dlg-title {
+        text-align: center;
+        font-size: 15px;
+        line-height: 22px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .section-label {
+        font-size: 10px;
+        line-height: 14px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        margin-bottom: 6px;
+      }
 
-  /* Quick Start preset tiles w/ brand glyphs */
-  .presets { display: flex; gap: 8px; justify-content: space-between; }
-  .preset { display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer; flex: 1; }
-  .tile { width: 100%; max-width: 54px; height: 46px; border-radius: var(--r-inner);
-    background: var(--surface-overlay); border: 1px solid var(--border-subtle);
-    display: grid; place-items: center; color: var(--text-2); }
-  .tile svg { width: 22px; height: 22px; display: block; }
-  .preset.sel .tile { background: var(--accent-wash); border-color: var(--accent); color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent); }
-  .preset .name { font-size: 11px; line-height: 13px; color: var(--text-3); text-align: center; }
-  .preset.sel .name { color: var(--text-2); }
+      /* Quick Start preset tiles w/ brand glyphs */
+      .presets {
+        display: flex;
+        gap: 8px;
+        justify-content: space-between;
+      }
+      .preset {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+        flex: 1;
+      }
+      .tile {
+        width: 100%;
+        max-width: 54px;
+        height: 46px;
+        border-radius: var(--r-inner);
+        background: var(--surface-overlay);
+        border: 1px solid var(--border-subtle);
+        display: grid;
+        place-items: center;
+        color: var(--text-2);
+      }
+      .tile svg {
+        width: 22px;
+        height: 22px;
+        display: block;
+      }
+      .preset.sel .tile {
+        background: var(--accent-wash);
+        border-color: var(--accent);
+        color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+      .preset .name {
+        font-size: 11px;
+        line-height: 13px;
+        color: var(--text-3);
+        text-align: center;
+      }
+      .preset.sel .name {
+        color: var(--text-2);
+      }
 
-  /* Segmented control */
-  .seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--inset);
-    border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); align-self: center; }
-  .seg button { height: 24px; padding: 0 14px; border: none; border-radius: 4px; cursor: pointer;
-    background: transparent; color: var(--text-3); font-family: var(--ui); font-size: 12px; }
-  .seg button.on { background: var(--accent-wash); color: var(--accent); font-weight: 500; }
+      /* Segmented control */
+      .seg {
+        display: inline-flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--inset);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-ctl);
+        align-self: center;
+      }
+      .seg button {
+        height: 24px;
+        padding: 0 14px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        background: transparent;
+        color: var(--text-3);
+        font-family: var(--ui);
+        font-size: 12px;
+      }
+      .seg button.on {
+        background: var(--accent-wash);
+        color: var(--accent);
+        font-weight: 500;
+      }
 
-  .field { display: flex; flex-direction: column; gap: 4px; }
-  .field > label { font-size: 11px; color: var(--text-3); font-weight: 500; }
-  .input { height: 30px; padding: 0 9px; border-radius: var(--r-ctl);
-    border: 1px solid var(--border-subtle); background: var(--inset); color: var(--text);
-    font-family: var(--ui); font-size: 12.5px; outline: none; display: flex; align-items: center; }
-  .input.focus { box-shadow: 0 0 0 1.5px var(--accent); border-color: transparent; }
-  .ph { color: var(--text-faint); }
-  .mono { font-family: var(--mono); }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .field > label {
+        font-size: 11px;
+        color: var(--text-3);
+        font-weight: 500;
+      }
+      .input {
+        height: 30px;
+        padding: 0 9px;
+        border-radius: var(--r-ctl);
+        border: 1px solid var(--border-subtle);
+        background: var(--inset);
+        color: var(--text);
+        font-family: var(--ui);
+        font-size: 12.5px;
+        outline: none;
+        display: flex;
+        align-items: center;
+      }
+      .input.focus {
+        box-shadow: 0 0 0 1.5px var(--accent);
+        border-color: transparent;
+      }
+      .ph {
+        color: var(--text-faint);
+      }
+      .mono {
+        font-family: var(--mono);
+      }
 
-  /* ---- Command builder ---- */
-  .builder { border: 1px solid var(--border-subtle); border-radius: var(--r-inner);
-    background: var(--surface); padding: 11px 11px 6px; display: flex; flex-direction: column; gap: 9px; }
-  .builder-head { display: flex; align-items: center; justify-content: space-between; }
-  .builder-head .t { font-size: 11px; color: var(--text-3); font-weight: 500; letter-spacing: 0.04em;
-    text-transform: uppercase; }
-  .search { height: 28px; border-radius: var(--r-ctl); border: 1px solid var(--border-subtle);
-    background: var(--inset); display: flex; align-items: center; gap: 7px; padding: 0 8px; }
-  .search svg { width: 13px; height: 13px; color: var(--text-3); }
-  .search input { border: none; background: transparent; outline: none; color: var(--text);
-    font-family: var(--ui); font-size: 12px; width: 100%; }
-  .search input::placeholder { color: var(--text-faint); }
+      /* ---- Command builder ---- */
+      .builder {
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-inner);
+        background: var(--surface);
+        padding: 11px 11px 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .builder-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .builder-head .t {
+        font-size: 11px;
+        color: var(--text-3);
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .search {
+        height: 28px;
+        border-radius: var(--r-ctl);
+        border: 1px solid var(--border-subtle);
+        background: var(--inset);
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 8px;
+      }
+      .search svg {
+        width: 13px;
+        height: 13px;
+        color: var(--text-3);
+      }
+      .search input {
+        border: none;
+        background: transparent;
+        outline: none;
+        color: var(--text);
+        font-family: var(--ui);
+        font-size: 12px;
+        width: 100%;
+      }
+      .search input::placeholder {
+        color: var(--text-faint);
+      }
 
-  .opt { display: flex; align-items: center; gap: 9px; min-height: 28px; }
-  .opt .oname { font-size: 12.5px; color: var(--text); flex: 0 0 118px; }
-  .opt .flag { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); margin-left: auto; }
-  /* select pill */
-  .pill { height: 26px; padding: 0 8px; border-radius: var(--r-ctl); border: 1px solid var(--border);
-    background: var(--inset); color: var(--text); font-size: 12px; display: inline-flex; align-items: center;
-    gap: 6px; cursor: pointer; }
-  .pill.on { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
-  .pill svg { width: 11px; height: 11px; }
-  /* checkbox */
-  .cbx { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--border-strong);
-    background: transparent; display: grid; place-items: center; flex: none; }
-  .cbx.on { background: var(--accent); border-color: var(--accent); }
-  .opt.dim .oname { color: var(--text-2); }
-  .more { font-size: 11px; color: var(--text-3); padding: 2px 0 4px; }
-  .more b { color: var(--accent); font-weight: 500; }
+      .opt {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 28px;
+      }
+      .opt .oname {
+        font-size: 12.5px;
+        color: var(--text);
+        flex: 0 0 118px;
+      }
+      .opt .flag {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--text-faint);
+        margin-left: auto;
+      }
+      /* select pill */
+      .pill {
+        height: 26px;
+        padding: 0 8px;
+        border-radius: var(--r-ctl);
+        border: 1px solid var(--border);
+        background: var(--inset);
+        color: var(--text);
+        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+      }
+      .pill.on {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: var(--accent-wash);
+      }
+      .pill svg {
+        width: 11px;
+        height: 11px;
+      }
+      /* checkbox */
+      .cbx {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1px solid var(--border-strong);
+        background: transparent;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .cbx.on {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .opt.dim .oname {
+        color: var(--text-2);
+      }
+      .more {
+        font-size: 11px;
+        color: var(--text-3);
+        padding: 2px 0 4px;
+      }
+      .more b {
+        color: var(--accent);
+        font-weight: 500;
+      }
 
-  /* composed command preview */
-  .composed { display: flex; flex-direction: column; gap: 4px; }
-  .composed label { font-size: 11px; color: var(--text-3); font-weight: 500; display: flex; gap: 6px; align-items:center; }
-  .composed .badge { font-size: 9px; color: var(--text-faint); border: 1px solid var(--border-subtle);
-    border-radius: var(--r-pill); padding: 0 6px; line-height: 14px; }
-  .cmdbox { min-height: 30px; padding: 7px 9px; border-radius: var(--r-ctl);
-    border: 1px solid var(--border-subtle); background: var(--inset); color: var(--text);
-    font-family: var(--mono); font-size: 12px; line-height: 17px; }
-  .cmdbox .fl { color: var(--accent); }
+      /* composed command preview */
+      .composed {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .composed label {
+        font-size: 11px;
+        color: var(--text-3);
+        font-weight: 500;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .composed .badge {
+        font-size: 9px;
+        color: var(--text-faint);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-pill);
+        padding: 0 6px;
+        line-height: 14px;
+      }
+      .cmdbox {
+        min-height: 30px;
+        padding: 7px 9px;
+        border-radius: var(--r-ctl);
+        border: 1px solid var(--border-subtle);
+        background: var(--inset);
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 12px;
+        line-height: 17px;
+      }
+      .cmdbox .fl {
+        color: var(--accent);
+      }
 
-  .check { display: flex; align-items: center; gap: 8px; }
-  .check .lbl { font-size: 12.5px; color: var(--text); }
-  .check .hint { font-size: 11px; color: var(--text-3); }
-  .i { width: 13px; height: 13px; border-radius: 50%; border: 1px solid var(--border-strong);
-    color: var(--text-3); font-size: 9px; display: inline-grid; place-items: center; font-family: var(--mono); }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .check .lbl {
+        font-size: 12.5px;
+        color: var(--text);
+      }
+      .check .hint {
+        font-size: 11px;
+        color: var(--text-3);
+      }
+      .i {
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        border: 1px solid var(--border-strong);
+        color: var(--text-3);
+        font-size: 9px;
+        display: inline-grid;
+        place-items: center;
+        font-family: var(--mono);
+      }
 
-  .footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
-  .btn { height: 30px; padding: 0 14px; border-radius: var(--r-ctl); font-family: var(--ui);
-    font-size: 12.5px; cursor: pointer; }
-  .ghost { border: 1px solid var(--border-subtle); background: transparent; color: var(--text-2); }
-  .primary { border: 1px solid var(--accent); background: var(--accent-wash); color: var(--accent); font-weight: 600; }
+      .footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 2px;
+      }
+      .btn {
+        height: 30px;
+        padding: 0 14px;
+        border-radius: var(--r-ctl);
+        font-family: var(--ui);
+        font-size: 12.5px;
+        cursor: pointer;
+      }
+      .ghost {
+        border: 1px solid var(--border-subtle);
+        background: transparent;
+        color: var(--text-2);
+      }
+      .primary {
+        border: 1px solid var(--accent);
+        background: var(--accent-wash);
+        color: var(--accent);
+        font-weight: 600;
+      }
 
-  .legend { max-width: 940px; margin: 34px auto 0; color: var(--text-3); font-size: 12px; line-height: 19px; }
-  .legend b { color: var(--text-2); font-weight: 600; }
-  .legend code { font-family: var(--mono); color: var(--text-2); background: var(--inset); padding: 1px 5px; border-radius: 4px; }
-</style>
-</head>
-<body>
-<div class="stage">
+      .legend {
+        max-width: 940px;
+        margin: 34px auto 0;
+        color: var(--text-3);
+        font-size: 12px;
+        line-height: 19px;
+      }
+      .legend b {
+        color: var(--text-2);
+        font-weight: 600;
+      }
+      .legend code {
+        font-family: var(--mono);
+        color: var(--text-2);
+        background: var(--inset);
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <!-- LEFT: Claude builder, full -->
+      <div class="col">
+        <div class="state-cap">State 1 · Claude selected · command builder</div>
+        <div class="dlg">
+          <div class="dlg-title">New Terminal</div>
 
-  <!-- LEFT: Claude builder, full -->
-  <div class="col">
-    <div class="state-cap">State 1 · Claude selected · command builder</div>
-    <div class="dlg">
-      <div class="dlg-title">New Terminal</div>
-
-      <div>
-        <div class="section-label">Quick start</div>
-        <div class="presets">
-          <div class="preset sel">
-            <div class="tile"><svg viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-              <path d="M15 12h6"/><path d="M14.1 14.1l4.3 4.3"/><path d="M12 15v6"/><path d="M9.9 14.1l-4.3 4.3"/>
-              <path d="M9 12H3"/><path d="M9.9 9.9L5.6 5.6"/><path d="M12 9V3"/><path d="M14.1 9.9l4.3-4.3"/></g></svg></div>
-            <div class="name">Claude</div>
+          <div>
+            <div class="section-label">Quick start</div>
+            <div class="presets">
+              <div class="preset sel">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                      <path d="M15 12h6" />
+                      <path d="M14.1 14.1l4.3 4.3" />
+                      <path d="M12 15v6" />
+                      <path d="M9.9 14.1l-4.3 4.3" />
+                      <path d="M9 12H3" />
+                      <path d="M9.9 9.9L5.6 5.6" />
+                      <path d="M12 9V3" />
+                      <path d="M14.1 9.9l4.3-4.3" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Claude</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g fill="none" stroke="currentColor" stroke-width="1.4">
+                      <ellipse cx="12" cy="12" rx="3.6" ry="8.4" />
+                      <ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(60 12 12)" />
+                      <ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(120 12 12)" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Codex</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M12 2c.7 5.6 3.7 8.6 9.3 9.3 0 .5 0 .9 0 1.4-5.6.7-8.6 3.7-9.3 9.3-.5 0-.9 0-1.4 0C9.9 16.4 6.9 13.4 1.3 12.7c0-.5 0-.9 0-1.4C6.9 10.6 9.9 7.6 10.6 2c.5 0 .9 0 1.4 0z"
+                    />
+                  </svg>
+                </div>
+                <div class="name">Gemini</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M9 8l-4 4 4 4" />
+                      <path d="M15 8l4 4-4 4" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Open<br />Code</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M5 8l4 4-4 4" />
+                      <path d="M12 16h7" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Shell</div>
+              </div>
+            </div>
           </div>
-          <div class="preset">
-            <div class="tile"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.4">
-              <ellipse cx="12" cy="12" rx="3.6" ry="8.4"/><ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(60 12 12)"/>
-              <ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(120 12 12)"/></g></svg></div>
-            <div class="name">Codex</div>
+
+          <div class="seg"><button class="on">Details</button><button>Appearance</button></div>
+
+          <div class="field">
+            <label>Name</label>
+            <div class="input"><span class="ph">Auth refactor agent</span></div>
           </div>
-          <div class="preset">
-            <div class="tile"><svg viewBox="0 0 24 24"><path fill="currentColor"
-              d="M12 2c.7 5.6 3.7 8.6 9.3 9.3 0 .5 0 .9 0 1.4-5.6.7-8.6 3.7-9.3 9.3-.5 0-.9 0-1.4 0C9.9 16.4 6.9 13.4 1.3 12.7c0-.5 0-.9 0-1.4C6.9 10.6 9.9 7.6 10.6 2c.5 0 .9 0 1.4 0z"/></svg></div>
-            <div class="name">Gemini</div>
+
+          <div class="builder">
+            <div class="builder-head">
+              <span class="t">Configure Claude</span>
+            </div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.5-4.5" />
+              </svg>
+              <input placeholder="Search options (model, effort, permission, resume…)" />
+            </div>
+
+            <div class="opt dim">
+              <span class="oname">Model</span>
+              <span class="pill on"
+                >Opus 4.8
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6" /></svg
+              ></span>
+              <span class="flag">--model opus</span>
+            </div>
+            <div class="opt dim">
+              <span class="oname">Effort</span>
+              <span class="pill on"
+                >high
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6" /></svg
+              ></span>
+              <span class="flag">--effort high</span>
+            </div>
+            <div class="opt dim">
+              <span class="oname">Permission mode</span>
+              <span class="pill on"
+                >plan
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6" /></svg
+              ></span>
+              <span class="flag">--permission-mode plan</span>
+            </div>
+            <div class="opt">
+              <span class="cbx on"
+                ><svg width="10" height="10" viewBox="0 0 10 10">
+                  <path
+                    d="M1.5 5L4 7.5L8.5 2.5"
+                    stroke="#0a0a0b"
+                    stroke-width="1.6"
+                    fill="none"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg
+              ></span>
+              <span class="oname" style="flex: 1">Continue last session</span>
+              <span class="flag">-c</span>
+            </div>
+            <div class="opt">
+              <span class="cbx"></span>
+              <span class="oname" style="flex: 1">Resume a session…</span>
+              <span class="flag">--resume</span>
+            </div>
+            <div class="more">
+              <b>+ 12 more</b> · background, worktree, add-dir, allowed/disallowed tools,
+              mcp-config…
+            </div>
           </div>
-          <div class="preset">
-            <div class="tile"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 8l-4 4 4 4"/><path d="M15 8l4 4-4 4"/></g></svg></div>
-            <div class="name">Open<br>Code</div>
+
+          <div class="composed">
+            <label>Command <span class="badge">composed · editable</span></label>
+            <div class="cmdbox">
+              claude <span class="fl">--model</span> opus <span class="fl">--effort</span> high
+              <span class="fl">--permission-mode</span> plan <span class="fl">-c</span>
+            </div>
           </div>
-          <div class="preset">
-            <div class="tile"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 8l4 4-4 4"/><path d="M12 16h7"/></g></svg></div>
-            <div class="name">Shell</div>
+
+          <div class="check">
+            <span class="cbx on" style="width: 16px; height: 16px"
+              ><svg width="10" height="10" viewBox="0 0 10 10">
+                <path
+                  d="M1.5 5L4 7.5L8.5 2.5"
+                  stroke="#0a0a0b"
+                  stroke-width="1.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <span class="lbl">Monitor activity</span><span class="i">i</span>
+            <span class="hint">status &amp; recap · joins the swarm</span>
+          </div>
+
+          <div class="footer">
+            <button class="btn ghost">Cancel</button><button class="btn primary">Create</button>
           </div>
         </div>
       </div>
 
-      <div class="seg"><button class="on">Details</button><button>Appearance</button></div>
+      <!-- RIGHT: search-filtered state -->
+      <div class="col">
+        <div class="state-cap">State 2 · search "perm" filters the option list</div>
+        <div class="dlg">
+          <div class="dlg-title">New Terminal</div>
 
-      <div class="field"><label>Name</label><div class="input"><span class="ph">Auth refactor agent</span></div></div>
+          <div>
+            <div class="section-label">Quick start</div>
+            <div class="presets">
+              <div class="preset sel">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                      <path d="M15 12h6" />
+                      <path d="M14.1 14.1l4.3 4.3" />
+                      <path d="M12 15v6" />
+                      <path d="M9.9 14.1l-4.3 4.3" />
+                      <path d="M9 12H3" />
+                      <path d="M9.9 9.9L5.6 5.6" />
+                      <path d="M12 9V3" />
+                      <path d="M14.1 9.9l4.3-4.3" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Claude</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g fill="none" stroke="currentColor" stroke-width="1.4">
+                      <ellipse cx="12" cy="12" rx="3.6" ry="8.4" />
+                      <ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(60 12 12)" />
+                      <ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(120 12 12)" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Codex</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M12 2c.7 5.6 3.7 8.6 9.3 9.3 0 .5 0 .9 0 1.4-5.6.7-8.6 3.7-9.3 9.3-.5 0-.9 0-1.4 0C9.9 16.4 6.9 13.4 1.3 12.7c0-.5 0-.9 0-1.4C6.9 10.6 9.9 7.6 10.6 2c.5 0 .9 0 1.4 0z"
+                    />
+                  </svg>
+                </div>
+                <div class="name">Gemini</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M9 8l-4 4 4 4" />
+                      <path d="M15 8l4 4-4 4" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Open<br />Code</div>
+              </div>
+              <div class="preset">
+                <div class="tile">
+                  <svg viewBox="0 0 24 24">
+                    <g
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M5 8l4 4-4 4" />
+                      <path d="M12 16h7" />
+                    </g>
+                  </svg>
+                </div>
+                <div class="name">Shell</div>
+              </div>
+            </div>
+          </div>
 
-      <div class="builder">
-        <div class="builder-head">
-          <span class="t">Configure Claude</span>
-        </div>
-        <div class="search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.5-4.5"/></svg>
-          <input placeholder="Search options (model, effort, permission, resume…)" />
-        </div>
+          <div class="seg"><button class="on">Details</button><button>Appearance</button></div>
 
-        <div class="opt dim">
-          <span class="oname">Model</span>
-          <span class="pill on">Opus 4.8 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
-          <span class="flag">--model opus</span>
+          <div class="field">
+            <label>Name</label>
+            <div class="input"><span class="ph">Auth refactor agent</span></div>
+          </div>
+
+          <div class="builder">
+            <div class="builder-head"><span class="t">Configure Claude</span></div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.5-4.5" />
+              </svg>
+              <input value="perm" />
+            </div>
+            <div class="opt dim">
+              <span class="oname">Permission mode</span>
+              <span class="pill on"
+                >plan
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6" /></svg
+              ></span>
+              <span class="flag">--permission-mode plan</span>
+            </div>
+            <div class="opt">
+              <span class="cbx"></span>
+              <span class="oname" style="flex: 1">Skip permission prompts</span>
+              <span class="flag">--dangerously-skip-permissions</span>
+            </div>
+            <div class="opt">
+              <span class="cbx"></span>
+              <span class="oname" style="flex: 1">Add bypass to mode cycle</span>
+              <span class="flag">--allow-dangerously-…</span>
+            </div>
+            <div class="more">3 of 17 options match <b>"perm"</b></div>
+          </div>
+
+          <div class="composed">
+            <label>Command <span class="badge">composed · editable</span></label>
+            <div class="cmdbox">claude <span class="fl">--permission-mode</span> plan</div>
+          </div>
+
+          <div class="check">
+            <span class="cbx on" style="width: 16px; height: 16px"
+              ><svg width="10" height="10" viewBox="0 0 10 10">
+                <path
+                  d="M1.5 5L4 7.5L8.5 2.5"
+                  stroke="#0a0a0b"
+                  stroke-width="1.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
+            ></span>
+            <span class="lbl">Monitor activity</span><span class="i">i</span>
+          </div>
+
+          <div class="footer">
+            <button class="btn ghost">Cancel</button><button class="btn primary">Create</button>
+          </div>
         </div>
-        <div class="opt dim">
-          <span class="oname">Effort</span>
-          <span class="pill on">high <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
-          <span class="flag">--effort high</span>
-        </div>
-        <div class="opt dim">
-          <span class="oname">Permission mode</span>
-          <span class="pill on">plan <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
-          <span class="flag">--permission-mode plan</span>
-        </div>
-        <div class="opt">
-          <span class="cbx on"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 5L4 7.5L8.5 2.5" stroke="#0a0a0b" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-          <span class="oname" style="flex:1">Continue last session</span>
-          <span class="flag">-c</span>
-        </div>
-        <div class="opt">
-          <span class="cbx"></span>
-          <span class="oname" style="flex:1">Resume a session…</span>
-          <span class="flag">--resume</span>
-        </div>
-        <div class="more"><b>+ 12 more</b> · background, worktree, add-dir, allowed/disallowed tools, mcp-config…</div>
       </div>
-
-      <div class="composed">
-        <label>Command <span class="badge">composed · editable</span></label>
-        <div class="cmdbox">claude <span class="fl">--model</span> opus <span class="fl">--effort</span> high <span class="fl">--permission-mode</span> plan <span class="fl">-c</span></div>
-      </div>
-
-      <div class="check">
-        <span class="cbx on" style="width:16px;height:16px"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 5L4 7.5L8.5 2.5" stroke="#0a0a0b" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span class="lbl">Monitor activity</span><span class="i">i</span>
-        <span class="hint">status &amp; recap · joins the swarm</span>
-      </div>
-
-      <div class="footer"><button class="btn ghost">Cancel</button><button class="btn primary">Create</button></div>
     </div>
-  </div>
 
-  <!-- RIGHT: search-filtered state -->
-  <div class="col">
-    <div class="state-cap">State 2 · search "perm" filters the option list</div>
-    <div class="dlg">
-      <div class="dlg-title">New Terminal</div>
-
-      <div>
-        <div class="section-label">Quick start</div>
-        <div class="presets">
-          <div class="preset sel">
-            <div class="tile"><svg viewBox="0 0 24 24"><g stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-              <path d="M15 12h6"/><path d="M14.1 14.1l4.3 4.3"/><path d="M12 15v6"/><path d="M9.9 14.1l-4.3 4.3"/>
-              <path d="M9 12H3"/><path d="M9.9 9.9L5.6 5.6"/><path d="M12 9V3"/><path d="M14.1 9.9l4.3-4.3"/></g></svg></div>
-            <div class="name">Claude</div>
-          </div>
-          <div class="preset"><div class="tile"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.4">
-            <ellipse cx="12" cy="12" rx="3.6" ry="8.4"/><ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(60 12 12)"/>
-            <ellipse cx="12" cy="12" rx="3.6" ry="8.4" transform="rotate(120 12 12)"/></g></svg></div><div class="name">Codex</div></div>
-          <div class="preset"><div class="tile"><svg viewBox="0 0 24 24"><path fill="currentColor"
-            d="M12 2c.7 5.6 3.7 8.6 9.3 9.3 0 .5 0 .9 0 1.4-5.6.7-8.6 3.7-9.3 9.3-.5 0-.9 0-1.4 0C9.9 16.4 6.9 13.4 1.3 12.7c0-.5 0-.9 0-1.4C6.9 10.6 9.9 7.6 10.6 2c.5 0 .9 0 1.4 0z"/></svg></div><div class="name">Gemini</div></div>
-          <div class="preset"><div class="tile"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 8l-4 4 4 4"/><path d="M15 8l4 4-4 4"/></g></svg></div><div class="name">Open<br>Code</div></div>
-          <div class="preset"><div class="tile"><svg viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 8l4 4-4 4"/><path d="M12 16h7"/></g></svg></div><div class="name">Shell</div></div>
-        </div>
-      </div>
-
-      <div class="seg"><button class="on">Details</button><button>Appearance</button></div>
-
-      <div class="field"><label>Name</label><div class="input"><span class="ph">Auth refactor agent</span></div></div>
-
-      <div class="builder">
-        <div class="builder-head"><span class="t">Configure Claude</span></div>
-        <div class="search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.5-4.5"/></svg>
-          <input value="perm" />
-        </div>
-        <div class="opt dim">
-          <span class="oname">Permission mode</span>
-          <span class="pill on">plan <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
-          <span class="flag">--permission-mode plan</span>
-        </div>
-        <div class="opt">
-          <span class="cbx"></span>
-          <span class="oname" style="flex:1">Skip permission prompts</span>
-          <span class="flag">--dangerously-skip-permissions</span>
-        </div>
-        <div class="opt">
-          <span class="cbx"></span>
-          <span class="oname" style="flex:1">Add bypass to mode cycle</span>
-          <span class="flag">--allow-dangerously-…</span>
-        </div>
-        <div class="more">3 of 17 options match <b>"perm"</b></div>
-      </div>
-
-      <div class="composed">
-        <label>Command <span class="badge">composed · editable</span></label>
-        <div class="cmdbox">claude <span class="fl">--permission-mode</span> plan</div>
-      </div>
-
-      <div class="check">
-        <span class="cbx on" style="width:16px;height:16px"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 5L4 7.5L8.5 2.5" stroke="#0a0a0b" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span class="lbl">Monitor activity</span><span class="i">i</span>
-      </div>
-
-      <div class="footer"><button class="btn ghost">Cancel</button><button class="btn primary">Create</button></div>
+    <div class="legend">
+      <b>Notes for sign-off.</b>
+      Quick-start tiles now use <b>monochrome brand glyphs</b> (inherit <code>currentColor</code> →
+      accent when selected), not full-color logos — keeps the calm palette and sidesteps
+      trademark/bundling concerns. Glyphs here are recognizable approximations; real implementation
+      adds official-mark SVG paths to <code>Icon.tsx</code>. The free-text Command field is replaced
+      by a <b>structured + searchable builder</b>: selects (Model / Effort / Permission mode),
+      toggles (Continue / Resume / …), and a live <b>composed command</b> that stays editable (the
+      raw escape hatch — preserves the locked agent-agnostic <code>launchCommand</code>). All flags
+      shown are <b>real, current</b> <code>claude</code> CLI flags (verified 2026-06-13):
+      <code>--model</code>, <code>--effort low|medium|high|xhigh|max</code>,
+      <code>--permission-mode</code>, <code>-c</code>, <code>--resume</code>. Each agent preset
+      carries its own option schema; Shell shows no builder (optional raw command only).
     </div>
-  </div>
-
-</div>
-
-<div class="legend">
-  <b>Notes for sign-off.</b>
-  Quick-start tiles now use <b>monochrome brand glyphs</b> (inherit <code>currentColor</code> → accent when selected),
-  not full-color logos — keeps the calm palette and sidesteps trademark/bundling concerns. Glyphs here are
-  recognizable approximations; real implementation adds official-mark SVG paths to <code>Icon.tsx</code>.
-  The free-text Command field is replaced by a <b>structured + searchable builder</b>: selects (Model / Effort /
-  Permission mode), toggles (Continue / Resume / …), and a live <b>composed command</b> that stays editable
-  (the raw escape hatch — preserves the locked agent-agnostic <code>launchCommand</code>).
-  All flags shown are <b>real, current</b> <code>claude</code> CLI flags (verified 2026-06-13): <code>--model</code>,
-  <code>--effort low|medium|high|xhigh|max</code>, <code>--permission-mode</code>, <code>-c</code>, <code>--resume</code>.
-  Each agent preset carries its own option schema; Shell shows no builder (optional raw command only).
-</div>
-</body>
+  </body>
 </html>

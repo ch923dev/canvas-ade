@@ -42,6 +42,39 @@ describe('initial state', () => {
   })
 })
 
+describe('New Terminal config-pending flow (v10)', () => {
+  beforeEach(() =>
+    useCanvasStore.setState({ boards: [], configPendingId: null, past: [], future: [] })
+  )
+
+  it('addBoard with configPending holds a terminal (sets configPendingId)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 }, { configPending: true })
+    expect(get().configPendingId).toBe(id)
+  })
+
+  it('ignores configPending for a non-terminal board', () => {
+    get().addBoard('browser', { x: 0, y: 0 }, { configPending: true })
+    expect(get().configPendingId).toBeNull()
+  })
+
+  it('a plain terminal add does not hold (configPendingId stays null)', () => {
+    get().addBoard('terminal', { x: 0, y: 0 })
+    expect(get().configPendingId).toBeNull()
+  })
+
+  it('clearConfigPending releases the spawn', () => {
+    get().addBoard('terminal', { x: 0, y: 0 }, { configPending: true })
+    get().clearConfigPending()
+    expect(get().configPendingId).toBeNull()
+  })
+
+  it('removing the held board clears the dangling flag', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 }, { configPending: true })
+    get().removeBoard(id)
+    expect(get().configPendingId).toBeNull()
+  })
+})
+
 describe('addBoard', () => {
   it('appends a board of the type with its default size and returns the new id', () => {
     const id = get().addBoard('terminal', { x: 10, y: 20 })

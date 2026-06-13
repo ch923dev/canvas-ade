@@ -37,9 +37,12 @@ import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/
  * - **v9 = optional root `background`** (canvas backdrop — wallpaper/scene + dim/saturation/grid,
  *   see `docs/canvas-backdrop/`). Optional + defaulted-at-read → identity bump; absent reads as
  *   "none" (today's flat void, byte-identical for existing projects).
+ * - **v10 = optional TerminalBoard `agentKind` + `monitorActivity`** (New Terminal agent presets).
+ *   Both optional + defaulted-at-read → identity bump; ADDITIVE so MIN_READER_VERSION stays 9 (an
+ *   older reader opens v10 docs; the two fields ride through `structuredClone` and survive a save).
  *   Do not silently reuse a version for a new shape.
  */
-export const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 10
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -95,6 +98,20 @@ export interface TerminalBoard extends BoardCommon {
    * + default-at-read => NO SCHEMA_VERSION bump (mirrors previewSourceId / agentSessionId).
    */
   fontSize?: number
+  /**
+   * v10: which agentic-CLI preset this terminal was created from (e.g. 'claude' | 'codex' |
+   * 'gemini' | 'opencode' | 'shell' | a custom id). Identity metadata only — the actual exec
+   * is still `launchCommand`. Free string (not a closed enum) so a custom/future preset needs
+   * no schema bump; the renderer maps an unknown id to a generic glyph. Exposed to MCP via
+   * `canvas://boards` so an orchestrator can route by capability.
+   */
+  agentKind?: string
+  /**
+   * v10: whether this terminal participates in activity monitoring (status/recap publish +
+   * the MCP `canvas://attention` swarm queue). Absent ⇒ treated as `true` (opt-out, not
+   * opt-in). `false` keeps a plain shell out of the orchestrator's view.
+   */
+  monitorActivity?: boolean
 }
 
 export interface BrowserBoard extends BoardCommon {
@@ -443,7 +460,10 @@ const MIGRATIONS: Record<number, Migration> = {
   7: (doc) => ({ ...doc, schemaVersion: 8 }),
   // v9: optional root `background` (canvas backdrop). Optional + defaulted-at-read →
   // identity bump; absent reads as "none" so existing projects render unchanged.
-  8: (doc) => ({ ...doc, schemaVersion: 9 })
+  8: (doc) => ({ ...doc, schemaVersion: 9 }),
+  // v10: optional TerminalBoard agentKind + monitorActivity (agent presets). All-optional →
+  // identity bump; absent agentKind reads as "no preset", absent monitorActivity reads as true.
+  9: (doc) => ({ ...doc, schemaVersion: 10 })
 }
 
 /**
@@ -653,6 +673,12 @@ function assertBoard(b: unknown): void {
       }
       if (b.fontSize !== undefined && !isPositiveNum(b.fontSize)) {
         fail('terminal fontSize must be a positive number')
+      }
+      if (b.agentKind !== undefined && typeof b.agentKind !== 'string') {
+        fail('terminal agentKind is not a string')
+      }
+      if (b.monitorActivity !== undefined && typeof b.monitorActivity !== 'boolean') {
+        fail('terminal monitorActivity is not a boolean')
       }
       return
     case 'browser':

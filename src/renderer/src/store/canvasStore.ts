@@ -120,15 +120,32 @@ export interface CanvasState {
   setProjectLoading: () => void
 
   /**
+   * Id of a terminal awaiting first-run config in the New Terminal dialog (place-first
+   * flow). EPHEMERAL session state — never serialized (scene/session split): set by a
+   * user-placed terminal (`addBoard` with `opts.configPending`), cleared on Create/Cancel
+   * (`clearConfigPending`) or if the board is removed. While set, the matching terminal's
+   * spawn effect is gated OFF so the PTY does not auto-spawn until the dialog resolves.
+   * The MCP `spawn_board` path never sets it (agents configure via `configure_board`).
+   */
+  configPendingId: string | null
+  /**
    * Add a board of `type` at a world position; selects it; returns its id. `opts.id`
    * injects a caller-minted id (the MCP `spawn_board` path mints the id in MAIN so
-   * the tool can return it to the agent); omitted → the store mints one.
+   * the tool can return it to the agent); omitted → the store mints one. `opts.configPending`
+   * (terminal only) holds the board's spawn until the New Terminal dialog resolves.
    */
   addBoard: (
     type: BoardType,
     at: { x: number; y: number },
-    opts?: { id?: string; size?: { w: number; h: number }; exact?: boolean }
+    opts?: {
+      id?: string
+      size?: { w: number; h: number }
+      exact?: boolean
+      configPending?: boolean
+    }
   ) => string
+  /** Clear the New Terminal config-pending flag (dialog Create/Cancel), releasing the spawn. */
+  clearConfigPending: () => void
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
@@ -479,7 +496,11 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     'port',
     'agentSessionId',
     'agentTranscriptPath',
-    'fontSize'
+    'fontSize',
+    // v10 (New Terminal presets): the chosen agent identity + whether the board joins
+    // activity monitoring (MCP attention/swarm). Both terminal-scoped + serialized.
+    'agentKind',
+    'monitorActivity'
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements']
@@ -526,6 +547,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   future: [],
   viewport: null,
   background: null,
+  configPendingId: null,
   project: { dir: null, name: null, status: 'welcome' },
 
   addBoard: (type, at, opts) => {
@@ -537,6 +559,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const board = createBoard(type, { id, x: pos.x, y: pos.y, w: size.w, h: size.h })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
+    // Place-first New Terminal flow: a user-placed terminal holds its spawn until the
+    // dialog resolves (the spawn effect is gated on configPendingId). Terminal-only +
+    // never on the MCP path. EPHEMERAL — set OUTSIDE trackedChange so it isn't snapshotted
+    // onto the undo rail.
+    const pending = opts?.configPending === true && type === 'terminal'
     set((s) =>
       trackedChange(
         s,
@@ -544,8 +571,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         { selection: { selectedId: id, selectedIds: [id] }, reflectPresent: false }
       )
     )
+    if (pending) set({ configPendingId: id })
     return id
   },
+
+  clearConfigPending: () => set({ configPendingId: null }),
 
   removeBoard: (id) =>
     set((s) => {
@@ -574,7 +604,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // trackedChange no-ops the groups field (membership unchanged).
       const nextGroups = pruneBoardFromGroups(s.groups, id) ?? s.groups
       const nextSelIds = s.selectedIds.filter((x) => x !== id)
-      return trackedChange(
+      const result = trackedChange(
         s,
         { boards: next, connectors: nextConnectors, groups: nextGroups },
         {
@@ -585,6 +615,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           reflectPresent: false
         }
       )
+      // Drop a dangling config-pending flag if the awaiting-config terminal is the one
+      // being removed (e.g. undo/MCP close while its New Terminal dialog is open).
+      return s.configPendingId === id ? { ...result, configPendingId: null } : result
     }),
 
   duplicateBoard: (id) => {

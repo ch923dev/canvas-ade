@@ -50,6 +50,14 @@ export type IconName =
   | 'distribute-h'
   | 'distribute-v'
   | 'connector'
+  // Agentic-CLI preset glyphs (New Terminal dialog). Monochrome `currentColor` marks in
+  // the existing stroked single-path style — recognizable silhouettes, NOT brand logos
+  // (DESIGN.md "functional, non-illustrative"; the brand-mark approximation is deliberate).
+  | 'agent-claude'
+  | 'agent-codex'
+  | 'agent-gemini'
+  | 'agent-opencode'
+  | 'agent-shell'
 
 /** Icons drawn from multiple primitives (rect + path) rather than one path. */
 export type DeviceIconName = 'mobile' | 'tablet' | 'desktop'
@@ -103,7 +111,20 @@ const PATHS: Record<IconName, string> = {
   'distribute-h': 'M5 4v16M19 4v16M11 7h2v10h-2z',
   'distribute-v': 'M4 5h16M4 19h16M7 11v2h10v-2z',
   // Connector: two node rings joined by a diagonal link (the draw-a-cable affordance).
-  connector: 'M9 17a2 2 0 1 1-4 0 2 2 0 1 1 4 0M19 7a2 2 0 1 1-4 0 2 2 0 1 1 4 0M8.5 15.5l7-7'
+  connector: 'M9 17a2 2 0 1 1-4 0 2 2 0 1 1 4 0M19 7a2 2 0 1 1-4 0 2 2 0 1 1 4 0M8.5 15.5l7-7',
+  // Agentic-CLI preset glyphs (monochrome approximations):
+  // claude — radial burst (8 spokes).
+  'agent-claude':
+    'M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.8 2.8M15.2 15.2L18 18M6 18l2.8-2.8M15.2 8.8L18 6',
+  // codex — contained hexagon ring.
+  'agent-codex': 'M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z',
+  // gemini — four-point sparkle (concave star).
+  'agent-gemini':
+    'M12 3c.4 4.6 1.4 5.6 6 6-4.6.4-5.6 1.4-6 6-.4-4.6-1.4-5.6-6-6 4.6-.4 5.6-1.4 6-6z',
+  // opencode — code brackets.
+  'agent-opencode': 'M9 8l-4 4 4 4M15 8l4 4-4 4',
+  // shell — prompt chevron + caret line.
+  'agent-shell': 'M5 8l4 4-4 4M13 16h6'
 }
 
 interface SvgProps {

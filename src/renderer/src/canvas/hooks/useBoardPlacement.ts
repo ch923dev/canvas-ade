@@ -90,10 +90,13 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
       const onUp = (ev: PointerEvent): void => {
         abortDrag() // removes these listeners + clears the ghost
         const add = useCanvasStore.getState().addBoard
+        // A user-placed terminal opens the New Terminal dialog (place-first flow): its spawn
+        // is held until the dialog resolves. Browser/Planning place + render immediately.
+        const configPending = type === 'terminal'
         if (isClickGesture(ev.clientX - sx, ev.clientY - sy)) {
           const pt = rf.screenToFlowPosition({ x: ev.clientX, y: ev.clientY })
           const size = DEFAULT_BOARD_SIZE[type]
-          add(type, { x: pt.x - size.w / 2, y: pt.y - size.h / 2 }, { exact: false })
+          add(type, { x: pt.x - size.w / 2, y: pt.y - size.h / 2 }, { exact: false, configPending })
         } else {
           const a = rf.screenToFlowPosition({
             x: Math.min(sx, ev.clientX),
@@ -104,7 +107,7 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
             y: Math.max(sy, ev.clientY)
           })
           const r = placementRect(a, b)
-          add(type, { x: r.x, y: r.y }, { size: { w: r.w, h: r.h }, exact: true })
+          add(type, { x: r.x, y: r.y }, { size: { w: r.w, h: r.h }, exact: true, configPending })
         }
         setTool('select')
       }

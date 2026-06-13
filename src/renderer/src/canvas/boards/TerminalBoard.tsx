@@ -34,6 +34,8 @@ import { resumeCommand } from './terminal/resumeCommand'
 import { BrowserPickPanel, NEW_BROWSER } from './terminal/BrowserPickPanel'
 import { usePickerDismiss } from './terminal/usePickerDismiss'
 import { useTerminalSpawn } from './terminal/useTerminalSpawn'
+import { NewTerminalDialog } from './terminal/NewTerminalDialog'
+import { presetById } from './terminal/agentPresets'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
 import { TerminalRestartMenu } from './terminal/TerminalRestartMenu'
@@ -88,6 +90,9 @@ export function TerminalBoard({
   // A board with no explicit cwd spawns in the open project folder, not os.homedir().
   const projectDir = useCanvasStore((s) => s.project.dir)
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  // Place-first New Terminal flow: true while THIS board awaits first-run config in the
+  // dialog. Held terminals don't spawn (the dialog resolves first) — see useTerminalSpawn.
+  const configPending = useCanvasStore((s) => s.configPendingId === board.id)
 
   // ── Spawn lifecycle ───────────────────────────────────────────────────────────
   // The PTY spawn/respawn/restart state machine + xterm construction + MessagePort data
@@ -114,7 +119,8 @@ export function TerminalBoard({
     screenRef,
     fontStepRef,
     fontResetRef,
-    pasteIntoTerminal
+    pasteIntoTerminal,
+    configPending
   })
 
   const [configOpen, setConfigOpen] = useState(false)
@@ -173,7 +179,12 @@ export function TerminalBoard({
     return () => window.clearTimeout(t)
   }, [flip.flipped, termRef])
 
-  const identity = agentIdentity(board.launchCommand, board.shell)
+  // Prefer the chosen agent preset's label for the identity pill (e.g. "Claude"); a plain
+  // Shell preset still shows the resolved shell name (more informative than "Shell"), and a
+  // terminal with no preset (MCP-spawned / pre-v10) falls back to command/shell inference.
+  const presetLabel =
+    board.agentKind && board.agentKind !== 'shell' ? presetById(board.agentKind)?.label : undefined
+  const identity = presetLabel ?? agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
 
   // ── Per-board font size ───────────────────────────────────────────────────────
@@ -727,6 +738,10 @@ export function TerminalBoard({
           />
         </div>
       )}
+      {/* Place-first New Terminal dialog: opens over the just-dropped board (the spawn is
+          held until Create/Cancel). Modal portals to body, so its position in this tree is
+          immaterial. */}
+      {configPending && <NewTerminalDialog board={board} />}
     </>
   )
 }

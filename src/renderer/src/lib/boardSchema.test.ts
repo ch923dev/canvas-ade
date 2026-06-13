@@ -560,14 +560,14 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 9', () => {
-    expect(SCHEMA_VERSION).toBe(9)
+  it('SCHEMA_VERSION is 10', () => {
+    expect(SCHEMA_VERSION).toBe(10)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 9,
+      schemaVersion: 10,
       minReaderVersion: 9,
       viewport: vp,
       boards: [],
@@ -753,8 +753,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 9', () => {
-    expect(SCHEMA_VERSION).toBe(9)
+  it('SCHEMA_VERSION is 10', () => {
+    expect(SCHEMA_VERSION).toBe(10)
   })
 
   it('round-trips a valid image element', () => {
@@ -807,8 +807,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 9', () => {
-    expect(SCHEMA_VERSION).toBe(9)
+  it('SCHEMA_VERSION is 10', () => {
+    expect(SCHEMA_VERSION).toBe(10)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -1421,5 +1421,59 @@ describe('schema v9 — canvas backdrop', () => {
     const back = fromObject(doc)
     expect(back.boards).toHaveLength(1)
     expect(back.background?.kind).toBe('none')
+  })
+})
+
+// ── Terminal agent presets (schema v10) ──────────────────────────────────────────
+// Optional TerminalBoard `agentKind` + `monitorActivity`. All-optional → ADDITIVE:
+// the writer bumps to 10 but MIN_READER_VERSION stays 9 (an older app opens v10 docs).
+describe('schema v10 — terminal agentKind + monitorActivity', () => {
+  const v9doc = (terminal?: Record<string, unknown>): unknown => ({
+    schemaVersion: 9,
+    minReaderVersion: 9,
+    viewport: null,
+    boards: terminal
+      ? [{ id: 't1', type: 'terminal', x: 0, y: 0, w: 420, h: 340, title: 'T', ...terminal }]
+      : [],
+    connectors: [],
+    groups: []
+  })
+
+  it('migrates a v9 doc to current (identity bump, fields absent)', () => {
+    const migrated = migrate(v9doc() as never)
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
+  })
+
+  it('keeps the compat floor at 9 (additive — older apps still open it)', () => {
+    expect(toObject([], null).minReaderVersion).toBe(9)
+  })
+
+  it('round-trips agentKind + monitorActivity', () => {
+    const back = fromObject(v9doc({ agentKind: 'claude', monitorActivity: false }))
+    const t = back.boards[0]
+    expect(t.type).toBe('terminal')
+    if (t.type === 'terminal') {
+      expect(t.agentKind).toBe('claude')
+      expect(t.monitorActivity).toBe(false)
+    }
+  })
+
+  it('accepts a terminal with neither field (absent ⇒ monitor on, no preset)', () => {
+    const back = fromObject(v9doc({}))
+    const t = back.boards[0]
+    if (t.type === 'terminal') {
+      expect(t.agentKind).toBeUndefined()
+      expect(t.monitorActivity).toBeUndefined()
+    }
+  })
+
+  it('rejects a non-string agentKind', () => {
+    expect(() => fromObject(v9doc({ agentKind: 42 }))).toThrow(/agentKind is not a string/)
+  })
+
+  it('rejects a non-boolean monitorActivity', () => {
+    expect(() => fromObject(v9doc({ monitorActivity: 'yes' }))).toThrow(
+      /monitorActivity is not a boolean/
+    )
   })
 })
