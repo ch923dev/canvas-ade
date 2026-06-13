@@ -196,6 +196,13 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 - Before editing, read the shared board `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md` (the
   SessionStart hook injects it automatically). **Stay in YOUR declared zone**; cross-zone edits → note
   them on the board first. Your edits are auto-logged so the next session sees what you touched.
+- **Post-merge signaling + stale-base self-check.** After pushing to `origin/main`, run
+  `pwsh .claude/tools/signal-merge.ps1 -Pr <n> -Subject "<subj>"` (`-Lockfile` if the lockfile moved) —
+  it updates `integration-tip.json` + the board so every other session knows main advanced. In return,
+  the coordination hook flags a stale base automatically: a banner at SessionStart, a per-prompt nudge,
+  and a **hard pre-push block** on a stale push to `main` (feature pushes warn). On any of those:
+  `git fetch origin && git rebase origin/main` before continuing. Full protocol: `ACTIVE-WORK.md` ›
+  *Post-merge signaling*.
 - New/teardown worktrees via `.claude/tools/new-worktree.ps1` / `remove-worktree.ps1` (handles the
   node_modules junction + safe teardown). Cap ~4 live. Merge feat branches into main sequentially,
   re-running the full gate + e2e after EACH merge — **the FULL e2e matrix (`pnpm test:e2e:matrix`,

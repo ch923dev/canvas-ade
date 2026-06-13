@@ -40,6 +40,9 @@ Thumbs.db
 # parallel-session coordination: track the tooling (hook + ps1), ignore the live shared state
 .claude/coordination/ACTIVE-WORK.md
 .claude/coordination/edit-log.jsonl
+.claude/coordination/integration-tip.json
+.claude/coordination/merge-signal.jsonl
+.claude/coordination/fetch-stamps/
 .claude/coordination/archive/
 # agent tooling — workflow scripts + skills lockfile (NOT project source)
 .agents/

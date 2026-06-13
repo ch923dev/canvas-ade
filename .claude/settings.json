@@ -62,6 +62,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"Z:\\Canvas ADE\\.claude\\coordination\\coordination-hook.cjs\" user-prompt-submit"
+          }
+        ]
+      }
     ]
   }
 }

@@ -24,6 +24,48 @@ remote_name="$1"
 [ "$remote_name" = "origin" ] || { echo "[pre-push] remote '$remote_name' != origin — skipping e2e."; exit 0; }
 
 z40="0000000000000000000000000000000000000000"
+
+# The refs being pushed arrive on stdin and can only be read ONCE — capture them so
+# both the stale-base gate (below) and the e2e change-detection loop can consume them.
+refs_input="$(cat)"
+
+# ----- stale-base gate (2026-06-13) ------------------------------------------
+# Independent of the coordination signal (Tier 2 self-check): compare the branch
+# being pushed against the REAL origin/main. BLOCK a push to main on a stale base
+# (would merge an un-rebased branch); WARN a stale feature push (legitimately lags,
+# but should rebase before opening/merging the PR). Fail OPEN on a fetch error so a
+# network blip never wedges a push. Bypass with: git push --no-verify
+if command -v timeout >/dev/null 2>&1; then
+  GIT_TERMINAL_PROMPT=0 timeout 20 git fetch --quiet origin main 2>/dev/null \
+    || echo "[pre-push] NOTE: could not fetch origin/main — stale-base check is advisory this run."
+else
+  GIT_TERMINAL_PROMPT=0 git fetch --quiet origin main 2>/dev/null \
+    || echo "[pre-push] NOTE: could not fetch origin/main — stale-base check is advisory this run."
+fi
+block_stale=0
+if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+  # Heredoc (not a pipe) so block_stale persists in THIS shell.
+  while read -r sl_ref sl_sha sr_ref sr_sha; do
+    [ -z "$sl_sha" ] && continue
+    [ "$sl_sha" = "$z40" ] && continue                  # branch delete — nothing to rebase
+    git merge-base --is-ancestor origin/main "$sl_sha" >/dev/null 2>&1 && continue  # contains origin/main → fresh
+    behind="$(git rev-list --count "${sl_sha}..origin/main" 2>/dev/null || echo '?')"
+    if [ "$sr_ref" = "refs/heads/main" ]; then
+      echo "[pre-push] ✋ BLOCKED: pushing to main on a STALE base — origin/main is $behind commit(s) ahead and not in your history."
+      echo "           Integrate first:  git fetch origin && git rebase origin/main"
+      echo "           (Override only if you are certain it is safe: git push --no-verify)"
+      block_stale=1
+    else
+      echo "[pre-push] ⚠️  WARNING: '$sr_ref' is BEHIND origin/main by $behind commit(s) — rebase before opening/merging the PR:"
+      echo "           git fetch origin && git rebase origin/main"
+    fi
+  done <<EOF
+$refs_input
+EOF
+fi
+[ "$block_stale" = "1" ] && exit 1
+# ----- end stale-base gate ---------------------------------------------------
+
 changed=""
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "$local_sha" = "$z40" ] && continue                 # branch delete — nothing to test
@@ -63,7 +105,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   }
   changed="$changed$diff_out
 "
-done
+done <<EOF
+$refs_input
+EOF
 
 # Drop blank lines (the per-ref accumulation above leaves a trailing newline; a
 # blank line matches neither docs pattern, so it would defeat the docs-only skip)
