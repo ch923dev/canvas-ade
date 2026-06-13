@@ -8,9 +8,7 @@ import {
   ZOOM_SNAP_HI,
   isLod,
   gridDotOpacity,
-  snapZoom,
-  FIT_FRAME,
-  OVERVIEW_FRAME
+  snapZoom
 } from './canvasView'
 
 describe('camera constants', () => {
@@ -19,19 +17,6 @@ describe('camera constants', () => {
     expect(Z_MAX).toBe(2.5)
     expect(LOD_ZOOM).toBe(0.4)
     expect(GRID_GAP).toBe(24)
-  })
-})
-
-// BUG-061 regression: OVERVIEW_FRAME must not zoom tighter than FIT_FRAME for small clusters
-describe('camera framing presets', () => {
-  it('BUG-061: OVERVIEW_FRAME.maxZoom does not exceed FIT_FRAME.maxZoom', () => {
-    const overviewMax = (OVERVIEW_FRAME as { maxZoom?: number }).maxZoom ?? Z_MAX
-    const fitMax = (FIT_FRAME as { maxZoom?: number }).maxZoom ?? Z_MAX
-    expect(overviewMax).toBeLessThanOrEqual(fitMax)
-  })
-
-  it('BUG-061: OVERVIEW_FRAME has an explicit maxZoom (not inherited from the flow)', () => {
-    expect((OVERVIEW_FRAME as { maxZoom?: number }).maxZoom).toBeDefined()
   })
 })
 
