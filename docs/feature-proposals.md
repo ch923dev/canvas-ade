@@ -645,6 +645,76 @@ value, almost no UI weight.
 
 ---
 
+## QW-7 · Device emulation for Browser presets (User-Agent + viewport) ✅
+
+- **Status:** proposed
+- **Effort:** low
+- **Roadmap slot:** extends Phase 2.2 Browser board responsive presets (Mobile/Tablet/Desktop);
+  pairs with QW-4 console capture + QW-5 screenshot. Composes cleanly with the offscreen-preview
+  spike (the hooks are `webContents`-level, so they apply identically to the OSR window).
+- **Depends on:** nothing hard — the per-board session already isolates UA/zoom
+  (`partition: preview-<id>`). Persistence only needed if a per-board override toggle is persisted.
+
+### The gap (and the term)
+A site can switch to its mobile experience two different ways:
+
+1. **Server-side User-Agent redirect** — the server reads the `User-Agent` header, sees a phone, and
+   `302`-redirects to a mobile host (`m.facebook.com`, `m.wikipedia.org`). This is **UA sniffing**.
+2. **Client-side responsive CSS** — same URL, CSS media queries reflow by viewport width. This is what
+   modern dev apps (Next, Vite, Tailwind, React) do.
+
+Our presets (`VIEWPORT_PRESETS`, `lib/browserLayout.ts:52` — `mobile 390×844`, `tablet 834×1112`,
+`desktop 1280×800`) only change the **CSS render width** via `setZoomFactor` (`preview.ts:411,499`).
+That fires mechanism (2) — responsive reflow works — but **never touches the User-Agent**, so a
+UA-sniffing site (mechanism 1) still serves its desktop host on the Mobile preset. The dev-tool
+capability that closes this is **device emulation** (Chrome DevTools "Device Mode" / mobile emulation).
+
+### What it does
+Bind each viewport preset to a **device profile**: when `viewport === 'mobile'`, present a mobile
+User-Agent (and mobile device metrics / touch) so a previewed page that UA-sniffs serves its phone
+experience; `desktop` clears the override. Exposed as a small **per-board toggle** ("emulate mobile
+device") so a dev whose own server runs custom UA logic isn't surprised.
+
+### Why valuable
+Makes the Mobile/Tablet presets *truthful* for the class of sites that branch on UA, not just on CSS
+width — the user's intuition ("Facebook gives me `m.facebook.com` on a phone"). Low cost, additive,
+and it deepens the Browser board's core job (faithful responsive preview) without a new dependency.
+
+### Implementation sketch
+- **MAIN, the built-in path (no CDP):**
+  - `webContents.setUserAgent(profile.ua)` — the site's UA-sniff now sees a phone.
+  - `webContents.enableDeviceEmulation({ screenPosition: 'mobile', viewSize, deviceScaleFactor, … })`
+    for device metrics; `disableDeviceEmulation()` to revert. Drive both off the preset switch that
+    already runs per board.
+- **Deeper fidelity (optional, only if needed):** CDP `Emulation.setUserAgentOverride` +
+  `setDeviceMetricsOverride` + `setTouchEmulationEnabled` give full Device Mode (`navigator.platform`,
+  touch events, `ontouchstart`). **ADR 0002 pre-authorizes CDP attach** — but ship the built-in path
+  first; only reach for CDP if a target site needs touch/platform spoofing the built-ins miss.
+- **Renderer:** the existing Mobile/Tablet/Desktop segmented control drives it; add the per-board
+  "emulate device" toggle. A device profile is just `{ ua, deviceScaleFactor, touch }` keyed by preset.
+- **Persistence:** session-only for v1, or persist the per-board toggle in `canvas.json` (additive
+  optional field → writer-only schema bump, ADR 0007). UA strings live in a small MAIN registry, not
+  the doc.
+- **No new dependencies.**
+
+### Viability checklist (run at ship time)
+- [ ] `setUserAgent` + `enableDeviceEmulation` behave on the Electron 42 `WebContentsView` **and** on
+      the offscreen window if the OSR spike has landed (re-check after the preview path is finalized).
+- [ ] Switching presets re-navigates/reloads as needed so a UA redirect actually re-fires (some sites
+      only redirect on the next navigation, not in-place) — verify Mobile→Desktop round-trips host.
+- [ ] `disableDeviceEmulation()` / UA reset fully reverts on the Desktop preset (no sticky mobile UA).
+- [ ] Per-board toggle defaults OFF (or to a safe default) so a dev server with custom UA logic isn't
+      silently mobile-emulated; document the one sanctioned behaviour.
+- [ ] Device metrics (`deviceScaleFactor`) don't fight the responsive `setZoomFactor`/`setBounds`
+      width math — confirm the preset still reflows at the right breakpoint with emulation on.
+- [ ] Security unchanged: emulation is read-only display state; no new page→PTY or write path; stays
+      within `sandbox`/`contextIsolation`/per-board session.
+- **Acceptance:** point a Browser board at a UA-sniffing site (or a tiny local server that branches on
+  `User-Agent`) → Mobile preset with emulation on serves the mobile variant; Desktop preset serves the
+  desktop variant; a normal responsive localhost app still reflows correctly under both.
+
+---
+
 # Other shortlisted
 
 ## OS-1 · One-click commit / merge / open-PR from a Terminal board ◆
