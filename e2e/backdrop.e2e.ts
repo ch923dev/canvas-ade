@@ -16,6 +16,8 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
  *  4. reduced-motion freeze (S7, PR 2) — the registered blossom-river scene animates
  *     under normal motion (two strided pixel-hashes differ) and freezes to ONE
  *     pixel-stable still when prefers-reduced-motion flips live via emulateMedia.
+ *  5. grid lattice (S12, PR 4) — gridStyle drives RF's native BackgroundVariant: off ⇒
+ *     no pattern, dots ⇒ <circle>, lines/cross ⇒ distinct <path> geometries.
  *
  * Registry state: since PR 2 `blossom-river` is REGISTERED (probes 1 and 4 ride the
  * real scene canvas); the passthrough probe's `probe-scene` id stays deliberately
@@ -374,5 +376,55 @@ test.describe('@chrome canvas backdrop (S4)', () => {
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
+  })
+
+  test('grid lattice: gridStyle switches the RF background variant (S12)', async ({ page }) => {
+    // A scene backdrop makes FadingDots opt-in (gated on gridDots, spec §3); the lattice
+    // style then drives RF's native BackgroundVariant. dots ⇒ <circle>, lines/cross ⇒ <path>.
+    const bg = '.react-flow__background'
+    const setGrid = (patch: string): string =>
+      `window.__canvasE2E.setBackground({ kind: 'scene', scene: 'blossom-river', dim: 0.25, saturation: 0.7, ${patch} })`
+
+    // Grid off ⇒ no RF background pattern paints at all (FadingDots returns null).
+    await evalIn(page, setGrid('gridDots: false'))
+    expect(
+      await pollEval(page, `document.querySelector('${bg}') === null`, 2000),
+      'no grid pattern when gridDots is off'
+    ).toBe(true)
+
+    // Dots ⇒ the pattern uses <circle>.
+    await evalIn(page, setGrid('gridDots: true, gridStyle: "dots"'))
+    expect(
+      await pollEval(page, `!!document.querySelector('${bg} circle')`, 2000),
+      'dots variant renders circles'
+    ).toBe(true)
+
+    // Lines ⇒ a <path>, no <circle>.
+    await evalIn(page, setGrid('gridDots: true, gridStyle: "lines"'))
+    expect(
+      await pollEval(
+        page,
+        `!!document.querySelector('${bg} path') && document.querySelector('${bg} circle') === null`,
+        2000
+      ),
+      'lines variant renders a path and no circle'
+    ).toBe(true)
+    const linesPath = await evalIn<string>(
+      page,
+      `document.querySelector('${bg} path')?.getAttribute('d') ?? ''`
+    )
+
+    // Cross ⇒ also a <path>, but a geometry distinct from lines (robust to RF's exact d-string).
+    await evalIn(page, setGrid('gridDots: true, gridStyle: "cross"'))
+    expect(
+      await pollEval(
+        page,
+        `(document.querySelector('${bg} path')?.getAttribute('d') ?? '') !== ${JSON.stringify(linesPath)} && document.querySelector('${bg} circle') === null`,
+        2000
+      ),
+      'cross variant renders a different path geometry than lines'
+    ).toBe(true)
+
+    await evalIn(page, `window.__canvasE2E.setBackground({ kind: 'none' })`)
   })
 })

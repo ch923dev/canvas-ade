@@ -50,14 +50,18 @@ describe('BackdropPicker', () => {
     expect(useCanvasStore.getState().background?.kind).toBe('none')
   })
 
-  it('sliders + grid toggle are disabled while source is none (spec §3)', () => {
+  it('sliders + grid segment are disabled while source is none (spec §3)', () => {
     render(<BackdropPicker />)
     openPicker()
-    const ctl = (k: string): HTMLInputElement =>
-      document.querySelector(`[data-test="backdrop-${k}"]`) as HTMLInputElement
-    expect(ctl('dim').disabled).toBe(true)
-    expect(ctl('saturation').disabled).toBe(true)
-    expect(ctl('griddots').disabled).toBe(true)
+    const disabled = (k: string): boolean =>
+      (
+        document.querySelector(`[data-test="backdrop-${k}"]`) as
+          | HTMLInputElement
+          | HTMLButtonElement
+      ).disabled
+    expect(disabled('dim')).toBe(true)
+    expect(disabled('saturation')).toBe(true)
+    for (const seg of ['off', 'dots', 'lines', 'cross']) expect(disabled(`grid-${seg}`)).toBe(true)
   })
 
   it('a good wallpaper pick writes the asset and sets kind file + assetId', async () => {
@@ -140,11 +144,38 @@ describe('BackdropPicker', () => {
     expect(useCanvasStore.getState().background?.dim).toBe(0.5)
   })
 
-  it('grid-dots toggle writes background.gridDots', () => {
+  const seg = (style: string): HTMLButtonElement =>
+    document.querySelector(`[data-test="backdrop-grid-${style}"]`) as HTMLButtonElement
+
+  it('grid segment: picking a style turns the grid on + writes gridStyle', () => {
     useCanvasStore.getState().setBackground({ kind: 'scene', scene: 'x' })
     render(<BackdropPicker />)
     openPicker()
-    fireEvent.click(document.querySelector('[data-test="backdrop-griddots"]') as HTMLInputElement)
-    expect(useCanvasStore.getState().background?.gridDots).toBe(true)
+    fireEvent.click(seg('lines'))
+    expect(useCanvasStore.getState().background).toMatchObject({
+      gridDots: true,
+      gridStyle: 'lines'
+    })
+  })
+
+  it('grid segment: Off hides the grid (gridDots false)', () => {
+    useCanvasStore
+      .getState()
+      .setBackground({ kind: 'scene', scene: 'x', gridDots: true, gridStyle: 'cross' })
+    render(<BackdropPicker />)
+    openPicker()
+    fireEvent.click(seg('off'))
+    expect(useCanvasStore.getState().background?.gridDots).toBe(false)
+  })
+
+  it('grid segment: the active style is the only one aria-checked', () => {
+    useCanvasStore
+      .getState()
+      .setBackground({ kind: 'scene', scene: 'x', gridDots: true, gridStyle: 'cross' })
+    render(<BackdropPicker />)
+    openPicker()
+    expect(seg('cross').getAttribute('aria-checked')).toBe('true')
+    expect(seg('off').getAttribute('aria-checked')).toBe('false')
+    expect(seg('dots').getAttribute('aria-checked')).toBe('false')
   })
 })

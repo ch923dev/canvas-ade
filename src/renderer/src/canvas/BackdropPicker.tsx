@@ -6,11 +6,12 @@
  *
  * Source rows: None · bundled scenes (sceneRegistry — empty until PR 2) ·
  * Wallpaper… (file input → asset:write → background.assetId). Sliders + the grid
- * toggle apply LIVE via setBackground (persisted by the debounced autosave) and are
- * enabled only when a source is active. Import caps (spec §6): 30MB image / 200MB
- * video — Blob URLs hold the whole file in memory. Slider/checkbox rows stop
- * keydown propagation so the Menu shell's roving arrows never steal the range keys
- * (they are deliberately NOT role=menuitem; keyboard reach is a recorded follow-up).
+ * segment (Off · Dots · Lines · Cross, PR 4) apply LIVE via setBackground (persisted
+ * by the debounced autosave) and are enabled only when a source is active. Import caps
+ * (spec §6): 30MB image / 200MB video — Blob URLs hold the whole file in memory.
+ * Slider/segment rows stop keydown propagation so the Menu shell's roving arrows never
+ * steal the range keys (they are deliberately NOT role=menuitem; keyboard reach is a
+ * recorded follow-up).
  */
 import { useRef, useState, type ChangeEvent, type ReactElement } from 'react'
 import { useCanvasStore } from '../store/canvasStore'
@@ -18,7 +19,8 @@ import {
   BACKGROUND_DIM_RANGE,
   BACKGROUND_SATURATION_RANGE,
   DEFAULT_BACKGROUND_DIM,
-  DEFAULT_BACKGROUND_SATURATION
+  DEFAULT_BACKGROUND_SATURATION,
+  type GridStyle
 } from '../lib/boardSchema'
 import { showToast } from '../store/toastStore'
 import { Menu } from './Menu'
@@ -35,6 +37,15 @@ const TIERS: ReadonlyArray<{ tier: SceneDef['tier']; label: string }> = [
   { tier: 'ambient', label: 'Ambient' },
   { tier: 'scenic', label: 'Scenic' }
 ]
+/** Grid-on-top lattice options (PR 4). 'off' hides the grid; the three styles map
+ *  1:1 to React Flow BackgroundVariants. 'off' ⇒ gridDots:false; a style ⇒
+ *  gridDots:true + gridStyle. One segmented control replaces the old on/off checkbox. */
+const GRID_SEGMENTS: ReadonlyArray<{ key: 'off' | GridStyle; label: string }> = [
+  { key: 'off', label: 'Off' },
+  { key: 'dots', label: 'Dots' },
+  { key: 'lines', label: 'Lines' },
+  { key: 'cross', label: 'Cross' }
+]
 
 export function BackdropPicker(): ReactElement {
   const [open, setOpen] = useState(false)
@@ -47,6 +58,13 @@ export function BackdropPicker(): ReactElement {
   const enabled = kind !== 'none'
   const dim = background?.dim ?? DEFAULT_BACKGROUND_DIM
   const saturation = background?.saturation ?? DEFAULT_BACKGROUND_SATURATION
+  // Selected grid segment: 'off' when the grid is hidden, else the active lattice style.
+  const gridSeg: 'off' | GridStyle =
+    (background?.gridDots ?? false) ? (background?.gridStyle ?? 'dots') : 'off'
+  const selectGrid = (seg: 'off' | GridStyle): void => {
+    if (seg === 'off') setBackground({ gridDots: false })
+    else setBackground({ gridDots: true, gridStyle: seg })
+  }
 
   const importFile = async (file: File): Promise<void> => {
     const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
@@ -206,17 +224,26 @@ export function BackdropPicker(): ReactElement {
             />
             <span className="bd-val">{saturation.toFixed(2)}</span>
           </label>
-          <label className="bd-check" data-disabled={enabled ? undefined : ''}>
-            <input
-              type="checkbox"
-              checked={background?.gridDots ?? false}
-              disabled={!enabled}
-              onKeyDown={stopKeys}
-              onChange={(e) => setBackground({ gridDots: e.target.checked })}
-              data-test="backdrop-griddots"
-            />
-            grid dots on top
-          </label>
+          <div className="bd-grid" data-disabled={enabled ? undefined : ''}>
+            <span>Grid</span>
+            <div className="bd-seg" role="radiogroup" aria-label="Grid style" onKeyDown={stopKeys}>
+              {GRID_SEGMENTS.map((s) => (
+                <button
+                  key={s.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={gridSeg === s.key}
+                  className="bd-seg-btn"
+                  data-on={gridSeg === s.key ? '' : undefined}
+                  disabled={!enabled}
+                  onClick={() => selectGrid(s.key)}
+                  data-test={`backdrop-grid-${s.key}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </Menu>
       )}
     </div>
