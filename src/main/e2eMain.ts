@@ -7,9 +7,9 @@
  * This is a registry + an env flag — NOT a security change. sandbox / contextIsolation /
  * nodeIntegration are untouched; nothing here is reachable in a normal run.
  */
-import { clipboard, Menu, nativeImage, type BrowserWindow } from 'electron'
+import { clipboard, ipcMain, Menu, nativeImage, type BrowserWindow } from 'electron'
 import { execFileSync } from 'child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
@@ -22,9 +22,19 @@ import {
   debugViewIds,
   debugViewWebContentsId
 } from './preview'
-import { debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
+import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
+import { recordBoardResult } from './boardResults'
+import { __setMemoryDirForTest } from './boardMemory'
+import { listConnectors } from './boardRegistry'
+import { sendMcpCommand, type McpCommandAck } from './mcpCommand'
+import type { BoardResult } from '@expanse-ade/mcp'
+import type { RunningMcp } from './mcp'
+
+/** The fixed board id the e2e/mcp.e2e.ts worker token binds to, so the write_result
+ *  probe can read its own structured result back via canvas://board/{id}/result. */
+const MCP_E2E_WORKER_BOARD = 'mcp-e2e-worker'
 
 export interface E2EMain {
   terminalPid(id: string): number | null
@@ -98,6 +108,37 @@ export interface E2EMain {
    * createTempProject). Returns false if the write was rejected (e.g. unsafe board id).
    */
   writeRecapMd(boardId: string, md: string): Promise<boolean>
+  /**
+   * MCP tier-smoke port (e2e/mcp.e2e.ts) — the loopback MCP server's port + the two
+   * tier tokens, so the test process can connect its own orchestrator + worker clients
+   * over 127.0.0.1 (the client moved out of MAIN into the Playwright runner). The worker
+   * token is bound to a FIXED board id (`workerBoardId`) so the write_result probe can
+   * read its own structured result back. Returns null when the server never mounted.
+   */
+  mcpInfo(): {
+    port: number
+    orchestratorToken: string
+    workerToken: string
+    workerBoardId: string
+  } | null
+  /** Seed a board's live PTY output ring with known ANSI content (output-pagination probe). */
+  mcpSeedOutput(id: string, text: string): boolean
+  /** Record a board's structured result (drives the empty→filled `canvas://board/{id}/result` probe). */
+  mcpRecordResult(id: string, result: BoardResult): void
+  /** Round-trip a MAIN→renderer `ping` command — the inverse-of-the-mirror command-channel probe. */
+  mcpPingCommand(): Promise<McpCommandAck>
+  /** The orchestration connector mirror (the relay-cable probe asserts A→B landed in MAIN). */
+  mcpListConnectors(): Array<{ sourceId: string; targetId: string; kind: string }>
+  /**
+   * Memory probe (T1.7): point the Brain/Memory engine at a fresh EMPTY temp dir and
+   * return its root — `canvas://memory` must then read the graceful-empty shell. Always
+   * pair with `mcpMemoryEnd` to revert the global dir override + delete the temp root.
+   */
+  mcpMemoryBegin(): string | null
+  /** Memory probe: write the `MEMORY.md` + `board-memprobe.md` fixtures under the begun root. */
+  mcpMemoryServe(root: string): void
+  /** Memory probe: revert the dir override + delete the temp root (call in a finally). */
+  mcpMemoryEnd(root: string): void
 }
 
 /**
@@ -152,7 +193,7 @@ declare global {
 }
 
 /** Install the registry. No-op unless CANVAS_E2E is set. Call once after the window exists. */
-export function installE2EMain(win: BrowserWindow, localUrl: string): void {
+export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: RunningMcp | null): void {
   if (!process.env.CANVAS_E2E) return
   globalThis.__canvasE2EMain = {
     terminalPid: debugTerminalPid,
@@ -233,6 +274,52 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     },
     writeRecapMd(boardId, md) {
       return writeRecapMdToCurrentProject(boardId, md)
+    },
+    mcpInfo() {
+      if (!mcp) return null
+      return {
+        port: mcp.port,
+        orchestratorToken: mcp.orchestratorToken,
+        workerToken: mcp.mintWorkerToken(MCP_E2E_WORKER_BOARD),
+        workerBoardId: MCP_E2E_WORKER_BOARD
+      }
+    },
+    mcpSeedOutput(id, text) {
+      return debugSeedOutput(id, text)
+    },
+    mcpRecordResult(id, result) {
+      recordBoardResult(id, result)
+    },
+    mcpPingCommand() {
+      return sendMcpCommand(ipcMain, () => win, { type: 'ping' })
+    },
+    mcpListConnectors() {
+      // Project to plain serializable fields — ConnectorMirror may carry more than the
+      // probe asserts, and only {sourceId,targetId,kind} crosses the evaluate bridge.
+      return listConnectors().map((c) => ({
+        sourceId: c.sourceId,
+        targetId: c.targetId,
+        kind: c.kind
+      }))
+    },
+    mcpMemoryBegin() {
+      const root = mkdtempSync(join(tmpdir(), 'canvas-mem-e2e-'))
+      __setMemoryDirForTest(root) // empty dir → canvas://memory reads {present:false}
+      return root
+    },
+    mcpMemoryServe(root) {
+      const memDir = join(root, '.canvas', 'memory')
+      mkdirSync(memDir, { recursive: true })
+      writeFileSync(join(memDir, 'MEMORY.md'), '# e2e memory', 'utf8')
+      writeFileSync(join(memDir, 'board-memprobe.md'), 'memprobe summary', 'utf8')
+    },
+    mcpMemoryEnd(root) {
+      __setMemoryDirForTest(null)
+      try {
+        rmSync(root, { recursive: true, force: true })
+      } catch {
+        /* best-effort temp cleanup */
+      }
     }
   }
 }

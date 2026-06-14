@@ -18,8 +18,10 @@ files at pinned counts. The five rules that keep files maintainable:
 `canvas/hooks/use*.ts` or `boards/<type>/use*.ts`; MAIN pure cores → `xCore(args, deps)` + a thin
 wrapper.
 
-**Current pins (measured 2026-06-09, code-lines):** `TerminalBoard.tsx` 1025 · `mcpSmoke.ts` 1000 ·
-`Canvas.tsx` 925 · `PlanningBoard.tsx` 850. Every other file is under the 700 global cap — including
+**Current pins (measured 2026-06-09, code-lines):** `TerminalBoard.tsx` 1025 · `Canvas.tsx` 925 ·
+`PlanningBoard.tsx` 850. (`mcpSmoke.ts` was pinned at 1000 until its retirement — the
+`CANVAS_SMOKE=mcp` harness was ported to `e2e/mcp.e2e.ts` and deleted; dx-audit PR-5.) Every other
+file is under the 700 global cap — including
 the comment-dense `pty.ts` (524), `usePreviewManager.ts` (597), `canvasStore.ts` (612), and
 `mcpOrchestrator.ts` (673), which are large by total lines but well under the cap by code.
 

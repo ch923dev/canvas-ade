@@ -38,7 +38,6 @@ import { createMemoryEngine } from './memoryEngine'
 import { performGuardedQuit, makeCrashHandler } from './quit'
 import { getCurrentDir, readProject } from './projectStore'
 import { startMcpServer, type RunningMcp } from './mcp'
-import { runMcpSmoke } from './mcpSmoke'
 import {
   listBoardMirror,
   listConnectors,
@@ -71,7 +70,7 @@ let stopRecapWatch: (() => void) | null = null
 // Terminal recap (Task 11 — Slice B): hands-free mtime watcher; one per app lifetime.
 let recapWatcher: RecapWatcher | null = null
 
-const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test, "exit"=self-test+quit, "mcp"=MCP tier smoke+quit
+const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
 
 // Smoke markers go to stdout. If the reader closes early (e.g. a truncated shell
 // pipe like `pnpm start | Select-Object -First N`), the next write hits a dead
@@ -183,10 +182,9 @@ function createWindow(): void {
     })
   }
 
-  // The Playwright e2e boot (CANVAS_E2E) and the MCP tier smoke (CANVAS_SMOKE='mcp')
-  // both need the renderer's seeding hook (window.__canvasE2E) to populate the board
-  // mirror, so load with ?e2e=1 for either.
-  const seedHarness = !!process.env.CANVAS_E2E || SMOKE === 'mcp'
+  // The Playwright e2e boot (CANVAS_E2E) needs the renderer's seeding hook
+  // (window.__canvasE2E) to populate the board mirror, so load with ?e2e=1.
+  const seedHarness = !!process.env.CANVAS_E2E
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
     mainWindow.loadURL(seedHarness ? `${base}?e2e=1` : base)
@@ -516,29 +514,18 @@ app.whenReady().then(async () => {
   // (The MCP dispatch audit trail is now registered earlier, before startMcpServer — BUG-025.)
 
   createWindow()
-  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl)
+  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp)
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
-      if (SMOKE === 'mcp') {
-        const code = await runMcpSmoke(mcp, mainWindow!)
-        process.exitCode = code
-        // Drain the renderer's debounced autosave before teardown (the mcp smoke
-        // seeds boards under ?e2e=1, arming useAutosave) so a late `project:save`
-        // invoke can't race the window destruction.
-        await flushRenderer()
-        await shutdown()
-        app.exit(code)
-      } else {
-        // BUG-026: reuse defaultPreviewUrl (already '' when startLocalServer threw) instead
-        // of the non-null assertion localServer!.url — if the bind failed (EACCES/firewall/
-        // fd exhaustion) localServer is null, and the assertion would throw a TypeError into
-        // the uncaughtException sink → crashShutdown(1), turning a graceful degraded boot into
-        // an exit-1 smoke failure with no SELFTEST_DONE line. runSelfTest tolerates an empty URL.
-        const ok = await runSelfTest(mainWindow!, defaultPreviewUrl)
-        smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
-        if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
-      }
+      // BUG-026: reuse defaultPreviewUrl (already '' when startLocalServer threw) instead
+      // of the non-null assertion localServer!.url — if the bind failed (EACCES/firewall/
+      // fd exhaustion) localServer is null, and the assertion would throw a TypeError into
+      // the uncaughtException sink → crashShutdown(1), turning a graceful degraded boot into
+      // an exit-1 smoke failure with no SELFTEST_DONE line. runSelfTest tolerates an empty URL.
+      const ok = await runSelfTest(mainWindow!, defaultPreviewUrl)
+      smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
+      if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
     })
   }
 
