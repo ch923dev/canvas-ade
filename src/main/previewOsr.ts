@@ -1,5 +1,5 @@
-import type { IpcMain, BrowserWindow } from 'electron'
-import { WebContentsView } from 'electron'
+import type { IpcMain } from 'electron'
+import { WebContentsView, BrowserWindow } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { isAllowedPreviewUrl, registerPreviewNavGuards } from './preview'
 
@@ -122,6 +122,156 @@ function disposeOsr(id: string): void {
 export function disposeAllOsr(): void {
   for (const id of [...osr.keys()]) disposeOsr(id)
   owner = null
+}
+
+/**
+ * SPIKE probe (spec §5 Q1) — does an OFF-TREE offscreen WebContentsView actually paint?
+ *
+ * Creates a throwaway offscreen view (NEVER added to the window's view tree), loads
+ * `url`, and resolves on the FIRST `paint` with the frame size — or a timeout/failure
+ * verdict. Answers the make-or-break question headlessly (no headed app, no human eyes):
+ * if this resolves `painted:true` with non-zero dimensions, the whole offscreen→canvas
+ * approach is alive and M1/M2 can proceed. Standalone (its own session, not in the live
+ * `osr` Map) so it never collides with real spike views. Surfaced via the self-test.
+ */
+export function probeOsrPaint(
+  url: string,
+  timeoutMs = 8000
+): Promise<{ painted: boolean; detail: string }> {
+  return new Promise((resolve) => {
+    let done = false
+    let loaded = false
+    const view = new WebContentsView({
+      webPreferences: {
+        offscreen: true,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: 'preview-osr-probe'
+      }
+    })
+    const wc = view.webContents
+    const finish = (painted: boolean, detail: string): void => {
+      if (done) return
+      done = true
+      try {
+        wc.close() // throwaway view — close or leak the renderer
+      } catch {
+        /* already gone */
+      }
+      resolve({ painted, detail })
+    }
+    if (!isAllowedPreviewUrl(url)) {
+      finish(false, `blocked/empty url: ${url || '(none)'}`)
+      return
+    }
+    let paints = 0
+    let lastSize = '0x0'
+    view.setBounds({ x: 0, y: 0, width: OSR_WIDTH, height: OSR_HEIGHT })
+    wc.setFrameRate(OSR_FRAME_RATE)
+    wc.on('paint', (_ev, _dirty, image) => {
+      const size = image.getSize()
+      paints++
+      lastSize = `${size.width}x${size.height}`
+      // Ignore pre-layout 0×0 frames; only a real, sized frame proves the path works.
+      if (size.width > 0 && size.height > 0)
+        finish(true, `painted ${lastSize} (after ${paints} paints)`)
+    })
+    wc.once('did-finish-load', () => {
+      loaded = true
+      try {
+        wc.startPainting() // nudge the offscreen frame scheduler
+      } catch {
+        /* not an OSR-capable webContents */
+      }
+    })
+    wc.once('did-fail-load', (_e, code, desc) => finish(false, `did-fail-load ${code} ${desc}`))
+    void wc.loadURL(url)
+    setTimeout(() => {
+      let painting = 'n/a'
+      try {
+        painting = String(wc.isPainting())
+      } catch {
+        /* gone */
+      }
+      finish(
+        false,
+        `no sized paint in ${timeoutMs}ms (paints=${paints}, last=${lastSize}, finishLoad=${loaded}, painting=${painting})`
+      )
+    }, timeoutMs)
+  })
+}
+
+/**
+ * SPIKE probe variant (spec §5 Q1, transport choice) — the DOCUMENTED OSR host: a
+ * hidden offscreen `BrowserWindow` whose size drives the render surface. The plain
+ * `WebContentsView` probe above renders 0×0 off-tree (no window → no size); this checks
+ * whether a hidden window paints a real frame, which would make "one hidden OSR window
+ * per Browser board" the viable producer instead of a bare WebContentsView.
+ */
+export function probeOsrPaintWindow(
+  url: string,
+  timeoutMs = 8000
+): Promise<{ painted: boolean; detail: string }> {
+  return new Promise((resolve) => {
+    let done = false
+    let loaded = false
+    const win = new BrowserWindow({
+      width: OSR_WIDTH,
+      height: OSR_HEIGHT,
+      show: false,
+      webPreferences: {
+        offscreen: true,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: 'preview-osr-probe-win'
+      }
+    })
+    const wc = win.webContents
+    const finish = (painted: boolean, detail: string): void => {
+      if (done) return
+      done = true
+      try {
+        win.destroy()
+      } catch {
+        /* already gone */
+      }
+      resolve({ painted, detail })
+    }
+    if (!isAllowedPreviewUrl(url)) {
+      finish(false, `blocked/empty url: ${url || '(none)'}`)
+      return
+    }
+    let paints = 0
+    let lastSize = '0x0'
+    wc.setFrameRate(OSR_FRAME_RATE)
+    wc.on('paint', (_ev, _dirty, image) => {
+      const size = image.getSize()
+      paints++
+      lastSize = `${size.width}x${size.height}`
+      if (size.width > 0 && size.height > 0)
+        finish(true, `painted ${lastSize} (after ${paints} paints)`)
+    })
+    wc.once('did-finish-load', () => {
+      loaded = true
+      try {
+        wc.startPainting()
+      } catch {
+        /* not an OSR-capable webContents */
+      }
+    })
+    wc.once('did-fail-load', (_e, code, desc) => finish(false, `did-fail-load ${code} ${desc}`))
+    void wc.loadURL(url)
+    setTimeout(
+      () =>
+        finish(
+          false,
+          `no sized paint in ${timeoutMs}ms (paints=${paints}, last=${lastSize}, finishLoad=${loaded})`
+        ),
+      timeoutMs
+    )
+  })
 }
 
 interface OsrOpenArgs {

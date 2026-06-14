@@ -2,12 +2,19 @@ import type { BrowserWindow } from 'electron'
 import { WebContentsView } from 'electron'
 import * as os from 'node:os'
 import * as pty from 'node-pty'
+import { probeOsrPaint, probeOsrPaintWindow } from './previewOsr'
 
 export interface SelfTestResult {
   pty: boolean
   ptyDetail: string
   preview: boolean
   previewDetail: string
+  // SPIKE (feat/preview-offscreen-spike): does an off-tree offscreen view paint? (§5 Q1)
+  // osr = bare WebContentsView; osrWin = hidden offscreen BrowserWindow (the OSR host).
+  osr: boolean
+  osrDetail: string
+  osrWin: boolean
+  osrWinDetail: string
 }
 
 /**
@@ -21,11 +28,23 @@ export async function runSelfTest(win: BrowserWindow, localUrl: string): Promise
     pty: false,
     ptyDetail: '',
     preview: false,
-    previewDetail: ''
+    previewDetail: '',
+    osr: false,
+    osrDetail: '',
+    osrWin: false,
+    osrWinDetail: ''
   }
 
   await testPty(result)
   await testPreview(win, localUrl, result)
+  // SPIKE: the make-or-break check — an offscreen view must stream a real frame. Run
+  // both hosts: a bare off-tree WebContentsView, and a hidden offscreen BrowserWindow.
+  const osr = await probeOsrPaint(localUrl)
+  result.osr = osr.painted
+  result.osrDetail = osr.detail
+  const osrWin = await probeOsrPaintWindow(localUrl)
+  result.osrWin = osrWin.painted
+  result.osrWinDetail = osrWin.detail
   return result
 }
 

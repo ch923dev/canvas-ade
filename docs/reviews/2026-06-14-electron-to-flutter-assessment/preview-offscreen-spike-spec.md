@@ -248,6 +248,29 @@ not a "cap-or-it-covers-things" constraint.
 
 ---
 
+## 8b. Spike findings (running log)
+
+**2026-06-14 — §5 Q1 RESOLVED: offscreen rendering works, but the host must be a hidden
+`BrowserWindow`, not a bare `WebContentsView`.** A headless paint-probe in the self-test
+(`previewOsr.ts` › `probeOsrPaint` / `probeOsrPaintWindow`, surfaced via `runSelfTest` →
+`SELFTEST_DONE`) measured both hosts against the bundled local server:
+
+| Host | Result |
+|---|---|
+| Bare off-tree `WebContentsView` (`offscreen:true`, never `addChildView`) | **No frames.** Page loads (`finishLoad=true`) and `isPainting=true`, but `paint` never fires (`paints=0`). With a forced `invalidate()` it emits a single **0×0** frame — i.e. no render surface size without a window host. |
+| Hidden offscreen `BrowserWindow` (`show:false`, `offscreen:true`, sized 1280×800) | **Works.** `painted 1280x800 (after 1 paints)` — a real, correctly-sized frame on the first paint. |
+
+**Consequence for the build plan (§5):** the producer's host changes from `WebContentsView`
+→ a **hidden offscreen `BrowserWindow` per Browser board** (the window size drives the render
+surface). Everything downstream is unchanged — same `paint` → BGRA → `preview:osrFrame` →
+`<canvas>` pipeline, same security carry-overs. Open sub-questions this introduces: hidden-window
+lifecycle/cleanup (`destroy()` per board), `skipTaskbar`/focus hygiene, and whether one shared
+hidden window can host multiple boards' content vs one window each. Transport option A (offscreen
+`'paint'`) stays the default; CDP option B is not needed yet. M1 (DPR sharpness) and M2 (throughput)
+remain the next measurements, now against the BrowserWindow host.
+
+---
+
 ## 9. Effort & decision gate
 
 **Effort:** ~1–2 weeks, one engineer, one board, behind a flag. Reuses the already-built capture/clipped-
