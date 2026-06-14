@@ -14,6 +14,16 @@ import { evalIn } from './helpers'
 type BoardInfo = { launchCommand?: string; agentKind?: string }
 const boardById = (page: Page, id: string): Promise<BoardInfo> =>
   page.evaluate((a) => (globalThis as any).__canvasE2E.getBoards().find((b: any) => b.id === a), id)
+// Seed a live board + select/fit it via STRUCTURED ARGS too — the patch object and id never get
+// string-interpolated into an eval'd code string (same js/bad-code-sanitization rule as boardById).
+const seedTerminal = (page: Page, patch: Record<string, unknown>): Promise<string> =>
+  page.evaluate((p) => (globalThis as any).__canvasE2E.seedBoard('terminal', p), patch)
+const selectAndFit = (page: Page, id: string): Promise<void> =>
+  page.evaluate((a) => {
+    const e = (globalThis as any).__canvasE2E
+    e.setSelection([a])
+    e.fitView(a)
+  }, id)
 
 test.describe('New Terminal dialog (place-first flow)', () => {
   test('pick a preset → Create → board carries the preset command + agentKind', async ({
@@ -97,15 +107,13 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     page
   }) => {
     // A LIVE (already-spawned) terminal, not a held one — the edit path.
-    const patch = JSON.stringify({
+    const id = await seedTerminal(page, {
       agentKind: 'claude',
       launchCommand: 'claude',
       title: 'My agent'
     })
-    const id = await evalIn<string>(page, `window.__canvasE2E.seedBoard('terminal', ${patch})`)
     // Select + fit so the board chrome is visible and on-screen, then open config via ⚙.
-    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await selectAndFit(page, id)
     await page.locator(`[data-test="config-${id}"]`).click()
 
     const dialog = page.locator('[data-test="new-terminal-dialog"]')
@@ -124,14 +132,12 @@ test.describe('New Terminal dialog (place-first flow)', () => {
   })
 
   test('edit mode: Cancel discards the edit; the live board is not patched', async ({ page }) => {
-    const patch = JSON.stringify({
+    const id = await seedTerminal(page, {
       agentKind: 'claude',
       launchCommand: 'claude',
       title: 'My agent'
     })
-    const id = await evalIn<string>(page, `window.__canvasE2E.seedBoard('terminal', ${patch})`)
-    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await selectAndFit(page, id)
     await page.locator(`[data-test="config-${id}"]`).click()
 
     const dialog = page.locator('[data-test="new-terminal-dialog"]')
