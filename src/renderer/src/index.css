@@ -733,8 +733,10 @@ body {
   cursor: pointer;
   text-align: center;
 }
-.bd-seg-btn:hover:not(:disabled),
-.bd-seg-btn:focus-visible {
+/* Exclude the active button so the grey hover never outranks its accent-wash
+   ([data-on] is (0,2,0); :hover:not(:disabled) would otherwise win at (0,3,0)). */
+.bd-seg-btn:not([data-on]):hover:not(:disabled),
+.bd-seg-btn:not([data-on]):focus-visible {
   background: var(--surface-raised);
 }
 .bd-seg-btn[data-on] {
