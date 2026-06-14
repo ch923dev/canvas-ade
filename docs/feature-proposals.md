@@ -792,6 +792,62 @@ the spatial canvas is the ideal surface for it.
 
 ---
 
+## OS-3 · OSR Browser Preview — productionization (offscreen → canvas) ◆
+
+- **Status:** proposed (spike PROVEN — see the draft PR + spec below; productionization is the open work)
+- **Effort:** high (multi-week — closes a whole class of offscreen-render fidelity gaps)
+- **Roadmap slot:** post-spike. Gated on a decision to make the offscreen path the DEFAULT
+  Browser preview (currently flag-gated `VITE_PREVIEW_OSR=1`, off). Build on the spike branch.
+- **Depends on:** the shipped spike (`feat/preview-offscreen-spike`); ADR 0002 (CDP pre-authorized);
+  the native preview path it reuses helpers from (`preview.ts`).
+
+### What it does
+Promotes the **occlusion-fix spike** — render a Browser board's page OFFSCREEN and paint its
+frames into a DOM `<canvas>` (clippable/z-orderable, so the ADR-0002 native-overlay occlusion
+disappears) — from a flag-gated proof into the **default** preview engine, by closing the
+fidelity gaps that a flat-bitmap + hidden-window + synthetic-input model otherwise breaks.
+
+**The spike already PROVED + shipped (flag-gated):** occlusion solved; full click/scroll/type;
+cursor mirroring; blinking caret + `:focus` ring (CDP focus-emulation, per-interaction); hover;
+full-view; `window.open` security; load/error/crash lifecycle + Reload. The decision question
+(*is occlusion fixable in Electron?* → **yes**, no Flutter migration needed) is answered.
+
+### Why valuable
+A native `WebContentsView` can never be clipped/rounded/z-ordered (ADR 0002) — it occludes other
+boards + chrome. The OSR→canvas path removes that permanently, which unblocks overlapping layouts,
+in-canvas chrome over previews, and a cleaner full-view. Productionizing it lets the canvas finally
+treat a live preview like any other board.
+
+### Implementation sketch — the open gap register (FULL detail in the spike spec §8c)
+`docs/reviews/2026-06-14-electron-to-flutter-assessment/preview-offscreen-spike-spec.md` › §8c is
+the authoritative register (status / severity / fix lever / Electron+CDP API per item). Summary:
+- **P1 (correctness/feel):** IME/CJK composition (`Input.imeSetComposition`/`insertText`); native
+  `<select>`/date-picker popups don't composite → MAIN-side CDP overlay; clipboard Ctrl+C/V →
+  `wc.copy()/paste()`; AltGr chars; JS dialogs + file-chooser (`Page.javascriptDialogOpening` /
+  `setInterceptFileChooserDialog`); audio from invisible windows (`setAudioMuted` policy);
+  downloads (`will-download`); precise wheel scroll.
+- **Deferred measurements (now with fix levers):** **M1** DPR sharpness
+  (`setContentSize(W*S)+setZoomFactor(S)` supersample); **M2** throughput/CPU gating (per-board
+  `setFrameRate`/`stopPainting` by visibility + `MAX_LIVE`; honor `dirtyRect`; `createImageBitmap`);
+  **M4** responsive presets (`setContentSize(presetW)` + live input-transform width).
+- **P2:** title/favicon meta, native context menu, debugger re-attach, teardown symmetry, paint
+  watchdog, custom-cursor rate-limit, `osrInput` type allowlist (§8c).
+
+### Viability checklist (run at ship time)
+- [ ] Decision made to flip OSR to the DEFAULT (or run both behind a per-project/board toggle).
+- [ ] P1 register items closed or explicitly accepted-as-gaps (esp. native `<select>` + IME, the
+      two highest-likelihood breakages for real localhost apps).
+- [ ] M1/M2/M4 landed (sharpness, CPU gating, responsive reflow) — these are the table-stakes for
+      "as good as the native view".
+- [ ] Security invariants re-verified under the new surface (no Browser→PTY; deny-all permissions;
+      per-board partition; `wc.debugger` MAIN-only; `setWindowOpenHandler`).
+- [ ] FULL e2e matrix green (both legs) with the flag ON; the native path stays green with it OFF.
+- **Acceptance:** with OSR default, a Browser board over another board / under the dock reads
+  correctly (occlusion gone); a native `<select>` + a CJK input + a copy/paste + a Mobile preset all
+  behave like a real browser; 4 idle boards don't peg the CPU; text is crisp at working zoom.
+
+---
+
 # Dropped / deprioritized (with reason)
 
 Kept here so a future session doesn't re-propose them without seeing the prior reasoning. Promote if
