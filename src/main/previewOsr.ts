@@ -24,7 +24,10 @@ import { isAllowedPreviewUrl, registerPreviewNavGuards } from './preview'
  */
 
 interface OsrEntry {
-  view: WebContentsView
+  // Hidden offscreen BrowserWindow host — the window's size drives the render surface,
+  // which a bare off-tree WebContentsView lacks (spec §8b: a WebContentsView loads but
+  // emits zero frames; a hidden offscreen BrowserWindow paints a real, sized frame).
+  osrWin: BrowserWindow
 }
 
 const osr = new Map<string, OsrEntry>()
@@ -60,7 +63,13 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   owner = win
   const existing = osr.get(id)
   if (existing) return existing
-  const view = new WebContentsView({
+  // Hidden offscreen BrowserWindow (never shown, off the taskbar). Its width/height set
+  // the render surface — the proven OSR host (spec §8b).
+  const osrWin = new BrowserWindow({
+    width: OSR_WIDTH,
+    height: OSR_HEIGHT,
+    show: false,
+    skipTaskbar: true,
     webPreferences: {
       offscreen: true,
       sandbox: true,
@@ -71,9 +80,9 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       partition: `preview-osr-${id}`
     }
   })
-  const e: OsrEntry = { view }
+  const e: OsrEntry = { osrWin }
   osr.set(id, e)
-  const wc = view.webContents
+  const wc = osrWin.webContents
   // Deny-all permissions on this view's session (untrusted localhost content) — same
   // posture as the native path (preview.ts).
   const sess = wc.session
@@ -81,9 +90,8 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   sess.setPermissionCheckHandler(() => false)
   // http(s)-only nav scheme allowlist, shared with the native path.
   registerPreviewNavGuards(wc)
-  // Offscreen render size + frame cap. NOTE: no addChildView — the whole point is that
-  // the view stays OFF the native tree, so nothing paints above the HTML.
-  view.setBounds({ x: 0, y: 0, width: OSR_WIDTH, height: OSR_HEIGHT })
+  // Frame cap (M2 knob). The window size already set the render surface; the window is
+  // never shown, so nothing paints above the HTML — the whole point of the spike.
   wc.setFrameRate(OSR_FRAME_RATE)
   wc.on('paint', (_ev, _dirty, image) => {
     const size = image.getSize()
@@ -94,12 +102,11 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   if (isAllowedPreviewUrl(url)) {
     void wc.loadURL(url)
   }
-  // Defensive (spec §5 Q1 — does an off-tree offscreen view paint at all?): painting
-  // normally auto-starts once content loads and a frame rate is set; kick it explicitly
-  // in case an off-tree view doesn't. Harmless if already painting.
+  // Kick the offscreen frame scheduler once content loads — the probe showed the hidden
+  // window needs startPainting() to emit its first frame. Harmless if already painting.
   wc.once('did-finish-load', () => {
     try {
-      if (!wc.isPainting()) wc.startPainting()
+      wc.startPainting()
     } catch {
       /* not an OSR-capable webContents */
     }
@@ -111,7 +118,7 @@ function disposeOsr(id: string): void {
   const e = osr.get(id)
   if (!e) return
   try {
-    e.view.webContents.close() // no destroy() on WebContentsView — close or leak the renderer
+    e.osrWin.destroy() // hidden offscreen window — destroy to free the renderer
   } catch {
     /* already gone */
   }
@@ -307,7 +314,7 @@ export function registerPreviewOsrHandlers(
     const e = osr.get(args.id)
     if (!e) return false
     try {
-      e.view.webContents.sendInputEvent(args.event)
+      e.osrWin.webContents.sendInputEvent(args.event)
       return true
     } catch {
       return false
