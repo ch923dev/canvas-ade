@@ -145,6 +145,9 @@ export function BrowserBoard({
   const osrCanvasRef = useRef<HTMLCanvasElement>(null)
   useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW)
   // SPIKE M3: forward pointer/wheel/keyboard on the canvas to the offscreen page.
+  // Open fidelity gaps + the productionization plan (P1: IME / native <select> / clipboard /
+  // dialogs / audio / downloads · M1 sharpness · M2 throughput · M4 responsive presets) are
+  // tracked in docs/feature-proposals.md › OS-3 and the spike spec §8c (the gap register).
   useOffscreenInput(board.id, osrCanvasRef, OSR_PREVIEW)
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
