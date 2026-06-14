@@ -53,6 +53,36 @@ export function isUnsafeProjectDir(dir: string): boolean {
 }
 
 /**
+ * Separator-agnostic, case-insensitive segment list for a (traversal-free) absolute path.
+ * Host-neutral on purpose: the unit suite drives BOTH `C:\...` and `/...` shapes on a single
+ * OS (see the M-6 note above), so we must not lean on the host's `path.sep` / drive casing.
+ * Callers MUST gate on `isUnsafeProjectDir` first — this assumes no `..` segment.
+ */
+function pathSegments(p: string): string[] {
+  return path
+    .normalize(p)
+    .replace(/[/\\]+$/, '') // strip trailing separator(s) so `<root>/` === `<root>`
+    .split(/[/\\]/)
+    .map((s) => s.toLowerCase()) // Windows paths are case-insensitive; harmless on POSIX
+    .filter((s) => s.length > 0)
+}
+
+/**
+ * BUG-006 (defense-in-depth): TRUE when `dir` is equal-to-or-under `root` (segment-wise).
+ * Completes the create/open guard's stated goal — `isUnsafeProjectDir` only proves the path
+ * is a clean absolute string, not that it points at a USER-APPROVED location. A compromised
+ * renderer could otherwise mkdir+write a fresh canvas.json at any absolute path. Approved
+ * roots are derived in-session from the OS folder-dialog result and the recents list.
+ */
+export function isUnderApprovedRoot(dir: string, root: string): boolean {
+  if (typeof dir !== 'string' || typeof root !== 'string' || root.length === 0) return false
+  const r = pathSegments(root)
+  const d = pathSegments(dir)
+  if (r.length === 0 || d.length < r.length) return false
+  return r.every((seg, i) => seg === d[i])
+}
+
+/**
  * Default T-M2 intent sink: log only. T-M3 replaces this with the Tier-2 summarize loop
  * (intent → runSummarize → canvasMemory.writeBoard). The intent is passive — it is an id,
  * never an action.
@@ -128,6 +158,33 @@ export function registerProjectHandlers(
 ): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
+  // BUG-006: the set of locations the USER has approved this session. A create/open target must
+  // be equal-to-or-under one of these — `isUnsafeProjectDir` only proves the path is a clean
+  // absolute string, not that the user picked it. Seeded by the OS folder-dialog result below;
+  // the recents list (already user-approved) is consulted live in the gate so prior sessions'
+  // projects stay openable. The current open dir is auto-approved too (an in-session reopen).
+  const approvedRoots = new Set<string>()
+
+  // TRUE when `dir` is approved to be created/opened: equal-to-or-under a dialog-picked root,
+  // the currently-open project, or any recents entry. Fails CLOSED — an unknown path is denied.
+  // listRecents reads the persisted MRU (the durable record of past user approvals).
+  const isApprovedTarget = async (dir: string): Promise<boolean> => {
+    if (approvedRoots.has(dir)) return true
+    const current = getCurrentDir()
+    if (current && isUnderApprovedRoot(dir, current)) return true
+    for (const root of approvedRoots) {
+      if (isUnderApprovedRoot(dir, root)) return true
+    }
+    let recents: RecentProject[]
+    try {
+      const listed = await listRecents(userDataDir)
+      recents = Array.isArray(listed) ? listed : []
+    } catch {
+      recents = []
+    }
+    return recents.some((r) => isUnderApprovedRoot(dir, r.path))
+  }
+
   // BUG-027: memory:readBoards built a fresh CanvasMemory on EVERY IPC call. Memoize one per
   // project dir and reuse it across calls (re-create only when the open project changes), so a
   // burst of reads doesn't re-run the path scaffolding each time.
@@ -145,7 +202,12 @@ export function registerProjectHandlers(
     const res = win
       ? await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
       : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
+    if (res.canceled || res.filePaths.length === 0) return null
+    // BUG-006: the user just picked this path in the OS dialog — approve it (and anything the
+    // renderer then creates/opens under it) so the subsequent project:create/open is allowed.
+    const picked = res.filePaths[0]
+    approvedRoots.add(picked)
+    return picked
   })
 
   const remember = async (r: ProjectResult): Promise<void> => {
@@ -165,6 +227,12 @@ export function registerProjectHandlers(
   ipcMain.handle('project:open', async (e, dir: string): Promise<ProjectResult> => {
     if (guard(e)) return { ok: false, error: 'forbidden' }
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
+    // BUG-006: constrain the target to a user-approved location (dialog pick / recents /
+    // current). Fail closed — a compromised renderer must not open an arbitrary path.
+    if (!(await isApprovedTarget(dir))) return { ok: false, error: 'invalid path' }
+    // Once opened from an approved location, remember the dir so an in-session re-open of the
+    // same project (e.g. after a project:current cycle) stays approved without a fresh dialog.
+    approvedRoots.add(dir)
     const r = readProject(dir)
     await remember(r)
     if (r.ok) {
@@ -226,6 +294,10 @@ export function registerProjectHandlers(
     ): Promise<ProjectResult> => {
       if (guard(e)) return { ok: false, error: 'forbidden' }
       if (isUnsafeProjectDir(args.dir)) return { ok: false, error: 'invalid path' }
+      // BUG-006: a fresh canvas.json may only be written under a user-approved location
+      // (the path just picked in the OS dialog, or a known recents/current root). Fail
+      // closed so a compromised renderer can't mkdir+write at an arbitrary absolute path.
+      if (!(await isApprovedTarget(args.dir))) return { ok: false, error: 'invalid path' }
       const r = await createProject(args.dir, args.name, args.opts ?? {})
       await remember(r)
       return r

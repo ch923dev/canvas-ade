@@ -181,6 +181,9 @@ describe('registerProjectHandlers (T4)', () => {
     store.collectAssetIds
       .mockReturnValueOnce(new Set(['assets/aaaa.png'])) // primary
       .mockReturnValueOnce(new Set(['assets/bbbb.png'])) // backup
+    // BUG-006: '/proj' must be an APPROVED open target (this test bypasses the OS dialog that would
+    // approve it); seed it as a known recent so the new approved-roots guard admits the open.
+    recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
 
     const cap = createIpcCapture()
     registerProjectHandlers(cap.ipcMain, getWin, '/userData')
