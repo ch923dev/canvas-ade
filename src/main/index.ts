@@ -59,8 +59,14 @@ import {
   type RecapMapEntry
 } from './agentRecapMap'
 import { registerRecapHandlers, readConsent } from './recapConsent'
-import { extractMilestones, isTrustedTranscriptPath, readTranscriptTail } from './agentTranscript'
+import {
+  extractMilestones,
+  isTrustedTranscriptPath,
+  readTranscriptTail,
+  resolveLiveTranscriptPath
+} from './agentTranscript'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
+import { registerRecapIpc } from './recapIpc'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -358,9 +364,10 @@ app.whenReady().then(async () => {
       // gated, so revoking consent did not stop ongoing summary-loop recap egress.
       const dir = getCurrentDir()
       if (!dir || readConsent(userData, dir) !== 'enabled') return undefined
-      const path =
+      const path = resolveLiveTranscriptPath(
         (board as { agentTranscriptPath?: string })?.agentTranscriptPath ??
-        recapMap.get(boardId)?.transcriptPath
+          recapMap.get(boardId)?.transcriptPath
+      )
       if (!path || !isTrustedTranscriptPath(path) || !existsSync(path)) return undefined
       try {
         return extractMilestones(readTranscriptTail(path), { maxMilestones: 12, maxTextChars: 600 })
@@ -378,6 +385,35 @@ app.whenReady().then(async () => {
   })
   const memoryEngine = createMemoryEngine({
     onIntent: (intent) => void summaryLoop.onIntent(intent)
+  })
+  // S1 (recap redesign): the recap face's read path. Facts are LOCAL-only (no egress ->
+  // no consent gate; trusted-path guard inside the handler). The transcript path resolves
+  // exactly like getAgentMilestones above: the board doc's persisted field, else the
+  // learned recap-map entry (the closure reads the live `recapMap` the watcher refreshes).
+  registerRecapIpc(ipcMain, {
+    getWin: () => mainWindow,
+    getCurrentDir,
+    getTranscriptPath: (boardId) => {
+      // Resolve the recorded path (board doc, else learned map), then self-heal it to the LIVE
+      // transcript (newest .jsonl in its dir) so a compaction/resume rotation can't strand the
+      // recap on a dead session — see resolveLiveTranscriptPath.
+      let recorded: string | undefined
+      const dir = getCurrentDir()
+      if (dir) {
+        const r = readProject(dir)
+        if (r.ok) {
+          const boards = (r.doc as { boards?: unknown }).boards
+          const b = Array.isArray(boards)
+            ? (boards as { id?: unknown }[]).find((x) => x.id === boardId)
+            : undefined
+          const p = (b as { agentTranscriptPath?: unknown })?.agentTranscriptPath
+          if (typeof p === 'string' && p) recorded = p
+        }
+      }
+      recorded ??= recapMap.get(boardId)?.transcriptPath
+      return resolveLiveTranscriptPath(recorded)
+    },
+    getTerminalRuntime
   })
   registerProjectHandlers(
     ipcMain,

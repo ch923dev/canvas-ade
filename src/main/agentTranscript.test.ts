@@ -1,11 +1,12 @@
 import { afterEach, describe, it, expect } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   extractMilestones,
   isTrustedTranscriptPath,
   readTranscriptTail,
+  resolveLiveTranscriptPath,
   TRANSCRIPT_TAIL_BYTES
 } from './agentTranscript'
 
@@ -139,5 +140,57 @@ describe('isTrustedTranscriptPath', () => {
   it('rejects a non-string', () => {
     const { env } = makeEnv()
     expect(isTrustedTranscriptPath(undefined as unknown as string, env)).toBe(false)
+  })
+})
+
+describe('resolveLiveTranscriptPath', () => {
+  const roots: string[] = []
+  afterEach(() => roots.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })))
+  // A claude config root with a project dir holding .jsonl files at explicit mtimes (epoch s).
+  const makeProject = (
+    files: { name: string; mtime: number }[]
+  ): { dir: string; env: NodeJS.ProcessEnv } => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-root-'))
+    roots.push(root)
+    const dir = join(root, 'projects', 'Z--proj')
+    mkdirSync(dir, { recursive: true })
+    for (const f of files) {
+      const p = join(dir, f.name)
+      writeFileSync(p, '{}\n')
+      utimesSync(p, f.mtime, f.mtime)
+    }
+    return { dir, env: { CLAUDE_CONFIG_DIR: root } as NodeJS.ProcessEnv }
+  }
+
+  it('resolves to the NEWEST .jsonl in the dir — self-heals a rotated/vanished recorded session', () => {
+    const { dir, env } = makeProject([
+      { name: 'old.jsonl', mtime: 1000 },
+      { name: 'live.jsonl', mtime: 5000 },
+      { name: 'mid.jsonl', mtime: 3000 }
+    ])
+    expect(resolveLiveTranscriptPath(join(dir, 'old.jsonl'), env)).toBe(join(dir, 'live.jsonl'))
+    // the dunly-dunning case: recorded session file is gone, but its dir holds the live one
+    expect(resolveLiveTranscriptPath(join(dir, 'gone.jsonl'), env)).toBe(join(dir, 'live.jsonl'))
+  })
+
+  it('only considers .jsonl files (a newer non-transcript file is ignored)', () => {
+    const { dir, env } = makeProject([
+      { name: 'a.jsonl', mtime: 1000 },
+      { name: 'notes.txt', mtime: 9000 }
+    ])
+    expect(resolveLiveTranscriptPath(join(dir, 'a.jsonl'), env)).toBe(join(dir, 'a.jsonl'))
+  })
+
+  it('passes an untrusted / empty recorded path through unchanged (never scans)', () => {
+    const { env } = makeProject([])
+    const outside = join(tmpdir(), 'elsewhere', 'x.jsonl')
+    expect(resolveLiveTranscriptPath(outside, env)).toBe(outside)
+    expect(resolveLiveTranscriptPath(undefined, env)).toBeUndefined()
+  })
+
+  it('falls back to the recorded path when the dir holds no .jsonl', () => {
+    const { dir, env } = makeProject([{ name: 'readme.md', mtime: 1000 }])
+    const recorded = join(dir, 'session.jsonl')
+    expect(resolveLiveTranscriptPath(recorded, env)).toBe(recorded)
   })
 })

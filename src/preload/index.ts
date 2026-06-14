@@ -119,6 +119,42 @@ export type LlmWriteResult = { ok: boolean; reason?: string }
 // ── Terminal-recap T12: consent state ──
 export type RecapConsentState = 'enabled' | 'declined' | 'undecided'
 
+// ── Recap redesign S1: the recap face's data bundle. MIRRORS src/main (recapFacts.ts +
+// summaryLoop.ts RecapNarrative + recapIpc.ts RecapBundle) — the process boundary means no
+// shared import (tsconfig.preload ⊥ tsconfig.node); keep the three in lockstep, same as PtyState.
+export type RecapStatus =
+  | 'spawning'
+  | 'running'
+  | 'waiting-on-you'
+  | 'idle'
+  | 'exited'
+  | 'spawn-failed'
+export interface RecapFacts {
+  v: 1
+  status: RecapStatus
+  /** PTY session currently alive (running/spawning); Resume is offered only when false. */
+  live: boolean
+  exitCode?: number
+  title?: string
+  sessionStart?: number
+  lastActivity?: number
+  turns: { user: number; agent: number }
+  lastAsk?: string
+  files: { path: string; op: 'edit' | 'write'; count: number }[]
+  commands: { label: string; count: number }[]
+  generatedAt: number
+}
+export interface RecapNarrative {
+  now: string
+  next?: string
+  beats: { ts: number; text: string; role: 'user' | 'agent' }[]
+  asOf: number
+}
+export interface RecapBundle {
+  facts: RecapFacts
+  narrative?: RecapNarrative
+}
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -289,6 +325,8 @@ const api = {
 
   // ── Terminal-recap T12: consent + learned-patches push ──
   recap: {
+    /** S1: one-shot read for the recap face — live LOCAL facts + the cached narrative. */
+    get: (boardId: string): Promise<RecapBundle | null> => ipcRenderer.invoke('recap:get', boardId),
     getConsent: (): Promise<RecapConsentState> => ipcRenderer.invoke('recap:getConsent'),
     setConsent: (decision: 'enabled' | 'declined'): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('recap:setConsent', decision),

@@ -573,7 +573,12 @@ export function TerminalBoard({
                 display: 'flex',
                 flexDirection: 'column',
                 // recap overlay is up → don't let the xterm behind it grab pointer/focus
-                pointerEvents: flipped ? 'none' : 'auto'
+                pointerEvents: flipped ? 'none' : 'auto',
+                // Contain this face's stacking (the idle "Start" overlay sets zIndex:2). Without
+                // a stacking context here that z-index leaks to a shared ancestor and paints OVER
+                // the sibling recap overlay (which has none) → flipping an idle board showed
+                // "Start shell" instead of the recap. isolate keeps it under the recap face.
+                isolation: 'isolate'
               }}
             >
               {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
@@ -685,7 +690,27 @@ export function TerminalBoard({
                 style={{ position: 'absolute', inset: 0, outline: 'none' }}
                 data-test={`recap-wrap-${board.id}`}
               >
-                <RecapView boardId={board.id} />
+                <RecapView
+                  boardId={board.id}
+                  canResume={canResume}
+                  onResume={() => {
+                    // Same resume routine as the Restart menu below: sanitized
+                    // `claude --resume <sessionId>` override, then the shared respawn.
+                    // Flip back to the terminal (like onStart) so the resumed session is
+                    // visible — staying on the recap face after acting is jarring.
+                    launchOverrideRef.current = resumeCommand(board.agentSessionId)
+                    restart()
+                    flip.toggle()
+                  }}
+                  // No session to resume/restart → offer to START one from the recap. Spawns the
+                  // shell + fires launchCommand (the same Start as the idle front face), then flips
+                  // back to the terminal so the new session is visible.
+                  canStart={state === 'idle'}
+                  onStart={() => {
+                    startLaunchRef.current?.()
+                    flip.toggle()
+                  }}
+                />
               </div>
             )}
             {/* T-resume restart menu, on the shared Menu shell since D2-B (Escape/outside/

@@ -1,6 +1,6 @@
-import { openSync, fstatSync, readSync, closeSync } from 'node:fs'
+import { openSync, fstatSync, readSync, closeSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { resolve, sep } from 'node:path'
+import { resolve, sep, dirname, join } from 'node:path'
 
 export interface Milestone {
   ts: number
@@ -12,7 +12,7 @@ export interface ExtractOpts {
   maxTextChars?: number
 }
 
-function textFromContent(content: unknown): string {
+export function textFromContent(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
     return content
@@ -104,4 +104,45 @@ export function isTrustedTranscriptPath(
   const root = claudeConfigRoot(env)
   const abs = resolve(path)
   return abs === root || abs.startsWith(root + sep)
+}
+
+/**
+ * Resolve the CURRENT live transcript for a board from a (possibly stale) recorded path.
+ *
+ * The recap bridge learns a transcript path at Claude SessionStart, but an auto-COMPACTION or a
+ * `/resume` can roll the agent onto a NEW transcript file mid-session WITHOUT firing SessionStart
+ * — stranding the recap on a dead file, so it shows a long-gone session (the dunly-dunning case:
+ * recorded `5e985fe0.jsonl` no longer existed while the live session wrote `b22cb76e.jsonl`).
+ * Claude always writes the live session as the newest `.jsonl` in its per-cwd project dir, so we
+ * resolve to the newest-mtime `.jsonl` in the recorded path's DIRECTORY. This self-heals a stale
+ * recorded path (even one whose file is gone — only its dir is needed).
+ *
+ * Trusted-path-guarded: only scans when the recorded path is trusted (a `.jsonl` under the Claude
+ * config root), and every candidate is a `.jsonl` in that SAME dir, so the result is still trusted
+ * (the caller re-validates with isTrustedTranscriptPath either way). Falls back to the recorded
+ * path when the dir can't be scanned or holds no `.jsonl`. Synchronous + total (never throws).
+ */
+export function resolveLiveTranscriptPath(
+  recordedPath: string | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): string | undefined {
+  if (!recordedPath || !isTrustedTranscriptPath(recordedPath, env)) return recordedPath
+  try {
+    const dir = dirname(recordedPath)
+    let newest: { path: string; mtime: number } | undefined
+    for (const name of readdirSync(dir)) {
+      if (!name.toLowerCase().endsWith('.jsonl')) continue
+      const p = join(dir, name)
+      let mtime: number
+      try {
+        mtime = statSync(p).mtimeMs
+      } catch {
+        continue // vanished between readdir and stat
+      }
+      if (!newest || mtime > newest.mtime) newest = { path: p, mtime }
+    }
+    return newest?.path ?? recordedPath
+  } catch {
+    return recordedPath // unreadable dir → recorded path (downstream existsSync still guards)
+  }
 }
