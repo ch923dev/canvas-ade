@@ -45,6 +45,10 @@ interface RuntimeProbe {
 export interface CanvasE2E {
   /** Add a board at an auto-incremented world x; optionally patch durable props. */
   seedBoard: (type: BoardType, patch?: Partial<Board>) => string
+  /** Place-first New Terminal flow: add a terminal whose spawn is held for the dialog. */
+  seedConfigPendingTerminal: () => string
+  /** Id of the terminal awaiting New Terminal config (null when none / resolved). */
+  getConfigPendingId: () => string | null
   /** Current boards (plain data — serializable). */
   getBoards: () => Board[]
   /** Set the multi-selection (group create path). */
@@ -306,6 +310,15 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       seedX += 760 // wider than the largest default board (browser 700) → no overlap
       if (patch) store.updateBoard(id, patch)
       return id
+    },
+    seedConfigPendingTerminal() {
+      const store = useCanvasStore.getState()
+      const id = store.addBoard('terminal', { x: seedX, y: 0 }, { configPending: true })
+      seedX += 760
+      return id
+    },
+    getConfigPendingId() {
+      return useCanvasStore.getState().configPendingId
     },
     getBoards() {
       return useCanvasStore.getState().boards
@@ -621,6 +634,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         // must not leave it painting under every later spec (same isolation class as
         // connectors above).
         background: null,
+        // A New Terminal dialog left open (config-pending) would otherwise gate the next
+        // spec's seeded terminal's spawn (same ephemeral-isolation class).
+        configPendingId: null,
         project: { dir: null, name: 'e2e', status: 'open' }
       })
       // D1-A: toasts + the save-failure state are global ephemeral stores too — a toast

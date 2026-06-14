@@ -14,7 +14,6 @@
  * driven by the `{ t: 'state', … }` messages the bridge pushes over the port.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { TerminalConfig } from './TerminalConfig'
 import type { TerminalBoard as TerminalBoardData } from '../../lib/boardSchema'
 import { BoardFrame, IconBtn } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
@@ -34,6 +33,8 @@ import { resumeCommand } from './terminal/resumeCommand'
 import { BrowserPickPanel, NEW_BROWSER } from './terminal/BrowserPickPanel'
 import { usePickerDismiss } from './terminal/usePickerDismiss'
 import { useTerminalSpawn } from './terminal/useTerminalSpawn'
+import { NewTerminalDialog } from './terminal/NewTerminalDialog'
+import { presetById } from './terminal/agentPresets'
 import { pasteIntoTerminal } from './terminal/pasteIntoTerminal'
 import { TerminalHint } from './terminal/TerminalHint'
 import { TerminalRestartMenu } from './terminal/TerminalRestartMenu'
@@ -88,6 +89,10 @@ export function TerminalBoard({
   // A board with no explicit cwd spawns in the open project folder, not os.homedir().
   const projectDir = useCanvasStore((s) => s.project.dir)
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  // Place-first New Terminal flow: true while THIS board awaits first-run config in the
+  // dialog. Held terminals don't spawn (the dialog resolves first) — see useTerminalSpawn.
+  const configPending = useCanvasStore((s) => s.configPendingId === board.id)
+  const clearConfigPending = useCanvasStore((s) => s.clearConfigPending)
 
   // ── Spawn lifecycle ───────────────────────────────────────────────────────────
   // The PTY spawn/respawn/restart state machine + xterm construction + MessagePort data
@@ -114,16 +119,14 @@ export function TerminalBoard({
     screenRef,
     fontStepRef,
     fontResetRef,
-    pasteIntoTerminal
+    pasteIntoTerminal,
+    configPending
   })
 
+  // Edit-config dialog open (the unified New Terminal dialog in 'edit' mode). A modal with
+  // explicit Cancel/Apply — no non-modal outside-close guard needed (it replaced the popover).
   const [configOpen, setConfigOpen] = useState(false)
-  // D2-B unsaved-changes guard: while the config popover is open, the ⚙ trigger does
-  // NOT unmount it directly — it bumps this counter and the popover routes the request
-  // through its dirty guard (TerminalConfig). The span ref is the popover's outside-
-  // close exclusion so the trigger's own click can toggle without re-entry.
-  const [cfgCloseReq, setCfgCloseReq] = useState(0)
-  const cfgBtnRef = useRef<HTMLSpanElement>(null)
+  const closeConfig = useCallback(() => setConfigOpen(false), [])
   const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
   // T15: flip to the recap back-face. The xterm well (front) stays MOUNTED across the
   // flip so the live PTY session never tears down — see the flip wrapper in render.
@@ -173,7 +176,12 @@ export function TerminalBoard({
     return () => window.clearTimeout(t)
   }, [flip.flipped, termRef])
 
-  const identity = agentIdentity(board.launchCommand, board.shell)
+  // Prefer the chosen agent preset's label for the identity pill (e.g. "Claude"); a plain
+  // Shell preset still shows the resolved shell name (more informative than "Shell"), and a
+  // terminal with no preset (MCP-spawned / pre-v10) falls back to command/shell inference.
+  const presetLabel =
+    board.agentKind && board.agentKind !== 'shell' ? presetById(board.agentKind)?.label : undefined
+  const identity = presetLabel ?? agentIdentity(board.launchCommand, board.shell)
   const running = isRunning(state)
 
   // ── Per-board font size ───────────────────────────────────────────────────────
@@ -391,16 +399,18 @@ export function TerminalBoard({
         onLongPress={() => void onPreview('hold')}
         onContextMenu={() => void onPreview('hold')}
       />
-      {/* The spans anchor the config guard / restart menu (IconBtn forwards no ref):
-          each is its popover's outside-close exclusion, so the trigger click toggles. */}
-      <span ref={cfgBtnRef} style={{ display: 'inline-flex' }}>
+      {/* Configure opens the unified New Terminal dialog in edit mode (a modal). The data-test
+          span gives the e2e a click handle (IconBtn forwards no ref/data-test). */}
+      <span data-test={`config-${board.id}`} style={{ display: 'inline-flex' }}>
         <IconBtn
           name="settings"
           title="Configure terminal"
           active={configOpen}
-          onClick={() => (configOpen ? setCfgCloseReq((n) => n + 1) : setConfigOpen(true))}
+          onClick={() => setConfigOpen(true)}
         />
       </span>
+      {/* The restart span anchors the resume/new menu (IconBtn forwards no ref): it's the
+          menu's outside-close exclusion, so the trigger click toggles. */}
       <span ref={restartBtnRef} style={{ display: 'inline-flex' }}>
         <IconBtn
           name="restart"
@@ -566,16 +576,6 @@ export function TerminalBoard({
                 pointerEvents: flipped ? 'none' : 'auto'
               }}
             >
-              {configOpen && (
-                <TerminalConfig
-                  board={board}
-                  onClose={() => setConfigOpen(false)}
-                  fontSize={effectiveFont}
-                  onSetFont={setFont}
-                  closeSignal={cfgCloseReq}
-                  triggerRef={cfgBtnRef}
-                />
-              )}
               {/* M-1: a restored/duplicated terminal starts idle (no auto-spawn). Offer an
               explicit Start that spawns the shell + fires launchCommand on click. */}
               {state === 'idle' && (
@@ -726,6 +726,18 @@ export function TerminalBoard({
             onDelete={onDelete}
           />
         </div>
+      )}
+      {/* One dialog for create + edit (Option A). create: place-first, opens over the
+          just-dropped board (spawn held until Create/Cancel) — close clears the held flag so
+          the gated spawn runs. edit: the ⚙ / first-run hint reconfigures a LIVE terminal —
+          Apply patches shell/launchCommand/cwd which respawns; close just hides it. Modal
+          portals to body, so its position in this tree is immaterial. */}
+      {(configPending || configOpen) && (
+        <NewTerminalDialog
+          board={board}
+          mode={configPending ? 'create' : 'edit'}
+          onClose={configPending ? clearConfigPending : closeConfig}
+        />
       )}
     </>
   )

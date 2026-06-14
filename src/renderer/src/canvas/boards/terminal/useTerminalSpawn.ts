@@ -120,6 +120,14 @@ export interface TerminalSpawnDeps {
   board: TerminalBoardData
   /** Open project folder — a board with no explicit cwd spawns here, not os.homedir(). */
   projectDir: string | null | undefined
+  /**
+   * Place-first New Terminal flow: while true (this board is awaiting first-run config in
+   * the dialog), the spawn effect is HELD — no xterm mounts, no PTY spawns. When it flips
+   * false (dialog Create/Cancel), the effect runs once and mounts fresh, reading the
+   * dialog-patched `launchCommand`. This is why the dialog config never races the spawn
+   * (the xterm is constructed exactly once, after config is finalized).
+   */
+  configPending: boolean
   /** Global LOD (zoom-out) flag. Sole driver of the WebGL suspension policy (the
    *  counter-scale keeps GL crisp at every settled zoom); NEVER respawns the PTY. */
   lod: boolean
@@ -160,6 +168,7 @@ export interface TerminalSpawnApi {
 /** Requires ReactFlowProvider (useStoreApi) + BoardFullViewContext in the render tree. */
 export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   const { board, projectDir, lod, screenRef, fontStepRef, fontResetRef, pasteIntoTerminal } = deps
+  const { configPending } = deps
 
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -636,7 +645,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     pasteIntoTerminal
   ])
 
-  useEffect(() => spawn(), [spawn])
+  // Hold the spawn while the New Terminal dialog is open (place-first flow): no xterm
+  // mounts until config is finalized, so the first (and only) mount reads the patched
+  // launchCommand. When configPending flips false the effect runs spawn() once.
+  useEffect(() => {
+    if (configPending) return undefined
+    return spawn()
+  }, [spawn, configPending])
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   /** Restart: kill the current session + respawn a fresh shell in place. */

@@ -7,10 +7,6 @@ import { evalIn, seed } from './helpers'
  *  - first-run launchCommand hint: shows on a bare-shell terminal, opens config,
  *    × dismisses app-wide forever (sticky localStorage — leading-reset + restored
  *    below, the e2e harness reuses a persistent userData dir);
- *  - config-popover unsaved-changes guard: Escape with edits arms the confirm row
- *    instead of silently discarding (REAL keyboard input — the guard's outside/Esc
- *    listeners are mount-stable window listeners, the D1-B/C mid-dispatch class
- *    jsdom cannot see);
  *  - restart menu on the shared Menu shell: Escape / outside-pointerdown / trigger
  *    re-click all auto-close (the audit's "no auto-close");
  *  - A6 recap-flip focus transfer: focus follows the visible face both ways.
@@ -25,11 +21,6 @@ import { evalIn, seed } from './helpers'
 const HINT_KEY = 'ca.terminal.hintDismissed'
 const node = (id: string): string => `.react-flow__node[data-id="${id}"]`
 
-const boardLaunchCommand = (page: Page, id: string): Promise<string | undefined> =>
-  page.evaluate(
-    (a) => (globalThis as any).__canvasE2E.getBoards().find((b: any) => b.id === a)?.launchCommand,
-    id
-  )
 const patchBoard = (page: Page, id: string, patch: Record<string, unknown>): Promise<void> =>
   page.evaluate((a) => (globalThis as any).__canvasE2E.patchBoard(a.id, a.patch), { id, patch })
 const terminalEchoed = (page: Page, id: string, marker: string): Promise<boolean> =>
@@ -73,10 +64,11 @@ test.describe('@terminal terminal polish (D2-B)', () => {
       const hint = page.locator(`${node(id)} [data-test="terminal-hint"]`)
       await expect(hint).toBeVisible()
 
-      // The pill text is the action: it opens the ⚙ config popover.
+      // The pill text is the action: it opens the unified config dialog (edit mode).
       await hint.getByRole('button', { name: /Set a launch command/ }).click()
-      await expect(page.locator(`${node(id)} .nowheel select`)).toBeVisible()
-      await page.locator(`${node(id)} button`, { hasText: 'Cancel' }).click()
+      await expect(page.locator('[data-test="new-terminal-dialog"]')).toBeVisible()
+      await page.locator('[data-test="new-terminal-cancel"]').click()
+      await expect(page.locator('[data-test="new-terminal-dialog"]')).toHaveCount(0)
 
       // × dismisses, persists the sticky key, and survives as gone.
       await hint.locator('[data-test="terminal-hint-dismiss"]').click()
@@ -98,34 +90,6 @@ test.describe('@terminal terminal polish (D2-B)', () => {
       // Never ratchet later specs/runs: leave the key absent (the pre-dismissal state).
       await evalIn(page, `localStorage.removeItem(${JSON.stringify(HINT_KEY)})`)
     }
-  })
-
-  test('config guard: Escape with unsaved edits confirms instead of discarding', async ({
-    page
-  }) => {
-    const id = await seed(page, 'terminal', { launchCommand: 'echo GUARD' })
-    await page.locator(`${node(id)} button[title="Configure terminal"]`).click()
-    const launch = page.locator(`${node(id)} input[placeholder^="e.g. claude"]`)
-    await expect(launch).toBeVisible()
-
-    // Dirty edit + REAL Escape: the popover stays, the confirm row arms.
-    await launch.fill('codex')
-    await page.keyboard.press('Escape')
-    await expect(page.locator(`${node(id)}`).getByRole('alert')).toContainText('Unsaved changes')
-    await expect(launch).toBeVisible()
-
-    // Discard closes without persisting the edit.
-    await page.locator(`${node(id)} button`, { hasText: 'Discard' }).click()
-    await expect(launch).toHaveCount(0)
-    const persisted = await boardLaunchCommand(page, id)
-    expect(persisted, 'discard must not persist the edit').toBe('echo GUARD')
-
-    // Clean reopen: Escape closes straight through (no confirm row).
-    await page.locator(`${node(id)} button[title="Configure terminal"]`).click()
-    await expect(launch).toBeVisible()
-    await launch.click()
-    await page.keyboard.press('Escape')
-    await expect(launch).toHaveCount(0)
   })
 
   test('restart menu auto-closes: Escape, outside pointerdown, trigger re-click', async ({
