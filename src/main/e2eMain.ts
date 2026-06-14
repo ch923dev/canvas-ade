@@ -7,11 +7,11 @@
  * This is a registry + an env flag — NOT a security change. sandbox / contextIsolation /
  * nodeIntegration are untouched; nothing here is reachable in a normal run.
  */
-import { clipboard, Menu, nativeImage, type BrowserWindow } from 'electron'
+import { app, clipboard, Menu, nativeImage, type BrowserWindow } from 'electron'
 import { execFileSync } from 'child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import {
   debugCaptureView,
   debugCaptureViewPng,
@@ -98,6 +98,27 @@ export interface E2EMain {
    * createTempProject). Returns false if the write was rejected (e.g. unsafe board id).
    */
   writeRecapMd(boardId: string, md: string): Promise<boolean>
+  /**
+   * Recap redesign S1: persist a canned `board-<id>.recap.json` narrative sidecar into the
+   * current project's `.canvas/memory/` (the rebuilt RecapView's narrative source). Same
+   * temp-project self-minting as writeRecapMd.
+   */
+  writeRecapJson(boardId: string, narrative: unknown): Promise<boolean>
+  /**
+   * Recap redesign S1: seed a fixture transcript JSONL under a throwaway CLAUDE_CONFIG_DIR
+   * (process.env is set so isTrustedTranscriptPath accepts it) and return its absolute
+   * path - the test then seeds a board with `agentTranscriptPath` pointing at it, proving
+   * the zero-LLM Layer-0 facts path end-to-end.
+   */
+  seedRecapTranscript(jsonl: string): string
+  /**
+   * Recap redesign S1: register a board->transcript mapping through the PRODUCTION learned
+   * path - append a session line to the real userData session-map.jsonl exactly as the
+   * external recordSession.js hook does; watchRecapMap then flows it into the live in-memory
+   * map that recap:get's getTranscriptPath falls back to. (In e2e the renderer has no open
+   * project, so the board-doc field never reaches disk - the map IS the path that works.)
+   */
+  recordRecapSession(boardId: string, transcriptPath: string): void
 }
 
 /**
@@ -233,6 +254,40 @@ export function installE2EMain(win: BrowserWindow, localUrl: string): void {
     },
     writeRecapMd(boardId, md) {
       return writeRecapMdToCurrentProject(boardId, md)
+    },
+    async writeRecapJson(boardId, narrative) {
+      let dir = getCurrentDir()
+      if (!dir) {
+        dir = mkdtempSync(join(tmpdir(), 'canvas-e2e-recap-'))
+        await createProject(dir, 'recap-e2e', {})
+        setCurrentDir(dir)
+      }
+      return createCanvasMemory(dir).writeBoardRecap(boardId, narrative)
+    },
+    seedRecapTranscript(jsonl) {
+      const root = mkdtempSync(join(tmpdir(), 'canvas-e2e-claude-'))
+      const dir = join(root, 'projects', 'fixture')
+      mkdirSync(dir, { recursive: true })
+      const path = join(dir, 'session.jsonl')
+      writeFileSync(path, jsonl, 'utf8')
+      process.env.CLAUDE_CONFIG_DIR = root
+      return path
+    },
+    recordRecapSession(boardId, transcriptPath) {
+      const mapPath = join(app.getPath('userData'), 'recap', 'session-map.jsonl')
+      mkdirSync(dirname(mapPath), { recursive: true })
+      // Same append-only line shape recordSession.js writes; last-write-wins per boardId.
+      appendFileSync(
+        mapPath,
+        JSON.stringify({
+          boardId,
+          sessionId: 'e2e-session',
+          transcriptPath,
+          cwd: '',
+          source: 'e2e',
+          ts: Date.now()
+        }) + '\n'
+      )
     }
   }
 }

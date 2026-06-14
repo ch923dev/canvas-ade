@@ -364,6 +364,54 @@ export function buildRecapMarkdown(
   return head + lines.join('\n') + '\n'
 }
 
+// ── S1 (recap redesign): the STRUCTURED narrative twin of buildRecapMarkdown ─────────
+//
+// The rebuilt RecapView renders a typed sidecar (board-<id>.recap.json) instead of parsing
+// markdown; the md keeps serving the DigestPanel/MCP unchanged. Same note->milestone
+// resolution + sanitization as buildRecapMarkdown so the two can never disagree on content;
+// S2 unifies both over one helper when the payload gains `next` + per-beat durations.
+
+/** One rendered timeline beat: the REAL milestone timestamp + the curated note text. */
+export interface RecapBeat {
+  ts: number
+  text: string
+  role: 'user' | 'agent'
+}
+
+/** The recap face's narrative layer: NOW (+ optional NEXT, S2) + beats + freshness. */
+export interface RecapNarrative {
+  now: string
+  /** Suggested next user action - populated from S2's prompt v2; absent until then. */
+  next?: string
+  beats: RecapBeat[]
+  /** When this narrative was generated (epoch ms) - the face's "as of" stamp. */
+  asOf: number
+}
+
+/**
+ * Pure: (parsed payload, milestones, asOf) -> the sidecar narrative. Beat timestamps/roles
+ * resolve via `note.i` with the same positional fallback as buildRecapMarkdown; all text is
+ * sanitizeSummary'd (untrusted LLM -> disk/render).
+ */
+export function buildRecapNarrative(
+  payload: RecapPayload,
+  milestones: Milestone[],
+  asOf: number
+): RecapNarrative {
+  const beats = payload.notes.slice(0, MAX_RECAP_NOTES).map((note, idx) => {
+    const ref =
+      note.i && note.i >= 1 && note.i <= milestones.length
+        ? milestones[note.i - 1]
+        : milestones[idx]
+    return {
+      ts: ref ? ref.ts : 0,
+      text: sanitizeSummary(note.text).replace(/\n/g, ' ').trim(),
+      role: ref ? ref.role : ('agent' as const)
+    }
+  })
+  return { now: sanitizeSummary(payload.now).trim(), beats, asOf }
+}
+
 /**
  * Build the numbered-milestone summarize input for a terminal recap. SECURITY: each milestone's
  * text is run through redactSecrets BEFORE it becomes egress input (the consent contract). Capped
@@ -541,13 +589,21 @@ export function createSummaryLoop(deps: SummaryLoopDeps): SummaryLoop {
         // payload + the REAL milestone timestamps; the non-recap path is byte-identical to before.
         // BUG-017: sanitize the title to prevent newlines from breaking the # heading (both paths).
         const title = sanitizeTitle(str((board as RawBoard).title)) || boardId
-        const md =
-          useRecap && milestones
-            ? buildRecapMarkdown(title, parseRecapPayload(result.text), milestones)
-            : `# ${title}
+        let md: string
+        if (useRecap && milestones) {
+          const payload = parseRecapPayload(result.text)
+          md = buildRecapMarkdown(title, payload, milestones)
+          // S1 (recap redesign): persist the STRUCTURED narrative sidecar alongside the
+          // markdown - the rebuilt RecapView renders the sidecar; the md stays the
+          // DigestPanel/MCP surface. Best-effort like every memory write (returns false,
+          // never throws), so a sidecar failure cannot lose the md write below.
+          mem.writeBoardRecap(boardId, buildRecapNarrative(payload, milestones, now().getTime()))
+        } else {
+          md = `# ${title}
 
 ${sanitizeSummary(result.text)}
 `
+        }
         mem.writeBoard(boardId, md)
         // BUG-014: the index + rollup enumerate the WHOLE board list, so they must reflect any
         // boards added/removed during the (up to 30 s) await — not the `r.doc` snapshot taken

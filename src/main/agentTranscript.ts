@@ -12,7 +12,7 @@ export interface ExtractOpts {
   maxTextChars?: number
 }
 
-function textFromContent(content: unknown): string {
+export function textFromContent(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) {
     return content

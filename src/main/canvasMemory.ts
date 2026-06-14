@@ -36,6 +36,8 @@ export interface CanvasMemoryPaths {
   index: string
   project: string
   board(id: string): string
+  /** S1 (recap redesign): the structured recap sidecar the rebuilt RecapView renders. */
+  boardRecap(id: string): string
 }
 
 export interface CanvasMemory {
@@ -45,6 +47,9 @@ export interface CanvasMemory {
   writeIndex(md: string): void
   writeProject(md: string): void
   readBoard(id: string): string | undefined
+  /** S1: JSON twin of writeBoard/readBoard for `board-<id>.recap.json` (same id guard). */
+  writeBoardRecap(id: string, data: unknown): boolean
+  readBoardRecap(id: string): unknown
   readIndex(): string | undefined
   readProject(): string | undefined
   setCommitOptIn(commit: boolean): void
@@ -72,7 +77,8 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     gitignore,
     index: join(memoryDir, 'MEMORY.md'),
     project: join(memoryDir, 'project.md'),
-    board: (id) => join(memoryDir, `board-${id}.md`)
+    board: (id) => join(memoryDir, `board-${id}.md`),
+    boardRecap: (id) => join(memoryDir, `board-${id}.recap.json`)
   }
 
   // BUG-017: the canonical .canvas/ tree = memory/ + audit/. Both ensureScaffold and
@@ -122,6 +128,27 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
     readBoard(id) {
       if (!safeBoardId(id)) return undefined
       return readMd(paths.board(id))
+    },
+    writeBoardRecap(id, data) {
+      if (!safeBoardId(id)) return false
+      try {
+        mkdirSync(memoryDir, { recursive: true })
+        writeFileAtomic.sync(paths.boardRecap(id), JSON.stringify(data), 'utf8')
+        return true
+      } catch (err) {
+        console.warn('[canvasMemory] writeBoardRecap failed (non-fatal)', err)
+        return false
+      }
+    },
+    readBoardRecap(id) {
+      if (!safeBoardId(id)) return undefined
+      const raw = readMd(paths.boardRecap(id))
+      if (raw === undefined) return undefined
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return undefined // corrupt/hand-edited sidecar reads as absent, never throws
+      }
     },
     readIndex() {
       return readMd(paths.index)
