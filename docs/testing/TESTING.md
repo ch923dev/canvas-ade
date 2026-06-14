@@ -53,6 +53,38 @@ E2E is reserved for surfaces that ONLY reproduce in the real app:
 auto-update · OS process-tree kill / cross-platform.** Everything else pushes down to
 integration/unit.
 
+### Pure-renderer specs: what stays e2e, and why (dx-audit MT-2)
+
+The chrome/planning interaction specs are deliberately ONE real-input sliver per pattern; every
+variant/state matrix (all tints, all font sizes, all shortcut bindings, cycle order, deltas, clamps)
+lives in the jsdom contract beside the component. A sliver earns its e2e seat ONLY when jsdom
+provably misses its class: a real OS key/pointer travelling through the camera transform or a portal;
+the mid-dispatch window-listener-removal hazard (D1-B/C -- a deps-churned listener silently never
+fires, which jsdom cannot see); a real CSS `:hover`; real focus routing onto xterm or the planning
+well; or the native `WebContentsView`. Keep this table honest when you touch these specs -- do not
+re-add a variant assertion the jsdom tier already owns.
+
+| Spec | Kept e2e slivers (the jsdom-impossible class) | Contract pinned in (jsdom) |
+|---|---|---|
+| `menu` | popover real-layout clamp on-screen; native preview detach on open (ADR 0002) | `BoardMenu.integration.test.tsx` |
+| `modal` | real Esc close + focus-restore (mid-dispatch listener class); post-close occlusion via `elementFromPoint` | `ConfirmModal` / `EscFullViewConfirm.integration.test.tsx` |
+| `noteTint` | real right-click through the well hit-test into the menu portal; real CSS `:hover` swatch pill | `ElementContextMenu` / `NoteCard.integration.test.tsx` (full tint matrix) |
+| `textToolbar` | real click through the camera transform onto the grip + size button | `TextToolbar.test.tsx` (all sizes) / `FreeText.test.tsx` |
+| `titleEdit` | real double-click swap (RF dblclick-zoom machinery); real Esc cancel; F2 NEGATIVE through real xterm focus | `BoardFrame.titleedit.test.tsx` (incl. positive F2-open) |
+| `boardKeyboard` | Tab real-key delivery into the one window keymap; A3 native-preview focus-return; xterm/well real-focus negatives | `useBoardKeyboardNav.test.tsx` (deltas/clamps/burst-undo/focus-fit) |
+| `planningKeyboard` | real well-focus routing for arrows; real marquee multi-select; Shift+F10 -> shared menu shell | `usePlanningKeyboard.integration.test.tsx` |
+| `commandPalette` | real Ctrl+K / ? chords; Esc layering vs the capture-phase full-view listener; rename intent -> focus handoff timing; native detach | `CommandPalette` / `paletteIntent.consumers.integration.test.tsx` |
+
+**MT-2 trim (PR-4).** Four e2e tests whose entire assertion set was already duplicated in the jsdom
+contract AND whose real-input delivery is pinned by a kept sibling sliver were removed:
+`boardKeyboard`'s arrow-burst / Alt-resize / Enter-focus (-> `useBoardKeyboardNav.test.tsx`
+L148/L208/L230; delivery pinned by the kept Tab sliver -- same window keymap, and the move handler
+keys off event ORDER, not `e.repeat`, so a synthetic burst is byte-equivalent to OS key-repeat) and
+`titleEdit`'s positive F2-open (-> `BoardFrame.titleedit.test.tsx` L123/L47; real F2 delivery + the
+xterm guard pinned by the kept F2 negative). No jsdom tests were added -- the counterparts pre-existed
+(the D1-D4 waves wrote the contract tier as they built each feature), which is why the unit count is
+flat. The other six specs were already at one-sliver-per-pattern and were left unchanged.
+
 ## Security boundaries → tier map
 
 Electron's security checklist is asserted at the **unit/integration** tier, not via broad e2e:
