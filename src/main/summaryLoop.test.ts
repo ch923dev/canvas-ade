@@ -14,6 +14,7 @@ import {
   sanitizeTitle,
   createSummaryLoop,
   buildRecapMarkdown,
+  buildRecapNarrative,
   parseRecapPayload,
   redactSecrets,
   RECAP_SYSTEM,
@@ -939,6 +940,64 @@ describe('recap assembly', () => {
   it('RECAP_SYSTEM instructs JSON-only + no timestamps', () => {
     expect(RECAP_SYSTEM).toMatch(/JSON/)
     expect(RECAP_SYSTEM).toMatch(/timestamps/i)
+  })
+
+  // buildRecapNarrative is the STRUCTURED twin of buildRecapMarkdown (the sidecar RecapView reads);
+  // it must resolve beat ts/role the same way, sanitize untrusted LLM text, and cap to MAX_RECAP_NOTES.
+  it('buildRecapNarrative: resolves each beat ts+role from its referenced milestone (note.i, out of order)', () => {
+    expect(
+      buildRecapNarrative(
+        {
+          now: 'Reviewing auth',
+          notes: [
+            { i: 2, text: 'Found 3 issues' },
+            { i: 1, text: 'You: review auth' }
+          ]
+        },
+        ms,
+        9999
+      )
+    ).toEqual({
+      now: 'Reviewing auth',
+      asOf: 9999,
+      beats: [
+        { ts: ms[1].ts, text: 'Found 3 issues', role: 'agent' },
+        { ts: ms[0].ts, text: 'You: review auth', role: 'user' }
+      ]
+    })
+  })
+  it('buildRecapNarrative: falls back to the positional milestone when a note has no index', () => {
+    const n = buildRecapNarrative(
+      { now: 'x', notes: [{ text: 'first' }, { text: 'second' }] },
+      ms,
+      1
+    )
+    expect(n.beats).toEqual([
+      { ts: ms[0].ts, text: 'first', role: 'user' },
+      { ts: ms[1].ts, text: 'second', role: 'agent' }
+    ])
+  })
+  it('buildRecapNarrative: ts 0 + agent role when no milestone resolves (index out of range, no positional)', () => {
+    const n = buildRecapNarrative({ now: 'x', notes: [{ i: 99, text: 'orphan' }] }, [], 7)
+    expect(n.beats).toEqual([{ ts: 0, text: 'orphan', role: 'agent' }])
+  })
+  it('buildRecapNarrative: sanitizes + single-lines note text and trims now', () => {
+    const n = buildRecapNarrative(
+      { now: '  spaced  ', notes: [{ i: 1, text: 'line one\nline two  ' }] },
+      ms,
+      1
+    )
+    expect(n.now).toBe('spaced')
+    expect(n.beats[0].text).toBe('line one line two')
+  })
+  it('buildRecapNarrative: caps beats at MAX_RECAP_NOTES', () => {
+    const many: Milestone[] = Array.from({ length: 10 }, (_, k) => ({
+      ts: 1000 + k,
+      role: 'agent',
+      text: `m${k}`
+    }))
+    const notes = Array.from({ length: 10 }, (_, k) => ({ i: k + 1, text: `n${k}` }))
+    expect(buildRecapNarrative({ now: 'x', notes }, many, 1).beats.length).toBe(MAX_RECAP_NOTES)
   })
 })
 
