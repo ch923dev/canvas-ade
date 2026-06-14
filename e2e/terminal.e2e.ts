@@ -47,27 +47,6 @@ test.describe('@terminal terminal (node-pty / ConPTY — real instance)', () => 
     expect(typeof text === 'string' && text.includes(TERM_SENTINEL)).toBe(true)
   })
 
-  test('Configure popover carries nowheel (no canvas pan on scroll)', async ({ page }) => {
-    const id = await seed(page, 'terminal', { launchCommand: `echo ${TERM_SENTINEL}` })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await evalIn(page, 'window.__canvasE2E.setZoom(1)')
-    await page.waitForTimeout(150)
-    const cfgOk = await evalIn<boolean>(
-      page,
-      `(async () => {
-         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-         const node = document.querySelector('.react-flow__node[data-id="${id}"]');
-         const cfgBtn = node && node.querySelector('button[title="Configure terminal"]');
-         if (!cfgBtn) return false;
-         cfgBtn.click(); await sleep(150);
-         const ok = !!document.querySelector('.nowheel select');
-         cfgBtn.click();
-         return ok;
-       })()`
-    )
-    expect(cfgOk, 'config popover has nowheel').toBe(true)
-  })
-
   test('survives LOD zoom-out — does not unmount + kill the PTY', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: `echo ${TERM_SENTINEL}` })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 5000)

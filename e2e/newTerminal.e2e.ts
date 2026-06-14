@@ -126,4 +126,30 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     expect(board.launchCommand).toBe('claude --model opus')
     expect(board.agentKind).toBe('claude')
   })
+
+  test('edit mode: Cancel discards the edit; the live board is not patched', async ({ page }) => {
+    const patch = JSON.stringify({
+      agentKind: 'claude',
+      launchCommand: 'claude',
+      title: 'My agent'
+    })
+    const id = await evalIn<string>(page, `window.__canvasE2E.seedBoard('terminal', ${patch})`)
+    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await page.locator(`[data-test="config-${id}"]`).click()
+
+    const dialog = page.locator('[data-test="new-terminal-dialog"]')
+    await expect(dialog).toBeVisible()
+    // Dirty the command, then Cancel: the Modal closes and persists nothing. This is the new
+    // contract that replaced the old TerminalConfig unsaved-changes guard (explicit Cancel/Apply).
+    await page.locator('[data-test="new-terminal-command"]').fill('codex --full-auto')
+    await page.locator('[data-test="new-terminal-cancel"]').click()
+    await expect(dialog).toHaveCount(0)
+    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
+      page,
+      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
+    )
+    expect(board.launchCommand).toBe('claude')
+    expect(board.agentKind).toBe('claude')
+  })
 })
