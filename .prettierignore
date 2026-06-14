@@ -5,6 +5,8 @@ release/
 design-reference/
 # Local Claude Code skill/plugin artifacts (mirrors the .claude/** eslint ignore).
 .claude/
+# Local Playwright MCP scratch (browser snapshots / console logs) — tool output, never reflow.
+.playwright-mcp/
 # Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand). Do not reflow.
 src/vendor/
 pnpm-lock.yaml

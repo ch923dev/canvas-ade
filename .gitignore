@@ -62,3 +62,5 @@ canvas.json.bak
 /e2e/.cache/
 # repro scratchpad (copy of _repro.e2e.ts.template) — never committed; promote to a real spec
 /e2e/_repro.e2e.ts
+# Playwright MCP scratch (browser snapshots / console logs from the MCP server) — never tracked
+/.playwright-mcp/
