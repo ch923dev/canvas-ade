@@ -300,7 +300,14 @@ app.whenReady().then(async () => {
     audit: (e) =>
       getAuditLog()
         ?.append(e)
-        .then(() => {}) ?? Promise.resolve(),
+        .then(() => {})
+        .catch((err: unknown) => {
+          // A failed audit write is a forensic gap — surface it in the log even if a future
+          // non-awaiting caller forgets to handle the rejection, then RE-THROW so today's
+          // awaiting callers (the mcpOrchestrator dispatch paths) still see it and can react.
+          console.error('[mcp-audit] append failed', err)
+          throw err
+        }) ?? Promise.resolve(),
     // 🔒 MCP worker-tier write (T4.4 write_result): record a board's own structured
     // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
     recordResult: (id, result) => recordBoardResult(id, result)

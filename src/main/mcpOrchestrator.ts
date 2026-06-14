@@ -49,14 +49,21 @@ export function buildOrchestrator(
   const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
   // 🔒 One single-use-nonce authority per orchestrator (T4.3 dispatch).
   const guard = opts.guard ?? createDispatchGuard()
-  const sleep =
-    opts.sleep ??
-    ((ms: number) =>
-      new Promise<void>((r) => {
-        const t = setTimeout(r, ms)
-        t.unref?.()
-      }))
   const handoffTimeoutMs = opts.handoffTimeoutMs ?? MCP_IDLE_TTL_MS
+  // The handoff await-idle backstop deadline, made CANCELLABLE: a fast-settling dispatch clears
+  // the real timer in finish() instead of leaving a 5-min timer + closure alive until it no-ops
+  // (the prior `void sleep(...).then()` never cancelled). The injected `opts.sleep` seam (tests)
+  // still drives the delay when present — its promise can't be cancelled, but finish() is
+  // idempotent so a late fire is a harmless no-op and the test leaks no real timer.
+  const startBackstop = (ms: number, onExpire: () => void): (() => void) => {
+    if (opts.sleep) {
+      void opts.sleep(ms).then(onExpire)
+      return () => {}
+    }
+    const t = setTimeout(onExpire, ms)
+    t.unref?.()
+    return () => clearTimeout(t)
+  }
   // A fresh LAZY session-status resolver per logical status read: materialises
   // registry.listSessions() at most once, and only when a terminal-without-mirror-status
   // is actually derived (deriveStatus's terminal-fallback branch — the common read never
@@ -83,10 +90,12 @@ export function buildOrchestrator(
     return new Promise<'idle' | 'closed' | 'timed_out'>((resolve) => {
       let settled = false
       let unsub = (): void => {}
+      let cancelBackstop = (): void => {}
       const finish = (exit: 'idle' | 'closed' | 'timed_out'): void => {
         if (settled) return
         settled = true
         unsub()
+        cancelBackstop()
         resolve(exit)
       }
       unsub = registry.subscribeStatus((change) => {
@@ -94,8 +103,8 @@ export function buildOrchestrator(
         const c = check()
         if (c) finish(c)
       })
-      // One-shot backstop (NOT a poll): a single deadline timer via the injected `sleep` seam.
-      void sleep(handoffTimeoutMs).then(() => finish('timed_out'))
+      // One-shot backstop (NOT a poll): a single deadline timer, cancelled on settle.
+      cancelBackstop = startBackstop(handoffTimeoutMs, () => finish('timed_out'))
     })
   }
 

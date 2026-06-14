@@ -149,6 +149,28 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(useCanvasStore.getState().boards.find((b) => b.id === 'srv-1')).toBeDefined()
   })
 
+  it('rejects a configureBoard with a null/non-object patch instead of throwing (ack {ok:false})', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
+    const ack = applyMcpCommand({
+      type: 'configureBoard',
+      id: 'srv-1',
+      // @ts-expect-error — malformed patch (null); must be rejected, never throw past the ack
+      patch: null
+    })
+    expect(ack.ok).toBe(false)
+    // the board is untouched (no partial apply)
+    expect(useCanvasStore.getState().boards.find((b) => b.id === 'srv-1')).toBeDefined()
+  })
+
+  it('rejects a removeBoard with a non-string id (ack {ok:false})', () => {
+    const ack = applyMcpCommand({
+      type: 'removeBoard',
+      // @ts-expect-error — malformed id; must be rejected
+      id: 123
+    })
+    expect(ack.ok).toBe(false)
+  })
+
   it('acks an unknown command type as a failure', () => {
     // @ts-expect-error — unknown command shape
     const ack = applyMcpCommand({ type: 'frobnicate' })

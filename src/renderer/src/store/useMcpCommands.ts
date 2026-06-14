@@ -48,12 +48,24 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       return { ok: true, type: 'addBoard' }
     }
     case 'removeBoard': {
+      if (typeof command.id !== 'string' || command.id.length === 0) {
+        return { ok: false, error: `invalid removeBoard id: ${JSON.stringify(command.id)}` }
+      }
       // Idempotent: removeBoard no-ops on an unknown id (a board the user already
       // closed), so a double close still acks ok.
       useCanvasStore.getState().removeBoard(command.id)
       return { ok: true, type: 'removeBoard' }
     }
     case 'configureBoard': {
+      if (typeof command.id !== 'string' || command.id.length === 0) {
+        return { ok: false, error: `invalid configureBoard id: ${JSON.stringify(command.id)}` }
+      }
+      if (command.patch === null || typeof command.patch !== 'object') {
+        return {
+          ok: false,
+          error: `invalid configureBoard patch: ${JSON.stringify(command.patch)}`
+        }
+      }
       // updateBoard filters to PATCHABLE_KEYS per board type, so an off-type/identity/
       // ephemeral key (e.g. id, a browser `url` on a terminal) is dropped — the patch
       // can never forge a cross-type hybrid or change identity. No-ops on an unknown id.
@@ -82,7 +94,14 @@ export function useMcpCommands(): void {
     const onCommand = window.api?.mcp?.onCommand
     if (!onCommand) return
     return onCommand((command, reply) => {
-      reply(applyMcpCommand(command as McpCommandIn))
+      try {
+        reply(applyMcpCommand(command as McpCommandIn))
+      } catch (err) {
+        // A malformed envelope must never throw PAST the ack — that strands MAIN's
+        // sendMcpCommand on its 2s timeout. Convert any unexpected throw into a resolved
+        // { ok: false } so the round-trip always completes.
+        reply({ ok: false, error: err instanceof Error ? err.message : String(err) })
+      }
     })
   }, [])
 }
