@@ -119,6 +119,27 @@ function readTerminalText(page: Page, id: string): Promise<string | null> {
   return evalIn<string | null>(page, `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`)
 }
 
+/** Whether a board `id` is on the canvas. Structured-arg eval -- the id is passed as DATA, never
+ *  interpolated into the eval'd code string (CodeQL js/bad-code-sanitization; the #82 pattern). */
+function boardOnCanvas(page: Page, id: string): Promise<boolean> {
+  return page.evaluate((boardId) => {
+    const hook = (globalThis as unknown as { __canvasE2E: { getBoards(): Array<{ id: string }> } })
+      .__canvasE2E
+    return !!hook.getBoards().find((b) => b.id === boardId)
+  }, id)
+}
+/** A board's launchCommand (undefined if unset/absent). Structured-arg eval (the #82 pattern). */
+function boardLaunchCommand(page: Page, id: string): Promise<string | undefined> {
+  return page.evaluate((boardId) => {
+    const hook = (
+      globalThis as unknown as {
+        __canvasE2E: { getBoards(): Array<{ id: string; launchCommand?: string }> }
+      }
+    ).__canvasE2E
+    return hook.getBoards().find((b) => b.id === boardId)?.launchCommand
+  }, id)
+}
+
 /** Drive the trusted confirm modal like a human (the dispatch tools block on this gate). */
 const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
 const APPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
@@ -297,6 +318,40 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     expect(filled.refs?.[0]).toBe('src/x.ts')
   })
 
+  test('write_result is a BOTH-tier worker write: a worker records its OWN board result over the wire', async ({
+    mcp
+  }) => {
+    // The tier split cuts BOTH ways here: write_result is the one worker-tier WRITE tool, so it
+    // is in BOTH tools/lists (unlike the orchestrator-only spawn/configure/close). The worker
+    // token is bound to info.workerBoardId (no client-supplied id), so its write lands on THAT
+    // board's result resource — which the orchestrator can then read back.
+    type ResultShell = { present: boolean; status?: string; summary?: string; refs?: string[] }
+    expect(mcp.worker.tools).toContain('write_result')
+    expect(mcp.orch.tools).toContain('write_result')
+    const wr = await mcp.worker.call('write_result', {
+      status: 'success',
+      summary: 'e2e write_result',
+      refs: ['src/y.ts']
+    })
+    expect(acked(wr)).toBe(true)
+    await expect
+      .poll(
+        async () => {
+          const res = await mcp.orch.readJson<ResultShell>(
+            `canvas://board/${mcp.info.workerBoardId}/result`
+          )
+          return (
+            res.present === true &&
+            res.status === 'success' &&
+            res.summary === 'e2e write_result' &&
+            res.refs?.[0] === 'src/y.ts'
+          )
+        },
+        { timeout: 4000 }
+      )
+      .toBe(true)
+  })
+
   test('canvas://memory empties gracefully then serves a doc, with a path-traversal guard', async ({
     electronApp,
     mcp
@@ -346,16 +401,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     const spawnedId = okText(spawn)
     expect(spawnedId).not.toBe('')
     // The command round-tripped to the renderer: the board is on the canvas.
-    await expect
-      .poll(
-        () =>
-          evalIn<boolean>(
-            page,
-            `!!window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(spawnedId)})`
-          ),
-        { timeout: 6000 }
-      )
-      .toBe(true)
+    await expect.poll(() => boardOnCanvas(page, spawnedId), { timeout: 6000 }).toBe(true)
     // The worker is DENIED server-side (the specific tool-not-found isError).
     const workerSpawn = await mcp.worker.call('spawn_board', { type: 'terminal' })
     expect(deniedToolNotFound(workerSpawn, 'spawn_board')).toBe(true)
@@ -379,16 +425,7 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await evalIn(page, APPROVE)
     expect(acked(await cfgP)).toBe(true)
     // The approved change lands on the board (asserted through the renderer; the boards resource is metadata-only).
-    await expect
-      .poll(
-        () =>
-          evalIn<boolean>(
-            page,
-            `(window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)}) || {}).launchCommand === 'echo MCP_CFG'`
-          ),
-        { timeout: 6000 }
-      )
-      .toBe(true)
+    await expect.poll(() => boardLaunchCommand(page, id), { timeout: 6000 }).toBe('echo MCP_CFG')
     const workerCfg = await mcp.worker.call('configure_board', { id, launchCommand: 'x' })
     expect(deniedToolNotFound(workerCfg, 'configure_board')).toBe(true)
     await mcp.orch.call('close_board', { id })
@@ -398,29 +435,11 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     const spawn = await mcp.orch.call('spawn_board', { type: 'terminal' })
     const id = okText(spawn)
     expect(id).not.toBe('')
-    await expect
-      .poll(
-        () =>
-          evalIn<boolean>(
-            page,
-            `!!window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
-          ),
-        { timeout: 6000 }
-      )
-      .toBe(true)
+    await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
     expect(mcp.worker.tools).not.toContain('close_board')
     const close = await mcp.orch.call('close_board', { id })
     expect(acked(close)).toBe(true)
-    await expect
-      .poll(
-        () =>
-          evalIn<boolean>(
-            page,
-            `!window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
-          ),
-        { timeout: 6000 }
-      )
-      .toBe(true)
+    await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(false) // gone
     // The worker is denied the tool regardless of whether the board still exists.
     const workerClose = await mcp.worker.call('close_board', { id })
     expect(deniedToolNotFound(workerClose, 'close_board')).toBe(true)
