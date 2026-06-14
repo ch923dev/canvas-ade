@@ -66,7 +66,6 @@ const checklist = (items: { label: string; done: boolean }[]): unknown => ({
 
 describe('boardFingerprint — move-invariant', () => {
   it('terminal: pure move/resize does not change the fingerprint', () => {
-    // title is now PART of the fingerprint (BUG-018), so hold it fixed and vary only geometry.
     expect(boardFingerprint(terminal())).toBe(
       boardFingerprint(terminal({ x: 999, y: 888, w: 1000, h: 900, z: 5 }))
     )
@@ -93,13 +92,14 @@ describe('boardFingerprint — content-sensitive', () => {
     expect(boardFingerprint(browser({ url: 'http://localhost:3000' }))).not.toBe(base)
     expect(boardFingerprint(browser({ viewport: 'mobile' }))).not.toBe(base)
   })
-  it('terminal: a title-only rename IS detected (title opens the LLM prompt — BUG-018)', () => {
-    // boardContent emits `Terminal board "${title}".`, so a rename changes the summary input
-    // → the fingerprint MUST change or the cached prose stays stale with the old name.
-    expect(boardFingerprint(terminal({ title: 'Renamed' }))).not.toBe(boardFingerprint(terminal()))
+  it('terminal: a title-only rename is NOT detected (title excluded — lockstep with boardContent, BUG-010)', () => {
+    // boardContent emits a title-less constant ('Terminal board.'), so a rename yields identical
+    // summary input → the fingerprint MUST NOT change or it arms an intent + burns a budgeted
+    // summarize for byte-identical output.
+    expect(boardFingerprint(terminal({ title: 'Renamed' }))).toBe(boardFingerprint(terminal()))
   })
-  it('browser: a title-only rename IS detected (title opens the LLM prompt — BUG-018)', () => {
-    expect(boardFingerprint(browser({ title: 'Renamed' }))).not.toBe(boardFingerprint(browser()))
+  it('browser: a title-only rename is NOT detected (title excluded — lockstep with boardContent, BUG-010)', () => {
+    expect(boardFingerprint(browser({ title: 'Renamed' }))).toBe(boardFingerprint(browser()))
   })
   it('browser: a previewSourceId-only change is NOT detected (excluded — never in the summary)', () => {
     // The Tier-2 summary omits the preview link, so a link-only change must not arm a
@@ -287,7 +287,7 @@ describe('createMemoryEngine — reset', () => {
   })
 })
 
-describe('createMemoryEngine — title rename arms an intent (BUG-018)', () => {
+describe('createMemoryEngine — title rename does NOT arm an intent (BUG-010)', () => {
   const titled = (id: string, title: string): unknown => ({
     id,
     type: 'terminal',
@@ -299,14 +299,17 @@ describe('createMemoryEngine — title rename arms an intent (BUG-018)', () => {
     launchCommand: 'pnpm dev'
   })
 
-  it('a title-only rename after baseline emits a re-summarize intent', () => {
+  it('a title-only rename after baseline emits NOTHING (title is excluded from the fingerprint)', () => {
+    // The summary input (summaryLoop.boardContent) is title-less, so a pure rename produces
+    // byte-identical input. Arming an intent here would burn a budgeted runSummarize for the SAME
+    // output — the BUG-010 lockstep regression. A real content change (launchCommand) still arms.
     const { schedule, flush } = fakeScheduler()
     const intents: SummarizeIntent[] = []
     const engine = createMemoryEngine({ onIntent: (i) => intents.push(i), schedule })
     engine.observe(docOf([titled('t1', 'Build')])) // baseline
-    engine.observe(docOf([titled('t1', 'Renamed')])) // title-only rename
+    engine.observe(docOf([titled('t1', 'Renamed')])) // title-only rename → no input change
     flush()
-    expect(intents).toEqual([{ boardId: 't1' }])
+    expect(intents).toEqual([])
   })
 })
 

@@ -48,6 +48,36 @@ describe('extractMilestones', () => {
     expect(ms).toHaveLength(12)
     expect(ms[0].text.length).toBeLessThanOrEqual(50)
   })
+
+  // BUG-011: a secret that straddles the maxTextChars (cap) offset must be redacted at FULL length
+  // BEFORE the slice. redactSecrets' patterns are length-gated (hex >= 40 chars), so if redaction ran
+  // only later (buildRecapInput) AFTER truncation, the secret's sub-threshold PREFIX (here 20 hex
+  // chars) would survive the slice and egress unredacted.
+  it('BUG-011: redacts a secret straddling the cap so no sub-threshold prefix survives the slice', () => {
+    const cap = 600
+    // Non-hex padding ending in a space (so the secret is matched as its own token via the word
+    // boundary, not absorbed into the padding). 'word ' x 116 = 580 chars, so the 64-hex secret
+    // occupies offsets [580, 644) and straddles the cap at 600. A redaction that ran only AFTER the
+    // slice would see just the first 20 hex chars (offsets 580-599), below the 40-char threshold →
+    // the prefix would leak. Full-length redaction before the cap closes that gap.
+    const pad = 'word '.repeat(116) // ends with a space → word boundary right before the secret
+    const secret = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' // 64 hex chars
+    const prefix = secret.slice(0, cap - pad.length) // the 20 hex chars that would survive a raw slice
+    expect(pad.length).toBe(580)
+    expect(prefix.length).toBe(20)
+    const jsonl = line({
+      type: 'assistant',
+      timestamp: T,
+      message: { role: 'assistant', content: [{ type: 'text', text: pad + secret }] }
+    })
+    const ms = extractMilestones(jsonl, { maxMilestones: 12, maxTextChars: cap })
+    expect(ms).toHaveLength(1)
+    // The token was collapsed to [redacted] at full length BEFORE the cap, so its prefix never leaks.
+    expect(ms[0].text).not.toContain(prefix)
+    expect(ms[0].text).not.toContain(secret)
+    expect(ms[0].text).toContain('[redacted]')
+    expect(ms[0].text.length).toBeLessThanOrEqual(cap)
+  })
 })
 
 describe('readTranscriptTail', () => {
