@@ -32,6 +32,7 @@ import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
 import { isHttpUrl } from '../../lib/autoConnect'
 import { useOffscreenPreview } from './useOffscreenPreview'
+import { useOffscreenInput } from './useOffscreenInput'
 
 // SPIKE (feat/preview-offscreen-spike): when set, Browser previews render OFFSCREEN
 // and paint into a DOM <canvas> here (occlusion fix under test, ADR 0002) instead of
@@ -139,6 +140,8 @@ export function BrowserBoard({
   // .bb-frame); a no-op unless OSR_PREVIEW. Full view binds elsewhere — skip for now.
   const osrCanvasRef = useRef<HTMLCanvasElement>(null)
   useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW && !fullView)
+  // SPIKE M3: forward pointer/wheel/keyboard on the canvas to the offscreen page.
+  useOffscreenInput(board.id, osrCanvasRef, OSR_PREVIEW && !fullView)
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
   // board.url changes underneath (e.g. set elsewhere), re-sync the draft DURING
@@ -478,7 +481,9 @@ export function BrowserBoard({
           {/* SPIKE: offscreen-rendered frames paint here, OVER the snapshot/state
               fallback. A normal DOM <canvas> — clips/rounds with .bb-frame, no native
               overlay (the occlusion fix under test). */}
-          {OSR_PREVIEW && <canvas ref={osrCanvasRef} className="bb-live" />}
+          {OSR_PREVIEW && (
+            <canvas ref={osrCanvasRef} className="bb-live nowheel nodrag" tabIndex={0} />
+          )}
           {/* D2-C: evicted (renderer freed) ≠ detached (snapshot) — say so. Safe to
               overlay: an evicted board has no live native view above this HTML. */}
           {paused && <span className="bb-paused-badge">paused</span>}

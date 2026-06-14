@@ -943,6 +943,12 @@ body {
   height: 100%;
   display: block;
 }
+/* Canvas is focusable (tabIndex) so it can receive forwarded keystrokes (M3 input);
+   suppress the browser focus ring — the page itself draws its own focus affordances. */
+.bb-live:focus,
+.bb-live:focus-visible {
+  outline: none;
+}
 .bb-state {
   position: absolute;
   inset: 0;
