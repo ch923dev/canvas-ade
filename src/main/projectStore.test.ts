@@ -19,8 +19,19 @@ import {
   writeAsset,
   readAsset,
   collectAssetIds,
-  gcAssets
+  gcAssets,
+  SCHEMA_VERSION as MAIN_SCHEMA_VERSION,
+  MIN_READER_VERSION as MAIN_MIN_READER_VERSION
 } from './projectStore'
+// BUG-014: cross-import the AUTHORITATIVE renderer constants from the dependency-free version module
+// (boardSchemaVersion, which boardSchema re-exports) so this main-side test doesn't drag boardSchema's
+// DOM-bound deps (terminalFont -> window) into the node tsconfig. This test never ships, so the
+// renderer->main import is fine; see llmModels.lockstep.test.ts for the same pattern. Assert the
+// on-disk fresh-doc fields + MAIN's mirror equal them, so a one-sided bump fails.
+import {
+  SCHEMA_VERSION as RENDERER_SCHEMA_VERSION,
+  MIN_READER_VERSION as RENDERER_MIN_READER_VERSION
+} from '../renderer/src/lib/boardSchemaVersion'
 
 let dir: string
 beforeEach(() => {
@@ -53,34 +64,46 @@ describe('projectStore', () => {
     await createProject(dir, 'My Proj', {})
     // The created file must be re-readable through the same guard project:save writes
     // by — locking the fresh-doc shape to the single validated write path.
-    // BUG-024: fresh doc uses SCHEMA_VERSION (9) + connectors field, not the old hardcoded 2.
+    // BUG-024/BUG-014: fresh doc uses the authoritative renderer SCHEMA_VERSION/
+    // MIN_READER_VERSION + connectors field, not the old hardcoded 2 (and not a literal that
+    // can drift — these read from boardSchema so a one-sided MAIN bump fails this assertion).
     const r = readProject(dir)
     expect(r.ok).toBe(true)
     if (r.ok)
       expect(r.doc).toEqual({
-        schemaVersion: 9,
-        minReaderVersion: 9,
+        schemaVersion: RENDERER_SCHEMA_VERSION,
+        minReaderVersion: RENDERER_MIN_READER_VERSION,
         viewport: null,
         boards: [],
         connectors: []
       })
   })
 
-  // BUG-024: createProject hardcodes schemaVersion 2 instead of SCHEMA_VERSION (8).
-  // A fresh canvas.json must carry the current schema version so external tooling (MCP,
-  // user scripts) and the backup never see a stale/old version marker on disk.
-  it('BUG-024: createProject writes schemaVersion === SCHEMA_VERSION (9), not the hardcoded 2', async () => {
+  // BUG-024/BUG-014: createProject must stamp a fresh canvas.json with the CURRENT schema
+  // version so external tooling (MCP, user scripts) and the backup never see a stale/old
+  // version marker on disk. The drift guard asserts the on-disk values against the
+  // AUTHORITATIVE renderer constants (boardSchema), not literals — a hardcoded literal here
+  // cannot detect the lock-step drift that shipped MAIN at 9 while the renderer moved to 10.
+  it('BUG-014: createProject writes schemaVersion/minReaderVersion equal to boardSchema (no drift)', async () => {
     const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
     const onDisk = JSON.parse(readFileSync(join(dir, 'canvas.json'), 'utf8'))
-    // Before the fix this asserts 2; after the fix it must match SCHEMA_VERSION (9 — the
-    // v9 lock-step bump #126 missed in MAIN rode along with ADR 0007).
-    expect(onDisk.schemaVersion).toBe(9)
+    // On-disk writer version must equal the renderer's authoritative SCHEMA_VERSION (10).
+    expect(onDisk.schemaVersion).toBe(RENDERER_SCHEMA_VERSION)
     // ADR 0007: fresh docs also carry the compat floor, lock-stepped with
-    // boardSchema.MIN_READER_VERSION (both asserted at 8, BUG-024 style).
-    expect(onDisk.minReaderVersion).toBe(9)
-    // The fresh doc must also carry the connectors field added at v4→v5 migration.
+    // boardSchema.MIN_READER_VERSION (still 9 — v10 is additive).
+    expect(onDisk.minReaderVersion).toBe(RENDERER_MIN_READER_VERSION)
+    // The fresh doc must also carry the connectors field added at v4->v5 migration.
     expect(onDisk).toHaveProperty('connectors')
+  })
+
+  // BUG-013/BUG-014: MAIN's duplicated SCHEMA_VERSION/MIN_READER_VERSION must stay in
+  // lock-step with the renderer's boardSchema source of truth. This asserts the constants
+  // themselves (not just the on-disk value), so a future ONE-SIDED bump on either side fails
+  // here — the mirror llmModels.lockstep.test.ts uses for DEFAULT_MODELS.
+  it('BUG-013: MAIN projectStore versions are lock-stepped with renderer boardSchema', () => {
+    expect(MAIN_SCHEMA_VERSION).toBe(RENDERER_SCHEMA_VERSION)
+    expect(MAIN_MIN_READER_VERSION).toBe(RENDERER_MIN_READER_VERSION)
   })
 
   // BUG-042: createProject on a folder where BOTH canvas.json and .bak are unparseable
