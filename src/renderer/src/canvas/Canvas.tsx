@@ -466,7 +466,9 @@ function CanvasInner(): ReactElement {
           // #15: park a terminal's live session BEFORE removal so undo can adopt it. RF's
           // deleteKeyCode removes EVERY selected node, so this loops over the whole selection.
           const removed = useCanvasStore.getState().boards.find((x) => x.id === intent.id)
-          if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id)
+          // #BUG-015: swallow the invoke rejection (teardown/channel-gone race on a closing
+          // window) so it can't surface as an unhandled promise — mirrors the memory.* guards above.
+          if (removed?.type === 'terminal') void window.api.parkTerminal(intent.id).catch(() => {})
           // #BUG-012: keyboard-delete (deleteKeyCode) reaches removal HERE, bypassing
           // boardActions.remove — so tear down any full-view mode pointing at this board
           // FIRST (same guards boardActions.remove uses). Otherwise fullViewId/cameraFullViewId
