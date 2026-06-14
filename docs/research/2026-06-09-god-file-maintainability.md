@@ -1,6 +1,6 @@
 # God-file maintainability — research & improvement plan
 
-**Date:** 2026-06-09 · **Status:** research (no code changed) · **Scope:** the 8 largest source files
+**Date:** 2026-06-09 · **Status:** seam backlog -- doctrine promoted to `contributing/file-size-doctrine.md` (the max-lines ratchet); Tier-1/2 extracts have shipped, remaining seams feed the ongoing god-file paydown · **Scope:** the 8 largest source files
 **Method:** 6 parallel read-only subagent dissections (one per file group) + a read of the existing
 extraction idiom (`canvas/hooks/useTidyTile.ts`, the `*Core` pattern in `pty.ts`) and the Wave-5 B5
 kickoff (`docs/reviews/2026-06-05-wave5-b4-b5-kickoff.md`, now git history). Line refs captured on `main` @ `6ca45fd`.

@@ -12,6 +12,10 @@ is `docs/reviews/README.md`.
   T0–T5 testing overhaul (Playwright `_electron` + pre-commit matrix). Living contract: `testing/TESTING.md`.
 - [`2026-06-04-context-subsystem.md`](2026-06-04-context-subsystem.md) — compiled Context subsystem build-log
   (M-digest + M-brain + M-memory, PR #39). Collapsed `roadmap-context.md` + plans/specs/handoffs.
+- [`2026-06-15-docs-hygiene-sweep.md`](2026-06-15-docs-hygiene-sweep.md) — compiled residue of the 2026-06-15
+  docs-hygiene sweep: collapsed merged slice-specs (#140 recap · #142/#149 terminal presets · #93 e2e-lint)
+  + done research/findings (#122/#125 terminal blur · 2026-06-05 MCP review · 2026-06-10 design/UX umbrella).
+  Raw originals in git history.
 
 Older raw docs were collapsed into the summaries above (2026-06-01, 2026-06-04, and 2026-06-10) and
 removed from the working tree (git history retains them):

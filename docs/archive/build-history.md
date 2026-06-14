@@ -86,6 +86,7 @@ Landed since #75 (2026-06-06 -> 06-08):
 - **#89** `668a783` - terminal-recap (flip a terminal board to an agent-CLI session recap).
 - **#90** `c670732` - Shift+Enter sends LF.
 - **#88/#91** - Claude PR-review CI (inline comments + triage).
+- **#93** `fa5b58e` - e2e/lint hygiene: fixed the `terminalIO:117` selection flake (leaked recap-consent modal scrim occluding canvas center -> AppChrome modal-gated on `projectDir`) + eslint-10 flat-config `ignores` for `playwright-report/**` + `test-results/**`. Restored a clean 2-OS matrix gate.
 
 Landed 2026-06-10:
 - **#107** `cd1ac61` - 2026-06-10 full-app audit fix run: all 72 verified findings fixed (0 Crit / 4 High / 14 Med / 54 Low) via 16 collision-aware cluster agents over 4 waves + adversarial verify (5 amendments); ~130 new regression tests (unit suite -> 1906). 6 bot-review rounds, 12 inline findings all fixed + dispositioned. Findings package committed under `bug-hunt-findings/` (INDEX + 72 cards + FIX-REPORT).
