@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { evalIn } from './helpers'
 
@@ -7,6 +8,13 @@ import { evalIn } from './helpers'
  * hook (real store path), then drive the portaled dialog with real OS clicks (it is a
  * fixed-position modal at scale 1, so plain Playwright clicks hit-test correctly).
  */
+
+// Look up a board by id via a STRUCTURED ARG to page.evaluate — never interpolate the id into an
+// eval'd code string (CodeQL js/bad-code-sanitization; the terminalPolish.e2e.ts / #82 convention).
+type BoardInfo = { launchCommand?: string; agentKind?: string }
+const boardById = (page: Page, id: string): Promise<BoardInfo> =>
+  page.evaluate((a) => (globalThis as any).__canvasE2E.getBoards().find((b: any) => b.id === a), id)
+
 test.describe('New Terminal dialog (place-first flow)', () => {
   test('pick a preset → Create → board carries the preset command + agentKind', async ({
     page
@@ -27,10 +35,7 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     // Dialog closes, the held flag is released, and the patch landed on the board.
     await expect(dialog).toHaveCount(0)
     expect(await evalIn(page, 'window.__canvasE2E.getConfigPendingId()')).toBeNull()
-    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
-      page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
-    )
+    const board = await boardById(page, id)
     expect(board.launchCommand).toBe('codex')
     expect(board.agentKind).toBe('codex')
   })
@@ -43,10 +48,7 @@ test.describe('New Terminal dialog (place-first flow)', () => {
 
     await expect(page.locator('[data-test="new-terminal-dialog"]')).toHaveCount(0)
     expect(await evalIn(page, 'window.__canvasE2E.getConfigPendingId()')).toBeNull()
-    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
-      page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
-    )
+    const board = await boardById(page, id)
     expect(board.launchCommand ?? null).toBeNull()
     expect(board.agentKind ?? null).toBeNull()
   })
@@ -86,10 +88,7 @@ test.describe('New Terminal dialog (place-first flow)', () => {
 
     await page.locator('[data-test="new-terminal-create"]').click()
     await expect(page.locator('[data-test="new-terminal-dialog"]')).toHaveCount(0)
-    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
-      page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
-    )
+    const board = await boardById(page, id)
     expect(board.launchCommand).toBe('claude --model opus -c')
     expect(board.agentKind).toBe('claude')
   })
@@ -119,10 +118,7 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     await page.locator('[data-test="new-terminal-command"]').fill('claude --model opus')
     await page.locator('[data-test="new-terminal-create"]').click()
     await expect(dialog).toHaveCount(0)
-    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
-      page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
-    )
+    const board = await boardById(page, id)
     expect(board.launchCommand).toBe('claude --model opus')
     expect(board.agentKind).toBe('claude')
   })
@@ -145,10 +141,7 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     await page.locator('[data-test="new-terminal-command"]').fill('codex --full-auto')
     await page.locator('[data-test="new-terminal-cancel"]').click()
     await expect(dialog).toHaveCount(0)
-    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
-      page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
-    )
+    const board = await boardById(page, id)
     expect(board.launchCommand).toBe('claude')
     expect(board.agentKind).toBe('claude')
   })

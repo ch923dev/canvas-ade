@@ -33,4 +33,14 @@ describe('composeCommand', () => {
       'claude --add-dir "C:/My Project"'
     )
   })
+
+  it('escapes backslashes in a quoted value (Windows path with spaces stays intact)', () => {
+    expect(composeCommand(claude, { 'add-dir': 'C:\\Program Files\\x' })).toBe(
+      'claude --add-dir "C:\\\\Program Files\\\\x"'
+    )
+  })
+
+  it('escapes an embedded double-quote in a quoted value', () => {
+    expect(composeCommand(claude, { resume: 'a b"c' })).toBe('claude --resume "a b\\"c"')
+  })
 })

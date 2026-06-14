@@ -14,9 +14,15 @@ import type { AgentPreset } from './agentPresets'
 export type OptionValue = string | boolean
 export type OptionValues = Record<string, OptionValue>
 
-/** Quote an argument that contains whitespace so it survives as a single shell token. */
+/**
+ * Quote an argument that contains whitespace so it survives as a single shell token.
+ * Escape backslashes AND double-quotes (POSIX double-quote semantics) so a Windows path or an
+ * embedded quote can't mis-terminate / break out of the quoted token. The persisted
+ * launchCommand stays user-editable, so any shell-specific quoting (pwsh backtick, cmd ^) is the
+ * raw Command field's job — this is the convenience default, not a security boundary.
+ */
 function quoteArg(v: string): string {
-  return /\s/.test(v) ? `"${v.replace(/"/g, '\\"')}"` : v
+  return /\s/.test(v) ? `"${v.replace(/[\\"]/g, '\\$&')}"` : v
 }
 
 export function composeCommand(preset: AgentPreset, values: OptionValues): string {
