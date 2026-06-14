@@ -34,7 +34,7 @@ const pollTrue = async (fn: () => Promise<boolean>, timeout: number): Promise<bo
  * board is. The ONLY way to get visual evidence of native-view content is a MAIN-side
  * capturePage → disk. `captureViewToFile` is that primitive; this proves it end to end.
  */
-test.describe('e2e evidence — native-view PNG to disk (captureViewToFile)', () => {
+test.describe('@core e2e evidence — native-view PNG to disk (captureViewToFile)', () => {
   test('writes a non-blank PNG of a live browser board to disk', async ({ page, electronApp }) => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'evid-', 'evidence')
     try {

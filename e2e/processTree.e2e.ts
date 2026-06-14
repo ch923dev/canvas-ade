@@ -13,7 +13,7 @@ const CHILD = `node -e "console.log('${MARKER}_PID='+process.pid);setInterval(()
 
 const readTerm = (id: string) => `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
 
-test.describe('process-tree kill (real child tree — node-pty / OS reap)', () => {
+test.describe('@terminal process-tree kill (real child tree — node-pty / OS reap)', () => {
   test('killing a terminal reaps its spawned child process (no orphan)', async ({
     page,
     electronApp

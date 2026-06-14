@@ -51,7 +51,7 @@ async function seedPlanningRow(page: Page, n: number): Promise<string[]> {
   return ids
 }
 
-test.describe('board keyboard nav (real OS input, D4-B)', () => {
+test.describe('@chrome board keyboard nav (real OS input, D4-B)', () => {
   test('Tab cycles selection in reading order; Shift+Tab reverses; wraps', async ({ page }) => {
     const [a, b, c] = await seedPlanningRow(page, 3)
 

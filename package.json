@@ -28,6 +28,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "pretest:e2e": "electron-vite build",
+    "pretest:e2e:smoke": "electron-vite build",
+    "test:e2e:smoke": "playwright test --grep @core",
     "test:e2e:linux": "docker build -f Dockerfile.e2e -t canvas-e2e-linux . && docker run --rm canvas-e2e-linux && docker builder prune -f --filter until=168h",
     "test:e2e:matrix": "pnpm test:e2e && pnpm test:e2e:linux",
     "rebuild": "electron-rebuild -f -w node-pty",

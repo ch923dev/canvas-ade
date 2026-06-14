@@ -29,7 +29,9 @@ export default defineConfig({
         test: {
           name: 'unit-node',
           environment: 'node',
-          include: ['src/**/*.test.ts'],
+          // `scripts/**` carries pure build-tooling logic (e.g. e2e-scope.mjs)
+          // that is unit-tested like any other node module.
+          include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
           exclude: [...configDefaults.exclude, INTEGRATION]
         }
       },

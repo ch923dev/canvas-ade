@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures'
 import { evalIn, mainCall, pollEval } from './helpers'
 
-test.describe('drag-to-create board placement (real OS input through the camera)', () => {
+test.describe('@core drag-to-create board placement (real OS input through the camera)', () => {
   test('a drag creates a board sized to the rectangle', async ({ page, electronApp }) => {
     await evalIn(page, `window.__canvasE2E.setZoom(1)`) // world size == screen drag size
     await evalIn(page, `window.__canvasE2E.setTool('terminal')`)

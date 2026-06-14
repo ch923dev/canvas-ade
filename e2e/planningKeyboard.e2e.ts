@@ -79,7 +79,7 @@ async function seedTwoNotes(page: Page): Promise<string> {
   return id
 }
 
-test.describe('planning keyboard (real OS input)', () => {
+test.describe('@planning planning keyboard (real OS input)', () => {
   test('grip click focuses the well; real arrows nudge 1px, Shift+arrow 10px', async ({ page }) => {
     const id = await seedTwoNotes(page)
 

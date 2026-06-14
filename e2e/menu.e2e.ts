@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures'
 import { evalIn, mainCall, seed } from './helpers'
 
-test.describe('board ⋯ menu (real layout / native occlusion)', () => {
+test.describe('@chrome board ⋯ menu (real layout / native occlusion)', () => {
   test('⋯ trigger stays in the title bar + popover clamps on-screen + visible at rest', async ({
     page
   }) => {

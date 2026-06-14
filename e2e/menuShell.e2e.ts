@@ -6,7 +6,7 @@ import { evalIn } from './helpers'
 // focus restore back into xterm. Two of these caught real bugs during the lane:
 // a mid-dispatch listener removal swallowed Escape (groups.e2e.ts:150), and the
 // focus restore was a silent no-op on xterm's transiently-unfocusable textarea.
-test.describe('shared menu shell (real OS input)', () => {
+test.describe('@chrome shared menu shell (real OS input)', () => {
   test('project switcher: ArrowDown moves the roving focus; Escape closes', async ({ page }) => {
     await page.locator('.project-switcher-trigger').click()
     await expect(page.locator('.project-switcher-menu')).toHaveCount(1)

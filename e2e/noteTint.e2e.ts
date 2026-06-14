@@ -52,7 +52,7 @@ async function seedNote(page: Page): Promise<string> {
   return planId
 }
 
-test.describe('note tint picker (real OS input)', () => {
+test.describe('@planning note tint picker (real OS input)', () => {
   test('right-click note → Tint swatch recolors it; ONE undo restores', async ({ page }) => {
     const planId = await seedNote(page)
     expect(await tintOf(page, planId, 'tn-1')).toBe('yellow')

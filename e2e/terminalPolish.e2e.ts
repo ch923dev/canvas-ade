@@ -62,7 +62,7 @@ const flipSettled = (page: Page, id: string): Promise<boolean> =>
     return !!stage && !stage.style.transform
   }, id)
 
-test.describe('terminal polish (D2-B)', () => {
+test.describe('@terminal terminal polish (D2-B)', () => {
   test('first-run hint: bare shell shows the pill; click opens config; × dismisses app-wide', async ({
     page
   }) => {

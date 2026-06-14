@@ -236,7 +236,10 @@ the feature with `pnpm dev` and actually look at the change in the live app.
 > (`pnpm test:e2e`); the Linux Docker leg joins per-push only for cross-platform-sensitive diffs
 > (`src/main|preload`, `e2e/`, build/test config — `LINUX_SENSITIVE` in the hook) or
 > `E2E_FULL_MATRIX=1`; the **FULL matrix is mandatory once per PR at the pre-merge gate** (see
-> Parallel sessions). **`pre-commit` is now the cheap trio only** (`typecheck ·
+> Parallel sessions). **Spec-scoped 2026-06-14 (dx-audit MT-1):** a renderer-scoped Windows push is
+> further narrowed by board area — e2e specs carry `@core/@terminal/@preview/@planning/@chrome` tags
+> and `scripts/e2e-scope.mjs` maps the changed paths to a `--grep` subset, **failing open to the full
+> suite** for any cross-cutting/unknown path (`docs/testing/TESTING.md` › E2E tags). **`pre-commit` is now the cheap trio only** (`typecheck ·
 > lint · format:check`). Both enabled by the `prepare` script via `core.hooksPath`. Flake policy:
 > `retries:2` under `E2E_PRECOMMIT`, `workers:1`. Bypass with `git commit --no-verify` (cheap gate) /
 > `git push --no-verify` (e2e). **CI gate = the Actions `check` job only**

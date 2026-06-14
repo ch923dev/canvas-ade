@@ -85,7 +85,7 @@ async function seedSettled(page: Parameters<typeof evalIn>[0]): Promise<string> 
   return id
 }
 
-test.describe('terminal native re-raster (FREEZE)', () => {
+test.describe('@terminal terminal native re-raster (FREEZE)', () => {
   test('WebGL is held across settled zooms (no renderer swap on zoom)', async ({ page }) => {
     const id = await seedSettled(page)
     // WebGL active ⇔ the DOM renderer's rows container was disposed. If rows persist

@@ -25,7 +25,7 @@ async function pollRect(
   return rect!
 }
 
-test.describe('text font toolbar (real OS input)', () => {
+test.describe('@planning text font toolbar (real OS input)', () => {
   test('select a text element → toolbar → click size L → persists fontSize', async ({
     page,
     electronApp

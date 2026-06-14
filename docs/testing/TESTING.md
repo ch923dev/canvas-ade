@@ -174,19 +174,51 @@ Both hooks are enabled per-clone by the `package.json` `prepare` script (`git co
 - **`.githooks/pre-commit` — cheap trio, every commit.** Runs `typecheck · lint · format:check`
   (~seconds; docs-only commits run `format:check` alone). Bypass a WIP commit with
   `git commit --no-verify`.
-- **`.githooks/pre-push` — the e2e matrix, origin pushes only.** Runs the full matrix on `git push`
-  to `origin`; skips non-origin remotes, no-op pushes, and docs-only pushes (the changed set is
-  diffed across the pushed ref range). It checks Docker is up first (the Linux leg needs it) and sets
-  `E2E_PRECOMMIT=1` so Playwright uses `retries:2` (the documented browser-trio env flake can't
-  false-block a push). Bypass a WIP push with `git push --no-verify`.
+- **`.githooks/pre-push` — the e2e gate, origin pushes only.** Runs on `git push` to `origin`; skips
+  non-origin remotes, no-op pushes, and docs-only pushes (the changed set is diffed across the pushed
+  ref range). Sets `E2E_PRECOMMIT=1` so Playwright uses `retries:2` (the documented browser-trio env
+  flake can't false-block a push). Bypass a WIP push with `git push --no-verify`. **Two scope axes**
+  (both fail OPEN to full) keep the per-push cost low without losing coverage:
+  - **Which OS legs (QW-4 / PR-2).** A cross-platform/cross-cutting diff (`LINUX_SENSITIVE` —
+    `src/main`, `src/preload`, `e2e/`, build/test config, or the `force-full` fallback) runs the full
+    **Windows + Linux Docker** matrix (and checks Docker is up first); any other (renderer-scoped) diff
+    runs the **Windows leg only**.
+  - **Which specs (MT-1 / PR-3).** On a Windows-only push, `scripts/e2e-scope.mjs` maps the changed
+    paths to a Playwright `--grep` subset by board area (see below); a cross-cutting/unknown diff runs
+    every spec. The **full cross-OS matrix is paid once per PR at the pre-merge gate** (CLAUDE.md ›
+    parallel sessions), so deferring the Linux leg + the full suite to per-PR loses no coverage. Force
+    the full matrix anytime with `E2E_FULL_MATRIX=1`.
 
 Run the legs directly:
 
 | Command | Leg | How |
 |---|---|---|
-| `pnpm test:e2e` | **Windows** | native (real ConPTY + WebContentsView on this OS) |
+| `pnpm test:e2e` | **Windows** | native (real ConPTY + WebContentsView on this OS); add `-- --grep @area` to scope |
+| `pnpm test:e2e:smoke` | **Windows** | `--grep @core` only (~8 boot / placement / recovery / isolation tests — the fast subset) |
 | `pnpm test:e2e:linux` | **Linux** | Docker (`Dockerfile.e2e`: `node:22-bookworm` + Xvfb + `xauth` + Electron libs; `pnpm install` rebuilds node-pty for the Electron ABI; `CI=1` → `--no-sandbox`) |
-| `pnpm test:e2e:matrix` | **both** | the Windows leg then the Linux leg; both must pass (what the hook runs) |
+| `pnpm test:e2e:matrix` | **both** | the Windows leg then the Linux leg; both must pass (the per-PR merge gate) |
+
+#### E2E tags + path-scoped selection (MT-1)
+
+Every spec's `test.describe` (or, for the describe-less `modal`/`recap` specs, each top-level `test`)
+title is prefixed with exactly one **area tag**. The tags partition the suite — every test carries one,
+none overlap — so `playwright test --grep @area` selects a clean subset:
+
+| Tag | Specs | Source it guards |
+|---|---|---|
+| `@core` | `recovery` · `reset-isolation` · `placement` · `evidence` | boot / persistence / placement / native-capture — relevant to **any** change, so always included in a scoped run |
+| `@terminal` | `terminal*` · `processTree` · `recap` | `boards/terminal*`, `boards/TerminalBoard`, recap, `src/main/pty*` |
+| `@preview` | `browser*` · `preview*` · `previewLink` · `fullview` | `boards/Browser*`, `usePreviewManager`, `src/main/preview*`, `localServer` |
+| `@planning` | `whiteboard` · `textCreate` · `textToolbar` · `noteTint` · `planningKeyboard` | `boards/planning/**`, `boards/PlanningBoard`, vendored `perfect-freehand` |
+| `@chrome` | `menu*` · `modal` · `commandPalette` · `wayfinding` · `titleEdit` · `boardKeyboard` · `groups` · `backdrop` | `AppChrome`, `SettingsModal`, menu/modal/toast/group/palette/wayfinding/backdrop chrome |
+
+`scripts/e2e-scope.mjs` is the path → tag mapping (a pure, unit-tested function — `scripts/e2e-scope.test.ts`).
+**Safety contract — it fails OPEN to `FULL`** (run every spec) for any cross-cutting or cross-OS path
+(`Canvas.tsx`, `BoardFrame`, `canvasStore`, `boardSchema`, `src/main/**`, `src/preload/**`, `e2e/**`,
+build/test config) and for any renderer path it doesn't recognise. A scoped verdict is therefore, by
+construction, renderer-area-only — which is why such pushes are safe to run on the Windows leg alone.
+**When you add a new e2e spec, tag its title** with the right area (and, if it covers a new source
+area, extend the mapping + its test).
 
 The Docker image's CMD builds then runs `xvfb-run -a … --reporter=line` — the `line` reporter streams
 without a TTY, so `docker run` works from a pnpm pipe. (The default `list` reporter does tty

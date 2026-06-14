@@ -6,7 +6,7 @@ const live = (id: string) =>
 const status = (id: string, s: string) =>
   `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(s)}; })()`
 
-test.describe('full view (native rebind — real instance)', () => {
+test.describe('@preview full view (native rebind — real instance)', () => {
   test('a full-viewed OTHER board: browser stays detached through a mutation + webContents survives', async ({
     page,
     electronApp

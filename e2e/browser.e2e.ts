@@ -6,7 +6,7 @@ const runtimeLive = (id: string) =>
 const runtimeStatus = (id: string, status: string) =>
   `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
 
-test.describe('browser preview (native WebContentsView — real instance)', () => {
+test.describe('@preview browser preview (native WebContentsView — real instance)', () => {
   test('connects + a per-view capturePage is non-blank', async ({ page, electronApp }) => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })

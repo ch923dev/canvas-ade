@@ -22,7 +22,7 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
  * UNKNOWN to keep the PR-1 forward-compat path pinned (id preserved verbatim through
  * save/load, layer renders the dim veil only).
  */
-test.describe('canvas backdrop (S4)', () => {
+test.describe('@chrome canvas backdrop (S4)', () => {
   test('persist-reload: a scene backdrop survives save -> reopen from disk', async ({
     page,
     electronApp

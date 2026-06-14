@@ -12,7 +12,7 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
  * board that never rendered and timed out — a real isolation bug that `retries:2` masked
  * (the retry runs in a fresh worker). This pins the contract deterministically.
  */
-test.describe('reset() clean-slate contract (test isolation)', () => {
+test.describe('@core reset() clean-slate contract (test isolation)', () => {
   // envelope-valid but deep-corrupt: primary AND .bak too-new → unrecoverable → status:'error'.
   const TOO_NEW = '{"schemaVersion":999999,"boards":[]}'
 

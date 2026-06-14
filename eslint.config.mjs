@@ -183,6 +183,16 @@ export default tseslint.config(
     }
   },
 
+  // Build/test tooling in `scripts/` runs standalone under Node — the pre-push
+  // hook invokes `e2e-scope.mjs` directly. Plain ESM modules with Node globals.
+  {
+    files: ['scripts/**/*.{mjs,ts}'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: { ...globals.node }
+    }
+  },
+
   // File-size ratchet — caps new source at 700 CODE lines (blanks + comments skipped, so dense
   // documentation is never penalised) and freezes today's code-heavy files at pinned counts. Pins
   // are edited DOWNWARD only: lower a file's pin in the same PR that shrinks it; delete the entry

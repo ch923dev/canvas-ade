@@ -14,7 +14,7 @@ type Geo = {
 const geoOf = (id: string) => `window.__canvasE2E.terminalGeometry(${JSON.stringify(id)})`
 const TOLERANCE = 1 // px -- sub-pixel rounding only; a clipped glyph is >=~6px
 
-test.describe('terminal clip-free fit', () => {
+test.describe('@terminal terminal clip-free fit', () => {
   test.afterEach(async ({ page }) => {
     await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '12.5')`)
   })

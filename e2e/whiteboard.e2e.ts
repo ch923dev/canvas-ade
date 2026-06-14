@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures'
 import { evalIn, mainCall, pollEval, seed } from './helpers'
 
-test.describe('whiteboard slivers (real OS input / native pipeline)', () => {
+test.describe('@planning whiteboard slivers (real OS input / native pipeline)', () => {
   test('full-view add-note: a real click lands in-bounds through the live camera transform', async ({
     page,
     electronApp

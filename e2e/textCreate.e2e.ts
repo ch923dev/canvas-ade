@@ -34,7 +34,7 @@ async function rfZoom(page: Page): Promise<number> {
   )
 }
 
-test.describe('text create + edit (real OS input)', () => {
+test.describe('@planning text create + edit (real OS input)', () => {
   /**
    * Test A — Text tool: drag makes a wrapped area text with a height-mapped size.
    *

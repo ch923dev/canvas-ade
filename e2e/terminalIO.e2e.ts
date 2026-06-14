@@ -4,7 +4,7 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
 
 const readInput = (id: string) => `window.__canvasE2E.readTerminalInput(${JSON.stringify(id)})`
 
-test.describe('terminal I/O', () => {
+test.describe('@terminal terminal I/O', () => {
   test('Shift+Enter posts LF (Ctrl+J newline), never ESC+CR or a bare \\r', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: 'echo ready' })
     await pollEval(page, `window.__canvasE2E.terminalMounted(${JSON.stringify(id)})`, 8000)

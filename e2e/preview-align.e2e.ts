@@ -73,7 +73,7 @@ const pollTrue = async (fn: () => Promise<boolean>, timeout: number): Promise<bo
 const BORDER = 1
 const TOLERANCE = 2 // px — native vs frame-inset at settled rest
 
-test.describe('preview camera-sync regression', () => {
+test.describe('@preview preview camera-sync regression', () => {
   test('native rect tracks the .bb-frame after a REAL panOnScroll', async ({
     page,
     electronApp
