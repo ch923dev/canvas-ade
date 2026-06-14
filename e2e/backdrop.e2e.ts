@@ -325,7 +325,13 @@ test.describe('canvas backdrop (S4)', () => {
         ),
         `${id}: scene canvas mounted`
       ).toBe(true)
-      expect(await pollEval(page, `${HASH} !== null`, 4000), `${id}: painted a frame`).toBe(true)
+      // `?? 0` keeps a missing canvas (HASH null) falsy; the `!== 0` threshold gives the
+      // guard teeth — a scene that sizes its canvas but never paints (all-zero buffer → hash
+      // 0) now FAILS instead of trivially passing. A working scene's void fill (rgb(10,10,11)
+      // α255) hashes non-zero.
+      expect(await pollEval(page, `(${HASH} ?? 0) !== 0`, 4000), `${id}: painted a frame`).toBe(
+        true
+      )
     }
     await page.emulateMedia({ reducedMotion: null })
     await evalIn(page, `window.__canvasE2E.setBackground({ kind: 'none' })`)
