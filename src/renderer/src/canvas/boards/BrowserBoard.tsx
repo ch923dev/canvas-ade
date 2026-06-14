@@ -136,12 +136,16 @@ export function BrowserBoard({
   const preset = VIEWPORT_PRESETS[board.viewport]
 
   // SPIKE (feat/preview-offscreen-spike): the offscreen-preview canvas. The hook opens
-  // an offscreen render in MAIN and paints its frames into this canvas (inside
-  // .bb-frame); a no-op unless OSR_PREVIEW. Full view binds elsewhere — skip for now.
+  // an offscreen render in MAIN and paints its frames into this canvas (inside .bb-frame);
+  // a no-op unless OSR_PREVIEW. Stays enabled in FULL VIEW: portal full view RELOCATES this
+  // live subtree (canvas + its 2D context + input listeners) into the modal host without
+  // remounting (useFullView), so keeping `enabled` constant across the toggle means the
+  // OSR window is never torn down — the canvas keeps painting + forwarding in full view
+  // too. (Gating on `!fullView` destroyed the OSR on enter → a blank full-view preview.)
   const osrCanvasRef = useRef<HTMLCanvasElement>(null)
-  useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW && !fullView)
+  useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW)
   // SPIKE M3: forward pointer/wheel/keyboard on the canvas to the offscreen page.
-  useOffscreenInput(board.id, osrCanvasRef, OSR_PREVIEW && !fullView)
+  useOffscreenInput(board.id, osrCanvasRef, OSR_PREVIEW)
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
   // board.url changes underneath (e.g. set elsewhere), re-sync the draft DURING
@@ -310,7 +314,9 @@ export function BrowserBoard({
   // D2-C Reload CTA: wc.reload() relaunches a crashed renderer; its fresh main-frame
   // nav-start clears the crashed latch back to `connecting` (usePreviewEvents).
   const reloadCrashed = (): void => {
-    void window.api.reloadPreview(board.id)
+    // In OSR mode there's no native view for preview:reload — reload the offscreen window.
+    if (OSR_PREVIEW) void window.api.reloadOsrPreview(board.id)
+    else void window.api.reloadPreview(board.id)
   }
 
   return (

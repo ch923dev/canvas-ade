@@ -96,6 +96,15 @@ export interface OsrFrame {
   height: number
   buffer: Uint8Array
 }
+/** The offscreen page's cursor, mirrored onto the host <canvas>. `image` (a data URL) +
+ *  `hotspot` are present only for type:'custom'. Mirrors main `OsrCursorPayload`. */
+export interface OsrCursor {
+  id: string
+  type: string
+  image?: string
+  hotspot?: { x: number; y: number }
+  scale?: number
+}
 /** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
 export type OsrInputEvent = Parameters<Electron.WebContents['sendInputEvent']>[0]
 
@@ -223,10 +232,23 @@ const api = {
   closeOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrClose', id),
   sendOsrInput: (id: string, event: OsrInputEvent): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrInput', { id, event }),
+  // Reload a crashed/failed OSR board (the native reloadPreview has no view in OSR mode).
+  reloadOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrReload', id),
+  // Per-interaction focus emulation: enable on canvas focus, disable on blur (P0 — so the
+  // caret/:focus ring show while interacting AND the page's blur/focusout still fire).
+  setOsrFocus: (id: string, focused: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrFocus', { id, focused }),
   onPreviewOsrFrame: (listener: (f: OsrFrame) => void): (() => void) => {
     const handler = (_e: IpcRendererEvent, f: OsrFrame): void => listener(f)
     ipcRenderer.on('preview:osrFrame', handler)
     return () => ipcRenderer.removeListener('preview:osrFrame', handler)
+  },
+  // Cursor stream: the offscreen page's cursor type, applied to the board's <canvas>
+  // so the preview shows an I-beam over inputs / pointer over links (a bitmap has none).
+  onPreviewOsrCursor: (listener: (c: OsrCursor) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, c: OsrCursor): void => listener(c)
+    ipcRenderer.on('preview:osrCursor', handler)
+    return () => ipcRenderer.removeListener('preview:osrCursor', handler)
   },
 
   // ── Phase 3 persistence ──

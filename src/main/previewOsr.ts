@@ -1,7 +1,16 @@
 import type { IpcMain } from 'electron'
 import { WebContentsView, BrowserWindow } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import { isAllowedPreviewUrl, registerPreviewNavGuards } from './preview'
+import {
+  isAllowedPreviewUrl,
+  registerPreviewNavGuards,
+  createOpenExternalLimiter,
+  openExternalSafe,
+  registerLoadLatch,
+  registerCrashReadyGate,
+  isHttpErrorCode,
+  isErrorResponseCode
+} from './preview'
 
 /**
  * SPIKE (feat/preview-offscreen-spike) — offscreen Browser-preview producer.
@@ -15,12 +24,13 @@ import { isAllowedPreviewUrl, registerPreviewNavGuards } from './preview'
  *
  * Deliberately ISOLATED from the shipping native path in `preview.ts` — its own `osr`
  * Map and its own session partition — so the spike can be toggled or deleted without
- * touching the proven path. NOT yet hardened to that path's level (no load-latch /
- * crash-ready gate / zoom persistence): the first slice only proves frames flow and
- * paint sharp (spec M1/M2). Security carry-overs that ARE wired: per-view in-memory
- * session, deny-all permissions, http(s) nav-scheme allowlist, frame-guarded IPC.
- * `preview:osrInput` (spec M3) is scaffolded; the renderer coordinate-transform that
- * feeds it is a later increment.
+ * touching the proven path. Security + lifecycle carry-overs now mirrored from the native
+ * path: per-view in-memory session, deny-all permissions, http(s) nav-scheme allowlist,
+ * frame-guarded IPC, the window.open deny+open-external limiter, and the shared
+ * load-latch / crash-ready gate (emitting the same `preview:event` channel). Input (M3) is
+ * forwarded via `preview:osrInput`; cursor + per-interaction focus-emulation feed back the
+ * browser-like feel. Known-deferred: M1 DPR sharpness, M2 throughput, M4 responsive presets,
+ * and the P1 fidelity gaps (IME, native select, clipboard) in the spike spec's gap register.
  */
 
 interface OsrEntry {
@@ -28,7 +38,23 @@ interface OsrEntry {
   // which a bare off-tree WebContentsView lacks (spec §8b: a WebContentsView loads but
   // emits zero frames; a hidden offscreen BrowserWindow paints a real, sized frame).
   osrWin: BrowserWindow
+  // Last cursor type forwarded (diff-skip dedupe for the cursor-changed pump).
+  lastCursorKey?: string
+  // Load-failed latch (registerLoadLatch) + first-paint-ready flag (registerCrashReadyGate)
+  // — the same lifecycle the native path uses so a dead/404/crashed server resolves state.
+  failed: boolean
+  ready: boolean
 }
+
+/** Browser-preview lifecycle event, emitted on the SAME `preview:event` channel the native
+ *  path uses so the renderer's previewStore resolves connecting/connected/load-failed/crashed.
+ *  Mirrors the renderer `PreviewEvent` union (minus the native-only `escape`). */
+type OsrLifecycleEvent =
+  | { id: string; type: 'did-finish-load'; url: string }
+  | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
+  | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
+  | { id: string; type: 'did-start-navigation' }
+  | { id: string; type: 'render-process-gone'; reason: string }
 
 const osr = new Map<string, OsrEntry>()
 let owner: BrowserWindow | null = null
@@ -51,11 +77,53 @@ export interface OsrFramePayload {
 /** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
 type OsrInputEvent = Parameters<Electron.WebContents['sendInputEvent']>[0]
 
+/** The offscreen page's current cursor, mirrored onto the host <canvas> so the preview
+ *  shows an I-beam over inputs / pointer over links (a flat bitmap has no cursor of its
+ *  own). `image` (a data URL) + `hotspot` are present only for type:'custom'. */
+export interface OsrCursorPayload {
+  id: string
+  type: string
+  image?: string
+  hotspot?: { x: number; y: number }
+  scale?: number
+}
+
 function emitFrame(payload: OsrFramePayload): void {
   try {
     owner?.webContents.send('preview:osrFrame', payload)
   } catch {
     /* window gone */
+  }
+}
+
+function emitCursor(payload: OsrCursorPayload): void {
+  try {
+    owner?.webContents.send('preview:osrCursor', payload)
+  } catch {
+    /* window gone */
+  }
+}
+
+function emitEvent(payload: OsrLifecycleEvent): void {
+  try {
+    owner?.webContents.send('preview:event', payload)
+  } catch {
+    /* window gone */
+  }
+}
+
+/** Toggle CDP focus-emulation for one board's offscreen page (per-interaction; see ensureOsr).
+ *  Enabled → blinking caret + :focus ring even though the window is never OS-focused;
+ *  disabled → the page's blur/focusout fires (menus close, on-blur validation runs). */
+function setOsrFocus(e: OsrEntry, focused: boolean): void {
+  try {
+    void e.osrWin.webContents.debugger
+      .sendCommand('Emulation.setFocusEmulationEnabled', { enabled: focused })
+      .catch(() => {
+        /* debugger detached / unsupported */
+      })
+  } catch {
+    /* debugger not attached */
   }
 }
 
@@ -72,6 +140,10 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     skipTaskbar: true,
     webPreferences: {
       offscreen: true,
+      // A never-shown window is background-throttled → rAF/timers pause, so the text
+      // caret stops blinking and CSS hover/focus transitions freeze. Disabling throttling
+      // keeps document.visibilityState 'visible', so the page feels live (research P0).
+      backgroundThrottling: false,
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
@@ -80,7 +152,7 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       partition: `preview-osr-${id}`
     }
   })
-  const e: OsrEntry = { osrWin }
+  const e: OsrEntry = { osrWin, failed: false, ready: false }
   osr.set(id, e)
   const wc = osrWin.webContents
   // Deny-all permissions on this view's session (untrusted localhost content) — same
@@ -90,6 +162,27 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   sess.setPermissionCheckHandler(() => false)
   // http(s)-only nav scheme allowlist, shared with the native path.
   registerPreviewNavGuards(wc)
+  // Page-driven popups: a previewed page's window.open / target=_blank / OAuth popup would
+  // otherwise mint a REAL on-screen window OUTSIDE this view's deny-all/nav-guard/partition
+  // posture (and a scripted page could tab-bomb the desktop). Deny in-window; open allowlisted
+  // schemes in the OS browser via the token-bucket limiter — verbatim from the native path.
+  const allowExternalOpen = createOpenExternalLimiter()
+  wc.setWindowOpenHandler(({ url: openUrl }) => {
+    if (allowExternalOpen()) openExternalSafe(openUrl)
+    return { action: 'deny' }
+  })
+  // A hidden, never-OS-focused window makes the page report document.hasFocus()===false:
+  // no blinking caret, no :focus ring, dead autofocus. CDP focus-emulation fixes that — but
+  // LATCHING it on permanently kills blur/focusout/visibilitychange (menus never close, on-blur
+  // validation never fires, video never pauses, every board reports itself focused at once). So
+  // attach the debugger here and drive emulation PER-INTERACTION via preview:osrFocus (enabled
+  // when the board's canvas gains focus, disabled on blur → the page's blur/focusout fires).
+  // ADR 0002 pre-authorizes CDP attach; MAIN-side only — does not weaken the renderer sandbox.
+  try {
+    wc.debugger.attach('1.3')
+  } catch {
+    /* devtools already attached / unsupported — caret falls back to wc.focus() only */
+  }
   // Frame cap (M2 knob). The window size already set the render surface; the window is
   // never shown, so nothing paints above the HTML — the whole point of the spike.
   wc.setFrameRate(OSR_FRAME_RATE)
@@ -99,18 +192,80 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     // toBitmap() (raw BGRA) — the correctly-typed equivalent of the legacy getBitmap().
     emitFrame({ id, width: size.width, height: size.height, buffer: image.toBitmap() })
   })
+  // Mirror the offscreen page's cursor onto the host <canvas> (research P0). Signature:
+  // (event, type, image, scale, size, hotspot). Standard types are deduped by `type`;
+  // custom cursors ship a data URL (NativeImage can't cross IPC) + hotspot and always emit.
+  wc.on('cursor-changed', (_ev, type, image, scale, _size, hotspot) => {
+    if (type === 'custom') {
+      if (image && !image.isEmpty()) {
+        e.lastCursorKey = undefined // a following standard cursor must re-emit
+        emitCursor({ id, type, image: image.toDataURL(), hotspot, scale })
+      }
+      return
+    }
+    if (e.lastCursorKey === type) return // diff-skip, like the frame pump
+    e.lastCursorKey = type
+    emitCursor({ id, type })
+  })
+  // Load / fail / crash lifecycle on the SAME preview:event channel the native path uses
+  // (useOffscreenPreview consumes it → previewStore status), reusing the unit-tested latch +
+  // crash-gate so a dead/404/crashed dev server resolves Connecting → Couldn't-load /
+  // Preview-crashed + Reload instead of a frozen bitmap. startPainting() lives in the gate's
+  // onReady so it re-arms on the FIRST load AND every crash-reload (the relaunched renderer
+  // needs it again). On an initial failed load, onReady is latch-gated → no startPainting →
+  // the canvas stays transparent and the board's "Couldn't load" fallback shows through.
+  registerLoadLatch(wc, e, {
+    getUrl: () => wc.getURL(),
+    applyZoom: () => {}, // OSR has no per-board zoom factor (the M1 supersample is separate)
+    onNavStart: () => emitEvent({ id, type: 'did-start-navigation' }),
+    onSuccess: (loadedUrl) => emitEvent({ id, type: 'did-finish-load', url: loadedUrl }),
+    onFail: (errorCode, errorDescription, validatedURL) =>
+      emitEvent({ id, type: 'did-fail-load', url: validatedURL, errorCode, errorDescription })
+  })
+  registerCrashReadyGate(wc, e, {
+    onReady: () => {
+      try {
+        wc.startPainting()
+      } catch {
+        /* not an OSR-capable webContents */
+      }
+    },
+    onCrashed: (reason) => emitEvent({ id, type: 'render-process-gone', reason }),
+    isFailed: () => e.failed
+  })
+  // Surface navigation for the URL bar + back/forward state. A 4xx/5xx response commits a
+  // real error page but fires NO did-fail-load → carry the failure here (mirrors preview.ts).
+  wc.on('did-navigate', (_ev, navUrl, httpResponseCode) => {
+    if (isErrorResponseCode(httpResponseCode)) e.failed = true
+    if (isHttpErrorCode(httpResponseCode))
+      emitEvent({
+        id,
+        type: 'did-fail-load',
+        url: navUrl,
+        errorCode: httpResponseCode,
+        errorDescription: `HTTP ${httpResponseCode}`
+      })
+    emitEvent({
+      id,
+      type: 'did-navigate',
+      url: navUrl,
+      canGoBack: wc.navigationHistory.canGoBack(),
+      canGoForward: wc.navigationHistory.canGoForward()
+    })
+  })
+  wc.on('did-navigate-in-page', (_ev, navUrl, isMainFrame) => {
+    if (!isMainFrame) return
+    emitEvent({
+      id,
+      type: 'did-navigate',
+      url: navUrl,
+      canGoBack: wc.navigationHistory.canGoBack(),
+      canGoForward: wc.navigationHistory.canGoForward()
+    })
+  })
   if (isAllowedPreviewUrl(url)) {
     void wc.loadURL(url)
   }
-  // Kick the offscreen frame scheduler once content loads — the probe showed the hidden
-  // window needs startPainting() to emit its first frame. Harmless if already painting.
-  wc.once('did-finish-load', () => {
-    try {
-      wc.startPainting()
-    } catch {
-      /* not an OSR-capable webContents */
-    }
-  })
   return e
 }
 
@@ -314,10 +469,45 @@ export function registerPreviewOsrHandlers(
     const e = osr.get(args.id)
     if (!e) return false
     try {
-      e.osrWin.webContents.sendInputEvent(args.event)
+      const wc = e.osrWin.webContents
+      // Keyboard only routes to the page's focused element if the offscreen WIDGET
+      // is focused — but a hidden, never-shown window is never OS-focused, so typing
+      // is silently dropped (mouse events hit-test by coordinate and don't need this).
+      // Focus the offscreen webContents on click/keydown: for an offscreen window this
+      // sets renderer-side focus WITHOUT stealing OS focus from the main window (no OS
+      // surface), so the renderer keeps receiving the keystrokes it forwards here.
+      if (args.event.type === 'mouseDown' || args.event.type === 'keyDown') {
+        try {
+          wc.focus()
+        } catch {
+          /* focus unavailable */
+        }
+      }
+      wc.sendInputEvent(args.event)
       return true
     } catch {
       return false
     }
+  })
+  // Reload CTA for a crashed/failed OSR board (the native preview:reload has no view here).
+  ipcMain.handle('preview:osrReload', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = osr.get(id)
+    if (!e) return false
+    try {
+      e.osrWin.webContents.reload()
+      return true
+    } catch {
+      return false
+    }
+  })
+  // Per-interaction focus emulation (P0): the renderer enables it on canvas focus, disables
+  // on blur — so the caret/:focus ring show while interacting, and blur/focusout still fire.
+  ipcMain.handle('preview:osrFocus', (ev, args: { id: string; focused: boolean }) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = osr.get(args.id)
+    if (!e) return false
+    setOsrFocus(e, args.focused)
+    return true
   })
 }

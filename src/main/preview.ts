@@ -121,7 +121,7 @@ export function isAllowedExternal(rawUrl: string): boolean {
  * whether it was actually opened (false = scheme blocked / unparseable) so callers can
  * surface feedback; the setWindowOpenHandler caller ignores the result.
  */
-function openExternalSafe(rawUrl: string): boolean {
+export function openExternalSafe(rawUrl: string): boolean {
   if (!isAllowedExternal(rawUrl)) return false
   void shell.openExternal(rawUrl)
   return true

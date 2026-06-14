@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { RefObject } from 'react'
+import { usePreviewStore } from '../../store/previewStore'
 
 /**
  * SPIKE (feat/preview-offscreen-spike): drive a Browser board's offscreen preview.
@@ -22,6 +23,39 @@ export function useOffscreenPreview(
   useEffect(() => {
     if (!enabled || !url) return
     void window.api.openOsrPreview({ id: boardId, url })
+    // Show "Connecting…" under the (still-transparent) canvas until the first frame /
+    // did-finish-load promotes to connected. previewStore is the same runtime the board's
+    // DeviceContent reads, so the OSR path resolves the SAME states as the native path.
+    usePreviewStore.getState().patch(boardId, { status: 'connecting', error: null })
+    // MAIN emits load/fail/navigate/crash on the shared preview:event channel (previewOsr.ts).
+    // usePreviewEvents (the native consumer) is OFF in OSR mode, so consume them here, slimly
+    // (no native `recs`/eviction — an OSR board exists while its canvas is mounted).
+    const offEvent = window.api.onPreviewEvent((ev) => {
+      if (ev.id !== boardId) return
+      const ps = usePreviewStore.getState()
+      const cur = ps.byId[boardId]?.status
+      if (ev.type === 'did-start-navigation') {
+        if (cur === 'load-failed' || cur === 'crashed')
+          ps.patch(boardId, { status: 'connecting', error: null })
+      } else if (ev.type === 'did-finish-load') {
+        if (cur !== 'load-failed')
+          ps.patch(boardId, { status: 'connected', liveUrl: ev.url, error: null })
+      } else if (ev.type === 'did-navigate') {
+        ps.patchIfPresent(boardId, {
+          liveUrl: ev.url,
+          canGoBack: ev.canGoBack,
+          canGoForward: ev.canGoForward
+        })
+      } else if (ev.type === 'did-fail-load') {
+        ps.patchIfPresent(boardId, { status: 'load-failed', error: ev.errorDescription })
+      } else if (ev.type === 'render-process-gone') {
+        ps.patchIfPresent(boardId, { status: 'crashed', error: ev.reason })
+        // A crashed renderer paints no more frames; clear the stale bitmap so the board's
+        // "Preview crashed + Reload" fallback (under the canvas) becomes visible.
+        const cv = canvasRef.current
+        cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
+      }
+    })
     const off = window.api.onPreviewOsrFrame((f) => {
       if (f.id !== boardId) return
       const cv = canvasRef.current
@@ -47,6 +81,7 @@ export function useOffscreenPreview(
     })
     return () => {
       off()
+      offEvent()
       void window.api.closeOsrPreview(boardId)
     }
   }, [boardId, url, enabled, canvasRef])
