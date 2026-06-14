@@ -92,12 +92,25 @@ export interface BoardMirrorEntry {
   id: string
   type: string
   title: string
+  /**
+   * Terminal agent-preset id (schema v10 `agentKind`) — forwarded to the MCP
+   * `canvas://boards` view so an orchestrator can route by capability. Absent on
+   * non-terminal boards. The full `Board` objects passed in already carry it.
+   */
+  agentKind?: string
+  /**
+   * Terminal activity-monitoring opt-out (schema v10). Absent ⇒ monitored; `false`
+   * keeps a plain shell out of the agent-facing attention queue (Phase B).
+   */
+  monitorActivity?: boolean
 }
 
 /**
  * Build the renderer→MAIN board snapshot: each board's `{id,type,title}` plus its
  * derived `status` bucket. Pure — no store/React access — so it is unit-testable and
- * the publish hook is a thin wiring layer over it.
+ * the publish hook is a thin wiring layer over it. The v10 agent-identity fields ride
+ * through only when present (a terminal that set them), so non-terminal snapshots are
+ * byte-identical to before.
  */
 export function buildBoardSnapshot(
   boards: ReadonlyArray<BoardMirrorEntry>,
@@ -110,6 +123,8 @@ export function buildBoardSnapshot(
     status: boardStatusBucket(b.type, {
       terminalRunning: runtime.running[b.id],
       preview: runtime.preview[b.id]?.status
-    })
+    }),
+    ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
+    ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
   }))
 }

@@ -70,7 +70,16 @@ export interface ConnectorMirrorEntry {
 
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
-  listBoards(): Array<{ id: string; type: string; title: string; status?: string }>
+  listBoards(): Array<{
+    id: string
+    type: string
+    title: string
+    status?: string
+    /** v10 agent-preset id (Phase B) — forwarded to `canvas://boards`. */
+    agentKind?: string
+    /** v10 monitoring opt-out (Phase B) — gates the `canvas://attention` queue. */
+    monitorActivity?: boolean
+  }>
   /**
    * The connector graph the renderer mirrors (T4.6). Only `orchestration` edges authorize
    * an agent-to-agent relay; directional (source → target). MAIN injects `listConnectors`
@@ -82,9 +91,12 @@ export interface BoardRegistry {
    * Subscribe to per-board coarse status changes (M5 event-driven attention). MAIN injects
    * `boardRegistry.ts`'s `subscribeBoardStatus`. Emits `{ id, status }` on each change
    * (`status: 'gone'` when a board leaves the canvas); returns an unsubscribe fn. The handoff
-   * await-idle wakes on these instead of polling.
+   * await-idle wakes on these instead of polling. Phase B: each change also carries the board's
+   * `monitorActivity` (absent ⇒ monitored) so the attention notifier can gate its push.
    */
-  subscribeStatus(listener: (change: { id: string; status: string }) => void): () => void
+  subscribeStatus(
+    listener: (change: { id: string; status: string; monitorActivity?: boolean }) => void
+  ): () => void
   /**
    * Drive the canvas via the MAIN → renderer control-plane command channel (T3.1+).
    * MAIN injects a frame-guarded `sendMcpCommand`; the renderer applies the command

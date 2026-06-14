@@ -78,4 +78,30 @@ describe('buildBoardSnapshot', () => {
     })
     expect(snapshot[0].status).toBe('idle')
   })
+
+  it('forwards v10 agentKind + monitorActivity only when present (Phase B)', () => {
+    const snapshot = buildBoardSnapshot(
+      [
+        { id: 't1', type: 'terminal', title: 'Claude', agentKind: 'claude', monitorActivity: true },
+        { id: 't2', type: 'terminal', title: 'Shell', monitorActivity: false },
+        { id: 't3', type: 'terminal', title: 'Plain' } // neither field set
+      ],
+      { running: { t1: true }, preview: {} }
+    )
+    expect(snapshot).toEqual([
+      {
+        id: 't1',
+        type: 'terminal',
+        title: 'Claude',
+        status: 'running',
+        agentKind: 'claude',
+        monitorActivity: true
+      },
+      { id: 't2', type: 'terminal', title: 'Shell', status: 'idle', monitorActivity: false },
+      { id: 't3', type: 'terminal', title: 'Plain', status: 'idle' }
+    ])
+    // Absent fields must not appear as keys (no `agentKind: undefined` noise on the wire).
+    expect('agentKind' in snapshot[2]).toBe(false)
+    expect('monitorActivity' in snapshot[2]).toBe(false)
+  })
 })

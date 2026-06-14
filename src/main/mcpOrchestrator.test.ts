@@ -47,7 +47,14 @@ function okCommands(): {
 }
 
 function reg(
-  boards: Array<{ id: string; type: string; title: string; status?: string }>,
+  boards: Array<{
+    id: string
+    type: string
+    title: string
+    status?: string
+    agentKind?: string
+    monitorActivity?: boolean
+  }>,
   sessions: Array<{ id: string; status: string }> = [],
   outputs: Record<string, BoardOutput> = {},
   resultsById: Record<string, BoardResult> = {},
@@ -84,6 +91,35 @@ describe('buildOrchestrator', () => {
       { id: 't1', type: 'terminal', title: 'Term', status: 'running' },
       { id: 'b1', type: 'browser', title: 'Web', status: 'failed' },
       { id: 'p1', type: 'planning', title: 'Plan', status: 'static' }
+    ])
+  })
+
+  it('forwards agentKind + monitorActivity onto the board summary, only when set (Phase B)', async () => {
+    const orch = buildOrchestrator(
+      reg([
+        {
+          id: 't1',
+          type: 'terminal',
+          title: 'Claude',
+          status: 'running',
+          agentKind: 'claude',
+          monitorActivity: true
+        },
+        { id: 't2', type: 'terminal', title: 'Shell', status: 'idle', monitorActivity: false },
+        { id: 't3', type: 'terminal', title: 'Plain', status: 'idle' } // neither field
+      ])
+    )
+    expect(await orch.listBoards()).toEqual([
+      {
+        id: 't1',
+        type: 'terminal',
+        title: 'Claude',
+        status: 'running',
+        agentKind: 'claude',
+        monitorActivity: true
+      },
+      { id: 't2', type: 'terminal', title: 'Shell', status: 'idle', monitorActivity: false },
+      { id: 't3', type: 'terminal', title: 'Plain', status: 'idle' }
     ])
   })
 

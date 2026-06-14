@@ -45,6 +45,22 @@ describe('boardRegistry', () => {
     ])
   })
 
+  it('keeps a bounded agentKind + a strict-boolean monitorActivity, drops invalid ones (board kept)', () => {
+    const longKind = 'x'.repeat(300)
+    const out = sanitizeSnapshot([
+      { id: 'a', type: 'terminal', title: 'A', agentKind: 'claude', monitorActivity: false },
+      { id: 'b', type: 'terminal', title: 'B', agentKind: 123, monitorActivity: 'yes' }, // both invalid
+      { id: 'c', type: 'terminal', title: 'C', agentKind: longKind }, // over-length → field dropped
+      { id: 'd', type: 'terminal', title: 'D', monitorActivity: true }
+    ])
+    expect(out).toEqual([
+      { id: 'a', type: 'terminal', title: 'A', agentKind: 'claude', monitorActivity: false },
+      { id: 'b', type: 'terminal', title: 'B' }, // invalid fields dropped, board retained
+      { id: 'c', type: 'terminal', title: 'C' },
+      { id: 'd', type: 'terminal', title: 'D', monitorActivity: true }
+    ])
+  })
+
   it('listBoardMirror returns the last stored snapshot (empty by default)', () => {
     __setMirrorForTest([{ id: 'x', type: 'terminal', title: 'X' }])
     expect(listBoardMirror()).toEqual([{ id: 'x', type: 'terminal', title: 'X' }])
@@ -115,6 +131,30 @@ describe('diffStatus', () => {
   it('exports BoardStatusChange with an { id, status } shape', () => {
     const change: BoardStatusChange = { id: 'x', status: 'idle' }
     expect(change).toEqual({ id: 'x', status: 'idle' })
+  })
+
+  it('carries monitorActivity on each (non-gone) change (Phase B)', () => {
+    expect(
+      diffStatus(
+        [],
+        [{ id: 'a', type: 'terminal', title: 'A', status: 'blocked', monitorActivity: false }]
+      )
+    ).toEqual([{ id: 'a', status: 'blocked', monitorActivity: false }])
+  })
+
+  it('emits on a monitorActivity flip even when the status bucket is unchanged (Phase B)', () => {
+    const prev = [
+      { id: 'a', type: 'terminal', title: 'A', status: 'blocked', monitorActivity: true }
+    ]
+    const next = [
+      { id: 'a', type: 'terminal', title: 'A', status: 'blocked', monitorActivity: false }
+    ]
+    expect(diffStatus(prev, next)).toEqual([{ id: 'a', status: 'blocked', monitorActivity: false }])
+  })
+
+  it('emits nothing when status AND monitorActivity are both unchanged (Phase B)', () => {
+    const s = [{ id: 'a', type: 'terminal', title: 'A', status: 'running', monitorActivity: false }]
+    expect(diffStatus(s, s)).toEqual([])
   })
 })
 
