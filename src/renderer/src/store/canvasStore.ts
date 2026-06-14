@@ -390,6 +390,8 @@ function applyLoadedDoc(
     selectedIds: [],
     past: [],
     future: [],
+    // A load/switch starts fresh — drop any ephemeral pending-config flag from the prior project.
+    configPendingId: null,
     ...(project ? { project } : {})
   })
 }
@@ -615,8 +617,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           reflectPresent: false
         }
       )
-      // Drop a dangling config-pending flag if the awaiting-config terminal is the one
-      // being removed (e.g. undo/MCP close while its New Terminal dialog is open).
+      // Drop a dangling config-pending flag if the awaiting-config terminal is the one being
+      // removed here (MCP close / user delete while its New Terminal dialog is open). Undo and
+      // project-load prune it separately — they restore boards from a snapshot, not via
+      // removeBoard.
       return s.configPendingId === id ? { ...result, configPendingId: null } : result
     }),
 
@@ -838,7 +842,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         past: r.past,
         future: r.future,
         selectedId: null,
-        selectedIds: []
+        selectedIds: [],
+        // configPendingId is ephemeral (never snapshotted on the undo rail). If this jump dropped
+        // the awaiting-config terminal, the flag would dangle — prune it (the removeBoard guard
+        // can't, since undo restores boards from a snapshot rather than calling removeBoard).
+        ...(s.configPendingId && !survivingIds.has(s.configPendingId)
+          ? { configPendingId: null }
+          : {})
       }
     }),
   redo: () =>

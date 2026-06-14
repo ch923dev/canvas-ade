@@ -73,6 +73,21 @@ describe('New Terminal config-pending flow (v10)', () => {
     get().removeBoard(id)
     expect(get().configPendingId).toBeNull()
   })
+
+  it('undo that drops the held board prunes the dangling flag (ephemeral, not on the rail)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 }, { configPending: true })
+    expect(get().configPendingId).toBe(id)
+    get().undo() // restores the pre-add snapshot; the board vanishes but configPendingId is ephemeral
+    expect(get().boards.some((b) => b.id === id)).toBe(false)
+    expect(get().configPendingId).toBeNull()
+  })
+
+  it('loading a document clears a pending flag (load starts fresh)', () => {
+    const id = get().addBoard('terminal', { x: 0, y: 0 }, { configPending: true })
+    expect(get().configPendingId).toBe(id)
+    get().loadObject(get().toObject())
+    expect(get().configPendingId).toBeNull()
+  })
 })
 
 describe('addBoard', () => {
