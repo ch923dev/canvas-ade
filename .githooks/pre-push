@@ -168,6 +168,10 @@ else
     E2E_PRECOMMIT=1 pnpm test:e2e
   else
     echo "[pre-push] renderer-scoped diff — Windows e2e leg, specs matching '$SCOPE' (Linux + full suite at the merge gate; force all with E2E_FULL_MATRIX=1). <1 min after build."
-    E2E_PRECOMMIT=1 pnpm test:e2e -- --grep "$SCOPE"
+    # NB: NO `--` before the flags. pnpm 9 forwards the `--` separator itself into the
+    # script, so `pnpm test:e2e -- --grep X` runs `playwright test -- --grep X` — and
+    # Playwright treats everything after `--` as positional FILE-path filters, not a title
+    # grep → "No tests found." `pnpm test:e2e --grep "$SCOPE"` forwards cleanly.
+    E2E_PRECOMMIT=1 pnpm test:e2e --grep "$SCOPE"
   fi
 fi
