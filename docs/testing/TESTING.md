@@ -125,7 +125,7 @@ test when you introduce a genuinely new native/real-instance surface (see "E2E k
 | **Planning / whiteboard** (notes/arrows/pen/checklist; shapes·mermaid = in-flight research, not shipped) | **integration (jsdom)** — render the real `PlanningBoard`; unit for pure geometry (snapping/tools/layout) | only the transform/real-OS-input slivers: full-view add-note (real click through live camera) · real Ctrl+V paste · PNG export raster. New shapes/mermaid → cover in jsdom; add an e2e ONLY if it needs real OS input or the native raster pipeline. |
 | **Persistence / migrations** (`canvas.json`, schema) | unit — `boardSchema` (de)serialize, migration pipeline, atomic-write contract, scene/session split | none (no native surface) — never e2e what a schema round-trip proves |
 | **MAIN / IPC & security** (`index.ts`, pty/preview/projectIpc, `localServer.ts`) | **integration** via `ipcTestHarness` (no app boot) + unit `windowSecurity` | none — assert the Electron security checklist at unit/integration (see Security map). Foreign-sender rejection is REQUIRED for every new guarded handler. |
-| **MCP swarm layer** (`@expanse-ade/mcp`, hosted in MAIN) | unit — orchestrator lifecycle/dispatch logic (`mcpOrchestrator` · `dispatchGuard` · `auditLog` · `ptyOutput` · `boardStatus` · `orchestrationEdges` · `resolveConnectTarget` · `useMcpCommands`); integration — IPC registration + **foreign-sender rejection** (`auditIpc` · `mcpConfirm` · `mcpCommand` `.integration`) + viewer/modal render (`AuditLogViewer` · `ConfirmModal` `.integration`). The Host-header DNS-rebind guard is tested in the sibling pkg repo. | `CANVAS_SMOKE=mcp` (`mcpSmoke.ts`) — the live tier-enforcement + real `handoff_prompt`→PTY smoke against the built app (two real loopback MCP clients, drives the confirm modal). The **one surviving `CANVAS_SMOKE` exception**; a Playwright `_electron` port (`e2e/mcp.e2e.ts`) is a tracked follow-up. |
+| **MCP swarm layer** (`@expanse-ade/mcp`, hosted in MAIN) | unit — orchestrator lifecycle/dispatch logic (`mcpOrchestrator` · `dispatchGuard` · `auditLog` · `ptyOutput` · `boardStatus` · `orchestrationEdges` · `resolveConnectTarget` · `useMcpCommands`); integration — IPC registration + **foreign-sender rejection** (`auditIpc` · `mcpConfirm` · `mcpCommand` `.integration`) + viewer/modal render (`AuditLogViewer` · `ConfirmModal` `.integration`). The Host-header DNS-rebind guard is tested in the sibling pkg repo. | `e2e/mcp.e2e.ts` (`@mcp`) — live tier-enforcement (list+call split) + the board mirror/status/states/attention + the passive resources (output/result/memory+traversal) + lifecycle (spawn/configure/close/cap) + **all four dispatch tools** (handoff/assign/interrupt/relay) against the built app: two real loopback MCP clients (the client runs in the **test process**, not MAIN), the real renderer mirror, real native preview (browser→failed), and real PTY writes driven through the confirm modal. **Idle-reap** (orchestrator sweep) and the **single-use-nonce replay** invariant stay unit-only — pure logic the smoke skipped/duplicated (`mcpOrchestrator.test.ts` · `dispatchGuard.test.ts`). This **retired the last `CANVAS_SMOKE` exception** (the 1221-line `mcpSmoke.ts` is deleted; dx-audit PR-5) — and the port even drives the launchCommand-configure confirm gate (BUG-002) the stale smoke never exercised. |
 | **Feature Workspaces / git worktrees** (deferred; `simple-git` in MAIN) | integration — worktree create/remove, dirty-on-delete prompt logic, `git init` opt-in/reuse/never-nest rules (mock `simple-git`) | one real-instance test of an actual worktree create→remove only if logic can't prove it. |
 | **Context subsystem** (`.canvas/` memory, digest) | unit — digest build, memory read/write, serialization | none. |
 | **Packaging / auto-update** (Phase 5) | — | **the one outstanding e2e-only surface**: an auto-update flow e2e once electron-updater/packaging/signing exist. Deferred until then. |
@@ -233,8 +233,10 @@ Run the legs directly:
 #### E2E tags + path-scoped selection (MT-1)
 
 Every spec's `test.describe` (or, for the describe-less `modal`/`recap` specs, each top-level `test`)
-title is prefixed with exactly one **area tag**. The tags partition the suite — every test carries one,
-none overlap — so `playwright test --grep @area` selects a clean subset:
+title is prefixed with exactly one **area tag**. The five area tags partition the renderer suite —
+every test carries one, none overlap — so `playwright test --grep @area` selects a clean subset. The
+`@mcp` swarm spec sits OUTSIDE this partition: its source (`src/main/**`) always routes to `FULL`, so
+it never runs as a scoped subset — only in the full matrix (see its row):
 
 | Tag | Specs | Source it guards |
 |---|---|---|
@@ -243,6 +245,7 @@ none overlap — so `playwright test --grep @area` selects a clean subset:
 | `@preview` | `browser*` · `preview*` · `previewLink` · `fullview` | `boards/Browser*`, `usePreviewManager`, `src/main/preview*`, `localServer` |
 | `@planning` | `whiteboard` · `textCreate` · `textToolbar` · `noteTint` · `planningKeyboard` | `boards/planning/**`, `boards/PlanningBoard`, vendored `perfect-freehand` |
 | `@chrome` | `menu*` · `modal` · `commandPalette` · `wayfinding` · `titleEdit` · `boardKeyboard` · `groups` · `backdrop` | `AppChrome`, `SettingsModal`, menu/modal/toast/group/palette/wayfinding/backdrop chrome |
+| `@mcp` | `mcp` | the swarm layer — `src/main/mcp*` + `@expanse-ade/mcp`. Always-FULL: the scope script routes `src/main/**` (and `e2e/**`) to `FULL`, so `@mcp` runs in the full matrix at the merge gate / on any MAIN change, never as a scoped renderer subset. |
 
 `scripts/e2e-scope.mjs` is the path → tag mapping (a pure, unit-tested function — `scripts/e2e-scope.test.ts`).
 **Safety contract — it fails OPEN to `FULL`** (run every spec) for any cross-cutting or cross-OS path

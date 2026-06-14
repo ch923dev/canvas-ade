@@ -196,7 +196,7 @@ export default tseslint.config(
   // File-size ratchet — caps new source at 700 CODE lines (blanks + comments skipped, so dense
   // documentation is never penalised) and freezes today's code-heavy files at pinned counts. Pins
   // are edited DOWNWARD only: lower a file's pin in the same PR that shrinks it; delete the entry
-  // once it drops under 700. Tests are exempt (large test files are healthy). The four pins below
+  // once it drops under 700. Tests are exempt (large test files are healthy). The three pins below
   // are the only source files whose CODE-line count currently exceeds 700 (measured 2026-06-09);
   // every other file — incl. the comment-dense pty.ts/mcpOrchestrator.ts/usePreviewManager.ts/
   // canvasStore.ts — is already under the global cap, which guards it against future growth.
@@ -209,10 +209,6 @@ export default tseslint.config(
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],
     rules: { 'max-lines': ['error', { max: 631, skipBlankLines: true, skipComments: true }] }
-  },
-  {
-    files: ['src/main/mcpSmoke.ts'],
-    rules: { 'max-lines': ['error', { max: 1000, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/Canvas.tsx'],

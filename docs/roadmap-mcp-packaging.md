@@ -46,7 +46,7 @@ pnpm mcp:link            # = pnpm link ../canvas-ade-mcp
 # inner loop while developing a pkg change:
 #   edit Z:\canvas-ade-mcp/src ...
 pnpm mcp:build           # build the sibling dist  (= pnpm --dir ../canvas-ade-mcp build)
-pnpm build && CANVAS_SMOKE=mcp pnpm start   # app now runs the edited library
+pnpm test:e2e --grep @mcp   # exercise the edited library against the built app (the @mcp e2e spec)
 
 # or in one shot:
 pnpm mcp:dev             # mcp:build + mcp:link
@@ -91,5 +91,6 @@ Rules:
 
 - **Workspace vs sibling repos** (item 4): the sibling-repo split keeps the package independently
   publishable/testable; the workspace makes the dev loop trivial. Pick when item-1 friction warrants it.
-- **Packaged-app verification** (item 3): is a dedicated packaged smoke (run the built installer with
-  `CANVAS_SMOKE=mcp`) worth it, or does the dev smoke suffice? Resolve at Phase 5.
+- **Packaged-app verification** (item 3): is a dedicated packaged smoke (run the built installer and
+  exercise the MCP tiers) worth it, or does the `@mcp` e2e spec against the unpacked build suffice?
+  Resolve at Phase 5.

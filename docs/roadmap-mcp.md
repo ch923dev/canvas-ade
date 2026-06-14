@@ -63,7 +63,7 @@ are all explicitly deferred).
 |---|---|
 | **Repos / zones** | package files touched + app files touched (declared on the coordination board) |
 | **Build** | **pkg:** tool/resource + Zod schema + contract test. **app:** Orchestrator-adapter method + any IPC + any UI |
-| **🧪 e2e** | a `CANVAS_SMOKE=mcp` probe in `src/main/mcpSmoke.ts` that **asserts the canvas actually changed** (not just that the call returned). New probes follow the existing `MCP_*_OK` marker style |
+| **🧪 e2e** | a `@mcp` Playwright probe in `e2e/mcp.e2e.ts` that **asserts the canvas actually changed** (not just that the call returned) — a `test()` block under the `@mcp` describe, driving the live loopback server from the test process (this replaced the retired `CANVAS_SMOKE=mcp` / `mcpSmoke.ts` marker harness; dx-audit PR-5) |
 | **Manual** | **(a)** MCP **Inspector** (`@modelcontextprotocol/inspector`) against the live loopback server — call the tool/read the resource, eyeball the result; **(b)** a **real CLI agent** in a Terminal board, pointed at the server via a generated `.mcp.json`, exercising the capability end-to-end. Each lists explicit steps + expected output |
 | **Gate** | `pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build` (app) · `pnpm test && pnpm test:live` (pkg) · the two-layer 🧪 must be green |
 | **Handoff** | written after the task: what landed, files, test evidence, follow-ups, next-task pointer |
@@ -535,8 +535,8 @@ contained; revocation works; the lethal-trifecta path cannot fire without the hu
 - **Never weaken the locked security model:** `contextIsolation`/`sandbox`/`no-nodeIntegration`;
   Browser content never reaches the PTY; loopback-only; capability split enforced **server-side by
   token** (never annotation/prompt).
-- **Keep the app gate green** (typecheck/lint/format/unit/build) + the board e2e harness after every
-  task; the MCP smoke (`CANVAS_SMOKE=mcp`) grows one probe per capability.
+- **Keep the app gate green** (typecheck/lint/format/unit/build) + the e2e matrix after every task;
+  the `@mcp` e2e spec (`e2e/mcp.e2e.ts`) grows one `test()` per capability.
 - **Coordination:** declare each sub-branch's zones on `.claude/coordination/ACTIVE-WORK.md` before
   editing; never run feature work in the `Z:\Canvas ADE` main dir (the 2026-06-03 collision lesson).
 - **Add an MCP-layer ADR** when a load-bearing decision lands (transport, auth, safety-tier, worktrees).
