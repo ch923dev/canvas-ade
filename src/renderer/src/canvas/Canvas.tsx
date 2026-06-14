@@ -98,18 +98,22 @@ const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: Orchestratio
 // Single-board focus framing moved to useBoardKeyboardNav (D4-B): Enter and
 // double-click share its focusBoardById, so the two paths can never drift.
 
-/** Dot grid that fades toward the void as the camera zooms out (DESIGN.md §5).
- *  With a backdrop active the grid is opt-in via the picker's toggle (spec §3 —
- *  background.gridDots); backdrop-less ("none"/null) keeps today's always-on grid. */
+/** Lattice grid that fades toward the void as the camera zooms out (DESIGN.md §5).
+ *  With a backdrop active the grid is opt-in via the picker (spec §3 — background.gridDots)
+ *  and its style is the picker's lattice pick (PR 4 — background.gridStyle: dots/lines/cross,
+ *  RF-native variants); backdrop-less ("none"/null) keeps today's always-on dot grid. */
 function FadingDots(): ReactElement | null {
   const zoom = useStore((s) => s.transform[2])
   const background = useCanvasStore((s) => s.background)
   if (background !== null && background.kind !== 'none' && !background.gridDots) return null
+  // GridStyle values are exactly the BackgroundVariant string members ('dots'/'lines'/'cross').
+  const variant = (background?.gridStyle ?? 'dots') as BackgroundVariant
   return (
     <Background
-      variant={BackgroundVariant.Dots}
+      variant={variant}
       gap={GRID_GAP}
-      size={1}
+      // RF size = dot radius (1) / cross arm length (6, its default); ignored for lines.
+      size={variant === BackgroundVariant.Cross ? 6 : 1}
       // Mirror of the --grid-dot token (SVG fill can't read a CSS var reliably).
       color="#202022"
       style={{ opacity: gridDotOpacity(zoom) }}

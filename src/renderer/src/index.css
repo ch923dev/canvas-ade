@@ -676,8 +676,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.bd-slider,
-.bd-check {
+.bd-slider {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -699,12 +698,52 @@ body {
   font: 11px var(--mono, monospace);
   color: var(--text-3);
 }
-.bd-slider[data-disabled],
-.bd-check[data-disabled] {
+.bd-slider[data-disabled] {
   opacity: 0.45;
 }
-.bd-check input {
-  accent-color: var(--accent);
+/* Grid lattice segmented control (PR 4): Off · Dots · Lines · Cross. */
+.bd-grid {
+  padding: 8px 12px;
+  font: 12px var(--ui);
+  color: var(--text-2);
+}
+.bd-grid > span {
+  display: block;
+  margin-bottom: 6px;
+}
+.bd-grid[data-disabled] {
+  opacity: 0.45;
+}
+.bd-seg {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface-overlay);
+}
+.bd-seg-btn {
+  padding: 5px 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-2);
+  font: 11.5px var(--ui);
+  cursor: pointer;
+  text-align: center;
+}
+.bd-seg-btn:hover:not(:disabled),
+.bd-seg-btn:focus-visible {
+  background: var(--surface-raised);
+}
+.bd-seg-btn[data-on] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bd-seg-btn:disabled {
+  cursor: default;
 }
 .react-flow__node-smoke {
   background: var(--surface-raised);

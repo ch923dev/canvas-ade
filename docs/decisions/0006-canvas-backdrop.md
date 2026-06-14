@@ -1,8 +1,10 @@
 # ADR 0006 — Canvas backdrop (wallpaper mode)
 
 - **Status:** accepted (spec signed off 2026-06-11; preset library + grid variants by user vote
-  2026-06-12 — `docs/canvas-backdrop/` carries the per-slice detail until PR 2 merges; this ADR is
-  the durable residue).
+  2026-06-12). Shipped across PRs #126 (core + wallpaper) · #137 (blossom-river) · #147 (scenic
+  roster, 10 scenes) · grid variants (final PR). The per-slice `docs/canvas-backdrop/` folder was
+  deleted with the final PR (doc lifecycle) — this ADR + `docs/archive/build-history.md` are the
+  durable residue.
 - **Context:** the user wants wallpaper-grade art behind the boards (vivid scenes or their own
   image/video), beyond the flat `--void`. `design-reference/` is read-only and predates this, so
   the visual-contract amendment lives here (like the D0 token deltas).
