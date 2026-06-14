@@ -18,6 +18,23 @@ describe('sceneRegistry', () => {
     }
   })
 
+  it('registers the full PR 3b scenic roster (addendum §3) in the scenic tier', () => {
+    for (const id of [
+      'aurora-night',
+      'starfield-nebula',
+      'sunset-ocean',
+      'snowfall-ridge',
+      'rainy-window',
+      'city-lights',
+      'misty-pines'
+    ]) {
+      const def = getScene(id)
+      expect(def, id).toBeDefined()
+      expect(def!.tier, id).toBe('scenic')
+      expect(def!.label.length, id).toBeGreaterThan(0)
+    }
+  })
+
   it('every listed scene round-trips through getScene (the picker/drift-guard seam)', () => {
     const all = listScenes()
     expect(all.length).toBeGreaterThanOrEqual(1)

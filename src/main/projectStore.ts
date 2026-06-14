@@ -191,8 +191,15 @@ export async function createProject(
 const ASSETS = 'assets'
 /** A safe stored assetId: exactly `assets/<40-hex sha1>.<ext>`; blocks any traversal. */
 const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
-/** Keep in sync with the renderer accept lists (BackdropPicker VIDEO_EXTS + useBackdropMedia MIME_BY_EXT). */
-const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
+/**
+ * MAIN re-validates asset extensions independently of the renderer (untrusted) — a
+ * deliberate cross-trust-boundary duplication of the renderer accept lists, NOT a
+ * shared import. `assetExtsParity.test.ts` (S11b) drift-guards it: every ext in the
+ * renderer's `acceptExts` (IMAGE_EXTS + VIDEO_EXTS + MIME_BY_EXT keys) must be a
+ * subset of this set, so a new ext added on one side fails a unit test rather than a
+ * user's import (the webm regression, addendum section 6). `svg` is MAIN-only here.
+ */
+export const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
 
 /**
  * Content-address `bytes` (sha1) into `<dir>/assets/<sha1>.<ext>` and return the

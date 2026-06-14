@@ -24,12 +24,11 @@ import { showToast } from '../store/toastStore'
 import { Menu } from './Menu'
 import { Icon } from './Icon'
 import { listScenes, type SceneDef } from './backdrop/sceneRegistry'
+import { IMAGE_EXTS, VIDEO_EXTS } from './backdrop/acceptExts'
 
 export const IMAGE_CAP_BYTES = 30 * 1024 * 1024
 export const VIDEO_CAP_BYTES = 200 * 1024 * 1024
-const VIDEO_EXTS = ['webm', 'mp4']
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
-/** Mirror of useBackdropMedia's MIME map — the import side of the same contract. */
+/** Accept list shared with useBackdropMedia + drift-guarded against MAIN (acceptExts). */
 const ACCEPT = [...IMAGE_EXTS, ...VIDEO_EXTS].map((e) => `.${e}`).join(',')
 /** Gallery section order (addendum §3): ambient = subtle, scenic = wallpaper-grade. */
 const TIERS: ReadonlyArray<{ tier: SceneDef['tier']; label: string }> = [
