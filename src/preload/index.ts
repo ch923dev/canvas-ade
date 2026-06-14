@@ -86,6 +86,28 @@ export type PreviewEvent =
   // with a Reload CTA. Kept in sync with the main-process union.
   | { id: string; type: 'render-process-gone'; reason: string }
 
+// ── SPIKE (feat/preview-offscreen-spike): offscreen preview → <canvas> ──
+// One offscreen-rendered frame pushed main → renderer. `buffer` is the NativeImage
+// bitmap (BGRA); the renderer swaps R/B and paints it into the board's <canvas>.
+// Mirrors main `OsrFramePayload` (preload stays decoupled from main).
+export interface OsrFrame {
+  id: string
+  width: number
+  height: number
+  buffer: Uint8Array
+}
+/** The offscreen page's cursor, mirrored onto the host <canvas>. `image` (a data URL) +
+ *  `hotspot` are present only for type:'custom'. Mirrors main `OsrCursorPayload`. */
+export interface OsrCursor {
+  id: string
+  type: string
+  image?: string
+  hotspot?: { x: number; y: number }
+  scale?: number
+}
+/** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
+export type OsrInputEvent = Parameters<Electron.WebContents['sendInputEvent']>[0]
+
 // ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
 export interface RecentProject {
   path: string
@@ -235,6 +257,34 @@ const api = {
     const handler = (_e: IpcRendererEvent, ev: PreviewEvent): void => listener(ev)
     ipcRenderer.on('preview:event', handler)
     return () => ipcRenderer.removeListener('preview:event', handler)
+  },
+
+  // ── SPIKE (feat/preview-offscreen-spike): offscreen preview → <canvas> ──
+  // Render a Browser board's page offscreen and stream frames to a DOM <canvas>
+  // (the occlusion fix under test). Isolated from the native preview methods above;
+  // the renderer routes here only when VITE_PREVIEW_OSR=1 (BrowserPreviewLayer).
+  openOsrPreview: (args: { id: string; url: string }): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrOpen', args),
+  closeOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrClose', id),
+  sendOsrInput: (id: string, event: OsrInputEvent): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrInput', { id, event }),
+  // Reload a crashed/failed OSR board (the native reloadPreview has no view in OSR mode).
+  reloadOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrReload', id),
+  // Per-interaction focus emulation: enable on canvas focus, disable on blur (P0 — so the
+  // caret/:focus ring show while interacting AND the page's blur/focusout still fire).
+  setOsrFocus: (id: string, focused: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrFocus', { id, focused }),
+  onPreviewOsrFrame: (listener: (f: OsrFrame) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, f: OsrFrame): void => listener(f)
+    ipcRenderer.on('preview:osrFrame', handler)
+    return () => ipcRenderer.removeListener('preview:osrFrame', handler)
+  },
+  // Cursor stream: the offscreen page's cursor type, applied to the board's <canvas>
+  // so the preview shows an I-beam over inputs / pointer over links (a bitmap has none).
+  onPreviewOsrCursor: (listener: (c: OsrCursor) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, c: OsrCursor): void => listener(c)
+    ipcRenderer.on('preview:osrCursor', handler)
+    return () => ipcRenderer.removeListener('preview:osrCursor', handler)
   },
 
   // ── Phase 3 persistence ──

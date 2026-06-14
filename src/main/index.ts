@@ -16,6 +16,7 @@ import {
   setRecapEnvProvider
 } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
+import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
 import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
@@ -121,7 +122,10 @@ function createWindow(): void {
   // (blank Browser boards) — and the preview renderer processes leak while no
   // window exists. Close every preview view on window destruction; the recreated
   // window's renderer re-opens fresh views per persisted board.
-  mainWindow.on('closed', () => disposeAllPreviews())
+  mainWindow.on('closed', () => {
+    disposeAllPreviews()
+    disposeAllOsr() // SPIKE: close offscreen preview renderers too
+  })
 
   // External links open in the OS browser, never in-app. The scheme is allowlisted
   // (Bug #23) so a stray window.open of file:/smb:/custom-protocol is dropped, not
@@ -317,6 +321,7 @@ app.whenReady().then(async () => {
     recordResult: (id, result) => recordBoardResult(id, result)
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
+  registerPreviewOsrHandlers(ipcMain, () => mainWindow) // SPIKE: offscreen preview → <canvas>
   registerPreviewScreenshotHandler(ipcMain, () => mainWindow)
 
   // T-B2: encrypt the API key with Electron safeStorage. Built here (index already imports
@@ -579,6 +584,7 @@ app.whenReady().then(async () => {
 function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
   disposeAllPreviews()
+  disposeAllOsr() // SPIKE: close offscreen preview renderers
   const mcpClosed = mcp?.close() ?? Promise.resolve()
   mcp = null
   localServer?.close()

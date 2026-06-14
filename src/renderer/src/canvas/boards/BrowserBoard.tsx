@@ -31,6 +31,14 @@ import { showToast } from '../../store/toastStore'
 import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
 import { isHttpUrl } from '../../lib/autoConnect'
+import { useOffscreenPreview } from './useOffscreenPreview'
+import { useOffscreenInput } from './useOffscreenInput'
+
+// SPIKE (feat/preview-offscreen-spike): when set, Browser previews render OFFSCREEN
+// and paint into a DOM <canvas> here (occlusion fix under test, ADR 0002) instead of
+// the native WebContentsView. The native path is disabled in BrowserPreviewLayer when
+// this is on, so the two never run together.
+const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR === '1'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
@@ -126,6 +134,21 @@ export function BrowserBoard({
   const beginChange = useCanvasStore((s) => s.beginChange)
   const runtime = usePreviewStore(selectRuntime(board.id))
   const preset = VIEWPORT_PRESETS[board.viewport]
+
+  // SPIKE (feat/preview-offscreen-spike): the offscreen-preview canvas. The hook opens
+  // an offscreen render in MAIN and paints its frames into this canvas (inside .bb-frame);
+  // a no-op unless OSR_PREVIEW. Stays enabled in FULL VIEW: portal full view RELOCATES this
+  // live subtree (canvas + its 2D context + input listeners) into the modal host without
+  // remounting (useFullView), so keeping `enabled` constant across the toggle means the
+  // OSR window is never torn down — the canvas keeps painting + forwarding in full view
+  // too. (Gating on `!fullView` destroyed the OSR on enter → a blank full-view preview.)
+  const osrCanvasRef = useRef<HTMLCanvasElement>(null)
+  useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW)
+  // SPIKE M3: forward pointer/wheel/keyboard on the canvas to the offscreen page.
+  // Open fidelity gaps + the productionization plan (P1: IME / native <select> / clipboard /
+  // dialogs / audio / downloads · M1 sharpness · M2 throughput · M4 responsive presets) are
+  // tracked in docs/feature-proposals.md › OS-3 and the spike spec §8c (the gap register).
+  useOffscreenInput(board.id, osrCanvasRef, OSR_PREVIEW)
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
   // board.url changes underneath (e.g. set elsewhere), re-sync the draft DURING
@@ -294,7 +317,9 @@ export function BrowserBoard({
   // D2-C Reload CTA: wc.reload() relaunches a crashed renderer; its fresh main-frame
   // nav-start clears the crashed latch back to `connecting` (usePreviewEvents).
   const reloadCrashed = (): void => {
-    void window.api.reloadPreview(board.id)
+    // In OSR mode there's no native view for preview:reload — reload the offscreen window.
+    if (OSR_PREVIEW) void window.api.reloadOsrPreview(board.id)
+    else void window.api.reloadPreview(board.id)
   }
 
   return (
@@ -462,6 +487,12 @@ export function BrowserBoard({
             willRetry={willRetry}
             onReload={reloadCrashed}
           />
+          {/* SPIKE: offscreen-rendered frames paint here, OVER the snapshot/state
+              fallback. A normal DOM <canvas> — clips/rounds with .bb-frame, no native
+              overlay (the occlusion fix under test). */}
+          {OSR_PREVIEW && (
+            <canvas ref={osrCanvasRef} className="bb-live nowheel nodrag" tabIndex={0} />
+          )}
           {/* D2-C: evicted (renderer freed) ≠ detached (snapshot) — say so. Safe to
               overlay: an evicted board has no live native view above this HTML. */}
           {paused && <span className="bb-paused-badge">paused</span>}

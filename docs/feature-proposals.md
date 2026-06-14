@@ -645,6 +645,76 @@ value, almost no UI weight.
 
 ---
 
+## QW-7 · Device emulation for Browser presets (User-Agent + viewport) ✅
+
+- **Status:** proposed
+- **Effort:** low
+- **Roadmap slot:** extends Phase 2.2 Browser board responsive presets (Mobile/Tablet/Desktop);
+  pairs with QW-4 console capture + QW-5 screenshot. Composes cleanly with the offscreen-preview
+  spike (the hooks are `webContents`-level, so they apply identically to the OSR window).
+- **Depends on:** nothing hard — the per-board session already isolates UA/zoom
+  (`partition: preview-<id>`). Persistence only needed if a per-board override toggle is persisted.
+
+### The gap (and the term)
+A site can switch to its mobile experience two different ways:
+
+1. **Server-side User-Agent redirect** — the server reads the `User-Agent` header, sees a phone, and
+   `302`-redirects to a mobile host (`m.facebook.com`, `m.wikipedia.org`). This is **UA sniffing**.
+2. **Client-side responsive CSS** — same URL, CSS media queries reflow by viewport width. This is what
+   modern dev apps (Next, Vite, Tailwind, React) do.
+
+Our presets (`VIEWPORT_PRESETS`, `lib/browserLayout.ts:52` — `mobile 390×844`, `tablet 834×1112`,
+`desktop 1280×800`) only change the **CSS render width** via `setZoomFactor` (`preview.ts:411,499`).
+That fires mechanism (2) — responsive reflow works — but **never touches the User-Agent**, so a
+UA-sniffing site (mechanism 1) still serves its desktop host on the Mobile preset. The dev-tool
+capability that closes this is **device emulation** (Chrome DevTools "Device Mode" / mobile emulation).
+
+### What it does
+Bind each viewport preset to a **device profile**: when `viewport === 'mobile'`, present a mobile
+User-Agent (and mobile device metrics / touch) so a previewed page that UA-sniffs serves its phone
+experience; `desktop` clears the override. Exposed as a small **per-board toggle** ("emulate mobile
+device") so a dev whose own server runs custom UA logic isn't surprised.
+
+### Why valuable
+Makes the Mobile/Tablet presets *truthful* for the class of sites that branch on UA, not just on CSS
+width — the user's intuition ("Facebook gives me `m.facebook.com` on a phone"). Low cost, additive,
+and it deepens the Browser board's core job (faithful responsive preview) without a new dependency.
+
+### Implementation sketch
+- **MAIN, the built-in path (no CDP):**
+  - `webContents.setUserAgent(profile.ua)` — the site's UA-sniff now sees a phone.
+  - `webContents.enableDeviceEmulation({ screenPosition: 'mobile', viewSize, deviceScaleFactor, … })`
+    for device metrics; `disableDeviceEmulation()` to revert. Drive both off the preset switch that
+    already runs per board.
+- **Deeper fidelity (optional, only if needed):** CDP `Emulation.setUserAgentOverride` +
+  `setDeviceMetricsOverride` + `setTouchEmulationEnabled` give full Device Mode (`navigator.platform`,
+  touch events, `ontouchstart`). **ADR 0002 pre-authorizes CDP attach** — but ship the built-in path
+  first; only reach for CDP if a target site needs touch/platform spoofing the built-ins miss.
+- **Renderer:** the existing Mobile/Tablet/Desktop segmented control drives it; add the per-board
+  "emulate device" toggle. A device profile is just `{ ua, deviceScaleFactor, touch }` keyed by preset.
+- **Persistence:** session-only for v1, or persist the per-board toggle in `canvas.json` (additive
+  optional field → writer-only schema bump, ADR 0007). UA strings live in a small MAIN registry, not
+  the doc.
+- **No new dependencies.**
+
+### Viability checklist (run at ship time)
+- [ ] `setUserAgent` + `enableDeviceEmulation` behave on the Electron 42 `WebContentsView` **and** on
+      the offscreen window if the OSR spike has landed (re-check after the preview path is finalized).
+- [ ] Switching presets re-navigates/reloads as needed so a UA redirect actually re-fires (some sites
+      only redirect on the next navigation, not in-place) — verify Mobile→Desktop round-trips host.
+- [ ] `disableDeviceEmulation()` / UA reset fully reverts on the Desktop preset (no sticky mobile UA).
+- [ ] Per-board toggle defaults OFF (or to a safe default) so a dev server with custom UA logic isn't
+      silently mobile-emulated; document the one sanctioned behaviour.
+- [ ] Device metrics (`deviceScaleFactor`) don't fight the responsive `setZoomFactor`/`setBounds`
+      width math — confirm the preset still reflows at the right breakpoint with emulation on.
+- [ ] Security unchanged: emulation is read-only display state; no new page→PTY or write path; stays
+      within `sandbox`/`contextIsolation`/per-board session.
+- **Acceptance:** point a Browser board at a UA-sniffing site (or a tiny local server that branches on
+  `User-Agent`) → Mobile preset with emulation on serves the mobile variant; Desktop preset serves the
+  desktop variant; a normal responsive localhost app still reflows correctly under both.
+
+---
+
 # Other shortlisted
 
 ## OS-1 · One-click commit / merge / open-PR from a Terminal board ◆
@@ -719,6 +789,62 @@ the spatial canvas is the ideal surface for it.
 - [ ] Broadcast respects the trusted-input boundary (no Browser content path).
 - **Acceptance:** select 3 terminals, enable broadcast, type a prompt → all 3 receive it; disable →
       input returns to single-board.
+
+---
+
+## OS-3 · OSR Browser Preview — productionization (offscreen → canvas) ◆
+
+- **Status:** proposed (spike PROVEN — see the draft PR + spec below; productionization is the open work)
+- **Effort:** high (multi-week — closes a whole class of offscreen-render fidelity gaps)
+- **Roadmap slot:** post-spike. Gated on a decision to make the offscreen path the DEFAULT
+  Browser preview (currently flag-gated `VITE_PREVIEW_OSR=1`, off). Build on the spike branch.
+- **Depends on:** the shipped spike (`feat/preview-offscreen-spike`); ADR 0002 (CDP pre-authorized);
+  the native preview path it reuses helpers from (`preview.ts`).
+
+### What it does
+Promotes the **occlusion-fix spike** — render a Browser board's page OFFSCREEN and paint its
+frames into a DOM `<canvas>` (clippable/z-orderable, so the ADR-0002 native-overlay occlusion
+disappears) — from a flag-gated proof into the **default** preview engine, by closing the
+fidelity gaps that a flat-bitmap + hidden-window + synthetic-input model otherwise breaks.
+
+**The spike already PROVED + shipped (flag-gated):** occlusion solved; full click/scroll/type;
+cursor mirroring; blinking caret + `:focus` ring (CDP focus-emulation, per-interaction); hover;
+full-view; `window.open` security; load/error/crash lifecycle + Reload. The decision question
+(*is occlusion fixable in Electron?* → **yes**, no Flutter migration needed) is answered.
+
+### Why valuable
+A native `WebContentsView` can never be clipped/rounded/z-ordered (ADR 0002) — it occludes other
+boards + chrome. The OSR→canvas path removes that permanently, which unblocks overlapping layouts,
+in-canvas chrome over previews, and a cleaner full-view. Productionizing it lets the canvas finally
+treat a live preview like any other board.
+
+### Implementation sketch — the open gap register (FULL detail in the spike spec §8c)
+`docs/reviews/2026-06-14-electron-to-flutter-assessment/preview-offscreen-spike-spec.md` › §8c is
+the authoritative register (status / severity / fix lever / Electron+CDP API per item). Summary:
+- **P1 (correctness/feel):** IME/CJK composition (`Input.imeSetComposition`/`insertText`); native
+  `<select>`/date-picker popups don't composite → MAIN-side CDP overlay; clipboard Ctrl+C/V →
+  `wc.copy()/paste()`; AltGr chars; JS dialogs + file-chooser (`Page.javascriptDialogOpening` /
+  `setInterceptFileChooserDialog`); audio from invisible windows (`setAudioMuted` policy);
+  downloads (`will-download`); precise wheel scroll.
+- **Deferred measurements (now with fix levers):** **M1** DPR sharpness
+  (`setContentSize(W*S)+setZoomFactor(S)` supersample); **M2** throughput/CPU gating (per-board
+  `setFrameRate`/`stopPainting` by visibility + `MAX_LIVE`; honor `dirtyRect`; `createImageBitmap`);
+  **M4** responsive presets (`setContentSize(presetW)` + live input-transform width).
+- **P2:** title/favicon meta, native context menu, debugger re-attach, teardown symmetry, paint
+  watchdog, custom-cursor rate-limit, `osrInput` type allowlist (§8c).
+
+### Viability checklist (run at ship time)
+- [ ] Decision made to flip OSR to the DEFAULT (or run both behind a per-project/board toggle).
+- [ ] P1 register items closed or explicitly accepted-as-gaps (esp. native `<select>` + IME, the
+      two highest-likelihood breakages for real localhost apps).
+- [ ] M1/M2/M4 landed (sharpness, CPU gating, responsive reflow) — these are the table-stakes for
+      "as good as the native view".
+- [ ] Security invariants re-verified under the new surface (no Browser→PTY; deny-all permissions;
+      per-board partition; `wc.debugger` MAIN-only; `setWindowOpenHandler`).
+- [ ] FULL e2e matrix green (both legs) with the flag ON; the native path stays green with it OFF.
+- **Acceptance:** with OSR default, a Browser board over another board / under the dock reads
+  correctly (occlusion gone); a native `<select>` + a CJK input + a copy/paste + a Mobile preset all
+  behave like a real browser; 4 idle boards don't peg the CPU; text is crisp at working zoom.
 
 ---
 
