@@ -40,11 +40,21 @@ is part of every check.
       0.8: the selection lands on the exact cells under the cursor. Scrollback + the live session
       survive every zoom change (no respawn).
 - [ ] Kill the board -> the child process tree dies (no zombie agent), no console error.
-- [ ] Config popover (D2-B guard): edit the launch command, press Esc or click away -> "Unsaved
-      changes" row arms (no silent discard); Discard closes without persisting; an edit or second
-      Esc returns to editing; a clean popover closes straight through.
+- [ ] New Terminal dialog (create): drag-create a terminal -> the dialog opens over the dropped
+      board (spawn held); pick a preset (Claude/Codex/Gemini/OpenCode/Shell) -> the brand glyph
+      selects and the command pre-fills; Create spawns with the chosen command + identity; Cancel/Esc
+      releases it as a plain shell (no agentKind).
+- [ ] Command builder: Claude shows category tabs (Setup/Session/Permissions/Context); set Model on
+      Setup + Continue on Session -> the composed command reads `claude --model opus -c` (recomposes
+      in flag order across tabs); the search magnifier filters options across all tabs; editing the
+      Command field by hand overrides the builder; Shell shows NO builder (raw command only).
+- [ ] Terminal Settings (edit): the gear opens the SAME dialog pre-filled from the board; the primary
+      action reads "Apply & restart" and patches shell/launchCommand/cwd/monitorActivity (respawns the
+      live session); Cancel/Esc closes and persists nothing (replaces the old D2-B unsaved-edit guard).
+- [ ] Monitor activity toggle: defaults on; toggling off then reopening the board persists
+      `monitorActivity: false`. (The swarm/`canvas://attention` exclusion is Phase B — not wired yet.)
 - [ ] Bare-shell terminal (no launchCommand) -> the first-run hint pill shows bottom-left; clicking
-      it opens config; X dismisses it on EVERY board, forever (sticky across restarts).
+      it opens the Settings dialog; X dismisses it on EVERY board, forever (sticky across restarts).
 - [ ] While `starting`, the top sliver runs in its slow/dim variant, then switches to the normal
       run sliver on `running` (static under reduced motion).
 - [ ] Restart (with a resumable session) -> menu auto-closes on Esc / outside click / re-click;

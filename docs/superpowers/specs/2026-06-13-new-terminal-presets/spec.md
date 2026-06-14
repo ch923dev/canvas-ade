@@ -1,9 +1,12 @@
 # Spec — New Terminal agent-preset dialog (+ MCP agent identity)
 
-- **Status:** Design signed off (mock-v2). **A1 (`9838161`) + A2 (`7946375`) IMPLEMENTED +
-  GATE-GREEN**: typecheck/lint/format · unit 2306 · build · Windows e2e 111/111 (3 dialog tests
-  incl. builder compose + search filter). **Phase B (MCP observation) remains; pre-merge owes the
-  full e2e matrix (Linux leg).**
+- **Status:** **PHASE A COMPLETE.** A1 (preset dialog + brand glyphs + identity + schema v10), A2
+  (searchable per-agent command builder with category tabs), and the **unified create+edit dialog
+  (Option A)** — NewTerminalDialog now serves BOTH the place-first create flow and the gear-icon edit
+  flow, and the old in-canvas TerminalConfig popover + its configDirty guard are removed. Gate green:
+  typecheck/lint/format, unit+integration 2298, Windows e2e 111/111. Rebased onto main `5fbb7b0`.
+  **Phase B (MCP agent-identity observation) is the remaining follow-up; the full e2e matrix (Linux
+  leg) is owed at the pre-merge gate.**
 - **Branch:** `feat/new-terminal-presets` (off `main` @ `d82acc6`).
 - **Schema:** claims **v10** (additive; `minReaderVersion` stays 9). Coordinate with in-flight
   `canvas-backdrop` (v9) — see Coordination.
