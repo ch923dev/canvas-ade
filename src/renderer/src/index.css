@@ -626,6 +626,56 @@ body {
   margin: 6px 0;
   background: var(--border-subtle);
 }
+/* Scene gallery (PR 3a): tier-grouped thumbnail grid under the source rows. */
+.bd-tier {
+  font: 600 10px var(--ui);
+  color: var(--text-3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 12px 4px;
+}
+.bd-gallery {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 2px 8px 4px;
+}
+.bd-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  text-align: left;
+}
+.bd-tile:hover,
+.bd-tile:focus-visible {
+  background: var(--surface-overlay);
+}
+.bd-tile[data-on] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bd-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+.bd-tile-label {
+  font: 11.5px var(--ui);
+  padding-left: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .bd-slider,
 .bd-check {
   display: flex;

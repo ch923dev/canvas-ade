@@ -294,6 +294,43 @@ test.describe('canvas backdrop (S4)', () => {
     await evalIn(page, `window.__canvasE2E.setBackground({ kind: 'none' })`)
   })
 
+  test('every registered scene mounts a canvas and paints a frame (S11)', async ({ page }) => {
+    // Registry-derived: the loop covers whatever the picker offers, so PR 3b's scenic
+    // roster is exercised here for free the moment it is registered.
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const ids = await evalIn<string[]>(page, 'window.__canvasE2E.listSceneIds()')
+    expect(ids, 'drift + current + blossom-river at least').toEqual(
+      expect.arrayContaining(['drift', 'current', 'blossom-river'])
+    )
+    // Strided pixel hash (the reduced-motion probe's technique) — non-null ⇒ the scene
+    // canvas sized and painted at least one frame.
+    const HASH = `(() => {
+      const c = document.querySelector('canvas[data-test="backdrop-scene"]');
+      if (!c || c.width === 0) return null;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let h = 0;
+      for (let i = 0; i < d.length; i += 97) h = (h * 31 + d[i]) | 0;
+      return h;
+    })()`
+    for (const id of ids) {
+      await evalIn(
+        page,
+        `window.__canvasE2E.setBackground({ kind: 'scene', scene: ${JSON.stringify(id)}, dim: 0.25, saturation: 0.7, gridDots: false })`
+      )
+      expect(
+        await pollEval(
+          page,
+          `!!document.querySelector('canvas[data-test="backdrop-scene"]')`,
+          2000
+        ),
+        `${id}: scene canvas mounted`
+      ).toBe(true)
+      expect(await pollEval(page, `${HASH} !== null`, 4000), `${id}: painted a frame`).toBe(true)
+    }
+    await page.emulateMedia({ reducedMotion: null })
+    await evalIn(page, `window.__canvasE2E.setBackground({ kind: 'none' })`)
+  })
+
   test('missing wallpaper asset: keyed toast + revert to none', async ({ page, electronApp }) => {
     // A real project dir so asset:read genuinely probes the disk (and finds nothing).
     const tmp = await mainCall<string>(

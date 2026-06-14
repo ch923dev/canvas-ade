@@ -23,7 +23,7 @@ import {
 import { showToast } from '../store/toastStore'
 import { Menu } from './Menu'
 import { Icon } from './Icon'
-import { listScenes } from './backdrop/sceneRegistry'
+import { listScenes, type SceneDef } from './backdrop/sceneRegistry'
 
 export const IMAGE_CAP_BYTES = 30 * 1024 * 1024
 export const VIDEO_CAP_BYTES = 200 * 1024 * 1024
@@ -31,6 +31,11 @@ const VIDEO_EXTS = ['webm', 'mp4']
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
 /** Mirror of useBackdropMedia's MIME map — the import side of the same contract. */
 const ACCEPT = [...IMAGE_EXTS, ...VIDEO_EXTS].map((e) => `.${e}`).join(',')
+/** Gallery section order (addendum §3): ambient = subtle, scenic = wallpaper-grade. */
+const TIERS: ReadonlyArray<{ tier: SceneDef['tier']; label: string }> = [
+  { tier: 'ambient', label: 'Ambient' },
+  { tier: 'scenic', label: 'Scenic' }
+]
 
 export function BackdropPicker(): ReactElement {
   const [open, setOpen] = useState(false)
@@ -129,22 +134,6 @@ export function BackdropPicker(): ReactElement {
             <span className="bd-dot" data-on={kind === 'none' ? '' : undefined} />
             None
           </button>
-          {listScenes().map((s) => (
-            <button
-              key={s.id}
-              role="menuitemradio"
-              className="bd-row"
-              aria-checked={kind === 'scene' && background?.scene === s.id}
-              onClick={() => setBackground({ kind: 'scene', scene: s.id })}
-            >
-              <span
-                className="bd-dot"
-                data-on={kind === 'scene' && background?.scene === s.id ? '' : undefined}
-              />
-              {s.label}
-              <span className="bd-tag">scene</span>
-            </button>
-          ))}
           <button
             role="menuitemradio"
             className="bd-row"
@@ -155,6 +144,38 @@ export function BackdropPicker(): ReactElement {
             Wallpaper…
             <span className="bd-tag">choose file</span>
           </button>
+          <div className="bd-sep" />
+          {/* Tier-grouped scene gallery (PR 3a/3b). Each tile is a menuitemradio; the
+              thumbnail is the SceneDef.thumb data-URI, so the gallery derives from the
+              registry with no per-scene wiring here. */}
+          {TIERS.map(({ tier, label }) => {
+            const tierScenes = listScenes().filter((s) => s.tier === tier)
+            if (tierScenes.length === 0) return null
+            return (
+              <div key={tier}>
+                <div className="bd-tier">{label}</div>
+                <div className="bd-gallery">
+                  {tierScenes.map((s) => {
+                    const on = kind === 'scene' && background?.scene === s.id
+                    return (
+                      <button
+                        key={s.id}
+                        role="menuitemradio"
+                        className="bd-tile"
+                        aria-checked={on}
+                        data-on={on ? '' : undefined}
+                        title={s.label}
+                        onClick={() => setBackground({ kind: 'scene', scene: s.id })}
+                      >
+                        <img className="bd-thumb" src={s.thumb} alt="" />
+                        <span className="bd-tile-label">{s.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
           <div className="bd-sep" />
           <label className="bd-slider" data-disabled={enabled ? undefined : ''}>
             <span>Dim</span>
