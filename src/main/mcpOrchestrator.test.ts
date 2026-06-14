@@ -1689,10 +1689,11 @@ describe('buildOrchestrator.subscribeStatus (M5 app-adopt)', () => {
   /** A registry that captures the forwarded status listener + seeds readResult for t1. */
   function capturingReg(): {
     registry: BoardRegistry
-    emit: (c: { id: string; status: string }) => void
+    emit: (c: { id: string; status: string; monitorActivity?: boolean }) => void
     subscribed: () => boolean
   } {
-    let listener: ((c: { id: string; status: string }) => void) | null = null
+    let listener: ((c: { id: string; status: string; monitorActivity?: boolean }) => void) | null =
+      null
     const base = reg(
       [{ id: 't1', type: 'terminal', title: 'T', status: 'idle' }],
       [],
@@ -1727,6 +1728,28 @@ describe('buildOrchestrator.subscribeStatus (M5 app-adopt)', () => {
       { id: 't1', status: 'idle', result: { present: true, status: 'success', summary: 'done' } },
       { id: 't2', status: 'idle' },
       { id: 't1', status: 'gone' }
+    ])
+  })
+
+  it('carries monitorActivity through to the package listener, including the idle+result path (Phase B)', () => {
+    // Regression guard: the wrapper must forward `monitorActivity` so the attention notifier can
+    // gate its push — a `monitorActivity:false` board must NOT raise a canvas://attention update.
+    const { registry, emit } = capturingReg()
+    const orch = buildOrchestrator(registry)
+    const seen: BoardStatusChange[] = []
+    orch.subscribeStatus((c) => seen.push(c))
+
+    emit({ id: 't1', status: 'running', monitorActivity: false }) // non-idle: flag carried, no result
+    emit({ id: 't1', status: 'idle', monitorActivity: false }) // idle+present: flag carried WITH result
+
+    expect(seen).toEqual([
+      { id: 't1', status: 'running', monitorActivity: false },
+      {
+        id: 't1',
+        status: 'idle',
+        monitorActivity: false,
+        result: { present: true, status: 'success', summary: 'done' }
+      }
     ])
   })
 
