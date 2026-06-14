@@ -50,9 +50,10 @@ export type IconName =
   | 'distribute-h'
   | 'distribute-v'
   | 'connector'
-  // Agentic-CLI preset glyphs (New Terminal dialog). Monochrome `currentColor` marks in
-  // the existing stroked single-path style — recognizable silhouettes, NOT brand logos
-  // (DESIGN.md "functional, non-illustrative"; the brand-mark approximation is deliberate).
+  // Agentic-CLI preset glyphs (New Terminal dialog). Monochrome `currentColor` marks that
+  // approximate each brand's recognizable silhouette in the system's stroked style (kept
+  // de-colored / non-illustrative per DESIGN.md §6). codex + shell are multi-primitive and
+  // special-cased in the Icon body; the rest are single paths in PATHS.
   | 'agent-claude'
   | 'agent-codex'
   | 'agent-gemini'
@@ -112,18 +113,18 @@ const PATHS: Record<IconName, string> = {
   'distribute-v': 'M4 5h16M4 19h16M7 11v2h10v-2z',
   // Connector: two node rings joined by a diagonal link (the draw-a-cable affordance).
   connector: 'M9 17a2 2 0 1 1-4 0 2 2 0 1 1 4 0M19 7a2 2 0 1 1-4 0 2 2 0 1 1 4 0M8.5 15.5l7-7',
-  // Agentic-CLI preset glyphs (monochrome approximations):
-  // claude — radial burst (8 spokes).
+  // Agentic-CLI preset brand marks (monochrome approximations):
+  // claude — Anthropic radial burst (8 rays from centre).
   'agent-claude':
-    'M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.8 2.8M15.2 15.2L18 18M6 18l2.8-2.8M15.2 8.8L18 6',
-  // codex — contained hexagon ring.
-  'agent-codex': 'M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z',
-  // gemini — four-point sparkle (concave star).
+    'M12 12V4M12 12v8M12 12H4M12 12h8M12 12L6.3 6.3M12 12l5.7 5.7M12 12l-5.7 5.7M12 12l5.7-5.7',
+  // gemini — Google Gemini four-point sparkle.
   'agent-gemini':
-    'M12 3c.4 4.6 1.4 5.6 6 6-4.6.4-5.6 1.4-6 6-.4-4.6-1.4-5.6-6-6 4.6-.4 5.6-1.4 6-6z',
+    'M12 2c.6 5.8 4.2 9.4 10 10-5.8.6-9.4 4.2-10 10-.6-5.8-4.2-9.4-10-10 5.8-.6 9.4-4.2 10-10z',
   // opencode — code brackets.
-  'agent-opencode': 'M9 8l-4 4 4 4M15 8l4 4-4 4',
-  // shell — prompt chevron + caret line.
+  'agent-opencode': 'M8.5 7.5L4 12l4.5 4.5M15.5 7.5L20 12l-4.5 4.5',
+  // codex (OpenAI blossom) + shell (terminal window) are special-cased in the Icon body;
+  // these single-path entries are fallbacks only.
+  'agent-codex': 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z',
   'agent-shell': 'M5 8l4 4-4 4M13 16h6'
 }
 
@@ -179,6 +180,23 @@ export function Icon({ name, size = 16, sw = 1.5, style }: IconProps): ReactElem
       <Svg size={size} sw={sw} style={style}>
         <rect x={3} y={4} width={18} height={12} rx={1.4} />
         <path d="M9 20h6M12 16v4" />
+      </Svg>
+    )
+  // codex — OpenAI "blossom": three overlapping ellipses at 60° (six-fold knot silhouette).
+  if (name === 'agent-codex')
+    return (
+      <Svg size={size} sw={sw} style={style}>
+        <ellipse cx={12} cy={12} rx={3.3} ry={8.2} />
+        <ellipse cx={12} cy={12} rx={3.3} ry={8.2} transform="rotate(60 12 12)" />
+        <ellipse cx={12} cy={12} rx={3.3} ry={8.2} transform="rotate(120 12 12)" />
+      </Svg>
+    )
+  // shell — a terminal window: framed rect with a `>` prompt + cursor line.
+  if (name === 'agent-shell')
+    return (
+      <Svg size={size} sw={sw} style={style}>
+        <rect x={3.5} y={5} width={17} height={14} rx={2} />
+        <path d="M7.5 10l2.8 2-2.8 2M12.8 14H16.5" />
       </Svg>
     )
   return (

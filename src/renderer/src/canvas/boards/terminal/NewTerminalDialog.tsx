@@ -1,15 +1,30 @@
 /**
- * New Terminal dialog (place-first flow): opens over a just-dropped terminal whose spawn
- * is held (`configPendingId`) until this resolves. Quick Start agent presets pre-fill the
- * launch command + set the board's `agentKind`; Details/Appearance tabs edit name / command
- * / cwd / monitor / font. Create applies the patch then releases the spawn (the gated spawn
- * effect mounts fresh and auto-spawns with the chosen command); Cancel/Esc releases it as a
- * plain shell. Built on the shared Modal (scrim + focus-trap + Esc).
+ * Terminal config dialog — one modal for BOTH creating and editing a terminal.
  *
- * A1 ships the raw Command field (pre-filled per preset). The searchable per-agent command
- * builder is A2 — it composes into the same `launchCommand` string this field holds.
+ * - `mode: 'create'` (place-first flow): opens over a just-dropped terminal whose spawn is
+ *   held (`configPendingId`) until this resolves. The primary button is "Create"; on apply
+ *   the parent's `onClose` clears the held flag and the gated spawn effect mounts fresh and
+ *   auto-spawns with the chosen command. Cancel/Esc releases it as a plain shell.
+ * - `mode: 'edit'` (⚙ / first-run hint): opens over a LIVE terminal, pre-filled from the
+ *   board. The primary button is "Apply & restart"; on apply the patch to shell/launchCommand/
+ *   cwd re-runs TerminalBoard's spawn effect and respawns. Cancel/Esc just closes (no patch).
+ *
+ * Quick Start agent presets set the board's `agentKind` and pre-fill the launch command; the
+ * searchable per-agent command builder (CommandBuilder) composes into the same editable
+ * `launchCommand` string the Command field holds (the raw field stays the source of truth +
+ * escape hatch — in edit mode it pre-fills with the board's existing command). Built on the
+ * shared Modal (scrim + focus-trap + Esc), so explicit Cancel/Apply replace the old non-modal
+ * popover's unsaved-changes guard.
  */
-import { useCallback, useMemo, useState, type CSSProperties, type ReactElement } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement
+} from 'react'
 import { Modal } from '../../Modal'
 import { Icon } from '../../Icon'
 import { useCanvasStore } from '../../../store/canvasStore'
@@ -26,24 +41,69 @@ import {
 
 const DEFAULT_PRESET = 'claude'
 
-export function NewTerminalDialog({ board }: { board: TerminalBoardData }): ReactElement {
+type ShellInfo = Awaited<ReturnType<typeof window.api.listShells>>[number]
+
+export function NewTerminalDialog({
+  board,
+  mode = 'create',
+  onClose
+}: {
+  board: TerminalBoardData
+  /** 'create' = place-first held spawn; 'edit' = reconfigure a live terminal. */
+  mode?: 'create' | 'edit'
+  /** Close the dialog. For create the host clears the held spawn; for edit it hides it. */
+  onClose: () => void
+}): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
-  const clearConfigPending = useCanvasStore((s) => s.clearConfigPending)
+  const editing = mode === 'edit'
 
-  const [presetId, setPresetId] = useState(DEFAULT_PRESET)
+  // Edit pre-fills from the board; create starts from the defaults. An edit of a board with no
+  // agentKind (MCP-spawned / pre-v10) falls back to the raw 'shell' preset (command-only).
+  const [presetId, setPresetId] = useState(
+    editing && board.agentKind && presetById(board.agentKind)
+      ? board.agentKind
+      : editing
+        ? 'shell'
+        : DEFAULT_PRESET
+  )
   const [tab, setTab] = useState<'details' | 'appearance'>('details')
-  // A board dropped from the dock carries the default 'Terminal' title — start the Name
-  // field empty (placeholder guides) rather than pre-filling that placeholder text.
-  const [name, setName] = useState(board.title === 'Terminal' ? '' : board.title)
+  // Create: a dock-dropped board carries the default 'Terminal' title → start Name empty
+  // (the placeholder guides). Edit: show the board's actual current title.
+  const [name, setName] = useState(
+    editing ? board.title : board.title === 'Terminal' ? '' : board.title
+  )
   // A2: structured builder values per option id; the command is composed from them. A manual
   // edit of the command field sets `rawOverride` and wins until a builder control recomposes.
+  // Edit seeds the raw override with the board's existing command (shown as-is, editable).
   const [values, setValues] = useState<OptionValues>({})
-  const [rawOverride, setRawOverride] = useState<string | null>(null)
+  const [rawOverride, setRawOverride] = useState<string | null>(
+    editing ? (board.launchCommand ?? null) : null
+  )
+  const [shells, setShells] = useState<ShellInfo[]>([])
+  const [shell, setShell] = useState(board.shell ?? '')
   const [cwd, setCwd] = useState(board.cwd ?? '')
-  const [monitor, setMonitor] = useState(true)
+  // Absent monitorActivity reads as true, so default the toggle on unless explicitly opted out.
+  const [monitor, setMonitor] = useState(board.monitorActivity !== false)
   const seedFont = resolveInitialFont(board.fontSize)
   const [font, setFont] = useState(seedFont)
+
+  // Shell list (OS-aware). Only PERSIST a shell the user actually picked: the select auto-seeds
+  // to list[0] for display when the board has no explicit shell, but persisting that auto-seed
+  // would flip board.shell undefined → default and respawn on a label-only apply (TerminalConfig #9).
+  const shellTouched = useRef(false)
+  const seededShell = useRef(board.shell)
+  useEffect(() => {
+    let live = true
+    void window.api.listShells().then((list) => {
+      if (!live) return
+      setShells(list)
+      if (!seededShell.current && list[0]) setShell(list[0].path)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
 
   const preset = presetById(presetId) ?? AGENT_PRESETS[0]
   const composed = useMemo(() => composeCommand(preset, values), [preset, values])
@@ -63,47 +123,49 @@ export function NewTerminalDialog({ board }: { board: TerminalBoardData }): Reac
     setRawOverride(null)
   }, [])
 
-  const create = useCallback((): void => {
+  const apply = useCallback((): void => {
     beginChange()
     updateBoard(board.id, {
       title: name.trim() || board.title,
       agentKind: presetId,
+      // Only persist `shell` when the user explicitly chose one (see shellTouched above).
+      ...(shellTouched.current ? { shell: shell || undefined } : {}),
       launchCommand: command.trim() || undefined,
       cwd: cwd.trim() || undefined,
-      // Absent monitorActivity reads as `true`, so only persist the opt-out.
-      ...(monitor ? {} : { monitorActivity: false }),
-      // Only persist a font that differs from the sticky default seed (else follow it).
+      // Create omits the key when monitoring is on (stays absent = true); edit writes the
+      // explicit boolean so the user can toggle it back ON after a prior opt-out.
+      ...(editing ? { monitorActivity: monitor } : monitor ? {} : { monitorActivity: false }),
+      // Only pin a font that differs from the sticky default seed (else follow it).
       ...(font !== seedFont ? { fontSize: font } : {})
     })
-    clearConfigPending()
+    onClose()
   }, [
     beginChange,
     updateBoard,
-    clearConfigPending,
     board.id,
     board.title,
     name,
     presetId,
+    shell,
     command,
     cwd,
     monitor,
     font,
-    seedFont
+    seedFont,
+    editing,
+    onClose
   ])
-
-  // Cancel / Esc / scrim: release the spawn as a plain shell (no patch).
-  const cancel = useCallback((): void => clearConfigPending(), [clearConfigPending])
 
   return (
     <Modal
-      label="New Terminal"
-      onClose={cancel}
+      label={editing ? 'Terminal Settings' : 'New Terminal'}
+      onClose={onClose}
       zIndex={600}
       scrimProps={{ 'data-test': 'new-terminal-scrim' }}
       cardProps={{ 'data-test': 'new-terminal-dialog' }}
       cardStyle={card}
     >
-      <div style={title}>New Terminal</div>
+      <div style={title}>{editing ? 'Terminal Settings' : 'New Terminal'}</div>
 
       <div>
         <div style={sectionLabel}>Quick start</div>
@@ -161,8 +223,32 @@ export function NewTerminalDialog({ board }: { board: TerminalBoardData }): Reac
               onBlur={ringOff}
             />
           </Field>
+          <Field label="Shell">
+            <select
+              style={fld}
+              value={shell}
+              onChange={(e) => {
+                shellTouched.current = true
+                setShell(e.target.value)
+              }}
+              onFocus={ringOn}
+              onBlur={ringOff}
+            >
+              {shells.map((s) => (
+                <option key={s.path} value={s.path} style={shellOpt}>
+                  {s.label}
+                  {s.default ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
           {preset.options && (
-            <CommandBuilder preset={preset} values={values} onChange={onBuilderChange} />
+            <CommandBuilder
+              key={preset.id}
+              preset={preset}
+              values={values}
+              onChange={onBuilderChange}
+            />
           )}
           <Field label={preset.options ? 'Command (composed, editable)' : 'Command'}>
             <input
@@ -228,11 +314,11 @@ export function NewTerminalDialog({ board }: { board: TerminalBoardData }): Reac
       )}
 
       <div style={footer}>
-        <button type="button" style={btnGhost} onClick={cancel} data-test="new-terminal-cancel">
+        <button type="button" style={btnGhost} onClick={onClose} data-test="new-terminal-cancel">
           Cancel
         </button>
-        <button type="button" style={btnPrimary} onClick={create} data-test="new-terminal-create">
-          Create
+        <button type="button" style={btnPrimary} onClick={apply} data-test="new-terminal-create">
+          {editing ? 'Apply & restart' : 'Create'}
         </button>
       </div>
     </Modal>
@@ -258,8 +344,12 @@ const ringOff = (e: { currentTarget: HTMLElement }): void => {
 }
 
 const card: CSSProperties = {
-  width: 396,
-  maxWidth: '90vw',
+  width: 460,
+  maxWidth: '92vw',
+  maxHeight: '92vh',
+  overflowY: 'auto',
+  scrollbarWidth: 'thin',
+  scrollbarColor: 'var(--border-strong) transparent',
   padding: 18,
   display: 'flex',
   flexDirection: 'column',
@@ -355,8 +445,12 @@ const fld: CSSProperties = {
   color: 'var(--text)',
   fontFamily: 'var(--ui)',
   fontSize: 12.5,
-  outline: 'none'
+  outline: 'none',
+  // Render the native Shell dropdown popup with dark chrome (harmless for the text inputs).
+  colorScheme: 'dark'
 }
+// Explicit per-option colors so the native Shell popup is always readable on dark.
+const shellOpt: CSSProperties = { background: 'var(--surface-overlay)', color: 'var(--text)' }
 const check: CSSProperties = {
   display: 'flex',
   alignItems: 'center',

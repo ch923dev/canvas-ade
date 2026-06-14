@@ -51,21 +51,36 @@ test.describe('New Terminal dialog (place-first flow)', () => {
     expect(board.agentKind ?? null).toBeNull()
   })
 
-  test('command builder composes flags into the command + search filters the options', async ({
+  test('category tabs group the options; the builder composes flags + search spans all tabs', async ({
     page
   }) => {
     const id = await evalIn<string>(page, 'window.__canvasE2E.seedConfigPendingTerminal()')
     await expect(page.locator('[data-test="command-builder"]')).toBeVisible()
 
-    // Pick a model + a toggle → the command field recomposes (registry order).
+    // Claude's options are split across category tabs. The Setup tab is active by default, so
+    // Model is visible but Continue (Session tab) is not — until we switch tabs. Search starts
+    // collapsed behind its toggle (one band, not a permanent search bar).
+    await expect(page.locator('[data-test="group-setup"]')).toBeVisible()
+    await expect(page.locator('[data-test="group-session"]')).toBeVisible()
+    await expect(page.locator('[data-test="opt-model"]')).toBeVisible()
+    await expect(page.locator('[data-test="opt-continue"]')).toHaveCount(0)
+    await expect(page.locator('[data-test="command-builder-search"]')).toHaveCount(0)
+    await expect(page.locator('[data-test="command-builder-search-toggle"]')).toBeVisible()
+
+    // Set a model on Setup, then switch to the Session tab to reach Continue. The composed
+    // command recomposes in registry order regardless of which tab set each value.
     await page.locator('[data-test="opt-model"]').selectOption('opus')
+    await page.locator('[data-test="group-session"]').click()
     await page.locator('[data-test="opt-continue"]').click()
     await expect(page.locator('[data-test="new-terminal-command"]')).toHaveValue(
       'claude --model opus -c'
     )
 
-    // Search narrows the option list (the model row drops out; permission stays).
+    // Open search → the tab strip is replaced and the query spans all tabs: 'perm' surfaces the
+    // permission option from the Permissions tab while the Setup tab's model row drops out.
+    await page.locator('[data-test="command-builder-search-toggle"]').click()
     await page.locator('[data-test="command-builder-search"]').fill('perm')
+    await expect(page.locator('[data-test="group-setup"]')).toHaveCount(0)
     await expect(page.locator('[data-test="opt-permission-mode"]')).toBeVisible()
     await expect(page.locator('[data-test="opt-model"]')).toHaveCount(0)
 
@@ -76,6 +91,39 @@ test.describe('New Terminal dialog (place-first flow)', () => {
       `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
     )
     expect(board.launchCommand).toBe('claude --model opus -c')
+    expect(board.agentKind).toBe('claude')
+  })
+
+  test('edit mode: the ⚙ button opens the same dialog pre-filled; Apply patches the live board', async ({
+    page
+  }) => {
+    // A LIVE (already-spawned) terminal, not a held one — the edit path.
+    const patch = JSON.stringify({
+      agentKind: 'claude',
+      launchCommand: 'claude',
+      title: 'My agent'
+    })
+    const id = await evalIn<string>(page, `window.__canvasE2E.seedBoard('terminal', ${patch})`)
+    // Select + fit so the board chrome is visible and on-screen, then open config via ⚙.
+    await evalIn(page, `window.__canvasE2E.setSelection([${JSON.stringify(id)}])`)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await page.locator(`[data-test="config-${id}"]`).click()
+
+    const dialog = page.locator('[data-test="new-terminal-dialog"]')
+    await expect(dialog).toBeVisible()
+    // Edit mode pre-fills the command from the board and the primary action is Apply & restart.
+    await expect(page.locator('[data-test="new-terminal-command"]')).toHaveValue('claude')
+    await expect(page.locator('[data-test="new-terminal-create"]')).toHaveText('Apply & restart')
+
+    // Edit the command and apply → the live board is patched (which respawns the session).
+    await page.locator('[data-test="new-terminal-command"]').fill('claude --model opus')
+    await page.locator('[data-test="new-terminal-create"]').click()
+    await expect(dialog).toHaveCount(0)
+    const board = await evalIn<{ launchCommand?: string; agentKind?: string }>(
+      page,
+      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)})`
+    )
+    expect(board.launchCommand).toBe('claude --model opus')
     expect(board.agentKind).toBe('claude')
   })
 })

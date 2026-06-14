@@ -16,17 +16,23 @@
  */
 import type { IconName } from '../../Icon'
 
-/** One configurable option in the command builder; composes to a CLI fragment. */
+/**
+ * One configurable option in the command builder; composes to a CLI fragment.
+ * `group` is the builder's category-tab label — options sharing a group sit under the same
+ * tab. First-appearance order of the groups in a preset's `options` is the tab order. Two or
+ * more distinct groups ⇒ the builder shows category tabs; absent / one group ⇒ a flat list.
+ */
 export type AgentOption =
   | {
       id: string
       kind: 'select'
       label: string
       flag: string
+      group?: string
       choices: { value: string; label: string }[]
     }
-  | { id: string; kind: 'toggle'; label: string; flag: string; danger?: boolean }
-  | { id: string; kind: 'text'; label: string; flag: string; placeholder?: string }
+  | { id: string; kind: 'toggle'; label: string; flag: string; group?: string; danger?: boolean }
+  | { id: string; kind: 'text'; label: string; flag: string; group?: string; placeholder?: string }
 
 export interface AgentPreset {
   /** Stable key — also the persisted `TerminalBoard.agentKind`. */
@@ -43,13 +49,18 @@ export interface AgentPreset {
   defaultRole?: 'orchestrator' | 'worker'
 }
 
-/** Claude option schema — grounded in the real `claude` CLI (verified 2026-06-13). */
+// Claude option schema — grounded in the real `claude` CLI (verified 2026-06-13). Ordered so
+// each builder tab's options are contiguous; the group order below IS the tab order:
+// Setup → Session → Permissions → Context. (model < effort < continue order is load-bearing
+// for composeCommand's registry-order test — keep Setup before Session.)
 const CLAUDE_OPTIONS: AgentOption[] = [
+  // — Setup —
   {
     id: 'model',
     kind: 'select',
     label: 'Model',
     flag: '--model',
+    group: 'Setup',
     choices: [
       { value: 'sonnet', label: 'Sonnet' },
       { value: 'opus', label: 'Opus' },
@@ -62,6 +73,7 @@ const CLAUDE_OPTIONS: AgentOption[] = [
     kind: 'select',
     label: 'Effort',
     flag: '--effort',
+    group: 'Setup',
     choices: [
       { value: 'low', label: 'Low' },
       { value: 'medium', label: 'Medium' },
@@ -70,11 +82,24 @@ const CLAUDE_OPTIONS: AgentOption[] = [
       { value: 'max', label: 'Max' }
     ]
   },
+  // — Session —
+  { id: 'continue', kind: 'toggle', label: 'Continue last session', flag: '-c', group: 'Session' },
+  {
+    id: 'resume',
+    kind: 'text',
+    label: 'Resume a session',
+    flag: '--resume',
+    group: 'Session',
+    placeholder: 'session id / name'
+  },
+  { id: 'bg', kind: 'toggle', label: 'Background session', flag: '--bg', group: 'Session' },
+  // — Permissions —
   {
     id: 'permission-mode',
     kind: 'select',
     label: 'Permission mode',
     flag: '--permission-mode',
+    group: 'Permissions',
     choices: [
       { value: 'default', label: 'Default' },
       { value: 'acceptEdits', label: 'Accept edits' },
@@ -84,28 +109,29 @@ const CLAUDE_OPTIONS: AgentOption[] = [
       { value: 'bypassPermissions', label: 'Bypass permissions' }
     ]
   },
-  { id: 'continue', kind: 'toggle', label: 'Continue last session', flag: '-c' },
-  {
-    id: 'resume',
-    kind: 'text',
-    label: 'Resume a session',
-    flag: '--resume',
-    placeholder: 'session id / name'
-  },
   {
     id: 'skip-permissions',
     kind: 'toggle',
     label: 'Skip permission prompts',
     flag: '--dangerously-skip-permissions',
+    group: 'Permissions',
     danger: true
   },
-  { id: 'bg', kind: 'toggle', label: 'Background session', flag: '--bg' },
-  { id: 'add-dir', kind: 'text', label: 'Add directory', flag: '--add-dir', placeholder: 'path' },
+  // — Context —
+  {
+    id: 'add-dir',
+    kind: 'text',
+    label: 'Add directory',
+    flag: '--add-dir',
+    group: 'Context',
+    placeholder: 'path'
+  },
   {
     id: 'mcp-config',
     kind: 'text',
     label: 'MCP config',
     flag: '--mcp-config',
+    group: 'Context',
     placeholder: 'json path / inline'
   }
 ]

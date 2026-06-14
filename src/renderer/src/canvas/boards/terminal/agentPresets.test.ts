@@ -33,6 +33,23 @@ describe('agentPresets', () => {
     expect(ids).toContain('permission-mode')
   })
 
+  it('Claude options carry groups; first-appearance order is the builder tab order', () => {
+    const opts = presetById('claude')?.options ?? []
+    expect(opts.length).toBeGreaterThan(0)
+    expect(opts.every((o) => typeof o.group === 'string' && o.group.length > 0)).toBe(true)
+    const order: string[] = []
+    for (const o of opts) if (o.group && !order.includes(o.group)) order.push(o.group)
+    expect(order).toEqual(['Setup', 'Session', 'Permissions', 'Context'])
+  })
+
+  it('agents with a small option set are ungrouped (flat list, no tabs)', () => {
+    for (const id of ['codex', 'gemini', 'opencode']) {
+      const opts = presetById(id)?.options ?? []
+      expect(opts.length).toBeGreaterThan(0)
+      expect(opts.every((o) => o.group === undefined)).toBe(true)
+    }
+  })
+
   it('Claude --effort exposes the real level set', () => {
     const effort = presetById('claude')?.options?.find((o) => o.id === 'effort')
     expect(effort?.kind).toBe('select')
