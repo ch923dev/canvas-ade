@@ -329,19 +329,30 @@ function trackedChange(
 const idleOnMountIds = new Set<string>()
 
 /**
- * Idle flags swept by undo, PARKED so a redo that resurrects the board restores them
- * (#BUG-012: duplicate → undo → redo must keep the clone idle — without the symmetric
- * re-add the redone clone auto-spawned its shell + launchCommand, violating M-1). Pruned
- * on every undo/redo against the redo rail: a parked id can only ever return via a
- * `future` snapshot, so anything unreachable there is dead and dropped — preserving the
- * BUG-033 no-leak guarantee the sweep was added for.
+ * Idle flags swept off the live registry, PARKED so a later history jump that resurrects
+ * the board restores them (#BUG-012: duplicate -> undo -> redo must keep the clone idle —
+ * without the symmetric re-add the redone clone auto-spawned its shell + launchCommand,
+ * violating M-1). An id lands here two ways: (a) undo drops a board from the present (it
+ * can only ever return via a `future` snapshot — redo); (b) a DIRECT `removeBoard` of an
+ * idle terminal (it can only ever return via a `past` snapshot — undo). So a parked id is
+ * dead only once it is unreachable from EVERY rail (present u past u future), which is the
+ * GC condition below — broadened from the old future-only prune that leaked a directly
+ * deleted-then-evicted terminal's id (BUG-012).
  */
 const parkedIdleIds = new Set<string>()
 
-/** Drop parked idle ids that no `future` snapshot can ever resurrect (BUG-012/BUG-033). */
-function pruneParkedIdle(future: CanvasSnapshot[]): void {
+/**
+ * GC parked idle flags against the WHOLE history graph (BUG-012/BUG-033): a parked id is
+ * dropped only when no present/past/future snapshot can ever resurrect its board — so a
+ * directly removed terminal's flag is reclaimed once its last `past` snapshot is evicted
+ * by the 50-entry history cap (the leak BUG-012 was filed for), while a flag still
+ * reachable on any rail (awaiting an undo or a redo) is kept. Call AFTER the rails settle.
+ */
+function gcParkedIdle(present: Board[], past: CanvasSnapshot[], future: CanvasSnapshot[]): void {
   if (parkedIdleIds.size === 0) return
   const reachable = new Set<string>()
+  for (const b of present) reachable.add(b.id)
+  for (const snap of past) for (const b of snap.boards) reachable.add(b.id)
   for (const snap of future) for (const b of snap.boards) reachable.add(b.id)
   for (const id of [...parkedIdleIds]) if (!reachable.has(id)) parkedIdleIds.delete(id)
 }
@@ -355,6 +366,16 @@ export function isIdleOnMount(id: string): boolean {
  *  subsequent in-session respawn / remount of that board spawns normally. */
 export function clearIdleOnMount(id: string): void {
   idleOnMountIds.delete(id)
+}
+
+/**
+ * Test-only: the combined size of the live + parked idle-flag registries — the exact
+ * session-lifetime leak surface BUG-012/BUG-033 guard. Exposed so a regression test can
+ * assert a directly removed terminal's UUID is reclaimed (not stranded) once the history
+ * rail evicts its last snapshot. Not used in app code.
+ */
+export function idleFlagRegistrySize(): number {
+  return idleOnMountIds.size + parkedIdleIds.size
 }
 
 /** Mark every terminal in a freshly-loaded doc as idle-on-mount (restore path). */
@@ -617,6 +638,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           reflectPresent: false
         }
       )
+      // BUG-012: a DIRECT delete of an idle terminal must not leak its UUID. Don't EAGERLY
+      // delete the flag (that would resurrect a started agent on undo — the respawn class);
+      // PARK it instead, so an immediate undo re-promotes it (see undo's resurrection sweep),
+      // and let gcParkedIdle reclaim it once its last `past` snapshot is evicted by the
+      // history cap. The pre-remove snapshot trackedChange just pushed onto `result.past`
+      // still holds the board, so the parked id is reachable until then.
+      if (idleOnMountIds.delete(id)) parkedIdleIds.add(id)
+      // GC against the settled rails: present = `next`, future = [] (trackedChange cleared
+      // it), past = result.past (the rail trackedChange just recorded — a real removal is
+      // never a no-op here, so result always carries the new rails).
+      const newPast = 'past' in result && result.past ? result.past : s.past
+      gcParkedIdle(next, newPast, [])
       // Drop a dangling config-pending flag if the awaiting-config terminal is the one being
       // removed here (MCP close / user delete while its New Terminal dialog is open). Undo and
       // project-load prune it separately — they restore boards from a snapshot, not via
@@ -834,7 +867,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       for (const b of s.boards) {
         if (!survivingIds.has(b.id) && idleOnMountIds.delete(b.id)) parkedIdleIds.add(b.id)
       }
-      pruneParkedIdle(r.future)
+      // BUG-012: re-promote the parked idle flag of every board this undo RESURRECTS (e.g.
+      // undoing a DIRECT removeBoard of an idle terminal, which parked the flag) so the
+      // restored board still mounts idle — the symmetric counterpart of redo's sweep.
+      const priorIds = new Set(s.boards.map((b) => b.id))
+      for (const b of r.present.boards) {
+        if (!priorIds.has(b.id) && parkedIdleIds.delete(b.id)) idleOnMountIds.add(b.id)
+      }
+      gcParkedIdle(r.present.boards, r.past, r.future)
       return {
         boards: r.present.boards,
         connectors: r.present.connectors,
@@ -860,13 +900,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       )
       if (!r) return s
       pendingCheckpoint = null // see undo — a history jump stales the gesture checkpoint
+      // BUG-012: boards this redo DROPS from the present (e.g. redoing a removeBoard of an
+      // idle terminal) must park their flag too — mirrors undo's vanish sweep so an idle id
+      // never strands on the live registry when its board is no longer present.
+      const survivingIds = new Set(r.present.boards.map((b) => b.id))
+      for (const b of s.boards) {
+        if (!survivingIds.has(b.id) && idleOnMountIds.delete(b.id)) parkedIdleIds.add(b.id)
+      }
       // BUG-012: re-add the parked idle flag of every board this redo RESURRECTS (the
       // symmetric counterpart of undo's sweep) so a redone terminal clone mounts idle.
       const priorIds = new Set(s.boards.map((b) => b.id))
       for (const b of r.present.boards) {
         if (!priorIds.has(b.id) && parkedIdleIds.delete(b.id)) idleOnMountIds.add(b.id)
       }
-      pruneParkedIdle(r.future)
+      gcParkedIdle(r.present.boards, r.past, r.future)
       return {
         boards: r.present.boards,
         connectors: r.present.connectors,
