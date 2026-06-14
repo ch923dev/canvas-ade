@@ -133,11 +133,22 @@ if ! command -v pnpm >/dev/null 2>&1; then
   exit 1
 fi
 
-# QW-4 scope decision: cross-platform-sensitive surface → FULL matrix (Windows +
-# Linux Docker); anything else (renderer-scoped diffs) → Windows leg only. The
-# `force-full` sentinel (BUG-018/068 fallbacks above) MUST land in the full branch,
-# so it is part of the pattern. Fail OPEN to full, never to skip.
+# Two scope axes, composed (each fails OPEN — to full, never to skip):
+#   (1) WHICH OS LEGS — QW-4 / PR-2. `LINUX_SENSITIVE` cross-platform/cross-cutting
+#       surface → full matrix (Windows native + Linux Docker); everything else →
+#       Windows leg only. The `force-full` sentinel (BUG-018/068 fallbacks above)
+#       MUST land in the full branch, so it is part of the pattern.
+#   (2) WHICH SPECS — MT-1 / PR-3. For a Windows-only (renderer-scoped) push,
+#       scripts/e2e-scope.mjs maps the changed paths to a Playwright `--grep`
+#       subset by board area (@core|@terminal|@preview|@planning|@chrome) or to
+#       FULL. A scoped subset is, by construction, renderer-area-only — so it is
+#       safe to run on Windows alone. The full cross-OS matrix is paid once per PR
+#       at the pre-merge gate (CLAUDE.md › parallel sessions), so no Linux coverage
+#       is lost — only deferred from per-push to per-PR for renderer diffs.
+# E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
+# documented browser-trio env flake doesn't false-block a push.
 LINUX_SENSITIVE='^force-full$|^src/main/|^src/preload/|^e2e/|^Dockerfile\.e2e$|^\.dockerignore$|^package\.json$|^pnpm-lock\.yaml$|^playwright\.config\.ts$|^electron\.vite\.config\.ts$|^electron-builder\.yml$|^\.githooks/|^\.npmrc$'
+
 if [ "${E2E_FULL_MATRIX:-}" = "1" ] || printf '%s\n' "$changed" | grep -qE "$LINUX_SENSITIVE"; then
   echo "[pre-push] e2e FULL matrix (Windows native + Linux Docker) — cross-platform-sensitive diff (or E2E_FULL_MATRIX=1). ~3-5 min."
   # The Linux leg runs in Docker — fail early with a clear message if it is not up.
@@ -146,10 +157,17 @@ if [ "${E2E_FULL_MATRIX:-}" = "1" ] || printf '%s\n' "$changed" | grep -qE "$LIN
     echo "           Start Docker Desktop, or bypass this push with: git push --no-verify"
     exit 1
   fi
-  # E2E_PRECOMMIT=1 turns on Playwright retries:2 (see playwright.config.ts) so the
-  # documented browser-trio env flake doesn't false-block a push.
   E2E_PRECOMMIT=1 pnpm test:e2e:matrix
 else
-  echo "[pre-push] renderer-scoped diff — Windows e2e leg only (Linux joins at the merge gate; force with E2E_FULL_MATRIX=1). ~1.5-2.5 min."
-  E2E_PRECOMMIT=1 pnpm test:e2e
+  # Windows leg only — scope the SPEC SET to the touched board area(s). Fail open
+  # to FULL on any error (node missing, parse failure, unknown path).
+  SCOPE="$(printf '%s\n' "$changed" | node scripts/e2e-scope.mjs 2>/dev/null)" || SCOPE="FULL"
+  [ -z "$SCOPE" ] && SCOPE="FULL"
+  if [ "$SCOPE" = "FULL" ]; then
+    echo "[pre-push] renderer-scoped diff — Windows e2e leg, ALL specs (cross-cutting/unknown path → no narrower scope; Linux at the merge gate). ~1.5-2.5 min."
+    E2E_PRECOMMIT=1 pnpm test:e2e
+  else
+    echo "[pre-push] renderer-scoped diff — Windows e2e leg, specs matching '$SCOPE' (Linux + full suite at the merge gate; force all with E2E_FULL_MATRIX=1). <1 min after build."
+    E2E_PRECOMMIT=1 pnpm test:e2e -- --grep "$SCOPE"
+  fi
 fi

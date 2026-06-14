@@ -18,7 +18,7 @@ const resetSticky = (page: Parameters<typeof evalIn>[0]) =>
     `window.localStorage.setItem('ca.terminal.fontSize', ${JSON.stringify(KNOWN_STICKY)})`
   )
 
-test.describe('terminal font resize', () => {
+test.describe('@terminal terminal font resize', () => {
   test.afterEach(async ({ page }) => {
     await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '12.5')`)
   })

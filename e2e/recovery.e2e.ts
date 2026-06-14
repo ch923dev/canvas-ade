@@ -12,7 +12,7 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
  * and the renderer's deep-validation `.bak` retry — the actual Wave-0 fix — is what is
  * exercised). The headline invariant: a corrupt project must NEVER leave a black screen.
  */
-test.describe('corrupt canvas.json recovery (Wave-0 data-loss seam)', () => {
+test.describe('@core corrupt canvas.json recovery (Wave-0 data-loss seam)', () => {
   // envelope-valid (numeric schemaVersion + boards[]) but deep-corrupt: schemaVersion is
   // newer than this build supports → fromObject's migrate() throws "newer than supported".
   const TOO_NEW = '{"schemaVersion":999999,"boards":[]}'

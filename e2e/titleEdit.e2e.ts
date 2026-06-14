@@ -26,7 +26,7 @@ const selectOnly = (page: Page, id: string): Promise<void> =>
     ;(globalThis as any).__canvasE2E.setSelection([boardId])
   }, id)
 
-test.describe('inline board title edit (real OS input)', () => {
+test.describe('@chrome inline board title edit (real OS input)', () => {
   test('double-click swaps to the input; typing + Enter commits to the store', async ({ page }) => {
     const id = await seed(page, 'planning')
     await evalIn(page, `window.__canvasE2E.fitView()`)

@@ -20,7 +20,7 @@ const boardCount = (page: Page): Promise<number> =>
 const runtimeLive = (id: string): string =>
   `!!(window.__canvasE2E.getRuntime(${JSON.stringify(id)}) || {}).live`
 
-test.describe('command palette (real OS input)', () => {
+test.describe('@chrome command palette (real OS input)', () => {
   test('Ctrl+K opens focused; type-to-filter + Enter runs the verb (board created)', async ({
     page
   }) => {

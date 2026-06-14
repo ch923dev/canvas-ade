@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures'
 import { evalIn, pollEval } from './helpers'
 
-test.describe('named board groups — Ctrl+G create flow', () => {
+test.describe('@chrome named board groups — Ctrl+G create flow', () => {
   test('Ctrl+G on a 2-board selection mints a group + renders its box tab', async ({ page }) => {
     // 1. Clean canvas (fixtures.page resets before each test) — start from zero.
     expect(await evalIn<number>(page, `window.__canvasE2E.getBoards().length`)).toBe(0)

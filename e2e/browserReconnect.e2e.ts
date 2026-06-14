@@ -16,7 +16,7 @@ async function freePort(): Promise<number> {
   return port
 }
 
-test.describe('browser board — auto-reconnect', () => {
+test.describe('@preview browser board — auto-reconnect', () => {
   test('a refused board auto-connects once the dev server comes up', async ({ page }) => {
     const port = await freePort()
     const url = `http://127.0.0.1:${port}/`

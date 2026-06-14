@@ -16,7 +16,9 @@ import { evalIn } from './helpers'
  *    canvas center, and with no project open the recap-consent scrim never mounts.
  */
 
-test('settings modal: token scrim, initial focus, Esc close, focus restore', async ({ page }) => {
+test('@chrome settings modal: token scrim, initial focus, Esc close, focus restore', async ({
+  page
+}) => {
   await page.click('[title="Settings"]')
   const modal = page.locator('[data-test="settings-modal"]')
   await expect(modal).toBeVisible()
@@ -48,7 +50,7 @@ test('settings modal: token scrim, initial focus, Esc close, focus restore', asy
   expect(restored, 'focus restored to the Settings opener').toBe('Settings')
 })
 
-test('no modal scrim occludes the canvas after close / without a project (PR #93 regression)', async ({
+test('@chrome no modal scrim occludes the canvas after close / without a project (PR #93 regression)', async ({
   page
 }) => {
   // Open + close the Settings modal, then prove the scrim fully unmounted.

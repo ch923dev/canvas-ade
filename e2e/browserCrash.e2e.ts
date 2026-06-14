@@ -41,7 +41,7 @@ const pollTrue = async (fn: () => Promise<boolean>, timeout: number): Promise<bo
   }
 }
 
-test.describe('browser board — crashed preview recovery (D2-C)', () => {
+test.describe('@preview browser board — crashed preview recovery (D2-C)', () => {
   test('render-process-gone → crashed state + Reload CTA reconnects', async ({
     page,
     electronApp

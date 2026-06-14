@@ -7,7 +7,7 @@ const ADOPT_MARKER = 'CANVAS_E2E_ADOPT_MARKER'
 
 const readTerm = (id: string) => `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
 
-test.describe('terminal (node-pty / ConPTY — real instance)', () => {
+test.describe('@terminal terminal (node-pty / ConPTY — real instance)', () => {
   test('spawn → echoes the sentinel into the framebuffer', async ({ page }) => {
     const id = await seed(page, 'terminal', { launchCommand: `echo ${TERM_SENTINEL}` })
     const ok = await pollEval(

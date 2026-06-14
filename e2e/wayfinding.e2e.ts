@@ -27,7 +27,7 @@ const stickyKey = (page: Page): Promise<string | null> =>
     return g.localStorage.getItem('ca.canvas.minimapVisible')
   })
 
-test.describe('D4-C wayfinding minimap (real OS input)', () => {
+test.describe('@chrome D4-C wayfinding minimap (real OS input)', () => {
   test('bare M toggles the island and the choice persists (localStorage)', async ({ page }) => {
     await seed(page, 'planning')
     await evalIn(page, `window.__canvasE2E.fitView()`)

@@ -17,7 +17,7 @@ import { mainCall, seed } from './helpers'
  * (writeRecapMdToCurrentProject) is harmless but would leave currentDir set and the tmp dir
  * on disk; the explicit teardownProject here prevents that leak into later same-worker tests.
  */
-test('flip shows the recap for a terminal board', async ({ page, electronApp }) => {
+test('@terminal flip shows the recap for a terminal board', async ({ page, electronApp }) => {
   const tmp = await mainCall<string>(electronApp, 'createTempProject', 'recap-e2e-', 'recap-e2e')
   try {
     // (a) seed a terminal board + write a canned recap md via the MAIN e2e seam.
@@ -46,7 +46,10 @@ test('flip shows the recap for a terminal board', async ({ page, electronApp }) 
  * later unmounts). We offset the first double-click off-center so it lands on the terminal
  * surface, not the centered idle "Start" button (double-clicks on buttons are guarded out).
  */
-test('double-click flips a terminal to its recap and back', async ({ page, electronApp }) => {
+test('@terminal double-click flips a terminal to its recap and back', async ({
+  page,
+  electronApp
+}) => {
   const tmp = await mainCall<string>(electronApp, 'createTempProject', 'recap-dbl-', 'recap-dbl')
   try {
     const id = await seed(page, 'terminal', { launchCommand: 'claude', agentTranscriptPath: 'x' })
