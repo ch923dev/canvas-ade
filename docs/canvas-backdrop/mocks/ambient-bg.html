@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ambient background — S0 design mock</title>
+    <style>
+      /* Tokens mirrored verbatim from src/renderer/src/index.css (DESIGN.md §2-4).
+     Geist not loaded here (throwaway mock) — system fallbacks only. */
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+        --r-board: 8px;
+        --r-ctl: 5px;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        background: var(--void);
+        color: var(--text);
+        font-family: var(--ui);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 8px 16px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border-subtle);
+        flex: none;
+      }
+      header h1 {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-2);
+      }
+      header .hint {
+        font-size: 11px;
+        font-family: var(--mono);
+        color: var(--text-3);
+      }
+      main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      .panel {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+      }
+      .panel + .panel {
+        border-left: 1px solid var(--border-subtle);
+      }
+      .panel canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .panel .tag {
+        position: absolute;
+        top: 10px;
+        left: 12px;
+        z-index: 3;
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
+      .panel .fps {
+        position: absolute;
+        top: 10px;
+        right: 12px;
+        z-index: 3;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-faint);
+      }
+      /* Fake board chrome — for judging the effect in context */
+      .board {
+        position: absolute;
+        z-index: 2;
+        pointer-events: none;
+        overflow: hidden;
+        background: var(--surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-board);
+        box-shadow: var(--shadow-board);
+      }
+      .tb {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        background: var(--surface-raised);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .tb .glyph {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-3);
+      }
+      .tb .type {
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+      }
+      .tb .title {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-2);
+      }
+      .bb {
+        padding: 10px 12px;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 19px;
+        color: var(--text-3);
+      }
+      .bb .dim {
+        color: var(--text-faint);
+      }
+      /* Controls */
+      footer {
+        flex: none;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 22px;
+        align-items: center;
+        padding: 10px 16px;
+        background: var(--surface-raised);
+        border-top: 1px solid var(--border-subtle);
+      }
+      .grp {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .grp .gl {
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-faint);
+        width: 52px;
+      }
+      .ctl {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .ctl label {
+        font-size: 11px;
+        color: var(--text-3);
+      }
+      .ctl output {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-2);
+        min-width: 34px;
+        text-align: right;
+      }
+      input[type='range'] {
+        width: 90px;
+        accent-color: var(--accent);
+      }
+      input[type='checkbox'] {
+        accent-color: var(--accent);
+      }
+      button {
+        font-family: var(--ui);
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-2);
+        background: var(--surface-overlay);
+        border: 1px solid var(--border);
+        border-radius: var(--r-ctl);
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        color: var(--text);
+        border-color: var(--border-strong);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Ambient background — S0 mock</h1>
+      <span class="hint"
+        >left: Drift (dot-grid light wave) · right: Current (the river) · tune below, then “Copy
+        settings” to lock numbers</span
+      >
+    </header>
+    <main>
+      <div class="panel" id="pDrift">
+        <canvas id="cDrift"></canvas>
+        <span class="tag">Drift</span><span class="fps" id="fpsDrift"></span>
+        <div class="board" style="left: 12%; top: 20%; width: 360px; height: 220px">
+          <div class="tb">
+            <span class="glyph">&gt;_</span><span class="type">Terminal</span
+            ><span class="title">agent · api</span>
+          </div>
+          <div class="bb">
+            claude<br /><span class="dim">⏺ Reading src/routes/auth.ts…</span><br /><span
+              class="dim"
+              >⏺ 3 files changed</span
+            >
+          </div>
+        </div>
+        <div class="board" style="left: 56%; top: 55%; width: 300px; height: 170px">
+          <div class="tb">
+            <span class="glyph">◫</span><span class="type">Planning</span
+            ><span class="title">sprint notes</span>
+          </div>
+          <div class="bb">
+            <span class="dim">— wire login flow<br />— port detection</span>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="pCurrent">
+        <canvas id="cCurrent"></canvas>
+        <span class="tag">Current</span><span class="fps" id="fpsCurrent"></span>
+        <div class="board" style="left: 10%; top: 18%; width: 360px; height: 220px">
+          <div class="tb">
+            <span class="glyph">&gt;_</span><span class="type">Terminal</span
+            ><span class="title">agent · ui</span>
+          </div>
+          <div class="bb">
+            claude<br /><span class="dim">⏺ Running pnpm typecheck…</span><br /><span class="dim"
+              >✓ green</span
+            >
+          </div>
+        </div>
+        <div class="board" style="left: 54%; top: 52%; width: 320px; height: 180px">
+          <div class="tb">
+            <span class="glyph">◍</span><span class="type">Browser</span
+            ><span class="title">localhost:5173</span>
+          </div>
+          <div class="bb"><span class="dim">preview · 390 × mobile</span></div>
+        </div>
+      </div>
+    </main>
+    <footer id="controls"></footer>
+    <script>
+      'use strict'
+      /* ---------- settings ---------- */
+      const DEFAULTS = {
+        brightness: 0.07, // peak stroke alpha (Current) / wave lift (Drift)
+        speed: 24, // px/s particle drift
+        density: 150, // particle count
+        trail: 0.55, // 0..1 → longer trail = slower erase
+        swirl: 1.0, // eddy strength (rad amplitude)
+        scale: 1.0, // eddy size multiplier
+        dir: -8, // base flow direction, degrees
+        period: 18, // Drift wave period, s
+        wavelength: 520, // Drift wavelength, px
+        grid: true, // dot grid under Current
+        reduced: false // reduced-motion preview (static frame)
+      }
+      const LS_KEY = 'ambient-mock-settings'
+      let S = { ...DEFAULTS }
+      try {
+        Object.assign(S, JSON.parse(localStorage.getItem(LS_KEY) || '{}'))
+      } catch {
+        /* fresh */
+      }
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) S.reduced = true
+
+      const GRID_GAP = 24
+      const VOID = [10, 10, 11]
+
+      /* ---------- controls ---------- */
+      const SLIDERS = [
+        {
+          g: 'Global',
+          k: 'brightness',
+          l: 'Brightness',
+          min: 0.02,
+          max: 0.18,
+          step: 0.005,
+          fmt: (v) => v.toFixed(3)
+        },
+        { g: 'Global', k: 'speed', l: 'Speed', min: 6, max: 70, step: 1, fmt: (v) => v + '' },
+        {
+          g: 'Current',
+          k: 'density',
+          l: 'Density',
+          min: 40,
+          max: 320,
+          step: 10,
+          fmt: (v) => v + ''
+        },
+        {
+          g: 'Current',
+          k: 'trail',
+          l: 'Trail',
+          min: 0,
+          max: 1,
+          step: 0.05,
+          fmt: (v) => v.toFixed(2)
+        },
+        {
+          g: 'Current',
+          k: 'swirl',
+          l: 'Swirl',
+          min: 0,
+          max: 2,
+          step: 0.05,
+          fmt: (v) => v.toFixed(2)
+        },
+        {
+          g: 'Current',
+          k: 'scale',
+          l: 'Eddy size',
+          min: 0.4,
+          max: 2.5,
+          step: 0.05,
+          fmt: (v) => v.toFixed(2)
+        },
+        {
+          g: 'Current',
+          k: 'dir',
+          l: 'Direction',
+          min: -180,
+          max: 180,
+          step: 1,
+          fmt: (v) => v + '°'
+        },
+        { g: 'Drift', k: 'period', l: 'Period', min: 6, max: 40, step: 1, fmt: (v) => v + 's' },
+        {
+          g: 'Drift',
+          k: 'wavelength',
+          l: 'Wavelength',
+          min: 200,
+          max: 1200,
+          step: 20,
+          fmt: (v) => v + ''
+        }
+      ]
+      const footer = document.getElementById('controls')
+      const groups = {}
+      for (const s of SLIDERS) {
+        if (!groups[s.g]) {
+          const div = document.createElement('div')
+          div.className = 'grp'
+          div.innerHTML = `<span class="gl">${s.g}</span>`
+          footer.appendChild(div)
+          groups[s.g] = div
+        }
+        const ctl = document.createElement('span')
+        ctl.className = 'ctl'
+        ctl.innerHTML = `<label>${s.l}</label>
+    <input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${S[s.k]}" data-k="${s.k}">
+    <output>${s.fmt(S[s.k])}</output>`
+        const inp = ctl.querySelector('input'),
+          out = ctl.querySelector('output')
+        inp.addEventListener('input', () => {
+          S[s.k] = parseFloat(inp.value)
+          out.textContent = s.fmt(S[s.k])
+          save()
+          onSettingsChange(s.k)
+        })
+        groups[s.g].appendChild(ctl)
+      }
+      const togglesGrp = document.createElement('div')
+      togglesGrp.className = 'grp'
+      togglesGrp.innerHTML = `<span class="gl">Toggles</span>
+  <span class="ctl"><label><input type="checkbox" id="tGrid" ${S.grid ? 'checked' : ''}> dot grid under Current</label></span>
+  <span class="ctl"><label><input type="checkbox" id="tReduced" ${S.reduced ? 'checked' : ''}> reduced motion (static)</label></span>
+  <button id="bReset">Reset</button>
+  <button id="bCopy">Copy settings</button>`
+      footer.appendChild(togglesGrp)
+      document.getElementById('tGrid').addEventListener('change', (e) => {
+        S.grid = e.target.checked
+        save()
+      })
+      document.getElementById('tReduced').addEventListener('change', (e) => {
+        S.reduced = e.target.checked
+        save()
+        onSettingsChange('reduced')
+      })
+      document.getElementById('bReset').addEventListener('click', () => {
+        localStorage.removeItem(LS_KEY)
+        location.reload()
+      })
+      document.getElementById('bCopy').addEventListener('click', async () => {
+        await navigator.clipboard.writeText(JSON.stringify(S, null, 2))
+        const b = document.getElementById('bCopy')
+        b.textContent = 'Copied ✓'
+        setTimeout(() => {
+          b.textContent = 'Copy settings'
+        }, 1200)
+      })
+      function save() {
+        localStorage.setItem(LS_KEY, JSON.stringify(S))
+      }
+
+      /* ---------- canvas plumbing ---------- */
+      function fit(canvas) {
+        const dpr = window.devicePixelRatio || 1
+        const r = canvas.parentElement.getBoundingClientRect()
+        const w = Math.max(1, Math.round(r.width * dpr)),
+          h = Math.max(1, Math.round(r.height * dpr))
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w
+          canvas.height = h
+          return true
+        }
+        return false
+      }
+      const cDrift = document.getElementById('cDrift'),
+        xD = cDrift.getContext('2d')
+      const cCur = document.getElementById('cCurrent'),
+        xC = cCur.getContext('2d')
+
+      /* ---------- Drift: dot grid with a slow traveling light wave ---------- */
+      function drawDrift(t) {
+        const dpr = window.devicePixelRatio || 1
+        const w = cDrift.width,
+          h = cDrift.height,
+          gap = GRID_GAP * dpr
+        xD.fillStyle = `rgb(${VOID})`
+        xD.fillRect(0, 0, w, h)
+        const a1 = 0.42,
+          a2 = 2.1 // two wave headings (rad) for an organic cross-swell
+        const k1 = (2 * Math.PI) / (S.wavelength * dpr)
+        const k2 = (2 * Math.PI) / (S.wavelength * 1.7 * dpr)
+        const ph1 = ((2 * Math.PI) / S.period) * t
+        const ph2 = ((2 * Math.PI) / (S.period * 1.6)) * t
+        const lift = S.brightness * 190 // peak added luminance ≈ +13 at default 0.07
+        const r = Math.max(1, Math.round(0.5 * dpr)) * 2 // ~1px dot at dpr1
+        for (let y = gap / 2; y < h; y += gap) {
+          for (let x = gap / 2; x < w; x += gap) {
+            let wv =
+              0.5 +
+              0.25 * Math.sin(k1 * (x * Math.cos(a1) + y * Math.sin(a1)) - ph1) +
+              0.25 * Math.sin(k2 * (x * Math.cos(a2) + y * Math.sin(a2)) - ph2)
+            if (S.reduced) wv = 0 // static: plain grid, byte-identical to today's dots
+            const l = wv * lift
+            xD.fillStyle = `rgb(${(32 + l) | 0},${(32 + l) | 0},${(34 + l) | 0})`
+            xD.fillRect(x - r / 2, y - r / 2, r, r)
+          }
+        }
+      }
+
+      /* ---------- Current: curl-ish flow field with drifting streamline comets ---------- */
+      let parts = []
+      function flowAngle(x, y, t) {
+        const f = 0.004 / S.scale
+        const n =
+          (Math.sin(x * f + t * 0.21) +
+            Math.sin(y * f * 1.31 - t * 0.16) +
+            Math.sin((x * 0.62 + y * 0.84) * f * 0.71 + t * 0.11)) /
+          3
+        return (S.dir * Math.PI) / 180 + n * S.swirl * 0.9
+      }
+      function spawn(w, h, fresh) {
+        const maxLife = 6 + Math.random() * 8
+        return {
+          x: Math.random() * w,
+          y: Math.random() * h,
+          life: fresh ? Math.random() * maxLife : 0,
+          maxLife
+        }
+      }
+      function syncParts(w, h) {
+        while (parts.length < S.density) parts.push(spawn(w, h, true))
+        if (parts.length > S.density) parts.length = S.density
+      }
+      function drawGridOn(ctx, w, h, dpr) {
+        const gap = GRID_GAP * dpr,
+          r = Math.max(1, Math.round(0.5 * dpr)) * 2
+        ctx.fillStyle = '#202022'
+        for (let y = gap / 2; y < h; y += gap)
+          for (let x = gap / 2; x < w; x += gap) ctx.fillRect(x - r / 2, y - r / 2, r, r)
+      }
+      let curInit = false
+      function drawCurrent(dt, t) {
+        const dpr = window.devicePixelRatio || 1
+        const w = cCur.width,
+          h = cCur.height
+        syncParts(w, h)
+        if (!curInit) {
+          xC.fillStyle = `rgb(${VOID})`
+          xC.fillRect(0, 0, w, h)
+          curInit = true
+        }
+        // trail: erase a little void each frame (flat color, alpha persistence — no gradients)
+        const fade = 0.125 - S.trail * 0.105 // trail 0→.125 (short) … 1→.02 (long)
+        xC.fillStyle = `rgba(${VOID},${fade.toFixed(3)})`
+        xC.fillRect(0, 0, w, h)
+        if (S.grid) drawGridOn(xC, w, h, dpr)
+        xC.lineWidth = Math.max(1, dpr)
+        xC.lineCap = 'round'
+        const v = S.speed * dpr
+        for (const p of parts) {
+          const a = flowAngle(p.x / dpr, p.y / dpr, t)
+          const nx = p.x + Math.cos(a) * v * dt,
+            ny = p.y + Math.sin(a) * v * dt
+          p.life += dt
+          const env = Math.sin(Math.PI * Math.min(p.life / p.maxLife, 1)) // fade in/out
+          xC.strokeStyle = `rgba(225,229,238,${(S.brightness * env).toFixed(4)})`
+          xC.beginPath()
+          xC.moveTo(p.x, p.y)
+          xC.lineTo(nx, ny)
+          xC.stroke()
+          p.x = nx
+          p.y = ny
+          const m = 24 * dpr
+          if (p.life >= p.maxLife || nx < -m || nx > w + m || ny < -m || ny > h + m)
+            Object.assign(p, spawn(w, h, false))
+        }
+      }
+      function drawCurrentStatic() {
+        // reduced-motion: one quiet static frame — faint short streaks along the field
+        const dpr = window.devicePixelRatio || 1
+        const w = cCur.width,
+          h = cCur.height
+        xC.fillStyle = `rgb(${VOID})`
+        xC.fillRect(0, 0, w, h)
+        if (S.grid) drawGridOn(xC, w, h, dpr)
+        syncParts(w, h)
+        xC.lineWidth = Math.max(1, dpr)
+        xC.lineCap = 'round'
+        for (const p of parts) {
+          const env = Math.sin(Math.PI * ((p.life % p.maxLife) / p.maxLife))
+          xC.strokeStyle = `rgba(225,229,238,${(S.brightness * 0.8 * env).toFixed(4)})`
+          let x = p.x,
+            y = p.y
+          xC.beginPath()
+          xC.moveTo(x, y)
+          for (let i = 0; i < 12; i++) {
+            const a = flowAngle(x / dpr, y / dpr, 0)
+            x += Math.cos(a) * 1.6 * dpr
+            y += Math.sin(a) * 1.6 * dpr
+            xC.lineTo(x, y)
+          }
+          xC.stroke()
+        }
+      }
+
+      /* ---------- loop ---------- */
+      const fpsD = document.getElementById('fpsDrift'),
+        fpsC = document.getElementById('fpsCurrent')
+      let last = performance.now(),
+        ema = 16.7,
+        fpsTick = 0
+      function frame(now) {
+        const dt = Math.min((now - last) / 1000, 0.05)
+        last = now
+        if (fit(cDrift)) {
+          /* resized */
+        }
+        if (fit(cCur)) curInit = false
+        const t = now / 1000
+        if (!S.reduced) {
+          const t0 = performance.now()
+          drawDrift(t)
+          drawCurrent(dt, t)
+          ema = ema * 0.95 + (performance.now() - t0) * 0.05
+          if ((fpsTick = (fpsTick + 1) % 30) === 0) {
+            fpsD.textContent = ''
+            fpsC.textContent = `draw ${ema.toFixed(2)}ms`
+          }
+        }
+        requestAnimationFrame(frame)
+      }
+      function onSettingsChange(k) {
+        if (k === 'reduced' || S.reduced) {
+          fit(cDrift)
+          fit(cCur)
+          drawDrift(0)
+          drawCurrentStatic()
+          fpsC.textContent = S.reduced ? 'static (reduced motion)' : ''
+        }
+        if (k === 'density') syncParts(cCur.width, cCur.height)
+      }
+      fit(cDrift)
+      fit(cCur)
+      if (S.reduced) {
+        drawDrift(0)
+        drawCurrentStatic()
+        fpsC.textContent = 'static (reduced motion)'
+      }
+      requestAnimationFrame(frame)
+      window.addEventListener('resize', () => {
+        if (S.reduced) onSettingsChange('reduced')
+      })
+    </script>
+  </body>
+</html>

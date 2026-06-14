@@ -9,6 +9,8 @@
  * know degrades to plain void + a toast (forward-compat with newer preset packs)
  * instead of being destroyed at parse time.
  */
+import { drift } from './scenes/drift'
+import { current } from './scenes/current'
 import { blossomRiver } from './scenes/blossomRiver'
 
 export interface SceneOpts {
@@ -45,7 +47,10 @@ export interface SceneDef {
 
 /** Registration order = picker display order within a tier. */
 const SCENES: readonly SceneDef[] = [
-  // PR 3 adds: drift, current, aurora-night, starfield-nebula, sunset-ocean,
+  // PR 3a — the ambient pair (subtle, dot-lattice based).
+  drift,
+  current,
+  // PR 3b adds the scenic roster: aurora-night, starfield-nebula, sunset-ocean,
   // snowfall-ridge, rainy-window, city-lights, misty-pines (addendum §3).
   blossomRiver
 ]

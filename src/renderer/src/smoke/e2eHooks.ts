@@ -34,6 +34,7 @@ import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
+import { listScenes } from '../canvas/backdrop/sceneRegistry'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
 interface RuntimeProbe {
@@ -56,6 +57,8 @@ export interface CanvasE2E {
   setBackground: (patch: Partial<CanvasBackground>) => void
   /** S4: the live backdrop settings (plain data — serializable), or null when never set. */
   getBackground: () => CanvasBackground | null
+  /** PR 3: registered bundled-scene ids, so e2e coverage is registry-derived. */
+  listSceneIds: () => string[]
   /** Named groups (plain data — serializable). */
   getGroups: () => { id: string; name: string; boardIds: string[] }[]
   /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
@@ -321,6 +324,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getBackground() {
       return useCanvasStore.getState().background
+    },
+    listSceneIds() {
+      return listScenes().map((s) => s.id)
     },
     getGroups() {
       return useCanvasStore.getState().groups
