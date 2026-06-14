@@ -16,6 +16,7 @@
  */
 import {
   useEffect,
+  useId,
   useRef,
   type CSSProperties,
   type HTMLAttributes,
@@ -25,6 +26,7 @@ import {
   type RefObject
 } from 'react'
 import { createPortal } from 'react-dom'
+import { usePreviewStore } from '../store/previewStore'
 
 /** Enabled, tabbable controls — the trap edges and the initial-focus fallback. */
 const FOCUSABLE =
@@ -78,6 +80,20 @@ export function Modal({
   children
 }: ModalProps): ReactElement {
   const cardRef = useRef<HTMLDivElement>(null)
+
+  // BUG-003: a native WebContentsView (Browser preview) paints ABOVE all HTML, so a live
+  // view overlapping this centered dialog occludes the card AND its scrim. The preview
+  // layer detaches every live view to its (clippable, z-ordered) HTML snapshot while
+  // `menuOpen` is set, so register a useId-keyed token for the modal's open lifetime —
+  // ref-counted by token, this covers EVERY modal built on the primitive (ConfirmModal /
+  // RecapConsentModal / SettingsModal). SettingsModal also registers its own token; the
+  // double-registration is harmless (two tokens, menuOpen = any open).
+  const menuToken = useId()
+  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
+  useEffect(() => {
+    setMenuOpen(menuToken, true)
+    return () => setMenuOpen(menuToken, false)
+  }, [menuToken, setMenuOpen])
 
   // A7: initial focus on mount, restore on unmount. Mount-only — the queue-advancing
   // ConfirmModal keeps one mounted Modal across requests and must not re-steal focus.
