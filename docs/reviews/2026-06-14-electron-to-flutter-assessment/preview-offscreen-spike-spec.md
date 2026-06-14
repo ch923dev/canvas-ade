@@ -271,6 +271,85 @@ remain the next measurements, now against the BrowserWindow host.
 
 ---
 
+## 8c. Interaction-fidelity findings + gap register (2026-06-15)
+
+Once frames flowed, the spike hit a recurring **class** of bug: native/browser behaviours
+that silently break when a page is rendered offscreen to a bitmap and driven by synthetic
+`sendInputEvent`. We fixed them reactively (cursor → caret → focus ring), then ran two
+research workflows — one to fix the feedback, one to **proactively enumerate the rest** —
+so the gaps are known, not discovered live.
+
+### Shipped this pass (commit `feat(spike): browser-like feedback + P0 hardening`)
+
+**Feedback (feel like a real browser):**
+- **Cursor** — forward `webContents 'cursor-changed'` → `preview:osrCursor` → `canvas.style.cursor`
+  via an Electron-type→CSS map (I-beam over inputs, pointer over links; custom = data-URL `url()`).
+- **Caret + animations** — `backgroundThrottling:false` so the hidden window's rAF/timers don't pause.
+- **Caret + `:focus` ring** on a never-OS-focused window — CDP `Emulation.setFocusEmulationEnabled`
+  over `wc.debugger`, driven **per-interaction** (`preview:osrFocus` on canvas focus/blur) so
+  `blur`/`focusout`/`visibilitychange` still fire.
+- **Hover-clear** on `pointerleave` + flush the coalesced move before `mouseUp` (exact endpoints).
+- **Full view** — keep the OSR window alive across the portal relocation (it was being destroyed on enter).
+- **Un-clickable preview fix** — the input hook bailed when the canvas was absent on the first tick
+  (deferred content host); rAF-wait for it.
+
+**P0 hardening (from the sweep — two were self-inflicted by the feedback fixes):**
+- 🔒 **Popup security** — `setWindowOpenHandler` (deny + token-bucket open-external) on the OSR window.
+  A previewed page's `window.open`/`target=_blank` no longer mints a real desktop window outside the
+  deny-all/nav-guard/partition posture (a scripted page could tab-bomb the desktop).
+- **Load/crash lifecycle** — wired the native path's load-latch + crash-ready gate + `did-navigate`
+  onto the OSR `wc`, emitting the shared `preview:event` channel (consumed slimly in
+  `useOffscreenPreview`) so a dead/404/crashed server shows Connecting → Couldn't-load / Preview-crashed
+  + a working Reload (`preview:osrReload`) instead of a frozen bitmap.
+- **Focus regression** — the always-on focus emulation (caret fix) permanently killed
+  `blur`/`focusout`; the per-interaction toggle above restores them.
+
+### Open gap register (P1 — important, not yet built)
+
+| Gap | Status | Sev × Likely | Fix lever |
+|---|---|---|---|
+| IME / composition (CJK, emoji, dead keys) typing | broken | high × med | CDP `Input.imeSetComposition`/`insertText` over the attached `wc.debugger` |
+| Native `<select>`/date/color picker list never renders | broken | high × high | OSR can't composite popup widgets (electron #34095) → MAIN-side CDP-driven React overlay |
+| **M1** fixed-1280×800 bitmap blurs at every zoom | broken | high × high | `setContentSize(W*S)+setZoomFactor(S)` supersample (no `setDeviceScaleFactor`) |
+| **M2** every board paints forever (CPU/battery) | broken | high × high | per-board `setFrameRate`/`stopPainting` visibility-gating + `MAX_LIVE`; honor `dirtyRect`; `createImageBitmap` |
+| **M4** responsive presets don't reflow | broken | high × high | `setContentSize(presetW)` per preset + update the input transform off the live width |
+| Clipboard Ctrl+C/X/V flaky | partial | high × high | route to `wc.copy()/cut()/paste()/selectAll()` (not synthetic chords) |
+| AltGr (€) chars dropped + corrupted into Ctrl+Alt | broken | med × med | detect AltGr, still emit `char`, strip control/alt mods (or route all text via `Input.insertText`) |
+| `<input type=file>` + `alert/confirm/prompt` un-parented; confirm/prompt FREEZE the preview | partial | med × low | CDP `Page.javascriptDialogOpening`/`handleJavaScriptDialog` + `Page.setInterceptFileChooserDialog` |
+| `<video>/<audio>` audio from invisible window, no mute | partial | med × med | `setAudioMuted` off-screen/over-cap + per-board mute toggle |
+| Downloads unhandled (silent/stray saves) | broken | med × med | `session.on('will-download', …)` policy (toast + `setSavePath` or prevent) |
+| Forwarded wheel jumpy (no precise deltas/ticks) | partial | med × med | `hasPreciseScrollingDeltas`/`wheelTicks`; sane line/page mapping |
+| Stale frame on resume/zoom-settle (once M2 gating lands) | partial | med × med | `wc.invalidate()` on every resume/visibility-active |
+
+### P2 (nice-to-have)
+60fps animation cap (`setFrameRate(60)` focused board) · custom-cursor `toDataURL()` DoS rate-limit ·
+`document.title`/favicon → board chrome (`page-title-updated`/`page-favicon-updated`) · `requestFullscreen`
+→ board full view · native right-click menu (`wc.on('context-menu')`) · debugger re-attach on
+DevTools-open/crash · teardown symmetry (`debugger.detach()` + `removeAllListeners` + `stopPainting()`
+before `destroy()`) · paint-watchdog · ctrl+wheel page-zoom guard (`setVisualZoomLevelLimits(1,1)`) ·
+page `navigator.clipboard` (intentionally denied) · unmapped-key leakage · `osrInput` event-type allowlist.
+
+### Quick probes (confirm a suspected gap in dev)
+- `window.open`/`target=_blank` → stray desktop window? (security) — **now fixed**
+- Dead URL `localhost:9999` / crash → Couldn't-load / Preview-crashed + Reload? — **now fixed**
+- Open a menu, click outside → does it close? (blur) — **now fixed by the per-interaction toggle**
+- Switch OS to a CJK IME / press a dead key → does non-ASCII type? — **broken (P1)**
+- Click a native `<select>` / `<input type=date>` → does the list/calendar appear? — **broken (P1)**
+- Zoom the canvas and read preview text → soft at every zoom? — **M1**
+- 4 boards panned off-screen, walk away → CPU stays pegged? — **M2**
+- Mobile preset on a responsive site → does it actually reflow (hamburger)? — **M4**
+- `Ctrl+C` selected text → does paste land elsewhere? — **partial (P1)**
+- Play a `<video>` → audio with no visible source / no mute? — **partial (P1)**
+
+**Provenance:** two dynamic research workflows (2026-06-15) — `osr-feedback-research` (5 agents) and
+`osr-fidelity-gap-sweep` (6 agents) — grounded in `previewOsr.ts`/`useOffscreenInput.ts`/
+`useOffscreenPreview.ts`/`BrowserBoard.tsx` + Electron 42 docs (context7) + Electron/Chromium prior-art
+(electron #34095/#34047/#44186 select popups, #4912 hover, #10510 OSR dialogs, #7830 paint-stops,
+#39859 WebGL OSR, #6338 macOS copy). The cursor/caret/focus class and the security/lifecycle gaps all
+trace to the same root: a flat bitmap + a hidden, never-OS-focused window + synthetic input.
+
+---
+
 ## 9. Effort & decision gate
 
 **Effort:** ~1–2 weeks, one engineer, one board, behind a flag. Reuses the already-built capture/clipped-
