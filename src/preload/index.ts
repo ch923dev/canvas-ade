@@ -270,6 +270,11 @@ const api = {
     ipcRenderer.invoke('preview:osrInput', { id, event }),
   // Reload a crashed/failed OSR board (the native reloadPreview has no view in OSR mode).
   reloadOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrReload', id),
+  // URL-bar Back/Forward in OSR mode (native goBack/goForwardPreview drive a WebContentsView
+  // the offscreen path doesn't have, so those buttons would otherwise no-op).
+  goBackOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrGoBack', id),
+  goForwardOsrPreview: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrGoForward', id),
   // Per-interaction focus emulation: enable on canvas focus, disable on blur (P0 — so the
   // caret/:focus ring show while interacting AND the page's blur/focusout still fire).
   setOsrFocus: (id: string, focused: boolean): Promise<boolean> =>

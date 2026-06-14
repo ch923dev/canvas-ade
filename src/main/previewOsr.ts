@@ -489,6 +489,31 @@ export function registerPreviewOsrHandlers(
       return false
     }
   })
+  // URL-bar Back/Forward for an OSR board (the native preview:goBack/goForward operate on a
+  // WebContentsView this path never creates, so in OSR mode those buttons would no-op). Mirror
+  // the native handlers verbatim against the offscreen window's navigationHistory.
+  ipcMain.handle('preview:osrGoBack', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = osr.get(id)
+    if (!e) return false
+    const wc = e.osrWin.webContents
+    if (wc.navigationHistory.canGoBack()) {
+      wc.navigationHistory.goBack()
+      return true
+    }
+    return false
+  })
+  ipcMain.handle('preview:osrGoForward', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = osr.get(id)
+    if (!e) return false
+    const wc = e.osrWin.webContents
+    if (wc.navigationHistory.canGoForward()) {
+      wc.navigationHistory.goForward()
+      return true
+    }
+    return false
+  })
   // Reload CTA for a crashed/failed OSR board (the native preview:reload has no view here).
   ipcMain.handle('preview:osrReload', (ev, id: string) => {
     if (isForeignSender(ev, getWin)) return false

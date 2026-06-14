@@ -348,23 +348,37 @@ export function BrowserBoard({
             name="back"
             title="Back"
             disabled={!runtime.canGoBack}
-            onClick={() => void window.api.goBackPreview(board.id)}
+            onClick={() =>
+              void (OSR_PREVIEW
+                ? window.api.goBackOsrPreview(board.id)
+                : window.api.goBackPreview(board.id))
+            }
           />
           <NavBtn
             name="forward"
             title="Forward"
             disabled={!runtime.canGoForward}
-            onClick={() => void window.api.goForwardPreview(board.id)}
+            onClick={() =>
+              void (OSR_PREVIEW
+                ? window.api.goForwardOsrPreview(board.id)
+                : window.api.goForwardPreview(board.id))
+            }
           />
           <NavBtn
             name="refresh"
             title="Reload"
-            onClick={() => void window.api.reloadPreview(board.id)}
+            onClick={() =>
+              void (OSR_PREVIEW
+                ? window.api.reloadOsrPreview(board.id)
+                : window.api.reloadPreview(board.id))
+            }
           />
           <NavBtn
             name="camera"
             title="Screenshot"
-            disabled={!runtime.live}
+            // Screenshot routes to the native capturePage path, which has no view in OSR mode;
+            // disable it there (runtime.live is also never set without the native engine).
+            disabled={!runtime.live || OSR_PREVIEW}
             onClick={takeScreenshot}
           />
           <NavBtn name="external" title="Open in browser" onClick={openExternal} />

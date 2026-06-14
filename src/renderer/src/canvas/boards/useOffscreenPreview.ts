@@ -22,6 +22,13 @@ export function useOffscreenPreview(
 ): void {
   useEffect(() => {
     if (!enabled || !url) return
+    // Clear any previously-painted frame so a stale page bitmap never sits OVER the board's
+    // Connecting / Couldn't-load / Crashed fallback. A re-open (URL change), a failed load, or a
+    // crash all stop the frame stream, leaving the last good frame frozen on the canvas otherwise.
+    const clearCanvas = (): void => {
+      const cv = canvasRef.current
+      cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
+    }
     void window.api.openOsrPreview({ id: boardId, url })
     // Show "Connecting…" under the (still-transparent) canvas until the first frame /
     // did-finish-load promotes to connected. previewStore is the same runtime the board's
@@ -48,12 +55,14 @@ export function useOffscreenPreview(
         })
       } else if (ev.type === 'did-fail-load') {
         ps.patchIfPresent(boardId, { status: 'load-failed', error: ev.errorDescription })
+        // No more frames will arrive; drop the stale bitmap so the "Couldn't load + Reload"
+        // fallback (under the canvas) is visible instead of the last good page.
+        clearCanvas()
       } else if (ev.type === 'render-process-gone') {
         ps.patchIfPresent(boardId, { status: 'crashed', error: ev.reason })
         // A crashed renderer paints no more frames; clear the stale bitmap so the board's
         // "Preview crashed + Reload" fallback (under the canvas) becomes visible.
-        const cv = canvasRef.current
-        cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
+        clearCanvas()
       }
     })
     const off = window.api.onPreviewOsrFrame((f) => {
@@ -83,6 +92,9 @@ export function useOffscreenPreview(
       off()
       offEvent()
       void window.api.closeOsrPreview(boardId)
+      // On a URL change the effect re-runs (close → open); clear so the OLD page's last frame
+      // doesn't linger over "Connecting…" until the new page's first frame arrives.
+      clearCanvas()
     }
   }, [boardId, url, enabled, canvasRef])
 }
