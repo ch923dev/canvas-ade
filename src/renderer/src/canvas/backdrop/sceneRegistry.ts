@@ -11,7 +11,14 @@
  */
 import { drift } from './scenes/drift'
 import { current } from './scenes/current'
+import { auroraNight } from './scenes/auroraNight'
+import { starfieldNebula } from './scenes/starfieldNebula'
+import { sunsetOcean } from './scenes/sunsetOcean'
+import { snowfallRidge } from './scenes/snowfallRidge'
+import { rainyWindow } from './scenes/rainyWindow'
+import { cityLights } from './scenes/cityLights'
 import { blossomRiver } from './scenes/blossomRiver'
+import { mistyPines } from './scenes/mistyPines'
 
 export interface SceneOpts {
   /** Palette-variant key (background.sceneVariant); unknown ⇒ the scene default. */
@@ -50,9 +57,15 @@ const SCENES: readonly SceneDef[] = [
   // PR 3a — the ambient pair (subtle, dot-lattice based).
   drift,
   current,
-  // PR 3b adds the scenic roster: aurora-night, starfield-nebula, sunset-ocean,
-  // snowfall-ridge, rainy-window, city-lights, misty-pines (addendum §3).
-  blossomRiver
+  // PR 3b — the scenic roster (addendum §3), in voted/display order.
+  auroraNight,
+  starfieldNebula,
+  sunsetOcean,
+  snowfallRidge,
+  rainyWindow,
+  cityLights,
+  blossomRiver,
+  mistyPines
 ]
 
 export function listScenes(): readonly SceneDef[] {

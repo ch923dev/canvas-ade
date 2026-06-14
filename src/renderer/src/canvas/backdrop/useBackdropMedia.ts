@@ -15,23 +15,13 @@
  * assetId is ignored by the tag check.
  */
 import { useEffect, useState } from 'react'
+import { MIME_BY_EXT } from './acceptExts'
 
 export type BackdropMediaState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'ready'; url: string; video: boolean }
   | { status: 'missing' }
-
-/** Import-accept list (spec §3) — keep in sync with BackdropPicker's file input. */
-const MIME_BY_EXT: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  gif: 'image/gif',
-  webm: 'video/webm',
-  mp4: 'video/mp4'
-}
 
 type Outcome = { for: string; state: BackdropMediaState }
 
