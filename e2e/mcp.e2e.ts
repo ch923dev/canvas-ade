@@ -155,7 +155,15 @@ const test = base.extend<{ mcp: McpPair }>({
     if (!info) throw new Error('MCP server not mounted (mcpInfo returned null)')
     const url = `http://127.0.0.1:${info.port}/mcp`
     const orch = await connect(url, info.orchestratorToken)
-    const worker = await connect(url, info.workerToken)
+    // Close orch if the SECOND connect throws — otherwise the first client leaks before the
+    // try/finally below is even entered.
+    let worker: McpClient
+    try {
+      worker = await connect(url, info.workerToken)
+    } catch (e) {
+      await orch.close().catch(() => {})
+      throw e
+    }
     try {
       await use({ info, orch, worker })
     } finally {
