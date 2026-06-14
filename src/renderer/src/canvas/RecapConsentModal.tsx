@@ -91,7 +91,11 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
             <i>you</i> choose, with <i>your</i> key &mdash; only if you set one. Pick a local model
             &rarr; nothing leaves.
           </li>
-          <li>File contents and command output are never sent.</li>
+          <li>
+            Raw files and full command output are never attached &mdash; only the agent&apos;s own
+            recap text, secret-scrubbed. (If the agent quoted a snippet in its summary, that quote
+            rides along in the text.)
+          </li>
         </ul>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
