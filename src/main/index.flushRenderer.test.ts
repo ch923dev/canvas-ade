@@ -11,8 +11,12 @@
  *      — RED against the old `finish = (): void => { ... }` that accepted no arguments
  *      and therefore could not perform any frame check.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { makeFlushChannel, makeFlushFinish } from './flushChannel'
+import { watchRecapMap } from './agentRecapMap'
 import type { BrowserWindow } from 'electron'
 
 // ---------------------------------------------------------------------------
@@ -91,6 +95,76 @@ describe('BUG-001 isForeignSender — destroyed-window guard (mirrors index.ts f
     const { isForeignSender } = await import('./ipcGuard')
     const e = { senderFrame: { id: 'frame' } } as never
     expect(isForeignSender(e, () => null)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// BUG-001 (recap-map watcher crash): the recap-map onChange callback in index.ts runs
+// INSIDE agentRecapMap's bare debounce setTimeout, so any throw escapes to uncaughtException
+// -> crashShutdown(1). The defect: `const wc = mainWindow?.webContents` — optional chaining
+// does NOT stop the `.webContents` GETTER from THROWING on a destroyed-but-non-null window
+// (the 'closed' handler used to leave mainWindow non-null). The fix reads win.isDestroyed()
+// BEFORE touching .webContents. These tests drive the REAL watchRecapMap setTimeout escape
+// path (the crash vector) against a destroyed-window double whose getter throws, proving the
+// BUGGY shape escapes the timer and the FIXED shape does not.
+// ---------------------------------------------------------------------------
+
+describe('BUG-001 watchRecapMap onChange — destroyed-window guard (real timer escape path)', () => {
+  let dir: string | null = null
+  afterEach(() => {
+    vi.useRealTimers()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+    dir = null
+  })
+
+  /** A destroyed-but-non-null window whose `.webContents` getter THROWS, like a real one. */
+  function destroyedNonNullWin(): BrowserWindow {
+    return {
+      isDestroyed: () => true,
+      get webContents(): never {
+        throw new Error('Object has been destroyed')
+      }
+    } as unknown as BrowserWindow
+  }
+
+  it('🔒 the OLD `mainWindow?.webContents` shape throws out of the debounce setTimeout', () => {
+    vi.useFakeTimers()
+    dir = mkdtempSync(join(tmpdir(), 'recap-bug001-old-'))
+    const mapPath = join(dir, 'session-map.jsonl')
+    writeFileSync(mapPath, '')
+    const win = destroyedNonNullWin()
+    // The OLD index.ts onChange: optional chaining does NOT guard the throwing getter.
+    const dispose = watchRecapMap(mapPath, () => {
+      const wc = win?.webContents // <- throws on the destroyed window (the bug)
+      if (wc && !wc.isDestroyed()) wc.send('recap:learned', [])
+    })
+    // The prime fire scheduled a debounce timer; running it invokes onChange inside the
+    // setTimeout. In prod that escapes to uncaughtException -> crashShutdown(1).
+    expect(() => vi.runOnlyPendingTimers()).toThrow(/destroyed/i)
+    dispose()
+  })
+
+  it('🔒 the FIXED guard (isDestroyed() BEFORE .webContents) does NOT throw and does NOT send', () => {
+    vi.useFakeTimers()
+    dir = mkdtempSync(join(tmpdir(), 'recap-bug001-fixed-'))
+    const mapPath = join(dir, 'session-map.jsonl')
+    writeFileSync(mapPath, '')
+    const win = destroyedNonNullWin()
+    let sent = 0
+    // The FIXED index.ts onChange: read isDestroyed() FIRST, never touch .webContents on a
+    // destroyed window (mirrors flushRenderer's canonical guard).
+    const dispose = watchRecapMap(mapPath, () => {
+      const w = win
+      if (!w || w.isDestroyed()) return
+      const wc = w.webContents
+      if (!wc.isDestroyed()) {
+        sent++
+        wc.send('recap:learned', [])
+      }
+    })
+    expect(() => vi.runOnlyPendingTimers()).not.toThrow()
+    expect(sent).toBe(0) // a destroyed window is never sent to
+    dispose()
   })
 })
 

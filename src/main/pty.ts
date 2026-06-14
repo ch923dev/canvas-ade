@@ -668,6 +668,34 @@ export function getTerminalRuntime(id: string): TerminalRuntime | undefined {
 }
 
 /**
+ * 🔒 Pure core of getTerminalActivityStaleMs (BUG-007). Ms since the board's last PTY output,
+ * computed against the injected `nowMs` clock. An absent id (non-terminal / closed / parked-not-live)
+ * → undefined. Keyed on `lastActivityAt` only (narrowed map type) so it unit-tests with a fake map.
+ * READ-ONLY, control-plane only — never the PTY data stream, never a write.
+ */
+export function getTerminalActivityStaleMsCore(
+  id: string,
+  sessionMap: Map<string, { lastActivityAt: number }>,
+  nowMs: number
+): number | undefined {
+  const s = sessionMap.get(id)
+  if (!s) return undefined
+  return Math.max(0, nowMs - s.lastActivityAt)
+}
+
+/**
+ * MAIN-internal activity-staleness predicate (BUG-007): ms since terminal board `id` last produced
+ * PTY output. Drives the MCP idle-reaper's dormancy measure — a live agent shell's coarse status pill
+ * stays 'running' for its whole lifetime, so the reaper can't use that bucket to detect a quiescent
+ * board; output silence is the real dormancy signal. Returns undefined for any id without a LIVE
+ * session (non-terminal / closed / parked) — the reaper then falls back to its status-bucket check.
+ * Read-only; never exposed to the renderer.
+ */
+export function getTerminalActivityStaleMs(id: string): number | undefined {
+  return getTerminalActivityStaleMsCore(id, sessions, Date.now())
+}
+
+/**
  * Gracefully close the live PTY for `id` before its board is removed (MCP close_board,
  * T3.2). Best-effort GRACEFUL FIRST: interrupt any running foreground agent (Ctrl-C)
  * and ask the shell to `exit`, then wait a short grace window for a natural exit

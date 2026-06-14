@@ -699,6 +699,46 @@ describe('buildOrchestrator', () => {
       expect(audits.some((a) => a.status === 'failed')).toBe(true)
     })
 
+    it('🔒 BUG-008: a POST-write audit failure does NOT reject the dispatch (no re-run on retry)', async () => {
+      // The injected audit sink (index.ts) RE-THROWS on an append failure so PRE-write callers
+      // can react. But the `dispatched` audit lands AFTER the PTY write has committed — so if it
+      // re-throws, a successful dispatch is reported as a thrown error and a retry re-runs the
+      // command in the target shell. runGatedWrite must swallow the post-write audit rejection.
+      const writes: Array<{ id: string; text: string }> = []
+      const board: Board = { id: 't1', type: 'terminal', title: 'Term', status: 'idle' }
+      const registry: BoardRegistry = {
+        listBoards: () => [board],
+        listConnectors: () => [],
+        listSessions: () => [],
+        subscribeStatus: () => () => {},
+        readOutput: () => EMPTY_OUTPUT,
+        readResult: () => EMPTY_RESULT,
+        readMemory: () => EMPTY_MEMORY,
+        readSummary: () => EMPTY_MEMORY,
+        sendCommand: async (cmd) => ({ ok: true, type: cmd.type }),
+        drainPty: async () => {},
+        writeToPty: (id, text) => {
+          writes.push({ id, text })
+          return true
+        },
+        confirm: async () => ({ approved: true }),
+        // Reject EVERY post-write audit (dispatched + the handoff outcome) like the index.ts
+        // sink does on an append failure. Pre-write branches don't run here (idle board, approved).
+        audit: async (input) => {
+          if (input.status === 'dispatched' || input.status === 'completed') {
+            throw new Error('audit append failed (disk full)')
+          }
+        },
+        recordResult: () => {}
+      }
+      const orch = buildOrchestrator(registry, { sleep: async () => {} })
+      // The board is already idle, so awaitHandoffSettled resolves immediately as completed.
+      // Despite BOTH the dispatched + completed audit appends throwing, the handoff RESOLVES
+      // (it does not reject) and the write committed exactly once.
+      await expect(orch.handoffPrompt('t1', 'pnpm build')).resolves.toBeDefined()
+      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }])
+    })
+
     it('await-idle: parks on the status stream while running, resolves on the idle event', async () => {
       const result: BoardResult = { present: true, status: 'success', summary: 'ok' }
       const board: Board = { id: 't1', type: 'terminal', title: 'Term', status: 'running' }
@@ -736,6 +776,46 @@ describe('buildOrchestrator', () => {
       await orch.handoffPrompt('t1', 'x')
       expect(audits.some((a) => a.status === 'timed_out')).toBe(true)
       expect(audits.some((a) => a.status === 'completed')).toBe(false)
+    })
+
+    it('BUG-002: a worker write_result settles the handoff `completed` even while the shell stays `running`', async () => {
+      // A live agent shell's derived status is permanently `running` (no per-task running->idle
+      // transition), so the status stream never settles the handoff and it would ride the
+      // backstop to `timed_out`. The worker reporting its OWN result IS the task-done marker, so
+      // a write_result for the target board must settle the parked handoff as `completed`.
+      const board: Board = { id: 't1', type: 'terminal', title: 'Term', status: 'running' }
+      const { registry, audits, hasListener } = dispatchReg({ boards: [board] })
+      // A never-resolving backstop + a never-changing status: the ONLY way to settle is the
+      // write_result signal. (No emitStatus is called in this test.)
+      const orch = buildOrchestrator(registry, { sleep: () => new Promise<void>(() => {}) })
+      const p = orch.handoffPrompt('t1', 'x')
+      await waitForListener(hasListener) // the await-idle has parked on the stream + result signal
+      // The worker self-reports its result through the SAME orchestrator — this fires the
+      // in-orchestrator result-settle notifier that wakes the parked handoff.
+      await orch.writeResult('t1', { status: 'success', summary: 'done' })
+      await p
+      expect(hasListener()).toBe(false) // the handoff unsubscribed on settle
+      expect(audits.some((a) => a.status === 'completed')).toBe(true)
+      expect(audits.some((a) => a.status === 'timed_out')).toBe(false)
+    })
+
+    it('BUG-002: a write_result for a DIFFERENT board does NOT settle this handoff', async () => {
+      // The settle signal is per-board: a sibling worker's result must not spuriously settle
+      // an unrelated handoff (it would mislabel a still-running dispatch as completed).
+      const board: Board = { id: 't1', type: 'terminal', title: 'Term', status: 'running' }
+      const { registry, audits, hasListener } = dispatchReg({ boards: [board] })
+      const orch = buildOrchestrator(registry, { sleep: () => new Promise<void>(() => {}) })
+      const p = orch.handoffPrompt('t1', 'x')
+      await waitForListener(hasListener)
+      await orch.writeResult('other', { status: 'success' }) // unrelated board
+      // The handoff stays parked (still running, no matching result). Prove it never resolved by
+      // giving the event loop a few turns then asserting the listener is still armed.
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+      expect(hasListener()).toBe(true)
+      expect(audits.some((a) => a.status === 'completed')).toBe(false)
+      // Settle it for real so the dangling promise/listener is cleaned up.
+      await orch.writeResult('t1', { status: 'success' })
+      await p
     })
 
     it('🔒 defensive: a forged/replayed nonce (consume=false) blocks the write', async () => {
@@ -967,6 +1047,40 @@ describe('buildOrchestrator', () => {
       expect(recorded).toEqual([
         { id: 'b9', result: { present: true, at: new Date(1000).toISOString() } }
       ])
+    })
+
+    it('🔒 BUG-009: clamps an oversized summary + bounds refs (array length AND per-element)', async () => {
+      const recorded: Array<{ id: string; result: BoardResult }> = []
+      const registry = reg([{ id: 'w1', type: 'terminal', title: 'Worker' }])
+      registry.recordResult = (id, result) => {
+        recorded.push({ id, result })
+      }
+      const orch = buildOrchestrator(registry, { now: () => 1000 })
+      // A malicious/runaway worker self-reports an unbounded summary + huge refs array with
+      // huge elements. The external @expanse-ade/mcp schema .max() is a separate-repo follow-up,
+      // so MAIN clamps as a belt-and-suspenders sink (mirrors boardRegistry/auditLog caps).
+      const hugeSummary = 'x'.repeat(250_000)
+      const hugeRefs = Array.from({ length: 1000 }, () => 'r'.repeat(2000))
+      await orch.writeResult('w1', { summary: hugeSummary, refs: hugeRefs })
+      expect(recorded).toHaveLength(1)
+      const res = recorded[0].result
+      // Summary sliced to the 100k cap (NOT the 250k it tried to write).
+      expect(res.summary!.length).toBe(100_000)
+      // Refs bounded: at most 256 entries, each at most 256 chars.
+      expect(res.refs!.length).toBe(256)
+      expect(res.refs!.every((r) => r.length === 256)).toBe(true)
+    })
+
+    it('does not mangle an in-bounds summary/refs (clamp is a ceiling, not a rewrite)', async () => {
+      const recorded: Array<{ id: string; result: BoardResult }> = []
+      const registry = reg([{ id: 'w1', type: 'terminal', title: 'Worker' }])
+      registry.recordResult = (id, result) => {
+        recorded.push({ id, result })
+      }
+      const orch = buildOrchestrator(registry, { now: () => 1000 })
+      await orch.writeResult('w1', { summary: 'short', refs: ['a.ts', 'b.ts'] })
+      expect(recorded[0].result.summary).toBe('short')
+      expect(recorded[0].result.refs).toEqual(['a.ts', 'b.ts'])
     })
   })
 

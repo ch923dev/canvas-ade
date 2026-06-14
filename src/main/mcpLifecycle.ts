@@ -17,6 +17,12 @@ export interface McpLifecycleDeps {
   cap: number
   idleTtlMs: number
   spawnGraceMs: number
+  /**
+   * BUG-007: output-silence threshold (ms) above which a live terminal counts as dormant for the
+   * reaper. Only consulted on the terminal-with-live-session branch (where the status bucket is
+   * permanently 'running'); a board with no live session still uses its derived status bucket.
+   */
+  idleActivityMs: number
   /** The orchestrator's read-only listBoards — reapIdle reads derived per-board statuses through it. */
   listBoards: () => Promise<BoardSummary[]>
 }
@@ -28,7 +34,7 @@ export interface McpLifecycle {
 }
 
 export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
-  const { registry, now, cap, idleTtlMs, spawnGraceMs, listBoards } = deps
+  const { registry, now, cap, idleTtlMs, spawnGraceMs, idleActivityMs, listBoards } = deps
   // Boards this orchestrator has spawned — the cap budget (T3.1). `spawnedAt` gates
   // reconciliation (T3.4): an id absent from the live mirror is dropped only after the
   // spawn grace, so a just-spawned not-yet-published board isn't pruned. `idleSince`
@@ -125,8 +131,20 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       const t = now()
       const reapable: string[] = []
       for (const [id, rec] of tracked) {
-        const status = statuses.get(id)
-        const idle = status === undefined || status === 'idle'
+        // BUG-007: a live terminal's coarse status bucket is permanently 'running' (no per-task
+        // running->idle transition), so the reaper measures its dormancy by OUTPUT SILENCE — a
+        // board whose PTY has been quiet for >= idleActivityMs counts as idle. The activity
+        // predicate returns undefined for any board WITHOUT a live terminal session (non-terminal,
+        // or a closed/parked terminal), in which case we fall back to the derived status bucket
+        // (the browser/planning idle path, and a session-gone terminal that reads 'idle').
+        const staleMs = registry.boardActivityStaleMs?.(id)
+        let idle: boolean
+        if (staleMs !== undefined) {
+          idle = staleMs >= idleActivityMs
+        } else {
+          const status = statuses.get(id)
+          idle = status === undefined || status === 'idle'
+        }
         if (!idle) {
           rec.idleSince = null
           continue

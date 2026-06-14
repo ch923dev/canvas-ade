@@ -94,6 +94,7 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
       cap: 4,
       idleTtlMs: 1000,
       spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
       listBoards: listBoardsFrom(boards)
     })
     // Fill to cap-1 sequentially (3 of 4 slots used).
@@ -126,6 +127,7 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
       cap: 4,
       idleTtlMs: 1000,
       spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
       listBoards: listBoardsFrom(boardsRef)
     })
     const ids: string[] = []
@@ -150,6 +152,7 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
       cap: 4,
       idleTtlMs: 1000,
       spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
       listBoards: listBoardsFrom(boards)
     })
     const { id: idle } = await life.spawnBoard({ type: 'terminal' })
@@ -164,6 +167,77 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
     expect(drained).toContain(idle) // gracefully closed (drained + removed)
     expect(boards.some((b) => b.id === idle)).toBe(false) // gone from the mirror
     expect(boards.some((b) => b.id === busy)).toBe(true) // the running board survives
+  })
+
+  it('🔒 BUG-007: reaps a quiescent terminal by OUTPUT SILENCE even while its status stays `running`', async () => {
+    // A live agent shell's coarse status bucket is permanently `running` (no per-task
+    // running->idle transition), so the OLD reaper (which only reaped a board whose bucket
+    // read `idle`) NEVER reaped a dormant terminal. The fix measures dormancy by output silence
+    // via registry.boardActivityStaleMs. Both boards report status `running` here; only output
+    // silence distinguishes the dormant one from the actively-working one.
+    let clock = 0
+    const drained: string[] = []
+    const { registry, boards, setStatus } = liveReg({ drained })
+    // Per-board ms-since-last-output, driven by the test (the pty.ts getter in prod).
+    const staleById: Record<string, number> = {}
+    registry.boardActivityStaleMs = (id) => staleById[id]
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: 4,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000, // output silent >= 60s counts as dormant
+      listBoards: listBoardsFrom(boards)
+    })
+    const { id: quiet } = await life.spawnBoard({ type: 'terminal' })
+    const { id: busy } = await life.spawnBoard({ type: 'terminal' })
+    // BOTH boards' status pill is permanently `running` — the bug's exact precondition.
+    setStatus(quiet, 'running')
+    setStatus(busy, 'running')
+    // The quiet board has been silent for 90s (>= idleActivityMs); the busy one printed 5s ago.
+    staleById[quiet] = 90_000
+    staleById[busy] = 5_000
+    expect(await life.reapIdle()).toEqual([]) // sweep 1 arms idleSince for the quiet board
+    clock = 500
+    expect(await life.reapIdle()).toEqual([]) // still within the reaper TTL
+    clock = 1500 // dormant for >= idleTtlMs 1000 of continuous output silence
+    expect(await life.reapIdle()).toEqual([quiet])
+    expect(drained).toContain(quiet)
+    expect(boards.some((b) => b.id === quiet)).toBe(false) // reaped despite `running` status
+    expect(boards.some((b) => b.id === busy)).toBe(true) // the actively-printing board survives
+  })
+
+  it('🔒 BUG-007: fresh output RE-ARMS a terminal — a board that resumes printing is not reaped', async () => {
+    // The idleSince clock must clear when output resumes, exactly as it cleared on a return to
+    // a non-idle status before. A board that goes silent, then prints again, must reset.
+    let clock = 0
+    const drained: string[] = []
+    const { registry, boards, setStatus } = liveReg({ drained })
+    const staleById: Record<string, number> = {}
+    registry.boardActivityStaleMs = (id) => staleById[id]
+    const life = createMcpLifecycle({
+      registry,
+      now: () => clock,
+      cap: 4,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boards)
+    })
+    const { id } = await life.spawnBoard({ type: 'terminal' })
+    setStatus(id, 'running')
+    staleById[id] = 90_000 // silent
+    expect(await life.reapIdle()).toEqual([]) // arms idleSince
+    clock = 500
+    staleById[id] = 1_000 // the agent printed again — back to active (< idleActivityMs)
+    expect(await life.reapIdle()).toEqual([]) // clears idleSince (re-armed)
+    clock = 1500 // would have been past the TTL had the clock not reset
+    staleById[id] = 90_000 // silent again
+    expect(await life.reapIdle()).toEqual([]) // a FRESH idle clock (not the original) → no reap yet
+    clock = 3000
+    expect(await life.reapIdle()).toEqual([id]) // now dormant past the TTL since the re-arm
+    expect(boards.some((b) => b.id === id)).toBe(false)
   })
 
   it('🔒 APP-N3: rejects an off-type spawn at the adapter — no command sent (reject precedes side effects)', async () => {
@@ -190,6 +264,7 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
       cap: 4,
       idleTtlMs: 1000,
       spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
       listBoards: listBoardsFrom(boards)
     })
     await expect(life.spawnBoard({ type: 'evil' })).rejects.toThrow(/type|spawnable/i)
