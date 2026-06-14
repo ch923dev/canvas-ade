@@ -31,6 +31,13 @@ import { showToast } from '../../store/toastStore'
 import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
 import { isHttpUrl } from '../../lib/autoConnect'
+import { useOffscreenPreview } from './useOffscreenPreview'
+
+// SPIKE (feat/preview-offscreen-spike): when set, Browser previews render OFFSCREEN
+// and paint into a DOM <canvas> here (occlusion fix under test, ADR 0002) instead of
+// the native WebContentsView. The native path is disabled in BrowserPreviewLayer when
+// this is on, so the two never run together.
+const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR === '1'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
@@ -126,6 +133,12 @@ export function BrowserBoard({
   const beginChange = useCanvasStore((s) => s.beginChange)
   const runtime = usePreviewStore(selectRuntime(board.id))
   const preset = VIEWPORT_PRESETS[board.viewport]
+
+  // SPIKE (feat/preview-offscreen-spike): the offscreen-preview canvas. The hook opens
+  // an offscreen render in MAIN and paints its frames into this canvas (inside
+  // .bb-frame); a no-op unless OSR_PREVIEW. Full view binds elsewhere — skip for now.
+  const osrCanvasRef = useRef<HTMLCanvasElement>(null)
+  useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW && !fullView)
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
   // board.url changes underneath (e.g. set elsewhere), re-sync the draft DURING
@@ -462,6 +475,10 @@ export function BrowserBoard({
             willRetry={willRetry}
             onReload={reloadCrashed}
           />
+          {/* SPIKE: offscreen-rendered frames paint here, OVER the snapshot/state
+              fallback. A normal DOM <canvas> — clips/rounds with .bb-frame, no native
+              overlay (the occlusion fix under test). */}
+          {OSR_PREVIEW && <canvas ref={osrCanvasRef} className="bb-live" />}
           {/* D2-C: evicted (renderer freed) ≠ detached (snapshot) — say so. Safe to
               overlay: an evicted board has no live native view above this HTML. */}
           {paused && <span className="bb-paused-badge">paused</span>}
