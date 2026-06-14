@@ -47,7 +47,14 @@ function okCommands(): {
 }
 
 function reg(
-  boards: Array<{ id: string; type: string; title: string; status?: string }>,
+  boards: Array<{
+    id: string
+    type: string
+    title: string
+    status?: string
+    agentKind?: string
+    monitorActivity?: boolean
+  }>,
   sessions: Array<{ id: string; status: string }> = [],
   outputs: Record<string, BoardOutput> = {},
   resultsById: Record<string, BoardResult> = {},
@@ -84,6 +91,35 @@ describe('buildOrchestrator', () => {
       { id: 't1', type: 'terminal', title: 'Term', status: 'running' },
       { id: 'b1', type: 'browser', title: 'Web', status: 'failed' },
       { id: 'p1', type: 'planning', title: 'Plan', status: 'static' }
+    ])
+  })
+
+  it('forwards agentKind + monitorActivity onto the board summary, only when set (Phase B)', async () => {
+    const orch = buildOrchestrator(
+      reg([
+        {
+          id: 't1',
+          type: 'terminal',
+          title: 'Claude',
+          status: 'running',
+          agentKind: 'claude',
+          monitorActivity: true
+        },
+        { id: 't2', type: 'terminal', title: 'Shell', status: 'idle', monitorActivity: false },
+        { id: 't3', type: 'terminal', title: 'Plain', status: 'idle' } // neither field
+      ])
+    )
+    expect(await orch.listBoards()).toEqual([
+      {
+        id: 't1',
+        type: 'terminal',
+        title: 'Claude',
+        status: 'running',
+        agentKind: 'claude',
+        monitorActivity: true
+      },
+      { id: 't2', type: 'terminal', title: 'Shell', status: 'idle', monitorActivity: false },
+      { id: 't3', type: 'terminal', title: 'Plain', status: 'idle' }
     ])
   })
 
@@ -1653,10 +1689,11 @@ describe('buildOrchestrator.subscribeStatus (M5 app-adopt)', () => {
   /** A registry that captures the forwarded status listener + seeds readResult for t1. */
   function capturingReg(): {
     registry: BoardRegistry
-    emit: (c: { id: string; status: string }) => void
+    emit: (c: { id: string; status: string; monitorActivity?: boolean }) => void
     subscribed: () => boolean
   } {
-    let listener: ((c: { id: string; status: string }) => void) | null = null
+    let listener: ((c: { id: string; status: string; monitorActivity?: boolean }) => void) | null =
+      null
     const base = reg(
       [{ id: 't1', type: 'terminal', title: 'T', status: 'idle' }],
       [],
@@ -1691,6 +1728,28 @@ describe('buildOrchestrator.subscribeStatus (M5 app-adopt)', () => {
       { id: 't1', status: 'idle', result: { present: true, status: 'success', summary: 'done' } },
       { id: 't2', status: 'idle' },
       { id: 't1', status: 'gone' }
+    ])
+  })
+
+  it('carries monitorActivity through to the package listener, including the idle+result path (Phase B)', () => {
+    // Regression guard: the wrapper must forward `monitorActivity` so the attention notifier can
+    // gate its push — a `monitorActivity:false` board must NOT raise a canvas://attention update.
+    const { registry, emit } = capturingReg()
+    const orch = buildOrchestrator(registry)
+    const seen: BoardStatusChange[] = []
+    orch.subscribeStatus((c) => seen.push(c))
+
+    emit({ id: 't1', status: 'running', monitorActivity: false }) // non-idle: flag carried, no result
+    emit({ id: 't1', status: 'idle', monitorActivity: false }) // idle+present: flag carried WITH result
+
+    expect(seen).toEqual([
+      { id: 't1', status: 'running', monitorActivity: false },
+      {
+        id: 't1',
+        status: 'idle',
+        monitorActivity: false,
+        result: { present: true, status: 'success', summary: 'done' }
+      }
     ])
   })
 

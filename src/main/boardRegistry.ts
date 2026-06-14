@@ -12,6 +12,18 @@ export interface BoardMirror {
    * a PTY/presence-derived bucket). Validated against {@link STATUS_BUCKETS}.
    */
   status?: string
+  /**
+   * Terminal agent-preset id the human chose (schema v10 `agentKind`) — `'claude'`,
+   * `'codex'`, … — so an orchestrator can route by capability. Open string, length-capped
+   * like the other fields; absent on non-terminal boards and pre-v10 terminals.
+   */
+  agentKind?: string
+  /**
+   * Whether this terminal participates in activity monitoring (schema v10). Absent ⇒
+   * monitored (opt-out, not opt-in). `false` keeps a plain shell out of the agent-facing
+   * `canvas://attention` queue + its notifier (Phase B). Coerced to a strict boolean.
+   */
+  monitorActivity?: boolean
 }
 
 /**
@@ -47,6 +59,13 @@ const STATUS_BUCKETS: ReadonlySet<string> = new Set([
 export interface BoardStatusChange {
   id: string
   status: string
+  /**
+   * Mirror of {@link BoardMirror.monitorActivity} at the time of the change (Phase B). The
+   * MCP attention notifier gates its push on `monitorActivity !== false`; carrying it on the
+   * change lets the notifier decide membership without a second board lookup. Omitted on a
+   * `'gone'` change (the board is leaving — its flag no longer matters).
+   */
+  monitorActivity?: boolean
 }
 
 /**
@@ -56,14 +75,22 @@ export interface BoardStatusChange {
  * bucket is skipped (the renderer always buckets now; the bucketless fallback is legacy).
  * Inputs are sanitized mirrors (`sanitizeSnapshot` already dropped unknown buckets), so this does
  * no bucket re-validation — it just diffs.
+ *
+ * Phase B: also emits when only `monitorActivity` flipped (status unchanged) — so a mid-session
+ * monitor opt-out/opt-in still drives the attention notifier's leave/enter — and carries the
+ * current `monitorActivity` on every (non-`gone`) change.
  */
 export function diffStatus(prev: BoardMirror[], next: BoardMirror[]): BoardStatusChange[] {
-  const prevById = new Map(prev.map((b) => [b.id, b.status]))
+  const prevById = new Map(prev.map((b) => [b.id, b]))
   const nextIds = new Set(next.map((b) => b.id))
   const changes: BoardStatusChange[] = []
   for (const b of next) {
-    if (b.status !== undefined && b.status !== prevById.get(b.id)) {
-      changes.push({ id: b.id, status: b.status })
+    if (b.status === undefined) continue
+    const before = prevById.get(b.id)
+    const statusChanged = b.status !== before?.status
+    const monitorChanged = b.monitorActivity !== before?.monitorActivity
+    if (statusChanged || monitorChanged) {
+      changes.push({ id: b.id, status: b.status, monitorActivity: b.monitorActivity })
     }
   }
   for (const b of prev) {
@@ -148,7 +175,7 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       typeof (b as BoardMirror).type === 'string' &&
       typeof (b as BoardMirror).title === 'string'
     ) {
-      const { id, type, title, status } = b as BoardMirror
+      const { id, type, title, status, agentKind, monitorActivity } = b as BoardMirror
       if (
         id.length > MAX_FIELD_LEN ||
         type.length > MAX_FIELD_LEN ||
@@ -156,13 +183,19 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       ) {
         continue
       }
+      const entry: BoardMirror = { id, type, title }
       // Attach status only when it is a known bucket; an invalid/absent value is
       // dropped so the adapter falls back rather than forwarding garbage.
-      out.push(
-        typeof status === 'string' && STATUS_BUCKETS.has(status)
-          ? { id, type, title, status }
-          : { id, type, title }
-      )
+      if (typeof status === 'string' && STATUS_BUCKETS.has(status)) entry.status = status
+      // v10 agent identity (Phase B): agentKind is an open string, length-capped like the
+      // others (over-length / non-string → field dropped, board kept — a forward preset id is
+      // valid). monitorActivity is attached only as a strict boolean (anything else → absent,
+      // which reads as monitored downstream — the safe default).
+      if (typeof agentKind === 'string' && agentKind.length <= MAX_FIELD_LEN) {
+        entry.agentKind = agentKind
+      }
+      if (typeof monitorActivity === 'boolean') entry.monitorActivity = monitorActivity
+      out.push(entry)
     }
   }
   return out

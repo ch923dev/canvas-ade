@@ -244,7 +244,12 @@ export function buildOrchestrator(
       id: b.id,
       type: b.type,
       title: b.title,
-      status: deriveStatus(b, sessionStatusFor)
+      status: deriveStatus(b, sessionStatusFor),
+      // Phase B: forward the v10 agent-identity fields only when present, so a non-terminal
+      // (or pre-v10) board's summary is unchanged. agentKind lets an orchestrator route by
+      // capability; monitorActivity gates the canvas://attention queue (selectAttention).
+      ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
+      ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
     }))
   }
 
@@ -282,15 +287,18 @@ export function buildOrchestrator(
       // as the package's BoardStatusChange, attaching the board's recorded result when it
       // settles to idle so a barrier can return it. readResult is sync; the result is
       // omitted unless one was actually recorded (present), and only on idle.
+      // Phase B: carry `monitorActivity` through unchanged so the attention notifier can gate
+      // its push (a `monitorActivity:false` board raises no canvas://attention update).
       return registry.subscribeStatus((change) => {
+        const { monitorActivity } = change
         if (change.status === 'idle') {
           const result = registry.readResult(change.id)
           if (result.present) {
-            listener({ id: change.id, status: change.status, result })
+            listener({ id: change.id, status: change.status, monitorActivity, result })
             return
           }
         }
-        listener({ id: change.id, status: change.status })
+        listener({ id: change.id, status: change.status, monitorActivity })
       })
     },
     async projectMemory(): Promise<MemoryDoc> {
