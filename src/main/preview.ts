@@ -10,7 +10,17 @@ import { isForeignSender } from './ipcGuard'
  */
 export type PreviewEvent =
   | { id: string; type: 'did-finish-load'; url: string }
-  | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
+  // `recovered` (BUG-004): set only by an in-page nav that committed a non-error in-app
+  // route AFTER a prior failure: lets the renderer lift a stale `load-failed`/`crashed`
+  // latch back to `connected` (an in-page route fires no did-finish-load to promote it).
+  | {
+      id: string
+      type: 'did-navigate'
+      url: string
+      canGoBack: boolean
+      canGoForward: boolean
+      recovered?: boolean
+    }
   | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
   // A fresh main-frame navigation STARTED (reload / back / forward / in-page link).
   // Lets the renderer clear a stale `load-failed` latch so the following
@@ -248,6 +258,25 @@ export function registerLoadLatch(
   })
 }
 
+/**
+ * In-page (client-side route) recovery of a failed load (BUG-004). A `did-navigate`
+ * carrying a `>= 400` HTTP code latches `failed` (and emits a terminal did-fail-load),
+ * but the ONLY clear of that latch is registerLoadLatch's main-frame did-start-navigation:
+ * an in-page route (did-navigate-in-page) re-emits did-navigate and NEVER clears it, so
+ * after a 4xx document then a client-side route to a working in-app view the board stays
+ * stuck on `load-failed`. An in-page nav commits real, non-error in-app content, so when the
+ * latch is set we clear it symmetrically and report `true` so the caller can flag the
+ * did-navigate `recovered` (the renderer then lifts load-failed back to connected; the
+ * in-page nav fires no did-finish-load to promote it). When the latch is clear this is a
+ * normal in-page nav and returns `false`. Pure (mutates only the passed latch) so it is
+ * unit-testable without Electron, mirroring registerLoadLatch.
+ */
+export function clearLatchOnInPageRecovery(latch: FailedLatch): boolean {
+  if (!latch.failed) return false
+  latch.failed = false
+  return true
+}
+
 /** A holder for the mutable `ready` flag (the live `Entry` satisfies this). */
 interface ReadyHolder {
   ready: boolean
@@ -480,12 +509,34 @@ function ensure(id: string, win: BrowserWindow): Entry {
     })
     wc.on('did-navigate-in-page', (_ev, url, isMainFrame) => {
       if (!isMainFrame) return
+      // BUG-004: an in-page (client-side route) nav re-emits did-navigate but NEVER
+      // clears the failure latch, so after a >=400 document then a client-side route to
+      // a working in-app view, the board stays stuck on `load-failed` (native layer hidden
+      // until a full main-frame reload). An in-page route commits real, non-error in-app
+      // content, so symmetrically clear the latch here and tell the renderer to recover.
+      // The in-page nav fires no did-finish-load, so re-show the (already-painted) view
+      // directly and flag the did-navigate `recovered` so the renderer lifts load-failed
+      // back to connected. Genuine 4xx/main-frame failures are unaffected (they re-emit
+      // through the did-navigate handler above, which never sets `recovered`).
+      const recovered = clearLatchOnInPageRecovery(e!)
+      if (recovered) {
+        e!.ready = true
+        const cur = views.get(id)
+        if (cur?.attached) {
+          try {
+            cur.view.setVisible(true)
+          } catch {
+            /* view gone */
+          }
+        }
+      }
       emit({
         id,
         type: 'did-navigate',
         url,
         canGoBack: wc.navigationHistory.canGoBack(),
-        canGoForward: wc.navigationHistory.canGoForward()
+        canGoForward: wc.navigationHistory.canGoForward(),
+        recovered
       })
     })
   }
