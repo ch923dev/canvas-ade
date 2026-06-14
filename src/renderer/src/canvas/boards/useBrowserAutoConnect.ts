@@ -23,6 +23,10 @@ import {
   type PreviewStatusLike
 } from '../../lib/autoConnect'
 
+// SPIKE (feat/preview-offscreen-spike): in OSR mode the native `views` Map is empty, so the
+// 'reload' (reconnect-on-refused) path must retry via the offscreen window, not preview:navigate.
+const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR === '1'
+
 const TICK_MS = 1000
 
 interface Attempt {
@@ -82,7 +86,10 @@ export function useBrowserAutoConnect(): void {
           // reconcile reads on the NEXT canvasStore.boards mutation — with an unchanged
           // URL there is no boards mutation, so the nonce is never consumed. Direct IPC
           // (navigatePreview → loadURL) bypasses the diff-skip and re-navigates immediately.
-          void window.api.navigatePreview(board.id, board.url)
+          // In OSR mode there is no native view for preview:navigate (it hits the empty `views`
+          // Map and no-ops), so retry by reloading the offscreen window's current URL instead.
+          if (OSR_PREVIEW) void window.api.reloadOsrPreview(board.id)
+          else void window.api.navigatePreview(board.id, board.url)
         } else if (plan.kind === 'detect') {
           const sourceId = board.previewSourceId
           // type-narrow: previewSourceId is optional in the schema, though detect implies it is set

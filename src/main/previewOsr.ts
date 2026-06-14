@@ -496,23 +496,33 @@ export function registerPreviewOsrHandlers(
     if (isForeignSender(ev, getWin)) return false
     const e = osr.get(id)
     if (!e) return false
-    const wc = e.osrWin.webContents
-    if (wc.navigationHistory.canGoBack()) {
-      wc.navigationHistory.goBack()
-      return true
+    // try/catch like osrReload: a crash/concurrent-shutdown can leave the window in the Map
+    // momentarily; a throw inside ipcMain.handle would surface as an unhandled IPC rejection.
+    try {
+      const wc = e.osrWin.webContents
+      if (wc.navigationHistory.canGoBack()) {
+        wc.navigationHistory.goBack()
+        return true
+      }
+      return false
+    } catch {
+      return false
     }
-    return false
   })
   ipcMain.handle('preview:osrGoForward', (ev, id: string) => {
     if (isForeignSender(ev, getWin)) return false
     const e = osr.get(id)
     if (!e) return false
-    const wc = e.osrWin.webContents
-    if (wc.navigationHistory.canGoForward()) {
-      wc.navigationHistory.goForward()
-      return true
+    try {
+      const wc = e.osrWin.webContents
+      if (wc.navigationHistory.canGoForward()) {
+        wc.navigationHistory.goForward()
+        return true
+      }
+      return false
+    } catch {
+      return false
     }
-    return false
   })
   // Reload CTA for a crashed/failed OSR board (the native preview:reload has no view here).
   ipcMain.handle('preview:osrReload', (ev, id: string) => {

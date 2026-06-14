@@ -322,7 +322,9 @@ gaps shipped *without a row*. Three are fixed in this pass; the fourth is added 
 - **Auto-connect restored in OSR** — `useBrowserAutoConnect` lived inside `NativePreviewLayer`, which
   never mounts when the flag is on, so reconnect-on-refused + auto-push-detected-port silently vanished
   in OSR mode. Hoisted into `BrowserPreviewLayer` above the OSR early-return (it only steers `board.url`,
-  never a native view, so it is engine-agnostic).
+  so it is engine-agnostic). Hoisting alone restores the `'detect'` path; the `'reload'` (reconnect-on-
+  refused) path also had to branch on OSR — it called `navigatePreview` (native `views` Map, empty in
+  OSR), now routed to `reloadOsrPreview` so a refused/failed offscreen board retries.
 - **Stale-frame trap closed** — `useOffscreenPreview` cleared the canvas only on crash, so a URL change
   or a failed reload left the previous page's last frame painted *over* the Connecting/Couldn't-load
   fallback. Now also clears on `did-fail-load` and on effect-cleanup (URL change / unmount). (Distinct
