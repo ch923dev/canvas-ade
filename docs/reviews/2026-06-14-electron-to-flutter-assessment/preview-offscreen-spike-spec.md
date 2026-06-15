@@ -304,6 +304,32 @@ so the gaps are known, not discovered live.
 - **Focus regression** — the always-on focus emulation (caret fix) permanently killed
   `blur`/`focusout`; the per-interaction toggle above restores them.
 
+### Review follow-ups (2026-06-15 — deep review, 41 findings, 0 crit/high)
+
+A 6-dimension adversarial review (`docs/reviews/2026-06-15-osr-preview-review/`) found the spike clean —
+the flag-off path is byte-for-byte the shipping native path and every §2 security carry-over is present —
+with **no critical/high** issues. It also confirmed this register is **accurate on what it lists** (every
+"Shipped this pass" claim and every P1/P2 row verifies against code) but **incomplete**: four user-visible
+gaps shipped *without a row*. Three are fixed in this pass; the fourth is added to the P1 table below.
+
+**Fixed this pass (`fix/osr-review-followups`):**
+- **URL-bar Back / Forward / Reload wired for OSR** — they routed to the native `preview:goBack/
+  goForward/reload` handlers (which `views.get(id)` returns undefined for in OSR mode), so the buttons
+  were live-but-dead (Back/Forward even *enabled* off OSR `did-navigate` state, then no-op'd). Added
+  `preview:osrGoBack`/`preview:osrGoForward` (frame-guarded, mirroring the native handlers) +
+  `goBack/goForwardOsrPreview` preload methods; the four URL-bar buttons now branch on `OSR_PREVIEW`.
+  Screenshot is explicitly disabled in OSR mode (the native `capturePage` path has no view).
+- **Auto-connect restored in OSR** — `useBrowserAutoConnect` lived inside `NativePreviewLayer`, which
+  never mounts when the flag is on, so reconnect-on-refused + auto-push-detected-port silently vanished
+  in OSR mode. Hoisted into `BrowserPreviewLayer` above the OSR early-return (it only steers `board.url`,
+  so it is engine-agnostic). Hoisting alone restores the `'detect'` path; the `'reload'` (reconnect-on-
+  refused) path also had to branch on OSR — it called `navigatePreview` (native `views` Map, empty in
+  OSR), now routed to `reloadOsrPreview` so a refused/failed offscreen board retries.
+- **Stale-frame trap closed** — `useOffscreenPreview` cleared the canvas only on crash, so a URL change
+  or a failed reload left the previous page's last frame painted *over* the Connecting/Couldn't-load
+  fallback. Now also clears on `did-fail-load` and on effect-cleanup (URL change / unmount). (Distinct
+  from the still-open M2 "stale frame on resume/zoom-settle" row, which needs `wc.invalidate()`.)
+
 ### Open gap register (P1 — important, not yet built)
 
 | Gap | Status | Sev × Likely | Fix lever |
@@ -312,6 +338,7 @@ so the gaps are known, not discovered live.
 | Native `<select>`/date/color picker list never renders | broken | high × high | OSR can't composite popup widgets (electron #34095) → MAIN-side CDP-driven React overlay |
 | **M1** fixed-1280×800 bitmap blurs at every zoom | broken | high × high | `setContentSize(W*S)+setZoomFactor(S)` supersample (no `setDeviceScaleFactor`) |
 | **M2** every board paints forever (CPU/battery) | broken | high × high | per-board `setFrameRate`/`stopPainting` visibility-gating + `MAX_LIVE`; honor `dirtyRect`; `createImageBitmap` |
+| **MAX_LIVE** uncapped — N OSR boards = N full hidden renderer processes (added 2026-06-15; broader than M2 frame-gating) | broken | high × med | `MAX_LIVE` cap that `destroy()`s far/over-cap offscreen windows + recreates on demand (the native path's cap, ported) |
 | **M4** responsive presets don't reflow | broken | high × high | `setContentSize(presetW)` per preset + update the input transform off the live width |
 | Clipboard Ctrl+C/X/V flaky | partial | high × high | route to `wc.copy()/cut()/paste()/selectAll()` (not synthetic chords) |
 | AltGr (€) chars dropped + corrupted into Ctrl+Alt | broken | med × med | detect AltGr, still emit `char`, strip control/alt mods (or route all text via `Input.insertText`) |

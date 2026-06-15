@@ -14,6 +14,11 @@ import { useBrowserAutoConnect } from './useBrowserAutoConnect'
 const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR === '1'
 
 export function BrowserPreviewLayer(props: LayerProps): ReactElement | null {
+  // Auto-connect (reconnect-on-refused + auto-push-detected-port) is preview-engine-agnostic —
+  // it only steers board.url and never touches a native view — so it must run in BOTH the native
+  // and OSR paths. Mount it here, ABOVE the OSR early-return, so flipping VITE_PREVIEW_OSR doesn't
+  // silently drop it (it previously lived inside NativePreviewLayer, which never mounts in OSR).
+  useBrowserAutoConnect()
   if (OSR_PREVIEW) return null
   return <NativePreviewLayer {...props} />
 }
@@ -21,6 +26,5 @@ export function BrowserPreviewLayer(props: LayerProps): ReactElement | null {
 /** The shipping native-preview engine (camera sync, motion/LOD snapshots, ADR 0002). */
 function NativePreviewLayer(props: LayerProps): null {
   usePreviewManager(props)
-  useBrowserAutoConnect()
   return null
 }
