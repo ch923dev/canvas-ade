@@ -44,6 +44,14 @@ interface OsrEntry {
   // — the same lifecycle the native path uses so a dead/404/crashed server resolves state.
   failed: boolean
   ready: boolean
+  // Current offscreen render size (OS-3 Phase 1 — M1 supersample + M4 logical reflow).
+  // `superSample` is re-applied as the page zoom factor on every did-finish-load (applyZoom),
+  // so a SPA route / reload keeps the supersample. `sizeKey` is the no-op guard that skips a
+  // redundant `setContentSize` relayout.
+  logicalW: number
+  logicalH: number
+  superSample: number
+  sizeKey?: string
 }
 
 /** Browser-preview lifecycle event, emitted on the SAME `preview:event` channel the native
@@ -57,13 +65,94 @@ type OsrLifecycleEvent =
   | { id: string; type: 'render-process-gone'; reason: string }
 
 const osr = new Map<string, OsrEntry>()
+// A resize requested before its OSR window exists (the renderer's sizing hook fires on mount,
+// same as the open) is buffered here and drained by ensureOsr — so the initial size lands
+// without a window-less setContentSize and without a 1280→preset reflow flash on open.
+const pendingSize = new Map<string, OsrSizeRequest>()
 let owner: BrowserWindow | null = null
 
 /** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). */
 const OSR_FRAME_RATE = 30
-/** Logical render size — desktop-preset aspect. DPR / responsive-preset sizing = M1/M4. */
+/** INITIAL render size — desktop-preset aspect. The live size is driven per-board by
+ *  `preview:osrResize` (M1 supersample + M4 responsive logical width); this is just the
+ *  size the window is born at before the first resize arrives. */
 const OSR_WIDTH = 1280
 const OSR_HEIGHT = 800
+
+/** A renderer-requested offscreen render size (`computeOsrSize` → `preview:osrResize`). */
+interface OsrSizeRequest {
+  /** Page CSS width (the preset width → real breakpoint reflow, M4). */
+  logicalW: number
+  /** Page CSS height. */
+  logicalH: number
+  /** Supersample factor S — render at S×, downscale into the stage canvas (M1). */
+  supersample: number
+}
+
+/** The frame-guarded IPC args for `preview:osrResize` (an `OsrSizeRequest` + the board id). */
+export interface OsrResizeArgs extends OsrSizeRequest {
+  id: string
+}
+
+/** Minimal hidden-window surface `applyOsrSize` drives — so the resize logic is unit-testable
+ *  without a real Electron `BrowserWindow`. A `BrowserWindow` satisfies it structurally. */
+interface OsrResizeTarget {
+  setContentSize(width: number, height: number): void
+  webContents: { setZoomFactor(factor: number): void; invalidate(): void }
+}
+/** The mutable size state `applyOsrSize` reads/writes (the live `OsrEntry` satisfies it). */
+interface OsrSizeState {
+  logicalW: number
+  logicalH: number
+  superSample: number
+  sizeKey?: string
+}
+
+/**
+ * Clamp/round a renderer-supplied size to a safe, finite render surface. Defense-in-depth:
+ * the renderer computes these (clamped to S≤2), but MAIN must never `setContentSize` to a
+ * garbage / non-finite / absurd value if the channel is driven directly. Hard-caps S at 4.
+ */
+export function sanitizeOsrSize(args: OsrSizeRequest): OsrSizeRequest {
+  const pos = (n: number, fallback: number): number => (Number.isFinite(n) && n > 0 ? n : fallback)
+  return {
+    logicalW: Math.round(pos(args.logicalW, OSR_WIDTH)),
+    logicalH: Math.round(pos(args.logicalH, OSR_HEIGHT)),
+    supersample: Math.max(1, Math.min(4, pos(args.supersample, 1)))
+  }
+}
+
+/**
+ * Apply an offscreen render size (M1 supersample + M4 logical reflow):
+ *   - `setContentSize(logical·S)` sets the PHYSICAL surface — a sharper buffer for the stage;
+ *   - `setZoomFactor(S)` lays the page out at the LOGICAL width (contentSize/zoom = logical),
+ *     so a responsive site reflows at the true breakpoint instead of always at 1280;
+ *   - `invalidate()` repaints at the new surface (also clears a stale frame on resume).
+ * No-op-guarded via `sizeKey` so a redundant resize never forces a relayout. `superSample` is
+ * always updated (applyZoom re-applies it on the next did-finish-load).
+ */
+export function applyOsrSize(
+  win: OsrResizeTarget,
+  state: OsrSizeState,
+  size: OsrSizeRequest
+): void {
+  const key = `${size.logicalW}x${size.logicalH}@${size.supersample}`
+  state.superSample = size.supersample
+  state.logicalW = size.logicalW
+  state.logicalH = size.logicalH
+  if (state.sizeKey === key) return // identical surface → skip the relayout
+  state.sizeKey = key
+  try {
+    win.setContentSize(
+      Math.round(size.logicalW * size.supersample),
+      Math.round(size.logicalH * size.supersample)
+    )
+    win.webContents.setZoomFactor(size.supersample)
+    win.webContents.invalidate()
+  } catch {
+    /* window gone / not OSR-capable */
+  }
+}
 
 /** One offscreen-rendered frame (raw BGRA pixels) pushed main → renderer. */
 export interface OsrFramePayload {
@@ -173,7 +262,14 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       partition: `preview-osr-${id}`
     }
   })
-  const e: OsrEntry = { osrWin, failed: false, ready: false }
+  const e: OsrEntry = {
+    osrWin,
+    failed: false,
+    ready: false,
+    logicalW: OSR_WIDTH,
+    logicalH: OSR_HEIGHT,
+    superSample: 1
+  }
   osr.set(id, e)
   const wc = osrWin.webContents
   // Deny-all permissions on this view's session (untrusted localhost content) — same
@@ -237,7 +333,16 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   // the canvas stays transparent and the board's "Couldn't load" fallback shows through.
   registerLoadLatch(wc, e, {
     getUrl: () => wc.getURL(),
-    applyZoom: () => {}, // OSR has no per-board zoom factor (the M1 supersample is separate)
+    // Re-apply the M1 supersample as the page zoom factor on every finish-load: a fresh
+    // load / SPA route / crash-reload resets the host's zoom, so without this the page would
+    // revert to 1× (blurry) after navigating. setContentSize persists across nav; zoom doesn't.
+    applyZoom: () => {
+      try {
+        wc.setZoomFactor(e.superSample)
+      } catch {
+        /* not OSR-capable / window gone */
+      }
+    },
     onNavStart: () => emitEvent({ id, type: 'did-start-navigation' }),
     onSuccess: (loadedUrl) => emitEvent({ id, type: 'did-finish-load', url: loadedUrl }),
     onFail: (errorCode, errorDescription, validatedURL) =>
@@ -284,6 +389,14 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       canGoForward: wc.navigationHistory.canGoForward()
     })
   })
+  // If a resize raced ahead of this open (the sizing hook fires on mount too), apply the
+  // buffered size now — BEFORE load — so the page lays out at the right logical width from
+  // the first paint (no 1280→preset reflow flash). Drains the pending entry.
+  const pend = pendingSize.get(id)
+  if (pend) {
+    pendingSize.delete(id)
+    applyOsrSize(osrWin, e, pend)
+  }
   applyOsrInitialLoad(
     id,
     url,
@@ -295,6 +408,7 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
 }
 
 function disposeOsr(id: string): void {
+  pendingSize.delete(id) // drop a buffered-but-never-applied resize
   const e = osr.get(id)
   if (!e) return
   try {
@@ -568,6 +682,21 @@ export function registerPreviewOsrHandlers(
     const e = osr.get(args.id)
     if (!e) return false
     setOsrFocus(e, args.focused)
+    return true
+  })
+  // Resize the offscreen surface (M1 supersample + M4 responsive logical width). Sent by the
+  // renderer's settle-gated sizing hook ONLY on a settled-zoom / preset / board-resize change —
+  // NOT per camera frame (the OSR path's whole win is zero per-frame camera IPC). If the window
+  // isn't open yet (resize raced the open), buffer the latest request; ensureOsr drains it.
+  ipcMain.handle('preview:osrResize', (ev, args: OsrResizeArgs) => {
+    if (isForeignSender(ev, getWin)) return false
+    const size = sanitizeOsrSize(args)
+    const e = osr.get(args.id)
+    if (!e) {
+      pendingSize.set(args.id, size)
+      return true
+    }
+    applyOsrSize(e.osrWin, e, size)
     return true
   })
 }

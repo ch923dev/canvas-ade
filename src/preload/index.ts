@@ -275,6 +275,13 @@ const api = {
   goBackOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrGoBack', id),
   goForwardOsrPreview: (id: string): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrGoForward', id),
+  // OS-3 Phase 1: resize the offscreen surface (M1 supersample + M4 responsive logical width).
+  // Sent by the settle-gated sizing hook (useOffscreenSizing) ONLY on a settled-zoom / preset /
+  // board-resize change — never per camera frame.
+  resizeOsr: (
+    id: string,
+    size: { logicalW: number; logicalH: number; supersample: number }
+  ): Promise<boolean> => ipcRenderer.invoke('preview:osrResize', { id, ...size }),
   // Per-interaction focus emulation: enable on canvas focus, disable on blur (P0 — so the
   // caret/:focus ring show while interacting AND the page's blur/focusout still fire).
   setOsrFocus: (id: string, focused: boolean): Promise<boolean> =>
