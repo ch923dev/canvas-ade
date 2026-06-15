@@ -12,9 +12,8 @@ import type { Page } from '@playwright/test'
  * writes nothing.
  *
  * The tool is FLAG-GATED (ADR 0003); the e2e harness boots with CANVAS_E2E=1 so MAIN enables
- * it. It also requires the @expanse-ade/mcp version that ships the tool — publishing that
- * version is a separate follow-up, so when the INSTALLED package predates it the whole block
- * self-skips with a logged reason (never a silent pass). It runs fully once the package lands.
+ * it. It requires `@expanse-ade/mcp` ≥ 0.11.0 (the version that ships the tool), which the app
+ * now pins — so its absence is a real regression, asserted (not skipped).
  */
 
 type McpInfo = {
@@ -131,14 +130,9 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     mcp
   }) => {
     test.slow() // real confirm modal + mirror propagation + canvas apply
-    // The tool ships in a later @expanse-ade/mcp version (publish is a separate follow-up).
-    // If the installed package predates it, skip the whole block WITH a logged reason — never
-    // a silent pass. It exercises fully once the package lands.
-    test.skip(
-      !mcp.orch.tools.includes(TOOL),
-      `${TOOL} not registered — installed @expanse-ade/mcp predates the S2 tool (publish pending)`
-    )
-
+    // The orchestrator MUST see the tool (pkg ≥ 0.11.0 + the CANVAS_E2E flag) — absence is a
+    // real regression, asserted here.
+    expect(mcp.orch.tools).toContain(TOOL)
     // Capability split: a worker tier must never even see the content-write tool.
     expect(mcp.worker.tools).not.toContain(TOOL)
     const workerCall = await mcp.worker.call(TOOL, {

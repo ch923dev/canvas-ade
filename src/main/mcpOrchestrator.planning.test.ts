@@ -133,8 +133,9 @@ describe('orchestrator.addPlanningElements (S2 content write gate)', () => {
     const h = harness(planning)
     const orch = buildOrchestrator(h.registry)
     await expect(
-      // unknown kind → buildPlanningOps throws PlanningContentError
-      orch.addPlanningElements('plan-1', { elements: [{ kind: 'diagram', source: 'x' }] })
+      // unknown kind → buildPlanningOps throws PlanningContentError. Cast: deliberately
+      // off-shape input exercising MAIN's runtime validation of untrusted agent content.
+      orch.addPlanningElements('plan-1', { elements: [{ kind: 'diagram', source: 'x' }] as never })
     ).rejects.toThrow()
     expect(h.confirms).toEqual([])
     expect(h.sent).toEqual([])

@@ -5,7 +5,8 @@ import type {
   BoardResultInput,
   BoardStatusChange,
   BoardSummary,
-  MemoryDoc
+  MemoryDoc,
+  PlanningElementsSpec
 } from '@expanse-ade/mcp'
 import type { AuditInput } from './auditLog'
 import { createDispatchGuard } from './dispatchGuard'
@@ -49,27 +50,15 @@ const WRITE_RESULT_MAX_REFS = 256
 const WRITE_RESULT_MAX_REF_LEN = 256
 
 /**
- * The orchestrator the app builds: the package's `LifecycleOrchestrator` PLUS the S2
- * planning content-write method. `addPlanningElements` is declared HERE (not imported from
- * @expanse-ade/mcp) so the app typechecks against the currently-published package while the
- * matching version (with the `add_planning_elements` tool that calls this) ships separately
- * — the wider object is still assignable to the package's `Orchestrator` param. `spec` is
- * typed loosely (`{ elements: unknown }`) because MAIN re-validates the agent content from
- * scratch (it is untrusted), regardless of what the tool layer already checked.
- */
-export type PlanningWriteOrchestrator = LifecycleOrchestrator & {
-  addPlanningElements(boardId: BoardId, spec: { elements: unknown }): Promise<void>
-}
-
-/**
  * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
  * terminal boards. Pure (type-only package imports → contract test loads no
- * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated.
+ * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated. `addPlanningElements`
+ * (S2) implements the package's content-write method (`@expanse-ade/mcp` ≥ 0.11.0).
  */
 export function buildOrchestrator(
   registry: BoardRegistry,
   opts: OrchestratorOpts = {}
-): PlanningWriteOrchestrator {
+): LifecycleOrchestrator {
   const now = opts.now ?? Date.now
   const cap = opts.cap ?? MCP_SPAWN_CAP
   const idleTtlMs = opts.idleTtlMs ?? MCP_IDLE_TTL_MS
@@ -497,7 +486,7 @@ export function buildOrchestrator(
       const ack = await registry.sendCommand({ type: 'configureBoard', id: boardId, patch: config })
       if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
     },
-    async addPlanningElements(boardId: BoardId, spec: { elements: unknown }): Promise<void> {
+    async addPlanningElements(boardId: BoardId, spec: PlanningElementsSpec): Promise<void> {
       // 🔒 S2: the FIRST MCP path writing attacker-influenceable CONTENT onto the durable
       // canvas (ADR 0003 §M-expose). Resolve + planning-check HERE; MAIN then
       // validates/sanitizes/caps every element, shows the FULL rendered content in a
@@ -536,7 +525,9 @@ export function buildOrchestrator(
       // human gate — never minted into ops, never shown to the human to rubber-stamp.
       let ops
       try {
-        ops = buildPlanningOps(spec?.elements)
+        // MAIN re-validates the agent content from scratch (untrusted) regardless of the
+        // tool-layer schema — buildPlanningOps takes `unknown` and rejects anything off-shape.
+        ops = buildPlanningOps(spec.elements)
       } catch (err) {
         if (err instanceof PlanningContentError) {
           await auditPlanning('rejected', { detail: `invalid content: ${err.message}` })

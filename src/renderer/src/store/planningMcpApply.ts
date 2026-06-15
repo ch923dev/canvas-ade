@@ -68,8 +68,8 @@ export function materializePlanningOps(
   ops: PlanningOp[],
   existing: PlanningElement[]
 ): PlanningElement[] {
-  const { x } = layoutStart(existing)
-  let y = layoutStart(existing).y
+  const { x, y: startY } = layoutStart(existing)
+  let y = startY
   const out: PlanningElement[] = []
   for (const op of ops) {
     switch (op.kind) {

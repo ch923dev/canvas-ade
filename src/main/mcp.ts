@@ -1,5 +1,5 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
-import type { McpServerDeps, TokenStore } from '@expanse-ade/mcp'
+import type { TokenStore } from '@expanse-ade/mcp'
 
 /**
  * Parse a positive-millisecond env override, falling back to `fallback` when the value
@@ -61,18 +61,14 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
     // just above). A second orchestrator-tier token (bound to a different board) then can't
     // drive orchestration cables it doesn't own. Matches the orchestratorToken's boardId.
-    // `planningWrite` is read at runtime by the matching @expanse-ade/mcp version (the one
-    // shipping the `add_planning_elements` tool). Typed as a local extension of the installed
-    // `McpServerDeps` so the app typechecks against the currently-published package while the
-    // tool version is released separately; passing a typed VARIABLE (not a fresh literal)
-    // avoids an excess-property error and an older package simply ignores the extra field.
-    const deps: McpServerDeps & { planningWrite?: boolean } = {
+    // 🔒 S2: `planningWrite` flag-gates the `add_planning_elements` content-write tool +
+    // `spawn_board` seed (off by default for the first release, ADR 0003).
+    const server = await createMcpHttpServer({
       orchestrator,
       tokens,
       commandBoardId: 'app',
       planningWrite: planningWriteEnabled()
-    }
-    const server = await createMcpHttpServer(deps)
+    })
     // 🔒 Idle-reap sweep (T3.4): periodically close MCP-spawned boards that have gone
     // idle past the TTL, so the swarm can't accrete dormant boards. unref() so the
     // timer never keeps the process alive at shutdown.

@@ -11,9 +11,10 @@ import type { PlanningOp, PlanningOpTint } from './mcpCommand'
  * human IN FULL via the confirm gate before they ever reach the renderer.
  *
  * MAIN cannot import the renderer's `assertPlanningElement` in shipped code (separate
- * bundle), so this validator mirrors the constraints for the four agent-content kinds; a
- * lock-step test cross-imports the renderer and asserts every op MAIN emits, once
- * materialized, passes `assertPlanningElement` (mirrors `projectStore` / `llmModels`).
+ * bundle), so this validator mirrors the constraints for the four agent-content kinds; the
+ * renderer applier then RE-validates every materialized element against the real
+ * `assertPlanningElement` before it lands (defense in depth) — so an off-shape op can never
+ * reach a board even if this mirror and the schema ever drift.
  */
 
 /** A content rejection — the orchestrator audits it `rejected` and throws. */
