@@ -298,6 +298,16 @@ function ensureOsrCursorListener(): void {
   })
 }
 
+// ── Phase 5 auto-update — MIRRORS main `UpdateStatus` (src/main/autoUpdate.ts). The
+// process boundary means no shared import; keep the two in lockstep, same as PtyState. ──
+export type UpdateStatus =
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'none' }
+  | { state: 'downloading'; percent: number }
+  | { state: 'ready'; version: string }
+  | { state: 'error'; message: string }
+
 const api = {
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
@@ -616,6 +626,23 @@ const api = {
       ipcRenderer.invoke('orchestration:getProvisionStatus'),
     sync: (ids: OrchestrationCliId[]): Promise<OrchestrationSyncResult[]> =>
       ipcRenderer.invoke('orchestration:syncProvisioners', ids)
+  },
+
+  // ── Phase 5 auto-update (electron-updater; main owns the feed/download) ──
+  update: {
+    /**
+     * Subscribe to update lifecycle status (checking → available → downloading →
+     * ready / error), pushed by main. Returns an unsubscribe fn. The listener gets
+     * ONLY the status payload (never the IpcRendererEvent). No events ever arrive in
+     * an unsigned/dev build — the gate in main never wires the updater.
+     */
+    onStatus: (listener: (status: UpdateStatus) => void): (() => void) => {
+      const handler = (_e: IpcRendererEvent, status: UpdateStatus): void => listener(status)
+      ipcRenderer.on('update:status', handler)
+      return () => ipcRenderer.removeListener('update:status', handler)
+    },
+    /** Install the downloaded update + relaunch — fired from the "ready" update toast. */
+    install: (): Promise<boolean> => ipcRenderer.invoke('update:install')
   },
 
   // ── MCP board mirror (control plane; metadata only — id/type/title + coarse status

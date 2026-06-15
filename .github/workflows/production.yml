@@ -66,6 +66,31 @@ jobs:
       - name: Package & publish to Release
         run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish always
         env:
-          # Skip macOS code-sign/notarize until Phase 5 (no certs in CI yet).
+          # ── Phase 5 code signing (STAGED) ──────────────────────────────────────────
+          # Every value below comes from a repo secret/variable. When a secret is unset,
+          # electron-builder degrades GRACEFULLY to an UNSIGNED build (notarization is
+          # skipped), so this release pipeline keeps working before any certs exist. Add
+          # the secrets to flip to signed releases — NO workflow edit needed. Full setup
+          # (cert formats, cloud signers, the auto-update switch): docs/contributing/releasing.md.
+          #
+          # macOS — Developer ID cert (CSC_LINK = base64 .p12, CSC_KEY_PASSWORD = its
+          # password) + notarization (Apple ID + app-specific password + team id):
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows — Authenticode cert as a .pfx (WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD).
+          # Modern OV/EV certs on a hardware token / cloud HSM use a cloud signer instead
+          # (e.g. Azure Trusted Signing) — see the releasing guide; these stay empty then.
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Never auto-pick a stray keychain identity on the macOS runner (signing still
+          # happens via CSC_LINK when present; this only disables implicit discovery).
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          # Auto-update is enabled ONLY when this repo variable is set to "1" — flip it on
+          # DELIBERATELY after you've verified signing works (the security invariant: never
+          # auto-update an unsigned build over a feed). Bakes __ENABLE_AUTO_UPDATE__=true
+          # into the main bundle (electron.vite.config.ts define).
+          ENABLE_AUTO_UPDATE: ${{ vars.AUTO_UPDATE == '1' && '1' || '' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

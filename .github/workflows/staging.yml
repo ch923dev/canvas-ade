@@ -36,7 +36,10 @@ jobs:
   # `pnpm test:e2e:matrix`). Decided 2026-06-03 — Actions e2e was billing-blocked, and
   # the native/Docker e2e is cheaper + faster on the dev box. See docs/testing/TESTING.md.
 
-  # Full per-OS / per-arch packaging matrix. Unsigned until Phase 5.
+  # Full per-OS / per-arch packaging matrix. Intentionally UNSIGNED: staging artifacts
+  # are throwaway smoke-test builds (7-day Actions artifacts, no release). Signed +
+  # notarized + published installers are cut by the production workflow on a GitHub
+  # Release (see production.yml + docs/contributing/releasing.md).
   package:
     needs: check
     strategy:
@@ -70,7 +73,9 @@ jobs:
       - name: Package
         run: pnpm exec electron-vite build && pnpm exec electron-builder ${{ matrix.args }} --publish never
         env:
-          # Skip macOS code-sign/notarize until Phase 5 (no certs in CI yet).
+          # Staging is unsigned by design (see the package-job comment above). Disable
+          # implicit keychain discovery so a self-hosted/macOS runner never picks a stray
+          # identity; signing is exercised only in the production release flow.
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v7

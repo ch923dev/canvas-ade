@@ -33,6 +33,12 @@ win:
   target:
     - target: nsis
   artifactName: ${productName}-${version}-${arch}.${ext}
+  # Phase 5 signing (STAGED): when a code-signing cert is provided via env —
+  # CSC_LINK (base64 cert or a path) + CSC_KEY_PASSWORD — electron-builder
+  # Authenticode-signs the app + installer automatically. Absent → unsigned build
+  # (Windows SmartScreen warns on first run). Modern OV/EV certs live on a hardware
+  # token / cloud HSM, not a portable .pfx; for those, use a cloud-signing provider
+  # (e.g. Azure Trusted Signing) and set its secrets. See docs/contributing/releasing.md.
 
 nsis:
   oneClick: false
@@ -42,19 +48,39 @@ mac:
   target:
     - target: dmg
   category: public.app-category.developer-tools
-  # Signing/notarization wired in Phase 5; CI builds unsigned for now.
-  identity: null
+  # Phase 5 signing (STAGED). Hardened runtime + entitlements are REQUIRED for
+  # notarization. When signing secrets are absent (local/staging) electron-builder
+  # SKIPS signing + notarization gracefully (unsigned build). When CSC_LINK +
+  # CSC_KEY_PASSWORD are set it signs with the Developer ID cert, and when the
+  # APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID env are also present it
+  # auto-notarizes. `identity: null` (force-unsigned) is intentionally removed so a
+  # provided cert is honored; CI keeps CSC_IDENTITY_AUTO_DISCOVERY=false so no stray
+  # keychain identity is ever picked up. See docs/contributing/releasing.md.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
 
 linux:
   target:
     - target: AppImage
   category: Development
 
-# SECURITY INVARIANT (audit `electron-updater-unsigned-latent`): auto-update stays
-# DORMANT until Phase 5. The `electron-updater` dep is present but intentionally NOT
-# wired (no `autoUpdater` import anywhere in src/). Do NOT set a `publish:` feed or
-# call `autoUpdater.checkForUpdates*` until BOTH land: (1) code-signing — mac notarize
-# + Win Authenticode (see `identity: null` above + the win/Phase-5 signing) — and
-# (2) an HTTPS update feed. An unsigned auto-update over a non-HTTPS feed is a remote
-# code-execution vector; enabling it before signing would ship that hole.
-publish: null
+# Update feed + release upload target (Phase 5). The GitHub provider does two things:
+# (1) lets `electron-builder --publish always` upload assets to the published Release
+#     (the production workflow). The previous `publish: null` SILENTLY NULLIFIED that
+#     CLI flag, so the release job went green while uploading zero assets (the
+#     bug-hunt finding at this line); and
+# (2) bakes app-update.yml into the app so electron-updater can read the HTTPS feed.
+#
+# SECURITY INVARIANT (audit `electron-updater-unsigned-latent`): configuring the feed
+# here does NOT by itself enable auto-update. The autoUpdater.checkForUpdates call
+# (src/main/autoUpdate.ts) is fenced behind the __ENABLE_AUTO_UPDATE__ build constant,
+# which is true ONLY when the production CI build sets ENABLE_AUTO_UPDATE=1 — and that
+# is set ONLY when code-signing secrets are present. An unsigned build therefore never
+# pulls an update over the feed (the remote-code-execution vector this invariant
+# guards). Do NOT flip the gate on for unsigned builds.
+publish:
+  provider: github
+  owner: ch923dev
+  repo: canvas-ade

@@ -248,6 +248,32 @@ sweep covers the shell; spot-check at least two different menus per item.
 - [ ] Remove the MOST-RECENT entry, quit, relaunch -> the app no longer auto-reopens that project
       (auto-reopen follows the new list head, or shows the welcome screen if empty).
 
+## Packaged build (Phase 5)
+
+The e2e harness boots the unpacked `out/` build; a GUI Electron app cannot be driven from a
+non-interactive shell, so these run on a **real desktop**. Build: `pnpm pack:dir`
+(fast, `release/win-unpacked/`) or `pnpm build:win` (full installer).
+
+- [ ] Launch the packaged exe (or install via the NSIS installer) -> the window OPENS to the
+      welcome screen (NOT a black/blank screen), title bar + taskbar read **Canvas ADE**, taskbar
+      icon is the accent-blue outline-diamond.
+- [ ] Open a project -> canvas renders; spawn a Terminal board -> a real shell + agent start
+      (node-pty loaded from `app.asar.unpacked`); spawn a Browser board -> native preview renders;
+      no React Flow attribution badge anywhere.
+- [ ] BUG-003 end-to-end: in a consented project, a packaged Claude SessionStart hook records to
+      the recap map and a board's recap face populates (the hook runs `recordSession.js` from
+      `app.asar.unpacked` via `ELECTRON_RUN_AS_NODE=1`).
+- [ ] Quit -> no orphaned `Canvas ADE.exe` / pty / preview-renderer processes.
+
+### Signed + auto-update (after certs + `AUTO_UPDATE=1`)
+
+- [ ] The installed app is code-signed: Windows shows the publisher (no SmartScreen "unknown
+      publisher"); macOS opens without a Gatekeeper block and `spctl -a -vv` / `codesign --verify`
+      pass; the build is notarized.
+- [ ] In-app update: install version N, publish a Release N+1 -> the running app shows the
+      "Downloading update… / Update ready — Restart" toast (bottom-right island); Restart relaunches
+      into N+1. Confirm an UNSIGNED build never shows this (the updater path is compiled out).
+
 ## Context / MCP (if touched)
 
 - [ ] Reopen a board -> instant Tier-1 digest, then cached Tier-2 LLM prose (with a key set).
