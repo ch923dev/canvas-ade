@@ -10,6 +10,15 @@ import type { BoardRegistry } from './mcpRegistry'
  */
 const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
 
+/**
+ * Cap on a spawned group's display name (PR-5b). The name is agent/user-provided text that
+ * lands in a renderer `NamedGroup.name` (rendered, never executed) — clamp it here at the
+ * agent-facing entry (belt-and-suspenders, mirroring the gitDiff/writeResult output clamps) so
+ * an unbounded name can't bloat the canvas/mirror. Whitespace is collapsed (a multi-line name
+ * would break the group-tab layout) before the clamp.
+ */
+const SPAWN_GROUP_MAX_NAME = 80
+
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -27,8 +36,34 @@ export interface McpLifecycleDeps {
   listBoards: () => Promise<BoardSummary[]>
 }
 
+/** The members a {@link McpLifecycle.spawnGroup} cluster may carry (terminal is always present). */
+export interface SpawnGroupInput {
+  name: string
+  /** Add a Planning member to the zone (the decomposed-subtask checklist surface). */
+  planning?: boolean
+  /** Add a Browser member, pre-wired to the terminal via `previewSourceId`. */
+  browser?: boolean
+}
+
+/** The minted ids a {@link McpLifecycle.spawnGroup} returns so the orchestrator can address the zone. */
+export interface SpawnGroupResult {
+  groupId: BoardId
+  terminalId: BoardId
+  planningId?: BoardId
+  browserId?: BoardId
+}
+
 export interface McpLifecycle {
   spawnBoard(input: { type: string; prompt?: string; cwd?: string }): Promise<{ id: BoardId }>
+  /**
+   * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
+   * optional planning + browser member, a Named Group over them, and the browser→terminal preview
+   * wiring. Mints every id in MAIN (returned so later lifecycle/dispatch tools can address each
+   * member); reserves ALL member slots against the same cap budget as `spawnBoard` BEFORE the
+   * await (so a near-cap group can't burst past it), and releases them on a failed ack. Content-
+   * less (empty boards), so it is cap-checked, not human-gated — the gate stays on content writes.
+   */
+  spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   closeBoard(boardId: BoardId): Promise<void>
   reapIdle(): Promise<string[]>
 }
@@ -95,6 +130,69 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       throw err
     }
     return { id }
+  }
+
+  const spawnGroup = async (input: SpawnGroupInput): Promise<SpawnGroupResult> => {
+    // Collapse whitespace (a multi-line name breaks the group-tab layout) → trim → clamp. The
+    // renderer re-validates a non-empty string before it lands (defense in depth).
+    const name = String(input?.name ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, SPAWN_GROUP_MAX_NAME)
+    if (name.length === 0) {
+      throw new Error('spawn_group: a non-empty group name is required')
+    }
+    // Compose the cluster: terminal always; planning/browser opt-in. The member COUNT is the
+    // cap budget this spawn consumes (the group record itself isn't a board, so it's uncapped).
+    const wantPlanning = input.planning === true
+    const wantBrowser = input.browser === true
+    const memberCount = 1 + (wantPlanning ? 1 : 0) + (wantBrowser ? 1 : 0)
+    // 🔒 Runaway-swarm guard (mirrors spawnBoard): reconcile away user-closed boards first, then
+    // reject BEFORE minting/sending if the WHOLE cluster would exceed the cap — so a capped group
+    // spawn has no side effects (no half-built zone).
+    reconcile()
+    if (tracked.size + memberCount > cap) {
+      throw new Error(
+        `MCP spawn concurrency cap reached (${cap} live spawned boards); spawning this group of ` +
+          `${memberCount} would exceed it — close some first`
+      )
+    }
+    // MAIN mints every id (server-issued) so the tool can return them + later lifecycle/dispatch
+    // tools can address each member. The renderer lays out the cluster + names the group.
+    // Annotate as plain `string` (randomUUID's template-literal type otherwise breaks the
+    // `x is string` narrowing below + the `tracked` map's string keys).
+    const groupId: string = randomUUID()
+    const terminalId: string = randomUUID()
+    const planningId: string | undefined = wantPlanning ? randomUUID() : undefined
+    const browserId: string | undefined = wantBrowser ? randomUUID() : undefined
+    const boardIds = [terminalId, planningId, browserId].filter((x): x is string => x !== undefined)
+    // 🔒 Optimistic reservation (BUG-003, group form): reserve ALL member slots NOW — before the
+    // await — so a concurrent spawn near the cap sees them and is rejected rather than both passing
+    // the check → cap+N. Release every reserved slot on a failed ack so a rejected group spawn
+    // doesn't permanently burn the budget (mirrors spawnBoard's single-slot release).
+    const at = now()
+    for (const id of boardIds) tracked.set(id, { spawnedAt: at, idleSince: null })
+    try {
+      const ack = await registry.sendCommand({
+        type: 'spawnGroup',
+        group: { id: groupId, name },
+        members: {
+          terminal: { id: terminalId },
+          ...(planningId ? { planning: { id: planningId } } : {}),
+          ...(browserId ? { browser: { id: browserId } } : {})
+        }
+      })
+      if (!ack.ok) throw new Error(`spawn_group failed: ${ack.error}`)
+    } catch (err) {
+      for (const id of boardIds) tracked.delete(id)
+      throw err
+    }
+    return {
+      groupId,
+      terminalId,
+      ...(planningId ? { planningId } : {}),
+      ...(browserId ? { browserId } : {})
+    }
   }
 
   const closeBoard = async (boardId: BoardId): Promise<void> => {
@@ -178,5 +276,5 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     }
   }
 
-  return { spawnBoard, closeBoard, reapIdle }
+  return { spawnBoard, spawnGroup, closeBoard, reapIdle }
 }

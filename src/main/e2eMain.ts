@@ -33,6 +33,7 @@ import { sendMcpCommand, type McpCommandAck } from './mcpCommand'
 import type { BoardResult } from '@expanse-ade/mcp'
 import type { RunningMcp } from './mcp'
 import type { AppModel } from './appModel'
+import type { SpawnGroupResult } from './mcpLifecycle'
 import type { ResultSynthesizer } from './boardResultSynth'
 
 /** The fixed board id the e2e/mcp.e2e.ts worker token binds to, so the write_result
@@ -146,6 +147,18 @@ export interface E2EMain {
    * it. Resolves null when the MCP server never mounted.
    */
   describeApp(): Promise<AppModel | null>
+  /**
+   * PR-5b live invoke: spawn a feature-zone cluster (terminal + optional planning/browser + a
+   * Named Group + browser→terminal preview wiring) through the orchestrator's `spawnGroup` —
+   * the same cap-checked write path the agent-facing `spawn_group` tool (PR-5c) will use. Lets
+   * the e2e drive the REAL command path (MAIN mints ids → sendCommand → renderer cluster +
+   * group) and assert the zone landed. Resolves null when the MCP server never mounted.
+   */
+  spawnGroupNow(input: {
+    name: string
+    planning?: boolean
+    browser?: boolean
+  }): Promise<SpawnGroupResult | null>
   /** Seed a board's live PTY output ring with known ANSI content (output-pagination probe). */
   mcpSeedOutput(id: string, text: string): boolean
   /** Record a board's structured result (drives the empty→filled `canvas://board/{id}/result` probe). */
@@ -371,6 +384,9 @@ export function installE2EMain(
     },
     describeApp() {
       return mcp?.describeApp() ?? Promise.resolve(null)
+    },
+    spawnGroupNow(input) {
+      return mcp?.spawnGroup(input) ?? Promise.resolve(null)
     },
     mcpSeedOutput(id, text) {
       return debugSeedOutput(id, text)

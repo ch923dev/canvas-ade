@@ -1964,3 +1964,26 @@ describe('setBackground', () => {
     expect(get().background).toBeNull()
   })
 })
+
+describe('spawnGroup (PR-5b — feature-zone cluster placement)', () => {
+  beforeEach(() => useCanvasStore.setState({ boards: [], groups: [], past: [], future: [] }))
+
+  it('places the whole cluster in a free slot that avoids an existing board', () => {
+    // Seed a board exactly at the cluster anchor so the naive position is occupied.
+    get().addBoard('terminal', { x: 100, y: 100 }, { exact: true })
+    const existing = get().boards[0]
+    get().spawnGroup({
+      at: { x: 100, y: 100 },
+      group: { id: 'g', name: 'Zone' },
+      members: { terminal: { id: 't' }, browser: { id: 'b' } }
+    })
+    const cluster = get().boards.filter((bd) => bd.id === 't' || bd.id === 'b')
+    expect(cluster).toHaveLength(2)
+    // No cluster member overlaps the pre-seeded board (freeSlot pushed the row clear).
+    const overlaps = (
+      a: { x: number; y: number; w: number; h: number },
+      c: typeof existing
+    ): boolean => a.x < c.x + c.w && c.x < a.x + a.w && a.y < c.y + c.h && c.y < a.y + a.h
+    for (const m of cluster) expect(overlaps(m, existing)).toBe(false)
+  })
+})
