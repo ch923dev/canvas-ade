@@ -231,6 +231,25 @@ export function clampOsrDirty(dirty: OsrRect, full: { width: number; height: num
   return { x, y, width, height }
 }
 
+/**
+ * The rect to actually ship for a paint (2C — hardened). Honors the dirty-rect crop ONLY at
+ * supersample 1, where the paint `dirtyRect`'s coordinate space provably matches the physical
+ * surface 1:1 (zoomFactor=1 ⇒ contentSize == logical, so DIP == device px). At S>1 the
+ * dirtyRect-vs-`image` coordinate space is NOT guaranteed equal (a DIP-reported dirtyRect would
+ * crop the wrong sub-region of a supersampled image), so we return the WHOLE frame instead — no
+ * crop, no misalignment. The fast word-swizzle still applies on every frame; only the dirty-rect
+ * BANDWIDTH win is skipped at S>1. (Most OSR setups report a full dirtyRect per paint anyway, so
+ * this rarely changes anything in practice; it makes the S>1 path provably safe.)
+ */
+export function osrPaintRect(
+  dirty: OsrRect,
+  full: { width: number; height: number },
+  superSample: number
+): OsrRect {
+  if (superSample === 1) return clampOsrDirty(dirty, full)
+  return { x: 0, y: 0, width: full.width, height: full.height }
+}
+
 /** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
 type OsrInputEvent = Parameters<Electron.WebContents['sendInputEvent']>[0]
 
@@ -375,13 +394,15 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   wc.on('paint', (_ev, dirty, image) => {
     const size = image.getSize()
     if (size.width === 0 || size.height === 0) return
-    // 2C — honor the dirty rect: crop to the changed region so we ship + swizzle only the pixels
-    // that changed (less IPC, smaller renderer-side swizzle). A full repaint (first paint /
-    // resize / resume invalidate) reports dirty == the whole image → `isFull` skips the crop and
-    // the renderer treats it as a whole-frame paint (which also re-fills a just-resized canvas).
-    const d = clampOsrDirty(dirty, size)
-    if (d.width === 0 || d.height === 0) return
+    // 2C — ship only the changed region (less IPC, smaller renderer-side swizzle). HARDENED:
+    // crop ONLY at supersample 1 (where the paint dirtyRect's coordinate space matches the
+    // physical surface 1:1); at S>1 osrPaintRect returns the whole frame, so a possible
+    // DIP-vs-device dirtyRect mismatch can never misalign the patch. A full repaint (first paint
+    // / resize / resume invalidate) reports dirty == the whole image → `isFull` skips the crop
+    // and the renderer treats it as a whole-frame paint (also re-filling a just-resized canvas).
     const full = { width: size.width, height: size.height }
+    const d = osrPaintRect(dirty, full, e.superSample)
+    if (d.width === 0 || d.height === 0) return
     const isFull = d.x === 0 && d.y === 0 && d.width === size.width && d.height === size.height
     const patch = isFull ? image : image.crop(d)
     emitFrame({ id, full, dirty: d, buffer: patch.toBitmap() })

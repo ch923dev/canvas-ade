@@ -4,7 +4,8 @@ import {
   sanitizeOsrSize,
   applyOsrSize,
   applyOsrPaint,
-  clampOsrDirty
+  clampOsrDirty,
+  osrPaintRect
 } from './previewOsr'
 
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
@@ -209,6 +210,32 @@ describe('clampOsrDirty', () => {
       y: 20,
       width: 31,
       height: 41
+    })
+  })
+})
+
+describe('osrPaintRect (2C hardening — crop only at supersample 1)', () => {
+  const full = { width: 800, height: 600 }
+  const dirty = { x: 100, y: 50, width: 200, height: 150 }
+
+  it('honors the (clamped) dirty rect at supersample 1', () => {
+    expect(osrPaintRect(dirty, full, 1)).toEqual(dirty)
+  })
+
+  it('returns the WHOLE frame at supersample 2 (no crop → no DIP/device misalignment)', () => {
+    expect(osrPaintRect(dirty, full, 2)).toEqual({ x: 0, y: 0, width: 800, height: 600 })
+  })
+
+  it('returns the whole frame for any S != 1 (e.g. fractional 1.5)', () => {
+    expect(osrPaintRect(dirty, full, 1.5)).toEqual({ x: 0, y: 0, width: 800, height: 600 })
+  })
+
+  it('still clamps an out-of-bounds dirty rect at S=1', () => {
+    expect(osrPaintRect({ x: 700, y: 500, width: 400, height: 400 }, full, 1)).toEqual({
+      x: 700,
+      y: 500,
+      width: 100,
+      height: 100
     })
   })
 })
