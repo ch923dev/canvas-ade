@@ -217,9 +217,40 @@ describe('buildOrchestrator', () => {
     expect(await orch.boardSummary('ghost')).toEqual(EMPTY_MEMORY)
   })
 
-  it('gitDiff stays phase-gated (M6)', async () => {
-    const orch = buildOrchestrator(reg([]))
-    await expect(orch.gitDiff('b')).rejects.toThrow(/Phase 6/)
+  describe('gitDiff (PR-2, read-only diff)', () => {
+    const termBoard = { id: 't1', type: 'terminal', title: 'Work' }
+
+    it('returns the registry diff for a terminal board', async () => {
+      const orch = buildOrchestrator({
+        ...reg([termBoard]),
+        gitDiff: async (id) => (id === 't1' ? 'diff --git a/x b/x\n+y' : '')
+      })
+      expect(await orch.gitDiff('t1')).toBe('diff --git a/x b/x\n+y')
+    })
+
+    it('rejects an unknown board id', async () => {
+      const orch = buildOrchestrator({ ...reg([termBoard]), gitDiff: async () => 'x' })
+      await expect(orch.gitDiff('ghost')).rejects.toThrow(/not found/)
+    })
+
+    it('rejects a non-terminal board', async () => {
+      const orch = buildOrchestrator({
+        ...reg([{ id: 'b1', type: 'browser', title: 'Preview' }]),
+        gitDiff: async () => 'x'
+      })
+      await expect(orch.gitDiff('b1')).rejects.toThrow(/not a terminal/)
+    })
+
+    it('throws when the registry does not wire gitDiff', async () => {
+      const orch = buildOrchestrator(reg([termBoard]))
+      await expect(orch.gitDiff('t1')).rejects.toThrow(/not available/)
+    })
+
+    it('clamps the diff to GITDIFF_MAX_BYTES (100k)', async () => {
+      const huge = 'x'.repeat(100_000 + 50)
+      const orch = buildOrchestrator({ ...reg([termBoard]), gitDiff: async () => huge })
+      expect((await orch.gitDiff('t1')).length).toBe(100_000)
+    })
   })
 
   describe('spawnBoard (T3.1, lifecycle write)', () => {

@@ -48,9 +48,16 @@ const WRITE_RESULT_MAX_REFS = 256
 const WRITE_RESULT_MAX_REF_LEN = 256
 
 /**
+ * 🔒 BUG-009-style belt-and-suspenders cap on the read-only gitDiff output (PR-2). A repo diff
+ * is untrusted, potentially-huge text (a large/hostile working tree); clamp in MAIN — the sink —
+ * mirroring WRITE_RESULT_MAX_SUMMARY. The caller gets a bounded, possibly-truncated diff.
+ */
+const GITDIFF_MAX_BYTES = 100_000
+
+/**
  * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
  * terminal boards. Pure (type-only package imports → contract test loads no
- * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated.
+ * node-pty). spawnBoard/dispatchPrompt stay phase-gated; gitDiff is live (PR-2, via registry).
  */
 export function buildOrchestrator(
   registry: BoardRegistry,
@@ -748,8 +755,18 @@ export function buildOrchestrator(
         confirmBody: () => `Send Ctrl-C (interrupt) to terminal "${board.title}" (${boardId})?`
       })
     },
-    async gitDiff(_boardId: BoardId): Promise<string> {
-      throw new Error('gitDiff not available until Phase 6')
+    async gitDiff(boardId: BoardId): Promise<string> {
+      // The orchestrator owns the policy (board resolution + terminal-check); the git work is a
+      // MAIN-injected capability (registry.gitDiff → gitDiff.ts → simple-git, MAIN-only, read-only).
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) throw new Error(`gitDiff: board not found: ${boardId}`)
+      if (board.type !== 'terminal') {
+        throw new Error(`gitDiff: not a terminal board: ${boardId}`)
+      }
+      if (!registry.gitDiff) throw new Error('gitDiff not available')
+      const raw = await registry.gitDiff(boardId)
+      // 🔒 clamp the untrusted diff (BUG-009 pattern, GITDIFF_MAX_BYTES).
+      return raw.length > GITDIFF_MAX_BYTES ? raw.slice(0, GITDIFF_MAX_BYTES) : raw
     }
   }
 }
