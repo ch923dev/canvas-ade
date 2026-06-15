@@ -11,15 +11,17 @@ vi.mock('./canvasStore', () => ({
 import { disposeLiveResources } from './disposeLiveResources'
 
 const closeAllPreviews = vi.fn<() => Promise<boolean>>()
+const closeAllOsr = vi.fn<() => Promise<boolean>>()
 const disposeAllTerminals = vi.fn<() => Promise<boolean>>()
 
 describe('disposeLiveResources (PTY-1)', () => {
   beforeEach(() => {
     storeState.boards = [{ id: 't1', type: 'terminal' }]
     closeAllPreviews.mockReset().mockResolvedValue(true)
+    closeAllOsr.mockReset().mockResolvedValue(true)
     disposeAllTerminals.mockReset().mockResolvedValue(true)
     ;(globalThis as unknown as { window: unknown }).window = {
-      api: { closeAllPreviews, disposeAllTerminals }
+      api: { closeAllPreviews, closeAllOsr, disposeAllTerminals }
     }
   })
 
@@ -33,6 +35,11 @@ describe('disposeLiveResources (PTY-1)', () => {
   it('still closes all preview views', async () => {
     await disposeLiveResources()
     expect(closeAllPreviews).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes all OSR offscreen windows too (OS-3 Phase 5 — deterministic reset sweep)', async () => {
+    await disposeLiveResources()
+    expect(closeAllOsr).toHaveBeenCalledTimes(1)
   })
 
   it('swallows IPC failures (best-effort) without throwing', async () => {

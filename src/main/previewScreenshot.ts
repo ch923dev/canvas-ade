@@ -1,17 +1,22 @@
 /**
- * Frame-guarded "screenshot the live preview" IPC. Captures a Browser board's native
- * WebContentsView, copies the PNG to the OS clipboard, and (when a project is open)
- * saves it into the project's content-addressed `assets/` store. Deps are injected so
- * the handler is unit-testable without Electron (mirrors clipboardIpc.ts).
+ * Frame-guarded "screenshot the live preview" IPC. Captures a Browser board's live preview,
+ * copies the PNG to the OS clipboard, and (when a project is open) saves it into the project's
+ * content-addressed `assets/` store. Deps are injected so the handler is unit-testable without
+ * Electron (mirrors clipboardIpc.ts).
+ *
+ * Engine-agnostic capture (OS-3 Phase 5): tries the native WebContentsView first, then the OSR
+ * offscreen window — OSR is the default engine, where the native `views` Map is empty so the
+ * native capture returns null and the OSR capture is used. One IPC serves both paths.
  *
  * Security: frame-guarded (isForeignSender); writes only inside the open project dir
- * (writeAsset); never touches the PTY. A detached/off-screen view captures blank, so
- * that case returns { ok:false, reason:'not-live' } and the renderer guides the user.
+ * (writeAsset); never touches the PTY. A detached/off-screen/blank capture returns
+ * { ok:false, reason:'not-live' } and the renderer guides the user.
  */
 import { clipboard, nativeImage, type IpcMain, type BrowserWindow } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir, writeAsset } from './projectStore'
 import { captureViewPng } from './preview'
+import { captureOsrPng } from './previewOsrCapture'
 
 export interface ScreenshotDeps {
   /** PNG bytes of the live view, or null if missing/detached/off-screen/blank. */
@@ -30,7 +35,8 @@ export type ScreenshotResult =
 
 function realDeps(): ScreenshotDeps {
   return {
-    capture: (id) => captureViewPng(id),
+    // Native view first (escape-hatch builds), OSR offscreen window otherwise (the default).
+    capture: async (id) => (await captureViewPng(id)) ?? (await captureOsrPng(id)),
     writeImage: (png) => clipboard.writeImage(nativeImage.createFromBuffer(png)),
     currentDir: () => getCurrentDir(),
     saveAsset: (dir, bytes, ext) => writeAsset(dir, bytes, ext)

@@ -1,15 +1,13 @@
 /**
- * D2-C: crashed-preview recovery. Drives the REAL render-process-gone path —
- * SIGKILL on the live view's renderer OS process via debugCrashView (Chromium's
- * forcefullyCrashRenderer is a silent no-op under some container kernels — the
- * 2026-06-13 Linux-leg finding; see preview.ts) — and asserts:
+ * D2-C / OS-3 Phase 5: crashed-preview recovery on the OSR engine. Drives the REAL
+ * render-process-gone path — SIGKILL on the offscreen window's renderer OS process via
+ * debugCrashOsr (Chromium's forcefullyCrashRenderer is a silent no-op under some container
+ * kernels — the 2026-06-13 Linux-leg finding; see previewOsr.ts) — and asserts:
  *  1. the board surfaces `crashed` (status word + Reload CTA) instead of freezing
  *     silently (the audit §3.4 Medium-High finding);
- *  2. the Reload CTA relaunches the renderer and the board reconnects;
- *  3. the recovery reuses the SAME webContents (reload, not close+reopen — page
- *     partition/session survives).
- * The CTA click is a real Playwright click on the HTML state layer (the dead native
- * view is hidden by main on crash, so the HTML underneath is genuinely hittable).
+ *  2. the Reload CTA relaunches the renderer and the board reconnects.
+ * The CTA click is a real Playwright click on the HTML state layer (the crashed state
+ * layer renders over the cleared canvas, so the HTML CTA is genuinely hittable).
  *
  * Renderer state is read via structured-arg page.evaluate (the preview-align
  * pattern): the board id/status flow as DATA, never interpolated into an eval'd
@@ -54,11 +52,9 @@ test.describe('@preview browser board — crashed preview recovery (D2-C)', () =
       await pollTrue(() => runtimeStatus(page, id, 'connected'), 10_000),
       'connects first'
     ).toBe(true)
-    const wcBefore = await mainCall<number | null>(electronApp, 'viewWebContentsId', id)
-
-    // Kill the preview's renderer process for real.
-    const crashed = await mainCall<boolean>(electronApp, 'crashView', id)
-    expect(crashed, 'crashView found the live view').toBe(true)
+    // Kill the OSR preview's renderer process for real (SIGKILL the offscreen window's pid).
+    const crashed = await mainCall<boolean>(electronApp, 'crashOsr', id)
+    expect(crashed, 'crashOsr found the live OSR window').toBe(true)
     expect(
       await pollTrue(() => runtimeStatus(page, id, 'crashed'), 10_000),
       'board surfaces crashed (no silent freeze)'
@@ -74,8 +70,5 @@ test.describe('@preview browser board — crashed preview recovery (D2-C)', () =
       await pollTrue(() => runtimeStatus(page, id, 'connected'), 15_000),
       'Reload CTA relaunches the renderer and reconnects'
     ).toBe(true)
-    // Reload (not close+reopen): the SAME webContents survives the crash recovery.
-    const wcAfter = await mainCall<number | null>(electronApp, 'viewWebContentsId', id)
-    expect(wcAfter, 'webContents id stable across crash recovery').toBe(wcBefore)
   })
 })

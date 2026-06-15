@@ -1,35 +1,15 @@
 import { test, expect } from './fixtures'
 import { evalIn, mainCall, pollEval, seed } from './helpers'
 
-const live = (id: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.live === true; })()`
 const status = (id: string, s: string) =>
   `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(s)}; })()`
+// OS-3 Phase 5: OSR full-view PORTAL-relocates the live <canvas> subtree into the modal host (it is
+// not remounted), so the canvas keeps its 2D context + last frame. A document-wide selector finds
+// it wherever it currently lives.
+const osrNonBlank = (id: string) => `window.__canvasE2E.osrCanvasNonBlank(${JSON.stringify(id)})`
 
-test.describe('@preview full view (native rebind — real instance)', () => {
-  test('a full-viewed OTHER board: browser stays detached through a mutation + webContents survives', async ({
-    page,
-    electronApp
-  }) => {
-    const url = await mainCall<string>(electronApp, 'localUrl')
-    const browserId = await seed(page, 'browser', { url })
-    const planId = await seed(page, 'planning')
-    await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
-    expect(await pollEval(page, live(browserId), 6000)).toBe(true)
-    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(planId)})`)
-    await page.waitForTimeout(400)
-    await evalIn(page, `window.__canvasE2E.addChecklist(${JSON.stringify(planId)})`)
-    await page.waitForTimeout(400)
-    const cap = await mainCall<{ attached: boolean }>(electronApp, 'captureView', browserId)
-    const survived = (await mainCall<string[]>(electronApp, 'viewIds')).includes(browserId)
-    await evalIn(page, 'window.__canvasE2E.setFullView(null)')
-    await page.waitForTimeout(300)
-    expect(cap.attached, 'browser stayed detached over the modal').toBe(false)
-    expect(survived, 'browser webContents survived full view').toBe(true)
-  })
-
-  test('full-viewing the browser ITSELF keeps the same webContents (no restart)', async ({
+test.describe('@preview full view (OSR portal relocation — real instance)', () => {
+  test('full-viewing the browser keeps it painting across the portal relocation (no restart)', async ({
     page,
     electronApp
   }) => {
@@ -37,17 +17,24 @@ test.describe('@preview full view (native rebind — real instance)', () => {
     const browserId = await seed(page, 'browser', { url })
     await page.waitForTimeout(150)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
-    expect(await pollEval(page, status(browserId, 'connected'), 6000)).toBe(true)
-    const before = await mainCall<number | null>(electronApp, 'viewWebContentsId', browserId)
+    expect(await pollEval(page, status(browserId, 'connected'), 10_000)).toBe(true)
+    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'painting before full view').toBe(
+      true
+    )
+    // Enter full view: the live subtree is portaled into the modal, not remounted — so the OSR
+    // window is never torn down and the canvas keeps painting. Assert it stays non-blank through
+    // the open AND the close (the OSR analogue of the native "same webContents survives" assert).
     await evalIn(page, `window.__canvasE2E.openFullViewAnimated(${JSON.stringify(browserId)})`)
     await page.waitForTimeout(700)
-    const during = await mainCall<number | null>(electronApp, 'viewWebContentsId', browserId)
+    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'still painting in full view').toBe(
+      true
+    )
     await evalIn(page, 'window.__canvasE2E.closeFullViewAnimated()')
     await page.waitForTimeout(700)
-    const after = await mainCall<number | null>(electronApp, 'viewWebContentsId', browserId)
-    expect(before).not.toBeNull()
-    expect(during).toBe(before)
-    expect(after).toBe(before)
+    expect(
+      await pollEval(page, osrNonBlank(browserId), 8000),
+      'still painting after closing full view'
+    ).toBe(true)
   })
 
   test('Mobile full view is an aspect-correct letterboxed emulator (not stretched)', async ({

@@ -6,8 +6,9 @@
  *    their deltas, clamps and key-repeat-burst -> ONE-undo coalescing are pinned as pure
  *    logic in useBoardKeyboardNav.test.tsx (the move handler keys off event ORDER, not
  *    e.repeat -- a synthetic keydown burst is byte-equivalent to OS key-repeat).
- *  - the A3 focus-return from a focused NATIVE preview view (before-input-event -> host
- *    webContents.focus -- pure main-process behavior).
+ *    (The A3 focus-return-from-a-focused-NATIVE-preview test was dropped in OS-3 Phase 5:
+ *    OSR is the default engine and never takes OS keyboard focus — its keyboard routes
+ *    through a renderer composition-proxy textarea, so there is no native focus to return.)
  *  - the negative probes: Tab/arrows from a focused xterm or planning well must NOT drive
  *    board selection -- only REAL focus on those surfaces exercises the whitelist guard.
  * The component contract (cycle order, deltas, clamps, checkpoint discipline) is pinned in
@@ -19,7 +20,7 @@
  */
 import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { evalIn, seed } from './helpers'
 
 interface BoardLite {
   id: string
@@ -65,51 +66,6 @@ test.describe('@chrome board keyboard nav (real OS input, D4-B)', () => {
     await expect.poll(() => getSelection(page)).toEqual([a])
     await page.keyboard.press('Shift+Tab') // wraps backward to the last board
     await expect.poll(() => getSelection(page)).toEqual([c])
-  })
-
-  test('A3: Esc inside a focused native preview returns focus + selects the board', async ({
-    page,
-    electronApp
-  }) => {
-    const url = await mainCall<string>(electronApp, 'localUrl')
-    const browserId = await seed(page, 'browser', { url })
-    const planId = await seed(page, 'planning')
-    await select(page, [])
-    await evalIn(page, `window.__canvasE2E.fitView()`)
-    await expect
-      .poll(
-        () =>
-          page.evaluate((id) => {
-            const r = (globalThis as any).__canvasE2E.getRuntime(id)
-            return !!r && r.status === 'connected'
-          }, browserId),
-        { timeout: 10_000 }
-      )
-      .toBe(true)
-
-    // A user clicking into the preview = the native view's webContents takes OS focus;
-    // the renderer window can no longer see the keyboard (the A3 trap).
-    expect(await mainCall<boolean>(electronApp, 'focusView', browserId)).toBe(true)
-    await expect.poll(() => mainCall<boolean>(electronApp, 'hostFocused')).toBe(false)
-
-    // Real Esc through the VIEW's webContents -> before-input-event forwards + main
-    // hands focus back to the host window; the renderer selects the board.
-    expect(
-      await mainCall<boolean>(electronApp, 'sendInputToView', browserId, {
-        type: 'keyDown',
-        keyCode: 'Escape'
-      })
-    ).toBe(true)
-    await mainCall(electronApp, 'sendInputToView', browserId, {
-      type: 'keyUp',
-      keyCode: 'Escape'
-    })
-    await expect.poll(() => mainCall<boolean>(electronApp, 'hostFocused')).toBe(true)
-    await expect.poll(() => getSelection(page)).toEqual([browserId])
-
-    // The keyboard is genuinely live again: Tab continues the cycle from that board.
-    await page.keyboard.press('Tab')
-    await expect.poll(() => getSelection(page)).toEqual([planId])
   })
 
   test('negative: Tab/arrows in a focused xterm do not drive board selection', async ({ page }) => {

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { evalIn, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -17,8 +17,6 @@ import type { Page } from '@playwright/test'
  * each test below starts from the shipped first-run default (hidden).
  */
 const minimap = (page: Page) => page.locator('.react-flow__minimap')
-const runtimeLive = (id: string): string =>
-  `!!(window.__canvasE2E.getRuntime(${JSON.stringify(id)}) || {}).live`
 const stickyKey = (page: Page): Promise<string | null> =>
   page.evaluate(() => {
     const g = globalThis as unknown as {
@@ -105,50 +103,9 @@ test.describe('@chrome D4-C wayfinding minimap (real OS input)', () => {
       .toBeLessThan(160)
   })
 
-  test('a live native preview overlapping the island demotes while visible (ADR 0002)', async ({
-    page,
-    electronApp
-  }) => {
-    const url = await mainCall<string>(electronApp, 'localUrl')
-    const id = await seed(page, 'browser', { url })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await evalIn(page, 'window.__canvasE2E.setZoom(1)')
-    // Park the board's stage over the bottom-right corner (where the island mounts):
-    // pan so the board's center sits 140px in from the corner. POLLED, re-applying the
-    // pan each iteration (the whiteboard fitted-poll pattern) — under full-suite load a
-    // one-shot pan can race a not-yet-finished camera op and get wiped (matrix catch).
-    const parked = await pollEval(
-      page,
-      `(() => {
-         const g = globalThis;
-         const board = g.__canvasE2E.getBoards().find((bd) => bd.id === ${JSON.stringify(id)});
-         if (!board) return false;
-         const vp = g.__canvasE2E.getViewport();
-         const cx = (board.x + board.w / 2) * vp.zoom + vp.x;
-         const cy = (board.y + board.h / 2) * vp.zoom + vp.y;
-         const dx = g.innerWidth - 140 - cx, dy = g.innerHeight - 140 - cy;
-         if (Math.hypot(dx, dy) < 4) return true;
-         g.__canvasE2E.panBy(dx, dy);
-         return false;
-       })()`,
-      5000
-    )
-    expect(parked, 'board parked over the bottom-right corner').toBe(true)
-    await page.waitForTimeout(300)
-    const liveBefore = await pollEval(page, runtimeLive(id), 8000)
-    expect(liveBefore, 'live before the minimap shows').toBe(true)
-
-    await page.keyboard.press('m')
-    await expect(minimap(page)).toBeVisible()
-    // The island's rect joined the chrome-exclusion zones → the overlapping live
-    // view demotes to its HTML snapshot.
-    await expect.poll(() => evalIn<boolean>(page, runtimeLive(id))).toBe(false)
-
-    await page.keyboard.press('m')
-    await expect(minimap(page)).toHaveCount(0)
-    const liveAfter = await pollEval(page, runtimeLive(id), 8000)
-    expect(liveAfter, 'reattached once hidden').toBe(true)
-  })
+  // (The "live native preview overlapping the island demotes (ADR 0002)" test was dropped in OS-3
+  // Phase 5: OSR is the default engine and its canvas clips/z-orders like any DOM node — there is
+  // no native view that paints over the island to occlusion-demote.)
 
   test('Esc layering: the minimap is not a layer — full view exits on the FIRST Esc', async ({
     page

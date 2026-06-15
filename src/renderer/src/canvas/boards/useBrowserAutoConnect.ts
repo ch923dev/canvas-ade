@@ -23,9 +23,10 @@ import {
   type PreviewStatusLike
 } from '../../lib/autoConnect'
 
-// SPIKE (feat/preview-offscreen-spike): in OSR mode the native `views` Map is empty, so the
-// 'reload' (reconnect-on-refused) path must retry via the offscreen window, not preview:navigate.
-const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR === '1'
+// OS-3 Phase 5: OSR is the default (set VITE_PREVIEW_OSR=0 for the legacy native engine). In OSR
+// mode the native `views` Map is empty, so the 'reload' (reconnect-on-refused) path must retry via
+// the offscreen window, not preview:navigate.
+const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR !== '0'
 
 const TICK_MS = 1000
 

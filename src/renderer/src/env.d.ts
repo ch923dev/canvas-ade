@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** SPIKE (feat/preview-offscreen-spike): '1' routes Browser previews through the
-   *  offscreen-render → <canvas> path instead of the native WebContentsView. */
+  /** OS-3 Phase 5: the offscreen-render → <canvas> preview path is the DEFAULT engine.
+   *  Set to '0' to fall back to the legacy native WebContentsView path (escape hatch,
+   *  removed in 5C). Any other value (incl. unset) = OSR. */
   readonly VITE_PREVIEW_OSR?: string
 }

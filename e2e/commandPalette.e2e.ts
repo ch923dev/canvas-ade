@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, pollEval, seed } from './helpers'
+import { evalIn, seed } from './helpers'
 import type { Page } from '@playwright/test'
 
 /**
@@ -17,8 +17,6 @@ import type { Page } from '@playwright/test'
 const palette = (page: Page) => page.locator('[data-test=command-palette]')
 const boardCount = (page: Page): Promise<number> =>
   evalIn<number>(page, `window.__canvasE2E.getBoards().length`)
-const runtimeLive = (id: string): string =>
-  `!!(window.__canvasE2E.getRuntime(${JSON.stringify(id)}) || {}).live`
 
 test.describe('@chrome command palette (real OS input)', () => {
   test('Ctrl+K opens focused; type-to-filter + Enter runs the verb (board created)', async ({
@@ -126,26 +124,7 @@ test.describe('@chrome command palette (real OS input)', () => {
       )
       .toBe('renamed via palette')
   })
-
-  test('open palette detaches a live native preview; close reattaches (ADR 0002)', async ({
-    page,
-    electronApp
-  }) => {
-    const url = await mainCall<string>(electronApp, 'localUrl')
-    const id = await seed(page, 'browser', { url })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await evalIn(page, 'window.__canvasE2E.setZoom(1)')
-    await page.waitForTimeout(250)
-    const liveBefore = await pollEval(page, runtimeLive(id), 8000)
-    expect(liveBefore, 'live before open').toBe(true)
-
-    await page.keyboard.press('Control+k')
-    await expect(palette(page)).toBeVisible()
-    await expect.poll(() => evalIn<boolean>(page, runtimeLive(id))).toBe(false)
-
-    await page.keyboard.press('Escape')
-    await expect(palette(page)).toHaveCount(0)
-    const liveAfter = await pollEval(page, runtimeLive(id), 8000)
-    expect(liveAfter, 'reattached on close').toBe(true)
-  })
+  // (The "open palette detaches a live native preview; close reattaches (ADR 0002)" test was
+  // dropped in OS-3 Phase 5: OSR is the default engine and its canvas is a clipped DOM node the
+  // modal simply renders over — there is no native view to occlusion-detach.)
 })
