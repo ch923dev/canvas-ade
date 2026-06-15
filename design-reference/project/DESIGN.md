@@ -232,9 +232,11 @@ LOD and only the title (rendered at a zoom-compensated size) shows.
 - Content = `--surface` with a *finer* dot grid (12px) to read as a sketch
   surface distinct from the void.
 - Holds free elements: **checklists**, **sticky notes** (`--surface-raised`,
-  soft shadow, 4 muted note tints at low chroma), **text**,
-  **arrows/connectors** (1.5px `--border-strong`, arrowhead), and **freehand
-  strokes** (`--text-2`).
+  soft shadow, 4 muted note tints at low chroma — the `--note-*` tokens, see
+  `planning/tints.ts`), **text**, **arrows/connectors** (1.5px `--border-strong`,
+  `--accent` when selected; arrowhead), **freehand strokes** (`--text-2`), and
+  **images** (pasted / dropped bitmaps). *(The original prototype omitted text
+  and images; both ship — see the tool-cluster divergence note below.)*
 - **Checklist element:** a `--surface-raised` card, `--r-board`, with a title +
   `done/total` mono count, a 3px `--accent` progress bar, and rows of
   togglable items. Item = 16px `--r-ctl` checkbox (checked = filled `--accent`
@@ -242,8 +244,19 @@ LOD and only the title (rendered at a zoom-compensated size) shows.
   strikethrough when done (D0-2: was `--text-faint`, below AA — faint is
   disabled-only now). Checklists scale with the board, so resize the
   planning board to give a long list room. Toggling is live.
-- **Actions:** mini tool cluster — `select · note · checklist · arrow · pen` —
-  only shown when the planning board is selected; otherwise it's just content.
+- **Actions** (shipped): a mini tool cluster shown only when the planning board
+  is selected — `select · note · text · check · arrow · pen · erase` — then a
+  **snap-to-grid toggle** (magnet) and an **export popover** (PNG / SVG).
+  Otherwise the board is just content. Source of truth: `PlanningToolbar.tsx`.
+  > **Divergence note (reconciled 2026-06-15, epic slice S5).** This intentionally
+  > diverges from the frozen prototype (`design-reference/project/boards.jsx`),
+  > which drew a 5-tool cluster `select · note · checklist · arrow · pen`. The
+  > shipped board renamed `checklist`→`check` and added the `text`, `erase`, snap,
+  > and export controls. Per CLAUDE.md "the design wins on UX; this
+  > brief/architecture wins on the stack" — the prototype stays the visual/UX
+  > reference; this list is the implemented contract. Don't re-sync the prototype
+  > `.jsx` to it (it is read-only intent), and don't treat the 5-tool list as a
+  > spec gap.
 - Connectors may originate from a planning board and point at another board's
   title bar (cross-board arrows live on the canvas layer, above boards).
 

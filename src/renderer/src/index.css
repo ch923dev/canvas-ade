@@ -70,9 +70,22 @@
      intentionally heavier than a modal (approved 2026-06-10). */
   --scrim: rgba(0, 0, 0, 0.5);
   /* Orchestration-connector arrowheads (Canvas.tsx markers; the cable stroke itself
-     is --border-strong / --text in OrchestrationEdge). */
+     is --border-strong / --text in OrchestrationEdge). The Planning whiteboard's own
+     arrow/connector ink stays on --border-strong (default) / --accent (selected) —
+     see DESIGN.md §7.3; no separate hex to promote there. */
   --connector: #5a6573;
   --connector-selected: #e6e6e6;
+  /* Planning whiteboard sticky-note tints (DESIGN.md §7.3: 4 muted, low-chroma — one
+     accent stays the only saturated colour). `plain` falls back to --surface-raised /
+     --border. planning/tints.ts mirrors these via var(); the SVG-export path keeps its
+     own concrete copy in planning/exportColors.ts (a standalone SVG can't read custom
+     properties). Keep all three in step if a tint changes. */
+  --note-yellow-fill: #2a2818;
+  --note-yellow-edge: #3d3a22;
+  --note-blue-fill: #16202b;
+  --note-blue-edge: #22354a;
+  --note-green-fill: #16241d;
+  --note-green-edge: #21392c;
   /* Browser device-frame notch (§7.2 device chrome, darker than any surface). */
   --notch: #15161a;
 
