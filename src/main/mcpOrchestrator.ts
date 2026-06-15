@@ -5,12 +5,14 @@ import type {
   BoardResultInput,
   BoardStatusChange,
   BoardSummary,
-  MemoryDoc
+  MemoryDoc,
+  PlanningElementsSpec
 } from '@expanse-ade/mcp'
 import type { AuditInput } from './auditLog'
 import { createDispatchGuard } from './dispatchGuard'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
+import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
 import {
   deriveStatus,
   makeSessionLookup,
@@ -50,7 +52,8 @@ const WRITE_RESULT_MAX_REF_LEN = 256
 /**
  * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
  * terminal boards. Pure (type-only package imports → contract test loads no
- * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated.
+ * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated. `addPlanningElements`
+ * (S2) implements the package's content-write method (`@expanse-ade/mcp` ≥ 0.11.0).
  */
 export function buildOrchestrator(
   registry: BoardRegistry,
@@ -482,6 +485,80 @@ export function buildOrchestrator(
       // ephemeral key is dropped.
       const ack = await registry.sendCommand({ type: 'configureBoard', id: boardId, patch: config })
       if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
+    },
+    async addPlanningElements(boardId: BoardId, spec: PlanningElementsSpec): Promise<void> {
+      // 🔒 S2: the FIRST MCP path writing attacker-influenceable CONTENT onto the durable
+      // canvas (ADR 0003 §M-expose). Resolve + planning-check HERE; MAIN then
+      // validates/sanitizes/caps every element, shows the FULL rendered content in a
+      // mandatory write-time human confirm, and only on approval appends it via the command
+      // channel. There is NO PTY write and NO nonce — nothing executes; the content is
+      // untrusted PASSIVE context that renders but never auto-arms an action (a "Run"-wired
+      // item is P4, out of this slice). Every branch audits, mirroring the dispatch paths.
+      const auditPlanning = (
+        status: DispatchStatus,
+        opts2: { prompt?: string; detail?: string } = {}
+      ): Promise<void> =>
+        writeAudit({
+          type: 'add_planning_elements',
+          targetId: boardId,
+          prompt: opts2.prompt ?? '',
+          nonce: '',
+          status,
+          ...(opts2.detail !== undefined ? { detail: opts2.detail } : {})
+        })
+
+      // (1) Resolve by OPAQUE id (never a label). Not found → audit + throw.
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) {
+        await auditPlanning('rejected', { detail: 'board not found' })
+        throw new Error(`add_planning_elements: board not found: ${boardId}`)
+      }
+
+      // (2) Planning-only. Content must NEVER land on a terminal/browser board (a terminal's
+      // content reaches a PTY; a planning board is an inert whiteboard).
+      if (board.type !== 'planning') {
+        await auditPlanning('rejected', { detail: `non-planning target (${board.type})` })
+        throw new Error(`add_planning_elements: target is not a planning board (${board.type})`)
+      }
+
+      // (3) Validate + sanitize + cap. A malformed / oversized batch is rejected BEFORE the
+      // human gate — never minted into ops, never shown to the human to rubber-stamp.
+      let ops
+      try {
+        // MAIN re-validates the agent content from scratch (untrusted) regardless of the
+        // tool-layer schema — buildPlanningOps takes `unknown` and rejects anything off-shape.
+        ops = buildPlanningOps(spec.elements)
+      } catch (err) {
+        if (err instanceof PlanningContentError) {
+          await auditPlanning('rejected', { detail: `invalid content: ${err.message}` })
+        }
+        throw err
+      }
+
+      // (4) Mandatory human confirm — MAIN owns the decision, fail-closed. The body carries
+      // the FULL rendered content (not a bare count) so injected text can't be rubber-
+      // stamped; one batch confirm per write.
+      const body = renderPlanningConfirmBody(board.title, ops)
+      const { approved } = await registry.confirm({
+        title: `Write ${ops.length} item(s) to "${board.title}"`,
+        body
+      })
+      if (!approved) {
+        await auditPlanning('denied', { prompt: body, detail: `${ops.length} elements` })
+        throw new Error('add_planning_elements: write denied by the human gate')
+      }
+
+      // (5) Apply via the command channel. The renderer appends to the planning board's
+      // `elements` (PATCHABLE_KEYS.planning) as a discrete undoable edit + re-validates each
+      // materialized element (defense in depth). A false ack → audit failed + throw.
+      const ack = await registry.sendCommand({ type: 'patchPlanning', id: boardId, ops })
+      if (!ack.ok) {
+        await auditPlanning('failed', { prompt: body, detail: `apply failed: ${ack.error}` })
+        throw new Error(`add_planning_elements failed: ${ack.error}`)
+      }
+
+      // (6) Record the landed write — the FULL content in `prompt` for the forensic trail.
+      await auditPlanning('applied', { prompt: body, detail: `${ops.length} elements` })
     },
     async handoffPrompt(boardId: BoardId, text: string): Promise<BoardResult> {
       // 🔒 The dangerous path: a write into another agent's shell. Resolve the OPAQUE id +

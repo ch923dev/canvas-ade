@@ -14,6 +14,9 @@ import { isForeignSender } from './ipcGuard'
  * placement, per-type defaults) from this spec. `removeBoard` (T3.2) tears one down
  * by id. `configureBoard` (T3.3) changes a board's durable per-type config (the
  * renderer applies it through `updateBoard`, which filters to PATCHABLE_KEYS).
+ * `patchPlanning` (S2) appends agent-authored CONTENT (notes/checklists/text/arrows) to a
+ * planning board's `elements`; the ops are already validated + sanitized + capped + human-
+ * confirmed by the orchestrator before this carries them.
  * Keep this the single source of truth; the renderer applier (`useMcpCommands`,
  * a separate bundle) mirrors it by hand.
  */
@@ -26,6 +29,27 @@ export type McpCommand =
       id: string
       patch: { shell?: string; launchCommand?: string; cwd?: string }
     }
+  | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
+
+/** Note tint a `note` op carries (mirrors the renderer `NoteTint`). */
+export type PlanningOpTint = 'yellow' | 'blue' | 'green' | 'plain'
+
+/**
+ * One SANITIZED, fully-normalized planning-element write op (S2), MAIN → renderer. The
+ * orchestrator's `addPlanningElements` validates + sanitizes + caps the agent's content
+ * BEFORE minting these (so the renderer receives clean, fully-specified ops: `tint` and
+ * item `done` are no longer optional). The renderer materializes each into a full
+ * `PlanningElement` — minting ids, stacking positions below existing content, and default
+ * sizes — and re-validates against the schema (defense in depth) before it lands. Only the
+ * existing schema kinds that carry agent content are expressible (note · checklist · text ·
+ * arrow), so `MIN_READER_VERSION` stays at 9 (no schema bump). 🔒 Untrusted passive content:
+ * it renders, never auto-arms an action.
+ */
+export type PlanningOp =
+  | { kind: 'note'; text: string; tint: PlanningOpTint }
+  | { kind: 'checklist'; title: string; items: Array<{ label: string; done: boolean }> }
+  | { kind: 'text'; text: string }
+  | { kind: 'arrow'; dx: number; dy: number }
 
 /** The renderer's reply to a command. `type` echoes the handled command. */
 export type McpCommandAck = { ok: true; type: string } | { ok: false; error: string }

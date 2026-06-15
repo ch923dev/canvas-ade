@@ -39,7 +39,8 @@ export const MCP_SPAWN_GRACE_MS = 5_000
  * (not-found / non-terminal / unsafe payload / replayed nonce / removed cable);
  * `denied` is a human "no"; `failed` is an attempted-but-errored write; `dispatched`
  * is a landed write; `completed`/`closed`/`timed_out` are the handoff await-idle exits;
- * `configured` is a persisted launchCommand.
+ * `configured` is a persisted launchCommand; `applied` is a confirmed planning content
+ * write that landed on the canvas (S2 `add_planning_elements`).
  */
 export type DispatchStatus =
   | 'rejected'
@@ -50,6 +51,7 @@ export type DispatchStatus =
   | 'closed'
   | 'timed_out'
   | 'configured'
+  | 'applied'
 
 /** Tuning + clock seam for the lifecycle cap/reaper (all optional; injected by tests). */
 export interface OrchestratorOpts {
