@@ -1,5 +1,6 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
 import type { TokenStore } from '@expanse-ade/mcp'
+import type { AppModel } from './appModel'
 
 /**
  * Parse a positive-millisecond env override, falling back to `fallback` when the value
@@ -47,6 +48,12 @@ export interface RunningMcp {
    * `@expanse-ade/mcp` package registers no `git_diff` tool yet, so it is not wire-reachable.
    */
   gitDiff(boardId: string): Promise<string>
+  /**
+   * PR-3: assemble the read-only app self-model (board types · tool catalog · live canvas · rules)
+   * via the orchestrator. Exposed here for the CANVAS_E2E `__canvasE2EMain.describeApp` seam; the
+   * agent-facing `canvas://app-model` MCP resource is a deferred follow-up (PR-3b).
+   */
+  describeApp(): Promise<AppModel>
   close(): Promise<void>
 }
 
@@ -90,6 +97,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       mintWorkerToken: (boardId) => mintBoardToken(tokens, { boardId, tier: 'worker' }).token,
       reapIdle: () => orchestrator.reapIdle(),
       gitDiff: (boardId) => orchestrator.gitDiff(boardId),
+      describeApp: () => orchestrator.describeApp(),
       close: () => {
         clearInterval(reapTimer)
         return server.close()
