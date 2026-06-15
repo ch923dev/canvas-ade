@@ -2,32 +2,35 @@ import { useEffect } from 'react'
 import type { RefObject } from 'react'
 import { VIEWPORT_PRESETS } from '../../lib/browserLayout'
 import type { BrowserViewport } from '../../lib/boardSchema'
+import { classifyKeydown } from '../../lib/osrKeyInput'
+import { mapOsrWheel } from '../../lib/osrWheel'
 
 /**
- * SPIKE (feat/preview-offscreen-spike) — M3 input forwarding for the offscreen preview.
+ * OS-3 Phase 3 — input forwarding for the offscreen (OSR) Browser preview.
  *
- * The offscreen `<canvas>` (useOffscreenPreview) is just a picture: the page renders in a
- * hidden window in MAIN, so the canvas receives no native OS input the way a live
- * WebContentsView does. This hook makes it interactive by forwarding real DOM events on
- * the canvas to MAIN's `preview:osrInput` → `webContents.sendInputEvent` on the offscreen
- * window:
+ * The offscreen `<canvas>` (useOffscreenPreview) is just a picture: the page renders in a hidden
+ * window in MAIN, so the canvas receives no native OS input the way a live WebContentsView does.
+ * This hook makes it interactive by forwarding real DOM events to MAIN. Two surfaces:
  *
- *   - **Coordinates.** Screen → page-logical px via the canvas's live `getBoundingClientRect`.
- *     That rect already reflects the React Flow camera (`translate/scale`) AND the device-frame
- *     letterboxing, so no camera-transform math is needed here — the ratio maps straight onto
- *     the page's LOGICAL space = the active preset's CSS box (M4: Mobile 390 / Tablet 834 /
- *     Desktop 1280, mirroring previewOsr.ts). Logical space is DPR- and supersample-independent,
- *     so this stays correct as M1 bumps the render buffer for sharpness.
- *   - **Mouse** down/up/move(+wheel). Move is rAF-coalesced (one event/frame) to bound IPC — an
- *     M2 throughput factor. `setPointerCapture` keeps a drag (text-select / slider) alive past the
- *     canvas edge.
- *   - **Keyboard** is BEST-EFFORT for this slice: the canvas is focusable and grabs focus on
- *     pointerdown, then keyDown/keyUp (+ a `char` for printable keys) forward. Special keys map to
- *     Electron key-code names. Robust key-byte fidelity (à la the terminal) is a later increment.
+ *   - **`<canvas>`** = pointer / wheel / cursor-mirror. Coordinates map screen → page-logical px via
+ *     the canvas's live `getBoundingClientRect` (already reflects the RF camera + device-frame
+ *     letterbox, so no camera math here); logical space is the active preset's CSS box (M4) — DPR-
+ *     and supersample-independent, so it stays correct as Phase 1 bumps the render buffer.
+ *   - **hidden `<textarea class="bb-ime-proxy">`** = keyboard / IME / clipboard target (Phase 3).
+ *     A bare focused `<canvas>` has no *editing host*, so it can't fire `composition*` (no IME) and
+ *     mis-handles AltGr (Windows reports it as Ctrl+Alt). The proxy is the industry-standard remote-
+ *     rendering pattern (xterm/noVNC): we `proxy.focus()` on canvas pointerdown, then route:
+ *       · **text** (printable, AltGr-composed `€`, dead-key `é`, IME commit) → the proxy's native
+ *         `input`/`composition` events → `osrIme(commit/compose)` → CDP `Input.insertText` /
+ *         `Input.imeSetComposition` (MAIN). The browser composes the grapheme for us.
+ *       · **command keys** (Enter/Tab/Esc/arrows/Backspace/…, Ctrl/Cmd shortcuts) → `sendOsrInput`
+ *         keyDown/keyUp so the page's key handlers + shortcuts fire.
+ *       · **clipboard** (Ctrl/Cmd+C/X/V/A) → `osrEditCommand` → `wc.copy/cut/paste/selectAll` (the
+ *         trusted bridge over the page's denied `navigator.clipboard`), NOT a synthetic chord.
+ *     Key classification is the pure, unit-tested `classifyKeydown` (`lib/osrKeyInput.ts`).
  *
- * Late-mount note: the boards mount content into a deferred "stable content host", so the
- * canvas can be absent on the effect's first tick. We rAF-wait for `canvasRef.current` before
- * attaching (the sibling frame hook dodges this only because it reads the ref lazily per frame).
+ * Late-mount note: the boards mount content into a deferred "stable content host", so the canvas /
+ * proxy can be absent on the effect's first tick. We rAF-wait for both before attaching.
  *
  * No-op unless `enabled` (VITE_PREVIEW_OSR + not full view). Isolated from the native path.
  */
@@ -66,29 +69,6 @@ function toPage(
     x: Math.max(0, Math.min(pageW - 1, x)),
     y: Math.max(0, Math.min(pageH - 1, y))
   }
-}
-
-/** DOM KeyboardEvent.key → an Electron `keyCode`. Printable single chars pass through as-is. */
-function keyCodeOf(e: KeyboardEvent): string | null {
-  const named: Record<string, string> = {
-    Enter: 'Return',
-    Backspace: 'Backspace',
-    Tab: 'Tab',
-    Escape: 'Escape',
-    Delete: 'Delete',
-    ' ': 'Space',
-    ArrowUp: 'Up',
-    ArrowDown: 'Down',
-    ArrowLeft: 'Left',
-    ArrowRight: 'Right',
-    Home: 'Home',
-    End: 'End',
-    PageUp: 'PageUp',
-    PageDown: 'PageDown'
-  }
-  if (named[e.key]) return named[e.key]
-  if (e.key.length === 1) return e.key // letters / digits / punctuation
-  return null // ignore standalone modifier presses, F-keys, etc. for this slice
 }
 
 /**
@@ -145,16 +125,18 @@ const CURSOR_CSS: Record<string, string> = {
   grabbing: 'grabbing'
 }
 
-/** Wire all input listeners onto a present canvas; returns a detach fn. `pageW/pageH` is the
- *  active preset's logical size — the page-coordinate space the offscreen window lays out in. */
+/** Wire all input listeners onto a present canvas + proxy textarea; returns a detach fn. `pageW/pageH`
+ *  is the active preset's logical size — the page-coordinate space the offscreen window lays out in. */
 function attachInput(
   boardId: string,
   canvas: HTMLCanvasElement,
+  proxy: HTMLTextAreaElement,
   pageW: number,
   pageH: number
 ): () => void {
   const send = (ev: OsrInput): void => void window.api.sendOsrInput(boardId, ev)
 
+  // ── Pointer (on the canvas) ──────────────────────────────────────────────────────────────────
   // rAF-coalesced move: keep only the latest position, flush once per frame.
   let pendingMove: { x: number; y: number; modifiers: Modifier[] } | null = null
   let rafId = 0
@@ -185,7 +167,9 @@ function attachInput(
     } catch {
       /* capture unavailable */
     }
-    canvas.focus({ preventScroll: true }) // route keyboard here
+    // Route keyboard/IME/clipboard to the hidden proxy textarea (NOT the canvas — it has no
+    // editing host, so it can't fire composition events). preventScroll: don't jump the page.
+    proxy.focus({ preventScroll: true })
     send({
       type: 'mouseDown',
       ...p,
@@ -232,41 +216,83 @@ function attachInput(
     e.stopPropagation()
     const p = toPage(canvas, e.clientX, e.clientY, pageW, pageH)
     if (!p) return
-    // deltaMode: 0=pixel, 1=line, 2=page → approximate non-pixel modes to pixels.
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? pageH : 1
-    // DOM wheel deltaY>0 scrolls down; Electron mouseWheel deltaY>0 scrolls up → negate.
-    send({
-      type: 'mouseWheel',
-      ...p,
-      deltaX: -e.deltaX * unit,
-      deltaY: -e.deltaY * unit,
-      canScroll: true,
-      modifiers: modifiersOf(e)
-    })
+    // Phase 3 / 3D — precise delta mapping (pixel passes through + precise hint; line x40; page
+    // xpageH) instead of the old crude x16. Pure + unit-tested in lib/osrWheel.ts.
+    send({ type: 'mouseWheel', ...p, ...mapOsrWheel(e, pageH), modifiers: modifiersOf(e) })
   }
   const onContextMenu = (e: MouseEvent): void => e.preventDefault()
-  // Per-interaction focus emulation (P0): the canvas grabs focus on pointerdown, so 'focus'
-  // here = "this preview is active" → enable the caret/:focus ring; 'blur' (clicking another
-  // board or app chrome) disables it so the page's blur/focusout fires (menus close, on-blur
-  // validation runs). DOM focus is singular, so only the active board is ever emulated-focused.
+
+  // ── Keyboard / IME / clipboard (on the proxy textarea) ───────────────────────────────────────
+  // Per-interaction focus emulation (P0): the proxy grabs focus on canvas pointerdown, so 'focus'
+  // here = "this preview is active" → enable the caret/:focus ring; 'blur' (clicking another board
+  // or app chrome) disables it so the page's blur/focusout fires (menus close, on-blur validation
+  // runs). DOM focus is singular, so only the active board is ever emulated-focused.
   const onFocus = (): void => void window.api.setOsrFocus(boardId, true)
   const onBlur = (): void => void window.api.setOsrFocus(boardId, false)
+
+  const clearProxy = (): void => {
+    proxy.value = ''
+  }
+  let composing = false
+  // After a composition commits, the browser fires a trailing `input` (insertCompositionText) we've
+  // already handled on compositionend — skip exactly one to avoid a double-insert.
+  let skipNextInput = false
+
   const onKeyDown = (e: KeyboardEvent): void => {
-    const keyCode = keyCodeOf(e)
-    if (!keyCode) return
-    e.preventDefault()
-    e.stopPropagation()
-    const modifiers = modifiersOf(e)
-    send({ type: 'keyDown', keyCode, modifiers })
-    // Printable (no ctrl/meta) → also emit a char so text inputs receive the character.
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-      send({ type: 'char', keyCode: e.key, modifiers })
+    const cls = classifyKeydown(e)
+    switch (cls.kind) {
+      case 'ignore':
+        return // IME-in-progress / lone modifier — composition events (or nothing) drive it
+      case 'clipboard':
+        e.preventDefault()
+        e.stopPropagation()
+        void window.api.osrEditCommand(boardId, cls.action)
+        return
+      case 'command':
+        // Real key event to the page (Enter/Tab/arrows + Ctrl/Cmd shortcuts). preventDefault stops
+        // the proxy from editing + React Flow from acting; stopPropagation keeps app shortcuts from
+        // double-firing (focus is "inside" the web content, like a real browser).
+        e.preventDefault()
+        e.stopPropagation()
+        send({ type: 'keyDown', keyCode: cls.keyCode, modifiers: modifiersOf(e) })
+        return
+      case 'text':
+        // Let the proxy receive the character (NO preventDefault) → its `input` event forwards the
+        // composed text via insertText. stopPropagation (no preventDefault) keeps app single-key
+        // shortcuts from firing while typing in the preview, exactly as the canvas path did.
+        e.stopPropagation()
+        return
     }
   }
   const onKeyUp = (e: KeyboardEvent): void => {
-    const keyCode = keyCodeOf(e)
-    if (!keyCode) return
-    send({ type: 'keyUp', keyCode, modifiers: modifiersOf(e) })
+    const cls = classifyKeydown(e)
+    if (cls.kind === 'command')
+      send({ type: 'keyUp', keyCode: cls.keyCode, modifiers: modifiersOf(e) })
+  }
+
+  const onCompositionStart = (): void => {
+    composing = true
+  }
+  const onCompositionUpdate = (e: CompositionEvent): void => {
+    void window.api.osrIme(boardId, 'compose', e.data ?? '') // inline underlined preview (best-effort)
+  }
+  const onCompositionEnd = (e: CompositionEvent): void => {
+    composing = false
+    const text = e.data ?? ''
+    if (text) void window.api.osrIme(boardId, 'commit', text) // commit replaces the composing range
+    skipNextInput = true // the trailing `input` (insertCompositionText) is already committed
+    clearProxy()
+  }
+  const onInput = (): void => {
+    if (composing) return // mid-composition; the compose path drives the page
+    if (skipNextInput) {
+      skipNextInput = false
+      clearProxy()
+      return
+    }
+    const text = proxy.value
+    if (text) void window.api.osrIme(boardId, 'commit', text)
+    clearProxy()
   }
 
   // Mirror the offscreen page's cursor onto the canvas (I-beam over inputs, pointer over
@@ -290,10 +316,14 @@ function attachInput(
   canvas.addEventListener('pointerleave', onPointerLeave)
   canvas.addEventListener('wheel', onWheel, { passive: false })
   canvas.addEventListener('contextmenu', onContextMenu)
-  canvas.addEventListener('keydown', onKeyDown)
-  canvas.addEventListener('keyup', onKeyUp)
-  canvas.addEventListener('focus', onFocus)
-  canvas.addEventListener('blur', onBlur)
+  proxy.addEventListener('keydown', onKeyDown)
+  proxy.addEventListener('keyup', onKeyUp)
+  proxy.addEventListener('compositionstart', onCompositionStart)
+  proxy.addEventListener('compositionupdate', onCompositionUpdate)
+  proxy.addEventListener('compositionend', onCompositionEnd)
+  proxy.addEventListener('input', onInput)
+  proxy.addEventListener('focus', onFocus)
+  proxy.addEventListener('blur', onBlur)
   return () => {
     if (rafId) cancelAnimationFrame(rafId)
     offCursor()
@@ -305,16 +335,21 @@ function attachInput(
     canvas.removeEventListener('pointerleave', onPointerLeave)
     canvas.removeEventListener('wheel', onWheel)
     canvas.removeEventListener('contextmenu', onContextMenu)
-    canvas.removeEventListener('keydown', onKeyDown)
-    canvas.removeEventListener('keyup', onKeyUp)
-    canvas.removeEventListener('focus', onFocus)
-    canvas.removeEventListener('blur', onBlur)
+    proxy.removeEventListener('keydown', onKeyDown)
+    proxy.removeEventListener('keyup', onKeyUp)
+    proxy.removeEventListener('compositionstart', onCompositionStart)
+    proxy.removeEventListener('compositionupdate', onCompositionUpdate)
+    proxy.removeEventListener('compositionend', onCompositionEnd)
+    proxy.removeEventListener('input', onInput)
+    proxy.removeEventListener('focus', onFocus)
+    proxy.removeEventListener('blur', onBlur)
   }
 }
 
 export function useOffscreenInput(
   boardId: string,
   canvasRef: RefObject<HTMLCanvasElement | null>,
+  proxyRef: RefObject<HTMLTextAreaElement | null>,
   viewport: BrowserViewport,
   enabled: boolean
 ): void {
@@ -327,21 +362,23 @@ export function useOffscreenInput(
     let raf = 0
     let tries = 0
     let detach: (() => void) | null = null
-    // The canvas can be absent on the first tick (deferred content host) — rAF-wait for it
-    // rather than bail permanently (the bug that made the preview un-clickable).
-    const waitForCanvas = (): void => {
+    // The canvas + proxy can be absent on the first tick (deferred content host) — rAF-wait for
+    // BOTH rather than bail permanently (the bug that made the preview un-clickable). They render
+    // together, so they appear on the same tick.
+    const waitForEls = (): void => {
       const canvas = canvasRef.current
-      if (canvas) {
-        detach = attachInput(boardId, canvas, preset.w, preset.h)
+      const proxy = proxyRef.current
+      if (canvas && proxy) {
+        detach = attachInput(boardId, canvas, proxy, preset.w, preset.h)
         return
       }
       if (tries++ > 180) return // ~3s of frames; give up rather than spin forever
-      raf = requestAnimationFrame(waitForCanvas)
+      raf = requestAnimationFrame(waitForEls)
     }
-    waitForCanvas()
+    waitForEls()
     return () => {
       if (raf) cancelAnimationFrame(raf)
       if (detach) detach()
     }
-  }, [boardId, enabled, canvasRef, viewport])
+  }, [boardId, enabled, canvasRef, proxyRef, viewport])
 }
