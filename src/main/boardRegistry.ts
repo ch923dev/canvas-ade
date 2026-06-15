@@ -42,6 +42,18 @@ export interface ConnectorMirror {
 const CONNECTOR_KINDS: ReadonlySet<string> = new Set(['preview', 'orchestration'])
 
 /**
+ * A Named Board Group the renderer mirrors to MAIN (PR-5). A group is a user-named set of
+ * boards (a "feature zone") — a board may belong to many groups; named-empty groups survive.
+ * Mirror of `NamedGroup` in `renderer/.../boardSchema.ts`. Read-only on MAIN: the app-model's
+ * `canvas.groups` projects this so the orchestrator/agent can reason about feature zones.
+ */
+export interface GroupMirror {
+  id: string
+  name: string
+  boardIds: string[]
+}
+
+/**
  * The buckets a renderer is allowed to publish (mirror of `BoardStatusBucket` in
  * `renderer/src/store/boardStatus.ts`). `status` arrives over an IPC channel, so an
  * unrecognized value is dropped — never forwarded to agents as-is.
@@ -101,6 +113,7 @@ export function diffStatus(prev: BoardMirror[], next: BoardMirror[]): BoardStatu
 
 let mirror: BoardMirror[] = []
 let connectorMirror: ConnectorMirror[] = []
+let groupMirror: GroupMirror[] = []
 
 /** Listeners notified on each per-board status change (M5 event-driven attention). */
 const statusListeners = new Set<(change: BoardStatusChange) => void>()
@@ -115,11 +128,17 @@ function emitStatus(change: BoardStatusChange): void {
   }
 }
 
-/** Replace the stored snapshot and emit the per-board status diffs (M5). */
-function applySnapshot(nextBoards: BoardMirror[], nextConnectors: ConnectorMirror[]): void {
+/** Replace the stored snapshot and emit the per-board status diffs (M5). Groups (PR-5) are
+ *  metadata-only — stored, never diffed (no status transition rides on group membership). */
+function applySnapshot(
+  nextBoards: BoardMirror[],
+  nextConnectors: ConnectorMirror[],
+  nextGroups: GroupMirror[] = []
+): void {
   const changes = diffStatus(mirror, nextBoards)
   mirror = nextBoards
   connectorMirror = nextConnectors
+  groupMirror = nextGroups
   for (const c of changes) emitStatus(c)
 }
 
@@ -140,9 +159,10 @@ export function subscribeBoardStatus(listener: (change: BoardStatusChange) => vo
 /** Test seam — apply a snapshot through the diff/emit path (unit tests only). */
 export function __applySnapshotForTest(
   boards: BoardMirror[],
-  connectors: ConnectorMirror[] = []
+  connectors: ConnectorMirror[] = [],
+  groups: GroupMirror[] = []
 ): void {
-  applySnapshot(boards, connectors)
+  applySnapshot(boards, connectors, groups)
 }
 
 /** Test seam — clear all status listeners between tests (unit tests only). */
@@ -153,6 +173,9 @@ export function __clearStatusListenersForTest(): void {
 /** Bound the snapshot so a forged/oversized push on mcp:boards can't grow MAIN memory. */
 const MAX_BOARDS = 500
 const MAX_CONNECTORS = 1000
+const MAX_GROUPS = 200
+/** Cap a single group's membership so one forged group can't grow MAIN memory unbounded. */
+const MAX_GROUP_MEMBERS = 500
 const MAX_FIELD_LEN = 256
 
 /**
@@ -234,6 +257,38 @@ export function sanitizeConnectors(input: unknown): ConnectorMirror[] {
   return out
 }
 
+/**
+ * Keep only well-formed {id,name,boardIds:string[]} group entries; drop anything else (PR-5).
+ * Bounded like {@link sanitizeSnapshot} — mcp:boards is an IPC channel, so a malformed/oversized
+ * payload is capped: at most MAX_GROUPS groups, MAX_FIELD_LEN per id/name, MAX_GROUP_MEMBERS
+ * boardIds each (non-string / over-length members dropped). A board may belong to many groups, so
+ * `boardIds` is NOT cross-validated against the live board set here — `name` is an open string.
+ */
+export function sanitizeGroups(input: unknown): GroupMirror[] {
+  if (!Array.isArray(input)) return []
+  const out: GroupMirror[] = []
+  for (const g of input) {
+    if (out.length >= MAX_GROUPS) break
+    if (
+      g &&
+      typeof g === 'object' &&
+      typeof (g as GroupMirror).id === 'string' &&
+      typeof (g as GroupMirror).name === 'string' &&
+      Array.isArray((g as GroupMirror).boardIds)
+    ) {
+      const { id, name, boardIds } = g as GroupMirror
+      if (id.length > MAX_FIELD_LEN || name.length > MAX_FIELD_LEN) continue
+      const members: string[] = []
+      for (const bid of boardIds) {
+        if (members.length >= MAX_GROUP_MEMBERS) break
+        if (typeof bid === 'string' && bid.length <= MAX_FIELD_LEN) members.push(bid)
+      }
+      out.push({ id, name, boardIds: members })
+    }
+  }
+  return out
+}
+
 /** Last snapshot the renderer pushed (empty until the renderer mounts + publishes). */
 export function listBoardMirror(): BoardMirror[] {
   return mirror
@@ -242,6 +297,11 @@ export function listBoardMirror(): BoardMirror[] {
 /** Last connector snapshot the renderer pushed (orchestration + preview edges). */
 export function listConnectors(): ConnectorMirror[] {
   return connectorMirror
+}
+
+/** Last Named Group snapshot the renderer pushed (PR-5; empty until the renderer publishes). */
+export function listGroups(): GroupMirror[] {
+  return groupMirror
 }
 
 /** Test seam — set the mirror directly (unit tests only). */
@@ -254,13 +314,18 @@ export function __setConnectorsForTest(next: ConnectorMirror[]): void {
   connectorMirror = next
 }
 
+/** Test seam — set the group mirror directly (unit tests only). */
+export function __setGroupsForTest(next: GroupMirror[]): void {
+  groupMirror = next
+}
+
 /**
  * Register the renderer→MAIN board-snapshot channel. Sender-guarded so only the
  * main window's main frame can publish (mirrors pty.ts's isForeignSender). The
  * snapshot is control-plane metadata only — never board content.
  *
- * Accepts either the legacy boards-only array OR the `{ boards, connectors }` payload
- * (T4.6 added connectors so MAIN can resolve relay edges). An array → connectors stay [].
+ * Accepts either the legacy boards-only array OR the `{ boards, connectors, groups }` payload
+ * (T4.6 added connectors; PR-5 added groups). An array → connectors + groups stay [].
  */
 export function registerBoardRegistryHandler(
   ipcMain: IpcMain,
@@ -273,10 +338,18 @@ export function registerBoardRegistryHandler(
     if (isForeignSender(e, getWin)) return
     if (Array.isArray(payload)) {
       // Legacy / version-skew only: a renderer predating T4.6 sends a bare boards array.
-      applySnapshot(sanitizeSnapshot(payload), [])
+      applySnapshot(sanitizeSnapshot(payload), [], [])
     } else if (payload && typeof payload === 'object') {
-      const { boards, connectors } = payload as { boards?: unknown; connectors?: unknown }
-      applySnapshot(sanitizeSnapshot(boards), sanitizeConnectors(connectors))
+      const { boards, connectors, groups } = payload as {
+        boards?: unknown
+        connectors?: unknown
+        groups?: unknown
+      }
+      applySnapshot(
+        sanitizeSnapshot(boards),
+        sanitizeConnectors(connectors),
+        sanitizeGroups(groups)
+      )
     }
   })
 }
