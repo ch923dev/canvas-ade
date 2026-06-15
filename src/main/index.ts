@@ -14,8 +14,10 @@ import {
   writeToPty,
   getTerminalRuntime,
   getTerminalActivityStaleMs,
+  getTerminalCwd,
   setRecapEnvProvider
 } from './pty'
+import { boardGitDiff } from './gitDiff'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
@@ -313,6 +315,8 @@ app.whenReady().then(async () => {
     // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
     // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
     writeToPty: (id, text) => writeToPty(id, text),
+    // 🔒 PR-2: read-only working-tree diff for a board (simple-git in MAIN, via gitDiff.ts).
+    gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
     // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
     confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
     // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
