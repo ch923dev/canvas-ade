@@ -5,7 +5,7 @@
  * date/color popup opening, audio playing) and emits them; `useOsrWidgetEvents` funnels them here.
  * `OsrWidgetLayer` (mounted in `.bb-frame`) reads `dialog`/`popup` to draw the modal/overlay;
  * `BrowserBoard`'s URL bar reads `audible`/`muted` for the mute toggle. Pure session state — never
- * serialized (only `VITE_PREVIEW_OSR` boards ever populate it).
+ * serialized.
  */
 import { create } from 'zustand'
 import type { OsrDialogEvent, OsrPopupEvent } from '../../../preload'
