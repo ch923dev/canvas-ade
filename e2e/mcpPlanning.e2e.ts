@@ -183,7 +183,9 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     expect(rejected(await denyP)).toBe(true) // a denied write resolves as an isError result
     expect(await planningElementKinds(page, planId)).toEqual([]) // still empty
 
-    // APPROVE path: write a checklist + two notes; drive the modal; assert they land.
+    // APPROVE path: write a checklist + two notes + a Mermaid diagram; drive the modal; assert
+    // they land. The diagram proves the v0.12.0 add_planning_elements `diagram` kind end-to-end
+    // (real server schema → confirm shows the source → renderer materializes a DiagramElement).
     const writeP = mcp.orch.call(TOOL, {
       boardId: planId,
       elements: [
@@ -196,20 +198,22 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
             { label: 'Wire confirm gate', done: false }
           ]
         },
-        { kind: 'note', text: 'second note', tint: 'green' }
+        { kind: 'note', text: 'second note', tint: 'green' },
+        { kind: 'diagram', source: 'graph TD\n  A[Plan]-->B[Build]' }
       ]
     })
     expect(await pollEval(page, MODAL, 8000)).toBe(true)
-    // The confirm body shows the FULL content (not a bare count) — the security premise.
+    // The confirm body shows the FULL content (not a bare count) — the security premise. Includes
+    // the Mermaid source so the human sees what the diagram will render before approving.
     const bodyShowsContent = await evalIn<boolean>(
       page,
-      `(() => { const m = document.querySelector('[data-testid="confirm-modal"]'); return !!m && m.textContent.includes('CANVAS_MCP_PLANNING_OK') && m.textContent.includes('Wire confirm gate') })()`
+      `(() => { const m = document.querySelector('[data-testid="confirm-modal"]'); return !!m && m.textContent.includes('CANVAS_MCP_PLANNING_OK') && m.textContent.includes('Wire confirm gate') && m.textContent.includes('graph TD') })()`
     )
     expect(bodyShowsContent).toBe(true)
     await evalIn(page, APPROVE)
     expect(acked(await writeP)).toBe(true)
     await expect
       .poll(() => planningElementKinds(page, planId), { timeout: 8000 })
-      .toEqual(['note', 'checklist', 'note'])
+      .toEqual(['note', 'checklist', 'note', 'diagram'])
   })
 })

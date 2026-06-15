@@ -59,11 +59,23 @@ describe('buildPlanningOps', () => {
     expect(ops[3]).toEqual({ kind: 'arrow', dx: 10, dy: -20 })
   })
 
-  it('rejects an unknown / unsupported kind (e.g. diagram is S4, not here)', () => {
-    expect(() => buildPlanningOps([{ kind: 'diagram', source: 'graph TD' }])).toThrow(
+  it('builds a diagram op (Mermaid source sanitized + kept multi-line)', () => {
+    const ops = buildPlanningOps([{ kind: 'diagram', source: 'graph TD\n  A-->B' }])
+    expect(ops[0]).toEqual({ kind: 'diagram', source: 'graph TD\n  A-->B' })
+  })
+
+  it('rejects a diagram with a non-string / empty source', () => {
+    expect(() => buildPlanningOps([{ kind: 'diagram', source: 42 }])).toThrow(PlanningContentError)
+    expect(() => buildPlanningOps([{ kind: 'diagram', source: '   ' }])).toThrow(
       PlanningContentError
     )
+  })
+
+  it('rejects an unknown / unsupported kind (stroke is a draw primitive, not agent content)', () => {
     expect(() => buildPlanningOps([{ kind: 'stroke', points: [0, 0] }])).toThrow(
+      PlanningContentError
+    )
+    expect(() => buildPlanningOps([{ kind: 'doodle', squiggle: true }])).toThrow(
       PlanningContentError
     )
   })
@@ -128,6 +140,14 @@ describe('renderPlanningConfirmBody', () => {
     expect(body).toContain('Auth refactor')
     expect(body).toContain('☑ done item')
     expect(body).toContain('☐ todo item')
+  })
+
+  it('shows a diagram op as the FULL Mermaid source (so the human sees what will render)', () => {
+    const ops = buildPlanningOps([{ kind: 'diagram', source: 'graph TD\n  A[Plan]-->B[Build]' }])
+    const body = renderPlanningConfirmBody('P', ops)
+    expect(body).toContain('Diagram')
+    expect(body).toContain('graph TD')
+    expect(body).toContain('A[Plan]-->B[Build]')
   })
 
   it('🔒 multi-line content cannot spoof a top-level "• " bullet (indents continuation lines)', () => {
