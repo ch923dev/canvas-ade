@@ -1,5 +1,12 @@
 import { describe, it, expect, vi } from 'vitest'
-import { applyOsrInitialLoad, sanitizeOsrSize, applyOsrSize } from './previewOsr'
+import {
+  applyOsrInitialLoad,
+  sanitizeOsrSize,
+  applyOsrSize,
+  applyOsrPaint,
+  clampOsrDirty,
+  osrPaintRect
+} from './previewOsr'
 
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
 // else, so a blocked (non-http(s)) scheme skipped the load AND emitted no lifecycle event ->
@@ -130,5 +137,105 @@ describe('applyOsrSize', () => {
     const state = { logicalW: 390, logicalH: 844, superSample: 99, sizeKey: '390x844@2' }
     applyOsrSize(win, state, { logicalW: 390, logicalH: 844, supersample: 2 })
     expect(state.superSample).toBe(2) // refreshed despite the no-op early-return
+  })
+})
+
+// OS-3 Phase 2 (M2 / 2A) — visibility paint-gating. applyOsrPaint drives a structural target
+// (start/stop/invalidate spies) so the gating logic is testable without a real BrowserWindow.
+function mkPaintWin() {
+  const startPainting = vi.fn<() => void>()
+  const stopPainting = vi.fn<() => void>()
+  const invalidate = vi.fn<() => void>()
+  const win = { webContents: { startPainting, stopPainting, invalidate } }
+  return { win, startPainting, stopPainting, invalidate }
+}
+
+describe('applyOsrPaint', () => {
+  it('freezes (true→false): stopPainting, no invalidate, state cleared', () => {
+    const { win, startPainting, stopPainting, invalidate } = mkPaintWin()
+    const state = { painting: true }
+    applyOsrPaint(win, state, false)
+    expect(stopPainting).toHaveBeenCalledTimes(1)
+    expect(startPainting).not.toHaveBeenCalled()
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(state.painting).toBe(false)
+  })
+
+  it('resumes (false→true): startPainting + invalidate (no stale pre-freeze frame), state set', () => {
+    const { win, startPainting, stopPainting, invalidate } = mkPaintWin()
+    const state = { painting: false }
+    applyOsrPaint(win, state, true)
+    expect(startPainting).toHaveBeenCalledTimes(1)
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    expect(stopPainting).not.toHaveBeenCalled()
+    expect(state.painting).toBe(true)
+  })
+
+  it('is idempotent — a redundant set to the current state is a no-op', () => {
+    const { win, startPainting, stopPainting } = mkPaintWin()
+    const state = { painting: true }
+    applyOsrPaint(win, state, true) // already painting
+    applyOsrPaint(win, state, true)
+    expect(startPainting).not.toHaveBeenCalled()
+    expect(stopPainting).not.toHaveBeenCalled()
+  })
+})
+
+describe('clampOsrDirty', () => {
+  const full = { width: 800, height: 600 }
+  it('passes a fully-in-bounds rect through (rounded)', () => {
+    expect(clampOsrDirty({ x: 10, y: 20, width: 100, height: 50 }, full)).toEqual({
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 50
+    })
+  })
+  it('clamps a rect that overflows the frame to the remaining size', () => {
+    expect(clampOsrDirty({ x: 700, y: 500, width: 400, height: 400 }, full)).toEqual({
+      x: 700,
+      y: 500,
+      width: 100, // 800 - 700
+      height: 100 // 600 - 500
+    })
+  })
+  it('returns a zero-size rect for an origin past the frame (fully clipped)', () => {
+    const r = clampOsrDirty({ x: 900, y: 700, width: 50, height: 50 }, full)
+    expect(r.width).toBe(0)
+    expect(r.height).toBe(0)
+  })
+  it('floors the offset and ceils the size (no sub-pixel crop that drops a row)', () => {
+    expect(clampOsrDirty({ x: 10.9, y: 20.1, width: 30.2, height: 40.8 }, full)).toEqual({
+      x: 10,
+      y: 20,
+      width: 31,
+      height: 41
+    })
+  })
+})
+
+describe('osrPaintRect (2C hardening — crop only at supersample 1)', () => {
+  const full = { width: 800, height: 600 }
+  const dirty = { x: 100, y: 50, width: 200, height: 150 }
+
+  it('honors the (clamped) dirty rect at supersample 1', () => {
+    expect(osrPaintRect(dirty, full, 1)).toEqual(dirty)
+  })
+
+  it('returns the WHOLE frame at supersample 2 (no crop → no DIP/device misalignment)', () => {
+    expect(osrPaintRect(dirty, full, 2)).toEqual({ x: 0, y: 0, width: 800, height: 600 })
+  })
+
+  it('returns the whole frame for any S != 1 (e.g. fractional 1.5)', () => {
+    expect(osrPaintRect(dirty, full, 1.5)).toEqual({ x: 0, y: 0, width: 800, height: 600 })
+  })
+
+  it('still clamps an out-of-bounds dirty rect at S=1', () => {
+    expect(osrPaintRect({ x: 700, y: 500, width: 400, height: 400 }, full, 1)).toEqual({
+      x: 700,
+      y: 500,
+      width: 100,
+      height: 100
+    })
   })
 })

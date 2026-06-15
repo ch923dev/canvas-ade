@@ -27,6 +27,7 @@ import { BoardFrame } from '../BoardFrame'
 import { Icon } from '../Icon'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
+import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 import { showToast } from '../../store/toastStore'
 import { boardStatusBucket, bucketToPill } from '../../store/boardStatus'
 import type { BoardViewProps } from '../BoardNode'
@@ -317,8 +318,11 @@ export function BrowserBoard({
 
   // D2-C: the renderer was FREED (over-cap eviction), not just detached for motion —
   // page state is gone and interaction is dead until a live slot frees. Distinct
-  // from the visually-identical snapshot detach (audit §3.4).
-  const paused = runtime.evicted && !runtime.live
+  // from the visually-identical snapshot detach (audit §3.4). In OSR mode (OS-3 Phase 2 / 2B)
+  // the MAX_LIVE cap evicts the same way — the offscreen window is closed and its last frame
+  // stays frozen on the canvas; surface the same "paused" badge off the liveness store.
+  const osrAlive = useOsrLivenessStore((s) => s.alive[board.id] ?? true)
+  const paused = (runtime.evicted && !runtime.live) || (OSR_PREVIEW && !osrAlive)
 
   // D2-C Reload CTA: wc.reload() relaunches a crashed renderer; its fresh main-frame
   // nav-start clears the crashed latch back to `connecting` (usePreviewEvents).

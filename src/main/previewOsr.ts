@@ -52,6 +52,13 @@ interface OsrEntry {
   logicalH: number
   superSample: number
   sizeKey?: string
+  // OS-3 Phase 2 (M2 / 2A) — DESIRED paint state, driven by the renderer's settle-gated
+  // liveness manager (`preview:osrSetPaint`). Default true (a board paints on first ready); an
+  // off-screen / below-LOD board is set false → `wc.stopPainting()` (CPU→0, and the last frame
+  // stays on the host <canvas> as a free static snapshot). The crash-ready gate's first
+  // `startPainting` honors this flag, so a board that opens already-frozen never paints until it
+  // becomes visible (then `preview:osrSetPaint(true)` → startPainting + invalidate).
+  painting: boolean
 }
 
 /** Browser-preview lifecycle event, emitted on the SAME `preview:event` channel the native
@@ -69,6 +76,11 @@ const osr = new Map<string, OsrEntry>()
 // same as the open) is buffered here and drained by ensureOsr — so the initial size lands
 // without a window-less setContentSize and without a 1280→preset reflow flash on open.
 const pendingSize = new Map<string, OsrSizeRequest>()
+// A paint-state (`preview:osrSetPaint`) that raced ahead of its OSR window's open (the renderer's
+// liveness manager reconciles on mount, same as the open) is buffered here and drained by
+// ensureOsr — so a board that should open ALREADY-FROZEN (off-screen at mount) never paints a
+// frame before the manager's decision lands. Default-true means an un-buffered board paints.
+const pendingPaint = new Map<string, boolean>()
 let owner: BrowserWindow | null = null
 
 /** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). */
@@ -154,13 +166,88 @@ export function applyOsrSize(
   }
 }
 
-/** One offscreen-rendered frame (raw BGRA pixels) pushed main → renderer. */
-export interface OsrFramePayload {
-  id: string
+/** A pixel rect (OS-3 Phase 2 / 2C — the dirty region of a frame). */
+export interface OsrRect {
+  x: number
+  y: number
   width: number
   height: number
-  /** NativeImage.toBitmap() — raw BGRA; the renderer swaps to RGBA for the canvas. */
+}
+
+/** One offscreen-rendered frame pushed main → renderer (OS-3 Phase 2 / 2C — dirty-rect aware).
+ *  `buffer` is the BGRA pixels of the DIRTY region only (cropped from the full paint); the
+ *  renderer keeps its <canvas> at `full` size and blits `buffer` at `dirty`'s offset. A full
+ *  repaint (first paint / resize / resume invalidate) sends `dirty == full`, which is just the
+ *  whole-frame case — so there is no separate full-frame path. */
+export interface OsrFramePayload {
+  id: string
+  /** The whole frame's pixel size (the <canvas> tracks this; a change re-sizes + clears it). */
+  full: { width: number; height: number }
+  /** The changed sub-rect this buffer covers (in the same supersampled surface px as `full`). */
+  dirty: OsrRect
+  /** NativeImage.toBitmap() of the DIRTY region — raw BGRA; the renderer swaps to RGBA. */
   buffer: Buffer
+}
+
+/** Minimal hidden-window surface `applyOsrPaint` drives — so paint-gating is unit-testable
+ *  without a real Electron `BrowserWindow`. A `BrowserWindow` satisfies it structurally. */
+interface OsrPaintTarget {
+  webContents: { startPainting(): void; stopPainting(): void; invalidate(): void }
+}
+/** The mutable paint state `applyOsrPaint` reads/writes (the live `OsrEntry` satisfies it). */
+interface OsrPaintState {
+  painting: boolean
+}
+
+/**
+ * Apply a desired paint state (M2 / 2A). Idempotent — a redundant set is a no-op (the manager
+ * re-sends on every settle, so most sets are no-ops). On resume (false→true) `invalidate()`
+ * forces one fresh repaint so the board never shows its stale pre-freeze frame for a beat (the
+ * §8c "stale frame on resume" row); on freeze (true→false) `stopPainting()` drops CPU to ~0 and
+ * the last frame stays on the host <canvas>.
+ */
+export function applyOsrPaint(win: OsrPaintTarget, state: OsrPaintState, on: boolean): void {
+  if (state.painting === on) return // idempotent — already in the requested state
+  state.painting = on
+  try {
+    if (on) {
+      win.webContents.startPainting()
+      win.webContents.invalidate()
+    } else {
+      win.webContents.stopPainting()
+    }
+  } catch {
+    /* window gone / not OSR-capable */
+  }
+}
+
+/** Clamp a paint `dirtyRect` to the frame's pixel bounds (defensive — a bogus rect would make
+ *  `image.crop` throw or emit an off-canvas blit). Returns a zero-size rect if fully clipped. */
+export function clampOsrDirty(dirty: OsrRect, full: { width: number; height: number }): OsrRect {
+  const x = Math.max(0, Math.min(Math.floor(dirty.x), full.width))
+  const y = Math.max(0, Math.min(Math.floor(dirty.y), full.height))
+  const width = Math.max(0, Math.min(Math.ceil(dirty.width), full.width - x))
+  const height = Math.max(0, Math.min(Math.ceil(dirty.height), full.height - y))
+  return { x, y, width, height }
+}
+
+/**
+ * The rect to actually ship for a paint (2C — hardened). Honors the dirty-rect crop ONLY at
+ * supersample 1, where the paint `dirtyRect`'s coordinate space provably matches the physical
+ * surface 1:1 (zoomFactor=1 ⇒ contentSize == logical, so DIP == device px). At S>1 the
+ * dirtyRect-vs-`image` coordinate space is NOT guaranteed equal (a DIP-reported dirtyRect would
+ * crop the wrong sub-region of a supersampled image), so we return the WHOLE frame instead — no
+ * crop, no misalignment. The fast word-swizzle still applies on every frame; only the dirty-rect
+ * BANDWIDTH win is skipped at S>1. (Most OSR setups report a full dirtyRect per paint anyway, so
+ * this rarely changes anything in practice; it makes the S>1 path provably safe.)
+ */
+export function osrPaintRect(
+  dirty: OsrRect,
+  full: { width: number; height: number },
+  superSample: number
+): OsrRect {
+  if (superSample === 1) return clampOsrDirty(dirty, full)
+  return { x: 0, y: 0, width: full.width, height: full.height }
 }
 
 /** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
@@ -268,7 +355,8 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     ready: false,
     logicalW: OSR_WIDTH,
     logicalH: OSR_HEIGHT,
-    superSample: 1
+    superSample: 1,
+    painting: true
   }
   osr.set(id, e)
   const wc = osrWin.webContents
@@ -303,11 +391,21 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   // Frame cap (M2 knob). The window size already set the render surface; the window is
   // never shown, so nothing paints above the HTML — the whole point of the spike.
   wc.setFrameRate(OSR_FRAME_RATE)
-  wc.on('paint', (_ev, _dirty, image) => {
+  wc.on('paint', (_ev, dirty, image) => {
     const size = image.getSize()
     if (size.width === 0 || size.height === 0) return
-    // toBitmap() (raw BGRA) — the correctly-typed equivalent of the legacy getBitmap().
-    emitFrame({ id, width: size.width, height: size.height, buffer: image.toBitmap() })
+    // 2C — ship only the changed region (less IPC, smaller renderer-side swizzle). HARDENED:
+    // crop ONLY at supersample 1 (where the paint dirtyRect's coordinate space matches the
+    // physical surface 1:1); at S>1 osrPaintRect returns the whole frame, so a possible
+    // DIP-vs-device dirtyRect mismatch can never misalign the patch. A full repaint (first paint
+    // / resize / resume invalidate) reports dirty == the whole image → `isFull` skips the crop
+    // and the renderer treats it as a whole-frame paint (also re-filling a just-resized canvas).
+    const full = { width: size.width, height: size.height }
+    const d = osrPaintRect(dirty, full, e.superSample)
+    if (d.width === 0 || d.height === 0) return
+    const isFull = d.x === 0 && d.y === 0 && d.width === size.width && d.height === size.height
+    const patch = isFull ? image : image.crop(d)
+    emitFrame({ id, full, dirty: d, buffer: patch.toBitmap() })
   })
   // Mirror the offscreen page's cursor onto the host <canvas> (research P0). Signature:
   // (event, type, image, scale, size, hotspot). Standard types are deduped by `type`;
@@ -350,6 +448,11 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   })
   registerCrashReadyGate(wc, e, {
     onReady: () => {
+      // 2A — honor the DESIRED paint state: a board that opened (or crash-reloaded) while
+      // off-screen must NOT start painting; the liveness manager flips it on when it becomes
+      // visible (preview:osrSetPaint(true) → startPainting + invalidate). Default true → the
+      // common visible-at-open board paints on first ready exactly as before.
+      if (!e.painting) return
       try {
         wc.startPainting()
       } catch {
@@ -397,6 +500,14 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     pendingSize.delete(id)
     applyOsrSize(osrWin, e, pend)
   }
+  // 2A — if a paint-state raced ahead of this open (the liveness manager reconciles on mount),
+  // drain it onto the desired flag BEFORE load so onReady honors it (a board that should open
+  // already-frozen never paints a frame). startPainting itself is the gate's job, not here.
+  const pendPaint = pendingPaint.get(id)
+  if (pendPaint !== undefined) {
+    pendingPaint.delete(id)
+    e.painting = pendPaint
+  }
   applyOsrInitialLoad(
     id,
     url,
@@ -409,6 +520,7 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
 
 function disposeOsr(id: string): void {
   pendingSize.delete(id) // drop a buffered-but-never-applied resize
+  pendingPaint.delete(id) // …and a buffered-but-never-applied paint-state
   const e = osr.get(id)
   if (!e) return
   try {
@@ -697,6 +809,22 @@ export function registerPreviewOsrHandlers(
       return true
     }
     applyOsrSize(e.osrWin, e, size)
+    return true
+  })
+  // M2 / 2A — set a board's desired paint state. Sent by the renderer's settle-gated liveness
+  // manager ONLY when a board's visibility flips (on-screen ⇄ off-screen / below-LOD), NOT per
+  // frame. A `false` stops the offscreen paint pump (CPU→0; the last frame stays on the canvas as
+  // a free snapshot); a `true` resumes + invalidates (fresh repaint, no stale frame). If the
+  // window isn't open yet (the manager raced the open), buffer it; ensureOsr drains it pre-load.
+  ipcMain.handle('preview:osrSetPaint', (ev, args: { id: string; painting: boolean }) => {
+    if (isForeignSender(ev, getWin)) return false
+    const on = args.painting === true
+    const e = osr.get(args.id)
+    if (!e) {
+      pendingPaint.set(args.id, on)
+      return true
+    }
+    applyOsrPaint(e.osrWin, e, on)
     return true
   })
 }

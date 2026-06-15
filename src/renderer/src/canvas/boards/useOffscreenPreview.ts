@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import type { RefObject } from 'react'
 import { usePreviewStore } from '../../store/previewStore'
+import { useOsrLivenessStore } from '../../store/osrLivenessStore'
+import { bgraToRgba } from '../../lib/bgraToRgba'
 
 /**
  * SPIKE (feat/preview-offscreen-spike): drive a Browser board's offscreen preview.
@@ -11,8 +13,12 @@ import { usePreviewStore } from '../../store/previewStore'
  * 0002). There is NO camera-sync IPC: the canvas moves with the DOM, so the entire
  * `setBoundsBatch` rAF pump the native path needs is gone.
  *
- * First slice = frames only (spec M1/M2). Input forwarding (M3) and DPR/responsive
- * sizing (M1/M4) are later increments. A URL change re-opens (close → open).
+ * OS-3 Phase 2 (2B): the window's open/close is gated on the board's `alive` flag (the
+ * liveness manager's MAX_LIVE existence cap). An evicted (over-cap) board's window is
+ * CLOSED — its renderer freed — but its last frame stays on the <canvas> as a frozen
+ * snapshot (a "paused" badge over it); it re-opens when it climbs back into the cap. So
+ * the canvas-clear is split into its OWN effect (url-change / unmount only) — the
+ * lifecycle effect closes WITHOUT clearing so an evict keeps the frame.
  */
 export function useOffscreenPreview(
   boardId: string,
@@ -20,11 +26,26 @@ export function useOffscreenPreview(
   canvasRef: RefObject<HTMLCanvasElement | null>,
   enabled: boolean
 ): void {
+  // 2B — the MAX_LIVE existence flag for this board. Default true so a freshly-mounted board
+  // opens immediately; the manager flips it false to evict (over-cap), true to revive.
+  const alive = useOsrLivenessStore((s) => s.alive[boardId] ?? true)
+
+  // Clear the canvas on a URL change or unmount — but NOT on an evict (alive→false), which keeps
+  // the frozen last frame. Its own effect (deps exclude `alive`) so the lifecycle effect can
+  // close-without-clearing. A failed-load / crash clear stays in the event handler below.
   useEffect(() => {
-    if (!enabled || !url) return
-    // Clear any previously-painted frame so a stale page bitmap never sits OVER the board's
-    // Connecting / Couldn't-load / Crashed fallback. A re-open (URL change), a failed load, or a
-    // crash all stop the frame stream, leaving the last good frame frozen on the canvas otherwise.
+    if (!enabled) return
+    const clearCanvas = (): void => {
+      const cv = canvasRef.current
+      cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
+    }
+    return () => clearCanvas()
+  }, [boardId, url, enabled, canvasRef])
+
+  useEffect(() => {
+    if (!enabled || !url || !alive) return
+    // Clear a stale page bitmap so it never sits OVER the board's Couldn't-load / Crashed
+    // fallback. Used by the fail/crash handlers (the stream stops, leaving the last frame frozen).
     const clearCanvas = (): void => {
       const cv = canvasRef.current
       cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
@@ -85,30 +106,35 @@ export function useOffscreenPreview(
       if (!cv) return
       const ctx = cv.getContext('2d')
       if (!ctx) return
-      if (cv.width !== f.width || cv.height !== f.height) {
-        cv.width = f.width
-        cv.height = f.height
+      // OS-3 Phase 2 (2C) — dirty-rect aware. A full repaint reports dirty == the whole frame;
+      // a partial paint covers only the changed sub-rect.
+      const isFull =
+        f.dirty.x === 0 &&
+        f.dirty.y === 0 &&
+        f.dirty.width === f.full.width &&
+        f.dirty.height === f.full.height
+      // The <canvas> tracks the FULL frame size; setting cv.width/height also CLEARS it. A
+      // partial frame can't fill a freshly-cleared canvas, so only adopt a new size on a FULL
+      // frame — MAIN guarantees the first frame after any resize is full (invalidate()). A
+      // stray partial frame for a not-yet-sized canvas is dropped (never happens in practice).
+      if (cv.width !== f.full.width || cv.height !== f.full.height) {
+        if (!isFull) return
+        cv.width = f.full.width
+        cv.height = f.full.height
       }
-      // NativeImage.getBitmap() is BGRA; ImageData is RGBA → swap R/B per pixel. This
-      // per-frame swap is itself an M2 throughput factor (a GPU path could avoid it) —
-      // noted for the spike's throughput measurement.
+      // NativeImage.toBitmap() is BGRA; ImageData is RGBA → swap R/B. The fast 32-bit-word
+      // swizzle (bgraToRgba) replaces the old per-byte loop (~4× fewer typed-array ops). Blit
+      // ONLY the dirty sub-rect; the rest of the canvas keeps the previous frame's pixels.
       const src = f.buffer instanceof Uint8Array ? f.buffer : new Uint8Array(f.buffer)
-      const rgba = new Uint8ClampedArray(src.length)
-      for (let i = 0; i < src.length; i += 4) {
-        rgba[i] = src[i + 2]
-        rgba[i + 1] = src[i + 1]
-        rgba[i + 2] = src[i]
-        rgba[i + 3] = src[i + 3]
-      }
-      ctx.putImageData(new ImageData(rgba, f.width, f.height), 0, 0)
+      const rgba = bgraToRgba(src)
+      ctx.putImageData(new ImageData(rgba, f.dirty.width, f.dirty.height), f.dirty.x, f.dirty.y)
     })
     return () => {
       off()
       offEvent()
+      // Close the offscreen window. On a URL change the separate clear effect wipes the canvas;
+      // on an EVICT (alive→false) it does NOT, so the frozen last frame stays as a snapshot.
       void window.api.closeOsrPreview(boardId)
-      // On a URL change the effect re-runs (close → open); clear so the OLD page's last frame
-      // doesn't linger over "Connecting…" until the new page's first frame arrives.
-      clearCanvas()
     }
-  }, [boardId, url, enabled, canvasRef])
+  }, [boardId, url, enabled, alive, canvasRef])
 }
