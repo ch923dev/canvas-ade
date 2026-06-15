@@ -96,4 +96,48 @@ test.describe('@planning note tint picker (real OS input)', () => {
       .poll(() => tintOf(page, planId, 'tn-1'), { message: 'one undo restores the tint' })
       .toBe('yellow')
   })
+
+  // S5 token promotion: the note tint hex moved out of tints.ts into named --note-*
+  // CSS tokens (index.css), referenced via var(). jsdom can't resolve custom
+  // properties, so this real-Chromium check is the only proof the indirection still
+  // paints the exact same colour ("renders identically — no visual diff").
+  test('note tints render to their exact --note-* token colours (S5 promotion)', async ({
+    page
+  }) => {
+    const planId = await seedNote(page)
+    const bgColorOf = (): Promise<string> =>
+      page
+        .locator(`[data-id="${planId}"] .pl-note`)
+        .evaluate((el) => el.ownerDocument.defaultView!.getComputedStyle(el).backgroundColor)
+    // hex → rgb: index.css --note-* tokens; plain falls back to --surface-raised (#1a1a1d).
+    const EXPECT: Record<string, string> = {
+      yellow: 'rgb(42, 40, 24)', // #2a2818
+      blue: 'rgb(22, 32, 43)', // #16202b
+      green: 'rgb(22, 36, 29)', // #16241d
+      plain: 'rgb(26, 26, 29)' // --surface-raised
+    }
+    for (const [tint, rgb] of Object.entries(EXPECT)) {
+      await page.evaluate(
+        ([bid, t]) => {
+          ;(globalThis as any).__canvasE2E.patchBoard(bid, {
+            elements: [
+              {
+                id: 'tn-1',
+                kind: 'note',
+                x: 40,
+                y: 40,
+                w: 156,
+                h: 96,
+                tint: t,
+                text: 'A',
+                rotation: 0
+              }
+            ]
+          })
+        },
+        [planId, tint] as const
+      )
+      await expect.poll(bgColorOf, { message: `${tint} note resolves to ${rgb}` }).toBe(rgb)
+    }
+  })
 })
