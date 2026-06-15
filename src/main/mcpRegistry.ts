@@ -183,6 +183,14 @@ export interface BoardRegistry {
    * only write its own result. No PTY write, no confirm — the agent reports its outcome.
    */
   recordResult(id: string, result: BoardResult): void
+  /**
+   * PR-2: read-only working-tree diff for a board. MAIN injects gitDiff.ts's `boardGitDiff`,
+   * which resolves the board's resolved spawn cwd (pty.ts `getTerminalCwd`) and runs `simple-git`
+   * (MAIN-only, read-only). The orchestrator owns board-resolution + terminal-check + the output
+   * bound (GITDIFF_MAX_BYTES); this returns the raw diff ('' for a non-repo / unknown cwd).
+   * Optional so a registry/test that does not wire it keeps the "unavailable" behaviour.
+   */
+  gitDiff?(id: string): Promise<string>
 }
 
 /**
