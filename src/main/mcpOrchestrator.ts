@@ -854,9 +854,10 @@ export function buildOrchestrator(
       return buf.subarray(0, end).toString('utf8')
     },
     async describeApp(): Promise<AppModel> {
-      // 🔒 PR-3: assemble the read-only app self-model (hybrid agency layer). Read-only — no write
-      // path, no token. boards/connectors are projected from the live mirror; rules come from this
-      // orchestrator's own cap/TTL budget; groups stay [] until PR-5 mirrors Named Groups to MAIN.
+      // 🔒 PR-3/PR-5: assemble the read-only app self-model (hybrid agency layer). Read-only — no
+      // write path, no token. boards/connectors/groups are projected from the live renderer mirror;
+      // rules come from this orchestrator's own cap/TTL budget. (PR-5 made `groups` live; a registry
+      // that doesn't wire listGroups reads [].)
       const summaries = await listBoardSummaries()
       return buildAppModel({
         boards: summaries.map((b) => ({
@@ -872,6 +873,11 @@ export function buildOrchestrator(
           sourceId: c.sourceId,
           targetId: c.targetId,
           kind: c.kind
+        })),
+        groups: (registry.listGroups?.() ?? []).map((g) => ({
+          id: g.id,
+          name: g.name,
+          boardIds: [...g.boardIds]
         })),
         rules: {
           spawnCap: cap,

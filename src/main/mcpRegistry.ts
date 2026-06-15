@@ -94,6 +94,13 @@ export interface ConnectorMirrorEntry {
   kind: string
 }
 
+/** A Named Board Group the renderer mirrors to MAIN (PR-5) — a feature zone of boards. */
+export interface GroupMirrorEntry {
+  id: string
+  name: string
+  boardIds: string[]
+}
+
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
 export interface BoardRegistry {
   listBoards(): Array<{
@@ -112,6 +119,13 @@ export interface BoardRegistry {
    * from `boardRegistry.ts`.
    */
   listConnectors(): ConnectorMirrorEntry[]
+  /**
+   * PR-5: the Named Board Group mirror (feature zones). MAIN injects `boardRegistry.ts`'s
+   * `listGroups`; the app self-model projects it as `canvas.groups` so the orchestrator/agent can
+   * reason about feature zones. Optional so a registry/test that does not wire it keeps the
+   * empty-groups behaviour (read-only — groups are metadata, no action surface).
+   */
+  listGroups?(): GroupMirrorEntry[]
   listSessions(): Array<{ id: string; status: string }>
   /**
    * BUG-007: ms since terminal board `id` last produced PTY output (its dormancy measure for the

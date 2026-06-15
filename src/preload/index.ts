@@ -525,6 +525,8 @@ const api = {
     publishBoards: (payload: {
       boards: Array<{ id: string; type: string; title: string; status: string }>
       connectors: Array<{ id: string; sourceId: string; targetId: string; kind: string }>
+      // PR-5: Named Board Groups (feature zones) — feeds the app-model's live canvas.groups.
+      groups?: Array<{ id: string; name: string; boardIds: string[] }>
     }): void => ipcRenderer.send('mcp:boards', payload),
 
     // MAIN → renderer command channel (the inverse of publishBoards). The handler

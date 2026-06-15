@@ -46,6 +46,7 @@ import { startMcpServer, type RunningMcp } from './mcp'
 import {
   listBoardMirror,
   listConnectors,
+  listGroups,
   registerBoardRegistryHandler,
   subscribeBoardStatus
 } from './boardRegistry'
@@ -304,6 +305,8 @@ app.whenReady().then(async () => {
     listBoards: listBoardMirror,
     // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
     listConnectors,
+    // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
+    listGroups,
     listSessions: listPtySessions,
     // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
     // output silence instead of the never-flipping 'running' status bucket of a live agent shell.

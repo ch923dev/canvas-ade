@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { mainCall, seed } from './helpers'
+import { evalIn, mainCall, seed } from './helpers'
 
 /**
  * @core PR-3 read-only app self-model (app-side), against the REAL running app.
@@ -17,7 +17,11 @@ interface AppModelShape {
   version: number
   boardTypes: Array<{ type: string; seedable: boolean; autowire: string | null }>
   tools: Array<{ name: string; tier: string }>
-  canvas: { boards: Array<{ id: string; type: string }>; connectors: unknown[]; groups: unknown[] }
+  canvas: {
+    boards: Array<{ id: string; type: string }>
+    connectors: unknown[]
+    groups: Array<{ id: string; name: string; boardIds: string[] }>
+  }
   rules: { spawnCap: number; everyWriteGated: boolean }
 }
 
@@ -38,7 +42,7 @@ test.describe('@core describeApp (read-only app self-model via the app-side seam
     expect(worker).toEqual(['ping', 'write_result'])
     expect(model.rules.spawnCap).toBe(4)
     expect(model.rules.everyWriteGated).toBe(true)
-    // groups stay [] until PR-5 mirrors Named Groups to MAIN
+    // No group created in this test → the live groups mirror (PR-5) is empty.
     expect(model.canvas.groups).toEqual([])
   })
 
@@ -54,5 +58,29 @@ test.describe('@core describeApp (read-only app self-model via the app-side seam
         { timeout: 8_000 }
       )
       .toBe(true)
+  })
+
+  test('PR-5: reflects a Named Group (feature zone) in the live canvas', async ({
+    page,
+    electronApp
+  }) => {
+    const b1 = await seed(page, 'terminal')
+    const b2 = await seed(page, 'planning')
+    // Create a Named Group over the two boards via the renderer (the same action Ctrl+G drives).
+    const gid = await evalIn<string>(
+      page,
+      `window.__canvasE2E.addGroup("Auth zone", [${JSON.stringify(b1)}, ${JSON.stringify(b2)}])`
+    )
+    // The group appears in the app-model once the renderer->MAIN mirror (mcp:boards) carries it.
+    await expect
+      .poll(
+        async () => {
+          const m = await mainCall<AppModelShape | null>(electronApp, 'describeApp')
+          const g = m?.canvas.groups.find((x) => x.id === gid)
+          return g ? `${g.name}|${[...g.boardIds].sort().join(',')}` : null
+        },
+        { timeout: 8_000 }
+      )
+      .toBe(`Auth zone|${[b1, b2].sort().join(',')}`)
   })
 })

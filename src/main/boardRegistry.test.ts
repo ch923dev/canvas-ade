@@ -3,12 +3,15 @@ import type { IpcMain, IpcMainEvent, BrowserWindow } from 'electron'
 import {
   __setMirrorForTest,
   __setConnectorsForTest,
+  __setGroupsForTest,
   __applySnapshotForTest,
   __clearStatusListenersForTest,
   listBoardMirror,
   listConnectors,
+  listGroups,
   sanitizeSnapshot,
   sanitizeConnectors,
+  sanitizeGroups,
   diffStatus,
   subscribeBoardStatus,
   registerBoardRegistryHandler,
@@ -90,6 +93,59 @@ describe('boardRegistry', () => {
     ])
     __setConnectorsForTest([])
     expect(listConnectors()).toEqual([])
+  })
+
+  it('sanitizeGroups keeps well-formed groups and drops malformed ones (PR-5)', () => {
+    const out = sanitizeGroups([
+      { id: 'g1', name: 'Auth', boardIds: ['a', 'b'] },
+      { id: 'g2', name: 'Empty', boardIds: [] }, // named-empty group is valid
+      { id: 'g3', name: 'Mixed', boardIds: ['ok', 7, null, 'ok2'] }, // non-string members dropped
+      { id: 'g4', boardIds: ['a'] }, // missing name → dropped
+      { id: 'g5', name: 'NoArray', boardIds: 'a,b' }, // boardIds not an array → dropped
+      { id: 9, name: 'BadId', boardIds: [] }, // non-string id → dropped
+      'nope'
+    ])
+    expect(out).toEqual([
+      { id: 'g1', name: 'Auth', boardIds: ['a', 'b'] },
+      { id: 'g2', name: 'Empty', boardIds: [] },
+      { id: 'g3', name: 'Mixed', boardIds: ['ok', 'ok2'] }
+    ])
+  })
+
+  it('sanitizeGroups bounds group count, name length, and membership size', () => {
+    const longName = 'x'.repeat(300)
+    const manyGroups = Array.from({ length: 250 }, (_, i) => ({
+      id: `g${i}`,
+      name: 'G',
+      boardIds: []
+    }))
+    expect(sanitizeGroups(manyGroups)).toHaveLength(200) // MAX_GROUPS
+    expect(sanitizeGroups([{ id: 'g', name: longName, boardIds: [] }])).toEqual([]) // over-length name → dropped
+    const bigMembers = {
+      id: 'g',
+      name: 'Big',
+      boardIds: Array.from({ length: 600 }, (_, i) => `b${i}`)
+    }
+    expect(sanitizeGroups([bigMembers])[0].boardIds).toHaveLength(500) // MAX_GROUP_MEMBERS
+  })
+
+  it('listGroups returns the last stored groups (empty by default)', () => {
+    __setGroupsForTest([{ id: 'g1', name: 'Auth', boardIds: ['a'] }])
+    expect(listGroups()).toEqual([{ id: 'g1', name: 'Auth', boardIds: ['a'] }])
+    __setGroupsForTest([])
+    expect(listGroups()).toEqual([])
+  })
+
+  it('__applySnapshotForTest stores groups alongside boards/connectors (metadata-only)', () => {
+    __applySnapshotForTest(
+      [{ id: 'a', type: 'terminal', title: 'A', status: 'idle' }],
+      [{ id: 'c1', sourceId: 'a', targetId: 'b', kind: 'orchestration' }],
+      [{ id: 'g1', name: 'Zone', boardIds: ['a'] }]
+    )
+    expect(listGroups()).toEqual([{ id: 'g1', name: 'Zone', boardIds: ['a'] }])
+    // A later snapshot without groups replaces them (the renderer always sends the full set).
+    __applySnapshotForTest([{ id: 'a', type: 'terminal', title: 'A', status: 'idle' }])
+    expect(listGroups()).toEqual([])
   })
 })
 
@@ -224,6 +280,29 @@ describe('registerBoardRegistryHandler BUG-033 sender guard', () => {
     const boards = [{ id: 'a', type: 'terminal', title: 'A' }]
     emit({ senderFrame: frame } as unknown as IpcMainEvent, boards)
     expect(listBoardMirror()).toEqual([{ id: 'a', type: 'terminal', title: 'A' }])
+  })
+
+  it('PR-5: routes {boards, connectors, groups} object payload through their sanitizers', () => {
+    const { ipcMain, emit } = makeIpc()
+    const frame = { id: 'main-frame' }
+    const win = makeWin({ frame })
+    registerBoardRegistryHandler(ipcMain, () => win)
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, {
+      boards: [{ id: 'a', type: 'terminal', title: 'A' }],
+      connectors: [{ id: 'c1', sourceId: 'a', targetId: 'b', kind: 'orchestration' }],
+      groups: [{ id: 'g1', name: 'Zone', boardIds: ['a'] }]
+    })
+    expect(listBoardMirror()).toEqual([{ id: 'a', type: 'terminal', title: 'A' }])
+    expect(listConnectors()).toEqual([
+      { id: 'c1', sourceId: 'a', targetId: 'b', kind: 'orchestration' }
+    ])
+    expect(listGroups()).toEqual([{ id: 'g1', name: 'Zone', boardIds: ['a'] }])
+    // A legacy bare-array payload resets connectors + groups to [].
+    emit({ senderFrame: frame } as unknown as IpcMainEvent, [
+      { id: 'a', type: 'terminal', title: 'A' }
+    ])
+    expect(listGroups()).toEqual([])
+    expect(listConnectors()).toEqual([])
   })
 })
 
