@@ -33,6 +33,10 @@ const CROSS_CUTTING = [
   // main process / preload / e2e harness / smoke seams (also cross-OS surface)
   'src/main/',
   'src/preload/',
+  // S4 diagram render-worker assets (vendored Mermaid + worker HTML/bridge) — loaded by a MAIN
+  // BrowserWindow, so a change here is a cross-OS render surface (the worker must paint on both
+  // Win + the Linux container). Self-documents what already falls open to FULL via the unknown path.
+  'resources/diagram-worker/',
   'src/renderer/src/smoke/',
   'e2e/',
   // the shared canvas shell + node/edge plumbing every board renders through
