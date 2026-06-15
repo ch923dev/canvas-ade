@@ -9,10 +9,10 @@ import { usePreviewManager, type LayerProps } from './usePreviewManager'
 import { useBrowserAutoConnect } from './useBrowserAutoConnect'
 import { useOffscreenLiveness } from './useOffscreenLiveness'
 
-// SPIKE (feat/preview-offscreen-spike): VITE_PREVIEW_OSR=1 disables the native
-// WebContentsView path entirely — BrowserBoard renders previews via an offscreen-fed
-// <canvas> instead. A clean A/B: with the flag on, NO native views are ever created.
-const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR === '1'
+// OS-3 Phase 5: OSR is the DEFAULT — BrowserBoard renders previews via an offscreen-fed
+// <canvas>, and NO native views are ever created. Set VITE_PREVIEW_OSR=0 to fall back to the
+// legacy native WebContentsView path (escape hatch; removed in 5C).
+const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR !== '0'
 
 export function BrowserPreviewLayer(props: LayerProps): ReactElement | null {
   // Auto-connect (reconnect-on-refused + auto-push-detected-port) is preview-engine-agnostic —

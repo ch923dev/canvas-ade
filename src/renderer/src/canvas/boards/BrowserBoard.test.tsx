@@ -8,6 +8,17 @@ import { usePreviewStore } from '../../store/previewStore'
 import { useToastStore } from '../../store/toastStore'
 import type { BrowserBoard as BrowserBoardData } from '../../lib/boardSchema'
 
+// OS-3 Phase 5: OSR is the default engine, so BrowserBoard now mounts the offscreen-preview hooks.
+// These tests assert the board CHROME (URL draft, crashed CTA, status word, screenshot toasts) —
+// all engine-agnostic — so stub the OSR engine hooks to no-ops; otherwise they'd call unmocked
+// window.api OSR methods on mount. The liveness/widget STORES are left real (they default sensibly:
+// osrAlive ?? true, no dialog/popup), which is what the chrome reads.
+vi.mock('./useOffscreenPreview', () => ({ useOffscreenPreview: () => {} }))
+vi.mock('./useOffscreenInput', () => ({ useOffscreenInput: () => {} }))
+vi.mock('./useOffscreenSizing', () => ({ useOffscreenSizing: () => {} }))
+vi.mock('./osr/useOsrWidgetEvents', () => ({ useOsrWidgetEvents: () => {} }))
+vi.mock('./osr/OsrWidgetLayer', () => ({ OsrWidgetLayer: () => null }))
+
 // jsdom has no ResizeObserver (BoardFrame/board chrome may observe size).
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class {
@@ -46,7 +57,10 @@ beforeEach(() => {
     openExternalPreview: vi.fn(async () => true),
     goBackPreview: vi.fn(async () => true),
     goForwardPreview: vi.fn(async () => true),
-    reloadPreview: vi.fn(async () => true)
+    reloadPreview: vi.fn(async () => true),
+    // OSR is the default engine, so the nav/crashed Reload CTAs route here (BrowserBoard branches
+    // on OSR_PREVIEW). Back/forward also have OSR variants but these tests don't click them.
+    reloadOsrPreview: vi.fn(async () => true)
   }
 })
 
@@ -117,7 +131,7 @@ describe('BrowserBoard — URL draft vs external writers (BUG-059)', () => {
 })
 
 describe('BrowserBoard — crashed preview state (D2-C)', () => {
-  it('shows "Preview crashed" with the reason and a Reload CTA wired to reloadPreview', () => {
+  it('shows "Preview crashed" with the reason and a Reload CTA wired to reloadOsrPreview', () => {
     const id = seedBrowser()
     act(() => {
       usePreviewStore.getState().patch(id, { status: 'crashed', error: 'oom', live: true })
@@ -128,8 +142,9 @@ describe('BrowserBoard — crashed preview state (D2-C)', () => {
     const cta = document.querySelector<HTMLButtonElement>('.bb-reload-btn')
     if (!cta) throw new Error('Reload CTA not found')
     fireEvent.click(cta)
+    // OSR is the default engine — the crashed Reload CTA routes to reloadOsrPreview.
     expect(
-      (window.api as unknown as { reloadPreview: ReturnType<typeof vi.fn> }).reloadPreview
+      (window.api as unknown as { reloadOsrPreview: ReturnType<typeof vi.fn> }).reloadOsrPreview
     ).toHaveBeenCalledWith(id)
   })
 
@@ -265,9 +280,10 @@ describe('BrowserBoard — auto-push URL accent flash (D2-C)', () => {
 describe('BrowserBoard — screenshot toast honesty (BUG-028, toast channel since D1-A)', () => {
   // The board no longer renders its own note — feedback goes to the app toast store.
   async function shoot(id: string): Promise<{ message: string; kind: string }> {
-    // The camera button is enabled only while the native view is live.
+    // OSR is the default engine: the camera button enables on status 'connected' + alive (osrAlive
+    // defaults true with the liveness store unseeded), not the native `live` flag.
     act(() => {
-      usePreviewStore.getState().patch(id, { live: true })
+      usePreviewStore.getState().patch(id, { status: 'connected' })
     })
     const btn = document.querySelector<HTMLButtonElement>('button[title="Screenshot"]')
     if (!btn) throw new Error('screenshot button not found')

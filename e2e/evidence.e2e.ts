@@ -29,12 +29,13 @@ const pollTrue = async (fn: () => Promise<boolean>, timeout: number): Promise<bo
 }
 
 /**
- * E2 (evidence capture): a Browser board is a native WebContentsView that paints ABOVE
- * all HTML, so Playwright's own page.screenshot() is BLANK exactly where the browser
- * board is. The ONLY way to get visual evidence of native-view content is a MAIN-side
- * capturePage → disk. `captureViewToFile` is that primitive; this proves it end to end.
+ * E2 (evidence capture), OS-3 Phase 5: a Browser board now renders via the OSR offscreen window
+ * (the default engine). `captureOsrToFile` is the MAIN-side `capturePage → disk` primitive for the
+ * offscreen window's full-resolution last frame; this proves it end to end. It is also the same
+ * capturePage path the user-facing OSR screenshot uses, so a green run on both legs is evidence the
+ * screenshot feature captures non-blank on each OS.
  */
-test.describe('@core e2e evidence — native-view PNG to disk (captureViewToFile)', () => {
+test.describe('@core e2e evidence — OSR-window PNG to disk (captureOsrToFile)', () => {
   test('writes a non-blank PNG of a live browser board to disk', async ({ page, electronApp }) => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'evid-', 'evidence')
     try {
@@ -46,11 +47,19 @@ test.describe('@core e2e evidence — native-view PNG to disk (captureViewToFile
         await pollTrue(() => runtimeStatus(page, id, 'connected'), 10_000),
         'browser connected'
       ).toBe(true)
-      await page.waitForTimeout(300) // one paint before capture
+      // The visible OSR <canvas> going non-blank proves frames are flowing from the offscreen
+      // window before we capturePage it (rather than a fixed sleep).
+      expect(
+        await pollTrue(
+          () => page.evaluate((bid) => (globalThis as any).__canvasE2E.osrCanvasNonBlank(bid), id),
+          8000
+        ),
+        'OSR painted before capture'
+      ).toBe(true)
 
       const pngPath = await mainCall<string>(electronApp, 'joinPath', tmp, 'browser-board.png')
-      const wrote = await mainCall<boolean>(electronApp, 'captureViewToFile', id, pngPath)
-      expect(wrote, 'captureViewToFile reported a non-blank write').toBe(true)
+      const wrote = await mainCall<boolean>(electronApp, 'captureOsrToFile', id, pngPath)
+      expect(wrote, 'captureOsrToFile reported a non-blank write').toBe(true)
       expect(
         await mainCall<boolean>(electronApp, 'fileExists', pngPath),
         'PNG landed on disk'
@@ -66,11 +75,11 @@ test.describe('@core e2e evidence — native-view PNG to disk (captureViewToFile
       const pngPath = await mainCall<string>(electronApp, 'joinPath', tmp, 'nope.png')
       const wrote = await mainCall<boolean>(
         electronApp,
-        'captureViewToFile',
+        'captureOsrToFile',
         'no-such-board',
         pngPath
       )
-      expect(wrote, 'no view → false').toBe(false)
+      expect(wrote, 'no OSR window → false').toBe(false)
       expect(await mainCall<boolean>(electronApp, 'fileExists', pngPath), 'nothing written').toBe(
         false
       )

@@ -140,13 +140,15 @@ interface OsrSizeState {
 /**
  * Clamp/round a renderer-supplied size to a safe, finite render surface. Defense-in-depth:
  * the renderer computes these (clamped to S≤2), but MAIN must never `setContentSize` to a
- * garbage / non-finite / absurd value if the channel is driven directly. Hard-caps S at 4.
+ * garbage / non-finite / absurd value if the channel is driven directly. Hard-caps S at 4
+ * and each logical dimension at 4096px (a sane max render surface — keeps physical = logical·S
+ * within GPU texture limits even at S=4).
  */
 export function sanitizeOsrSize(args: OsrSizeRequest): OsrSizeRequest {
   const pos = (n: number, fallback: number): number => (Number.isFinite(n) && n > 0 ? n : fallback)
   return {
-    logicalW: Math.round(pos(args.logicalW, OSR_WIDTH)),
-    logicalH: Math.round(pos(args.logicalH, OSR_HEIGHT)),
+    logicalW: Math.min(4096, Math.round(pos(args.logicalW, OSR_WIDTH))),
+    logicalH: Math.min(4096, Math.round(pos(args.logicalH, OSR_HEIGHT))),
     supersample: Math.max(1, Math.min(4, pos(args.supersample, 1)))
   }
 }
@@ -697,6 +699,15 @@ export function disposeAllOsr(): void {
 }
 
 /**
+ * The offscreen window backing a board, or undefined when none is open. The capture + crash
+ * helpers (previewOsrCapture.ts — used by the screenshot IPC and the e2e harness) read through
+ * this so they need no access to the private `osr` Map.
+ */
+export function getOsrWindow(id: string): BrowserWindow | undefined {
+  return osr.get(id)?.osrWin
+}
+
+/**
  * SPIKE probe (spec §5 Q1) — does an OFF-TREE offscreen WebContentsView actually paint?
  *
  * Creates a throwaway offscreen view (NEVER added to the window's view tree), loads
@@ -1013,6 +1024,15 @@ export function registerPreviewOsrHandlers(
     applyOsrPaint(e.osrWin, e, on)
     // 4A — a frozen off-screen board is auto-muted; on resume the user's manual choice is restored.
     applyEffectiveMute(e)
+    return true
+  })
+  // Tear down EVERY offscreen window + its per-board session listeners in one shot — the canonical
+  // project-switch / e2e-reset teardown (mirrors native preview:closeAll). Per-board cleanup also
+  // runs on board unmount (useOffscreenPreview), but that races React commit timing; this is the
+  // deterministic sweep so an OSR window/session can't leak across a project switch or e2e spec.
+  ipcMain.handle('preview:osrCloseAll', (ev) => {
+    if (isForeignSender(ev, getWin)) return true
+    disposeAllOsr()
     return true
   })
   // OS-3 Phase 4 — native-widget handlers (mute · dialog respond · popup commit/dismiss · reveal

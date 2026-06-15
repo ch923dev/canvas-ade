@@ -3,9 +3,10 @@ import { evalIn, mainCall, pollEval, seed } from './helpers'
 
 const runtimeStatus = (id: string, status: string) =>
   `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+const osrNonBlank = (id: string) => `window.__canvasE2E.osrCanvasNonBlank(${JSON.stringify(id)})`
 
-test.describe('@preview browser board — screenshot', () => {
-  test('captures the live view to an assets/ PNG file', async ({ page, electronApp }) => {
+test.describe('@preview browser board — screenshot (OSR offscreen window)', () => {
+  test('captures the live OSR preview to an assets/ PNG file', async ({ page, electronApp }) => {
     // Open a temp project so assets/ resolves.
     const projDir = await mainCall<string>(
       electronApp,
@@ -20,7 +21,10 @@ test.describe('@preview browser board — screenshot', () => {
       await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
       const connected = await pollEval(page, runtimeStatus(id, 'connected'), 12_000)
       expect(connected, 'connected before screenshot').toBe(true)
-      await page.waitForTimeout(400) // settle paint so capturePage is non-blank
+      // The OSR window must have painted before capturePage returns a non-blank frame; the
+      // visible <canvas> going non-blank proves frames are flowing from the offscreen window.
+      const painted = await pollEval(page, osrNonBlank(id), 8000)
+      expect(painted, 'OSR painted before screenshot').toBe(true)
 
       const res = await evalIn<{ ok: boolean; assetId: string | null }>(
         page,

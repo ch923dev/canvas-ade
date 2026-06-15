@@ -22,6 +22,7 @@ import {
   debugViewIds,
   debugViewWebContentsId
 } from './preview'
+import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
 import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
@@ -47,10 +48,19 @@ export interface E2EMain {
    * — a WebContentsView paints above all HTML, so Playwright screenshots can't see it.
    */
   captureViewToFile(id: string, absPath: string): Promise<boolean>
+  /**
+   * OSR analogue of captureViewToFile (OS-3 Phase 5): capture the board's offscreen window's last
+   * painted frame as a PNG and write it to `absPath`. Returns false if no OSR window / blank. Also
+   * exercises the same `capturePage()` path the user-facing OSR screenshot uses, so a green run on
+   * both legs is evidence the screenshot feature captures non-blank on each OS.
+   */
+  captureOsrToFile(id: string, absPath: string): Promise<boolean>
   viewIds(): string[]
   viewWebContentsId(id: string): number | null
   /** Forcefully crash a board's preview renderer (D2-C crashed-state probe). */
   crashView(id: string): boolean
+  /** OSR analogue of crashView — SIGKILL a board's offscreen renderer (OS-3 Phase 5 crash probe). */
+  crashOsr(id: string): boolean
   /** The native view's live bounds + attached flag, for the alignment probe (native vs .bb-frame). */
   viewBounds(
     id: string
@@ -241,9 +251,16 @@ export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: Runnin
       writeFileSync(absPath, png)
       return true
     },
+    async captureOsrToFile(id, absPath) {
+      const png = await captureOsrPng(id)
+      if (!png) return false
+      writeFileSync(absPath, png)
+      return true
+    },
     viewIds: debugViewIds,
     viewWebContentsId: debugViewWebContentsId,
     crashView: debugCrashView,
+    crashOsr: debugCrashOsr,
     viewBounds: debugViewBounds,
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)

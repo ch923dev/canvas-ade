@@ -39,11 +39,12 @@ import { useOsrWidgetEvents } from './osr/useOsrWidgetEvents'
 import { OsrWidgetLayer } from './osr/OsrWidgetLayer'
 import { useOsrWidgetStore } from '../../store/osrWidgetStore'
 
-// SPIKE (feat/preview-offscreen-spike): when set, Browser previews render OFFSCREEN
-// and paint into a DOM <canvas> here (occlusion fix under test, ADR 0002) instead of
-// the native WebContentsView. The native path is disabled in BrowserPreviewLayer when
-// this is on, so the two never run together.
-const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR === '1'
+// OS-3 Phase 5: OSR (offscreen→canvas) is the DEFAULT preview engine — Browser previews
+// render OFFSCREEN and paint into a DOM <canvas> here (the occlusion fix, ADR 0002). Set
+// VITE_PREVIEW_OSR=0 to fall back to the legacy native WebContentsView path (escape hatch;
+// removed in 5C). The native path is disabled in BrowserPreviewLayer when OSR is on, so the
+// two never run together.
+const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR !== '0'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
@@ -411,9 +412,11 @@ export function BrowserBoard({
           <NavBtn
             name="camera"
             title="Screenshot"
-            // Screenshot routes to the native capturePage path, which has no view in OSR mode;
-            // disable it there (runtime.live is also never set without the native engine).
-            disabled={!runtime.live || OSR_PREVIEW}
+            // The screenshot IPC captures whichever engine is live (native view OR OSR offscreen
+            // window — preview:screenshot is engine-agnostic since OS-3 Phase 5). Enable once the
+            // board can be captured: native = the view is live; OSR = connected AND not evicted
+            // (`runtime.live` is never set without the native engine, so gate on status+alive).
+            disabled={OSR_PREVIEW ? runtime.status !== 'connected' || !osrAlive : !runtime.live}
             onClick={takeScreenshot}
           />
           <NavBtn name="external" title="Open in browser" onClick={openExternal} />
@@ -543,7 +546,16 @@ export function BrowserBoard({
               programmatically on canvas pointerdown. */}
           {OSR_PREVIEW && (
             <>
-              <canvas ref={osrCanvasRef} className="bb-live nowheel nodrag" />
+              {/* The canvas sits OVER DeviceContent (the connecting/failed/crashed state layer).
+                  When the preview isn't connected the canvas is blank and has nothing to forward —
+                  it must NOT intercept the state layer's CTAs (e.g. the crashed Reload button), so
+                  drop its pointer events off the connected path. (Native mode hid the dead view; the
+                  OSR canvas stays in the DOM, so gate it here.) */}
+              <canvas
+                ref={osrCanvasRef}
+                className="bb-live nowheel nodrag"
+                style={runtime.status === 'connected' ? undefined : { pointerEvents: 'none' }}
+              />
               <textarea
                 ref={osrProxyRef}
                 className="bb-ime-proxy nowheel nodrag"

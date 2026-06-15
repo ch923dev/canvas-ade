@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, mainCall, seed } from './helpers'
+import { evalIn, seed } from './helpers'
 
 test.describe('@chrome board ⋯ menu (real layout / native occlusion)', () => {
   test('⋯ trigger stays in the title bar + popover clamps on-screen + visible at rest', async ({
@@ -46,42 +46,7 @@ test.describe('@chrome board ⋯ menu (real layout / native occlusion)', () => {
     expect(chrome.inViewport, 'popover clamps on-screen (14)').toBe(true)
     expect(chrome.restColor, 'rest colour resolves the CSS var').toBe('rgb(155, 155, 161)')
   })
-
-  test('open ⋯ menu detaches the live preview (un-occludes the popover) → reattaches on close', async ({
-    page,
-    electronApp
-  }) => {
-    const url = await mainCall<string>(electronApp, 'localUrl')
-    const id = await seed(page, 'browser', { url })
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await evalIn(page, 'window.__canvasE2E.setZoom(1)')
-    await page.waitForTimeout(250)
-    const occl = await evalIn<{
-      found: boolean
-      liveBefore: boolean
-      liveDuringMenu: boolean
-      liveAfter: boolean
-    }>(
-      page,
-      `(async () => {
-         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-         const sel = (s, root) => (root || document).querySelector(s);
-         const id = ${JSON.stringify(id)};
-         const live = () => !!(window.__canvasE2E.getRuntime(id) || {}).live;
-         const node = sel('.react-flow__node[data-id=' + JSON.stringify(id) + ']');
-         const more = node && sel('button[title="More"]', node);
-         if (!more) return { found: false, liveBefore: false, liveDuringMenu: false, liveAfter: false };
-         const liveBefore = live();
-         more.click(); await sleep(250);
-         const liveDuringMenu = live();
-         more.click(); await sleep(300);
-         const liveAfter = live();
-         return { found: true, liveBefore, liveDuringMenu, liveAfter };
-       })()`
-    )
-    expect(occl.found).toBe(true)
-    expect(occl.liveBefore, 'live before open').toBe(true)
-    expect(occl.liveDuringMenu, 'detached while menu open').toBe(false)
-    expect(occl.liveAfter, 'reattached on close').toBe(true)
-  })
+  // (The "open ⋯ menu detaches the live preview (un-occludes the popover)" test was dropped in OS-3
+  // Phase 5: OSR is the default engine and its canvas is a clipped DOM node the popover renders over
+  // — there is no native view to occlusion-detach when the menu opens.)
 })

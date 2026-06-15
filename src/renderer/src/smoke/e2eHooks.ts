@@ -71,6 +71,14 @@ export interface CanvasE2E {
   addToGroupReflowed: (groupId: string, boardId: string) => void
   /** Browser preview runtime for a board id, or null if none yet. */
   getRuntime: (id: string) => RuntimeProbe | null
+  /**
+   * OS-3 Phase 5 — true iff the board's OSR <canvas> has painted a REAL frame (≥1 opaque pixel
+   * AND non-uniform colour). The OSR replacement for the native `captureView → {attached, empty}`
+   * probe: it proves the offscreen frame actually reached the visible DOM canvas (the regression
+   * surface OSR adds). Reads the canvas in-renderer via getImageData (the canvas is filled by
+   * renderer-owned putImageData, so it is not tainted). False when no canvas / not yet painted.
+   */
+  osrCanvasNonBlank: (id: string) => boolean
   /** Whole xterm framebuffer for a terminal board id, or null if not registered. */
   readTerminal: (id: string) => string | null
   /** Concatenated bytes the terminal posted to its PTY since the last clear (e2e). */
@@ -353,6 +361,28 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     getRuntime(id) {
       const r = usePreviewStore.getState().byId[id]
       return r ? { status: r.status, live: r.live } : null
+    },
+    osrCanvasNonBlank(id) {
+      const cv = document.querySelector(
+        `[data-bb-frame="${id}"] canvas.bb-live`
+      ) as HTMLCanvasElement | null
+      if (!cv || cv.width === 0 || cv.height === 0) return false
+      const ctx = cv.getContext('2d')
+      if (!ctx) return false
+      const { data } = ctx.getImageData(0, 0, cv.width, cv.height)
+      // Non-blank = at least one opaque pixel AND not a single uniform colour (rejects both the
+      // cleared/transparent canvas and a flat fill). Early-exit once both conditions hold.
+      const r0 = data[0]
+      const g0 = data[1]
+      const b0 = data[2]
+      let anyOpaque = false
+      let nonUniform = false
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i + 3] !== 0) anyOpaque = true
+        if (data[i] !== r0 || data[i + 1] !== g0 || data[i + 2] !== b0) nonUniform = true
+        if (anyOpaque && nonUniform) return true
+      }
+      return false
     },
     readTerminal(id) {
       const term = e2eTerminals.get(id)

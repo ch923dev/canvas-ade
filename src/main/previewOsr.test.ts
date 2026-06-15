@@ -93,6 +93,11 @@ describe('sanitizeOsrSize', () => {
       sanitizeOsrSize({ logicalW: 1280, logicalH: 800, supersample: Infinity }).supersample
     ).toBe(1)
   })
+  it('hard-caps each logical dimension at 4096px (GPU texture sanity, even at S=4)', () => {
+    const s = sanitizeOsrSize({ logicalW: 99999, logicalH: 8000, supersample: 2 })
+    expect(s.logicalW).toBe(4096)
+    expect(s.logicalH).toBe(4096)
+  })
 })
 
 /** A structural OsrResizeTarget + spies — applyOsrSize drives this without a real BrowserWindow.

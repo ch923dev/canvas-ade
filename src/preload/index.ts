@@ -316,6 +316,9 @@ const api = {
   openOsrPreview: (args: { id: string; url: string }): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrOpen', args),
   closeOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrClose', id),
+  // Tear down EVERY offscreen window in one shot (project switch / e2e reset) — deterministic
+  // sweep that doesn't wait on per-board React unmount cleanup. Mirrors closeAllPreviews.
+  closeAllOsr: (): Promise<boolean> => ipcRenderer.invoke('preview:osrCloseAll'),
   sendOsrInput: (id: string, event: OsrInputEvent): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrInput', { id, event }),
   // Reload a crashed/failed OSR board (the native reloadPreview has no view in OSR mode).
