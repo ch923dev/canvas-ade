@@ -997,10 +997,30 @@ body {
   height: 100%;
   display: block;
 }
-/* Canvas is focusable (tabIndex) so it can receive forwarded keystrokes (M3 input);
-   suppress the browser focus ring — the page itself draws its own focus affordances. */
-.bb-live:focus,
-.bb-live:focus-visible {
+/* OS-3 Phase 3: a hidden composition-proxy <textarea> — NOT the canvas — is the keyboard/IME/
+   clipboard target (a <canvas> has no editing host, so it can't fire composition/IME events).
+   Invisible + click-through (pointer-events:none → clicks fall to the canvas); focused
+   programmatically on canvas pointerdown. Fills the board so the OS IME candidate window appears
+   over it. NEVER display:none / visibility:hidden — those would block focus + composition. */
+.bb-ime-proxy {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  resize: none;
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  white-space: pre;
+  overflow: hidden;
+}
+.bb-ime-proxy:focus,
+.bb-ime-proxy:focus-visible {
   outline: none;
 }
 .bb-state {

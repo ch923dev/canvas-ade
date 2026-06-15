@@ -114,6 +114,10 @@ export interface OsrCursor {
 }
 /** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
 export type OsrInputEvent = Parameters<Electron.WebContents['sendInputEvent']>[0]
+/** OS-3 Phase 3 — clipboard/selection verb routed to the offscreen WebContents' edit methods. */
+export type OsrEditAction = 'copy' | 'cut' | 'paste' | 'selectAll'
+/** OS-3 Phase 3 — text commit (`commit`) vs in-progress IME preview (`compose`). */
+export type OsrImeKind = 'compose' | 'commit'
 
 // ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
 export interface RecentProject {
@@ -298,6 +302,15 @@ const api = {
   // caret/:focus ring show while interacting AND the page's blur/focusout still fire).
   setOsrFocus: (id: string, focused: boolean): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrFocus', { id, focused }),
+  // OS-3 Phase 3 (3C): clipboard / select-all routed to the offscreen page's own edit methods
+  // (wc.copy/cut/paste/selectAll) — the trusted bridge over the page's denied navigator.clipboard.
+  osrEditCommand: (id: string, action: OsrEditAction): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrEdit', { id, action }),
+  // OS-3 Phase 3 (3A+3B): commit text / drive IME composition into the offscreen page via the
+  // attached CDP debugger (Input.insertText / Input.imeSetComposition). All TEXT routes here from
+  // the hidden composition-proxy <textarea>; raw key events stay on sendOsrInput.
+  osrIme: (id: string, kind: OsrImeKind, text: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrIme', { id, kind, text }),
   onPreviewOsrFrame: (listener: (f: OsrFrame) => void): (() => void) => {
     const handler = (_e: IpcRendererEvent, f: OsrFrame): void => listener(f)
     ipcRenderer.on('preview:osrFrame', handler)

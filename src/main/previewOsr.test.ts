@@ -5,7 +5,9 @@ import {
   applyOsrSize,
   applyOsrPaint,
   clampOsrDirty,
-  osrPaintRect
+  osrPaintRect,
+  applyOsrEdit,
+  applyOsrIme
 } from './previewOsr'
 
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
@@ -237,5 +239,119 @@ describe('osrPaintRect (2C hardening — crop only at supersample 1)', () => {
       width: 100,
       height: 100
     })
+  })
+})
+
+// OS-3 Phase 3 / 3C — clipboard verbs routed to the WebContents' own edit methods.
+function mkEditWin() {
+  const copy = vi.fn<() => void>()
+  const cut = vi.fn<() => void>()
+  const paste = vi.fn<() => void>()
+  const selectAll = vi.fn<() => void>()
+  return { wc: { copy, cut, paste, selectAll }, copy, cut, paste, selectAll }
+}
+
+describe('applyOsrEdit', () => {
+  it('maps each verb to the matching WebContents method', () => {
+    const { wc, copy, cut, paste, selectAll } = mkEditWin()
+    expect(applyOsrEdit(wc, 'copy')).toBe(true)
+    expect(applyOsrEdit(wc, 'cut')).toBe(true)
+    expect(applyOsrEdit(wc, 'paste')).toBe(true)
+    expect(applyOsrEdit(wc, 'selectAll')).toBe(true)
+    expect(copy).toHaveBeenCalledTimes(1)
+    expect(cut).toHaveBeenCalledTimes(1)
+    expect(paste).toHaveBeenCalledTimes(1)
+    expect(selectAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('is a no-op for an unknown/forged verb (returns false, calls nothing)', () => {
+    const { wc, copy, cut, paste, selectAll } = mkEditWin()
+    expect(applyOsrEdit(wc, 'rm -rf')).toBe(false)
+    expect(applyOsrEdit(wc, '')).toBe(false)
+    expect(copy).not.toHaveBeenCalled()
+    expect(cut).not.toHaveBeenCalled()
+    expect(paste).not.toHaveBeenCalled()
+    expect(selectAll).not.toHaveBeenCalled()
+  })
+})
+
+// OS-3 Phase 3 / 3A+3B — text commit + IME composition over the attached CDP debugger, with a
+// sendInputEvent char fallback when the debugger is detached.
+function mkImeWin(attached: boolean) {
+  const sendCommand = vi.fn<(m: string, p?: Record<string, unknown>) => Promise<unknown>>(() =>
+    Promise.resolve()
+  )
+  const sendInputEvent = vi.fn<(event: unknown) => void>()
+  const wc = {
+    debugger: { isAttached: () => attached, sendCommand },
+    sendInputEvent
+  }
+  return { wc, sendCommand, sendInputEvent }
+}
+
+describe('applyOsrIme', () => {
+  it('commit → Input.insertText over CDP (no fallback)', () => {
+    const { wc, sendCommand, sendInputEvent } = mkImeWin(true)
+    applyOsrIme(wc, 'commit', 'é')
+    expect(sendCommand).toHaveBeenCalledWith('Input.insertText', { text: 'é' })
+    expect(sendInputEvent).not.toHaveBeenCalled()
+  })
+
+  it('compose → Input.imeSetComposition with a collapsed caret at the end', () => {
+    const { wc, sendCommand, sendInputEvent } = mkImeWin(true)
+    applyOsrIme(wc, 'compose', '你好')
+    expect(sendCommand).toHaveBeenCalledWith('Input.imeSetComposition', {
+      text: '你好',
+      selectionStart: 2,
+      selectionEnd: 2
+    })
+    expect(sendInputEvent).not.toHaveBeenCalled()
+  })
+
+  it('commit falls back to per-code-point char events when the debugger is detached', () => {
+    const { wc, sendCommand, sendInputEvent } = mkImeWin(false)
+    applyOsrIme(wc, 'commit', 'ab')
+    expect(sendCommand).not.toHaveBeenCalled()
+    expect(sendInputEvent).toHaveBeenCalledTimes(2)
+    expect(sendInputEvent).toHaveBeenNthCalledWith(1, { type: 'char', keyCode: 'a' })
+    expect(sendInputEvent).toHaveBeenNthCalledWith(2, { type: 'char', keyCode: 'b' })
+  })
+
+  it('compose is a silent no-op when the debugger is detached (no fallback, no throw)', () => {
+    const { wc, sendCommand, sendInputEvent } = mkImeWin(false)
+    expect(() => applyOsrIme(wc, 'compose', 'wo')).not.toThrow()
+    expect(sendCommand).not.toHaveBeenCalled()
+    expect(sendInputEvent).not.toHaveBeenCalled()
+  })
+
+  it('iterates by code point (astral emoji stays one unit) in the fallback', () => {
+    const { wc, sendInputEvent } = mkImeWin(false)
+    applyOsrIme(wc, 'commit', '😀')
+    // for…of over a string yields whole code points, so a surrogate pair is ONE char event.
+    expect(sendInputEvent).toHaveBeenCalledTimes(1)
+    expect(sendInputEvent).toHaveBeenCalledWith({ type: 'char', keyCode: '😀' })
+  })
+
+  it('commit falls back to char events when CDP insertText REJECTS async (attached)', async () => {
+    const sendInputEvent = vi.fn<(event: unknown) => void>()
+    const sendCommand = vi.fn(() => Promise.reject(new Error('detached mid-call')))
+    const wc = { debugger: { isAttached: () => true, sendCommand }, sendInputEvent }
+    applyOsrIme(wc, 'commit', 'ab')
+    expect(sendCommand).toHaveBeenCalledWith('Input.insertText', { text: 'ab' })
+    expect(sendInputEvent).not.toHaveBeenCalled() // fallback runs on the rejection microtask
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sendInputEvent).toHaveBeenCalledTimes(2)
+    expect(sendInputEvent).toHaveBeenNthCalledWith(1, { type: 'char', keyCode: 'a' })
+  })
+
+  it('compose does NOT char-fall-back on an async rejection (best-effort only)', async () => {
+    const sendInputEvent = vi.fn<(event: unknown) => void>()
+    const sendCommand = vi.fn(() => Promise.reject(new Error('no composition')))
+    const wc = { debugger: { isAttached: () => true, sendCommand }, sendInputEvent }
+    applyOsrIme(wc, 'compose', 'ni')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sendInputEvent).not.toHaveBeenCalled()
   })
 })

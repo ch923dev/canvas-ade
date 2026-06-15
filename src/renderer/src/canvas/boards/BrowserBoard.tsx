@@ -145,12 +145,14 @@ export function BrowserBoard({
   // OSR window is never torn down — the canvas keeps painting + forwarding in full view
   // too. (Gating on `!fullView` destroyed the OSR on enter → a blank full-view preview.)
   const osrCanvasRef = useRef<HTMLCanvasElement>(null)
+  // OS-3 Phase 3: a hidden composition-proxy <textarea> is the keyboard/IME/clipboard target
+  // (the canvas can't host IME/composition). useOffscreenInput focuses it on canvas pointerdown.
+  const osrProxyRef = useRef<HTMLTextAreaElement>(null)
   useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW)
-  // SPIKE M3: forward pointer/wheel/keyboard on the canvas to the offscreen page.
-  // Open fidelity gaps + the productionization plan (P1: IME / native <select> / clipboard /
-  // dialogs / audio / downloads · M2 throughput · P2 polish) are tracked in
-  // docs/feature-proposals.md › OS-3 and the spike spec §8c (the gap register).
-  useOffscreenInput(board.id, osrCanvasRef, board.viewport, OSR_PREVIEW)
+  // Forward pointer/wheel on the canvas + keyboard/IME/clipboard on the proxy to the offscreen
+  // page (OS-3 Phase 3 closed the IME / AltGr / clipboard / wheel-precision gaps; the remaining
+  // P1 rows — native <select> / dialogs / downloads / audio mute — are Phase 4, design-gated).
+  useOffscreenInput(board.id, osrCanvasRef, osrProxyRef, board.viewport, OSR_PREVIEW)
   // OS-3 Phase 1 (M1 sharpness + M4 responsive reflow): drive the offscreen render size from
   // the board geometry + settled camera zoom + DPR via a settle-gated preview:osrResize — the
   // page renders supersampled (crisp) and lays out at the preset width (real breakpoint reflow).
@@ -513,9 +515,23 @@ export function BrowserBoard({
           />
           {/* SPIKE: offscreen-rendered frames paint here, OVER the snapshot/state
               fallback. A normal DOM <canvas> — clips/rounds with .bb-frame, no native
-              overlay (the occlusion fix under test). */}
+              overlay (the occlusion fix under test). The hidden proxy <textarea> is the
+              keyboard/IME/clipboard target (Phase 3) — invisible + click-through, focused
+              programmatically on canvas pointerdown. */}
           {OSR_PREVIEW && (
-            <canvas ref={osrCanvasRef} className="bb-live nowheel nodrag" tabIndex={0} />
+            <>
+              <canvas ref={osrCanvasRef} className="bb-live nowheel nodrag" />
+              <textarea
+                ref={osrProxyRef}
+                className="bb-ime-proxy nowheel nodrag"
+                aria-hidden="true"
+                tabIndex={-1}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+            </>
           )}
           {/* D2-C: evicted (renderer freed) ≠ detached (snapshot) — say so. Safe to
               overlay: an evicted board has no live native view above this HTML. */}

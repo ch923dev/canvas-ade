@@ -253,6 +253,108 @@ export function osrPaintRect(
 /** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
 type OsrInputEvent = Parameters<Electron.WebContents['sendInputEvent']>[0]
 
+/* ── OS-3 Phase 3 (input fidelity) ──────────────────────────────────────────────────────────── */
+
+/** Clipboard / selection edit verbs routed to the WebContents' OWN edit methods (Phase 3 / 3C).
+ *  The previewed page's `navigator.clipboard` is denied (deny-all permissions), so a synthetic
+ *  Ctrl+V cannot read the OS clipboard; `wc.paste()` is the trusted MAIN-side bridge (and copy/cut
+ *  push the page selection to the OS clipboard). NOT forwarded as synthetic key chords. */
+export type OsrEditAction = 'copy' | 'cut' | 'paste' | 'selectAll'
+
+/** Minimal WebContents surface `applyOsrEdit` drives (a real `WebContents` satisfies it). */
+interface OsrEditTarget {
+  copy(): void
+  cut(): void
+  paste(): void
+  selectAll(): void
+}
+
+/** Apply a clipboard/selection verb. `action` is typed `string` (defense-in-depth: the channel is
+ *  frame-guarded but MAIN must never trust a forged verb) → an unknown verb is a no-op (returns
+ *  false). Returns whether a verb actually ran. */
+export function applyOsrEdit(wc: OsrEditTarget, action: string): boolean {
+  switch (action) {
+    case 'copy':
+      wc.copy()
+      return true
+    case 'cut':
+      wc.cut()
+      return true
+    case 'paste':
+      wc.paste()
+      return true
+    case 'selectAll':
+      wc.selectAll()
+      return true
+    default:
+      return false
+  }
+}
+
+/** Text-commit (`commit`) vs in-progress IME preview (`compose`) — Phase 3 / 3A+3B. */
+export type OsrImeKind = 'compose' | 'commit'
+
+/** Minimal WebContents surface `applyOsrIme` drives — the attached CDP debugger (ADR 0002) plus a
+ *  `sendInputEvent` fallback. A real `WebContents` satisfies it. */
+interface OsrImeTarget {
+  debugger: {
+    isAttached(): boolean
+    sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>
+  }
+  sendInputEvent(event: OsrInputEvent): void
+}
+
+/**
+ * Commit text / drive IME composition into the offscreen page (Phase 3 / 3A+3B). All TEXT (plain
+ * typing, AltGr/dead-key results, and IME commits) routes here as `Input.insertText` over the
+ * attached `wc.debugger` — so the page composes graphemes for us instead of us guessing modifiers.
+ * In-progress composition (`compose`) drives `Input.imeSetComposition` for the inline underlined
+ * preview (best-effort). `Input.insertText` commits the active composition (replacing the composing
+ * range — no doubling) or inserts at the caret when none is active.
+ *
+ * Resilience: if the debugger is detached/unsupported (or `sendCommand` throws/rejects), `commit`
+ * falls back to per-code-point `char` `sendInputEvent`s so text never silently drops — including on
+ * an ASYNC CDP rejection (a rejected `Input.insertText` did not apply, so the char fallback can't
+ * double-insert). `compose` falls back to a no-op (the inline preview just won't show — the eventual
+ * `commit` still lands the text).
+ */
+function sendCharsFallback(wc: OsrImeTarget, text: string): void {
+  try {
+    for (const ch of text) wc.sendInputEvent({ type: 'char', keyCode: ch })
+  } catch {
+    /* window gone */
+  }
+}
+
+export function applyOsrIme(wc: OsrImeTarget, kind: OsrImeKind, text: string): void {
+  try {
+    if (wc.debugger.isAttached()) {
+      if (kind === 'compose') {
+        void Promise.resolve(
+          wc.debugger.sendCommand('Input.imeSetComposition', {
+            text,
+            selectionStart: text.length,
+            selectionEnd: text.length
+          })
+        ).catch(() => {
+          /* composition unsupported on this page — the commit still inserts */
+        })
+      } else {
+        // A rejected insertText did NOT apply → fall back to char events so the text still lands
+        // (mirrors the synchronous-detached path; a rejection can't have partially inserted).
+        void Promise.resolve(wc.debugger.sendCommand('Input.insertText', { text })).catch(() => {
+          sendCharsFallback(wc, text)
+        })
+      }
+      return
+    }
+  } catch {
+    /* debugger gone mid-call → fall through to the sendInputEvent fallback */
+  }
+  // No CDP: can't preview a composition, but a commit must still land — type each code point.
+  if (kind === 'commit') sendCharsFallback(wc, text)
+}
+
 /** The offscreen page's current cursor, mirrored onto the host <canvas> so the preview
  *  shows an I-beam over inputs / pointer over links (a flat bitmap has no cursor of its
  *  own). `image` (a data URL) + `hotspot` are present only for type:'custom'. */
@@ -739,6 +841,33 @@ export function registerPreviewOsrHandlers(
     } catch {
       return false
     }
+  })
+  // Phase 3 / 3C — clipboard + select-all routed to the offscreen page's OWN edit methods (NOT a
+  // synthetic Ctrl+V, which can't read the OS clipboard against the page's denied
+  // navigator.clipboard). `wc.copy()/cut()` push the page selection to the OS clipboard;
+  // `wc.paste()` pastes the OS clipboard into the page's focused field. Frame-guarded.
+  ipcMain.handle('preview:osrEdit', (ev, args: { id: string; action: string }) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = osr.get(args.id)
+    if (!e) return false
+    try {
+      return applyOsrEdit(e.osrWin.webContents, args.action)
+    } catch {
+      return false
+    }
+  })
+  // Phase 3 / 3A+3B — commit text / drive IME composition into the offscreen page over the attached
+  // CDP debugger (Input.insertText / Input.imeSetComposition). All TEXT (plain typing, AltGr/dead-key
+  // results, IME commits) flows here from the renderer's hidden composition-proxy <textarea>; raw key
+  // events stay on preview:osrInput. Frame-guarded; validates the discriminant + payload shape.
+  ipcMain.handle('preview:osrIme', (ev, args: { id: string; kind: OsrImeKind; text: string }) => {
+    if (isForeignSender(ev, getWin)) return false
+    if (args.kind !== 'compose' && args.kind !== 'commit') return false
+    if (typeof args.text !== 'string') return false
+    const e = osr.get(args.id)
+    if (!e) return false
+    applyOsrIme(e.osrWin.webContents, args.kind, args.text)
+    return true
   })
   // URL-bar Back/Forward for an OSR board (the native preview:goBack/goForward operate on a
   // WebContentsView this path never creates, so in OSR mode those buttons would no-op). Mirror
