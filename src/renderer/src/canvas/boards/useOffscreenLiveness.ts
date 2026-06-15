@@ -32,24 +32,20 @@ const OSR_MAX_LIVE = 4
  * Reconcile triggers (mirrors the native manager's gating):
  *   - `useOnViewportChange({ onEnd })` — a camera pan/zoom SETTLE. A pure camera move leaves
  *     the `boards` array reference untouched, so the store subscription below misses it; this
- *     is the camera trigger.
+ *     is the camera trigger. SINGLE-SLOT (last writer wins): this hook is mounted ONLY in OSR
+ *     mode (BrowserPreviewLayer › OffscreenLivenessLayer), where the native manager — the other
+ *     `useOnViewportChange` owner — is not mounted, so the registrations never clash.
  *   - the canvasStore `boards`-ref change — add/remove/geometry. A node drag mutates board
  *     geometry per frame (new `boards` array each frame), so this fires per drag-frame too —
  *     but `setOsrPaint` is diff-skipped and a board rarely flips visibility mid-drag, so the
  *     IPC stays ~zero (the compute is a few boards of cheap rect math).
- *
- * No-op unless `enabled` (VITE_PREVIEW_OSR) — in native mode the hook is mounted but inert.
  */
-export function useOffscreenLiveness(
-  enabled: boolean,
-  paneRef: RefObject<HTMLDivElement | null>
-): void {
+export function useOffscreenLiveness(paneRef: RefObject<HTMLDivElement | null>): void {
   const { getViewport } = useReactFlow()
   // Last paint-state pushed per board, for diff-skip (only a CHANGED board fires IPC).
   const sentRef = useRef<Map<string, boolean>>(new Map())
 
   const reconcile = useCallback((): void => {
-    if (!enabled) return
     const pane = paneRef.current?.getBoundingClientRect()
     if (!pane || pane.width === 0 || pane.height === 0) return
     const vp = getViewport()
@@ -102,15 +98,13 @@ export function useOffscreenLiveness(
     // Forget boards that no longer exist (a deleted board's window is disposed already), so a
     // future board reusing the id isn't diff-skipped against a stale entry.
     for (const id of [...sent.keys()]) if (!seen.has(id)) sent.delete(id)
-  }, [enabled, getViewport, paneRef])
+  }, [getViewport, paneRef])
 
-  // Camera settle (pan OR zoom end). reconcile no-ops when disabled, so registering this in
-  // native mode is harmless.
+  // Camera settle (pan OR zoom end).
   useOnViewportChange({ onEnd: reconcile })
 
   // Board geometry / membership changes + the initial reconcile.
   useEffect(() => {
-    if (!enabled) return
     reconcile()
     let prevBoards = useCanvasStore.getState().boards
     const unsub = useCanvasStore.subscribe((s) => {
@@ -120,5 +114,5 @@ export function useOffscreenLiveness(
       }
     })
     return unsub
-  }, [enabled, reconcile])
+  }, [reconcile])
 }
