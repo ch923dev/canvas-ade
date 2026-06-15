@@ -27,6 +27,13 @@ export interface RunningMcp {
   mintWorkerToken(boardId: string): string
   /** Run an idle-reap sweep now; returns the reaped board ids (T3.4 — drives the live smoke). */
   reapIdle(): Promise<string[]>
+  /**
+   * PR-2: the read-only working-tree diff for a board, through the SAME orchestrator path a
+   * future `git_diff` MCP tool will use (terminal-type check + 100 KB clamp). Exposed here only
+   * so the CANVAS_E2E `__canvasE2EMain.gitDiff` seam can invoke it live in-process — the
+   * `@expanse-ade/mcp` package registers no `git_diff` tool yet, so it is not wire-reachable.
+   */
+  gitDiff(boardId: string): Promise<string>
   close(): Promise<void>
 }
 
@@ -62,6 +69,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       orchestratorToken,
       mintWorkerToken: (boardId) => mintBoardToken(tokens, { boardId, tier: 'worker' }).token,
       reapIdle: () => orchestrator.reapIdle(),
+      gitDiff: (boardId) => orchestrator.gitDiff(boardId),
       close: () => {
         clearInterval(reapTimer)
         return server.close()
