@@ -3,6 +3,7 @@ import type { AuditInput } from './auditLog'
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
+import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -84,6 +85,13 @@ export type LifecycleOrchestrator = Orchestrator & {
    * (`canvas://app-model`) lands in PR-3b. Read-only — no write path, no token.
    */
   describeApp(): Promise<AppModel>
+  /**
+   * PR-5b: spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group +
+   * preview wiring) in one undoable step. App-local (NOT on the package `Orchestrator` interface)
+   * until the agent-facing `spawn_group` MCP tool lands in PR-5c — same split as gitDiff/PR-2b.
+   * Cap-checked (reserves all member slots), not human-gated (content-less empty boards).
+   */
+  spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */

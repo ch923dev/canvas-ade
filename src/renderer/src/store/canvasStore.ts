@@ -144,6 +144,22 @@ export interface CanvasState {
       configPending?: boolean
     }
   ) => string
+  /**
+   * Spawn a feature-zone CLUSTER in ONE undoable step (PR-5b, the MCP `spawnGroup` write path):
+   * the boards (terminal always; planning/browser per `members`) laid out as a row near `at`, a
+   * Named Group over them, and — when a browser member is present — its `previewSourceId` folded
+   * onto the terminal (the runtime source of truth the preview edge derives from). MAIN mints
+   * every id; the renderer owns placement. Returns the group id.
+   */
+  spawnGroup: (spec: {
+    at: { x: number; y: number }
+    group: { id: string; name: string }
+    members: {
+      terminal: { id: string }
+      planning?: { id: string }
+      browser?: { id: string }
+    }
+  }) => { groupId: string }
   /** Clear the New Terminal config-pending flag (dialog Create/Cancel), releasing the spawn. */
   clearConfigPending: () => void
   /** Remove a board; clears the selection if it was the selected one. */
@@ -603,6 +619,56 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     )
     if (pending) set({ configPendingId: id })
     return id
+  },
+
+  spawnGroup: (spec) => {
+    const { at, group, members } = spec
+    // Build the ordered member list (terminal first; planning/browser opt-in) → the row layout
+    // + the group's boardIds both follow this order.
+    const order: { id: string; type: BoardType }[] = [
+      { id: members.terminal.id, type: 'terminal' },
+      ...(members.planning ? [{ id: members.planning.id, type: 'planning' as BoardType }] : []),
+      ...(members.browser ? [{ id: members.browser.id, type: 'browser' as BoardType }] : [])
+    ]
+    // Find ONE free slot for the whole cluster's bounding box, then tile the members left-to-right
+    // inside it — so the zone lands as a contiguous, non-overlapping row (freeSlot only nudges a
+    // single box, so sizing it to the full width keeps the cluster together).
+    const sizes = order.map((m) => DEFAULT_BOARD_SIZE[m.type])
+    const totalW = sizes.reduce((sum, s) => sum + s.w, 0) + PLACE_GAP * (sizes.length - 1)
+    const maxH = Math.max(...sizes.map((s) => s.h))
+    const origin = freeSlot(get().boards, at, { w: totalW, h: maxH })
+    let cursorX = origin.x
+    const newBoards: Board[] = order.map((m, i) => {
+      const s = sizes[i]
+      const board = createBoard(m.type, { id: m.id, x: cursorX, y: origin.y, w: s.w, h: s.h })
+      cursorX += s.w + PLACE_GAP
+      // Wire the browser member to the terminal: previewSourceId is the runtime SoT the preview
+      // edge derives from (the cluster's only "connector" — orchestration cables are terminal↔
+      // terminal, N/A within a single-worker zone).
+      if (board.type === 'browser' && members.browser) {
+        return { ...board, previewSourceId: members.terminal.id }
+      }
+      return board
+    })
+    const namedGroup: NamedGroup = {
+      id: group.id,
+      name: group.name,
+      boardIds: order.map((m) => m.id)
+    }
+    // ONE tracked step covers the whole zone (boards + group + wiring) → a single undo removes it.
+    // reflectPresent:false matches addBoard/addGroup (granularly undoable; the tolerated #BUG M3
+    // post-no-op phantom). Select the terminal (the zone's anchor) + the whole cluster.
+    set((s) =>
+      trackedChange(
+        s,
+        { boards: [...s.boards, ...newBoards], groups: [...s.groups, namedGroup] },
+        {
+          selection: { selectedId: members.terminal.id, selectedIds: order.map((m) => m.id) },
+          reflectPresent: false
+        }
+      )
+    )
+    return { groupId: group.id }
   },
 
   clearConfigPending: () => set({ configPendingId: null }),

@@ -1,6 +1,7 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
 import type { TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
+import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
  * Parse a positive-millisecond env override, falling back to `fallback` when the value
@@ -54,6 +55,13 @@ export interface RunningMcp {
    * agent-facing `canvas://app-model` MCP resource is a deferred follow-up (PR-3b).
    */
   describeApp(): Promise<AppModel>
+  /**
+   * PR-5b: spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group +
+   * preview wiring) via the orchestrator. Exposed here for the CANVAS_E2E
+   * `__canvasE2EMain.spawnGroupNow` seam; the agent-facing `spawn_group` MCP tool is a deferred
+   * follow-up (PR-5c), so it is not yet wire-reachable — same split as gitDiff/PR-2b.
+   */
+  spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   close(): Promise<void>
 }
 
@@ -98,6 +106,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       reapIdle: () => orchestrator.reapIdle(),
       gitDiff: (boardId) => orchestrator.gitDiff(boardId),
       describeApp: () => orchestrator.describeApp(),
+      spawnGroup: (input) => orchestrator.spawnGroup(input),
       close: () => {
         clearInterval(reapTimer)
         return server.close()

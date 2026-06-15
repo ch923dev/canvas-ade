@@ -23,6 +23,15 @@ export type McpCommandIn =
       patch: { shell?: string; launchCommand?: string; cwd?: string }
     }
   | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
+  | {
+      type: 'spawnGroup'
+      group: { id: string; name: string }
+      members: {
+        terminal: { id: string }
+        planning?: { id: string }
+        browser?: { id: string }
+      }
+    }
 
 /** The ack shape MAIN's `sendMcpCommand` awaits (`McpCommandAck`). */
 export type McpAck = { ok: true; type: string } | { ok: false; error: string }
@@ -129,6 +138,37 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       const needed = neededBoardHeight(nextElements)
       if (needed > board.h) store.growBoardHeight(command.id, needed)
       return { ok: true, type: 'patchPlanning' }
+    }
+    case 'spawnGroup': {
+      // 🔒 PR-5b: create a feature-zone cluster (boards + Named Group + preview wiring) in one
+      // undoable step. MAIN minted every id + clamped the name; the renderer re-validates the
+      // envelope (defense in depth, mirroring addBoard) before it lands on the canvas.
+      const { group, members } = command
+      const validId = (m: { id?: unknown } | undefined): m is { id: string } =>
+        m !== null && typeof m === 'object' && typeof m.id === 'string' && m.id.length > 0
+      if (group === null || typeof group !== 'object' || !validId(group)) {
+        return { ok: false, error: `invalid spawnGroup group: ${JSON.stringify(group)}` }
+      }
+      if (typeof group.name !== 'string' || group.name.length === 0) {
+        return { ok: false, error: `invalid spawnGroup name: ${JSON.stringify(group.name)}` }
+      }
+      if (members === null || typeof members !== 'object' || !validId(members.terminal)) {
+        return { ok: false, error: `invalid spawnGroup members: ${JSON.stringify(members)}` }
+      }
+      // Optional members, when present, must be well-formed (reject a malformed `{}` member rather
+      // than silently dropping it — the agent should learn the spec was bad).
+      if (members.planning !== undefined && !validId(members.planning)) {
+        return { ok: false, error: `invalid spawnGroup planning member` }
+      }
+      if (members.browser !== undefined && !validId(members.browser)) {
+        return { ok: false, error: `invalid spawnGroup browser member` }
+      }
+      // Idempotent by group id (mirrors addBoard): a re-delivered spawnGroup whose group already
+      // exists is a no-op + ack ok, so it can't push a duplicate zone.
+      const store = useCanvasStore.getState()
+      if (store.groups.some((g) => g.id === group.id)) return { ok: true, type: 'spawnGroup' }
+      store.spawnGroup({ at: SPAWN_ANCHOR, group, members })
+      return { ok: true, type: 'spawnGroup' }
     }
     default:
       return { ok: false, error: `unknown command: ${(command as { type: string }).type}` }
