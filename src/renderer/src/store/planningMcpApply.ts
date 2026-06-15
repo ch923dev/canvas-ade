@@ -2,6 +2,7 @@ import type { PlanningElement, ChecklistItem } from '../lib/boardSchema'
 import {
   NOTE_SIZE,
   CHECKLIST_W,
+  DIAGRAM_SIZE,
   nominalChecklistHeight,
   elementBBox,
   unionBBox
@@ -31,6 +32,7 @@ export type PlanningOp =
   | { kind: 'checklist'; title: string; items: Array<{ label: string; done: boolean }> }
   | { kind: 'text'; text: string }
   | { kind: 'arrow'; dx: number; dy: number }
+  | { kind: 'diagram'; source: string }
 
 /**
  * Cumulative cap on total elements one planning board may hold. MAIN caps each BATCH; the
@@ -112,6 +114,20 @@ export function materializePlanningOps(
       case 'arrow':
         out.push({ id: newId(), kind: 'arrow', x, y, x2: x + op.dx, y2: y + op.dy })
         y += Math.max(GAP, Math.abs(op.dy)) + GAP
+        break
+      case 'diagram':
+        // No svgCache: the DiagramCard renders the source via the worker on display + caches it.
+        out.push({
+          id: newId(),
+          kind: 'diagram',
+          x,
+          y,
+          w: DIAGRAM_SIZE.w,
+          h: DIAGRAM_SIZE.h,
+          source: op.source,
+          engine: 'mermaid'
+        })
+        y += DIAGRAM_SIZE.h + GAP
         break
     }
   }

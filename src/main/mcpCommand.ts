@@ -40,9 +40,10 @@ export type PlanningOpTint = 'yellow' | 'blue' | 'green' | 'plain'
  * BEFORE minting these (so the renderer receives clean, fully-specified ops: `tint` and
  * item `done` are no longer optional). The renderer materializes each into a full
  * `PlanningElement` — minting ids, stacking positions below existing content, and default
- * sizes — and re-validates against the schema (defense in depth) before it lands. Only the
- * existing schema kinds that carry agent content are expressible (note · checklist · text ·
- * arrow), so `MIN_READER_VERSION` stays at 9 (no schema bump). 🔒 Untrusted passive content:
+ * sizes — and re-validates against the schema (defense in depth) before it lands. The schema
+ * kinds that carry agent content are expressible (note · checklist · text · arrow · diagram); a
+ * `diagram` carries a Mermaid `source` the renderer materializes into a `DiagramElement` (host
+ * schema v11) and renders to a themed SVG in the sandboxed worker. 🔒 Untrusted passive content:
  * it renders, never auto-arms an action.
  */
 export type PlanningOp =
@@ -50,6 +51,7 @@ export type PlanningOp =
   | { kind: 'checklist'; title: string; items: Array<{ label: string; done: boolean }> }
   | { kind: 'text'; text: string }
   | { kind: 'arrow'; dx: number; dy: number }
+  | { kind: 'diagram'; source: string }
 
 /** The renderer's reply to a command. `type` echoes the handled command. */
 export type McpCommandAck = { ok: true; type: string } | { ok: false; error: string }

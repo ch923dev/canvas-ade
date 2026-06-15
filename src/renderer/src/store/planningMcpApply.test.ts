@@ -15,12 +15,26 @@ describe('materializePlanningOps', () => {
         ]
       },
       { kind: 'text', text: 'see ADR 0003' },
-      { kind: 'arrow', dx: 80, dy: 40 }
+      { kind: 'arrow', dx: 80, dy: 40 },
+      { kind: 'diagram', source: 'graph TD\n  A-->B' }
     ]
     const out = materializePlanningOps(ops, [])
-    expect(out.map((e) => e.kind)).toEqual(['note', 'checklist', 'text', 'arrow'])
+    expect(out.map((e) => e.kind)).toEqual(['note', 'checklist', 'text', 'arrow', 'diagram'])
     // Every materialized element must pass the canvas schema validator (defense in depth).
     out.forEach(assertPlanningElement)
+    // The diagram materializes with its source + engine, no svgCache (the card renders it on display).
+    const diagram = out.find((e) => e.kind === 'diagram') as Extract<
+      PlanningElement,
+      { kind: 'diagram' }
+    >
+    expect(diagram).toMatchObject({
+      kind: 'diagram',
+      source: 'graph TD\n  A-->B',
+      engine: 'mermaid'
+    })
+    expect(diagram.svgCache).toBeUndefined()
+    expect(diagram.w).toBeGreaterThan(0)
+    expect(diagram.h).toBeGreaterThan(0)
     // Unique ids (board elements + nested checklist items).
     const ids = out.map((e) => e.id)
     expect(new Set(ids).size).toBe(ids.length)

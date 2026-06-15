@@ -11,7 +11,8 @@ import type { PlanningOp, PlanningOpTint } from './mcpCommand'
  * human IN FULL via the confirm gate before they ever reach the renderer.
  *
  * MAIN cannot import the renderer's `assertPlanningElement` in shipped code (separate
- * bundle), so this validator mirrors the constraints for the four agent-content kinds; the
+ * bundle), so this validator mirrors the constraints for the agent-content kinds (note ·
+ * checklist · text · arrow · diagram); the
  * renderer applier then RE-validates every materialized element against the real
  * `assertPlanningElement` before it lands (defense in depth) — so an off-shape op can never
  * reach a board even if this mirror and the schema ever drift.
@@ -36,6 +37,8 @@ export const MAX_PLANNING_TEXT = 4000
 export const MAX_PLANNING_TITLE = 200
 /** Max chars for one checklist item label. */
 export const MAX_PLANNING_LABEL = 500
+/** Max chars for a `diagram` element's Mermaid source (the worker also caps at render time). */
+export const MAX_PLANNING_DIAGRAM = 4000
 /**
  * Max total byte size (UTF-8) of one batch's ops, kept small enough that the FULL content
  * stays human-reviewable in the confirm modal (the security premise: injected text can't be
@@ -142,6 +145,16 @@ function buildOp(el: unknown, index: number): PlanningOp {
       }
       return { kind: 'arrow', dx, dy }
     }
+    case 'diagram': {
+      // Sanitize the Mermaid source like any multi-line text field (strip control/escape chars,
+      // keep newlines, cap length). It is rendered later by the sandboxed worker, never executed.
+      const source = sanitizePlanningText(
+        el.source,
+        MAX_PLANNING_DIAGRAM,
+        `diagram[${index}].source`
+      )
+      return { kind: 'diagram', source }
+    }
     default:
       throw new PlanningContentError(`element ${index} has an unsupported kind ${String(el.kind)}`)
   }
@@ -212,6 +225,10 @@ export function renderPlanningConfirmBody(boardTitle: string, ops: PlanningOp[])
         break
       case 'arrow':
         lines.push(`• Arrow (Δx ${op.dx}, Δy ${op.dy})`)
+        break
+      case 'diagram':
+        lines.push(`• Diagram (Mermaid — renders as an image):`)
+        lines.push(`    ${confirmField(op.source, '    ')}`)
         break
     }
   }

@@ -84,6 +84,21 @@ describe('orchestrator.addPlanningElements (S2 content write gate)', () => {
     expect(applied?.prompt).toContain('audit mw')
   })
 
+  it('a diagram op flows confirm (full source shown) → patchPlanning', async () => {
+    const h = harness(planning, { approve: true })
+    const orch = buildOrchestrator(h.registry)
+    await orch.addPlanningElements('plan-1', {
+      elements: [{ kind: 'diagram', source: 'graph TD\n  A-->B' }]
+    })
+    expect(h.confirms[0].body).toContain('graph TD') // the human sees the Mermaid before it lands
+    const cmd = h.sent[0]
+    expect(cmd.type).toBe('patchPlanning')
+    if (cmd.type === 'patchPlanning') {
+      expect(cmd.ops[0]).toEqual({ kind: 'diagram', source: 'graph TD\n  A-->B' })
+    }
+    expect(h.audits.some((a) => a.status === 'applied')).toBe(true)
+  })
+
   it('sanitizes content before it is shown or sent (control chars stripped, newlines kept)', async () => {
     const h = harness(planning)
     const orch = buildOrchestrator(h.registry)
@@ -135,7 +150,9 @@ describe('orchestrator.addPlanningElements (S2 content write gate)', () => {
     await expect(
       // unknown kind → buildPlanningOps throws PlanningContentError. Cast: deliberately
       // off-shape input exercising MAIN's runtime validation of untrusted agent content.
-      orch.addPlanningElements('plan-1', { elements: [{ kind: 'diagram', source: 'x' }] as never })
+      orch.addPlanningElements('plan-1', {
+        elements: [{ kind: 'doodle', squiggle: true }] as never
+      })
     ).rejects.toThrow()
     expect(h.confirms).toEqual([])
     expect(h.sent).toEqual([])
