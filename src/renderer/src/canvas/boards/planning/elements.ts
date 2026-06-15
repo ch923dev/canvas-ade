@@ -20,6 +20,13 @@ import type {
 } from '../../../lib/boardSchema'
 import { noteRotation, TINT_CYCLE } from './tints'
 import { MIN_TEXT_WIDTH_PX, type FontSizeToken } from './textStyle'
+// Geometry lives in the unified rail now; `BBox` is used internally by anchors()/unionBBox().
+import { type BBox } from './elementRegistry'
+
+// Re-export the geometry rail's public surface (canonical source = ./elementRegistry) so
+// existing `./elements` importers keep their import paths unchanged — behavior-identical (S3).
+export { elementBBox, nominalChecklistHeight, TEXT_NOMINAL, type Measured } from './elementRegistry'
+export type { BBox }
 
 /** Default sizes for the card-shaped elements (board-local px). */
 export const NOTE_SIZE = { w: 156, h: 96 } as const
@@ -249,17 +256,12 @@ export function checklistProgress(cl: ChecklistElement): {
 }
 
 // ── Bounding boxes + anchors (W2: marquee selection + snapping) ───────────────
+// `BBox`/`Measured` + `elementBBox` + the nominal sizes (`TEXT_NOMINAL`,
+// `nominalChecklistHeight`) now live in the unified geometry rail `./elementRegistry`
+// (co-located with `eraseHitTest` so a card-layout change updates both in one place — the
+// R4 drift class). They are re-exported at the top of this file so `./elements` import
+// paths keep working. The box-algebra helpers (`anchors`, `unionBBox`) stay here.
 
-export interface BBox {
-  x: number
-  y: number
-  w: number
-  h: number
-}
-export interface Measured {
-  w: number
-  h: number
-}
 export interface Anchors {
   left: number
   centerX: number
@@ -267,73 +269,6 @@ export interface Anchors {
   top: number
   centerY: number
   bottom: number
-}
-
-/** Nominal box for an auto-sized free-text element when no live DOM measurement exists. */
-export const TEXT_NOMINAL: Measured = { w: 120, h: 22 }
-
-// Approx ChecklistCard row metrics — single source of truth (erase.ts imports
-// nominalChecklistHeight rather than duplicating these). Keep roughly in step with
-// ChecklistCard.tsx if its layout changes.
-const CHECKLIST_HEADER_H = 30
-const CHECKLIST_ROW_H = 24
-const CHECKLIST_FOOTER_H = 24
-
-/** Approximate rendered checklist height from its item count (board-local px). */
-export function nominalChecklistHeight(itemCount: number): number {
-  return CHECKLIST_HEADER_H + itemCount * CHECKLIST_ROW_H + CHECKLIST_FOOTER_H
-}
-
-/**
- * Board-local bounding box for any element kind. `measured` (a live DOM size) refines
- * the auto-sized kinds — text has no persisted w/h; checklist persists h:0 and grows.
- * Pure: tests pass `measured` explicitly; the board supplies it from a ref map at runtime.
- * Arrows/strokes have NO single top-left → use the point/endpoint extent (never w/h).
- */
-export function elementBBox(el: PlanningElement, measured?: Measured): BBox {
-  switch (el.kind) {
-    case 'note':
-      // Prefer the live measured height when positive (NoteCard auto-sizes its textarea,
-      // so el.h is only the initial schema default of 96 — BUG-050). A zero measured
-      // height means the DOM has not laid out yet; fall back to el.h in that case.
-      return { x: el.x, y: el.y, w: el.w, h: measured && measured.h > 0 ? measured.h : el.h }
-    case 'checklist':
-      return {
-        x: el.x,
-        y: el.y,
-        w: el.w,
-        h: measured?.h ?? nominalChecklistHeight(el.items.length)
-      }
-    case 'text': {
-      const m = measured ?? TEXT_NOMINAL
-      return { x: el.x, y: el.y, w: m.w, h: m.h }
-    }
-    case 'arrow':
-      return {
-        x: Math.min(el.x, el.x2),
-        y: Math.min(el.y, el.y2),
-        w: Math.abs(el.x2 - el.x),
-        h: Math.abs(el.y2 - el.y)
-      }
-    case 'stroke': {
-      const pts = el.points
-      if (pts.length < 2) return { x: el.x, y: el.y, w: 0, h: 0 }
-      let minX = pts[0]
-      let minY = pts[1]
-      let maxX = pts[0]
-      let maxY = pts[1]
-      for (let i = 0; i + 1 < pts.length; i += 2) {
-        if (pts[i] < minX) minX = pts[i]
-        if (pts[i] > maxX) maxX = pts[i]
-        if (pts[i + 1] < minY) minY = pts[i + 1]
-        if (pts[i + 1] > maxY) maxY = pts[i + 1]
-      }
-      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
-    }
-    // W4: image element — bbox is its explicit w/h (renderer task handles display).
-    case 'image':
-      return { x: el.x, y: el.y, w: el.w, h: el.h }
-  }
 }
 
 /** Six alignment anchors (edges + centers) of a box. */
