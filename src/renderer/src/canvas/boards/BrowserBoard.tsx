@@ -2,23 +2,24 @@
  * Browser board content (Phase 2.2, DESIGN.md §7.2) — a responsive preview of the
  * user's running localhost app in a device frame.
  *
- * The live page is a native `WebContentsView` positioned by `BrowserPreviewLayer`
- * (the store-driven PreviewManager mounted inside <ReactFlow>). A native view CANNOT
- * be clipped/rounded/z-indexed against HTML (ADR 0002), so EVERYTHING this component
- * draws is HTML chrome laid out AROUND an unrounded native rect:
+ * The live page renders OFFSCREEN (OS-3 / ADR 0002) and streams BGRA frames into a DOM
+ * `<canvas>` inside `.bb-frame` — a normal DOM node that clips / rounds / z-orders, so the
+ * preview composites correctly under other boards and chrome (the occlusion fix). This
+ * component draws the HTML chrome around it:
  *   - the rounded device frame (border + inset shadow + mobile notch),
  *   - the URL/route bar (back/forward/reload + editable URL + connected dot + WxH),
- *   - the viewport segmented control (Mobile/Tablet/Desktop) in the title-bar slot.
- * The device-frame geometry mirrors `lib/browserLayout` EXACTLY so the HTML frame
- * lines up with the native rect at every camera zoom.
+ *   - the viewport segmented control (Mobile/Tablet/Desktop) in the title-bar slot,
+ *   - a hidden composition-proxy <textarea> (keyboard/IME/clipboard target) + the
+ *     native-widget overlay layer (JS dialogs / <select> popups the bitmap can't composite).
+ * The device-frame geometry mirrors `lib/browserLayout` so the HTML frame matches the page's
+ * laid-out preset at every camera zoom.
  *
- * The native view paints OVER the device-stage area; underneath it this component
- * renders the snapshot fallback (motion / LOD / over-cap) and the connecting /
- * load-failed states (read from `previewStore`). Durable props (`url`, `viewport`)
- * persist on the board via `canvasStore.updateBoard`.
+ * The connecting / load-failed / crashed states (read from `previewStore`) render UNDER the
+ * canvas as the fallback layer. Durable props (`url`, `viewport`) persist on the board via
+ * `canvasStore.updateBoard`.
  *
  * Security: this never touches the PTY. URL edits + nav go through the additive
- * `preview:*` control channel to the view's OWN webContents only.
+ * `preview:*` control channel to the board's OWN offscreen webContents only.
  */
 import { useState, useRef, useEffect, type ReactElement } from 'react'
 import type { BrowserBoard as BrowserBoardData, BrowserViewport } from '../../lib/boardSchema'
@@ -38,13 +39,6 @@ import { useOffscreenSizing } from './useOffscreenSizing'
 import { useOsrWidgetEvents } from './osr/useOsrWidgetEvents'
 import { OsrWidgetLayer } from './osr/OsrWidgetLayer'
 import { useOsrWidgetStore } from '../../store/osrWidgetStore'
-
-// OS-3 Phase 5: OSR (offscreen→canvas) is the DEFAULT preview engine — Browser previews
-// render OFFSCREEN and paint into a DOM <canvas> here (the occlusion fix, ADR 0002). Set
-// VITE_PREVIEW_OSR=0 to fall back to the legacy native WebContentsView path (escape hatch;
-// removed in 5C). The native path is disabled in BrowserPreviewLayer when OSR is on, so the
-// two never run together.
-const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR !== '0'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
@@ -141,30 +135,28 @@ export function BrowserBoard({
   const runtime = usePreviewStore(selectRuntime(board.id))
   const preset = VIEWPORT_PRESETS[board.viewport]
 
-  // SPIKE (feat/preview-offscreen-spike): the offscreen-preview canvas. The hook opens
-  // an offscreen render in MAIN and paints its frames into this canvas (inside .bb-frame);
-  // a no-op unless OSR_PREVIEW. Stays enabled in FULL VIEW: portal full view RELOCATES this
-  // live subtree (canvas + its 2D context + input listeners) into the modal host without
-  // remounting (useFullView), so keeping `enabled` constant across the toggle means the
-  // OSR window is never torn down — the canvas keeps painting + forwarding in full view
-  // too. (Gating on `!fullView` destroyed the OSR on enter → a blank full-view preview.)
+  // The offscreen-preview canvas. useOffscreenPreview opens an offscreen render in MAIN and
+  // paints its frames into this canvas (inside .bb-frame). Stays enabled in FULL VIEW: portal
+  // full view RELOCATES this live subtree (canvas + its 2D context + input listeners) into the
+  // modal host without remounting (useFullView), so the OSR window is never torn down — the
+  // canvas keeps painting + forwarding in full view too.
   const osrCanvasRef = useRef<HTMLCanvasElement>(null)
   // OS-3 Phase 3: a hidden composition-proxy <textarea> is the keyboard/IME/clipboard target
   // (the canvas can't host IME/composition). useOffscreenInput focuses it on canvas pointerdown.
   const osrProxyRef = useRef<HTMLTextAreaElement>(null)
-  useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW)
+  useOffscreenPreview(board.id, board.url, osrCanvasRef)
   // Forward pointer/wheel on the canvas + keyboard/IME/clipboard on the proxy to the offscreen
-  // page (OS-3 Phase 3 closed the IME / AltGr / clipboard / wheel-precision gaps; the remaining
-  // P1 rows — native <select> / dialogs / downloads / audio mute — are Phase 4, design-gated).
-  useOffscreenInput(board.id, osrCanvasRef, osrProxyRef, board.viewport, OSR_PREVIEW)
+  // page (OS-3 Phase 3 closed the IME / AltGr / clipboard / wheel-precision gaps; Phase 4 added
+  // native <select> / dialogs / downloads / audio mute).
+  useOffscreenInput(board.id, osrCanvasRef, osrProxyRef, board.viewport)
   // OS-3 Phase 1 (M1 sharpness + M4 responsive reflow): drive the offscreen render size from
   // the board geometry + settled camera zoom + DPR via a settle-gated preview:osrResize — the
   // page renders supersampled (crisp) and lays out at the preset width (real breakpoint reflow).
   // Low-frequency only (settle/preset/resize), so the OSR path keeps its zero-per-frame-IPC win.
-  useOffscreenSizing(board.id, board.w, board.h, board.viewport, OSR_PREVIEW)
+  useOffscreenSizing(board.id, board.w, board.h, board.viewport)
   // OS-3 Phase 4: subscribe the board's native-widget event streams (JS dialog · native popup ·
   // audible flip · download) → osrWidgetStore + toasts. Drives the mute toggle + the overlay layer.
-  useOsrWidgetEvents(board.id, OSR_PREVIEW)
+  useOsrWidgetEvents(board.id)
   // 4A — the URL-bar mute toggle shows only while the page is playing media; `muted` is the user's
   // manual choice (MAIN also auto-mutes off-screen). Ephemeral (no schema).
   const osrAudibleNow = useOsrWidgetStore((s) => s.audible[board.id] ?? false)
@@ -189,9 +181,8 @@ export function BrowserBoard({
   // (a focus-without-edit blur must not write a stale draft back over an external
   // url change).
   const urlDirty = useRef(false)
-  // D2-C: the committed draft failed the URL sanity check (scheme + host). Shown
-  // inline in the bar (red field + message in the dims slot) — NEVER over the device
-  // stage, where the always-above native view would occlude it (ADR 0002).
+  // D2-C: the committed draft failed the URL sanity check (scheme + host). Shown inline in
+  // the bar (red field + message in the dims slot), keeping the URL-bar feedback together.
   const [urlError, setUrlError] = useState<string | null>(null)
   // D2-C: an EXTERNAL writer (auto-connect detect push, terminal push-to-preview,
   // MCP) just rewrote board.url — flash the URL field with the accent wash for 600ms
@@ -334,20 +325,16 @@ export function BrowserBoard({
   // an http(s) URL; detect path needs a linked source terminal.
   const willRetry = isHttpUrl(board.url) || !!board.previewSourceId
 
-  // D2-C: the renderer was FREED (over-cap eviction), not just detached for motion —
-  // page state is gone and interaction is dead until a live slot frees. Distinct
-  // from the visually-identical snapshot detach (audit §3.4). In OSR mode (OS-3 Phase 2 / 2B)
-  // the MAX_LIVE cap evicts the same way — the offscreen window is closed and its last frame
-  // stays frozen on the canvas; surface the same "paused" badge off the liveness store.
+  // OS-3 Phase 2 (2B): the MAX_LIVE cap evicted this board — its offscreen window was closed
+  // (renderer freed) but its last frame stays frozen on the canvas. Surface a "paused" badge
+  // off the liveness store so the user knows interaction is dead until a live slot frees.
   const osrAlive = useOsrLivenessStore((s) => s.alive[board.id] ?? true)
-  const paused = (runtime.evicted && !runtime.live) || (OSR_PREVIEW && !osrAlive)
+  const paused = !osrAlive
 
-  // D2-C Reload CTA: wc.reload() relaunches a crashed renderer; its fresh main-frame
-  // nav-start clears the crashed latch back to `connecting` (usePreviewEvents).
+  // D2-C Reload CTA: reloading the offscreen window relaunches a crashed renderer; its fresh
+  // main-frame nav-start clears the crashed latch back to `connecting` (useOffscreenPreview).
   const reloadCrashed = (): void => {
-    // In OSR mode there's no native view for preview:reload — reload the offscreen window.
-    if (OSR_PREVIEW) void window.api.reloadOsrPreview(board.id)
-    else void window.api.reloadPreview(board.id)
+    void window.api.reloadOsrPreview(board.id)
   }
 
   return (
@@ -376,33 +363,21 @@ export function BrowserBoard({
             name="back"
             title="Back"
             disabled={!runtime.canGoBack}
-            onClick={() =>
-              void (OSR_PREVIEW
-                ? window.api.goBackOsrPreview(board.id)
-                : window.api.goBackPreview(board.id))
-            }
+            onClick={() => void window.api.goBackOsrPreview(board.id)}
           />
           <NavBtn
             name="forward"
             title="Forward"
             disabled={!runtime.canGoForward}
-            onClick={() =>
-              void (OSR_PREVIEW
-                ? window.api.goForwardOsrPreview(board.id)
-                : window.api.goForwardPreview(board.id))
-            }
+            onClick={() => void window.api.goForwardOsrPreview(board.id)}
           />
           <NavBtn
             name="refresh"
             title="Reload"
-            onClick={() =>
-              void (OSR_PREVIEW
-                ? window.api.reloadOsrPreview(board.id)
-                : window.api.reloadPreview(board.id))
-            }
+            onClick={() => void window.api.reloadOsrPreview(board.id)}
           />
-          {/* 4A — mute toggle, shown only while the OSR preview is playing media. */}
-          {OSR_PREVIEW && osrAudibleNow && (
+          {/* 4A — mute toggle, shown only while the preview is playing media. */}
+          {osrAudibleNow && (
             <NavBtn
               name={osrMuted ? 'volume-x' : 'volume'}
               title={osrMuted ? 'Unmute' : 'Mute audio'}
@@ -412,11 +387,9 @@ export function BrowserBoard({
           <NavBtn
             name="camera"
             title="Screenshot"
-            // The screenshot IPC captures whichever engine is live (native view OR OSR offscreen
-            // window — preview:screenshot is engine-agnostic since OS-3 Phase 5). Enable once the
-            // board can be captured: native = the view is live; OSR = connected AND not evicted
-            // (`runtime.live` is never set without the native engine, so gate on status+alive).
-            disabled={OSR_PREVIEW ? runtime.status !== 'connected' || !osrAlive : !runtime.live}
+            // The screenshot IPC captures the offscreen window's last painted frame. Enable once
+            // the board can be captured: connected AND not evicted (over the MAX_LIVE cap).
+            disabled={runtime.status !== 'connected' || !osrAlive}
             onClick={takeScreenshot}
           />
           <NavBtn name="external" title="Open in browser" onClick={openExternal} />
@@ -475,9 +448,8 @@ export function BrowserBoard({
             }}
           />
         </div>
-        {/* D2-C: the inline URL error takes the dims slot — INSIDE the bar's own
-            height, never over the device stage (a live native view paints above any
-            HTML it overlaps, ADR 0002). */}
+        {/* D2-C: the inline URL error takes the dims slot — INSIDE the bar's own height,
+            keeping all URL-bar feedback in one place rather than over the device stage. */}
         {urlError ? (
           <span className="bb-url-error" role="alert">
             {urlError}
@@ -489,8 +461,8 @@ export function BrowserBoard({
         )}
       </div>
 
-      {/* Device stage: a hatched backing well + the rounded HTML device frame. The
-          native view paints over the frame's inner area; the snapshot + states sit
+      {/* Device stage: a hatched backing well + the rounded HTML device frame. The offscreen
+          preview canvas fills the frame's inner area; the connecting/failed/crashed states sit
           UNDER it as the fallback layer. In full view the stage centres the frame so the
           letterbox (hatched backing) shows around an aspect-correct emulator. */}
       <div
@@ -508,10 +480,9 @@ export function BrowserBoard({
           // camera-scaled canvas, so board-geometry sizing no longer applies. Size it to
           // the preset's ASPECT RATIO (height-bound, centred, letterboxed) rather than
           // stretching it edge-to-edge — a Mobile/Tablet preview then renders as a
-          // bigger phone/tablet, not a blown-up landscape. The native view binds to this
-          // element's live DOM rect (fullViewBoundsFor); fitZoomFactorForBounds keeps the
-          // held preset width filling that rect, so the scale stays uniform (no stretch).
-          // On canvas it keeps the fitted device box.
+          // bigger phone/tablet, not a blown-up landscape. The offscreen canvas fills this
+          // element (CSS), and useOffscreenSizing reflows the page to the preset width, so
+          // the scale stays uniform (no stretch). On canvas it keeps the fitted device box.
           style={
             fullView
               ? {
@@ -539,40 +510,33 @@ export function BrowserBoard({
             willRetry={willRetry}
             onReload={reloadCrashed}
           />
-          {/* SPIKE: offscreen-rendered frames paint here, OVER the snapshot/state
-              fallback. A normal DOM <canvas> — clips/rounds with .bb-frame, no native
-              overlay (the occlusion fix under test). The hidden proxy <textarea> is the
-              keyboard/IME/clipboard target (Phase 3) — invisible + click-through, focused
-              programmatically on canvas pointerdown. */}
-          {OSR_PREVIEW && (
-            <>
-              {/* The canvas sits OVER DeviceContent (the connecting/failed/crashed state layer).
-                  When the preview isn't connected the canvas is blank and has nothing to forward —
-                  it must NOT intercept the state layer's CTAs (e.g. the crashed Reload button), so
-                  drop its pointer events off the connected path. (Native mode hid the dead view; the
-                  OSR canvas stays in the DOM, so gate it here.) */}
-              <canvas
-                ref={osrCanvasRef}
-                className="bb-live nowheel nodrag"
-                style={runtime.status === 'connected' ? undefined : { pointerEvents: 'none' }}
-              />
-              <textarea
-                ref={osrProxyRef}
-                className="bb-ime-proxy nowheel nodrag"
-                aria-hidden="true"
-                tabIndex={-1}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-              />
-              {/* OS-3 Phase 4: native-widget chrome (JS dialog modal · <select>/date/color overlay)
-                  the offscreen bitmap can't composite. A DOM layer → clips/rounds with the frame. */}
-              <OsrWidgetLayer boardId={board.id} pageW={preset.w} pageH={preset.h} />
-            </>
-          )}
-          {/* D2-C: evicted (renderer freed) ≠ detached (snapshot) — say so. Safe to
-              overlay: an evicted board has no live native view above this HTML. */}
+          {/* Offscreen-rendered frames paint here, OVER the connecting/failed/crashed state
+              fallback. A normal DOM <canvas> clips/rounds with .bb-frame (the occlusion fix).
+              When the preview isn't connected the canvas is blank and has nothing to forward, so
+              it must NOT intercept the state layer's CTAs (e.g. the crashed Reload button) — drop
+              its pointer events off the connected path. */}
+          <canvas
+            ref={osrCanvasRef}
+            className="bb-live nowheel nodrag"
+            style={runtime.status === 'connected' ? undefined : { pointerEvents: 'none' }}
+          />
+          {/* The hidden proxy <textarea> is the keyboard/IME/clipboard target (Phase 3) —
+              invisible + click-through, focused programmatically on canvas pointerdown. */}
+          <textarea
+            ref={osrProxyRef}
+            className="bb-ime-proxy nowheel nodrag"
+            aria-hidden="true"
+            tabIndex={-1}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+          />
+          {/* OS-3 Phase 4: native-widget chrome (JS dialog modal · <select>/date/color overlay)
+              the offscreen bitmap can't composite. A DOM layer → clips/rounds with the frame. */}
+          <OsrWidgetLayer boardId={board.id} pageW={preset.w} pageH={preset.h} />
+          {/* OS-3 Phase 2 (2B): an evicted (over-cap) board's renderer is freed — its last frame
+              stays frozen on the canvas, so flag it "paused" until a live slot frees. */}
           {paused && <span className="bb-paused-badge">paused</span>}
         </div>
       </div>
@@ -606,8 +570,8 @@ function NavBtn({
   )
 }
 
-/** The fallback layer under the native view: snapshot, connecting, load-failed, or
- *  crashed (D2-C — the dead native layer is hidden by main, so this state shows). */
+/** The fallback layer UNDER the offscreen preview canvas: connecting, load-failed, or
+ *  crashed (D2-C). The canvas (blank until connected) paints over this once frames arrive. */
 function DeviceContent({
   runtime,
   url,
@@ -649,10 +613,7 @@ function DeviceContent({
       </div>
     )
   }
-  if (runtime.snapshot) {
-    return <img src={runtime.snapshot} alt="" draggable={false} className="bb-snapshot" />
-  }
-  // No snapshot yet (first open / off-screen): a calm connecting placeholder.
+  // Connecting / idle (first open, before the canvas paints): a calm placeholder under the canvas.
   return (
     <div className="bb-state">
       <div className="bb-state-title">{runtime.status === 'connecting' ? 'Connecting…' : ''}</div>

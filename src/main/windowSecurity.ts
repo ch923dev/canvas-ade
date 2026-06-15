@@ -6,7 +6,7 @@
  * (creating the window, shell.openExternal, preventDefault) stay in index.ts;
  * these functions only compute the decisions.
  */
-import { isAllowedExternal } from './preview'
+import { isAllowedExternal } from './previewShared'
 
 /**
  * Security-critical webPreferences for the main window: contextIsolation +

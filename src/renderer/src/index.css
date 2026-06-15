@@ -2021,10 +2021,7 @@ body {
 }
 
 /* D1-A toast island — the single transient feedback channel (DESIGN.md §8 floating
-   island, bottom-right; status-dot variant signed off 2026-06-10). While visible, its
-   rect joins the preview manager's chrome-exclusion zones so a live native view never
-   paints over it (ADR 0002 — usePreviewManager.resolveChromeZones reads
-   [data-test=toast-island]). */
+   island, bottom-right; status-dot variant signed off 2026-06-10). */
 .toast-island {
   position: fixed;
   right: 16px;

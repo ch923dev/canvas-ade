@@ -202,8 +202,8 @@ export default tseslint.config(
   // are edited DOWNWARD only: lower a file's pin in the same PR that shrinks it; delete the entry
   // once it drops under 700. Tests are exempt (large test files are healthy). The three pins below
   // are the only source files whose CODE-line count currently exceeds 700 (measured 2026-06-09);
-  // every other file — incl. the comment-dense pty.ts/mcpOrchestrator.ts/usePreviewManager.ts/
-  // canvasStore.ts — is already under the global cap, which guards it against future growth.
+  // every other file — incl. the comment-dense pty.ts/mcpOrchestrator.ts/canvasStore.ts — is
+  // already under the global cap, which guards it against future growth.
   // See docs/contributing/file-size-doctrine.md.
   {
     files: ['src/**/*.{ts,tsx}'],
@@ -216,7 +216,7 @@ export default tseslint.config(
   },
   {
     files: ['src/renderer/src/canvas/Canvas.tsx'],
-    rules: { 'max-lines': ['error', { max: 779, skipBlankLines: true, skipComments: true }] }
+    rules: { 'max-lines': ['error', { max: 759, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/boards/PlanningBoard.tsx'],

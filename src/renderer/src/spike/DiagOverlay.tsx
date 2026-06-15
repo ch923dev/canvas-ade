@@ -11,11 +11,6 @@ interface PerformanceWithMemory extends Performance {
   memory?: PerformanceMemory
 }
 
-interface DiagOverlayProps {
-  /** Live WebContentsView count, fed from the PreviewManager in 1-C+. */
-  liveViews: number
-}
-
 interface Sample {
   /** Smoothed frame time in ms over the rolling window. */
   ms: number
@@ -33,7 +28,7 @@ const UPDATE_MS = 200
 
 const fmt = (n: number, d = 1): string => n.toFixed(d)
 
-export default function DiagOverlay({ liveViews }: DiagOverlayProps) {
+export default function DiagOverlay() {
   const [sample, setSample] = useState<Sample>({ ms: 0, fps: 0, heapMb: null })
 
   useEffect(() => {
@@ -78,7 +73,6 @@ export default function DiagOverlay({ liveViews }: DiagOverlayProps) {
     <div style={style}>
       <Row label="frame" value={`${fmt(sample.ms)} ms`} />
       <Row label="fps" value={fmt(sample.fps, 0)} />
-      <Row label="views" value={String(liveViews)} />
       <Row label="heap" value={sample.heapMb === null ? '—' : `${fmt(sample.heapMb)} MB`} />
     </div>
   )

@@ -33,7 +33,6 @@ import {
   type NodeTypes
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
-import { usePreviewStore, selectLiveCount } from '../store/previewStore'
 import {
   DEFAULT_BOARD_SIZE,
   MIN_BOARD_SIZE,
@@ -160,11 +159,6 @@ function CanvasInner(): ReactElement {
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
-  // Live native-view count (Browser boards) for the diagnostics overlay.
-  const liveViews = usePreviewStore(selectLiveCount)
-  // Signal a board drag/resize to the preview layer so it detaches live native
-  // views to snapshots for the duration (they'd otherwise paint over the moved board).
-  const setNodeGesture = usePreviewStore((s) => s.setNodeGesture)
   // Focused board: camera is fitted to it and (dimOnFocus, fixed-on) others dim.
   const [focusedId, setFocusedId] = useState<string | null>(null)
   // Group interaction choreography (naming popover · focus picker · tab context menu · S6 absorb
@@ -213,7 +207,6 @@ function CanvasInner(): ReactElement {
     fullViewId,
     fullViewHost,
     fullViewClosing,
-    fullViewMotion,
     cameraFullViewId,
     setFullViewId,
     setFullViewHost,
@@ -558,25 +551,20 @@ function CanvasInner(): ReactElement {
     [focusBoardById]
   )
 
-  // Drag start: checkpoint for undo + detach live preview views (snapshot carries
-  // the motion + restores z-order so a dragged board isn't occluded). Stop: reattach.
+  // Drag start: checkpoint for undo. (Browser previews paint into a clipping DOM <canvas>
+  // since OS-3, so a dragged board z-orders normally over them — no live-view detach needed.)
   const onNodeDragStart = useCallback(
     (_e: MouseEvent, node: BoardFlowNode) => {
       dragNodeIdRef.current = node.id
       beginChange()
-      setNodeGesture(true)
       // Disarm any in-flight reflow: if a drag starts inside the ~340ms absorb window the dragged
       // node would otherwise inherit `.reflowing .react-flow__node`'s transform transition and trail
       // the cursor. Clear the timer + class so the drag is direct.
       disarmReflow()
       // Manually moving a board releases live tiled mode (like un-snapping a tiled window).
       setActiveTile(null)
-      // Pull every live native view out IMMEDIATELY (before RF starts moving the node) so a
-      // dragged board can't be occluded by — or strand — an always-above native layer (#43961).
-      // beginMotion still captures the snapshot; this is the synchronous safety detach (bug 10).
-      void window.api.detachAllPreviews?.()
     },
-    [beginChange, setNodeGesture, disarmReflow]
+    [beginChange, disarmReflow]
   )
   // S6 drag-onto-box: hit-test the dragged board's center against group boxes (lights the hovered
   // box as a drop target) — logic lives in useGroupInteractions.
@@ -588,7 +576,6 @@ function CanvasInner(): ReactElement {
   const onNodeDragStop = useCallback(
     (_e: MouseEvent, node: BoardFlowNode) => {
       dragNodeIdRef.current = null
-      setNodeGesture(false)
       setGuides((g) => (g.length ? [] : g))
       setOverlaps((o) => (o.length ? [] : o))
       const target = dropTargetGroupId
@@ -596,7 +583,7 @@ function CanvasInner(): ReactElement {
       // Dropped a non-member board inside a group box → absorb it (membership + re-pack).
       if (target && node) reflowAddToGroup(target, [node.id])
     },
-    [setNodeGesture, dropTargetGroupId, reflowAddToGroup, setDropTargetGroupId]
+    [dropTargetGroupId, reflowAddToGroup, setDropTargetGroupId]
   )
 
   const clearSelection = useCallback(() => {
@@ -661,18 +648,16 @@ function CanvasInner(): ReactElement {
     setFullViewId((f) => (f !== null && !boards.some((b) => b.id === f) ? null : f))
     setCameraFullViewId((c) => (c !== null && !boards.some((b) => b.id === c) ? null : c))
     // #BUG-011: the dragged board was removed mid-drag (Delete key / MCP) — XYDrag aborts
-    // the gesture WITHOUT calling onNodeDragStop, so do its cleanup here. Otherwise
-    // nodeGesture latches true (every Browser preview frozen as a snapshot) and the last
+    // the gesture WITHOUT calling onNodeDragStop, so do its cleanup here. Otherwise the last
     // snap frame's guides / overlap tints / lit drop-target box stay painted.
     if (dragNodeIdRef.current !== null && !boards.some((b) => b.id === dragNodeIdRef.current)) {
       dragNodeIdRef.current = null
-      setNodeGesture(false)
       setGuides((g) => (g.length ? [] : g))
       setOverlaps((o) => (o.length ? [] : o))
       setDropTargetGroupId(null)
     }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [boards, setFullViewId, setCameraFullViewId, setNodeGesture, setDropTargetGroupId])
+  }, [boards, setFullViewId, setCameraFullViewId, setDropTargetGroupId])
 
   // M2 connector drag: while a source board is armed (title-bar connector handle pressed),
   // track the pointer for the rubber-band and, on release, resolve the drop target from
@@ -766,14 +751,13 @@ function CanvasInner(): ReactElement {
   ])
 
   // Capture the live camera into the (untracked) store so autosave persists it.
-  // NOT useOnViewportChange: that is a SINGLE-SLOT store field (last writer wins), and
-  // usePreviewManager owns it for the native Browser-preview camera sync (onStart/onChange/
-  // onEnd). A second useOnViewportChange here (Canvas is the parent → its effect commits
-  // last) clobbered the preview's onStart/onEnd with undefined and froze every Browser
-  // board's WebContentsView on pan/zoom. The RF store `transform` subscription is additive
-  // (any number of subscribers) and fires at the same rAF-coalesced cadence; setViewport is
-  // untracked (no undo) and L2-guards equal values (no autosave spam).
-  // See docs/research/2026-06-06-browser-preview-camera-sync-rootcause.md.
+  // NOT useOnViewportChange: that is a SINGLE-SLOT store field (last writer wins), and the
+  // offscreen-preview liveness manager (useOffscreenLiveness, mounted in BrowserPreviewLayer)
+  // owns it for its settle-gated paint reconcile. A second useOnViewportChange here (Canvas is
+  // the parent → its effect commits last) would clobber that onEnd with undefined. The RF store
+  // `transform` subscription is additive (any number of subscribers) and fires at the same
+  // rAF-coalesced cadence; setViewport is untracked (no undo) and L2-guards equal values (no
+  // autosave spam). See docs/research/2026-06-06-browser-preview-camera-sync-rootcause.md.
   const storeApi = useStoreApi()
   useEffect(() => {
     let prev: readonly [number, number, number] | null = null
@@ -864,21 +848,10 @@ function CanvasInner(): ReactElement {
               onTabDoubleClick={fitGroup}
               onTabContextMenu={(id, at) => setGroupMenu({ id, at })}
             />
-            {/* Phase 2.2 (Browser): the store-driven PreviewManager. Mounted INSIDE
-            <ReactFlow> so it can read the live camera (useReactFlow /
-            useOnViewportChange) and sync every Browser board's native
-            WebContentsView to the camera. Renders nothing (returns null); it owns
-            the native-view lifecycle only. The Browser board is the sole board type
-            allowed to touch this file. */}
-            <BrowserPreviewLayer
-              paneRef={paneRef}
-              focusedId={focusedId}
-              fullViewId={fullViewId}
-              fullViewHost={fullViewHost}
-              fullViewMotion={fullViewMotion}
-              onRequestCloseFullView={closeFullView}
-              digestOpen={digestOpen}
-            />
+            {/* Browser preview manager. Mounted INSIDE <ReactFlow> so it can read the live
+            camera (useReactFlow / useOnViewportChange) and drive each board's offscreen-preview
+            liveness (paint-gating + the MAX_LIVE cap). Renders nothing (returns null). */}
+            <BrowserPreviewLayer paneRef={paneRef} />
             {/* D4-C wayfinding minimap (§8 bottom-right island, toggled via `m`/palette).
             Inside <ReactFlow> — RF's <MiniMap> reads nodes + viewport from the RF store.
             Board click = the SAME focus path as Enter/double-click (focusBoardById). */}
@@ -1025,7 +998,7 @@ function CanvasInner(): ReactElement {
             onOpen={() => setDigestOpen(true)}
             onClose={() => setDigestOpen(false)}
           />
-          {diag && <DiagOverlay liveViews={liveViews} />}
+          {diag && <DiagOverlay />}
         </div>
         {fullViewBoard && (
           <FullViewModal

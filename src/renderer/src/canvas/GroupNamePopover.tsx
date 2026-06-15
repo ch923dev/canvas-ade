@@ -2,11 +2,10 @@
  * A small floating text input to (re)name a group, anchored at a client-space point. Mirrors the
  * TerminalConfig inline-popover discipline: controlled value, focus ring, Enter commits, Esc
  * cancels, stopPropagation on keydown so the canvas keymap (Ctrl+G/f/Esc) doesn't fire while
- * typing. Calls setMenuOpen so a live Browser board detaches and can't paint over it (ADR 0002).
+ * typing.
  */
-import { useEffect, useId, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
-import { usePreviewStore } from '../store/previewStore'
 
 export interface GroupNamePopoverProps {
   /** Initial text (auto-name for create; current name for rename). */
@@ -30,13 +29,6 @@ export function GroupNamePopover({
   // cancel (today React skips blur on an unmounting node, but this stops a future deferred-unmount
   // — e.g. an exit animation — from leaking a stray rename).
   const doneRef = useRef(false)
-  const token = useId()
-  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
-
-  useEffect(() => {
-    setMenuOpen(token, true)
-    return () => setMenuOpen(token, false)
-  }, [token, setMenuOpen])
 
   useEffect(() => {
     inputRef.current?.focus()

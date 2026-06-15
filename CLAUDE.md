@@ -31,7 +31,7 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 - **Whiteboard: custom** — vendored `perfect-freehand` (pen) + React Flow edges/bezier for arrows. NOT Excalidraw (see ADR 0001).
 - **Terminal: `@xterm/xterm` ≥5.5** (+ fit + webgl addons) ⇄ **`node-pty`** in MAIN.
 - **`node-pty` 1.2.0-beta.13** (pinned) — winpty-free / ConPTY-only. REQUIRED: the repo path `Z:\Canvas ADE` has a space, and node-pty ≤1.1 bundles winpty whose build (`GetCommitHash.bat`) hard-fails on spaced paths. The beta drops winpty and builds clean. Do not downgrade without relocating the repo to a space-free path. **Build prereq (Windows, since Electron 42):** the Electron-42 ABI has no node-pty prebuilt, so node-pty SOURCE-compiles, and its `binding.gyp` sets `SpectreMitigation: 'Spectre'` → the build needs the **MSVC x64/x86 Spectre-mitigated libs** VS component installed (we keep the hardening rather than patch it off). Linux/macOS unaffected.
-- **Preview: Electron `WebContentsView`** (NOT iframe/webview). Multiple views, synced to the camera by a PreviewManager.
+- **Preview: Electron offscreen rendering → DOM `<canvas>`** (OSR). Each Browser board's page renders in a hidden offscreen `BrowserWindow`; its frames stream to a clipping/z-ordering DOM `<canvas>` (occlusion-free — the ADR 0002 resolution). The legacy native `WebContentsView` engine + the `VITE_PREVIEW_OSR` escape-hatch flag were removed in OS-3 Phase 5C.
 - **State: Zustand** (app/ephemeral). **Persistence: JSON per project** (see below).
 - **Git: `simple-git`** in MAIN for per-agent worktrees. **`write-file-atomic`** for saves.
 
@@ -49,13 +49,26 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 - **Spawn the SHELL, not the agent.** Shell is user-selectable (Win: pwsh>powershell>cmd; *nix: $SHELL then zsh>bash). If a `launchCommand` is set, write it as the first PTY line (`pty.write('claude\r')`) so the agent inherits PATH/profile/auth. `launchCommand` is free-text → any agentic CLI.
 - **Kill the tree.** Agents spawn child processes: Windows `taskkill /PID <pid> /T /F`; *nix kill the negative pgid.
 
-### Browser preview (the Phase 1 gate)
-- A `WebContentsView` is a NATIVE OS layer: it paints ABOVE all HTML, cannot be clipped/rounded/rotated, has no z-index vs HTML, and has **no `destroy()`** — you MUST `view.webContents.close()` per removed board or leak a renderer.
-- **Sync** each view's `setBounds()` + scale to React Flow's camera transform (`translate(x,y) scale(z)` on `.react-flow__viewport`) via a single rAF loop driven by `useOnViewportChange` — never from React re-renders. Coalesce to one IPC batch/frame, diff-skip no-ops.
-- **Responsive trick:** hold the page at a fixed CSS width W∈{390,834,1280}; `fitScale = nodePx/W`; `setZoomFactor(fitScale*camZoom)` + `setBounds(width: W*fitScale*camZoom)` → true reflow at the breakpoint, scaled as a unit.
-- **LOD / occlusion strategy (decided): detach + snapshot.** During pan/zoom and below ~40% zoom, detach the live view and show a `capturePage()` snapshot card; reattach exact bounds on `onMoveEnd`. Capture WHILE on-screen (capture→await→detach) or the snapshot is blank. **Cap ~4 live views**; close far/over-cap ones and recreate on demand.
-- Build as real `WebContentsView` so CDP attach can be added later (deferred — do NOT build it now).
-- **Occlusion is inherent (gate finding, ADR 0002):** a native view paints above ALL HTML → it covers other boards and any in-canvas chrome it overlaps. Mitigate: LOD/motion snapshots (HTML, clippable) carry most cases; keep app chrome in a bar OUTSIDE the canvas pane (views are bounded to the pane); Full view renders a Browser board via snapshot. **Per-board session** (`partition: preview-<id>`) is REQUIRED for independent zoom (responsive presets). The `setZoomFactor` floor (0.25) caps how far the desktop preset reflows at heavy zoom-out — pick board world-sizes that keep presets unclamped in the working-zoom band.
+### Browser preview (OSR — offscreen → `<canvas>`)
+The native `WebContentsView` engine was the Phase-1 gate; it shipped, then OS-3 productionized the
+**offscreen-rendering (OSR)** engine and Phase 5C **deleted the native path entirely** (history:
+ADR 0002 + `docs/archive/build-history.md` › OS-3). What remains:
+- Each Browser board's page renders in a hidden **offscreen `BrowserWindow`** (`previewOsr.ts`,
+  `partition: preview-<id>` per board for zoom isolation). MAIN streams BGRA frames (dirty-rect
+  aware) over IPC; the renderer blits them into a DOM `<canvas>` inside `.bb-frame`. The canvas is
+  a normal DOM node, so it **clips / rounds / z-orders** — the occlusion problem ADR 0002 found is
+  gone (no detach/snapshot/chrome-exclusion machinery; popovers & chrome just paint over it).
+- **No per-frame camera IPC:** the `<canvas>` moves with the DOM under React Flow's transform. Size
+  is pushed only on a settle (`useOffscreenSizing` → one `preview:osrResize`): supersample
+  `S = deviceFitScale × settledZoom × DPR` for crispness, logical width = the live preset
+  (390/834/1280) for a true responsive reflow.
+- **Liveness (`useOffscreenLiveness`, the M2 CPU win):** paint-gate off-screen / below-LOD boards
+  (`stopPainting`, last frame stays frozen on the canvas) and cap **~4 live** offscreen windows
+  (MAX_LIVE existence cap; evicted boards keep a frozen frame + a "paused" badge).
+- **Input/widgets over the attached `wc.debugger` (CDP, MAIN-only):** a hidden composition-proxy
+  `<textarea>` carries keyboard/IME/clipboard/AltGr; native `<select>`/dialogs/downloads/mute are
+  re-rendered as HTML chrome in `.bb-frame` (they clip too). Lifecycle (load/fail/navigate/crash)
+  is emitted on the shared `preview:event` channel.
 
 ### Persistence
 - Project = a user-chosen folder. Whole canvas = single `canvas.json` at root + `canvas.json.bak` (parse-fail fallback). Heavy blobs in `assets/` by path, not inlined.
@@ -91,9 +104,10 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 | git init / worktrees | **Deferred** to the Feature Workspaces phase (post-MCP). When built: opt-in toggle; reuse-if-exists; never nest-init. |
 | Dirty worktree on delete | Keep on disk + prompt (rule stands for the deferred Feature Workspaces phase). |
 | Per-board ports | **Re-scoped** → runtime port **detection** (parse server-printed URL) + push-to-preview, NOT static assignment/injection. Slice C′. |
-| Preview liveness | Detach + snapshot while moving/LOD; cap ~4 live. |
-| Browser board scale | Scales WITH the camera (snapshot scales as a unit), not 1:1. Locked in 1-D. |
-| Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session syncs all presets. ADR 0002. |
+| Preview engine | **OSR** (offscreen → DOM `<canvas>`). Native `WebContentsView` engine + `VITE_PREVIEW_OSR` flag deleted in OS-3 5C. ADR 0002. |
+| Preview liveness | Paint-gate off-screen/below-LOD (frozen last frame); MAX_LIVE existence cap ~4 offscreen windows. |
+| Browser board scale | Scales WITH the camera (the `<canvas>` moves with the DOM transform), not 1:1. |
+| Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session would sync all presets. ADR 0002. |
 | Schema versioning | Two-tier (ADR 0007): `schemaVersion` (writer) + `minReaderVersion` (compat floor). Additive optional fields bump the writer only; breaking changes (new kinds/types, new DOC-LEVEL keys) bump both. Older apps open any doc whose floor ≤ their version. |
 | Checklist | A Planning **element** (card inside a Planning board), not a 4th board type / dock button. Decided 2026-05-29. |
 | Canvas backdrop | Per-project **screen-fixed** wallpaper layer behind RF (none / user file / bundled scene), dim+saturation, schema **v9** `background`, settings-class (never undoable). Scene ids registry-resolved at render (unknown ⇒ void+toast, preserved). ADR 0006. |
@@ -105,7 +119,7 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 
 ```
 src/
-  main/      index.ts (secure window + lifecycle) · pty.ts · preview.ts · localServer.ts · selfTest.ts
+  main/      index.ts (secure window + lifecycle) · pty.ts · previewOsr.ts (+ previewOsrWidgets/Capture · previewShared · previewScreenshot) · localServer.ts · selfTest.ts
   preload/   index.ts (contextBridge + MessagePort forwarding) · index.d.ts
   renderer/  index.html · src/{main.tsx, App.tsx, index.css, env.d.ts} · src/smoke/*
 design-reference/   authoritative design bundle (read-only)

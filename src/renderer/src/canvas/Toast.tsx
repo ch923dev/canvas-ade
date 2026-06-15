@@ -5,11 +5,6 @@
  * shows the oldest MAX_VISIBLE, the rest wait their turn. Auto-dismiss starts
  * when a toast becomes VISIBLE (mount), so a queued toast still gets its full
  * read time. Sticky toasts (data-loss class, e.g. save failure) never expire.
- *
- * Native-view occlusion (ADR 0002): a live WebContentsView paints above all
- * HTML, so while any toast is visible the island's rect joins the preview
- * manager's chrome-exclusion zones (usePreviewManager.resolveChromeZones reads
- * `[data-test=toast-island]` — the digest-panel pattern from PR #82).
  */
 import { useEffect, type ReactElement } from 'react'
 import { useToastStore, type Toast } from '../store/toastStore'

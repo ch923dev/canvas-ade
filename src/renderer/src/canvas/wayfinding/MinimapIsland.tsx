@@ -7,9 +7,7 @@
  *
  * React Flow's <MiniMap> does the rendering (it reads nodes + viewport from the RF
  * store, so this must mount INSIDE <ReactFlow>); this wrapper owns:
- *  - visibility (wayfindingStore; hidden ⇒ null — no DOM, no ADR 0002 chrome zone,
- *    zero cost; usePreviewManager.resolveChromeZones finds the island by class while
- *    visible, the toast-island pattern),
+ *  - visibility (wayfindingStore; hidden ⇒ null — no DOM, zero cost),
  *  - click a board rect → JUMP: the same camera-fit + dim-others path as
  *    Enter / double-click / palette-goto (D4-B `focusBoardById`, injected so the
  *    paths can never drift). stopPropagation keeps the svg-level click below from

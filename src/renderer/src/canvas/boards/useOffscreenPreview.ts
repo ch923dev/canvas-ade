@@ -23,8 +23,7 @@ import { bgraToRgba } from '../../lib/bgraToRgba'
 export function useOffscreenPreview(
   boardId: string,
   url: string,
-  canvasRef: RefObject<HTMLCanvasElement | null>,
-  enabled: boolean
+  canvasRef: RefObject<HTMLCanvasElement | null>
 ): void {
   // 2B — the MAX_LIVE existence flag for this board. Default true so a freshly-mounted board
   // opens immediately; the manager flips it false to evict (over-cap), true to revive.
@@ -34,16 +33,15 @@ export function useOffscreenPreview(
   // the frozen last frame. Its own effect (deps exclude `alive`) so the lifecycle effect can
   // close-without-clearing. A failed-load / crash clear stays in the event handler below.
   useEffect(() => {
-    if (!enabled) return
     const clearCanvas = (): void => {
       const cv = canvasRef.current
       cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
     }
     return () => clearCanvas()
-  }, [boardId, url, enabled, canvasRef])
+  }, [boardId, url, canvasRef])
 
   useEffect(() => {
-    if (!enabled || !url || !alive) return
+    if (!url || !alive) return
     // Clear a stale page bitmap so it never sits OVER the board's Couldn't-load / Crashed
     // fallback. Used by the fail/crash handlers (the stream stops, leaving the last frame frozen).
     const clearCanvas = (): void => {
@@ -53,11 +51,11 @@ export function useOffscreenPreview(
     void window.api.openOsrPreview({ id: boardId, url })
     // Show "Connecting…" under the (still-transparent) canvas until the first frame /
     // did-finish-load promotes to connected. previewStore is the same runtime the board's
-    // DeviceContent reads, so the OSR path resolves the SAME states as the native path.
+    // DeviceContent reads this, the same runtime the board chrome renders from.
     usePreviewStore.getState().patch(boardId, { status: 'connecting', error: null })
-    // MAIN emits load/fail/navigate/crash on the shared preview:event channel (previewOsr.ts).
-    // usePreviewEvents (the native consumer) is OFF in OSR mode, so consume them here, slimly
-    // (no native `recs`/eviction — an OSR board exists while its canvas is mounted).
+    // MAIN emits load/fail/navigate/crash on the `preview:event` channel (previewOsr.ts). Consume
+    // them here, slimly — an OSR board exists while its canvas is mounted, so there is no
+    // existence/eviction bookkeeping to gate against (unlike the deleted native consumer).
     const offEvent = window.api.onPreviewEvent((ev) => {
       if (ev.id !== boardId) return
       const ps = usePreviewStore.getState()
@@ -136,5 +134,5 @@ export function useOffscreenPreview(
       // on an EVICT (alive→false) it does NOT, so the frozen last frame stays as a snapshot.
       void window.api.closeOsrPreview(boardId)
     }
-  }, [boardId, url, enabled, alive, canvasRef])
+  }, [boardId, url, alive, canvasRef])
 }

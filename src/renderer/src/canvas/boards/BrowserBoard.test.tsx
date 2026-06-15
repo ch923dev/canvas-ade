@@ -5,6 +5,7 @@ import type { ReactElement } from 'react'
 import { BrowserBoard } from './BrowserBoard'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore } from '../../store/previewStore'
+import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 import { useToastStore } from '../../store/toastStore'
 import type { BrowserBoard as BrowserBoardData } from '../../lib/boardSchema'
 
@@ -38,7 +39,8 @@ function Harness({ id }: { id: string }): ReactElement | null {
 
 function seedBrowser(): string {
   useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
-  usePreviewStore.setState({ byId: {}, nodeGesture: false, openMenus: new Set(), menuOpen: false })
+  usePreviewStore.setState({ byId: {} })
+  useOsrLivenessStore.setState({ alive: {} })
   return useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 })
 }
 
@@ -55,12 +57,10 @@ beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
     screenshotPreview,
     openExternalPreview: vi.fn(async () => true),
-    goBackPreview: vi.fn(async () => true),
-    goForwardPreview: vi.fn(async () => true),
-    reloadPreview: vi.fn(async () => true),
-    // OSR is the default engine, so the nav/crashed Reload CTAs route here (BrowserBoard branches
-    // on OSR_PREVIEW). Back/forward also have OSR variants but these tests don't click them.
-    reloadOsrPreview: vi.fn(async () => true)
+    // The nav buttons + crashed Reload CTA route to the offscreen-preview IPC.
+    reloadOsrPreview: vi.fn(async () => true),
+    goBackOsrPreview: vi.fn(async () => true),
+    goForwardOsrPreview: vi.fn(async () => true)
   }
 })
 
@@ -134,7 +134,7 @@ describe('BrowserBoard — crashed preview state (D2-C)', () => {
   it('shows "Preview crashed" with the reason and a Reload CTA wired to reloadOsrPreview', () => {
     const id = seedBrowser()
     act(() => {
-      usePreviewStore.getState().patch(id, { status: 'crashed', error: 'oom', live: true })
+      usePreviewStore.getState().patch(id, { status: 'crashed', error: 'oom' })
     })
     render(<Harness id={id} />)
     expect(document.body.textContent).toContain('Preview crashed')
@@ -171,7 +171,9 @@ describe('BrowserBoard — status word beside the dot (D2-C, audit §3.4)', () =
   it('overrides the word with "paused" for an evicted (renderer-freed) board', () => {
     const id = seedBrowser()
     act(() => {
-      usePreviewStore.getState().patch(id, { status: 'connected', live: false, evicted: true })
+      usePreviewStore.getState().patch(id, { status: 'connected' })
+      // Evicted over the MAX_LIVE cap → the liveness store marks it not-alive → "paused".
+      useOsrLivenessStore.getState().setAlive({ [id]: false })
     })
     render(<Harness id={id} />)
     expect(document.querySelector('.bb-conn-word')?.textContent).toBe('paused')
@@ -182,12 +184,13 @@ describe('BrowserBoard — evicted "paused" badge (D2-C)', () => {
   it('shows the badge when the renderer was freed and hides it while live', () => {
     const id = seedBrowser()
     act(() => {
-      usePreviewStore.getState().patch(id, { status: 'connected', live: false, evicted: true })
+      usePreviewStore.getState().patch(id, { status: 'connected' })
+      useOsrLivenessStore.getState().setAlive({ [id]: false })
     })
     render(<Harness id={id} />)
     expect(document.querySelector('.bb-paused-badge')?.textContent).toBe('paused')
     act(() => {
-      usePreviewStore.getState().patch(id, { live: true, evicted: false })
+      useOsrLivenessStore.getState().setAlive({ [id]: true })
     })
     expect(document.querySelector('.bb-paused-badge')).toBeNull()
   })

@@ -12,16 +12,6 @@ import { execFileSync } from 'child_process'
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
-import {
-  debugCaptureView,
-  debugCaptureViewPng,
-  debugCrashView,
-  debugFocusView,
-  debugSendInputToView,
-  debugViewBounds,
-  debugViewIds,
-  debugViewWebContentsId
-} from './preview'
 import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
 import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
@@ -40,42 +30,18 @@ const MCP_E2E_WORKER_BOARD = 'mcp-e2e-worker'
 export interface E2EMain {
   terminalPid(id: string): number | null
   writeTerminal(id: string, data: string): boolean
-  captureView(id: string): Promise<{ attached: boolean; empty: boolean }>
   /**
-   * Capture a board's live native-view pixels and write them as a PNG to `absPath`.
-   * Returns true if a non-blank image was written, false otherwise (missing/detached/
-   * off-screen/un-composited). This is the only evidence path for browser-board content
-   * — a WebContentsView paints above all HTML, so Playwright screenshots can't see it.
-   */
-  captureViewToFile(id: string, absPath: string): Promise<boolean>
-  /**
-   * OSR analogue of captureViewToFile (OS-3 Phase 5): capture the board's offscreen window's last
-   * painted frame as a PNG and write it to `absPath`. Returns false if no OSR window / blank. Also
-   * exercises the same `capturePage()` path the user-facing OSR screenshot uses, so a green run on
-   * both legs is evidence the screenshot feature captures non-blank on each OS.
+   * Capture a board's offscreen window's last painted frame as a PNG and write it to
+   * `absPath`. Returns false if no OSR window / blank. This is the only evidence path for
+   * browser-board content (the offscreen bitmap never reaches a Playwright screenshot), and
+   * exercises the same `capturePage()` path the user-facing OSR screenshot uses — so a green
+   * run on both legs is evidence the screenshot feature captures non-blank on each OS.
    */
   captureOsrToFile(id: string, absPath: string): Promise<boolean>
-  viewIds(): string[]
-  viewWebContentsId(id: string): number | null
-  /** Forcefully crash a board's preview renderer (D2-C crashed-state probe). */
-  crashView(id: string): boolean
-  /** OSR analogue of crashView — SIGKILL a board's offscreen renderer (OS-3 Phase 5 crash probe). */
+  /** SIGKILL a board's offscreen preview renderer (D2-C crashed-state probe). */
   crashOsr(id: string): boolean
-  /** The native view's live bounds + attached flag, for the alignment probe (native vs .bb-frame). */
-  viewBounds(
-    id: string
-  ): { attached: boolean; bounds: { x: number; y: number; width: number; height: number } } | null
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
-  /** D4-B/A3: give a board's native preview view OS keyboard focus (= clicking into it). */
-  focusView(id: string): boolean
-  /** D4-B/A3: real input through a board's native VIEW (Esc runs the focus-return path). */
-  sendInputToView(
-    id: string,
-    evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]
-  ): boolean
-  /** True when the HOST window's webContents is the focused one (A3 focus-return assert). */
-  hostFocused(): boolean
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
   createTempProject(prefix: string, name: string): Promise<string>
   /** Clear the current dir + delete the temp project (best-effort). */
@@ -244,31 +210,15 @@ export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: Runnin
   globalThis.__canvasE2EMain = {
     terminalPid: debugTerminalPid,
     writeTerminal: debugWriteTerminal,
-    captureView: debugCaptureView,
-    async captureViewToFile(id, absPath) {
-      const png = await debugCaptureViewPng(id)
-      if (!png) return false
-      writeFileSync(absPath, png)
-      return true
-    },
     async captureOsrToFile(id, absPath) {
       const png = await captureOsrPng(id)
       if (!png) return false
       writeFileSync(absPath, png)
       return true
     },
-    viewIds: debugViewIds,
-    viewWebContentsId: debugViewWebContentsId,
-    crashView: debugCrashView,
     crashOsr: debugCrashOsr,
-    viewBounds: debugViewBounds,
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)
-    },
-    focusView: debugFocusView,
-    sendInputToView: debugSendInputToView,
-    hostFocused() {
-      return win.webContents.isFocused()
     },
     async createTempProject(prefix, name) {
       const tmp = mkdtempSync(join(tmpdir(), prefix))

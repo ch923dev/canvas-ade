@@ -2,8 +2,8 @@
 /**
  * CommandPalette integration (D4-A): rendering from a seeded store, type-to-filter,
  * keyboard navigation (combobox + aria-activedescendant), run semantics (close first,
- * verb one macrotask later), the `?` shortcuts view, the `data-palette-open` Esc-layer
- * marker, and the ADR 0002 preview-detach token pair.
+ * verb one macrotask later), the `?` shortcuts view, and the `data-palette-open` Esc-layer
+ * marker.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, act, configure } from '@testing-library/react'
@@ -13,7 +13,6 @@ import { render, screen, fireEvent, cleanup, act, configure } from '@testing-lib
 configure({ testIdAttribute: 'data-test' })
 import { CommandPalette, type CommandPaletteProps } from './CommandPalette'
 import { useCanvasStore } from '../../store/canvasStore'
-import { usePreviewStore } from '../../store/previewStore'
 import type { Board } from '../../lib/boardSchema'
 
 afterEach(cleanup)
@@ -161,26 +160,6 @@ describe('command view', () => {
   it('marks the scrim data-palette-open for the full-view Esc layer', () => {
     open()
     expect(document.querySelector('[data-palette-open]')).toBeTruthy()
-  })
-
-  it('holds a preview-detach token while mounted, released on unmount (ADR 0002)', () => {
-    const calls: [string, boolean][] = []
-    const orig = usePreviewStore.getState().setMenuOpen
-    usePreviewStore.setState({
-      setMenuOpen: (token: string, open: boolean) => {
-        calls.push([token, open])
-        orig(token, open)
-      }
-    })
-    try {
-      open()
-      expect(calls.some(([, o]) => o)).toBe(true)
-      cleanup()
-      const token = calls[0][0]
-      expect(calls.some(([t, o]) => t === token && !o)).toBe(true)
-    } finally {
-      usePreviewStore.setState({ setMenuOpen: orig })
-    }
   })
 })
 

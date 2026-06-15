@@ -405,13 +405,9 @@ function PresetThumb({ preset }: { preset: LayoutPreset }): ReactElement {
 
 // The Tidy preset PICKER (FancyZones-style). Rendered through the shared <Menu> shell
 // (D1-C): body portal, right-aligned under the trigger + unified viewport clamp, outside
-// pointerdown / Escape / resize close, menuitem roving tabindex + arrow keys, and the
-// ADR 0002 detach-live-previews-while-open signal. Each thumbnail applies its preset.
-// KNOWN (matches the board ⋯ menu): setMenuOpen runs in an effect + the detach IPC is
-// async, so a live Browser view overlapping this popover can occlude it for a few frames
-// before detaching. Accepted limitation of the menu-detach pattern; a fix would need sync
-// IPC across BrowserPreviewLayer too. The camera cluster is top-right, where live views
-// rarely sit.
+// pointerdown / Escape / resize close, menuitem roving tabindex + arrow keys. Each
+// thumbnail applies its preset. (Browser previews render into a clipping DOM <canvas>
+// since OS-3, so this popover z-orders over them — no detach-while-open dance needed.)
 function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): ReactElement {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLDivElement>(null)
@@ -470,8 +466,7 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
 // it; it hides a grace period after the cursor exits the zone. Pinned open while a
 // board type is armed (the pill is the only armed-mode indicator), while the canvas
 // is empty (EmptyState mirrors and points at it), and while keyboard focus is inside
-// (a hidden-but-focusable pill would tab blind). The chromeExclusionZones dock band
-// stays reserved even while hidden — see previewPlan.chromeExclusionZones.
+// (a hidden-but-focusable pill would tab blind).
 
 /** Proximity zone (screen px), centred on the dock, anchored to the pane top. */
 const DOCK_ZONE_W = 600

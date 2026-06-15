@@ -11,7 +11,7 @@ import {
   registerCrashReadyGate,
   isHttpErrorCode,
   isErrorResponseCode
-} from './preview'
+} from './previewShared'
 import {
   attachOsrWidgets,
   registerOsrDownloads,
@@ -881,6 +881,16 @@ export function registerPreviewOsrHandlers(
     if (isForeignSender(ev, getWin)) return true
     disposeOsr(id)
     return true
+  })
+  // Open the preview's current URL in the OS browser (for real DevTools / extensions). The
+  // renderer passes the URL it already shows (liveUrl ?? board.url); the scheme stays
+  // allowlisted via openExternalSafe (Bug #23) so nothing new reaches the OS handler that the
+  // page's own window.open couldn't. Returns whether it actually opened (false = scheme blocked)
+  // so the renderer can surface feedback. Frame-guarded (Bug #33). Engine-agnostic — lived in the
+  // native preview module until 5C deleted it.
+  ipcMain.handle('preview:openExternal', (ev, url: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    return openExternalSafe(String(url))
   })
   // M3 scaffold: forward a real OS input event to the offscreen view's webContents. The
   // renderer coordinate-transform (canvas-local → page px under camera/preset scale) is
