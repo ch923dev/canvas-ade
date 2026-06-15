@@ -40,6 +40,19 @@ async function seedDiagram(page: Page, source: string): Promise<string> {
   return id
 }
 
+/** Read the (only) diagram element's board-local size from the live store. */
+async function diagramSize(page: Page, boardId: string): Promise<{ w: number; h: number }> {
+  return page.evaluate((bid) => {
+    const boards = (globalThis as any).__canvasE2E.getBoards() as {
+      id: string
+      type: string
+      elements?: { kind: string; w: number; h: number }[]
+    }[]
+    const d = boards.find((x) => x.id === bid)?.elements?.find((e) => e.kind === 'diagram')
+    return { w: d?.w ?? 0, h: d?.h ?? 0 }
+  }, boardId)
+}
+
 test.describe('@planning diagram element (real Mermaid worker)', () => {
   test('renders a flowchart source to an inert SVG <img> via the hidden worker', async ({
     page
@@ -62,5 +75,29 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     // A bad source resolves to the error state, not a thrown render / blank img.
     await expect(page.locator('.pl-diagram-state')).toContainText(/error/i, { timeout: 20000 })
     await expect(page.locator('.pl-diagram img')).toHaveCount(0)
+  })
+
+  test('the bottom-right handle resizes the diagram via a real drag', async ({ page }) => {
+    const boardId = await seedDiagram(page, 'graph TD\n  A[Plan] --> B[Build]')
+    await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
+
+    // Select the card (body click, below the 22px header) → the resize handle appears.
+    await page.locator('.pl-diagram').click({ position: { x: 24, y: 80 } })
+    const handle = page.locator('.pl-diagram-resize')
+    await expect(handle).toBeVisible()
+    await page.screenshot({ path: 'test-results/diagram-resize-handle.png' })
+
+    const before = await diagramSize(page, boardId)
+    const box = await handle.boundingBox()
+    if (!box) throw new Error('resize handle has no bounding box')
+    // Real OS drag of the corner handle outward by +80/+60 screen px.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width / 2 + 80, box.y + box.height / 2 + 60, { steps: 8 })
+    await page.mouse.up()
+
+    const after = await diagramSize(page, boardId)
+    expect(after.w).toBeGreaterThan(before.w)
+    expect(after.h).toBeGreaterThan(before.h)
   })
 })

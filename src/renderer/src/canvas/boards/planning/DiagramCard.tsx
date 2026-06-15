@@ -26,6 +26,7 @@ import {
 } from 'react'
 import type { DiagramElement } from '../../../lib/boardSchema'
 import { buildDiagramThemeVars, diagramTypeLabel } from './diagramTheme'
+import { resizeFromDrag } from './diagramResize'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
@@ -44,10 +45,12 @@ export interface DiagramCardProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Tracked source commit (sets source + clears svgCache to invalidate the cache). */
   onChangeSource: (id: string, source: string) => void
-  /** Arm one undo checkpoint at the start of an editing session (beginChange). */
+  /** Arm one undo checkpoint at the start of an editing session OR a resize drag (beginChange). */
   onEditStart: () => void
   /** Persist a freshly-rendered SVG assetId (UNTRACKED — derived artifact). */
   onCache: (id: string, assetId: string) => void
+  /** Tracked resize commit (sets w/h; svgCache stays valid — the SVG scales via object-fit). */
+  onResize: (id: string, w: number, h: number) => void
 }
 
 export const DiagramCard = memo(function DiagramCard({
@@ -59,15 +62,86 @@ export const DiagramCard = memo(function DiagramCard({
   onSelect,
   onChangeSource,
   onEditStart,
-  onCache
+  onCache,
+  onResize
 }: DiagramCardProps): ReactElement {
   const { id, x, y, w, h, source, svgCache } = element
+  const locked = element.locked ?? false
   const [svgUrl, setSvgUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(source)
   const urlRef = useRef<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Live corner-resize gesture: start pointer (screen px) + start size + the board-local→screen
+  // scale captured at pointerdown. `moved` arms the undo checkpoint lazily so a no-move tap on the
+  // handle never pushes a phantom step (the planning lazy-checkpoint discipline).
+  const resizeRef = useRef<{
+    startX: number
+    startY: number
+    startW: number
+    startH: number
+    scale: number
+    moved: boolean
+  } | null>(null)
+
+  const onResizeDown = useCallback(
+    (e: ReactPointerEvent) => {
+      if (e.button !== 0) return
+      e.stopPropagation() // never start a board drag / toggle the selection from the handle
+      const handle = e.currentTarget as HTMLElement
+      // boardScale = the well's on-screen width ÷ its layout width — captures camera zoom AND any
+      // board-node render scale in one ratio (== screenScale). DOM-only, so the memo'd card never
+      // subscribes to the camera (no re-render per pan/zoom). Frozen for the gesture (pointer is
+      // captured, so the camera can't move mid-drag).
+      const well = handle.closest('.pl-well') as HTMLElement | null
+      const rect = well?.getBoundingClientRect()
+      const scale = well && rect && well.offsetWidth > 0 ? rect.width / well.offsetWidth : 1
+      resizeRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        startW: w,
+        startH: h,
+        scale,
+        moved: false
+      }
+      try {
+        handle.setPointerCapture(e.pointerId)
+      } catch {
+        /* synthetic event in tests */
+      }
+    },
+    [w, h]
+  )
+
+  const onResizeMove = useCallback(
+    (e: ReactPointerEvent) => {
+      const r = resizeRef.current
+      if (!r) return
+      const dx = e.clientX - r.startX
+      const dy = e.clientY - r.startY
+      // Arm ONE checkpoint on the first real move (>4 SCREEN px — zoom-independent, like the arrow
+      // endpoint + textbox gestures); a sub-threshold jiggle commits nothing.
+      if (!r.moved) {
+        if (Math.hypot(dx, dy) <= 4) return
+        onEditStart()
+        r.moved = true
+      }
+      const size = resizeFromDrag({ w: r.startW, h: r.startH }, { dx, dy }, r.scale)
+      onResize(id, size.w, size.h)
+    },
+    [id, onResize, onEditStart]
+  )
+
+  const onResizeUp = useCallback((e: ReactPointerEvent) => {
+    if (!resizeRef.current) return
+    resizeRef.current = null
+    try {
+      ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* capture already released / synthetic */
+    }
+  }, [])
 
   // Swap the displayed blob URL, revoking the previous one (never leak object URLs).
   const showSvg = useCallback((svg: string) => {
@@ -318,6 +392,44 @@ export const DiagramCard = memo(function DiagramCard({
           }}
         >
           {error}
+        </div>
+      )}
+
+      {/* Bottom-right resize handle (select mode, selected + unlocked, not editing). Reuses the
+          arrow endpoint-handle discipline: screen-px threshold, ONE undo step per drag, accent mark.
+          The SVG scales via object-fit so a resize keeps the cached svgCache valid (w/h only). */}
+      {selected && interactive && !locked && !editing && (
+        <div
+          className="pl-diagram-resize"
+          title="Resize"
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          style={{
+            position: 'absolute',
+            right: 0,
+            bottom: 0,
+            width: 16,
+            height: 16,
+            display: 'flex',
+            alignItems: 'flex-end',
+            justifyContent: 'flex-end',
+            cursor: 'nwse-resize',
+            zIndex: 2
+          }}
+        >
+          <div
+            style={{
+              width: 9,
+              height: 9,
+              margin: 2,
+              borderRight: '2px solid var(--accent)',
+              borderBottom: '2px solid var(--accent)',
+              borderBottomRightRadius: 2,
+              pointerEvents: 'none'
+            }}
+          />
         </div>
       )}
     </div>
