@@ -7,7 +7,7 @@
  * The card stops pointer propagation so interacting with it never starts a React
  * Flow node-drag or clears the canvas selection mid-edit.
  */
-import { useEffect, useRef, type ReactElement } from 'react'
+import { memo, useEffect, useRef, type ReactElement } from 'react'
 import type { NoteElement, NoteTint } from '../../../lib/boardSchema'
 import { NOTE_TINTS, TINT_CYCLE } from './tints'
 
@@ -34,7 +34,10 @@ export interface NoteCardProps {
   onSetTint?: (id: string, tint: NoteTint) => void
 }
 
-export function NoteCard({
+// Memoized: PlanningBoard passes stable callbacks + a per-element object that only
+// changes for the edited element (patchElement keeps unchanged refs), so editing one
+// element re-renders ONLY that card, not every card in the well.
+export const NoteCard = memo(function NoteCard({
   note,
   interactive,
   onDragStart,
@@ -261,4 +264,4 @@ export function NoteCard({
       </div>
     </div>
   )
-}
+})

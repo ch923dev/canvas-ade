@@ -99,13 +99,14 @@ export function WhiteboardSvg({
     soleSelectedId && !drawing
       ? viewArrows.find((a) => a.id === soleSelectedId && !isLocked(a))
       : undefined
-  // Memoize the (potentially heavy) outline math PER STROKE via the module-level
-  // points-keyed cache. The parent derives `strokes` via .filter() (new array every
-  // render) and translateElement returns the SAME element object (same `points` ref)
-  // for unmoved strokes — only the dragged one gets a fresh ref — so unchanged strokes
-  // reuse their path across every drag/zoom frame instead of recomputing getStroke for
-  // all of them (#BUG-028).
-  const strokePaths = useMemo(() => strokes.map((s) => strokeOutline(s.points)), [strokes])
+  // Per-stroke outline math is cached by the module-level points-keyed WeakMap above:
+  // the parent derives `strokes` via .filter() and translateElement returns the SAME
+  // element object (same `points` ref) for unmoved strokes — only the dragged one gets a
+  // fresh ref — so unchanged strokes hit the cache and reuse their path every drag/zoom
+  // frame (#BUG-028). No useMemo here: a [strokes]-keyed memo could never skip (the array
+  // identity changes whenever the parent re-derives it), so it only added overhead — the
+  // WeakMap is the real cache and the .map is a cheap per-stroke lookup.
+  const strokePaths = strokes.map((s) => strokeOutline(s.points))
   const draftPath = useMemo(
     () => (draftStroke && draftStroke.length >= 2 ? strokeToPath(draftStroke) : ''),
     [draftStroke]

@@ -11,6 +11,7 @@ import { useCallback, useEffect, type DragEvent as ReactDragEvent, type RefObjec
 import type { PlanningBoard as PlanningBoardData, PlanningElement } from '../../../lib/boardSchema'
 import { useCanvasStore } from '../../../store/canvasStore'
 import { makeImage, fitImageSize, IMAGE_MAX } from './elements'
+import { showToast } from '../../../store/toastStore'
 
 const newId = (): string => crypto.randomUUID()
 
@@ -48,9 +49,15 @@ export function usePlanningImageIO(deps: PlanningImageIODeps): {
       if ('error' in res) {
         // Surface the write failure (disk full / no project open / bad ext) instead of
         // silently abandoning the paste/drop. Keep the early return — we never add a
-        // broken image element — but don't swallow the cause.
+        // broken image element — but route it to the app toast channel (D1-A) so it is
+        // visible in a packaged build, not just the dev console (the open W5 follow-up).
         // eslint-disable-next-line no-console
         console.error('image write failed:', res.error)
+        showToast({
+          id: `image-write-failed-${board.id}`,
+          kind: 'error',
+          message: 'Could not add image — check the project folder and disk space'
+        })
         return
       }
       let w = IMAGE_MAX

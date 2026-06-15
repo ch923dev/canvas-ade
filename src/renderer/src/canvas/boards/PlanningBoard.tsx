@@ -15,7 +15,7 @@
  * Owns this file + everything under `boards/planning/`; the shared surface
  * (`BoardFrame`, schema, store) is consumed, never modified.
  */
-import { useCallback, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
@@ -178,10 +178,14 @@ export function PlanningBoard({
   // ── Element-level handlers (passed to the element components) ────────────────
   const interactive = tool === 'select'
 
+  // Live-read transform (not the render-time `elements` closure): keeps the callback
+  // identity STABLE across edits (dep is just the stable `commit`) so the React.memo'd
+  // NoteCard isn't re-created on every keystroke, and a concurrent edit landing in the
+  // same window can't clobber this one (BUG-023 class — matches setTextText below).
   const setNoteText = useCallback(
     (id: string, text: string) =>
-      commit(patchElement<NoteElement>(elements, id, (n) => ({ ...n, text }))),
-    [commit, elements]
+      commit((cur) => patchElement<NoteElement>(cur, id, (n) => ({ ...n, text }))),
+    [commit]
   )
   // Live-read transform (not the render-time `elements` closure): a text edit and a
   // typography patch from the toolbar can land in the same window, and the closure form
@@ -222,12 +226,21 @@ export function PlanningBoard({
   )
   const deleteEl = useCallback(
     (id: string) => {
-      const el = elements.find((x) => x.id === id)
-      if (el && isLocked(el)) return // locked resists the per-element X (closes the prior bypass)
+      // Live-read the lock guard + commit so the callback identity stays STABLE across
+      // edits (so React.memo'd cards holding onDelete don't all re-render on a keystroke)
+      // and a delete can't clobber a concurrent edit landing in the same window (BUG-023).
+      const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
+      const els = live?.type === 'planning' ? live.elements : []
+      const el = els.find((x) => x.id === id)
+      // Bail when the element is locked OR already gone from live state (a concurrent
+      // erase/menu delete racing a blur-prune): removeElement always returns a fresh
+      // array, so committing a no-op delete would consume the checkpoint and push a
+      // phantom undo step (applyBoardPatch compares elements by reference).
+      if (!el || isLocked(el)) return
       beginChange()
-      commit(removeElement(elements, id))
+      commit((cur) => removeElement(cur, id))
     },
-    [beginChange, commit, elements]
+    [beginChange, commit, board.id]
   )
 
   // Checklist mutators commit via the live-read transform (not the render-time
@@ -240,15 +253,17 @@ export function PlanningBoard({
     },
     [beginChange, commit]
   )
+  // Live-read transforms (stable identity, BUG-023-safe) — same discipline as
+  // setNoteText/setTextText so the memo'd ChecklistCard isn't re-created on each keystroke.
   const setTitle = useCallback(
     (elId: string, title: string) =>
-      commit(patchElement<ChecklistElement>(elements, elId, (c) => ({ ...c, title }))),
-    [commit, elements]
+      commit((cur) => patchElement<ChecklistElement>(cur, elId, (c) => ({ ...c, title }))),
+    [commit]
   )
   const setItem = useCallback(
     (elId: string, itemId: string, label: string) =>
-      commit(setItemLabel(elements, elId, itemId, label)),
-    [commit, elements]
+      commit((cur) => setItemLabel(cur, elId, itemId, label)),
+    [commit]
   )
   const appendItem = useCallback(
     (elId: string) => {
@@ -380,6 +395,28 @@ export function PlanningBoard({
   // (dragPos -> null + committed y) re-fires measure with the ref already cleared.
   useLayoutEffect(() => void (dragPosRef.current = dragPos), [dragPos])
 
+  // Stable identity for the element-drag handler the cards hold. usePlanningPointer's
+  // startElementDrag closes over `elements`/`selectedIds`, so it gets a fresh identity on
+  // every edit; handing that straight to the React.memo'd cards would re-render ALL of
+  // them on each keystroke. The ref-latest wrapper is a constant function that always
+  // calls the freshest implementation at gesture time, so a card re-renders only when its
+  // OWN element object changes (patchElement keeps unchanged element refs).
+  const startElementDragRef = useRef(startElementDrag)
+  useEffect(() => {
+    startElementDragRef.current = startElementDrag
+  }, [startElementDrag])
+  const onDragStartStable = useCallback(
+    (e: Parameters<typeof startElementDrag>[0], id: string) => startElementDragRef.current(e, id),
+    []
+  )
+  // Stable wrapper for the free-text editing-state setter (was an inline arrow in the JSX,
+  // which handed FreeText a fresh prop identity each render and defeated its memo).
+  const onTextEditingChange = useCallback(
+    (id: string, editing: boolean) =>
+      setEditingTextId((cur) => (editing ? id : cur === id ? null : cur)),
+    []
+  )
+
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
     <PlanningToolbar
@@ -415,7 +452,12 @@ export function PlanningBoard({
       : pendingErase && pendingErase.size > 0
         ? elements.filter((el) => !pendingErase.has(el.id))
         : elements
-  const viewElements = [...baseView, ...ghostCopies]
+  // Keep the array reference stable when idle (no alt-drag ghosts): `baseView` is the
+  // store's own `elements` array when nothing is in flight, so returning it directly
+  // (instead of always spreading into a fresh array) avoids a per-render allocation; the
+  // per-element card props stay referentially stable regardless (patchElement keeps
+  // unchanged element refs), which is what lets the memo'd cards skip.
+  const viewElements = ghostCopies.length > 0 ? [...baseView, ...ghostCopies] : baseView
 
   const arrows = viewElements.filter((e): e is ArrowElement => e.kind === 'arrow')
   const strokes = viewElements.filter((e): e is StrokeElement => e.kind === 'stroke')
@@ -515,7 +557,7 @@ export function PlanningBoard({
             selectOnPress(id, additive)
             wellRef.current?.focus()
           }}
-          onDragStart={startElementDrag}
+          onDragStart={onDragStartStable}
           endpointDrag={endpointDrag}
           onEndpointDragStart={startEndpointDrag}
         />
@@ -528,7 +570,7 @@ export function PlanningBoard({
                 key={el.id}
                 note={el}
                 interactive={interactive}
-                onDragStart={startElementDrag}
+                onDragStart={onDragStartStable}
                 onChangeText={setNoteText}
                 onDelete={deleteEl}
                 onEditStart={beginChange}
@@ -545,16 +587,14 @@ export function PlanningBoard({
                 key={el.id}
                 element={el}
                 interactive={interactive}
-                onDragStart={startElementDrag}
+                onDragStart={onDragStartStable}
                 onChangeText={setTextText}
                 onDelete={deleteEl}
                 onEditStart={beginChange}
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
-                onEditingChange={(id, editing) =>
-                  setEditingTextId((cur) => (editing ? id : cur === id ? null : cur))
-                }
+                onEditingChange={onTextEditingChange}
               />
             )
           }
@@ -564,7 +604,7 @@ export function PlanningBoard({
                 key={el.id}
                 element={el}
                 interactive={interactive}
-                onDragStart={startElementDrag}
+                onDragStart={onDragStartStable}
                 onToggle={toggle}
                 onChangeTitle={setTitle}
                 onChangeItem={setItem}
@@ -584,7 +624,7 @@ export function PlanningBoard({
                 key={el.id}
                 image={el}
                 interactive={interactive}
-                onDragStart={startElementDrag}
+                onDragStart={onDragStartStable}
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
               />
