@@ -261,6 +261,14 @@ export function PlanningBoard({
       useCanvasStore.getState().setDiagramCache(board.id, id, assetId),
     [board.id]
   )
+  // Corner-handle resize — tracked w/h commit (one undo step per drag; the card arms the checkpoint
+  // on first move). Live-read commit → stable identity (BUG-023-safe). No svgCache clear: the SVG
+  // scales to the new box via object-fit, so the cache stays valid.
+  const resizeDiagram = useCallback(
+    (id: string, w: number, h: number) =>
+      commit((cur) => patchElement<DiagramElement>(cur, id, (d) => ({ ...d, w, h }))),
+    [commit]
+  )
 
   // Checklist mutators commit via the live-read transform (not the render-time
   // `elements` closure) so two rapid toggles/appends/removes — key-repeat, a fast
@@ -662,6 +670,7 @@ export function PlanningBoard({
                 onChangeSource={setDiagramSource}
                 onEditStart={beginChange}
                 onCache={onDiagramCache}
+                onResize={resizeDiagram}
               />
             )
           }
