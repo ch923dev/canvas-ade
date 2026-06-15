@@ -62,8 +62,11 @@ describe('BUG-026: touchRecent errors are swallowed — never abort an open or r
     recents026.touchRecent.mockImplementation(() => {
       throw new Error('EPERM: operation not permitted')
     })
-    // listRecents returns empty (no prior recents), as a resolved Promise (it's now async).
-    recents026.listRecents.mockResolvedValue([])
+    // listRecents returns '/proj' as a known recent, as a resolved Promise (it's now async). The
+    // entry both satisfies the BUG-026 scenario (a prior project) AND, post-BUG-006, marks '/proj'
+    // an APPROVED open/create target so these direct project:open/create('/proj') calls aren't
+    // rejected by the new approved-roots guard (these tests bypass the OS dialog that would approve it).
+    recents026.listRecents.mockResolvedValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
   })
 
   it('BUG-026 red→green: project:open resolves to ok:true even when touchRecent throws (EPERM)', async () => {

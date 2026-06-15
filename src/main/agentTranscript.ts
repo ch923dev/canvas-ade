@@ -1,6 +1,7 @@
 import { openSync, fstatSync, readSync, closeSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve, sep, dirname, join } from 'node:path'
+import { redactSecrets } from './summaryLoop'
 
 export interface Milestone {
   ts: number
@@ -43,7 +44,12 @@ export function extractMilestones(jsonl: string, opts: ExtractOpts = {}): Milest
     }
     const role = rec.message?.role
     if (role !== 'user' && role !== 'assistant') continue
-    const text = textFromContent(rec.message?.content).trim()
+    // BUG-011: redact secrets on the FULL turn text BEFORE the length cap. redactSecrets' patterns
+    // are length-gated (hex/base64 >= 40 chars; sk-/gh*/Bearer >= 16-20), so a secret straddling the
+    // `cap` offset would have only a sub-threshold prefix survive the slice and egress unredacted.
+    // Redacting first collapses the full-length match to the short [redacted] token before the cap.
+    // buildRecapInput still re-redacts (belt-and-suspenders) — this just closes the truncation gap.
+    const text = redactSecrets(textFromContent(rec.message?.content).trim())
     if (!text) continue // assistant tool-only turns have no text -> dropped
     const ts = Date.parse(String(rec.timestamp ?? '')) || 0
     out.push({ ts, role: role === 'user' ? 'user' : 'agent', text: text.slice(0, cap) })

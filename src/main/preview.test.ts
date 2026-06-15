@@ -7,7 +7,8 @@ import {
   registerPreviewNavGuards,
   registerLoadLatch,
   registerCrashReadyGate,
-  createOpenExternalLimiter
+  createOpenExternalLimiter,
+  clearLatchOnInPageRecovery
 } from './preview'
 
 // Bug #5: a dead/refused URL loads a Chromium error page whose did-finish-load must
@@ -258,6 +259,32 @@ describe('registerLoadLatch (failed-latch lifecycle)', () => {
     wc.emit('did-fail-load', {}, -102, 'ERR_FAILED', 'http://localhost:5173/sub', false) // subframe
     expect(latch.failed).toBe(false)
     expect(hooks.onFail).not.toHaveBeenCalled()
+  })
+})
+
+// BUG-004: a `did-navigate` with a >= 400 code latches `failed`; the ONLY clear used
+// to be registerLoadLatch's main-frame did-start-navigation. An in-page (client-side
+// route) nav re-emits did-navigate but did NOT clear the latch, so after a 4xx document
+// then a client-side route to a working view the board stayed stuck on `load-failed`.
+// clearLatchOnInPageRecovery clears it symmetrically and reports whether it recovered so
+// the in-page did-navigate can be flagged `recovered`.
+describe('clearLatchOnInPageRecovery (BUG-004 in-page route recovery)', () => {
+  it('clears a set failed latch and reports recovery (the stuck-on-load-failed path)', () => {
+    const latch = { failed: true } // a prior did-navigate(404) latched it
+    expect(clearLatchOnInPageRecovery(latch)).toBe(true)
+    expect(latch.failed).toBe(false)
+  })
+
+  it('leaves a clear latch untouched and reports no recovery (a normal in-page nav)', () => {
+    const latch = { failed: false }
+    expect(clearLatchOnInPageRecovery(latch)).toBe(false)
+    expect(latch.failed).toBe(false)
+  })
+
+  it('does not re-flag recovery on a second in-page nav (idempotent once cleared)', () => {
+    const latch = { failed: true }
+    expect(clearLatchOnInPageRecovery(latch)).toBe(true)
+    expect(clearLatchOnInPageRecovery(latch)).toBe(false)
   })
 })
 

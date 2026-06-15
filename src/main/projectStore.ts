@@ -22,19 +22,21 @@ const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
 
 /**
- * BUG-024: must mirror boardSchema.SCHEMA_VERSION (9). MAIN cannot import the renderer
- * module, so this constant is duplicated here. It is tested (see projectStore.test.ts)
+ * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (10). MAIN cannot import the
+ * renderer module in shipped code, so this constant is duplicated here. It is tested (see
+ * projectStore.test.ts, which cross-imports the renderer constant and asserts equality)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation.
  */
-const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 10
 
 /**
- * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same BUG-024 lock-step
- * rule: bumped here whenever the renderer constant bumps (breaking changes only).
+ * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
+ * here whenever the renderer constant bumps (breaking changes only). v10 is additive, so
+ * the compat floor stays at 9 — older v9+ apps can still open fresh v10 docs.
  */
-const MIN_READER_VERSION = 9
+export const MIN_READER_VERSION = 9
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
@@ -173,8 +175,9 @@ export async function createProject(
   // created via the one envelope-guarded + atomic path (the same guard project:save uses)
   // — a future change to the fresh-doc shape can't silently bypass it. There is no prior
   // file here (reuse-if-exists returned above), so the .bak rotation is a no-op.
-  // BUG-024: use SCHEMA_VERSION (9) so fresh docs match the current schema contract;
-  // include connectors:[] (added at v4→v5) so external tooling never sees a stale marker.
+  // BUG-024/BUG-013: use SCHEMA_VERSION (10) so fresh docs match the current schema
+  // contract; include connectors:[] (added at v4->v5) so external tooling never sees a
+  // stale marker.
   const fresh = {
     schemaVersion: SCHEMA_VERSION,
     minReaderVersion: MIN_READER_VERSION,

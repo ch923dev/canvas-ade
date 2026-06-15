@@ -261,6 +261,10 @@ export const rainyWindow: SceneDef = {
       if (!running) return
       if (lastDraw === 0 || now - lastDraw >= FRAME_MS) {
         lastDraw = now
+        // Self-correct on a dpr change (window moved across displays) — the
+        // ResizeObserver only fires on CSS-box changes, not dpr changes.
+        // ensureSize() early-returns when the buffer is unchanged.
+        ensureSize()
         paint(now / 1000)
       }
       raf = requestAnimationFrame(tick)

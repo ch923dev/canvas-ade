@@ -13,6 +13,7 @@ import {
   killTreeCommand,
   writeToPtyCore,
   getTerminalRuntimeCore,
+  getTerminalActivityStaleMsCore,
   isValidResize,
   clampSpawnDim,
   attachPortInput
@@ -743,6 +744,24 @@ describe('getTerminalRuntimeCore (T-F1 — runtime snapshot for the Context summ
 
   it('returns undefined for an absent id (non-terminal / closed / parked-not-live)', () => {
     expect(getTerminalRuntimeCore('ghost', new Map())).toBeUndefined()
+  })
+})
+
+describe('getTerminalActivityStaleMsCore (BUG-007 — output-silence dormancy for the MCP reaper)', () => {
+  it('returns ms since the last PTY output against the injected clock', () => {
+    const sessions = new Map<string, any>([['t', { lastActivityAt: 1_000 }]])
+    expect(getTerminalActivityStaleMsCore('t', sessions, 61_000)).toBe(60_000)
+  })
+
+  it('clamps to 0 for a future/equal lastActivityAt (never negative)', () => {
+    const sessions = new Map<string, any>([['t', { lastActivityAt: 5_000 }]])
+    expect(getTerminalActivityStaleMsCore('t', sessions, 5_000)).toBe(0)
+    expect(getTerminalActivityStaleMsCore('t', sessions, 4_000)).toBe(0) // clock skew → 0, not negative
+  })
+
+  it('returns undefined for a board with no LIVE session (non-terminal / closed / parked)', () => {
+    // undefined is the reaper's signal to fall back to the derived status bucket.
+    expect(getTerminalActivityStaleMsCore('ghost', new Map(), 1_000)).toBeUndefined()
   })
 })
 /* eslint-enable @typescript-eslint/no-explicit-any */

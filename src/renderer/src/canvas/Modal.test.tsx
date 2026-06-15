@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { useRef, type ReactElement } from 'react'
 import { Modal } from './Modal'
+import { usePreviewStore } from '../store/previewStore'
 
 afterEach(cleanup)
 
@@ -179,5 +180,23 @@ describe('Modal (shared primitive, design-audit D1-B)', () => {
     realLast.focus()
     fireEvent.keyDown(realLast, { key: 'Tab' })
     expect(document.activeElement).toBe(screen.getByText('real-first'))
+  })
+
+  it('registers previewStore.setMenuOpen on mount and clears it on unmount (BUG-003)', () => {
+    // BUG-003: a live native WebContentsView paints above all HTML and occludes a centered
+    // dialog + its scrim. The preview layer detaches live views to their HTML snapshot while
+    // previewStore.menuOpen is set, so the shared Modal primitive must drive that flag for the
+    // whole open lifetime. Drive the REAL store (no mock) so the real detach signal is exercised.
+    expect(usePreviewStore.getState().menuOpen).toBe(false)
+    const { unmount } = render(
+      <Modal label="T" onClose={noop} zIndex={1}>
+        <button>b</button>
+      </Modal>
+    )
+    expect(usePreviewStore.getState().menuOpen).toBe(true)
+    expect(usePreviewStore.getState().openMenus.size).toBe(1)
+    unmount()
+    expect(usePreviewStore.getState().menuOpen).toBe(false)
+    expect(usePreviewStore.getState().openMenus.size).toBe(0)
   })
 })

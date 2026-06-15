@@ -11,7 +11,15 @@ type PatchFn = (id: string, patch: Partial<PreviewRuntime>) => void
 // handler reaches it via a widened-string compare — so the test emits it through a loose type.
 type PreviewEvent =
   | { id: string; type: 'did-finish-load'; url: string }
-  | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
+  | {
+      id: string
+      type: 'did-navigate'
+      url: string
+      canGoBack: boolean
+      canGoForward: boolean
+      // BUG-004: set by an in-page route that committed after a prior failure.
+      recovered?: boolean
+    }
   | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
   | { id: string; type: 'did-start-navigation' }
   | { id: string; type: 'escape' }
@@ -253,6 +261,143 @@ describe('usePreviewEvents', () => {
         error: 'ERR_CONNECTION_REFUSED'
       })
       expect(patchRuntime).not.toHaveBeenCalled()
+    })
+  })
+
+  // BUG-004: a >= 400 document (did-navigate(404) then did-fail-load) latches the board on
+  // `load-failed`; a client-side route to a working in-app view fires only
+  // did-navigate-in-page, which used to re-emit did-navigate WITHOUT lifting the latch, so
+  // the board stayed stuck on `load-failed` (live content hidden behind the error overlay)
+  // until a full main-frame reload. Main now flags the recovery did-navigate `recovered`,
+  // and this handler must lift load-failed back to `connected`.
+  describe('did-navigate recovery (BUG-004 in-page route after a failure)', () => {
+    it('lifts load-failed back to connected on a recovered did-navigate', () => {
+      recs.current.set('b1', makeRec(true))
+      renderEvents()
+      // The 4xx document: main emits a terminal did-fail-load → board is load-failed.
+      emit({
+        id: 'b1',
+        type: 'did-fail-load',
+        url: 'http://localhost:3000/missing',
+        errorCode: 404,
+        errorDescription: 'HTTP 404'
+      })
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        status: 'load-failed',
+        error: 'HTTP 404'
+      })
+      // Reflect that resolved status in the store the recovery gate reads (the live app's
+      // patchRuntimeIfPresent does this; the spy here does not mutate the store).
+      seedStatus('b1', 'load-failed')
+      patchRuntimeIfPresent.mockClear()
+      // The client-side route to a working view: an in-page nav main flags `recovered`.
+      emit({
+        id: 'b1',
+        type: 'did-navigate',
+        url: 'http://localhost:3000/dashboard',
+        canGoBack: true,
+        canGoForward: false,
+        recovered: true
+      })
+      // The board recovers: status moves out of load-failed back to connected.
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        status: 'connected',
+        liveUrl: 'http://localhost:3000/dashboard',
+        canGoBack: true,
+        canGoForward: false,
+        error: null
+      })
+      expect(patchRuntime).not.toHaveBeenCalled()
+    })
+
+    it('also recovers a crashed board on a recovered did-navigate', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'crashed')
+      renderEvents()
+      emit({
+        id: 'b1',
+        type: 'did-navigate',
+        url: 'http://localhost:3000/dashboard',
+        canGoBack: false,
+        canGoForward: false,
+        recovered: true
+      })
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        status: 'connected',
+        liveUrl: 'http://localhost:3000/dashboard',
+        canGoBack: false,
+        canGoForward: false,
+        error: null
+      })
+    })
+
+    it('does NOT promote an evicted board (no live rec) even on a recovered did-navigate', () => {
+      // Bug #18 discipline: a recovered flag must not flip a board with no live native view
+      // to a green connected over a dead/detached snapshot.
+      recs.current.set('b1', makeRec(false))
+      seedStatus('b1', 'load-failed')
+      renderEvents()
+      emit({
+        id: 'b1',
+        type: 'did-navigate',
+        url: 'http://localhost:3000/dashboard',
+        canGoBack: false,
+        canGoForward: false,
+        recovered: true
+      })
+      // Only the usual present-only liveUrl/back-forward patch fires — status stays.
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        liveUrl: 'http://localhost:3000/dashboard',
+        canGoBack: false,
+        canGoForward: false
+      })
+      expect(patchRuntimeIfPresent).not.toHaveBeenCalledWith(
+        'b1',
+        expect.objectContaining({ status: 'connected' })
+      )
+    })
+
+    it('a recovered did-navigate does NOT touch status when the board is not failed/crashed', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'connected')
+      renderEvents()
+      emit({
+        id: 'b1',
+        type: 'did-navigate',
+        url: 'http://localhost:3000/dashboard',
+        canGoBack: true,
+        canGoForward: false,
+        recovered: true
+      })
+      // No status change — only the usual liveUrl + back/forward patch.
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        liveUrl: 'http://localhost:3000/dashboard',
+        canGoBack: true,
+        canGoForward: false
+      })
+    })
+
+    it('a plain (non-recovered) did-navigate never lifts a load-failed latch', () => {
+      recs.current.set('b1', makeRec(true))
+      seedStatus('b1', 'load-failed')
+      renderEvents()
+      emit({
+        id: 'b1',
+        type: 'did-navigate',
+        url: 'http://localhost:3000/still-broken',
+        canGoBack: false,
+        canGoForward: false
+      })
+      // Only the present-only liveUrl/back-forward patch fires — status stays load-failed.
+      expect(patchRuntimeIfPresent).toHaveBeenCalledWith('b1', {
+        liveUrl: 'http://localhost:3000/still-broken',
+        canGoBack: false,
+        canGoForward: false
+      })
+      expect(patchRuntimeIfPresent).not.toHaveBeenCalledWith(
+        'b1',
+        expect.objectContaining({ status: 'connected' })
+      )
     })
   })
 

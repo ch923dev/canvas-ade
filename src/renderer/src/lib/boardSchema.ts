@@ -22,6 +22,7 @@ import {
   type TextColorToken
 } from '../canvas/boards/planning/textStyle'
 import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/terminalFont'
+import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 
 /**
  * Bump on any breaking change to the persisted shape and add a migration below.
@@ -42,7 +43,11 @@ import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/
  *   older reader opens v10 docs; the two fields ride through `structuredClone` and survive a save).
  *   Do not silently reuse a version for a new shape.
  */
-export const SCHEMA_VERSION = 10
+// SCHEMA_VERSION + MIN_READER_VERSION are defined in ./boardSchemaVersion (a dependency-free module)
+// so a main-side lock-step test can import the authoritative numbers without dragging in this file's
+// DOM-bound deps (terminalFont -> window) under the node tsconfig (BUG-014). Re-exported here so every
+// existing `import { SCHEMA_VERSION } from '.../boardSchema'` consumer is unchanged.
+export { SCHEMA_VERSION, MIN_READER_VERSION }
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -60,7 +65,7 @@ export const SCHEMA_VERSION = 10
  * so v9 is the breaking baseline. Pre-9 apps keep their old strict refuse-on-newer
  * behavior; every app from 9 on can read all future additive docs.
  */
-export const MIN_READER_VERSION = 9
+// MIN_READER_VERSION is imported + re-exported above from ./boardSchemaVersion (see BUG-013/014).
 
 export type BoardType = 'terminal' | 'browser' | 'planning'
 

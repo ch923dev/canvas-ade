@@ -14,6 +14,17 @@ export const MCP_SPAWN_CAP = 4
 export const MCP_IDLE_TTL_MS = 5 * 60 * 1000
 
 /**
+ * BUG-007: how long a live terminal's PTY output must be SILENT before the idle-reaper
+ * counts it as dormant. A live agent shell's coarse status pill stays 'running' for its
+ * whole lifetime (no per-task running->idle transition), so the reaper measures dormancy
+ * by output silence instead. Mirrors `summaryLoop`'s IDLE_AFTER_MS (the same "no activity
+ * for this long reads as idle" threshold the recap/summary paths use). Once a board is
+ * counted idle, the existing idleSince clock still requires a full MCP_IDLE_TTL_MS of
+ * continuous dormancy before it is reaped.
+ */
+export const MCP_IDLE_ACTIVITY_MS = 60_000
+
+/**
  * Grace after a spawn during which a tracked board is NOT reconciled away even if it
  * is absent from the mirror — the renderer publishes the new board asynchronously
  * (~150ms debounce), so a just-spawned id legitimately isn't in `listBoards()` yet.
@@ -46,6 +57,12 @@ export interface OrchestratorOpts {
   cap?: number
   idleTtlMs?: number
   spawnGraceMs?: number
+  /**
+   * BUG-007: output-silence threshold (ms) above which a live terminal counts as dormant for the
+   * idle-reaper. Defaults to {@link MCP_IDLE_ACTIVITY_MS}; injected by tests to drive the path
+   * deterministically.
+   */
+  idleActivityMs?: number
   /** 🔒 Single-use-nonce authority for dispatch (T4.3); a fresh guard per orchestrator by default. */
   guard?: DispatchGuard
   /** Backstop timer seam for the handoff await-idle deadline (injected by tests to avoid real timers). */
@@ -87,6 +104,14 @@ export interface BoardRegistry {
    */
   listConnectors(): ConnectorMirrorEntry[]
   listSessions(): Array<{ id: string; status: string }>
+  /**
+   * BUG-007: ms since terminal board `id` last produced PTY output (its dormancy measure for the
+   * idle-reaper). MAIN injects `pty.ts`'s `getTerminalActivityStaleMs`; returns undefined for any id
+   * without a LIVE terminal session (non-terminal / closed / parked), in which case the reaper falls
+   * back to its derived status bucket. Read-only; control-plane only. Optional so a registry that
+   * does not wire it (older tests / non-terminal-only stubs) keeps the status-bucket behaviour.
+   */
+  boardActivityStaleMs?(id: string): number | undefined
   /**
    * Subscribe to per-board coarse status changes (M5 event-driven attention). MAIN injects
    * `boardRegistry.ts`'s `subscribeBoardStatus`. Emits `{ id, status }` on each change

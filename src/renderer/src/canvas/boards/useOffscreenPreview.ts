@@ -48,11 +48,25 @@ export function useOffscreenPreview(
         if (cur !== 'load-failed')
           ps.patch(boardId, { status: 'connected', liveUrl: ev.url, error: null })
       } else if (ev.type === 'did-navigate') {
-        ps.patchIfPresent(boardId, {
-          liveUrl: ev.url,
-          canGoBack: ev.canGoBack,
-          canGoForward: ev.canGoForward
-        })
+        // BUG-004: an in-page route committed after a prior failure carries `recovered`
+        // (main cleared its `failed` latch); lift a stale load-failed/crashed back to
+        // connected here too, since an in-page nav fires no did-finish-load to promote it.
+        const recovered = (ev as { recovered?: boolean }).recovered === true
+        if (recovered && (cur === 'load-failed' || cur === 'crashed')) {
+          ps.patchIfPresent(boardId, {
+            status: 'connected',
+            liveUrl: ev.url,
+            canGoBack: ev.canGoBack,
+            canGoForward: ev.canGoForward,
+            error: null
+          })
+        } else {
+          ps.patchIfPresent(boardId, {
+            liveUrl: ev.url,
+            canGoBack: ev.canGoBack,
+            canGoForward: ev.canGoForward
+          })
+        }
       } else if (ev.type === 'did-fail-load') {
         ps.patchIfPresent(boardId, { status: 'load-failed', error: ev.errorDescription })
         // No more frames will arrive; drop the stale bitmap so the "Couldn't load + Reload"

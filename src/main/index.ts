@@ -13,6 +13,7 @@ import {
   drainPty,
   writeToPty,
   getTerminalRuntime,
+  getTerminalActivityStaleMs,
   setRecapEnvProvider
 } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
@@ -125,6 +126,12 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     disposeAllPreviews()
     disposeAllOsr() // SPIKE: close offscreen preview renderers too
+    // BUG-001: the window is now DESTROYED but the module ref stayed non-null, so every
+    // consumer that does `mainWindow?.webContents` (e.g. the recap-map watcher onChange)
+    // would hit the .webContents getter — which THROWS on a destroyed window before any
+    // `isDestroyed()` guard can run. Null the ref so the destroyed-but-non-null steady
+    // state disappears for ALL consumers (the canonical `getWin()` returns null instead).
+    mainWindow = null
   })
 
   // External links open in the OS browser, never in-app. The scheme is allowlisted
@@ -289,6 +296,9 @@ app.whenReady().then(async () => {
     // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
     listConnectors,
     listSessions: listPtySessions,
+    // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
+    // output silence instead of the never-flipping 'running' status bucket of a live agent shell.
+    boardActivityStaleMs: getTerminalActivityStaleMs,
     subscribeStatus: subscribeBoardStatus,
     readOutput: readPtyOutput,
     readResult: readBoardResult,
@@ -538,8 +548,14 @@ app.whenReady().then(async () => {
     for (const [boardId, entry] of m.entries()) {
       recapWatcher?.track(boardId, entry.transcriptPath)
     }
-    const wc = mainWindow?.webContents
-    if (wc && !wc.isDestroyed()) wc.send('recap:learned', patches)
+    // BUG-001: this onChange runs inside agentRecapMap's bare debounce setTimeout, so a
+    // throw escapes to uncaughtException -> crashShutdown(1). Optional chaining does NOT
+    // stop the .webContents getter from THROWING on a destroyed-but-non-null window, so
+    // guard isDestroyed() BEFORE dereferencing .webContents (mirrors flushRenderer).
+    const win = mainWindow
+    if (!win || win.isDestroyed()) return
+    const wc = win.webContents
+    if (!wc.isDestroyed()) wc.send('recap:learned', patches)
   })
 
   // Manual T-B1 check (dev-only, env-gated): `CANVAS_LLM_PING=hello pnpm start` calls

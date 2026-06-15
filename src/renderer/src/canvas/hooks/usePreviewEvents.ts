@@ -100,6 +100,30 @@ export function usePreviewEvents(params: {
         if (cur === 'load-failed') return
         patchRuntime(ev.id, { status: 'connected', liveUrl: ev.url, error: null })
       } else if (ev.type === 'did-navigate') {
+        // BUG-004: an in-page (client-side route) nav that committed a non-error in-app
+        // route AFTER a prior failure carries `recovered` (main reset its own `failed`
+        // latch + re-showed the view). An in-page route fires no did-finish-load to promote
+        // it, so without lifting the latch here the board stays stuck on `load-failed` over
+        // live content until a full main-frame reload. The flag is read off the event (the
+        // preload union may lag the optional field); a genuine 4xx main-frame failure (which
+        // re-emits a plain did-navigate) never sets it.
+        const recovered = (ev as { recovered?: boolean }).recovered === true
+        // Gate the promotion on a live native view (Bug #18 discipline, as did-finish-load
+        // does): never flip an evicted board to a green `connected` over a dead view.
+        const cur =
+          recovered && recs.current.get(ev.id)?.exists
+            ? usePreviewStore.getState().byId[ev.id]?.status
+            : undefined
+        if (cur === 'load-failed' || cur === 'crashed') {
+          patchRuntimeIfPresent(ev.id, {
+            status: 'connected',
+            liveUrl: ev.url,
+            canGoBack: ev.canGoBack,
+            canGoForward: ev.canGoForward,
+            error: null
+          })
+          return
+        }
         // Bug #32: patch ONLY if the entry still exists — an in-flight nav event that
         // arrives after the board was deleted must not resurrect a cleared orphan.
         patchRuntimeIfPresent(ev.id, {

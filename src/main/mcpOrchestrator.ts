@@ -14,6 +14,7 @@ import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import {
   deriveStatus,
   makeSessionLookup,
+  MCP_IDLE_ACTIVITY_MS,
   MCP_IDLE_TTL_MS,
   MCP_SPAWN_CAP,
   MCP_SPAWN_GRACE_MS,
@@ -35,6 +36,18 @@ export type {
 } from './mcpRegistry'
 
 /**
+ * 🔒 BUG-009: belt-and-suspenders caps for a worker's self-reported write_result fields. The
+ * external @expanse-ade/mcp tool schema SHOULD .max() these (a SEPARATE-REPO follow-up), but
+ * write_result is an untrusted sink (a worker reports its own result), so MAIN clamps here too —
+ * mirroring the sibling sinks (boardRegistry MAX_FIELD_LEN=256, auditLog MAX_LONG=100_000). An
+ * unbounded summary/refs would otherwise grow the in-memory results store + the
+ * canvas://board/{id}/result payload without limit.
+ */
+const WRITE_RESULT_MAX_SUMMARY = 100_000
+const WRITE_RESULT_MAX_REFS = 256
+const WRITE_RESULT_MAX_REF_LEN = 256
+
+/**
  * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
  * terminal boards. Pure (type-only package imports → contract test loads no
  * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated.
@@ -47,6 +60,8 @@ export function buildOrchestrator(
   const cap = opts.cap ?? MCP_SPAWN_CAP
   const idleTtlMs = opts.idleTtlMs ?? MCP_IDLE_TTL_MS
   const spawnGraceMs = opts.spawnGraceMs ?? MCP_SPAWN_GRACE_MS
+  // BUG-007: output-silence dormancy threshold for the idle-reaper (see MCP_IDLE_ACTIVITY_MS).
+  const idleActivityMs = opts.idleActivityMs ?? MCP_IDLE_ACTIVITY_MS
   // 🔒 One single-use-nonce authority per orchestrator (T4.3 dispatch).
   const guard = opts.guard ?? createDispatchGuard()
   const handoffTimeoutMs = opts.handoffTimeoutMs ?? MCP_IDLE_TTL_MS
@@ -73,11 +88,49 @@ export function buildOrchestrator(
   const sessionLookup = (): ((id: string) => string | undefined) =>
     makeSessionLookup(() => registry.listSessions())
 
+  // BUG-002: a live terminal's derived status is permanently 'running' (there is no
+  // per-task running->idle transition on a long-lived agent shell), so the status-stream
+  // settle in awaitHandoffSettled never fires and every handoff rode the backstop to
+  // 'timed_out'. A worker reporting its OWN result via write_result IS the real task-done
+  // marker — so we settle the handoff when a result lands for the target board too. These
+  // per-board listeners are fired by writeResult after registry.recordResult lands.
+  const resultSettleListeners = new Map<string, Set<() => void>>()
+  const onResultSettled = (boardId: string, fn: () => void): (() => void) => {
+    let set = resultSettleListeners.get(boardId)
+    if (!set) {
+      set = new Set()
+      resultSettleListeners.set(boardId, set)
+    }
+    set.add(fn)
+    return () => {
+      const s = resultSettleListeners.get(boardId)
+      if (!s) return
+      s.delete(fn)
+      if (s.size === 0) resultSettleListeners.delete(boardId)
+    }
+  }
+  const fireResultSettled = (boardId: string): void => {
+    const set = resultSettleListeners.get(boardId)
+    if (!set) return
+    // Copy before firing: a listener's finish() unsubscribes (mutating the set) mid-iteration.
+    for (const fn of [...set]) {
+      try {
+        fn()
+      } catch {
+        // 🔒 Isolate a throwing listener so one bad settle can't break the fan-out.
+      }
+    }
+  }
+
   /**
    * Await the dispatched board leaving `running`, event-driven off the status stream (M5 — replaces
    * the old busy-poll). Resolves 'idle' when it settles, 'closed' when it leaves the canvas, or
    * 'timed_out' at the backstop deadline. Re-resolves the LIVE derived status on each wake so a stale
    * pre-write 'running' snapshot can't stall it (BUG-008 discipline).
+   *
+   * BUG-002: ALSO settles 'idle' when a worker records its own result (write_result) for this board,
+   * since a live agent shell never flips its derived status off 'running' — the recorded result is
+   * the real task-done signal, so the handoff resolves instead of always riding the backstop.
    */
   const awaitHandoffSettled = (boardId: string): Promise<'idle' | 'closed' | 'timed_out'> => {
     const check = (): 'idle' | 'closed' | null => {
@@ -90,11 +143,13 @@ export function buildOrchestrator(
     return new Promise<'idle' | 'closed' | 'timed_out'>((resolve) => {
       let settled = false
       let unsub = (): void => {}
+      let unsubResult = (): void => {}
       let cancelBackstop = (): void => {}
       const finish = (exit: 'idle' | 'closed' | 'timed_out'): void => {
         if (settled) return
         settled = true
         unsub()
+        unsubResult()
         cancelBackstop()
         resolve(exit)
       }
@@ -103,6 +158,13 @@ export function buildOrchestrator(
         const c = check()
         if (c) finish(c)
       })
+      // BUG-002: a worker writing its OWN result (write_result) is the task-done marker even
+      // while its shell stays derived-'running' (a live agent shell never flips off 'running').
+      // A result LANDING for this board during the wait settles the handoff as 'idle' — UNLESS
+      // the board has meanwhile left the canvas, in which case `check()` reports 'closed'.
+      // Fired by writeResult AFTER registry.recordResult lands (a fresh task-done signal, not a
+      // pre-existing fixture result — so it can't settle a handoff that never saw a new write).
+      unsubResult = onResultSettled(boardId, () => finish(check() ?? 'idle'))
       // One-shot backstop (NOT a poll): a single deadline timer, cancelled on settle.
       cancelBackstop = startBackstop(handoffTimeoutMs, () => finish('timed_out'))
     })
@@ -231,7 +293,22 @@ export function buildOrchestrator(
     // await-idle follow-up the caller may run — so a crash mid-wait still leaves a durable
     // trail that the command executed in the target shell (the audit log's BEFORE/AFTER
     // contract).
-    await audit('dispatched', { detail: seqDetail })
+    //
+    // BUG-008: the write has ALREADY committed to the PTY at this point, so a POST-write
+    // audit append failure must NOT convert the realised dispatch into a thrown error — that
+    // would reject a successful dispatch and a retry would re-run the command in the target
+    // shell. The pre-write audit branches (rejected/denied/failed) DO re-throw (no side
+    // effect occurred there); here we swallow the rejection and log a forensic-gap warning
+    // instead, then resolve with the realised result.
+    try {
+      await audit('dispatched', { detail: seqDetail })
+    } catch (err) {
+      console.error(
+        `[mcp-audit] ${type}: dispatched audit append failed AFTER the PTY write committed; ` +
+          'forensic gap (command already ran, not re-thrown to avoid a re-run)',
+        err
+      )
+    }
     return { safeText, nonce, seq }
   }
 
@@ -262,6 +339,7 @@ export function buildOrchestrator(
     cap,
     idleTtlMs,
     spawnGraceMs,
+    idleActivityMs,
     listBoards: listBoardSummaries
   })
 
@@ -462,15 +540,28 @@ export function buildOrchestrator(
       // mid-dispatch (`closed`) or never left `running` before the deadline (`timed_out`),
       // so the MCP client/audit trail can tell them apart instead of always seeing
       // `completed` over a false-empty result (BUG-008).
-      await writeAudit({
-        type: 'handoff_prompt',
-        targetId: boardId,
-        prompt: safeText,
-        nonce,
-        status: exit === 'idle' ? 'completed' : exit,
-        outputs: JSON.stringify(result),
-        detail: `seq=${seq}`
-      })
+      //
+      // BUG-008: this audit lands AFTER the PTY write has committed + the board has run, so
+      // an append failure here must not reject the realised handoff (a thrown error would
+      // make a caller retry a command that already executed). Swallow + log a forensic-gap
+      // warning, then still return the realised result.
+      try {
+        await writeAudit({
+          type: 'handoff_prompt',
+          targetId: boardId,
+          prompt: safeText,
+          nonce,
+          status: exit === 'idle' ? 'completed' : exit,
+          outputs: JSON.stringify(result),
+          detail: `seq=${seq}`
+        })
+      } catch (err) {
+        console.error(
+          '[mcp-audit] handoff_prompt: outcome audit append failed AFTER the PTY write ' +
+            'committed; forensic gap (handoff already ran, not re-thrown to avoid a re-run)',
+          err
+        )
+      }
       return result
     },
     async dispatchPrompt(boardId: BoardId, text: string): Promise<void> {
@@ -523,9 +614,20 @@ export function buildOrchestrator(
       // host stamps `present: true` + `at`; only supplied fields are carried.
       const recorded: BoardResult = { present: true, at: new Date(now()).toISOString() }
       if (result.status !== undefined) recorded.status = result.status
-      if (result.summary !== undefined) recorded.summary = result.summary
-      if (result.refs !== undefined) recorded.refs = result.refs
+      // 🔒 BUG-009: clamp the untrusted self-reported fields (the external schema cap is a
+      // separate-repo follow-up). Summary is sliced to a max; refs is bounded in BOTH array
+      // length AND per-element length so a worker can't grow the results store unbounded.
+      if (result.summary !== undefined)
+        recorded.summary = result.summary.slice(0, WRITE_RESULT_MAX_SUMMARY)
+      if (result.refs !== undefined)
+        recorded.refs = result.refs
+          .slice(0, WRITE_RESULT_MAX_REFS)
+          .map((ref) => ref.slice(0, WRITE_RESULT_MAX_REF_LEN))
       registry.recordResult(boardId, recorded)
+      // BUG-002: a worker reporting its own result IS the task-done marker — wake any in-flight
+      // handoff await-idle parked on this board (a live agent shell never flips off 'running',
+      // so without this the dispatching agent's handoff would always ride the backstop).
+      fireResultSettled(boardId)
     },
     async relayPrompt(sourceId: BoardId, targetId: BoardId, text: string): Promise<void> {
       // 🔒 agent-to-agent relay (T4.6, the M4 gate): a dispatch A→B is authorized by an

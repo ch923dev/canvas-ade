@@ -127,6 +127,27 @@ function setOsrFocus(e: OsrEntry, focused: boolean): void {
   }
 }
 
+/** Initial-load gate, shared by ensureOsr and its unit test. Scheme allowlist at the trust
+ *  boundary (Bug #32): only http(s) loads. A rejected (non-http(s)) scheme must NOT silently
+ *  skip the load — that left useOffscreenPreview stuck on 'connecting' forever and leaked an
+ *  idle offscreen renderer (BUG-005). Mirror the native path (preview.ts preview:open): latch
+ *  `failed` and emit a terminal synthetic did-fail-load (errorCode -1, 'blocked scheme') so the
+ *  renderer transitions to 'load-failed'. */
+export function applyOsrInitialLoad(
+  id: string,
+  url: string,
+  e: { failed: boolean },
+  load: (url: string) => void,
+  emit: (ev: OsrLifecycleEvent) => void
+): void {
+  if (isAllowedPreviewUrl(url)) {
+    load(url)
+  } else {
+    e.failed = true
+    emit({ id, type: 'did-fail-load', url, errorCode: -1, errorDescription: 'blocked scheme' })
+  }
+}
+
 function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   owner = win
   const existing = osr.get(id)
@@ -263,9 +284,13 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       canGoForward: wc.navigationHistory.canGoForward()
     })
   })
-  if (isAllowedPreviewUrl(url)) {
-    void wc.loadURL(url)
-  }
+  applyOsrInitialLoad(
+    id,
+    url,
+    e,
+    (u) => void wc.loadURL(u),
+    (ev) => emitEvent(ev)
+  )
   return e
 }
 

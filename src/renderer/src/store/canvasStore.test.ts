@@ -3,11 +3,13 @@ import {
   useCanvasStore,
   isIdleOnMount,
   clearIdleOnMount,
+  idleFlagRegistrySize,
   patchBoardUntracked,
   patchBoardMeta,
   acquireProjectSwitchLock,
   releaseProjectSwitchLock
 } from './canvasStore'
+import { HISTORY_LIMIT } from './history'
 import {
   SCHEMA_VERSION,
   toObject,
@@ -288,6 +290,53 @@ describe('idle-on-mount registry (M-1: restored terminals stay idle)', () => {
     get().updateBoard(src, { x: 500 }) // real edit → future cleared, clone unreachable
     get().undo() // prune runs: parked id no longer reachable from any future snapshot
     expect(isIdleOnMount(cloneId)).toBe(false)
+  })
+
+  // BUG-012: a DIRECT removeBoard of an idle terminal (never undone) must NOT leak its UUID
+  // for the session. The flag is PARKED (so an immediate undo can still restore it idle —
+  // not eagerly deleted, which would resurrect a started agent), and reclaimed once the last
+  // history snapshot holding the board is evicted by the 50-entry rail. Drives the REAL path:
+  // exhaust the rail with genuine tracked adds, then a GC-triggering history op reclaims it.
+  it('directly removing a duplicated terminal, then evicting the rail, reclaims its idle UUID (BUG-012)', () => {
+    // The idle registries are module-scoped Sets that persist across tests; loading an empty
+    // doc clears BOTH (markRestoredIdle) so the baseline is a deterministic zero, not stale
+    // parked residue from an earlier test.
+    get().loadObject(toObject([], null))
+    expect(idleFlagRegistrySize()).toBe(0)
+    const src = get().addBoard('terminal', { x: 0, y: 0 })
+    const cloneId = get().duplicateBoard(src)! // clone flagged idle-on-mount (M-1)
+    expect(isIdleOnMount(cloneId)).toBe(true)
+    // Direct delete, no undo. The flag must leave the live registry (so it can't strand
+    // there) but be retained (parked) while the pre-remove snapshot still holds the clone.
+    get().removeBoard(cloneId)
+    expect(isIdleOnMount(cloneId)).toBe(false)
+    // Push more than HISTORY_LIMIT genuine tracked steps so the pre-remove snapshot (the
+    // only rail entry still holding the clone) is evicted from `past`. Each add clears the
+    // (already empty) future, so the clone is never reachable via a future snapshot either.
+    for (let i = 0; i < HISTORY_LIMIT + 1; i++) get().addBoard('planning', { x: i * 50, y: 0 })
+    // A history op now runs the GC against the settled rails (clone unreachable everywhere) —
+    // removing one filler board is the real, user-reachable trigger.
+    get().removeBoard(get().boards[get().boards.length - 1].id)
+    // The clone's UUID is reclaimed: the registry is empty again — `src` and the surviving
+    // fillers are fresh this-session adds (never idle), and the deleted clone leaves no
+    // residue. Without the fix it strands one dead UUID for the session (the BUG-012 leak).
+    expect(idleFlagRegistrySize()).toBe(0)
+  })
+
+  // BUG-012: an undo IMMEDIATELY after a direct delete must still restore the terminal idle
+  // (the flag was parked, not dropped) — otherwise the resurrected board would auto-spawn its
+  // agent (M-1), the exact respawn class the park-don't-delete discipline exists to prevent.
+  it('undo immediately after a direct delete restores the terminal idle-on-mount (BUG-012)', () => {
+    useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })
+    const src = get().addBoard('terminal', { x: 0, y: 0 })
+    const cloneId = get().duplicateBoard(src)!
+    expect(isIdleOnMount(cloneId)).toBe(true)
+    get().removeBoard(cloneId) // direct delete → flag parked
+    expect(get().boards.some((b) => b.id === cloneId)).toBe(false)
+    expect(isIdleOnMount(cloneId)).toBe(false)
+    get().undo() // resurrects the clone — it MUST come back idle, not auto-spawning
+    expect(get().boards.some((b) => b.id === cloneId)).toBe(true)
+    expect(isIdleOnMount(cloneId)).toBe(true)
   })
 })
 

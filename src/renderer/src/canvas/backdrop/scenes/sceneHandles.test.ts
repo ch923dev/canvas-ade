@@ -176,5 +176,26 @@ for (const def of listScenes()) {
       expect(() => h.renderStill()).not.toThrow()
       expect(canvas.width).toBe(640)
     })
+
+    it('a dpr change mid-loop (no CSS resize) re-sizes the buffer on the next tick (BUG-016)', () => {
+      // Window moved across displays of different dpr: devicePixelRatio changes
+      // but the CSS box does not, so the ResizeObserver never fires. The running
+      // tick() must self-correct the backbuffer or it renders blurry at the stale
+      // resolution until an unrelated resize.
+      Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
+      const canvas = makeCanvas(800, 600)
+      const h = handle(def, canvas, false)
+      h.start()
+      pump(16) // first tick — sizes the buffer at dpr 1
+      expect(canvas.width).toBe(800)
+      expect(canvas.height).toBe(600)
+      // dpr changes WITHOUT a ResizeObserver callback (roObserved stays as-is).
+      Object.defineProperty(window, 'devicePixelRatio', { value: 1.5, configurable: true })
+      pump(60) // 44ms later — admitted by the 33ms gate
+      expect(canvas.width).toBe(1200) // 800 * 1.5
+      expect(canvas.height).toBe(900) // 600 * 1.5
+      h.stop()
+      Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
+    })
   })
 }

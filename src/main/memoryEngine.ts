@@ -15,10 +15,11 @@
  * {label,done}, note text). Geometry/selection/canvas pan/zoom are excluded so a pure
  * move/resize/pan/select yields an identical fingerprint. browser previewSourceId is also
  * excluded — it never reaches the summary input, so it would churn spend without changing output.
- * The board TITLE is INCLUDED for terminal/browser because summaryLoop.boardContent opens the LLM
- * prompt with it (`Terminal board "${title}".`): a title-only rename changes the model input, so the
- * fingerprint must change too or the cached prose stays stale naming the old title (BUG-018). The
- * planning board-level title is left out (checklist/note content dominates its summary input).
+ * The board TITLE is EXCLUDED for terminal/browser to stay in lockstep with summaryLoop.boardContent,
+ * which emits a title-less constant ('Terminal board.' / 'Browser preview board.'): a title-only
+ * rename produces byte-identical summary input, so fingerprinting the title would only arm an intent
+ * and burn a budgeted runSummarize for identical output (BUG-010). The planning board-level title is
+ * likewise left out (checklist/note content dominates its summary input).
  *
  * 🔒 Security: generated/observed memory is untrusted passive context. The detector only
  * READS the already-trusted persisted doc and EMITS an id; it never triggers an action
@@ -54,11 +55,12 @@ export function boardFingerprint(board: unknown): string {
   const b = (board ?? {}) as RawBoard
   switch (b.type) {
     case 'terminal':
+      // title is EXCLUDED: summaryLoop.boardContent emits a title-less constant ('Terminal board.'),
+      // so a title-only rename yields identical summary input — fingerprinting it would arm an intent
+      // and burn a budgeted summarize for byte-identical output (BUG-010). Keep in lockstep with
+      // summaryLoop.boardContent.
       return JSON.stringify({
         t: 'terminal',
-        // title IS the opening line of summaryLoop.boardContent's LLM prompt → a rename
-        // changes the summary input, so it must change the fingerprint too (BUG-018).
-        title: str(b.title),
         launchCommand: str(b.launchCommand),
         cwd: str(b.cwd),
         port: numOrNull(b.port)
@@ -70,8 +72,9 @@ export function boardFingerprint(board: unknown): string {
       // The fingerprint mirrors the SUMMARY INPUT, not digest.ts's richer Tier-1 line set.
       return JSON.stringify({
         t: 'browser',
-        // title IS the opening line of summaryLoop.boardContent's LLM prompt (BUG-018).
-        title: str(b.title),
+        // title is EXCLUDED: summaryLoop.boardContent emits a title-less constant ('Browser preview
+        // board.'), so a title-only rename yields identical summary input — fingerprinting it would
+        // arm an intent and burn a budgeted summarize for byte-identical output (BUG-010).
         url: str(b.url),
         viewport: str(b.viewport)
       })
