@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { RefObject } from 'react'
 import { usePreviewStore } from '../../store/previewStore'
+import { bgraToRgba } from '../../lib/bgraToRgba'
 
 /**
  * SPIKE (feat/preview-offscreen-spike): drive a Browser board's offscreen preview.
@@ -85,22 +86,28 @@ export function useOffscreenPreview(
       if (!cv) return
       const ctx = cv.getContext('2d')
       if (!ctx) return
-      if (cv.width !== f.width || cv.height !== f.height) {
-        cv.width = f.width
-        cv.height = f.height
+      // OS-3 Phase 2 (2C) — dirty-rect aware. A full repaint reports dirty == the whole frame;
+      // a partial paint covers only the changed sub-rect.
+      const isFull =
+        f.dirty.x === 0 &&
+        f.dirty.y === 0 &&
+        f.dirty.width === f.full.width &&
+        f.dirty.height === f.full.height
+      // The <canvas> tracks the FULL frame size; setting cv.width/height also CLEARS it. A
+      // partial frame can't fill a freshly-cleared canvas, so only adopt a new size on a FULL
+      // frame — MAIN guarantees the first frame after any resize is full (invalidate()). A
+      // stray partial frame for a not-yet-sized canvas is dropped (never happens in practice).
+      if (cv.width !== f.full.width || cv.height !== f.full.height) {
+        if (!isFull) return
+        cv.width = f.full.width
+        cv.height = f.full.height
       }
-      // NativeImage.getBitmap() is BGRA; ImageData is RGBA → swap R/B per pixel. This
-      // per-frame swap is itself an M2 throughput factor (a GPU path could avoid it) —
-      // noted for the spike's throughput measurement.
+      // NativeImage.toBitmap() is BGRA; ImageData is RGBA → swap R/B. The fast 32-bit-word
+      // swizzle (bgraToRgba) replaces the old per-byte loop (~4× fewer typed-array ops). Blit
+      // ONLY the dirty sub-rect; the rest of the canvas keeps the previous frame's pixels.
       const src = f.buffer instanceof Uint8Array ? f.buffer : new Uint8Array(f.buffer)
-      const rgba = new Uint8ClampedArray(src.length)
-      for (let i = 0; i < src.length; i += 4) {
-        rgba[i] = src[i + 2]
-        rgba[i + 1] = src[i + 1]
-        rgba[i + 2] = src[i]
-        rgba[i + 3] = src[i + 3]
-      }
-      ctx.putImageData(new ImageData(rgba, f.width, f.height), 0, 0)
+      const rgba = bgraToRgba(src)
+      ctx.putImageData(new ImageData(rgba, f.dirty.width, f.dirty.height), f.dirty.x, f.dirty.y)
     })
     return () => {
       off()

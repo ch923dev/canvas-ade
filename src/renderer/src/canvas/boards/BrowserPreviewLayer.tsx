@@ -7,6 +7,7 @@
 import type { ReactElement } from 'react'
 import { usePreviewManager, type LayerProps } from './usePreviewManager'
 import { useBrowserAutoConnect } from './useBrowserAutoConnect'
+import { useOffscreenLiveness } from './useOffscreenLiveness'
 
 // SPIKE (feat/preview-offscreen-spike): VITE_PREVIEW_OSR=1 disables the native
 // WebContentsView path entirely — BrowserBoard renders previews via an offscreen-fed
@@ -19,6 +20,10 @@ export function BrowserPreviewLayer(props: LayerProps): ReactElement | null {
   // and OSR paths. Mount it here, ABOVE the OSR early-return, so flipping VITE_PREVIEW_OSR doesn't
   // silently drop it (it previously lived inside NativePreviewLayer, which never mounts in OSR).
   useBrowserAutoConnect()
+  // OS-3 Phase 2 (M2 / 2A): the offscreen-preview liveness manager — freezes off-screen /
+  // below-LOD boards' paint pumps (CPU win). Engine-specific (OSR only), so gate it on the
+  // flag; like auto-connect it lives ABOVE the early-return so it mounts in the OSR path.
+  useOffscreenLiveness(OSR_PREVIEW, props.paneRef)
   if (OSR_PREVIEW) return null
   return <NativePreviewLayer {...props} />
 }

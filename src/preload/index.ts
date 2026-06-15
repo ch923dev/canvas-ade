@@ -87,13 +87,20 @@ export type PreviewEvent =
   | { id: string; type: 'render-process-gone'; reason: string }
 
 // ── SPIKE (feat/preview-offscreen-spike): offscreen preview → <canvas> ──
-// One offscreen-rendered frame pushed main → renderer. `buffer` is the NativeImage
-// bitmap (BGRA); the renderer swaps R/B and paints it into the board's <canvas>.
-// Mirrors main `OsrFramePayload` (preload stays decoupled from main).
-export interface OsrFrame {
-  id: string
+// One offscreen-rendered frame pushed main → renderer (OS-3 Phase 2 / 2C — dirty-rect aware).
+// `buffer` is the NativeImage bitmap (BGRA) of the DIRTY region only; the renderer keeps its
+// <canvas> at `full` size and blits the swizzled buffer at `dirty`'s offset. A full repaint
+// reports `dirty == full`. Mirrors main `OsrFramePayload` (preload stays decoupled from main).
+export interface OsrRect {
+  x: number
+  y: number
   width: number
   height: number
+}
+export interface OsrFrame {
+  id: string
+  full: { width: number; height: number }
+  dirty: OsrRect
   buffer: Uint8Array
 }
 /** The offscreen page's cursor, mirrored onto the host <canvas>. `image` (a data URL) +
@@ -282,6 +289,11 @@ const api = {
     id: string,
     size: { logicalW: number; logicalH: number; supersample: number }
   ): Promise<boolean> => ipcRenderer.invoke('preview:osrResize', { id, ...size }),
+  // OS-3 Phase 2 (M2 / 2A): set a board's desired paint state. Sent by the settle-gated
+  // liveness manager (useOffscreenLiveness) ONLY when visibility flips — `false` freezes the
+  // offscreen pump (CPU→0, last frame stays), `true` resumes + invalidates.
+  setOsrPaint: (id: string, painting: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrSetPaint', { id, painting }),
   // Per-interaction focus emulation: enable on canvas focus, disable on blur (P0 — so the
   // caret/:focus ring show while interacting AND the page's blur/focusout still fire).
   setOsrFocus: (id: string, focused: boolean): Promise<boolean> =>
