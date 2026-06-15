@@ -1085,6 +1085,291 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ── OS-3 Phase 4 — native-widget & dialog overlays ────────────────────────────────────────────
+   The offscreen bitmap can't composite native popups, so we draw them as DOM chrome over the
+   host <canvas> inside .bb-frame (clips/rounds with it — the occlusion fix). The full-frame layer
+   intercepts input (modal dialog / click-away popup); the overlays match the signed-off mock. */
+.bb-osr-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3; /* above the canvas + paused badge */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bb-osr-layer-modal {
+  background: var(--scrim);
+}
+/* 4B — alert/confirm/prompt modal */
+.bb-osr-dialog {
+  width: 250px;
+  max-width: 86%;
+  padding: 14px 14px 12px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+}
+.bb-osr-origin {
+  font-family: var(--ui);
+  font-size: 10.5px;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+.bb-osr-msg {
+  font-family: var(--ui);
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--text);
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+}
+.bb-osr-input,
+.bb-osr-hex {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.bb-osr-input {
+  margin-bottom: 12px;
+}
+.bb-osr-input:focus,
+.bb-osr-hex:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.bb-osr-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.bb-osr-btn {
+  padding: 5px 12px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.bb-osr-btn:hover {
+  border-color: var(--border-strong);
+}
+.bb-osr-btn-primary {
+  background: var(--accent-wash);
+  color: var(--accent);
+  border-color: rgba(79, 140, 255, 0.32);
+}
+.bb-osr-btn-primary:hover {
+  border-color: var(--accent);
+}
+/* 4E — positioned popup container (anchored to the widget's page rect) */
+.bb-osr-popup-pos {
+  position: absolute;
+  z-index: 1;
+}
+/* <select> dropdown */
+.bb-osr-dropdown {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+  outline: none;
+}
+.bb-osr-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--r-ctl);
+  font-family: var(--ui);
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.bb-osr-opt-active {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.bb-osr-opt-sel {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.bb-osr-opt-disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.bb-osr-check {
+  width: 14px;
+  display: inline-flex;
+  flex: none;
+  color: var(--accent);
+}
+.bb-osr-opt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* date picker */
+.bb-osr-picker {
+  width: 218px;
+  padding: 10px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+  outline: none;
+}
+.bb-osr-pk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.bb-osr-pk-month {
+  font-family: var(--ui);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.bb-osr-pk-nav {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.bb-osr-pk-nav:hover {
+  border-color: var(--border-strong);
+}
+.bb-osr-pk-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.bb-osr-pk-wd {
+  text-align: center;
+  padding-bottom: 4px;
+  font-family: var(--ui);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.bb-osr-pk-day {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.bb-osr-pk-day:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.bb-osr-pk-mut {
+  color: var(--text-faint);
+}
+.bb-osr-pk-today {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--text);
+}
+.bb-osr-pk-sel {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.bb-osr-pk-sel:hover {
+  background: var(--accent);
+  color: #fff;
+}
+/* color picker */
+.bb-osr-color {
+  width: 196px;
+  padding: 10px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+  outline: none;
+}
+.bb-osr-sv {
+  position: relative;
+  height: 96px;
+  border-radius: var(--r-ctl);
+  cursor: crosshair;
+}
+.bb-osr-sv-knob {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.bb-osr-hue {
+  position: relative;
+  height: 12px;
+  margin: 10px 0;
+  border-radius: 999px;
+  cursor: pointer;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+.bb-osr-hue-knob {
+  position: absolute;
+  top: -2px;
+  width: 16px;
+  height: 16px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.bb-osr-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bb-osr-hex {
+  flex: 1;
+  min-width: 0;
+}
+.bb-osr-sw {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--border);
+}
+
 /* ── Planning board whiteboard (Phase 2.3) ────────────────────────────────────
    The Planning board paints its own elements (notes / text / checklists / SVG
    arrows + freehand strokes) inside the BoardFrame content slot. Most visuals

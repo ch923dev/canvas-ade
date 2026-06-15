@@ -119,6 +119,45 @@ export type OsrEditAction = 'copy' | 'cut' | 'paste' | 'selectAll'
 /** OS-3 Phase 3 — text commit (`commit`) vs in-progress IME preview (`compose`). */
 export type OsrImeKind = 'compose' | 'commit'
 
+// ── OS-3 Phase 4 — native widgets & dialogs (mirror main `previewOsrWidgets.ts`) ──
+/** A JS dialog the previewed page opened (beforeunload is auto-handled in MAIN, never sent). */
+export type OsrDialogType = 'alert' | 'confirm' | 'prompt'
+export interface OsrDialogEvent {
+  id: string
+  dialogType: OsrDialogType
+  message: string
+  defaultPrompt: string
+}
+export type OsrPopupKind = 'select' | 'date' | 'color'
+export interface OsrSelectOption {
+  label: string
+  value: string
+  selected: boolean
+  disabled: boolean
+}
+/** A native popup widget opening — `rect` is in PAGE CSS px; the renderer maps it into the frame. */
+export interface OsrPopupEvent {
+  id: string
+  kind: OsrPopupKind
+  rect: { x: number; y: number; width: number; height: number }
+  value: string
+  options?: OsrSelectOption[]
+  multiple?: boolean
+}
+export interface OsrAudibleEvent {
+  id: string
+  audible: boolean
+}
+export type OsrDownloadState = 'start' | 'progress' | 'done' | 'fail' | 'throttled'
+export interface OsrDownloadEvent {
+  id: string
+  state: OsrDownloadState
+  name: string
+  savePath?: string
+  received?: number
+  total?: number
+}
+
 // ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
 export interface RecentProject {
   path: string
@@ -322,6 +361,44 @@ const api = {
     const handler = (_e: IpcRendererEvent, c: OsrCursor): void => listener(c)
     ipcRenderer.on('preview:osrCursor', handler)
     return () => ipcRenderer.removeListener('preview:osrCursor', handler)
+  },
+
+  // ── OS-3 Phase 4 — native widgets & dialogs ──
+  // 4A — manual mute toggle (effective mute = manual || off-screen, applied in MAIN).
+  setOsrMuted: (id: string, muted: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrSetMuted', { id, muted }),
+  // 4B — answer the surfaced JS dialog (accept + optional prompt text) → handleJavaScriptDialog.
+  respondOsrDialog: (id: string, accept: boolean, promptText?: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrDialogRespond', { id, accept, promptText }),
+  // 4E — commit / dismiss a native popup overlay's choice (commit writes value + fires input/change).
+  commitOsrPopup: (id: string, value: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrPopupCommit', { id, value }),
+  dismissOsrPopup: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrPopupDismiss', id),
+  // 4D — reveal a completed download in the OS file manager (toast Show action).
+  revealOsrDownload: (savePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrRevealDownload', savePath),
+  // Event streams (MAIN → renderer): JS dialog opened · native popup opening · audible flip ·
+  // download progress. Each returns an unsubscribe fn, mirroring the frame/cursor pumps.
+  onPreviewOsrDialog: (listener: (d: OsrDialogEvent) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, d: OsrDialogEvent): void => listener(d)
+    ipcRenderer.on('preview:osrDialog', handler)
+    return () => ipcRenderer.removeListener('preview:osrDialog', handler)
+  },
+  onPreviewOsrPopup: (listener: (p: OsrPopupEvent) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, p: OsrPopupEvent): void => listener(p)
+    ipcRenderer.on('preview:osrPopup', handler)
+    return () => ipcRenderer.removeListener('preview:osrPopup', handler)
+  },
+  onPreviewOsrAudible: (listener: (a: OsrAudibleEvent) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, a: OsrAudibleEvent): void => listener(a)
+    ipcRenderer.on('preview:osrAudible', handler)
+    return () => ipcRenderer.removeListener('preview:osrAudible', handler)
+  },
+  onPreviewOsrDownload: (listener: (d: OsrDownloadEvent) => void): (() => void) => {
+    const handler = (_e: IpcRendererEvent, d: OsrDownloadEvent): void => listener(d)
+    ipcRenderer.on('preview:osrDownload', handler)
+    return () => ipcRenderer.removeListener('preview:osrDownload', handler)
   },
 
   // ── Phase 3 persistence ──

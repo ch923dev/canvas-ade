@@ -1,5 +1,6 @@
 import type { IpcMain } from 'electron'
-import { WebContentsView, BrowserWindow } from 'electron'
+import { WebContentsView, BrowserWindow, app } from 'electron'
+import { existsSync } from 'node:fs'
 import { isForeignSender } from './ipcGuard'
 import {
   isAllowedPreviewUrl,
@@ -11,6 +12,12 @@ import {
   isHttpErrorCode,
   isErrorResponseCode
 } from './preview'
+import {
+  attachOsrWidgets,
+  registerOsrDownloads,
+  applyEffectiveMute,
+  registerOsrWidgetIpc
+} from './previewOsrWidgets'
 
 /**
  * SPIKE (feat/preview-offscreen-spike) — offscreen Browser-preview producer.
@@ -59,6 +66,12 @@ interface OsrEntry {
   // `startPainting` honors this flag, so a board that opens already-frozen never paints until it
   // becomes visible (then `preview:osrSetPaint(true)` → startPainting + invalidate).
   painting: boolean
+  // OS-3 Phase 4 (4A) — the user's MANUAL mute choice (ephemeral; the toggle in the URL bar). The
+  // EFFECTIVE mute applied to `wc.setAudioMuted` is `manualMuted || !painting`, so a frozen
+  // off-screen board is silent without losing the user's choice (restored on resume).
+  manualMuted: boolean
+  // Last audible state emitted (diff-skip dedupe for the media-started/paused pump).
+  lastAudible?: boolean
 }
 
 /** Browser-preview lifecycle event, emitted on the SAME `preview:event` channel the native
@@ -390,6 +403,23 @@ function emitEvent(payload: OsrLifecycleEvent): void {
   }
 }
 
+/* ── OS-3 Phase 4 emit helpers (native widgets & dialogs) ───────────────────────────────────────
+ * Ferry a MAIN-detected page event to the renderer (its osrWidgetStore + OsrWidgetLayer draw the
+ * dialog modal / popup overlay; downloads → showToast). One generic sender; audible diff-skips. */
+function emitWidget(channel: string, payload: object): void {
+  try {
+    owner?.webContents.send(channel, payload)
+  } catch {
+    /* window gone */
+  }
+}
+
+function emitAudible(e: OsrEntry, id: string, audible: boolean): void {
+  if (e.lastAudible === audible) return // diff-skip, like the cursor/frame pumps
+  e.lastAudible = audible
+  emitWidget('preview:osrAudible', { id, audible })
+}
+
 /** Toggle CDP focus-emulation for one board's offscreen page (per-interaction; see ensureOsr).
  *  Enabled → blinking caret + :focus ring even though the window is never OS-focused;
  *  disabled → the page's blur/focusout fires (menus close, on-blur validation runs). */
@@ -458,7 +488,8 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     logicalW: OSR_WIDTH,
     logicalH: OSR_HEIGHT,
     superSample: 1,
-    painting: true
+    painting: true,
+    manualMuted: false
   }
   osr.set(id, e)
   const wc = osrWin.webContents
@@ -490,6 +521,27 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   } catch {
     /* devtools already attached / unsupported — caret falls back to wc.focus() only */
   }
+  // OS-3 Phase 4 — native widgets & dialogs over the just-attached debugger (ADR 0002, MAIN-only).
+  // A bitmap can't composite native popups and a JS dialog freezes the hidden renderer, so we
+  // intercept both via CDP and draw our own chrome; emit* ferry each to the renderer's overlay layer.
+  attachOsrWidgets(wc, {
+    onDialog: (info) => emitWidget('preview:osrDialog', { id, ...info }),
+    onPopup: (info) => emitWidget('preview:osrPopup', { id, ...info }),
+    getWin: () => owner
+  })
+  // Downloads (4D): save to the OS Downloads folder (no parented save-dialog freeze) + toast,
+  // token-bucket throttled. Per-board session (`preview-osr-${id}`), so the listener is board-scoped.
+  const allowDownload = createOpenExternalLimiter()
+  registerOsrDownloads(sess, {
+    downloadsDir: app.getPath('downloads'),
+    exists: existsSync,
+    allow: allowDownload,
+    emit: (info) => emitWidget('preview:osrDownload', { id, ...info })
+  })
+  // Audio (4A): surface a mute toggle while the page plays media. media-started/paused fire
+  // regardless of mute, so muting keeps the button visible; the emit is diff-skipped.
+  wc.on('media-started-playing', () => emitAudible(e, id, true))
+  wc.on('media-paused', () => emitAudible(e, id, false))
   // Frame cap (M2 knob). The window size already set the render surface; the window is
   // never shown, so nothing paints above the HTML — the whole point of the spike.
   wc.setFrameRate(OSR_FRAME_RATE)
@@ -954,6 +1006,11 @@ export function registerPreviewOsrHandlers(
       return true
     }
     applyOsrPaint(e.osrWin, e, on)
+    // 4A — a frozen off-screen board is auto-muted; on resume the user's manual choice is restored.
+    applyEffectiveMute(e)
     return true
   })
+  // OS-3 Phase 4 — native-widget handlers (mute · dialog respond · popup commit/dismiss · reveal
+  // download). Registered from previewOsrWidgets.ts (frame-guarded there) so this file stays focused.
+  registerOsrWidgetIpc(ipcMain, getWin, (id) => osr.get(id))
 }

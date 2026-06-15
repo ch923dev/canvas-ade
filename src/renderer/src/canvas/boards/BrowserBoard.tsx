@@ -35,6 +35,9 @@ import { isHttpUrl } from '../../lib/autoConnect'
 import { useOffscreenPreview } from './useOffscreenPreview'
 import { useOffscreenInput } from './useOffscreenInput'
 import { useOffscreenSizing } from './useOffscreenSizing'
+import { useOsrWidgetEvents } from './osr/useOsrWidgetEvents'
+import { OsrWidgetLayer } from './osr/OsrWidgetLayer'
+import { useOsrWidgetStore } from '../../store/osrWidgetStore'
 
 // SPIKE (feat/preview-offscreen-spike): when set, Browser previews render OFFSCREEN
 // and paint into a DOM <canvas> here (occlusion fix under test, ADR 0002) instead of
@@ -158,6 +161,18 @@ export function BrowserBoard({
   // page renders supersampled (crisp) and lays out at the preset width (real breakpoint reflow).
   // Low-frequency only (settle/preset/resize), so the OSR path keeps its zero-per-frame-IPC win.
   useOffscreenSizing(board.id, board.w, board.h, board.viewport, OSR_PREVIEW)
+  // OS-3 Phase 4: subscribe the board's native-widget event streams (JS dialog · native popup ·
+  // audible flip · download) → osrWidgetStore + toasts. Drives the mute toggle + the overlay layer.
+  useOsrWidgetEvents(board.id, OSR_PREVIEW)
+  // 4A — the URL-bar mute toggle shows only while the page is playing media; `muted` is the user's
+  // manual choice (MAIN also auto-mutes off-screen). Ephemeral (no schema).
+  const osrAudibleNow = useOsrWidgetStore((s) => s.audible[board.id] ?? false)
+  const osrMuted = useOsrWidgetStore((s) => s.muted[board.id] ?? false)
+  const toggleOsrMute = (): void => {
+    const next = !osrMuted
+    useOsrWidgetStore.getState().setMuted(board.id, next)
+    void window.api.setOsrMuted(board.id, next)
+  }
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
   // board.url changes underneath (e.g. set elsewhere), re-sync the draft DURING
@@ -385,6 +400,14 @@ export function BrowserBoard({
                 : window.api.reloadPreview(board.id))
             }
           />
+          {/* 4A — mute toggle, shown only while the OSR preview is playing media. */}
+          {OSR_PREVIEW && osrAudibleNow && (
+            <NavBtn
+              name={osrMuted ? 'volume-x' : 'volume'}
+              title={osrMuted ? 'Unmute' : 'Mute audio'}
+              onClick={toggleOsrMute}
+            />
+          )}
           <NavBtn
             name="camera"
             title="Screenshot"
@@ -531,6 +554,9 @@ export function BrowserBoard({
                 autoCapitalize="off"
                 spellCheck={false}
               />
+              {/* OS-3 Phase 4: native-widget chrome (JS dialog modal · <select>/date/color overlay)
+                  the offscreen bitmap can't composite. A DOM layer → clips/rounds with the frame. */}
+              <OsrWidgetLayer boardId={board.id} pageW={preset.w} pageH={preset.h} />
             </>
           )}
           {/* D2-C: evicted (renderer freed) ≠ detached (snapshot) — say so. Safe to
@@ -542,14 +568,14 @@ export function BrowserBoard({
   )
 }
 
-/** A 24x24 URL-bar nav button (back/forward/reload/camera/external). */
+/** A 24x24 URL-bar nav button (back/forward/reload/camera/external + the Phase-4 mute toggle). */
 function NavBtn({
   name,
   title,
   disabled = false,
   onClick
 }: {
-  name: 'back' | 'forward' | 'refresh' | 'camera' | 'external'
+  name: 'back' | 'forward' | 'refresh' | 'camera' | 'external' | 'volume' | 'volume-x'
   title: string
   disabled?: boolean
   onClick: () => void
