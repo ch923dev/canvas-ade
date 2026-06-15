@@ -19,7 +19,12 @@ export const EXPORT_COLORS = {
   accent: '#4f8cff'
 } as const
 
-/** Note tint fills/edges (tints.ts NOTE_TINTS with `plain` resolved to concrete tokens). */
+/**
+ * Note tint fills/edges — the concrete SVG-export mirror of the `--note-*` tokens in
+ * index.css (the canonical source since S5; `tints.ts` references them via `var()`).
+ * `plain` is resolved here to its concrete `--surface-raised` / `--border`. Keep this in
+ * step with index.css + tints.ts whenever a tint changes.
+ */
 export const EXPORT_NOTE_TINTS: Record<
   'yellow' | 'blue' | 'green' | 'plain',
   { fill: string; edge: string }
