@@ -4,6 +4,9 @@
 **Date:** 2026-06-15 · **Author:** design session (workflow `command-board-research` + 5 verified dimensions).
 **Form decided (user, 2026-06-15):** an **on-canvas "dock board"** that spawns + names a Named Group of
 worker boards per task and wires to them — realized as the **Combined board (⑤)** below.
+**Agency decided (user, 2026-06-15):** **hybrid** — a scripted state machine (safety envelope) **plus** a
+read-only **app self-model** (PR-3, agency) **plus** an optional live Mermaid plan diagram (PR-6,
+transparency). The agent reasons freely over the app; every write still pays `runGatedWrite`.
 **Base:** this worktree (`feat/command-board`) is cut from `main` @ `1ab21ed` (post-#154), so the
 bug-hunt fixes — including prerequisites PR-0 and PR-1 — are already in the tree.
 
@@ -27,6 +30,16 @@ It adds **no new orchestrator write path** — it sequences existing tools (`spa
 
 Each task → **its own named group** (a "feature zone"), exactly like Named Board Groups (v6). This is
 the deferred **Feature Workspaces** vision, realized through a Command board.
+
+### Agentic via a read-only app-model (hybrid)
+The board is **born agentic** without a new write path. The orchestrator/agent reads a single,
+self-describing **app-model** (`app://model`, read-only — see PR-3): the board **types** and what each
+is for, the **tool catalog**, the **live canvas** (boards/groups/connectors), and the **rules**. That
+turns decomposition + routing from a hardcoded recipe into *reasoned* planning grounded in the actual
+app — while the scripted state machine stays the **safety envelope** and *every write still pays
+`runGatedWrite`*. Agency lives in the what/why; the gate governs the do. The same structured app-model
+is the graph an optional live **Mermaid diagram** renders (PR-6), so the board's understanding is
+*visible* as it works.
 
 ### The board's face (Combined ⑤)
 One cohesive board with four views over the **same** state (`commandStore` tasks · `boardResult`
@@ -70,6 +83,24 @@ UI. No second orchestrator authority is created.
 Full architecture (token model, the `runGatedWrite` gate, discovery, state machine, persistence) is in
 the workflow synthesis captured in this session; the load-bearing decisions are folded into §4–§5 here.
 
+### App self-model — the read-only resource the agent reasons over (hybrid)
+A single read-only MCP **resource** the orchestrator/agent reads (NOT a write path, NO token). It is what
+makes routing *reasoned* instead of scripted; the scripted state machine stays the safety envelope.
+
+```text
+app://model  (read-only)
+{
+  boardTypes: [{ type, purpose, tools, states, seedable, autowire }],
+  tools:      [{ name, purpose, tier }],
+  canvas:     { boards, groups, connectors },   // live: listBoards + listGroups (groups land in PR-5)
+  rules:      { spawnCap: 4, everyWriteGated: true, ... }
+}
+```
+
+Static tier (`boardTypes` · `tools` · `rules`) has no dependencies and ships in PR-3; the `groups` /
+`connectors` slice of `canvas` completes when PR-5 mirrors groups to MAIN. The same object is the graph
+the optional live Mermaid plan diagram renders (PR-6).
+
 **Persistence (v1): runtime-only.** The task queue lives entirely in the ephemeral `commandStore` and is
 lost on quit — smallest, safest surface. **The Command board itself** is a persisted board (it is on the
 canvas), which is the one breaking schema change (see Phase A). Durable queue across restarts is
@@ -79,21 +110,26 @@ deferred (sidecar JSON in `userData`/`.canvas/`, never `canvas.json`).
 
 ## 3. Prerequisites — must land BEFORE the Command board functions
 
-These are ordered. **PR-0 and PR-1 already MERGED to `main` (#154, squash `1408060`)** — this worktree is
-based on that tip, so they are in. The rest (PR-2…PR-4) are net-new but each is a small,
-independently-shippable slice. **Ship these first.** PR-2's *app side* is already done locally
-(unpushed); its agent-facing tool is split out as **PR-2b** (sibling package).
+These are ordered. **PR-0/PR-1 are in the base** (merged to `main` via #154, squash `1408060`); **PR-2 is
+merged into the umbrella** (#164) and **PR-2b is shipped to npm** (`@expanse-ade/mcp@0.11.0`). The hybrid
+decision (2026-06-15) adds one net-new read-only prerequisite — **PR-3, the App self-model** — and
+re-orders the rest behind it, so the board is *born* agentic: a scripted state machine (safety envelope)
+**plus** a read-only app-model (agency), optionally rendered as a live Mermaid diagram (transparency).
+Each remaining slice is small and independently shippable **into the umbrella**. (The shipped IDs
+PR-0/PR-1/PR-2/PR-2b are frozen; only the unbuilt slices were renumbered — old PR-3→PR-4, PR-4→PR-5,
+PR-5→PR-6, PR-6→PR-7.)
 
 | # | Prerequisite | Why it blocks the Command board | Status / where | Size |
 |---|---|---|---|---|
 | **PR-0** | **Per-task settle (running→idle)** — BUG-002/007. A live shell's status is permanently `running`; `awaitHandoffSettled` never wakes, so handoffs ride the 5-min backstop. Fix = write_result fast-path + a quiet-window check **inside `awaitHandoffSettled`** reading `pty.ts` `lastActivityAt` directly (NOT `deriveStatus`'s dead fallback) + exit-code gate. | **Everything depends on it.** Without it: kanban cards never leave "executing", the recap timeline never gets a completed entry, "done" never fires. | **✅ MERGED to `main` (#154, squash `1408060`).** Still **verify** the shipped settle matches the two-gate shape this design assumes before relying on kanban/recap. | S (verify) |
 | **PR-1** | **Schema drift close** — BUG-013/014. MAIN `SCHEMA_VERSION` stuck at 9 while renderer `boardSchema` is 10; the drift-guard test hardcodes `9`. | Phase A mints a 4th board type `command` = a **breaking ADR 0007 double-bump** (`SCHEMA_VERSION` + `MIN_READER_VERSION`). That bump must start from a clean lock-step base, not on top of an existing drift. | **✅ MERGED to `main` (#154, squash `1408060`).** | S |
-| **PR-2** | **`gitDiff` — un-stub + wire simple-git in MAIN.** Today `mcpOrchestrator.ts:751` throws `"gitDiff not available until Phase 6"`; **simple-git is not wired in MAIN at all**. | The result/recap zones show diffstats (`+218 −37`) and a "view diff" action — the core *value* of collect/merge and the recap timeline. No diff backing today. *(User-identified prerequisite.)* | **✅ APP-SIDE DONE on `feat/command-board` (local, unpushed).** `simple-git` MAIN-only in `gitDiff.ts`; read-only `gitDiff(boardId)` over the board's resolved spawn `cwd` (`boardCwds` map in `pty.ts`), terminal-type check + 100 KB clamp in `mcpOrchestrator`. Unit-tested + **proven live** (real `git diff HEAD` through a `CANVAS_E2E` seam → `e2e/gitDiff.e2e.ts`, 3/3 Win). **But NOT wire-reachable** — see PR-2b. | M |
-| **PR-2b** | **`git_diff` MCP *tool* in `@expanse-ade/mcp`.** The installed package (`0.10.0`) registers **no `git_diff` tool** — only spawn/close/configure/handoff/assign/write_result/interrupt/relay/wait_for_idle/wait_for_all/ping. The orchestrator *interface* has `gitDiff(boardId)`, but nothing exposes it over the loopback wire, so an agent/orchestrator cannot call it. | PR-2 made the app side ready; the Command board's diffstats / "view diff" need an **agent-callable** tool. Without PR-2b, gitDiff is in-process only (the e2e seam). | **Net-new in the sibling package** (`Z:\canvas-ade-mcp` → npmjs `@expanse-ade/mcp`): add an orchestrator-tier `git_diff` tool calling `orchestrator.gitDiff`, publish, bump the app pin. Mirrors the existing `registerHandoffPrompt`/`registerInterrupt` shape. | S–M |
-| **PR-3** | **Worker result reporting.** Worker agents must call worker-tier `write_result` on completion (via launch-prompt instruction / Stop hook), or rely on PR-0's inactivity floor. | The `done` state, the recap TIMELINE, and merge all need a real `BoardResult` (status/summary/refs). The orchestrator already scaffolds `onResultSettled`; the *signal* is missing. | **Net-new (mostly config).** For claude, reuse the existing recap transcript watcher (`agentRecapMap.ts`) to synthesize a result. | M |
-| **PR-4** | **Group-aware orchestration.** `spawnBoard({type,prompt?,cwd?})` makes **one** board, no group; **groups are renderer-only** (no `listGroups`/`sanitizeGroups` in `boardRegistry.ts`, `mcp:boards` pushes only `{boards, connectors}`). | The board spawns a **Named Group** of {terminal, planning, browser} per task and the roll-up/dispatch must address it. | **Net-new.** (a) Mirror `groups[]` to MAIN (`sanitizeGroups` + extend `mcp:boards` payload + `listGroups()`); (b) a `spawnGroup` / spawn-into-group primitive that creates the cluster + named group + connectors in one tracked step. | L |
-| **PR-5** | **Planning checklist seeding** (optional for v1). No API seeds Planning elements via MCP (`spawnBoard` only sets `launchCommand` for terminals). | The Planning member of each group should be seeded with the decomposed subtask checklist. | **Net-new.** Could be deferred — ship v1 with terminal+browser groups, add the seeded Planning member later. | M |
-| **PR-6** | **Batch-authorization decision.** A decomposed task fans out N subtasks → N `runGatedWrite` confirm dialogs. | Usable but noisy. Either accept per-line confirm for v1, or build one plan-approval modal (per-line sanitize+nonce+audit preserved). | **Decision (optionally defer impl).** Net-new on the most security-sensitive path. | Decide → S/M |
+| **PR-2** | **`gitDiff` — un-stub + wire simple-git in MAIN.** Today `mcpOrchestrator.ts:751` throws `"gitDiff not available until Phase 6"`; **simple-git is not wired in MAIN at all**. | The result/recap zones show diffstats (`+218 −37`) and a "view diff" action — the core *value* of collect/merge and the recap timeline. No diff backing today. *(User-identified prerequisite.)* | **✅ MERGED into the umbrella (`feat/command-board`, PR #164).** `simple-git` MAIN-only in `gitDiff.ts`; read-only `gitDiff(boardId)` over the board's resolved spawn `cwd` (`boardCwds` map in `pty.ts`), terminal-type check + byte-accurate 100 KB clamp in `mcpOrchestrator`. Unit-tested + **proven live** (real `git diff HEAD` through a `CANVAS_E2E` seam → `e2e/gitDiff.e2e.ts`, 3/3 Win). Wire-reachable via PR-2b (`git_diff` tool, shipped `0.11.0`). | M |
+| **PR-2b** | **`git_diff` MCP *tool* in `@expanse-ade/mcp`.** The installed package (`0.10.0`) registers **no `git_diff` tool** — only spawn/close/configure/handoff/assign/write_result/interrupt/relay/wait_for_idle/wait_for_all/ping. The orchestrator *interface* has `gitDiff(boardId)`, but nothing exposes it over the loopback wire, so an agent/orchestrator cannot call it. | PR-2 made the app side ready; the Command board's diffstats / "view diff" need an **agent-callable** tool. Without PR-2b, gitDiff is in-process only (the e2e seam). | **✅ SHIPPED as `@expanse-ade/mcp@0.11.0`** (orchestrator-tier `git_diff` tool calling `orchestrator.gitDiff`, mirroring `registerInterrupt`; published via OIDC). **App-pin bump `^0.10.0`→`^0.11.0` deferred** — rides with the S2 session's app-side `addPlanningElements` adoption (shared `Orchestrator` interface). | S–M |
+| **PR-3** | **App self-model — read-only capability manifest** *(NEW; the hybrid agency layer)*. A single self-describing model the orchestrator/agent reads (no write path, no token): an MCP **resource** `app://model` exposing **board types** (purpose · tools · states · seedable/autowire), the **tool catalog** (name · purpose · tier), the **live canvas** (`boards`, and — once PR-5 lands — `groups`/`connectors` via `listBoards`/`listGroups`), and the **rules** (spawn cap, every-write-gated). | Flips routing/decomposition from a hardcoded recipe to *reasoned* planning grounded in the actual app, while the scripted state machine stays the **safety envelope**. Also the graph the optional live Mermaid diagram renders (PR-6). | **Net-new, read-only, security-neutral.** Static tier (types · tools · rules · boards) has no deps — **ship it next**; the `groups`/`connectors` slice of the live tier completes alongside PR-5's MAIN groups mirror. | M |
+| **PR-4** | **Worker result reporting** *(was PR-3)*. Worker agents must call worker-tier `write_result` on completion (via launch-prompt instruction / Stop hook), or rely on PR-0's inactivity floor. | The `done` state, the recap TIMELINE, and merge all need a real `BoardResult` (status/summary/refs). The orchestrator already scaffolds `onResultSettled`; the *signal* is missing. | **Net-new (mostly config).** For claude, reuse the existing recap transcript watcher (`agentRecapMap.ts`) to synthesize a result. | M |
+| **PR-5** | **Group-aware orchestration** *(was PR-4)*. `spawnBoard({type,prompt?,cwd?})` makes **one** board, no group; **groups are renderer-only** (no `listGroups`/`sanitizeGroups` in `boardRegistry.ts`, `mcp:boards` pushes only `{boards, connectors}`). | The board spawns a **Named Group** of {terminal, planning, browser} per task and the roll-up/dispatch must address it. **Also completes PR-3's app-model live tier** (`groups`/`connectors`). | **Net-new.** (a) Mirror `groups[]` to MAIN (`sanitizeGroups` + extend `mcp:boards` payload + `listGroups()`); (b) a `spawnGroup` / spawn-into-group primitive that creates the cluster + named group + connectors in one tracked step. | L |
+| **PR-6** | **Planning seed + live plan diagram** *(was PR-5; optional for v1)*. No API seeds Planning elements via MCP (`spawnBoard` only sets `launchCommand` for terminals). | Seed the Planning member with the decomposed subtask checklist — and, reusing the same write path, render the **app-model graph as a live Mermaid diagram** (the orchestration plan/topology, updating as the state machine advances). Consumes the S4 Mermaid Diagram element from the Planning-board epic as an **optional view**, never a dependency the board waits on. | **Net-new.** Could be deferred — ship v1 with terminal+browser groups; add the seeded Planning member + diagram view later. | M |
+| **PR-7** | **Batch-authorization decision** *(was PR-6)*. A decomposed task fans out N subtasks → N `runGatedWrite` confirm dialogs. | Usable but noisy. Either accept per-line confirm for v1, or build one plan-approval modal (per-line sanitize+nonce+audit preserved). | **Decision (optionally defer impl).** Net-new on the most security-sensitive path. | Decide → S/M |
 
 **Already shipped (NOT prerequisites):** Browser auto-wiring — the Browser member connects via the
 shipped **port-detect → push-to-preview** (Slice C′). The dispatch gate, board registry, status buckets,
@@ -103,11 +139,12 @@ shipped **port-detect → push-to-preview** (Slice C′). The dispatch gate, boa
 ```
 PR-0 settle ─┐ DONE — merged to main (#154); verify the settle shape before relying on it
 PR-1 schema ─┘ DONE — merged to main (#154)
-      └─► PR-2 gitDiff app-side (simple-git in MAIN)   DONE locally (unpushed) — proven live
-            └─► PR-2b git_diff MCP *tool* (sibling pkg @expanse-ade/mcp)  <-- START HERE: makes it agent-callable
-            └─► PR-3 worker result reporting
-                  └─► PR-4 group-aware spawn + groups[] MAIN mirror
-   decide: PR-6 batch-auth · defer: PR-5 planning seed
+      └─► PR-2  gitDiff app-side (simple-git in MAIN)        DONE — merged into umbrella (#164)
+            └─► PR-2b git_diff MCP *tool* (@expanse-ade/mcp) DONE — shipped 0.11.0 (app-pin bump deferred)
+                  └─► PR-3 App self-model (read-only app://model)   <-- START HERE: the agency layer
+                        └─► PR-4 worker result reporting
+                              └─► PR-5 group-aware spawn + groups[] MAIN mirror (completes PR-3 live tier)
+   optional/consumer: PR-6 planning seed + live Mermaid plan diagram · decide: PR-7 batch-auth
 ```
 
 ---
@@ -121,10 +158,10 @@ Each phase ends runnable + committed, on a `feat/*` worktree, merged sequentiall
 |---|---|---|---|
 | **A — Board shell** | Mint board type `command` (breaking bump 10→11 / floor→11 + migration); the Combined board frame (titlebar + seg control + submit well); ephemeral `commandStore`; capability auto-discovery of the worker pool (read-only `listBoards` filter by `agentKind`/`monitorActivity`). No dispatch yet. Re-shoot the production mock (combined + collapsed) and sign off first. | PR-1 ✅ | **Breaking** |
 | **B — Kanban + lifecycle** | The kanban body; cards = `commandStore` tasks bucketed by `TaskStatus`; cards move on `subscribeStatus`/settle events; honest "awaiting completion signal" sub-state. | PR-0 ✅ | No |
-| **C — Dispatch + group spawn** | submit → decompose → `spawnGroup` ({terminal[, planning][, browser]}) → `dispatch`/`handoff` to members; ephemeral routing-edge overlay (NOT persisted connectors); per-line `runGatedWrite` confirm; interrupt/retry. | PR-4, PR-3 | No |
-| **D — Collect / merge + recap + diff** | snapshot `boardResult` into the result zone; the flip-to-recap face (②) with the TIMELINE; real diffstats + "view diff" via `gitDiff`. | PR-2 (+ PR-2b for the agent-callable tool), PR-3 | No |
-| **E — Roll-up + rail polish** | the Group roll-up tab (③) with grouped-focus jump; the always-on/collapsed rail (④); flip + seg transitions. | PR-4 mirror | No |
-| **F — Batch-auth + durability (optional)** | plan-approval batch authorization (per PR-6 decision); optional durable queue (sidecar JSON in `userData`/`.canvas/`, never `canvas.json`). | PR-6 | No (sidecar) |
+| **C — Dispatch + group spawn** | submit → decompose → `spawnGroup` ({terminal[, planning][, browser]}) → `dispatch`/`handoff` to members, **reasoned over the app-model** (routing within the scripted envelope); ephemeral routing-edge overlay (NOT persisted connectors); per-line `runGatedWrite` confirm; interrupt/retry. | PR-5, PR-4, PR-3 (app-model) | No |
+| **D — Collect / merge + recap + diff** | snapshot `boardResult` into the result zone; the flip-to-recap face (②) with the TIMELINE; real diffstats + "view diff" via `gitDiff`. *(Optional: render the app-model as a live Mermaid plan diagram — PR-6.)* | PR-2 ✅ (+ PR-2b ✅), PR-4, PR-3 (app-model) | No |
+| **E — Roll-up + rail polish** | the Group roll-up tab (③) with grouped-focus jump (reads the app-model `groups`); the always-on/collapsed rail (④); flip + seg transitions. | PR-5 mirror, PR-3 (app-model) | No |
+| **F — Batch-auth + durability (optional)** | plan-approval batch authorization (per PR-7 decision); optional durable queue (sidecar JSON in `userData`/`.canvas/`, never `canvas.json`). | PR-7 | No (sidecar) |
 
 ---
 
@@ -147,6 +184,12 @@ Each phase ends runnable + committed, on a `feat/*` worktree, merged sequentiall
 - **Security never weakened** — `node-pty` + `simple-git` MAIN-only; renderer holds no token; all MCP IPC
   frame-guarded; every cross-board write pays `runGatedWrite`; browser-board content never reaches the
   PTY channel.
+- **Agency model (hybrid, decided 2026-06-15)** — a scripted state machine is the **safety envelope**; a
+  **read-only app self-model** (`app://model`, PR-3) is the **agency layer** the agent reasons over; an
+  optional live Mermaid diagram is the **transparency layer** (PR-6, consuming the Planning-epic S4
+  element). The agent plans freely; *every write still pays `runGatedWrite`* — agency lives in the
+  what/why, the gate governs the do. No new write path; no token in the renderer; the diagram is an
+  optional view the board never waits on.
 - **Design** — calm Linear/Raycast, one accent `#4f8cff`, no glass/gradient/glow; board chrome
   conventions; design-artifact-before-code.
 - **Schema** — two-tier ADR 0007; the 4th board type is the one acknowledged breaking bump (Phase A);
