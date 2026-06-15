@@ -60,11 +60,12 @@ test.describe('@core spawnGroup (feature-zone cluster via the app-side seam)', (
       .toBe([terminalId, planningId, browserId].sort().join(','))
 
     // (b) The browser member is wired to the terminal (previewSourceId — the preview-edge SoT).
-    const wiredSource = await evalIn<string | undefined>(
+    // Read ALL boards and match in the test runner (no id interpolated into evaluated code).
+    const boards = await evalIn<Array<{ id: string; previewSourceId?: string }>>(
       page,
-      `window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(browserId)})?.previewSourceId`
+      `window.__canvasE2E.getBoards()`
     )
-    expect(wiredSource).toBe(terminalId)
+    expect(boards.find((b) => b.id === browserId)?.previewSourceId).toBe(terminalId)
 
     // (c) MAIN mirror: the app self-model's live `canvas.groups` carries the zone (renderer→MAIN
     //     mcp:boards mirror, ~150ms debounce).
@@ -87,6 +88,7 @@ test.describe('@core spawnGroup (feature-zone cluster via the app-side seam)', (
     const res = await mainCall<SpawnGroupResult | null>(electronApp, 'spawnGroupNow', {
       name: 'Solo zone'
     })
+    expect(res, 'spawnGroupNow should resolve ids (MCP server mounted)').not.toBeNull()
     const { groupId, terminalId, planningId, browserId } = res as SpawnGroupResult
     expect(planningId).toBeUndefined()
     expect(browserId).toBeUndefined()
