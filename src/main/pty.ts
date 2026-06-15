@@ -524,6 +524,11 @@ export function cleanupCore(
   if (!s) return Promise.resolve()
   if (isStaleExit(s.proc, proc)) return Promise.resolve()
   sessionsMap.delete(id)
+  // PR-2: drop this board's gitDiff cwd when its session is torn down, so the map doesn't
+  // accrete entries for the session lifetime (it otherwise only drained on project switch).
+  // Kept across park/adopt (parkCore doesn't route here); a respawn re-sets it AFTER this
+  // synchronous delete (the Bug #13 restart reaps the old session before the new spawn).
+  boardCwds.delete(id)
   // BUG-022: when the shell/agent exited naturally (state === 'exited') AND this
   // is the process's own onExit callback (proc !== undefined), the root PID is
   // already dead and the OS may recycle it before taskkill resolves — a force-kill

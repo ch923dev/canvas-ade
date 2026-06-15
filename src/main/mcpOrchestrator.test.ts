@@ -251,6 +251,16 @@ describe('buildOrchestrator', () => {
       const orch = buildOrchestrator({ ...reg([termBoard]), gitDiff: async () => huge })
       expect((await orch.gitDiff('t1')).length).toBe(100_000)
     })
+
+    it('clamps by BYTES, not UTF-16 code units (multibyte diff)', async () => {
+      // 40k 3-byte chars = 120k bytes but only 40k code units; the old `.length` check
+      // (40k < 100k) would have passed it through unclamped.
+      const cjk = '世'.repeat(40_000)
+      const orch = buildOrchestrator({ ...reg([termBoard]), gitDiff: async () => cjk })
+      const out = await orch.gitDiff('t1')
+      expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(100_000)
+      expect(out.length).toBeLessThan(40_000) // genuinely truncated
+    })
   })
 
   describe('spawnBoard (T3.1, lifecycle write)', () => {

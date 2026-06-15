@@ -765,8 +765,15 @@ export function buildOrchestrator(
       }
       if (!registry.gitDiff) throw new Error('gitDiff not available')
       const raw = await registry.gitDiff(boardId)
-      // 🔒 clamp the untrusted diff (BUG-009 pattern, GITDIFF_MAX_BYTES).
-      return raw.length > GITDIFF_MAX_BYTES ? raw.slice(0, GITDIFF_MAX_BYTES) : raw
+      // 🔒 clamp the untrusted diff to a true BYTE bound (BUG-009 pattern). Measure UTF-8
+      // bytes — NOT UTF-16 code units (`.length`) — so a multibyte-heavy diff can't slip past
+      // the stated cap, and cut on a char boundary (back off any split trailing multibyte
+      // sequence) so the result is STRICTLY <= GITDIFF_MAX_BYTES with no U+FFFD expansion.
+      const buf = Buffer.from(raw, 'utf8')
+      if (buf.length <= GITDIFF_MAX_BYTES) return raw
+      let end = GITDIFF_MAX_BYTES
+      while (end > 0 && (buf[end] & 0xc0) === 0x80) end-- // 0b10xxxxxx = a continuation byte
+      return buf.subarray(0, end).toString('utf8')
     }
   }
 }

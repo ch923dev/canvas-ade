@@ -24,7 +24,14 @@ export async function boardGitDiff(
   // diff when the repo has no commits yet (a `diff HEAD` would throw on a missing HEAD).
   try {
     return await git.diff(['HEAD'])
-  } catch {
-    return await git.diff()
+  } catch (err) {
+    // Only the "no commits yet" case (HEAD is unresolvable) should fall back to the
+    // unstaged-only diff. Any other failure (I/O, missing git binary, repo corruption) must
+    // surface, not be masked by a second `diff()` that then throws an unrelated error.
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/bad revision|unknown revision|ambiguous argument .?HEAD/i.test(msg)) {
+      return await git.diff()
+    }
+    throw err
   }
 }

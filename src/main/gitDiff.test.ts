@@ -40,4 +40,10 @@ describe('boardGitDiff (PR-2)', () => {
     })
     expect(await boardGitDiff('t1', () => '/repo')).toBe('UNSTAGED')
   })
+
+  it('re-throws a non-HEAD failure instead of masking it with the unstaged fallback', async () => {
+    checkIsRepo.mockResolvedValue(true)
+    diff.mockRejectedValue(new Error('fatal: unable to read tree object (corrupt)'))
+    await expect(boardGitDiff('t1', () => '/repo')).rejects.toThrow(/corrupt/)
+  })
 })
