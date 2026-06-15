@@ -7,7 +7,15 @@ import {
   TEXT_HIT,
   ERASE_TOL
 } from './elementRegistry'
-import { makeNote, makeChecklist, makeText, makeArrow, makeStroke, makeImage } from './elements'
+import {
+  makeNote,
+  makeChecklist,
+  makeText,
+  makeArrow,
+  makeStroke,
+  makeImage,
+  makeDiagram
+} from './elements'
 import * as fromElements from './elements'
 import * as fromErase from './erase'
 
@@ -47,6 +55,10 @@ describe('elementRegistry — unified geometry rail (S3)', () => {
       const im = makeImage('im', { x: 5, y: 6 }, 'asset', 30, 40)
       expect(elementBBox(im)).toEqual({ x: im.x, y: im.y, w: 30, h: 40 })
     })
+    it('diagram: explicit w/h box (S4)', () => {
+      const d = makeDiagram('d', { x: 100, y: 100 })
+      expect(elementBBox(d)).toEqual({ x: d.x, y: d.y, w: d.w, h: d.h })
+    })
   })
 
   describe('eraseHitTest dispatches per kind', () => {
@@ -64,6 +76,11 @@ describe('elementRegistry — unified geometry rail (S3)', () => {
       const a = { ...makeArrow('a', { x: 0, y: 0 }), x2: 100, y2: 0 }
       expect(eraseHitTest(a, { x: 50, y: ERASE_TOL })).toBe(true)
       expect(eraseHitTest(a, { x: 50, y: ERASE_TOL + 1 })).toBe(false)
+    })
+    it('hits a diagram rect within tolerance, misses far away (S4)', () => {
+      const d = makeDiagram('d', { x: 200, y: 200 })
+      expect(eraseHitTest(d, { x: d.x + d.w / 2, y: d.y + d.h / 2 })).toBe(true)
+      expect(eraseHitTest(d, { x: d.x - 100, y: d.y })).toBe(false)
     })
   })
 

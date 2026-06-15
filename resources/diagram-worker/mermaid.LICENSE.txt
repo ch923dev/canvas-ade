@@ -1,0 +1,24 @@
+Vendored third-party asset — Mermaid
+====================================
+
+File:     mermaid.min.js
+Version:  11.15.0  (pinned; single-file IIFE build, no lazy-loaded chunks)
+Source:   https://cdn.jsdelivr.net/npm/mermaid@11.15.0/dist/mermaid.min.js
+SRI:      sha384-yQ4mmBBT+vhTAwjFH0toJXNYJ6O4usWnt6EPIdWwrRvx2V/n5lXuDZQwQFeSFydF
+License:  MIT — Copyright (c) 2014-2024 Knut Sveidqvist
+          https://github.com/mermaid-js/mermaid/blob/master/LICENSE
+
+Why vendored (not an npm dependency)
+------------------------------------
+Mermaid is loaded by the HIDDEN diagram render worker (a Chromium BrowserWindow,
+src/main/diagramWorker.ts) via a plain <script> tag in worker.html — NOT imported into
+the app bundle. Vendoring the self-contained UMD/IIFE build keeps it out of the renderer/
+main Vite graph, avoids pulling Mermaid's heavy transitive deps (d3 / dagre / cytoscape)
+into the shared workspace install, and lets the worker run fully offline under a locked
+`default-src 'none'` CSP (the single-file build performs zero dynamic chunk imports).
+
+Updating
+--------
+Re-download the pinned URL above, re-compute the SRI, and update both this file and the
+version note. Verify the worker still renders flowchart / sequence / ERD diagrams (the
+e2e @planning diagram spec covers this) before committing a bump.

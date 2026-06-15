@@ -27,19 +27,17 @@ const MIME_BY_EXT: Record<string, string> = {
   svg: 'image/svg+xml'
 }
 
-/** Gather assetId → data URI for every image element (missing → absent in the map). */
+/** Gather assetId → data URI for every embeddable element (missing → absent in the map): image
+ *  bitmaps (`assetId`) and the derived diagram SVG cache (`svgCache`, since v11/S4). */
 async function gatherAssets(board: PlanningBoard): Promise<Record<string, string>> {
   const ids = Array.from(
     new Set(
       board.elements
-        .filter((e) => e.kind === 'image')
         .map((e) => {
-          // TypeScript narrows e to ImageElement after the kind === 'image' filter above.
-          // The filter callback's return is not narrowed at the map call site in all TS
-          // versions, so we assert the discriminated member directly — ImageElement has
-          // assetId: string (boardSchema.ts line 113), and the filter guarantees it.
-          if (e.kind !== 'image') return ''
-          return e.assetId
+          // Both an image's bitmap and a diagram's cached SVG embed into the export artifact.
+          if (e.kind === 'image') return e.assetId
+          if (e.kind === 'diagram') return e.svgCache ?? ''
+          return ''
         })
         .filter((id) => id.length > 0)
     )

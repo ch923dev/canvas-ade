@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { DEV_CSP, PROD_CSP, injectCspMeta } from './csp'
+import { DEV_CSP, PROD_CSP, DIAGRAM_WORKER_CSP, injectCspMeta } from './csp'
 
 describe('CSP policy', () => {
   it('prod policy adds the hardening directives and blocks inline scripts', () => {
@@ -59,5 +59,29 @@ describe('CSP policy', () => {
     expect(prod).toContain(`content="${PROD_CSP}"`)
     expect(prod).not.toContain(`content="${DEV_CSP}"`)
     expect(injectCspMeta(html, true)).toContain(`content="${DEV_CSP}"`)
+  })
+})
+
+describe('diagram worker CSP (S4)', () => {
+  it('grants unsafe-eval (Mermaid/dagre) but keeps inline-script injection blocked + network off', () => {
+    expect(DIAGRAM_WORKER_CSP).toMatch(/script-src[^;]*'unsafe-eval'/)
+    // The eval grant must NOT come with unsafe-inline — an inline <script> stays blocked.
+    expect(DIAGRAM_WORKER_CSP).not.toMatch(/script-src[^;]*'unsafe-inline'/)
+    // default-src 'none' → no network; the vendored Mermaid build is self-contained.
+    expect(DIAGRAM_WORKER_CSP).toContain("default-src 'none'")
+    expect(DIAGRAM_WORKER_CSP).toContain("base-uri 'none'")
+  })
+
+  it('confines the eval grant to the worker — the MAIN window CSP never gains unsafe-eval', () => {
+    expect(PROD_CSP).not.toContain("'unsafe-eval'")
+    expect(DEV_CSP).not.toContain("'unsafe-eval'")
+  })
+
+  it('worker.html ships the EXACT DIAGRAM_WORKER_CSP (csp.ts is the single source)', () => {
+    const html = readFileSync(
+      fileURLToPath(new URL('../../resources/diagram-worker/worker.html', import.meta.url)),
+      'utf8'
+    )
+    expect(html).toContain(`content="${DIAGRAM_WORKER_CSP}"`)
   })
 })

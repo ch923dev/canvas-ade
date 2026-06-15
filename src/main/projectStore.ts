@@ -29,14 +29,15 @@ const CANVAS_BAK = 'canvas.json.bak'
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation.
  */
-export const SCHEMA_VERSION = 10
+export const SCHEMA_VERSION = 11
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
- * here whenever the renderer constant bumps (breaking changes only). v10 is additive, so
- * the compat floor stays at 9 — older v9+ apps can still open fresh v10 docs.
+ * here whenever the renderer constant bumps (breaking changes only). v11 adds the breaking
+ * `diagram` element kind, so the compat floor moves to 11 — pre-11 apps get the clean
+ * "update the app" message instead of failing deep validation on the unknown kind.
  */
-export const MIN_READER_VERSION = 9
+export const MIN_READER_VERSION = 11
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
@@ -239,8 +240,12 @@ export function readAsset(dir: string, assetId: string): Uint8Array | null {
 }
 
 /**
- * Every assetId a doc references (version-independent), from two sources:
+ * Every assetId a doc references (version-independent), from three sources:
  *  - planning `image` elements (`boards[].elements[].assetId`, since W4)
+ *  - planning `diagram` elements' derived `svgCache` (`boards[].elements[].svgCache`, since v11/S4).
+ *    MUST be included for the SAME reason as images: `gcAssets` runs at every project:open against
+ *    this set, so omitting it sweeps the cached SVG to `.trash` on reopen, forcing a needless
+ *    re-render (and a blank diagram until it completes) — the documented backdrop-asset gotcha.
  *  - the v9 root `background.assetId` — a `kind:'file'` wallpaper (image OR webm/mp4
  *    video). MUST be included: `gcAssets` runs at every project:open against this set,
  *    so omitting the backdrop asset sweeps the user's wallpaper to `.trash` on reopen,
@@ -254,8 +259,12 @@ export function collectAssetIds(doc: unknown): Set<string> {
       const els = (b as { elements?: unknown })?.elements
       if (!Array.isArray(els)) continue
       for (const el of els) {
-        if (el && (el as { kind?: unknown }).kind === 'image') {
+        const kind = el && (el as { kind?: unknown }).kind
+        if (kind === 'image') {
           const a = (el as { assetId?: unknown }).assetId
+          if (typeof a === 'string' && a.length > 0) ids.add(a)
+        } else if (kind === 'diagram') {
+          const a = (el as { svgCache?: unknown }).svgCache
           if (typeof a === 'string' && a.length > 0) ids.add(a)
         }
       }

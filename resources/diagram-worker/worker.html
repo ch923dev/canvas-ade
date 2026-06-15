@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Scoped Content-Security-Policy for the HIDDEN diagram render worker ONLY (S4). Mermaid 11
+      needs `unsafe-eval` (dagre / `new Function`) — this is the one window in the app that gets it.
+      The main window CSP (src/main/csp.ts PROD_CSP) stays `script-src 'self'` with NO eval. The
+      string below MUST stay byte-identical to `DIAGRAM_WORKER_CSP` in src/main/csp.ts — csp.test.ts
+      reads this file and asserts the match (single source = csp.ts). `'self'` resolves to this
+      file's directory (out/main/diagram-worker/), authorizing the sibling vendored mermaid.min.js;
+      `default-src 'none'` blocks all network (no chunk fetches — the vendored bundle is self-contained).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'"
+    />
+    <title>diagram-worker</title>
+  </head>
+  <body>
+    <!-- Vendored Mermaid 11 (single-file IIFE, no lazy chunks). Sets globalThis.mermaid. -->
+    <script src="./mermaid.min.js"></script>
+    <!-- External render bridge (NOT inline): the worker CSP is `script-src 'self' 'unsafe-eval'`
+         with NO 'unsafe-inline', so an inline <script> would be blocked. Both scripts are 'self'. -->
+    <script src="./bridge.js"></script>
+  </body>
+</html>

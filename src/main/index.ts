@@ -18,6 +18,7 @@ import {
 } from './pty'
 import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
+import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
 import { readBoardResult, recordBoardResult, pruneBoardResults } from './boardResults'
 import { readProjectMemory, readBoardSummary } from './boardMemory'
@@ -126,6 +127,7 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     disposeAllPreviews()
     disposeAllOsr() // SPIKE: close offscreen preview renderers too
+    disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
     // BUG-001: the window is now DESTROYED but the module ref stayed non-null, so every
     // consumer that does `mainWindow?.webContents` (e.g. the recap-map watcher onChange)
     // would hit the .webContents getter — which THROWS on a destroyed window before any
@@ -332,6 +334,7 @@ app.whenReady().then(async () => {
   })
   registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
   registerPreviewOsrHandlers(ipcMain, () => mainWindow) // SPIKE: offscreen preview → <canvas>
+  registerDiagramHandlers(ipcMain, () => mainWindow) // S4: hidden Mermaid render worker
   registerPreviewScreenshotHandler(ipcMain, () => mainWindow)
 
   // T-B2: encrypt the API key with Electron safeStorage. Built here (index already imports
@@ -601,6 +604,7 @@ function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
   disposeAllPreviews()
   disposeAllOsr() // SPIKE: close offscreen preview renderers
+  disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
   const mcpClosed = mcp?.close() ?? Promise.resolve()
   mcp = null
   localServer?.close()

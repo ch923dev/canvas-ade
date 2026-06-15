@@ -20,6 +20,7 @@ import { useStore } from '@xyflow/react'
 import type {
   ArrowElement,
   ChecklistElement,
+  DiagramElement,
   NoteElement,
   NoteTint,
   PlanningElement,
@@ -37,6 +38,7 @@ import { TextToolbar, type TextStylePatch } from './planning/TextToolbar'
 import { SIZE_PX, tokenFromHeight } from './planning/textStyle'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { ImageCard } from './planning/ImageCard'
+import { DiagramCard } from './planning/DiagramCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { type PlanTool } from './planning/tools'
 import {
@@ -241,6 +243,23 @@ export function PlanningBoard({
       commit((cur) => removeElement(cur, id))
     },
     [beginChange, commit, board.id]
+  )
+
+  // Diagram (v11/S4): a tracked source edit sets the canonical source AND clears the derived
+  // svgCache to invalidate it (the DiagramCard re-renders + re-writes the cache). Live-read commit
+  // → stable identity (the memo'd DiagramCard isn't re-created per keystroke) + BUG-023-safe.
+  const setDiagramSource = useCallback(
+    (id: string, src: string) =>
+      commit((cur) =>
+        patchElement<DiagramElement>(cur, id, (d) => ({ ...d, source: src, svgCache: undefined }))
+      ),
+    [commit]
+  )
+  // Persist a freshly-rendered SVG assetId — UNTRACKED (derived artifact, never an undo step).
+  const onDiagramCache = useCallback(
+    (id: string, assetId: string) =>
+      useCanvasStore.getState().setDiagramCache(board.id, id, assetId),
+    [board.id]
   )
 
   // Checklist mutators commit via the live-read transform (not the render-time
@@ -527,7 +546,7 @@ export function PlanningBoard({
               ? 'cell'
               : drawing
                 ? 'crosshair'
-                : tool === 'note' || tool === 'check'
+                : tool === 'note' || tool === 'check' || tool === 'diagram'
                   ? 'copy'
                   : 'default',
           // 12px dot grid — finer than the canvas lattice, to read as a sketch
@@ -627,6 +646,22 @@ export function PlanningBoard({
                 onDragStart={onDragStartStable}
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
+              />
+            )
+          }
+          if (el.kind === 'diagram') {
+            return (
+              <DiagramCard
+                key={el.id}
+                element={el}
+                boardId={board.id}
+                interactive={interactive}
+                onDragStart={onDragStartStable}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
+                onChangeSource={setDiagramSource}
+                onEditStart={beginChange}
+                onCache={onDiagramCache}
               />
             )
           }

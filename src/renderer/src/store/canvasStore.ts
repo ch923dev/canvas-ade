@@ -206,6 +206,13 @@ export interface CanvasState {
    * (#BUG-024). Only ever grows; a no-op when the board is already tall enough.
    */
   growBoardHeight: (id: string, h: number) => void
+  /**
+   * Write a diagram element's DERIVED svgCache (v11/S4). UNTRACKED — the SVG is a render
+   * artifact of the canonical `source`, not a user edit, so the async write-back from the hidden
+   * worker must NEVER push an undo step nor wipe an armed redo branch (the `lastRecorded`/
+   * growBoardHeight rule). No-op when the element is gone, not a diagram, or the cache is unchanged.
+   */
+  setDiagramCache: (boardId: string, elId: string, svgCache: string) => void
   /** Set the camera transform. UNTRACKED — never touches undo/redo (like growBoardHeight). */
   setViewport: (vp: CanvasViewport) => void
   /**
@@ -787,6 +794,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (b.id !== id || b.h >= h) return b
         changed = true
         return { ...b, h }
+      })
+      return changed ? { boards } : s
+    }),
+
+  setDiagramCache: (boardId, elId, svgCache) =>
+    set((s) => {
+      // Derived-artifact write, untracked (v11/S4): set the diagram's svgCache WITHOUT touching
+      // past/future, exactly like growBoardHeight. A source edit is the tracked step; this cache
+      // write that follows it (and any background re-render) must not add or coalesce an undo step.
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== boardId || b.type !== 'planning') return b
+        const elements = b.elements.map((el) => {
+          if (el.id !== elId || el.kind !== 'diagram' || el.svgCache === svgCache) return el
+          changed = true
+          return { ...el, svgCache }
+        })
+        return changed ? { ...b, elements } : b
       })
       return changed ? { boards } : s
     }),
