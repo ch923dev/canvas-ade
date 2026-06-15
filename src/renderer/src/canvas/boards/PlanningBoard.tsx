@@ -232,7 +232,11 @@ export function PlanningBoard({
       const live = useCanvasStore.getState().boards.find((b) => b.id === board.id)
       const els = live?.type === 'planning' ? live.elements : []
       const el = els.find((x) => x.id === id)
-      if (el && isLocked(el)) return // locked resists the per-element X (closes the prior bypass)
+      // Bail when the element is locked OR already gone from live state (a concurrent
+      // erase/menu delete racing a blur-prune): removeElement always returns a fresh
+      // array, so committing a no-op delete would consume the checkpoint and push a
+      // phantom undo step (applyBoardPatch compares elements by reference).
+      if (!el || isLocked(el)) return
       beginChange()
       commit((cur) => removeElement(cur, id))
     },
