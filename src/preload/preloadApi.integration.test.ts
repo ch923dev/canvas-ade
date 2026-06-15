@@ -54,42 +54,26 @@ describe('preload api → terminal channels', () => {
 })
 
 describe('preload api → preview channels', () => {
-  const bounds = { x: 0, y: 0, width: 100, height: 100 }
   it.each([
-    [
-      'openPreview',
-      (a: CanvasApi) => a.openPreview({ id: 'b1', bounds }),
-      ['preview:open', { id: 'b1', bounds }]
-    ],
-    [
-      'setPreviewBoundsBatch',
-      (a: CanvasApi) => a.setPreviewBoundsBatch([]),
-      ['preview:setBoundsBatch', []]
-    ],
-    ['capturePreview', (a: CanvasApi) => a.capturePreview('b1'), ['preview:capture', 'b1']],
-    ['detachPreview', (a: CanvasApi) => a.detachPreview('b1'), ['preview:detach', 'b1']],
-    ['detachAllPreviews', (a: CanvasApi) => a.detachAllPreviews(), ['preview:detachAll']],
-    [
-      'attachPreview',
-      (a: CanvasApi) => a.attachPreview({ id: 'b1', bounds }),
-      ['preview:attach', { id: 'b1', bounds }]
-    ],
-    ['closePreview', (a: CanvasApi) => a.closePreview('b1'), ['preview:close', 'b1']],
-    ['closeAllPreviews', (a: CanvasApi) => a.closeAllPreviews(), ['preview:closeAll']],
-    [
-      'navigatePreview',
-      (a: CanvasApi) => a.navigatePreview('b1', 'http://x/'),
-      ['preview:navigate', { id: 'b1', url: 'http://x/' }]
-    ],
-    ['goBackPreview', (a: CanvasApi) => a.goBackPreview('b1'), ['preview:goBack', 'b1']],
-    ['goForwardPreview', (a: CanvasApi) => a.goForwardPreview('b1'), ['preview:goForward', 'b1']],
-    ['reloadPreview', (a: CanvasApi) => a.reloadPreview('b1'), ['preview:reload', 'b1']],
     [
       'openExternalPreview',
       (a: CanvasApi) => a.openExternalPreview('http://x/'),
       ['preview:openExternal', 'http://x/']
     ],
-    ['screenshotPreview', (a: CanvasApi) => a.screenshotPreview('b1'), ['preview:screenshot', 'b1']]
+    [
+      'screenshotPreview',
+      (a: CanvasApi) => a.screenshotPreview('b1'),
+      ['preview:screenshot', 'b1']
+    ],
+    ['reloadOsrPreview', (a: CanvasApi) => a.reloadOsrPreview('b1'), ['preview:osrReload', 'b1']],
+    ['goBackOsrPreview', (a: CanvasApi) => a.goBackOsrPreview('b1'), ['preview:osrGoBack', 'b1']],
+    [
+      'goForwardOsrPreview',
+      (a: CanvasApi) => a.goForwardOsrPreview('b1'),
+      ['preview:osrGoForward', 'b1']
+    ],
+    ['closeOsrPreview', (a: CanvasApi) => a.closeOsrPreview('b1'), ['preview:osrClose', 'b1']],
+    ['closeAllOsr', (a: CanvasApi) => a.closeAllOsr(), ['preview:osrCloseAll']]
   ] as const)('%s', (_label, call, expected) => {
     call(api)
     expect(h.invoke).toHaveBeenCalledWith(...expected)

@@ -1,5 +1,3 @@
-import type { BrowserWindow } from 'electron'
-import { WebContentsView } from 'electron'
 import * as os from 'node:os'
 import * as pty from 'node-pty'
 import { probeOsrPaint, probeOsrPaintWindow } from './previewOsr'
@@ -7,9 +5,7 @@ import { probeOsrPaint, probeOsrPaintWindow } from './previewOsr'
 export interface SelfTestResult {
   pty: boolean
   ptyDetail: string
-  preview: boolean
-  previewDetail: string
-  // SPIKE (feat/preview-offscreen-spike): does an off-tree offscreen view paint? (§5 Q1)
+  // Does an off-tree offscreen view paint? (the OSR engine's make-or-break check)
   // osr = bare WebContentsView; osrWin = hidden offscreen BrowserWindow (the OSR host).
   osr: boolean
   osrDetail: string
@@ -19,16 +15,14 @@ export interface SelfTestResult {
 
 /**
  * Headless smoke for the MAIN-process dependencies: spawn a real PTY and run a
- * sentinel command, and load a localhost page into a throwaway WebContentsView.
+ * sentinel command, and stream a localhost page through the offscreen (OSR) preview.
  * Renderer deps (React Flow, xterm) self-report via console (see App.tsx).
  * Run with CANVAS_SMOKE=1 (keep open) or CANVAS_SMOKE=exit (quit after).
  */
-export async function runSelfTest(win: BrowserWindow, localUrl: string): Promise<SelfTestResult> {
+export async function runSelfTest(localUrl: string): Promise<SelfTestResult> {
   const result: SelfTestResult = {
     pty: false,
     ptyDetail: '',
-    preview: false,
-    previewDetail: '',
     osr: false,
     osrDetail: '',
     osrWin: false,
@@ -36,9 +30,8 @@ export async function runSelfTest(win: BrowserWindow, localUrl: string): Promise
   }
 
   await testPty(result)
-  await testPreview(win, localUrl, result)
-  // SPIKE: the make-or-break check — an offscreen view must stream a real frame. Run
-  // both hosts: a bare off-tree WebContentsView, and a hidden offscreen BrowserWindow.
+  // The make-or-break check — an offscreen view must stream a real frame. Run both
+  // hosts: a bare off-tree WebContentsView, and a hidden offscreen BrowserWindow.
   const osr = await probeOsrPaint(localUrl)
   result.osr = osr.painted
   result.osrDetail = osr.detail
@@ -101,36 +94,5 @@ function testPty(result: SelfTestResult): Promise<void> {
       () => finish(buf.includes(sentinel), `timeout; sawSentinel=${buf.includes(sentinel)}`),
       6000
     )
-  })
-}
-
-function testPreview(win: BrowserWindow, localUrl: string, result: SelfTestResult): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false
-    const view = new WebContentsView({
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
-    })
-    const finish = (ok: boolean, detail: string): void => {
-      if (done) return
-      done = true
-      result.preview = ok
-      result.previewDetail = detail
-      try {
-        win.contentView.removeChildView(view)
-        view.webContents.close()
-      } catch {
-        /* ignore */
-      }
-      resolve()
-    }
-
-    win.contentView.addChildView(view)
-    view.setBounds({ x: 0, y: 0, width: 400, height: 300 })
-    view.webContents.once('did-finish-load', () => finish(true, `loaded ${localUrl}`))
-    view.webContents.once('did-fail-load', (_e, code, desc) =>
-      finish(false, `did-fail-load ${code} ${desc}`)
-    )
-    void view.webContents.loadURL(localUrl)
-    setTimeout(() => finish(false, 'timeout loading localhost'), 6000)
   })
 }

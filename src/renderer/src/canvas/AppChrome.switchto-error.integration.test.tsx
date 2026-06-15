@@ -24,7 +24,6 @@ beforeEach(() => {
     },
     dialog: { openFolder: vi.fn().mockResolvedValue('Z:/some/new/project') },
     // disposeLiveResources tears these down before the load — resolve harmlessly
-    closeAllPreviews: vi.fn().mockResolvedValue(true),
     closeAllOsr: vi.fn().mockResolvedValue(true),
     disposeAllTerminals: vi.fn().mockResolvedValue(true)
   }

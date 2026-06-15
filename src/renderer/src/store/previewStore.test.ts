@@ -3,12 +3,7 @@ import { usePreviewStore, DEFAULT_RUNTIME } from './previewStore'
 
 describe('previewStore.requestReload', () => {
   beforeEach(() => {
-    usePreviewStore.setState({
-      byId: {},
-      nodeGesture: false,
-      openMenus: new Set(),
-      menuOpen: false
-    })
+    usePreviewStore.setState({ byId: {} })
   })
 
   test('bumps reloadNonce so a same-URL push forces a re-navigate', () => {
@@ -49,12 +44,7 @@ describe('previewStore.requestReload', () => {
 
 describe('previewStore.patchIfPresent', () => {
   beforeEach(() => {
-    usePreviewStore.setState({
-      byId: {},
-      nodeGesture: false,
-      openMenus: new Set(),
-      menuOpen: false
-    })
+    usePreviewStore.setState({ byId: {} })
   })
 
   test('does NOT create an entry for an absent id (Bug #32 guard)', () => {
@@ -82,12 +72,7 @@ describe('previewStore.patchIfPresent', () => {
 
 describe('previewStore.clear', () => {
   beforeEach(() => {
-    usePreviewStore.setState({
-      byId: {},
-      nodeGesture: false,
-      openMenus: new Set(),
-      menuOpen: false
-    })
+    usePreviewStore.setState({ byId: {} })
   })
 
   test('removes an existing entry', () => {
@@ -109,85 +94,5 @@ describe('previewStore.clear', () => {
     const before = usePreviewStore.getState().byId
     usePreviewStore.getState().clear('ghost')
     expect(usePreviewStore.getState().byId).toBe(before)
-  })
-})
-
-describe('previewStore.evicted (D2-C paused badge)', () => {
-  beforeEach(() => {
-    usePreviewStore.setState({
-      byId: {},
-      nodeGesture: false,
-      openMenus: new Set(),
-      menuOpen: false
-    })
-  })
-
-  test('DEFAULT_RUNTIME starts not-evicted', () => {
-    expect(DEFAULT_RUNTIME.evicted).toBe(false)
-  })
-
-  test('patch can mark a board evicted (renderer freed) and back', () => {
-    usePreviewStore.getState().patch('b1', { live: false, evicted: true })
-    expect(usePreviewStore.getState().byId['b1'].evicted).toBe(true)
-    usePreviewStore.getState().patch('b1', { live: true, evicted: false })
-    expect(usePreviewStore.getState().byId['b1'].evicted).toBe(false)
-  })
-})
-
-describe('previewStore.setNodeGesture / setMenuOpen', () => {
-  beforeEach(() => {
-    usePreviewStore.setState({
-      byId: {},
-      nodeGesture: false,
-      openMenus: new Set(),
-      menuOpen: false
-    })
-  })
-
-  test('setNodeGesture toggles the flag', () => {
-    usePreviewStore.getState().setNodeGesture(true)
-    expect(usePreviewStore.getState().nodeGesture).toBe(true)
-    usePreviewStore.getState().setNodeGesture(false)
-    expect(usePreviewStore.getState().nodeGesture).toBe(false)
-  })
-
-  test('setNodeGesture is a no-op (same state) when unchanged', () => {
-    const before = usePreviewStore.getState()
-    usePreviewStore.getState().setNodeGesture(false)
-    expect(usePreviewStore.getState()).toBe(before)
-  })
-
-  test('setMenuOpen toggles the flag', () => {
-    usePreviewStore.getState().setMenuOpen('a', true)
-    expect(usePreviewStore.getState().menuOpen).toBe(true)
-    usePreviewStore.getState().setMenuOpen('a', false)
-    expect(usePreviewStore.getState().menuOpen).toBe(false)
-  })
-
-  test('setMenuOpen is a no-op (same state) when unchanged', () => {
-    const before = usePreviewStore.getState()
-    usePreviewStore.getState().setMenuOpen('a', false)
-    expect(usePreviewStore.getState()).toBe(before)
-  })
-
-  test('PREV-C: stays open while ANY menu token is open', () => {
-    const { setMenuOpen } = usePreviewStore.getState()
-    setMenuOpen('a', true)
-    setMenuOpen('b', true)
-    expect(usePreviewStore.getState().menuOpen).toBe(true)
-    setMenuOpen('a', false) // first to close
-    expect(usePreviewStore.getState().menuOpen).toBe(true) // b still open
-    setMenuOpen('b', false)
-    expect(usePreviewStore.getState().menuOpen).toBe(false)
-  })
-
-  test('PREV-C: idempotent on repeat open/close of the same token', () => {
-    const { setMenuOpen } = usePreviewStore.getState()
-    setMenuOpen('a', true)
-    const afterOpen = usePreviewStore.getState()
-    setMenuOpen('a', true) // redundant open → no new state
-    expect(usePreviewStore.getState()).toBe(afterOpen)
-    setMenuOpen('a', false)
-    expect(usePreviewStore.getState().menuOpen).toBe(false)
   })
 })

@@ -14,8 +14,6 @@
  *   listener yields to it (after the `[data-confirm-active]` gate, BUG-005 order
  *   unchanged) so Modal's bubble Esc closes the palette first; a second Esc then
  *   exits full view.
- * - ADR 0002: while open, live native previews detach to snapshots via the same
- *   token-keyed previewStore.setMenuOpen pair as the shared Menu shell.
  */
 import {
   useEffect,
@@ -27,7 +25,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { useCanvasStore } from '../../store/canvasStore'
-import { usePreviewStore } from '../../store/previewStore'
 import { Modal } from '../Modal'
 import { TypeGlyph } from '../TypeGlyph'
 import {
@@ -76,14 +73,6 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const baseId = useId()
-
-  // ADR 0002: detach live native previews while the palette is up (token-keyed so
-  // closing it can't reattach views under another still-open popover — PREV-C).
-  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
-  useEffect(() => {
-    setMenuOpen(baseId, true)
-    return () => setMenuOpen(baseId, false)
-  }, [baseId, setMenuOpen])
 
   // Store snapshot — live subscriptions so rows stay correct while open (cheap: the
   // command list is a few dozen entries).

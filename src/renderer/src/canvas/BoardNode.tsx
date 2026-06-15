@@ -268,23 +268,12 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           minWidth={MIN_BOARD_SIZE.w}
           minHeight={MIN_BOARD_SIZE.h}
           isVisible={selected || hovered}
-          // Checkpoint for undo on press. Arm the gesture flag (so the preview layer
-          // detaches live native views, which can't be clipped, to snapshots while
-          // this board resizes) only on the FIRST real movement — XYResizer fires
-          // onResizeStart on a pure handle click too, and onResizeEnd is gated on
-          // movement, so arming on start would leave nodeGesture stuck true (#BUG-003).
+          // Checkpoint for undo on press. (The Browser preview renders into a clipping DOM
+          // <canvas> since OS-3, so resizing the board just reflows that canvas with the DOM —
+          // no live-view detach/reattach is needed the way the native engine required.)
           onResizeStart={() => {
             useCanvasStore.getState().beginChange()
           }}
-          onResize={() => {
-            usePreviewStore.getState().setNodeGesture(true)
-            // Pull live native views out IMMEDIATELY (mirrors onNodeDragStart): the async
-            // beginMotion snapshot lags the first resize frames, during which flushBatch
-            // repositions an always-above native layer that can ghost at the old size
-            // (PREV-B / #43961). Idempotent; reattach happens on resize end.
-            void window.api.detachAllPreviews?.()
-          }}
-          onResizeEnd={() => usePreviewStore.getState().setNodeGesture(false)}
         />
       )}
       {/* In-node mount point; the stable content host is appended here when not full-view.

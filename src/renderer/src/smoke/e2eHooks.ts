@@ -39,7 +39,6 @@ import { listScenes } from '../canvas/backdrop/sceneRegistry'
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
 interface RuntimeProbe {
   status: string
-  live: boolean
 }
 
 export interface CanvasE2E {
@@ -202,8 +201,6 @@ export interface CanvasE2E {
   completeConnectAt: (flowX: number, flowY: number) => string | null
   /** M2: select an orchestration connector (drives the ✕ affordance + Delete-key path). */
   selectConnector: (id: string | null) => void
-  /** Flag a node drag/resize gesture (drives the preview layer detach/reattach). */
-  setGesture: (active: boolean) => void
   /** Delete a board the way the canvas does (parks a terminal's session first). */
   deleteBoard: (id: string) => void
   /** Duplicate a board (store path); returns the clone id (null if the source is gone). */
@@ -360,7 +357,7 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getRuntime(id) {
       const r = usePreviewStore.getState().byId[id]
-      return r ? { status: r.status, live: r.live } : null
+      return r ? { status: r.status } : null
     },
     osrCanvasNonBlank(id) {
       const cv = document.querySelector(
@@ -570,9 +567,6 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     selectConnector(id) {
       host.selectConnector(id)
-    },
-    setGesture(active) {
-      usePreviewStore.getState().setNodeGesture(active)
     },
     deleteBoard(id) {
       const b = useCanvasStore.getState().boards.find((x) => x.id === id)

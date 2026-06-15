@@ -6,12 +6,11 @@ import type { OsrDownloadEvent } from '../../../../../preload'
 /**
  * OS-3 Phase 4 — subscribe a board's native-widget event streams (MAIN → renderer) and route them
  * to the `osrWidgetStore` (dialog / popup / audible) + the toast channel (downloads). One effect
- * per OSR board; a no-op unless `enabled` (VITE_PREVIEW_OSR). Mounted by `BrowserBoard` alongside
- * `useOffscreenPreview` so the URL-bar mute toggle + the `.bb-frame` overlay layer both have state.
+ * per OSR board. Mounted by `BrowserBoard` alongside `useOffscreenPreview` so the URL-bar mute
+ * toggle + the `.bb-frame` overlay layer both have state.
  */
-export function useOsrWidgetEvents(boardId: string, enabled: boolean): void {
+export function useOsrWidgetEvents(boardId: string): void {
   useEffect(() => {
-    if (!enabled) return
     const store = useOsrWidgetStore.getState()
     const offDialog = window.api.onPreviewOsrDialog((d) => {
       if (d.id === boardId) store.setDialog(boardId, d)
@@ -32,7 +31,7 @@ export function useOsrWidgetEvents(boardId: string, enabled: boolean): void {
       offDownload()
       useOsrWidgetStore.getState().clearBoard(boardId)
     }
-  }, [boardId, enabled])
+  }, [boardId])
 }
 
 /** Map a download lifecycle event to a board+file-keyed toast (replace-in-place per file). */

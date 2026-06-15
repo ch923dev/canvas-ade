@@ -2,16 +2,14 @@
  * OS-3 Phase 2 (M2 throughput/CPU gating) — pure decision logic for which offscreen
  * Browser previews should PAINT and which should EXIST.
  *
- * Deliberately self-contained (no DOM, no imports) — like `osrSizing.ts`. It does NOT
- * reuse `previewPlan.ts`: that is the NATIVE path's liveness (occlusion demote, focus
- * isolation, chrome-exclusion zones) which OS-3 Phase 5 DELETES. The OSR `<canvas>`
- * clips/z-orders like any DOM node, so none of that applies here — OSR liveness is only
- * "is the board on-screen, big enough, and within the cap." Keeping this module free of
- * `previewPlan` means deleting the native path can't break the surviving OSR path.
+ * Deliberately self-contained (no DOM, no imports) — like `osrSizing.ts`. The OSR `<canvas>`
+ * clips/z-orders like any DOM node, so there is no occlusion demote / focus isolation /
+ * chrome-exclusion to compute (the now-deleted native engine needed all that) — OSR liveness
+ * is only "is the board on-screen, big enough, and within the cap."
  *
  * The caller (the `useOffscreenLiveness` hook) resolves each board's device-stage rect to
- * SCREEN space (camera + pane offset) before calling in — same geom the native manager and
- * Phase-1 sizing use. This module is the pure, unit-tested core.
+ * SCREEN space (camera + pane offset, via `previewStageRect`) before calling in. This module
+ * is the pure, unit-tested core.
  */
 
 /** Axis-aligned rect in screen-space px (left/top + size). */

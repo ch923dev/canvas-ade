@@ -15,18 +15,16 @@ import { useSettledZoomStore } from '../../store/settledZoomStore'
  * move (DPR change). MAIN no-op-guards a redundant request, so re-sending on every settle is
  * cheap. A resize that races ahead of the window's open is buffered in MAIN (pendingSize).
  *
- * No-op unless `enabled` (VITE_PREVIEW_OSR). Sibling of useOffscreenPreview/useOffscreenInput.
+ * Sibling of useOffscreenPreview / useOffscreenInput.
  */
 export function useOffscreenSizing(
   boardId: string,
   w: number,
   h: number,
-  viewport: BrowserViewport,
-  enabled: boolean
+  viewport: BrowserViewport
 ): void {
   const settledZoom = useSettledZoomStore((s) => s.zoom)
   useEffect(() => {
-    if (!enabled) return
     const send = (): void => {
       const dpr = window.devicePixelRatio || 1
       void window.api.resizeOsr(boardId, computeOsrSize({ w, h, viewport }, settledZoom, dpr))
@@ -44,5 +42,5 @@ export function useOffscreenSizing(
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [boardId, enabled, w, h, viewport, settledZoom])
+  }, [boardId, w, h, viewport, settledZoom])
 }

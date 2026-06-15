@@ -4,7 +4,7 @@ import { useReactFlow, useOnViewportChange } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 import type { BrowserBoard } from '../../lib/boardSchema'
-import { stageScreenRect } from '../../lib/previewGeom'
+import { stageScreenRect } from '../../lib/previewStageRect'
 import { isOsrVisible, rankOsrAlive, type OsrAliveCandidate } from '../../lib/osrLiveness'
 import { LOD_ZOOM } from '../../lib/canvasView'
 
@@ -15,26 +15,24 @@ const OSR_MAX_LIVE = 4
 /**
  * OS-3 Phase 2 (M2 / 2A) — the offscreen-preview LIVENESS manager.
  *
- * Mounted ONCE in `BrowserPreviewLayer` (above the OSR early-return, beside
- * `useBrowserAutoConnect` — the engine-agnostic slot), it decides per Browser board whether
- * its hidden offscreen window should keep PAINTING. An off-screen / below-LOD board is frozen
+ * Mounted ONCE in `BrowserPreviewLayer` (beside `useBrowserAutoConnect`), it decides per
+ * Browser board whether its hidden offscreen window should keep PAINTING. An off-screen / below-LOD board is frozen
  * (`preview:osrSetPaint(false)` → MAIN `stopPainting`, CPU→0, the last frame stays on the
  * <canvas> as a free snapshot); a board back in view resumes (`true` → startPainting +
  * invalidate). This is the M2 CPU/battery fix — without it every board paints forever.
  *
- * It is far simpler than the native `usePreviewManager`: the OSR `<canvas>` clips/z-orders
- * like any DOM node, so there is NO occlusion demote, focus-isolation, or chrome-exclusion to
- * compute — only visibility (`osrLiveness.isOsrVisible`, pure + tested). And it preserves the
- * OSR path's defining win — ZERO per-frame camera IPC: it reconciles only on low-frequency
- * settles, and every `setOsrPaint` is DIFF-SKIPPED, so a settle that flips nothing sends
- * nothing.
+ * It is far simpler than the deleted native preview manager was: the OSR `<canvas>`
+ * clips/z-orders like any DOM node, so there is NO occlusion demote, focus-isolation, or
+ * chrome-exclusion to compute — only visibility (`osrLiveness.isOsrVisible`, pure + tested).
+ * And it preserves the OSR path's defining win — ZERO per-frame camera IPC: it reconciles only
+ * on low-frequency settles, and every `setOsrPaint` is DIFF-SKIPPED, so a settle that flips
+ * nothing sends nothing.
  *
- * Reconcile triggers (mirrors the native manager's gating):
+ * Reconcile triggers:
  *   - `useOnViewportChange({ onEnd })` — a camera pan/zoom SETTLE. A pure camera move leaves
  *     the `boards` array reference untouched, so the store subscription below misses it; this
- *     is the camera trigger. SINGLE-SLOT (last writer wins): this hook is mounted ONLY in OSR
- *     mode (BrowserPreviewLayer › OffscreenLivenessLayer), where the native manager — the other
- *     `useOnViewportChange` owner — is not mounted, so the registrations never clash.
+ *     is the camera trigger. `useOnViewportChange` is SINGLE-SLOT (last writer wins), and this
+ *     hook is its sole owner since 5C deleted the native manager that used to share it.
  *   - the canvasStore `boards`-ref change — add/remove/geometry. A node drag mutates board
  *     geometry per frame (new `boards` array each frame), so this fires per drag-frame too —
  *     but `setOsrPaint` is diff-skipped and a board rarely flips visibility mid-drag, so the

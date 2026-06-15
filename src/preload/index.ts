@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Rectangle, IpcRendererEvent } from 'electron'
+import type { IpcRendererEvent } from 'electron'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -261,40 +261,12 @@ const api = {
     readText: (): Promise<string> => ipcRenderer.invoke('clipboard:readText')
   },
 
-  // ── Browser preview (WebContentsView, keyed by board id — 1-E) ──
-  openPreview: (args: {
-    id: string
-    url?: string
-    bounds: Rectangle
-    zoomFactor?: number
-  }): Promise<{ url: string }> => ipcRenderer.invoke('preview:open', args),
-  // ONE coalesced batch for all views per frame (shared channel with node-pty).
-  setPreviewBoundsBatch: (
-    items: Array<{ id: string; bounds: Rectangle; zoomFactor?: number }>
-  ): Promise<boolean> => ipcRenderer.invoke('preview:setBoundsBatch', items),
-  // Snapshot the live view (data URL) before detaching, so an HTML <img> can carry
-  // motion / LOD while the native layer is pulled out of the tree (1-D).
-  capturePreview: (id: string): Promise<string | null> => ipcRenderer.invoke('preview:capture', id),
-  detachPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:detach', id),
-  detachAllPreviews: (): Promise<boolean> => ipcRenderer.invoke('preview:detachAll'),
-  attachPreview: (args: { id: string; bounds: Rectangle; zoomFactor?: number }): Promise<boolean> =>
-    ipcRenderer.invoke('preview:attach', args),
-  closePreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:close', id),
-  closeAllPreviews: (): Promise<boolean> => ipcRenderer.invoke('preview:closeAll'),
-
-  // ── Phase 2.2 browser — navigation + lifecycle events (additive) ──
-  // Navigate the preview's OWN webContents (control plane). Browser-board content
-  // never reaches the PTY write channel; these only steer the native view.
-  navigatePreview: (id: string, url: string): Promise<boolean> =>
-    ipcRenderer.invoke('preview:navigate', { id, url }),
-  goBackPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:goBack', id),
-  goForwardPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:goForward', id),
-  reloadPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:reload', id),
+  // ── Browser preview — engine-agnostic control plane (shared by the offscreen engine) ──
   // Open the preview's current URL in the OS browser (scheme-gated in main).
   openExternalPreview: (url: string): Promise<boolean> =>
     ipcRenderer.invoke('preview:openExternal', url),
-  // Screenshot the live view -> clipboard + project assets/. { ok:false, reason:'not-live' }
-  // when the view is detached/off-screen (capturePage is blank then).
+  // Screenshot the live preview -> clipboard + project assets/. { ok:false, reason:'not-live' }
+  // when the offscreen window is missing/off-screen (capturePage is blank then).
   screenshotPreview: (id: string): Promise<PreviewScreenshotResult> =>
     ipcRenderer.invoke('preview:screenshot', id),
   /**
@@ -309,22 +281,20 @@ const api = {
     return () => ipcRenderer.removeListener('preview:event', handler)
   },
 
-  // ── SPIKE (feat/preview-offscreen-spike): offscreen preview → <canvas> ──
-  // Render a Browser board's page offscreen and stream frames to a DOM <canvas>
-  // (the occlusion fix under test). Isolated from the native preview methods above;
-  // the renderer routes here only when VITE_PREVIEW_OSR=1 (BrowserPreviewLayer).
+  // ── Offscreen preview → <canvas> (the occlusion fix, ADR 0002) ──
+  // Render a Browser board's page offscreen and stream frames to a DOM <canvas> (a clipping,
+  // z-ordering DOM node). The sole Browser-preview engine since 5C deleted the native path.
   openOsrPreview: (args: { id: string; url: string }): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrOpen', args),
   closeOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrClose', id),
   // Tear down EVERY offscreen window in one shot (project switch / e2e reset) — deterministic
-  // sweep that doesn't wait on per-board React unmount cleanup. Mirrors closeAllPreviews.
+  // sweep that doesn't wait on per-board React unmount cleanup.
   closeAllOsr: (): Promise<boolean> => ipcRenderer.invoke('preview:osrCloseAll'),
   sendOsrInput: (id: string, event: OsrInputEvent): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrInput', { id, event }),
-  // Reload a crashed/failed OSR board (the native reloadPreview has no view in OSR mode).
+  // Reload a crashed/failed preview board (relaunches the offscreen renderer).
   reloadOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrReload', id),
-  // URL-bar Back/Forward in OSR mode (native goBack/goForwardPreview drive a WebContentsView
-  // the offscreen path doesn't have, so those buttons would otherwise no-op).
+  // URL-bar Back/Forward — navigate the offscreen webContents history.
   goBackOsrPreview: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrGoBack', id),
   goForwardOsrPreview: (id: string): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrGoForward', id),

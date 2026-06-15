@@ -4,18 +4,17 @@
  * content-addressed `assets/` store. Deps are injected so the handler is unit-testable without
  * Electron (mirrors clipboardIpc.ts).
  *
- * Engine-agnostic capture (OS-3 Phase 5): tries the native WebContentsView first, then the OSR
- * offscreen window — OSR is the default engine, where the native `views` Map is empty so the
- * native capture returns null and the OSR capture is used. One IPC serves both paths.
+ * Capture (OS-3 Phase 5C — OSR-only): the Browser preview renders in a hidden offscreen
+ * window; `captureOsrPng` grabs its last painted frame. (The native `WebContentsView`
+ * engine was deleted in 5C, so there is no native capture path left.)
  *
  * Security: frame-guarded (isForeignSender); writes only inside the open project dir
- * (writeAsset); never touches the PTY. A detached/off-screen/blank capture returns
+ * (writeAsset); never touches the PTY. An off-screen/blank/missing capture returns
  * { ok:false, reason:'not-live' } and the renderer guides the user.
  */
 import { clipboard, nativeImage, type IpcMain, type BrowserWindow } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir, writeAsset } from './projectStore'
-import { captureViewPng } from './preview'
 import { captureOsrPng } from './previewOsrCapture'
 
 export interface ScreenshotDeps {
@@ -35,8 +34,8 @@ export type ScreenshotResult =
 
 function realDeps(): ScreenshotDeps {
   return {
-    // Native view first (escape-hatch builds), OSR offscreen window otherwise (the default).
-    capture: async (id) => (await captureViewPng(id)) ?? (await captureOsrPng(id)),
+    // The Browser preview is an offscreen window; capture its last painted frame.
+    capture: async (id) => await captureOsrPng(id),
     writeImage: (png) => clipboard.writeImage(nativeImage.createFromBuffer(png)),
     currentDir: () => getCurrentDir(),
     saveAsset: (dir, bytes, ext) => writeAsset(dir, bytes, ext)

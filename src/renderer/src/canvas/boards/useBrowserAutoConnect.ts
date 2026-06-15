@@ -1,16 +1,16 @@
 /**
  * Browser-board auto-connect engine (renderer). One always-on 1s interval drives
  * BOTH reconnect-on-refused and auto-push-detected-port via the pure `planAutoConnect`
- * policy. It reuses existing IPC/store: a 'reload' calls window.api.navigatePreview directly
+ * policy. It reuses existing IPC/store: a 'reload' reloads the offscreen preview window
  * (the previewStore reloadNonce path is NOT used here -- reconcile only re-navigates on a
  * canvasStore.boards change, so a lone nonce bump would never be consumed); a 'detect'
  * polls detectPorts on the linked terminal and (only while NOT connected) sets the board
  * url via patchBoardUntracked (history-neutral — a background machine write must not touch
  * undo/redo, #BUG-057). Per-board exponential backoff (1->2->4s) avoids hammering a dead server.
  *
- * Mounted ONCE beside usePreviewManager (BrowserPreviewLayer). Reads stores via
- * getState() each tick (no selector → no re-render). Security: never writes the PTY;
- * detected URLs are used as-is (origin form from portDetect) and only steer the board url.
+ * Mounted ONCE in BrowserPreviewLayer. Reads stores via getState() each tick (no selector →
+ * no re-render). Security: never writes the PTY; detected URLs are used as-is (origin form
+ * from portDetect) and only steer the board url.
  */
 import { useEffect, useRef } from 'react'
 import { useCanvasStore, patchBoardUntracked } from '../../store/canvasStore'
@@ -22,11 +22,6 @@ import {
   isHttpUrl,
   type PreviewStatusLike
 } from '../../lib/autoConnect'
-
-// OS-3 Phase 5: OSR is the default (set VITE_PREVIEW_OSR=0 for the legacy native engine). In OSR
-// mode the native `views` Map is empty, so the 'reload' (reconnect-on-refused) path must retry via
-// the offscreen window, not preview:navigate.
-const OSR_PREVIEW = import.meta.env.VITE_PREVIEW_OSR !== '0'
 
 const TICK_MS = 1000
 
@@ -83,14 +78,10 @@ export function useBrowserAutoConnect(): void {
         a.waitTicks = backoffTicks(a.attempts)
 
         if (plan.kind === 'reload') {
-          // Navigate directly to the board URL: requestReload only bumps a nonce that
-          // reconcile reads on the NEXT canvasStore.boards mutation — with an unchanged
-          // URL there is no boards mutation, so the nonce is never consumed. Direct IPC
-          // (navigatePreview → loadURL) bypasses the diff-skip and re-navigates immediately.
-          // In OSR mode there is no native view for preview:navigate (it hits the empty `views`
-          // Map and no-ops), so retry by reloading the offscreen window's current URL instead.
-          if (OSR_PREVIEW) void window.api.reloadOsrPreview(board.id)
-          else void window.api.navigatePreview(board.id, board.url)
+          // Reconnect-on-refused: reload the offscreen window's current URL. (requestReload only
+          // bumps a nonce that reconcile reads on the NEXT canvasStore.boards mutation — with an
+          // unchanged URL there is no boards mutation, so the nonce would never be consumed.)
+          void window.api.reloadOsrPreview(board.id)
         } else if (plan.kind === 'detect') {
           const sourceId = board.previewSourceId
           // type-narrow: previewSourceId is optional in the schema, though detect implies it is set

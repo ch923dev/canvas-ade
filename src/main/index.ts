@@ -16,7 +16,6 @@ import {
   getTerminalActivityStaleMs,
   setRecapEnvProvider
 } from './pty'
-import { registerPreviewHandlers, disposeAll as disposeAllPreviews } from './preview'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
@@ -117,16 +116,12 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
-  // BUG-005: child WebContentsViews are NOT destroyed automatically with their
-  // window (Electron docs mandate closing them in a 'closed' handler). Without
-  // this, the preview module's stale views/owner/attached state survives a macOS
-  // close -> activate reopen — attach() then skips addChildView on the NEW window
-  // (blank Browser boards) — and the preview renderer processes leak while no
-  // window exists. Close every preview view on window destruction; the recreated
-  // window's renderer re-opens fresh views per persisted board.
+  // BUG-005: offscreen preview renderers + the Mermaid worker are NOT torn down
+  // automatically with their window — close them on window destruction so a macOS
+  // close -> activate reopen recreates them fresh per persisted board (and no
+  // renderer process leaks while no window exists).
   mainWindow.on('closed', () => {
-    disposeAllPreviews()
-    disposeAllOsr() // SPIKE: close offscreen preview renderers too
+    disposeAllOsr() // close offscreen preview renderers
     disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
     // BUG-001: the window is now DESTROYED but the module ref stayed non-null, so every
     // consumer that does `mainWindow?.webContents` (e.g. the recap-map watcher onChange)
@@ -332,8 +327,7 @@ app.whenReady().then(async () => {
     // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
     recordResult: (id, result) => recordBoardResult(id, result)
   })
-  registerPreviewHandlers(ipcMain, () => mainWindow, defaultPreviewUrl)
-  registerPreviewOsrHandlers(ipcMain, () => mainWindow) // SPIKE: offscreen preview → <canvas>
+  registerPreviewOsrHandlers(ipcMain, () => mainWindow) // offscreen preview → <canvas>
   registerDiagramHandlers(ipcMain, () => mainWindow) // S4: hidden Mermaid render worker
   registerPreviewScreenshotHandler(ipcMain, () => mainWindow)
 
@@ -583,7 +577,7 @@ app.whenReady().then(async () => {
       // fd exhaustion) localServer is null, and the assertion would throw a TypeError into
       // the uncaughtException sink → crashShutdown(1), turning a graceful degraded boot into
       // an exit-1 smoke failure with no SELFTEST_DONE line. runSelfTest tolerates an empty URL.
-      const ok = await runSelfTest(mainWindow!, defaultPreviewUrl)
+      const ok = await runSelfTest(defaultPreviewUrl)
       smokeLog(`SELFTEST_DONE ${JSON.stringify(ok)}`)
       if (SMOKE === 'exit') setTimeout(() => app.quit(), 400)
     })
@@ -595,15 +589,14 @@ app.whenReady().then(async () => {
 })
 
 /**
- * Idempotent teardown of every native resource (PTY trees, preview views, local
+ * Idempotent teardown of every native resource (PTY trees, offscreen previews, local
  * server). Returns a Promise that resolves once the PTY tree-kill is reaped (#49)
  * so the abrupt `app.exit` and guarded `before-quit` paths can await it; the crash
  * hooks fire it best-effort without awaiting (an uncaughtException handler can't).
  */
 function shutdown(): Promise<void> {
   const drained = disposeAllPtys()
-  disposeAllPreviews()
-  disposeAllOsr() // SPIKE: close offscreen preview renderers
+  disposeAllOsr() // close offscreen preview renderers
   disposeDiagramWorker() // close the hidden Mermaid render worker (S4)
   const mcpClosed = mcp?.close() ?? Promise.resolve()
   mcp = null

@@ -9,7 +9,7 @@ import {
   registerCrashReadyGate,
   createOpenExternalLimiter,
   clearLatchOnInPageRecovery
-} from './preview'
+} from './previewShared'
 
 // Bug #5: a dead/refused URL loads a Chromium error page whose did-finish-load must
 // not flip the board back to "connected". The httpResponseCode from did-navigate is

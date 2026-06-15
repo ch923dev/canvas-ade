@@ -2,8 +2,7 @@
  * Right-click menu for a group's name tab: Rename, Focus, Add selected boards, Remove group.
  * Rendered through the shared <Menu> shell (D1-C): body portal, unified viewport clamp at
  * the click point, outside-pointerdown / Esc / resize close, menuitem roving tabindex +
- * arrow-key navigation, setMenuOpen per ADR 0002. "Add selected boards" is disabled when
- * nothing is selected.
+ * arrow-key navigation. "Add selected boards" is disabled when nothing is selected.
  */
 import { type ReactElement } from 'react'
 import { Menu } from './Menu'

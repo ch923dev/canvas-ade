@@ -2,9 +2,8 @@
  * Shared popover-menu shell (D1-C). One implementation of the popover discipline every
  * menu in the app used to hand-roll: body portal, measure-then-clamp into the viewport,
  * Escape / outside-pointerdown / resize dismissal, `menuitem` roving tabindex + arrow-key
- * navigation, focus restore on close, and — critically — detaching live Browser previews
- * while open (a native WebContentsView paints above ALL HTML, so any popover dropping
- * over a live device stage would render under it; ADR 0002, token-keyed per PREV-C).
+ * navigation, and focus restore on close. (Browser previews render into a clipping DOM
+ * <canvas> since OS-3, so a popover dropping over one z-orders normally — no detach needed.)
  *
  * Purely a shell: callers render their own items — any element carrying
  * `role="menuitem"` or `role="menuitemradio"` (mutually-exclusive selection rows, e.g.
@@ -14,7 +13,6 @@
  */
 import {
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -25,7 +23,6 @@ import {
   type RefObject
 } from 'react'
 import { createPortal } from 'react-dom'
-import { usePreviewStore } from '../store/previewStore'
 import { clampMenuToViewport, type AnchorInput, type MenuPlacement } from './menuPlacement'
 
 /** Point anchor (context menus, opened at the pointer) or trigger anchor (dropdowns,
@@ -74,16 +71,6 @@ export function Menu({
   // Start off-screen; the layout effect measures the real menu and clamps it into the
   // viewport before paint (no flash at a stale corner).
   const [pos, setPos] = useState<MenuPlacement>({ top: -9999, left: -9999, maxHeight: 0 })
-
-  // ADR 0002: signal the preview layer to detach live native views to their HTML
-  // snapshot while this menu is open, then reattach on close. Token-keyed so closing
-  // one popover can't reattach views under another still-open one (PREV-C).
-  const token = useId()
-  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
-  useEffect(() => {
-    setMenuOpen(token, true)
-    return () => setMenuOpen(token, false)
-  }, [token, setMenuOpen])
 
   // Focus restore: capture what was focused when the menu opened; put it back on close
   // when the close left focus dangling (on <body> / inside the removed menu). A close

@@ -5,11 +5,10 @@
  * (calm/dense, one accent). Provider/model persist via llm.setConfig; the key via llm.setKey;
  * Clear key via llm.clearKey. No multi-key/profiles.
  */
-import { useEffect, useId, useState, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import { Modal } from './Modal'
 import { DEFAULT_MODELS } from '../lib/llmModels'
 import { useCanvasStore } from '../store/canvasStore'
-import { usePreviewStore } from '../store/previewStore'
 
 const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
   { id: 'openrouter', label: 'OpenRouter' },
@@ -57,13 +56,6 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       cancelled = true
     }
   }, [projectDir])
-
-  const menuToken = useId()
-  const setMenuOpen = usePreviewStore((s) => s.setMenuOpen)
-  useEffect(() => {
-    setMenuOpen(menuToken, true)
-    return () => setMenuOpen(menuToken, false)
-  }, [menuToken, setMenuOpen])
 
   useEffect(() => {
     // BUG-007(1): without a cancellation flag a slow llm.status() resolving AFTER the user has

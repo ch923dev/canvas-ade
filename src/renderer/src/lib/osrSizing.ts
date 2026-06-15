@@ -21,7 +21,8 @@
  *     still varies by preset (aspect fit into the same well), so S is NOT identical across
  *     presets — it tracks the actual stage pixel density, which is the point.
  *
- * Mirror of the MAIN render size (`previewOsr.ts`). Kept pure + unit-tested like `previewGeom.ts`.
+ * Mirror of the MAIN render size (`previewOsr.ts`). Kept pure + unit-tested like the other
+ * preview-geometry helpers (`previewStageRect.ts`).
  */
 import { VIEWPORT_PRESETS, deviceFitScale } from './browserLayout'
 import type { BrowserViewport } from './boardSchema'

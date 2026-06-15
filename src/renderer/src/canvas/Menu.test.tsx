@@ -4,7 +4,6 @@ import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/re
 import { useRef, type ReactElement } from 'react'
 import { Menu } from './Menu'
 import { clampMenuToViewport } from './menuPlacement'
-import { usePreviewStore } from '../store/previewStore'
 
 // `globals: false` in vitest.config → RTL auto-cleanup isn't registered; clean up by hand.
 afterEach(cleanup)
@@ -233,24 +232,6 @@ describe('Menu shell', () => {
     render(<Harness onClose={onClose} />)
     fireEvent(window, new Event('resize'))
     expect(onClose).toHaveBeenCalledOnce()
-  })
-
-  it('registers a preview-detach token while open and releases it on unmount (ADR 0002)', () => {
-    expect(usePreviewStore.getState().menuOpen).toBe(false)
-    const { unmount } = render(<Harness onClose={() => {}} />)
-    expect(usePreviewStore.getState().menuOpen).toBe(true)
-    unmount()
-    expect(usePreviewStore.getState().menuOpen).toBe(false)
-  })
-
-  it('two stacked menus: closing one keeps previews detached for the other (PREV-C)', () => {
-    const a = render(<Harness onClose={() => {}} />)
-    const b = render(<Harness onClose={() => {}} />)
-    expect(usePreviewStore.getState().menuOpen).toBe(true)
-    a.unmount()
-    expect(usePreviewStore.getState().menuOpen).toBe(true)
-    b.unmount()
-    expect(usePreviewStore.getState().menuOpen).toBe(false)
   })
 
   // Regression (groups.e2e.ts:150): dismissal listeners must be MOUNT-STABLE. Callers

@@ -31,8 +31,6 @@ import { mapOsrWheel } from '../../lib/osrWheel'
  *
  * Late-mount note: the boards mount content into a deferred "stable content host", so the canvas /
  * proxy can be absent on the effect's first tick. We rAF-wait for both before attaching.
- *
- * No-op unless `enabled` (VITE_PREVIEW_OSR + not full view). Isolated from the native path.
  */
 
 type OsrInput = Parameters<typeof window.api.sendOsrInput>[1]
@@ -344,11 +342,9 @@ export function useOffscreenInput(
   boardId: string,
   canvasRef: RefObject<HTMLCanvasElement | null>,
   proxyRef: RefObject<HTMLTextAreaElement | null>,
-  viewport: BrowserViewport,
-  enabled: boolean
+  viewport: BrowserViewport
 ): void {
   useEffect(() => {
-    if (!enabled) return
     // M4: forward coordinates in the ACTIVE preset's logical space (the width the page lays
     // out at in MAIN). A preset switch re-attaches with the new size — infrequent (a control
     // click), so the listener churn is negligible.
@@ -374,5 +370,5 @@ export function useOffscreenInput(
       if (raf) cancelAnimationFrame(raf)
       if (detach) detach()
     }
-  }, [boardId, enabled, canvasRef, proxyRef, viewport])
+  }, [boardId, canvasRef, proxyRef, viewport])
 }
