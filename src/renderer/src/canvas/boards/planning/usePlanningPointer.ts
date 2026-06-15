@@ -29,6 +29,7 @@ import type { MenuEntry } from './ElementContextMenu'
 import {
   makeArrow,
   makeChecklist,
+  makeDiagram,
   makeNote,
   makeStroke,
   makeText,
@@ -261,6 +262,12 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       if (tool === 'check') {
         beginChange()
         commit([...elements, makeChecklist(newId(), newId(), p)])
+        setTool('select')
+        return
+      }
+      if (tool === 'diagram') {
+        beginChange()
+        commit([...elements, makeDiagram(newId(), p)])
         setTool('select')
         return
       }

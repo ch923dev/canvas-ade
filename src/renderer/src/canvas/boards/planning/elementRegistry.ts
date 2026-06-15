@@ -238,6 +238,11 @@ const ELEMENT_GEOMETRY: ElementGeometryRegistry = {
   image: {
     bbox: (el) => ({ x: el.x, y: el.y, w: el.w, h: el.h }),
     hitTest: (el, p, tol) => inRect(p, el.x, el.y, el.w, el.h, tol)
+  },
+  // v11/S4: diagram element — like image, an explicit w/h box with a tolerance-padded hit rect.
+  diagram: {
+    bbox: (el) => ({ x: el.x, y: el.y, w: el.w, h: el.h }),
+    hitTest: (el, p, tol) => inRect(p, el.x, el.y, el.w, el.h, tol)
   }
 }
 

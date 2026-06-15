@@ -34,6 +34,10 @@ export default tseslint.config(
       '.agents/**',
       // Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand).
       'src/vendor/**',
+      // Diagram render-worker assets (S4): the vendored Mermaid bundle + the static worker
+      // HTML/bridge are loaded by Electron at runtime, NOT part of the app source graph (the
+      // bridge runs as a plain browser <script> with window/mermaid globals, not a module).
+      'resources/diagram-worker/**',
       // Shipped hook scripts: plain CommonJS .js files run standalone under node
       // (no build step, no bundler). ESLint's no-undef / no-require-imports do not
       // apply to these — they use globals (require, process) that are valid at runtime.

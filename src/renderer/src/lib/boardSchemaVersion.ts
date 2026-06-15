@@ -16,9 +16,13 @@
  * - v9 = optional root `background` (canvas backdrop). Optional + defaulted-at-read → identity bump.
  * - v10 = optional TerminalBoard `agentKind` + `monitorActivity` (New Terminal agent presets). Both
  *   optional + defaulted-at-read → identity bump; ADDITIVE so MIN_READER_VERSION stays 9.
+ * - v11 = the Planning `diagram` element kind (S4 — Mermaid Diagram). A NEW element kind is
+ *   BREAKING per ADR 0007: a pre-11 validator's `assertPlanningElement` default branch throws on
+ *   the unknown kind, so the compat floor moves to 11 too (see MIN_READER_VERSION below). The
+ *   migration itself is identity (the kind only appears on newly-authored diagram elements).
  *   Do not silently reuse a version for a new shape.
  */
-export const SCHEMA_VERSION = 10
+export const SCHEMA_VERSION = 11
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -31,9 +35,11 @@ export const SCHEMA_VERSION = 10
  *   misreads, or a NEW DOC-LEVEL KEY — toObject rebuilds the root object, so an older reader's save
  *   would DROP it): bump BOTH to the same value.
  *
- * Floor starts at 9: v9's root `background` key is exactly the doc-level case above — a v8 reader
- * would open the doc but silently DROP the user's wallpaper on its next save, so v9 is the breaking
- * baseline. Pre-9 apps keep their old strict refuse-on-newer behavior; every app from 9 on can read
- * all future additive docs.
+ * Floor was 9 (v9's root `background` key — a v8 reader would DROP the user's wallpaper on its next
+ * save). Floor moves to 11 with the v11 `diagram` element kind (S4): an app older than 11 has no
+ * `diagram` case in `assertPlanningElement`, so it would HARD-FAIL deep validation on a doc that
+ * contains one. Stamping `minReaderVersion: 11` makes pre-11 apps show the clean "update the app to
+ * open it" message (assertReadableVersion) instead of a confusing `.bak`-fallback parse failure.
+ * Every app from 11 on can read all future additive docs.
  */
-export const MIN_READER_VERSION = 9
+export const MIN_READER_VERSION = 11

@@ -373,6 +373,15 @@ const api = {
       ipcRenderer.invoke('asset:write', { bytes, ext }),
     read: (assetId: string): Promise<Uint8Array | null> => ipcRenderer.invoke('asset:read', assetId)
   },
+  // ── S4 — render Mermaid source → SVG in the hidden MAIN worker (Planning Diagram element) ──
+  diagram: {
+    render: (req: {
+      source: string
+      themeVars?: Record<string, string>
+      id: string
+    }): Promise<{ ok: true; svg: string } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('diagram:render', req)
+  },
   dialog: {
     openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
   },

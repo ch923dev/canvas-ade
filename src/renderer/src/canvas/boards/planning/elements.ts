@@ -11,6 +11,7 @@ import type {
   ArrowElement,
   ChecklistElement,
   ChecklistItem,
+  DiagramElement,
   ImageElement,
   NoteElement,
   NoteTint,
@@ -146,6 +147,27 @@ export function makeImage(
     w,
     h,
     assetId
+  }
+}
+
+/** Default board-local size for a freshly-placed diagram element. */
+export const DIAGRAM_SIZE = { w: 280, h: 200 } as const
+
+/** Starter Mermaid source for a new diagram (the wireframe's Plan → Build → Verify flow). */
+export const DIAGRAM_STARTER_SOURCE = 'graph TD\n  A[Plan] --> B[Build]\n  B --> C[Verify]'
+
+/** A new Mermaid diagram element centred on the placement point (top-left like a note). The SVG
+ *  cache is absent until the card renders it via the hidden MAIN worker. */
+export function makeDiagram(id: string, at: { x: number; y: number }): DiagramElement {
+  return {
+    id,
+    kind: 'diagram',
+    x: Math.round(at.x - DIAGRAM_SIZE.w / 2),
+    y: Math.round(at.y - DIAGRAM_SIZE.h / 2),
+    w: DIAGRAM_SIZE.w,
+    h: DIAGRAM_SIZE.h,
+    source: DIAGRAM_STARTER_SOURCE,
+    engine: 'mermaid'
   }
 }
 

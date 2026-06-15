@@ -21,6 +21,7 @@ export type IconName =
   | 'arrow'
   | 'pen'
   | 'erase'
+  | 'diagram'
   | 'refresh'
   | 'back'
   | 'forward'
@@ -78,6 +79,8 @@ const PATHS: Record<IconName, string> = {
   arrow: 'M5 19L19 5M19 5h-7M19 5v7',
   pen: 'M5 19l2-6 9-9 4 4-9 9-6 2zM14 6l4 4',
   erase: 'M16 7l5 5-9 9H7l-3-3z M9 21h12',
+  // diagram — two flowchart nodes joined by an elbow connector (the Mermaid Diagram tool mark).
+  diagram: 'M4 4h7v5H4zM13 15h7v5h-7zM7.5 9v3.5a2 2 0 0 0 2 2H13',
   refresh: 'M4 12a8 8 0 1 0 2.3-5.6M5 4v3.5H8.5',
   back: 'M15 6l-6 6 6 6',
   forward: 'M9 6l6 6-6 6',

@@ -49,9 +49,34 @@ function cspMeta(): Plugin {
   }
 }
 
+/**
+ * Diagram render worker (S4): copy the hidden-worker assets into the main build output so they land
+ * at `out/main/diagram-worker/{worker.html, mermaid.min.js}` — where `diagramWorker.ts` loads them
+ * via `join(__dirname, 'diagram-worker', 'worker.html')`. Like the recap hook, these are NOT modules
+ * the bundler reaches (worker.html is loaded by Electron; mermaid.min.js is a vendored <script> the
+ * page pulls), so without this copy they would be absent from `out/` and the packaged app. Packaged
+ * via the `out/**` glob in electron-builder.yml — no asarUnpack needed (loadFile reads from asar).
+ */
+function copyDiagramWorker(): Plugin {
+  const srcDir = resolve(__dirname, 'resources/diagram-worker')
+  const files = ['worker.html', 'bridge.js', 'mermaid.min.js']
+  let outDir = resolve(__dirname, 'out/main')
+  return {
+    name: 'canvas-ade-copy-diagram-worker',
+    configResolved(cfg): void {
+      if (cfg.build?.outDir) outDir = resolve(__dirname, cfg.build.outDir)
+    },
+    writeBundle(): void {
+      const destDir = join(outDir, 'diagram-worker')
+      mkdirSync(destDir, { recursive: true })
+      for (const f of files) copyFileSync(join(srcDir, f), join(destDir, f))
+    }
+  }
+}
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), copyRecapHook()],
+    plugins: [externalizeDepsPlugin(), copyRecapHook(), copyDiagramWorker()],
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/main/index.ts') }
