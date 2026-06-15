@@ -1,6 +1,12 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
-import type { BoardType } from '../lib/boardSchema'
+import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
+import {
+  materializePlanningOps,
+  neededBoardHeight,
+  MAX_PLANNING_BOARD_ELEMENTS,
+  type PlanningOp
+} from './planningMcpApply'
 
 /**
  * Renderer mirror of MAIN's `McpCommand` union (`src/main/mcpCommand.ts`) — kept in
@@ -16,6 +22,7 @@ export type McpCommandIn =
       id: string
       patch: { shell?: string; launchCommand?: string; cwd?: string }
     }
+  | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
 
 /** The ack shape MAIN's `sendMcpCommand` awaits (`McpCommandAck`). */
 export type McpAck = { ok: true; type: string } | { ok: false; error: string }
@@ -77,6 +84,51 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       store.beginChange()
       store.updateBoard(command.id, command.patch)
       return { ok: true, type: 'configureBoard' }
+    }
+    case 'patchPlanning': {
+      // 🔒 S2: append agent-authored CONTENT to a planning board. MAIN already validated +
+      // sanitized + capped + human-confirmed the ops; the renderer materializes + applies
+      // them. Re-validate every materialized element (defense in depth) before it lands —
+      // even though MAIN is trusted (frame-guarded control plane), mirroring addBoard.
+      if (typeof command.id !== 'string' || command.id.length === 0) {
+        return { ok: false, error: `invalid patchPlanning id: ${JSON.stringify(command.id)}` }
+      }
+      if (!Array.isArray(command.ops) || command.ops.length === 0) {
+        return { ok: false, error: 'patchPlanning ops must be a non-empty array' }
+      }
+      // One synchronous read→compute→write tick (no async gap → no lost-update window):
+      // read the LIVE elements, materialize below them, then commit as one undoable step.
+      const store = useCanvasStore.getState()
+      const board = store.boards.find((b) => b.id === command.id)
+      if (!board) return { ok: false, error: `patchPlanning: board not found: ${command.id}` }
+      if (board.type !== 'planning') {
+        return { ok: false, error: `patchPlanning: board ${command.id} is not a planning board` }
+      }
+      // Cumulative cap (resource guard the renderer enforces — only it knows the live count;
+      // MAIN caps each batch). Reject, don't truncate, so the agent learns nothing landed.
+      if (board.elements.length + command.ops.length > MAX_PLANNING_BOARD_ELEMENTS) {
+        return { ok: false, error: 'patchPlanning: planning board element cap exceeded' }
+      }
+      let added: PlanningElement[]
+      try {
+        added = materializePlanningOps(command.ops, board.elements)
+        added.forEach(assertPlanningElement)
+      } catch (err) {
+        return {
+          ok: false,
+          error: `patchPlanning: ${err instanceof Error ? err.message : String(err)}`
+        }
+      }
+      const nextElements = [...board.elements, ...added]
+      // beginChange() FIRST (lazy checkpoint, like configureBoard) so the agent's write is ONE
+      // discrete undo step that chains with human edits (BUG-023); updateBoard filters to
+      // PATCHABLE_KEYS.planning ('elements'). Then auto-grow the board to fit via the
+      // UNTRACKED growBoardHeight so the layout bump pushes no phantom undo step (BUG-024).
+      store.beginChange()
+      store.updateBoard(command.id, { elements: nextElements })
+      const needed = neededBoardHeight(nextElements)
+      if (needed > board.h) store.growBoardHeight(command.id, needed)
+      return { ok: true, type: 'patchPlanning' }
     }
     default:
       return { ok: false, error: `unknown command: ${(command as { type: string }).type}` }

@@ -1,5 +1,5 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
-import type { TokenStore } from '@expanse-ade/mcp'
+import type { McpServerDeps, TokenStore } from '@expanse-ade/mcp'
 
 /**
  * Parse a positive-millisecond env override, falling back to `fallback` when the value
@@ -18,6 +18,19 @@ export function positiveMsEnv(raw: string | undefined, fallback: number): number
 /** Idle-reap TTL + sweep interval (T3.4). Env-overridable so the live smoke can drive a fast reap. */
 const IDLE_TTL_MS = positiveMsEnv(process.env.CANVAS_MCP_IDLE_TTL_MS, MCP_IDLE_TTL_MS)
 const REAP_INTERVAL_MS = positiveMsEnv(process.env.CANVAS_MCP_REAP_INTERVAL_MS, 60_000)
+
+/**
+ * 🔒 S2 planning content-write path is FLAG-GATED for the first release (ADR 0003): the
+ * `add_planning_elements` tool + the `spawn_board` planning `seed` are registered ONLY when
+ * this returns true. Always on under the e2e harness (CANVAS_E2E) so the @planning MCP e2e
+ * can exercise it; otherwise opt-in via `CANVAS_MCP_PLANNING_WRITE` (1/true). Off by default
+ * in production until the write/confirm UX is proven (the P4 "Run"-wiring follow-up).
+ */
+export function planningWriteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.CANVAS_E2E === '1') return true
+  const v = env.CANVAS_MCP_PLANNING_WRITE
+  return v === '1' || v === 'true'
+}
 
 export interface RunningMcp {
   port: number
@@ -48,7 +61,18 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
     // just above). A second orchestrator-tier token (bound to a different board) then can't
     // drive orchestration cables it doesn't own. Matches the orchestratorToken's boardId.
-    const server = await createMcpHttpServer({ orchestrator, tokens, commandBoardId: 'app' })
+    // `planningWrite` is read at runtime by the matching @expanse-ade/mcp version (the one
+    // shipping the `add_planning_elements` tool). Typed as a local extension of the installed
+    // `McpServerDeps` so the app typechecks against the currently-published package while the
+    // tool version is released separately; passing a typed VARIABLE (not a fresh literal)
+    // avoids an excess-property error and an older package simply ignores the extra field.
+    const deps: McpServerDeps & { planningWrite?: boolean } = {
+      orchestrator,
+      tokens,
+      commandBoardId: 'app',
+      planningWrite: planningWriteEnabled()
+    }
+    const server = await createMcpHttpServer(deps)
     // 🔒 Idle-reap sweep (T3.4): periodically close MCP-spawned boards that have gone
     // idle past the TTL, so the swarm can't accrete dormant boards. unref() so the
     // timer never keeps the process alive at shutdown.
