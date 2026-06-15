@@ -2,6 +2,7 @@ import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
+import type { AppModel } from './appModel'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -77,6 +78,12 @@ export interface OrchestratorOpts {
 export type LifecycleOrchestrator = Orchestrator & {
   /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
   reapIdle(): Promise<string[]>
+  /**
+   * PR-3: assemble the read-only app self-model (board types · tool catalog · live canvas · rules).
+   * App-local (NOT on the package `Orchestrator` interface) until the agent-facing MCP resource
+   * (`canvas://app-model`) lands in PR-3b. Read-only — no write path, no token.
+   */
+  describeApp(): Promise<AppModel>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
