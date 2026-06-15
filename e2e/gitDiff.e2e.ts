@@ -18,8 +18,27 @@ import { execFileSync } from 'node:child_process'
  * The base `page` fixture resets the canvas before each test, so boards never leak between them.
  */
 
-const git = (cwd: string, ...args: string[]): string =>
-  execFileSync('git', args, { cwd, encoding: 'utf8' })
+// Hermetic git for the throwaway repo. EVERY invocation is pinned to it via an absolute
+// GIT_DIR/GIT_WORK_TREE, so git's directory discovery is bypassed entirely and it can NEVER
+// walk up to find (and mutate) the HOST worktree's repo. Identity is supplied via env, so the
+// test never runs `git config` and therefore has no config-write vector into any repo. (Belt
+// and suspenders after a prior run's setup escaped into the host repo + clobbered its identity.)
+const gitFor =
+  (repo: string) =>
+  (...args: string[]): string =>
+    execFileSync('git', args, {
+      cwd: repo,
+      env: {
+        ...process.env,
+        GIT_DIR: join(repo, '.git'),
+        GIT_WORK_TREE: repo,
+        GIT_AUTHOR_NAME: 'e2e',
+        GIT_AUTHOR_EMAIL: 'e2e@example.com',
+        GIT_COMMITTER_NAME: 'e2e',
+        GIT_COMMITTER_EMAIL: 'e2e@example.com'
+      },
+      encoding: 'utf8'
+    })
 
 /** The seam, tolerant of the two transient states: the renderer→MAIN board mirror not yet
  *  carrying a freshly-seeded board (orchestrator throws "board not found"), and the PTY not
@@ -39,15 +58,18 @@ test.describe('@terminal gitDiff (read-only working-tree diff via the app-side s
     // A throwaway repo with a real uncommitted diff vs HEAD: one modified tracked file plus
     // one intent-to-added new file (so `git diff HEAD` reports the addition too).
     repo = mkdtempSync(join(tmpdir(), 'e2e-gitdiff-'))
-    git(repo, 'init', '-q')
-    git(repo, 'config', 'user.email', 'e2e@example.com')
-    git(repo, 'config', 'user.name', 'e2e gitDiff')
+    // SAFETY: only ever operate on a throwaway dir under the OS temp root — never the host repo.
+    if (!repo.startsWith(tmpdir())) {
+      throw new Error(`e2e-gitdiff: refusing to run outside tmpdir (${repo})`)
+    }
+    const git = gitFor(repo)
+    git('init', '-q')
     writeFileSync(join(repo, 'hello.txt'), 'line one\nline two\nline three\n')
-    git(repo, 'add', '-A')
-    git(repo, 'commit', '-q', '-m', 'initial')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'initial')
     writeFileSync(join(repo, 'hello.txt'), 'line one\nline two CHANGED\nline three\nline four\n')
     writeFileSync(join(repo, 'fresh.txt'), 'a brand-new file\n')
-    git(repo, 'add', '-N', 'fresh.txt')
+    git('add', '-N', 'fresh.txt')
   })
 
   test.afterAll(() => {
