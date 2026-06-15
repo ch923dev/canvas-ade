@@ -75,7 +75,12 @@ export function CommandBoard({
     return c
   }, [tasks])
   const progress = counts.total ? counts.done / counts.total : 0
-  const countFor = (status: TaskStatus): number => tasks.filter((t) => t.status === status).length
+  // `failed` is not its own column — failed tasks bucket into Done (matches the COLUMNS note + the
+  // mock's Done column, which shows a failed card with a retry affordance). Phase B renders cards.
+  const countFor = (status: TaskStatus): number =>
+    status === 'done'
+      ? tasks.filter((t) => t.status === 'done' || t.status === 'failed').length
+      : tasks.filter((t) => t.status === status).length
 
   // Collapse swaps the board to a compact rail footprint (a real geometry change so the hub takes
   // less canvas space); expand restores the remembered height. The collapsed flag is ephemeral —

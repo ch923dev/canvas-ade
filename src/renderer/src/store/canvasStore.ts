@@ -560,8 +560,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   addBoard: (type, at, opts) => {
     // Singleton orchestrator (Phase A): the Command board is the single face of the MCP
     // orchestrator (one 'app' token, one ephemeral commandStore). Never mint a second — select and
-    // return the existing one. Covers EVERY add path (dock click/drag, palette, empty-state) since
-    // they all route through addBoard.
+    // return the existing one. Covers the dock/palette/empty-state add paths (all route through
+    // addBoard); duplicateBoard guards the singleton separately (it does NOT route through here).
     if (type === 'command') {
       const existing = get().boards.find((b) => b.type === 'command')
       if (existing) {
@@ -705,6 +705,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   duplicateBoard: (id) => {
     const src = get().boards.find((b) => b.id === id)
     if (!src) return null
+    // The Command board is a singleton (one orchestrator face) — duplicating it would forge a
+    // second one, and this path bypasses addBoard's guard. No-op it. (#175 reviewer.)
+    if (src.type === 'command') return null
     const cloneId = newId()
     const clone = structuredClone(src)
     clone.id = cloneId

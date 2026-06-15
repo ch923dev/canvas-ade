@@ -243,6 +243,12 @@ describe('idle-on-mount registry (M-1: restored terminals stay idle)', () => {
     expect(isIdleOnMount(cloneId)).toBe(true)
   })
 
+  it('duplicateBoard no-ops the singleton Command board (returns null; no second one)', () => {
+    const id = get().addBoard('command', { x: 0, y: 0 })
+    expect(get().duplicateBoard(id)).toBeNull()
+    expect(get().boards.filter((b) => b.type === 'command')).toHaveLength(1)
+  })
+
   it('clearIdleOnMount drops the flag so an explicit Start / later respawn spawns', () => {
     const id = get().addBoard('terminal', { x: 0, y: 0 })
     get().loadObject(toObject([createBoard('terminal', { id, x: 0, y: 0 })], null))
