@@ -131,6 +131,13 @@ export interface E2EMain {
     workerToken: string
     workerBoardId: string
   } | null
+  /**
+   * PR-2 live invoke: the read-only working-tree diff for a board, via the orchestrator path
+   * (terminal-type check + 100 KB clamp → registry.gitDiff → boardGitDiff → simple-git). Lets a
+   * driver seed a terminal in a git repo and SEE a real diff, since the package exposes no
+   * `git_diff` MCP tool yet. Resolves '' when the server never mounted.
+   */
+  gitDiff(boardId: string): Promise<string>
   /** Seed a board's live PTY output ring with known ANSI content (output-pagination probe). */
   mcpSeedOutput(id: string, text: string): boolean
   /** Record a board's structured result (drives the empty→filled `canvas://board/{id}/result` probe). */
@@ -336,6 +343,9 @@ export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: Runnin
         workerToken: mcp.mintWorkerToken(MCP_E2E_WORKER_BOARD),
         workerBoardId: MCP_E2E_WORKER_BOARD
       }
+    },
+    gitDiff(boardId) {
+      return mcp?.gitDiff(boardId) ?? Promise.resolve('')
     },
     mcpSeedOutput(id, text) {
       return debugSeedOutput(id, text)

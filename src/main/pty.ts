@@ -158,6 +158,15 @@ const sessions = new Map<string, SessionLike>()
 const parked = new Map<string, ParkedLike>()
 
 /**
+ * PR-2: resolved spawn cwd per board id, for the read-only gitDiff (getTerminalCwd → gitDiff.ts).
+ * Keyed by board id (NOT session lifecycle) so it survives the park/adopt MOVE untouched — the
+ * ParkedLike shape carries no cwd, and threading it through the pure park/adopt cores is
+ * unnecessary. Set at spawn; cleared wholesale on disposeAllPtys (project switch). A
+ * non-terminal / never-spawned id is simply absent (gitDiff then reads no cwd and returns '').
+ */
+const boardCwds = new Map<string, string>()
+
+/**
  * Injectable policy seam for injecting extra env vars at spawn time (e.g. CANVAS_RECAP_BOARD).
  * Returns a record to merge LAST into the spawn env, or undefined for no extra env.
  * Policy errors must NEVER break a spawn — the provider is called inside a try/catch.
@@ -368,13 +377,15 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     // the PTY at its spawn dimensions and causing TUI misrenders.
     const spawnCols = clampSpawnDim(opts.cols ?? 80, 80)
     const spawnRows = clampSpawnDim(opts.rows ?? 24, 24)
+    // PR-2: resolve the cwd ONCE so the live process and the gitDiff cwd map agree.
+    const spawnCwd = safeCwd(opts.cwd)
     let proc: pty.IPty
     try {
       proc = pty.spawn(shell, args, {
         name: 'xterm-256color',
         cols: spawnCols,
         rows: spawnRows,
-        cwd: safeCwd(opts.cwd),
+        cwd: spawnCwd,
         env: { ...process.env, ...(recapEnv ?? {}) } as Record<string, string>
       })
     } catch (err) {
@@ -438,6 +449,7 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     attachPortInput(port1, proc)
 
     sessions.set(opts.id, { proc, port: port1, buf, state: 'running', lastActivityAt: Date.now() })
+    boardCwds.set(opts.id, spawnCwd) // PR-2: remember the resolved cwd for the read-only gitDiff
     win.webContents.postMessage('pty:port', { id: opts.id }, [port2])
 
     // Announce running, then — spawn the SHELL, not the agent — write the
@@ -512,6 +524,11 @@ export function cleanupCore(
   if (!s) return Promise.resolve()
   if (isStaleExit(s.proc, proc)) return Promise.resolve()
   sessionsMap.delete(id)
+  // PR-2: drop this board's gitDiff cwd when its session is torn down, so the map doesn't
+  // accrete entries for the session lifetime (it otherwise only drained on project switch).
+  // Kept across park/adopt (parkCore doesn't route here); a respawn re-sets it AFTER this
+  // synchronous delete (the Bug #13 restart reaps the old session before the new spawn).
+  boardCwds.delete(id)
   // BUG-022: when the shell/agent exited naturally (state === 'exited') AND this
   // is the process's own onExit callback (proc !== undefined), the root PID is
   // already dead and the OS may recycle it before taskkill resolves — a force-kill
@@ -629,6 +646,7 @@ function killTree(proc: pty.IPty): Promise<void> {
  * before exiting instead of racing a fixed timer and orphaning a child tree.
  */
 export function disposeAllPtys(): Promise<void> {
+  boardCwds.clear() // PR-2: drop all gitDiff cwd entries on project switch
   return disposeAllPtysCore(sessions, parked, sessionDeps)
 }
 
@@ -693,6 +711,15 @@ export function getTerminalActivityStaleMsCore(
  */
 export function getTerminalActivityStaleMs(id: string): number | undefined {
   return getTerminalActivityStaleMsCore(id, sessions, Date.now())
+}
+
+/**
+ * PR-2: the resolved spawn cwd for a board id, or undefined for a non-terminal / never-spawned
+ * id. Read-only; control-plane only — gitDiff.ts runs `simple-git` against it in MAIN. Survives
+ * park/adopt (boardCwds is keyed by board id, not session lifecycle).
+ */
+export function getTerminalCwd(id: string): string | undefined {
+  return boardCwds.get(id)
 }
 
 /**
