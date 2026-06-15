@@ -569,8 +569,12 @@ function fail(msg: string): never {
 const VIEWPORTS: readonly BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const NOTE_TINTS: readonly NoteTint[] = ['yellow', 'blue', 'green', 'plain']
 
-/** Validate a single planning element by `kind`; throws on any mismatch. */
-function assertPlanningElement(el: unknown): void {
+/**
+ * Validate a single planning element by `kind`; throws on any mismatch. Exported so the MCP
+ * command applier (`useMcpCommands`) can re-validate every agent-materialized element as
+ * defense in depth before it lands on a board (S2 — content written via the MCP path).
+ */
+export function assertPlanningElement(el: unknown): void {
   if (!isRecord(el)) fail('planning element is not an object')
   if (typeof el.id !== 'string') fail('planning element has a non-string id')
   if (!isFiniteNum(el.x) || !isFiniteNum(el.y)) fail('planning element has non-finite x/y')

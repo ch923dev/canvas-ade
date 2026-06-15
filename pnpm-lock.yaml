@@ -20,8 +20,8 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0(electron@42.3.3)
       '@expanse-ade/mcp':
-        specifier: ^0.10.0
-        version: 0.10.0
+        specifier: ^0.11.0
+        version: 0.11.0
       electron-updater:
         specifier: ^6.8.3
         version: 6.8.3
@@ -553,8 +553,8 @@ packages:
       '@noble/hashes':
         optional: true
 
-  '@expanse-ade/mcp@0.10.0':
-    resolution: {integrity: sha512-aRLvGgHGmdkJxGjpgbM27tRW9G58ViQGfH4uFdZXSmHEGHi1H3yo3CK5jk8xAlaLjR5fbVi+pWopN1FHz/p1Fw==}
+  '@expanse-ade/mcp@0.11.0':
+    resolution: {integrity: sha512-ZXLEVNc52GGmSlwGDBO5Cpzw9VKBNPYs2R1JV6xGu9B2DhSMktp5yxSe5Sx0GQuWqSKVcK+9e6jcwcW49kzYoA==}
     engines: {node: '>=20'}
 
   '@gar/promisify@1.1.3':
@@ -3988,7 +3988,7 @@ snapshots:
 
   '@exodus/bytes@1.15.1': {}
 
-  '@expanse-ade/mcp@0.10.0':
+  '@expanse-ade/mcp@0.11.0':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       express: 5.2.1

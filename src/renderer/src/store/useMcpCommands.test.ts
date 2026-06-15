@@ -176,4 +176,138 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     const ack = applyMcpCommand({ type: 'frobnicate' })
     expect(ack.ok).toBe(false)
   })
+
+  describe('patchPlanning (S2 — agent content write)', () => {
+    const planning = (id = 'plan-1'): void => {
+      applyMcpCommand({ type: 'addBoard', board: { id, type: 'planning' } })
+      useCanvasStore.setState({ past: [], future: [] }) // clean history for the assertions
+    }
+    const find = (id: string): { elements?: unknown[]; h?: number } | undefined =>
+      useCanvasStore.getState().boards.find((b) => b.id === id) as never
+
+    it('appends a checklist + notes to a planning board and acks ok', () => {
+      planning()
+      const ack = applyMcpCommand({
+        type: 'patchPlanning',
+        id: 'plan-1',
+        ops: [
+          { kind: 'note', text: 'audit middleware', tint: 'yellow' },
+          {
+            kind: 'checklist',
+            title: 'Auth refactor',
+            items: [
+              { label: 'Audit current session mw', done: true },
+              { label: 'Wire confirm gate', done: false }
+            ]
+          }
+        ]
+      })
+      expect(ack).toEqual({ ok: true, type: 'patchPlanning' })
+      const els = find('plan-1')?.elements as Array<{ kind: string; text?: string; title?: string }>
+      expect(els).toHaveLength(2)
+      expect(els[0]).toMatchObject({ kind: 'note', text: 'audit middleware', tint: 'yellow' })
+      expect(els[1]).toMatchObject({ kind: 'checklist', title: 'Auth refactor' })
+    })
+
+    it('is ONE undo step that reverts the whole agent write', () => {
+      planning()
+      applyMcpCommand({
+        type: 'patchPlanning',
+        id: 'plan-1',
+        ops: [{ kind: 'note', text: 'a', tint: 'blue' }]
+      })
+      expect(useCanvasStore.getState().past).toHaveLength(1)
+      expect((find('plan-1')?.elements as unknown[]).length).toBe(1)
+      useCanvasStore.getState().undo()
+      expect((find('plan-1')?.elements as unknown[]).length).toBe(0)
+    })
+
+    it('chains AFTER an existing element instead of replacing it', () => {
+      planning()
+      applyMcpCommand({
+        type: 'patchPlanning',
+        id: 'plan-1',
+        ops: [{ kind: 'note', text: 'first', tint: 'green' }]
+      })
+      applyMcpCommand({
+        type: 'patchPlanning',
+        id: 'plan-1',
+        ops: [{ kind: 'note', text: 'second', tint: 'plain' }]
+      })
+      const els = find('plan-1')?.elements as Array<{ text?: string; y: number }>
+      expect(els.map((e) => e.text)).toEqual(['first', 'second'])
+      // The second note stacks strictly below the first (no overlap).
+      expect(els[1].y).toBeGreaterThan(els[0].y)
+    })
+
+    it('auto-grows the board height to fit tall content (untracked — no extra undo step)', () => {
+      planning()
+      const before = find('plan-1')?.h ?? 0
+      const ops = Array.from({ length: 8 }, (_, i) => ({
+        kind: 'note' as const,
+        text: `n${i}`,
+        tint: 'yellow' as const
+      }))
+      applyMcpCommand({ type: 'patchPlanning', id: 'plan-1', ops })
+      expect(find('plan-1')?.h ?? 0).toBeGreaterThan(before)
+      // grow is untracked → still exactly ONE undo step for the content append.
+      expect(useCanvasStore.getState().past).toHaveLength(1)
+    })
+
+    it('rejects a non-planning target without mutating it', () => {
+      applyMcpCommand({ type: 'addBoard', board: { id: 'term-1', type: 'terminal' } })
+      const ack = applyMcpCommand({
+        type: 'patchPlanning',
+        id: 'term-1',
+        ops: [{ kind: 'note', text: 'x', tint: 'yellow' }]
+      })
+      expect(ack.ok).toBe(false)
+    })
+
+    it('rejects an unknown board id', () => {
+      const ack = applyMcpCommand({
+        type: 'patchPlanning',
+        id: 'ghost',
+        ops: [{ kind: 'note', text: 'x', tint: 'yellow' }]
+      })
+      expect(ack.ok).toBe(false)
+    })
+
+    it('rejects an empty ops array', () => {
+      planning()
+      const ack = applyMcpCommand({ type: 'patchPlanning', id: 'plan-1', ops: [] })
+      expect(ack.ok).toBe(false)
+      expect((find('plan-1')?.elements as unknown[]).length).toBe(0)
+    })
+
+    it('rejects a write that would exceed the cumulative board element cap', () => {
+      planning()
+      // Pre-fill near the cap by direct state set (bypassing the per-call batch limit).
+      const filler = Array.from({ length: 299 }, (_, i) => ({
+        id: `e${i}`,
+        kind: 'note' as const,
+        x: 0,
+        y: 0,
+        w: 156,
+        h: 96,
+        tint: 'yellow' as const,
+        text: 't'
+      }))
+      useCanvasStore.setState({
+        boards: useCanvasStore
+          .getState()
+          .boards.map((b) => (b.id === 'plan-1' ? ({ ...b, elements: filler } as typeof b) : b))
+      })
+      const ack = applyMcpCommand({
+        type: 'patchPlanning',
+        id: 'plan-1',
+        ops: [
+          { kind: 'note', text: 'a', tint: 'yellow' },
+          { kind: 'note', text: 'b', tint: 'yellow' }
+        ]
+      })
+      expect(ack.ok).toBe(false)
+      expect((find('plan-1')?.elements as unknown[]).length).toBe(299) // unchanged
+    })
+  })
 })

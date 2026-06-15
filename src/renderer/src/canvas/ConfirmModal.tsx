@@ -77,7 +77,12 @@ export default function ConfirmModal(): React.ReactElement | null {
           lineHeight: 'var(--lh-body)',
           color: 'var(--text-2)',
           whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word'
+          wordBreak: 'break-word',
+          // A long body (e.g. an MCP planning write showing the full content, S2) must not
+          // push the Approve/Deny buttons off-screen — keep the body scrollable so the gate
+          // stays usable and the full content remains reviewable (ADR 0003).
+          maxHeight: '50vh',
+          overflowY: 'auto'
         }}
       >
         {current.body}

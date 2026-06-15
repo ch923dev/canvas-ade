@@ -1,0 +1,219 @@
+import type { PlanningOp, PlanningOpTint } from './mcpCommand'
+
+/**
+ * 🔒 MAIN-side validation, sanitization, and caps for agent-authored planning CONTENT (S2).
+ *
+ * `add_planning_elements` is the first MCP path that writes attacker-influenceable content
+ * onto the durable canvas (ADR 0003). The @expanse-ade/mcp tool schema is a first
+ * (transport) check, but MAIN is the authority — it re-validates every element, strips
+ * dangerous control characters, and caps element count + total byte size (the canvas doc /
+ * undo-snapshot bloat risk: no upper bound otherwise). The cleaned ops are then shown to the
+ * human IN FULL via the confirm gate before they ever reach the renderer.
+ *
+ * MAIN cannot import the renderer's `assertPlanningElement` in shipped code (separate
+ * bundle), so this validator mirrors the constraints for the four agent-content kinds; the
+ * renderer applier then RE-validates every materialized element against the real
+ * `assertPlanningElement` before it lands (defense in depth) — so an off-shape op can never
+ * reach a board even if this mirror and the schema ever drift.
+ */
+
+/** A content rejection — the orchestrator audits it `rejected` and throws. */
+export class PlanningContentError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PlanningContentError'
+  }
+}
+
+// ── Caps (MAIN-authoritative; the package mirrors looser transport caps) ──────────
+/** Max elements written in ONE call. */
+export const MAX_PLANNING_ELEMENTS = 50
+/** Max items in one checklist element. */
+export const MAX_PLANNING_ITEMS = 100
+/** Max chars for a free-text body (note / text). */
+export const MAX_PLANNING_TEXT = 4000
+/** Max chars for a checklist title. */
+export const MAX_PLANNING_TITLE = 200
+/** Max chars for one checklist item label. */
+export const MAX_PLANNING_LABEL = 500
+/**
+ * Max total byte size (UTF-8) of one batch's ops, kept small enough that the FULL content
+ * stays human-reviewable in the confirm modal (the security premise: injected text can't be
+ * rubber-stamped if it can't be seen). Bounds canvas.json / undo-snapshot growth per call.
+ */
+export const MAX_PLANNING_BYTES = 16 * 1024
+/** Bound on an arrow delta so a single op can't span an absurd distance. */
+const MAX_ARROW_DELTA = 5000
+
+const TINTS: readonly PlanningOpTint[] = ['yellow', 'blue', 'green', 'plain']
+const DEFAULT_TINT: PlanningOpTint = 'yellow'
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/**
+ * Reduce one agent text field to safe, bounded content. Normalizes CR/CRLF → LF; strips C0
+ * control chars EXCEPT newline (0x0A) and tab (0x09), DEL (0x7F), and C1 controls
+ * (0x80–0x9F) — the terminal-escape / injection surface — while KEEPING the newlines a note
+ * legitimately contains (unlike the single-line PTY dispatch sanitizer). Caps the length and
+ * requires non-empty after trimming.
+ */
+export function sanitizePlanningText(raw: unknown, max: number, field: string): string {
+  if (typeof raw !== 'string') throw new PlanningContentError(`${field} must be a string`)
+  // Normalize line endings first so a CRLF doesn't leave a stray CR to be stripped to nothing.
+  const normalized = raw.replace(/\r\n?/g, '\n')
+  let out = ''
+  for (const ch of normalized) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code === 0x0a || code === 0x09) {
+      out += ch
+      continue
+    }
+    if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
+    out += ch
+  }
+  const trimmed = out.trim()
+  if (trimmed.length === 0) throw new PlanningContentError(`${field} is empty after sanitization`)
+  if (trimmed.length > max) {
+    throw new PlanningContentError(`${field} exceeds the ${max}-char limit`)
+  }
+  return trimmed
+}
+
+/** Validate one agent-supplied element → a clean, fully-specified {@link PlanningOp}. */
+function buildOp(el: unknown, index: number): PlanningOp {
+  if (!isRecord(el)) throw new PlanningContentError(`element ${index} is not an object`)
+  switch (el.kind) {
+    case 'note': {
+      const text = sanitizePlanningText(el.text, MAX_PLANNING_TEXT, `note[${index}].text`)
+      let tint: PlanningOpTint = DEFAULT_TINT
+      if (el.tint !== undefined) {
+        if (!TINTS.includes(el.tint as PlanningOpTint)) {
+          throw new PlanningContentError(`note[${index}] has an invalid tint`)
+        }
+        tint = el.tint as PlanningOpTint
+      }
+      return { kind: 'note', text, tint }
+    }
+    case 'text': {
+      const text = sanitizePlanningText(el.text, MAX_PLANNING_TEXT, `text[${index}].text`)
+      return { kind: 'text', text }
+    }
+    case 'checklist': {
+      const title = sanitizePlanningText(el.title, MAX_PLANNING_TITLE, `checklist[${index}].title`)
+      if (!Array.isArray(el.items)) {
+        throw new PlanningContentError(`checklist[${index}].items is not an array`)
+      }
+      if (el.items.length === 0) {
+        throw new PlanningContentError(`checklist[${index}] has no items`)
+      }
+      if (el.items.length > MAX_PLANNING_ITEMS) {
+        throw new PlanningContentError(
+          `checklist[${index}] has more than ${MAX_PLANNING_ITEMS} items`
+        )
+      }
+      const items = el.items.map((it, j) => {
+        if (!isRecord(it)) throw new PlanningContentError(`checklist[${index}].items[${j}] invalid`)
+        const label = sanitizePlanningText(
+          it.label,
+          MAX_PLANNING_LABEL,
+          `checklist[${index}].items[${j}].label`
+        )
+        if (it.done !== undefined && typeof it.done !== 'boolean') {
+          throw new PlanningContentError(`checklist[${index}].items[${j}].done is not a boolean`)
+        }
+        return { label, done: it.done === true }
+      })
+      return { kind: 'checklist', title, items }
+    }
+    case 'arrow': {
+      const { dx, dy } = el
+      if (
+        typeof dx !== 'number' ||
+        !Number.isFinite(dx) ||
+        typeof dy !== 'number' ||
+        !Number.isFinite(dy)
+      ) {
+        throw new PlanningContentError(`arrow[${index}] has non-finite dx/dy`)
+      }
+      if (Math.abs(dx) > MAX_ARROW_DELTA || Math.abs(dy) > MAX_ARROW_DELTA) {
+        throw new PlanningContentError(`arrow[${index}] delta exceeds ${MAX_ARROW_DELTA}px`)
+      }
+      return { kind: 'arrow', dx, dy }
+    }
+    default:
+      throw new PlanningContentError(`element ${index} has an unsupported kind ${String(el.kind)}`)
+  }
+}
+
+/**
+ * Validate + sanitize + cap a whole agent batch into clean {@link PlanningOp}s. Throws a
+ * {@link PlanningContentError} on any violation (no partial writes). The byte cap is checked
+ * on the CLEANED ops (what actually lands) so a payload can't dodge it with control chars.
+ */
+export function buildPlanningOps(elements: unknown): PlanningOp[] {
+  if (!Array.isArray(elements)) {
+    throw new PlanningContentError('elements is not an array')
+  }
+  if (elements.length === 0) {
+    throw new PlanningContentError('no elements to write')
+  }
+  if (elements.length > MAX_PLANNING_ELEMENTS) {
+    throw new PlanningContentError(
+      `too many elements (${elements.length} > ${MAX_PLANNING_ELEMENTS})`
+    )
+  }
+  const ops = elements.map((el, i) => buildOp(el, i))
+  const bytes = Buffer.byteLength(JSON.stringify(ops), 'utf8')
+  if (bytes > MAX_PLANNING_BYTES) {
+    throw new PlanningContentError(`content too large (${bytes} > ${MAX_PLANNING_BYTES} bytes)`)
+  }
+  return ops
+}
+
+/**
+ * 🔒 Render ONE agent text field for the confirm body without letting it spoof the body's
+ * structure. Embedded newlines are kept (a note is legitimately multi-line) but every
+ * continuation line is INDENTED so it can't masquerade as a top-level "• " bullet or a
+ * checklist row — and runs of 3+ blank lines are collapsed so padded whitespace can't push
+ * the real subsequent elements out of the scrollable confirm viewport. Both close the
+ * confirm-body injection vector: the human must see the TRUE structure (ADR 0003).
+ */
+function confirmField(text: string, indent: string): string {
+  return text.replace(/\n{3,}/g, '\n\n').replace(/\n/g, `\n${indent}`)
+}
+
+/**
+ * Render the FULL human-readable content of a batch for the write-time confirm body. Shows
+ * every note/text body and every checklist item (✓/☐) so injected content is visible and
+ * can't be rubber-stamped — never a bare count (ADR 0003). Each field is run through
+ * {@link confirmField} so multi-line content can't forge the bullet/row structure.
+ */
+export function renderPlanningConfirmBody(boardTitle: string, ops: PlanningOp[]): string {
+  const lines: string[] = [
+    `The agent wants to write ${ops.length} element(s) to planning board "${boardTitle}".`,
+    '',
+    'Content to be added (renders as passive notes — nothing runs):'
+  ]
+  for (const op of ops) {
+    switch (op.kind) {
+      case 'note':
+        lines.push(`• Note: ${confirmField(op.text, '  ')}`)
+        break
+      case 'text':
+        lines.push(`• Text: ${confirmField(op.text, '  ')}`)
+        break
+      case 'checklist':
+        lines.push(`• Checklist "${confirmField(op.title, '  ')}" (${op.items.length} item(s)):`)
+        for (const it of op.items) {
+          lines.push(`    ${it.done ? '☑' : '☐'} ${confirmField(it.label, '      ')}`)
+        }
+        break
+      case 'arrow':
+        lines.push(`• Arrow (Δx ${op.dx}, Δy ${op.dy})`)
+        break
+    }
+  }
+  return lines.join('\n')
+}
