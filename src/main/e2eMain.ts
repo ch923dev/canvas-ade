@@ -22,6 +22,7 @@ import { listConnectors } from './boardRegistry'
 import { sendMcpCommand, type McpCommandAck } from './mcpCommand'
 import type { BoardResult } from '@expanse-ade/mcp'
 import type { RunningMcp } from './mcp'
+import type { AppModel } from './appModel'
 
 /** The fixed board id the e2e/mcp.e2e.ts worker token binds to, so the write_result
  *  probe can read its own structured result back via canvas://board/{id}/result. */
@@ -104,6 +105,12 @@ export interface E2EMain {
    * `git_diff` MCP tool yet. Resolves '' when the server never mounted.
    */
   gitDiff(boardId: string): Promise<string>
+  /**
+   * PR-3 live invoke: the read-only app self-model (board types · tool catalog · live canvas ·
+   * rules), via the orchestrator. Lets the e2e assert the live model shape before any UI consumes
+   * it. Resolves null when the MCP server never mounted.
+   */
+  describeApp(): Promise<AppModel | null>
   /** Seed a board's live PTY output ring with known ANSI content (output-pagination probe). */
   mcpSeedOutput(id: string, text: string): boolean
   /** Record a board's structured result (drives the empty→filled `canvas://board/{id}/result` probe). */
@@ -296,6 +303,9 @@ export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: Runnin
     },
     gitDiff(boardId) {
       return mcp?.gitDiff(boardId) ?? Promise.resolve('')
+    },
+    describeApp() {
+      return mcp?.describeApp() ?? Promise.resolve(null)
     },
     mcpSeedOutput(id, text) {
       return debugSeedOutput(id, text)
