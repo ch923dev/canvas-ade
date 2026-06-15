@@ -72,6 +72,10 @@ interface OsrEntry {
   manualMuted: boolean
   // Last audible state emitted (diff-skip dedupe for the media-started/paused pump).
   lastAudible?: boolean
+  // Removes the session `will-download` listener (4D). MUST run on dispose: the per-board session
+  // (`preview-osr-${id}`) OUTLIVES the destroyed window, so a discarded listener would leak + double-
+  // fire if the board id is ever reused (project restore / migration).
+  teardownDownloads?: () => void
 }
 
 /** Browser-preview lifecycle event, emitted on the SAME `preview:event` channel the native
@@ -532,7 +536,7 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   // Downloads (4D): save to the OS Downloads folder (no parented save-dialog freeze) + toast,
   // token-bucket throttled. Per-board session (`preview-osr-${id}`), so the listener is board-scoped.
   const allowDownload = createOpenExternalLimiter()
-  registerOsrDownloads(sess, {
+  e.teardownDownloads = registerOsrDownloads(sess, {
     downloadsDir: app.getPath('downloads'),
     exists: existsSync,
     allow: allowDownload,
@@ -677,6 +681,7 @@ function disposeOsr(id: string): void {
   pendingPaint.delete(id) // …and a buffered-but-never-applied paint-state
   const e = osr.get(id)
   if (!e) return
+  e.teardownDownloads?.() // 4D — remove the session will-download listener (the session outlives the window)
   try {
     e.osrWin.destroy() // hidden offscreen window — destroy to free the renderer
   } catch {
