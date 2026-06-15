@@ -33,6 +33,7 @@ function makeState(boards: Board[] = [], connectors: Connector[] = []): CanvasSt
     // Action stubs — the slice never calls them; they just satisfy the type.
     setBackground: vi.fn() as never,
     addBoard: vi.fn() as never,
+    spawnGroup: vi.fn() as never,
     clearConfigPending: vi.fn() as never,
     removeBoard: vi.fn() as never,
     duplicateBoard: vi.fn() as never,

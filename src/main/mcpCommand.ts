@@ -17,6 +17,12 @@ import { isForeignSender } from './ipcGuard'
  * `patchPlanning` (S2) appends agent-authored CONTENT (notes/checklists/text/arrows) to a
  * planning board's `elements`; the ops are already validated + sanitized + capped + human-
  * confirmed by the orchestrator before this carries them.
+ * `spawnGroup` (PR-5b) creates a whole feature-zone cluster — a terminal (always) + an
+ * optional planning + browser member, plus a Named Group over them and the browser→terminal
+ * preview wiring — in ONE undoable step. MAIN mints every id (so the tool can return them and
+ * later lifecycle tools can address each member); the renderer lays out the cluster (free-slot
+ * placement, per-type defaults) and folds the browser's `previewSourceId` onto the terminal.
+ * Content-less like `addBoard` (empty boards), so it is cap-checked, not human-gated.
  * Keep this the single source of truth; the renderer applier (`useMcpCommands`,
  * a separate bundle) mirrors it by hand.
  */
@@ -30,6 +36,15 @@ export type McpCommand =
       patch: { shell?: string; launchCommand?: string; cwd?: string }
     }
   | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
+  | {
+      type: 'spawnGroup'
+      group: { id: string; name: string }
+      members: {
+        terminal: { id: string }
+        planning?: { id: string }
+        browser?: { id: string }
+      }
+    }
 
 /** Note tint a `note` op carries (mirrors the renderer `NoteTint`). */
 export type PlanningOpTint = 'yellow' | 'blue' | 'green' | 'plain'
