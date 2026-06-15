@@ -4,7 +4,7 @@
  * note it stops pointer propagation so editing never disturbs the canvas, and the
  * `select` tool enables drag (from the gutter) + inline edit.
  */
-import { useEffect, useRef, type ReactElement } from 'react'
+import { memo, useEffect, useRef, type ReactElement } from 'react'
 import type { TextElement } from '../../../lib/boardSchema'
 import {
   FAMILY_CSS,
@@ -34,7 +34,9 @@ export interface FreeTextProps {
   onEditingChange?: (id: string, editing: boolean) => void
 }
 
-export function FreeText({
+// Memoized: stable callbacks from PlanningBoard + an element object that only changes
+// for THIS text element ⇒ editing one element re-renders only its own component.
+export const FreeText = memo(function FreeText({
   element,
   interactive,
   onDragStart,
@@ -233,4 +235,4 @@ export function FreeText({
       />
     </div>
   )
-}
+})

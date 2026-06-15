@@ -10,7 +10,7 @@
  * coordinates; stops pointer propagation so toggling/editing never starts a node
  * drag or clears the canvas selection.
  */
-import { useEffect, useRef, type ReactElement } from 'react'
+import { memo, useEffect, useRef, type ReactElement } from 'react'
 import type { ChecklistElement } from '../../../lib/boardSchema'
 import { Icon } from '../../Icon'
 
@@ -68,7 +68,10 @@ function Checkbox({ done }: { done: boolean }): ReactElement {
   )
 }
 
-export function ChecklistCard({
+// Memoized: stable callbacks from PlanningBoard + an element object that only changes
+// when THIS checklist changes (patchElement keeps unchanged refs) ⇒ a keystroke in one
+// element re-renders only its own card.
+export const ChecklistCard = memo(function ChecklistCard({
   element,
   interactive,
   onDragStart,
@@ -356,4 +359,4 @@ export function ChecklistCard({
       )}
     </div>
   )
-}
+})

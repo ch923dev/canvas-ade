@@ -11,6 +11,7 @@
  * can start over the image. Deletion is menu/eraser only — NO inline ×.
  */
 import {
+  memo,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -152,7 +153,9 @@ export interface ImageCardProps {
   onSelect?: (id: string, additive: boolean) => void
 }
 
-export function ImageCard({
+// Memoized: a moved/edited image yields a new element object; everything else keeps its
+// ref, so unrelated edits in the well don't re-render this card (or re-run useAssetUrl).
+export const ImageCard = memo(function ImageCard({
   image,
   interactive,
   onDragStart,
@@ -222,4 +225,4 @@ export function ImageCard({
       )}
     </div>
   )
-}
+})

@@ -58,7 +58,13 @@ function nearArrow(a: ArrowElement, p: HitPoint, tol: number): boolean {
   const c1y = a.y + (a.y2 - a.y) * 0.1
   const c2x = a.x + (a.x2 - a.x) * 0.6
   const c2y = a.y2 - (a.y2 - a.y) * 0.1
-  const STEPS = 16
+  // Arc-length-adaptive sampling: a fixed step count leaves gaps wider than `tol` between
+  // samples on a long arrow, so a swipe along the middle of a long curved arrow could miss
+  // it. Scale the step count with the chord length so each segment stays ~`tol` px (floor
+  // 16 keeps short-arrow behaviour identical; cap 512 bounds the worst case). The chord
+  // under-estimates the slightly-bowed bezier negligibly.
+  const chord = Math.hypot(a.x2 - a.x, a.y2 - a.y)
+  const STEPS = Math.max(16, Math.min(512, Math.ceil(chord / tol)))
   let prevX = a.x
   let prevY = a.y
   for (let i = 1; i <= STEPS; i++) {
