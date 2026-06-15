@@ -331,4 +331,27 @@ describe('applyOsrIme', () => {
     expect(sendInputEvent).toHaveBeenCalledTimes(1)
     expect(sendInputEvent).toHaveBeenCalledWith({ type: 'char', keyCode: '😀' })
   })
+
+  it('commit falls back to char events when CDP insertText REJECTS async (attached)', async () => {
+    const sendInputEvent = vi.fn<(event: unknown) => void>()
+    const sendCommand = vi.fn(() => Promise.reject(new Error('detached mid-call')))
+    const wc = { debugger: { isAttached: () => true, sendCommand }, sendInputEvent }
+    applyOsrIme(wc, 'commit', 'ab')
+    expect(sendCommand).toHaveBeenCalledWith('Input.insertText', { text: 'ab' })
+    expect(sendInputEvent).not.toHaveBeenCalled() // fallback runs on the rejection microtask
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sendInputEvent).toHaveBeenCalledTimes(2)
+    expect(sendInputEvent).toHaveBeenNthCalledWith(1, { type: 'char', keyCode: 'a' })
+  })
+
+  it('compose does NOT char-fall-back on an async rejection (best-effort only)', async () => {
+    const sendInputEvent = vi.fn<(event: unknown) => void>()
+    const sendCommand = vi.fn(() => Promise.reject(new Error('no composition')))
+    const wc = { debugger: { isAttached: () => true, sendCommand }, sendInputEvent }
+    applyOsrIme(wc, 'compose', 'ni')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(sendInputEvent).not.toHaveBeenCalled()
+  })
 })

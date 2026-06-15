@@ -312,10 +312,20 @@ interface OsrImeTarget {
  * preview (best-effort). `Input.insertText` commits the active composition (replacing the composing
  * range — no doubling) or inserts at the caret when none is active.
  *
- * Resilience: if the debugger is detached/unsupported (or `sendCommand` throws), `commit` falls back
- * to per-code-point `char` `sendInputEvent`s so text never silently drops; `compose` falls back to a
- * no-op (the inline preview just won't show — the eventual `commit` still lands the text).
+ * Resilience: if the debugger is detached/unsupported (or `sendCommand` throws/rejects), `commit`
+ * falls back to per-code-point `char` `sendInputEvent`s so text never silently drops — including on
+ * an ASYNC CDP rejection (a rejected `Input.insertText` did not apply, so the char fallback can't
+ * double-insert). `compose` falls back to a no-op (the inline preview just won't show — the eventual
+ * `commit` still lands the text).
  */
+function sendCharsFallback(wc: OsrImeTarget, text: string): void {
+  try {
+    for (const ch of text) wc.sendInputEvent({ type: 'char', keyCode: ch })
+  } catch {
+    /* window gone */
+  }
+}
+
 export function applyOsrIme(wc: OsrImeTarget, kind: OsrImeKind, text: string): void {
   try {
     if (wc.debugger.isAttached()) {
@@ -330,8 +340,10 @@ export function applyOsrIme(wc: OsrImeTarget, kind: OsrImeKind, text: string): v
           /* composition unsupported on this page — the commit still inserts */
         })
       } else {
+        // A rejected insertText did NOT apply → fall back to char events so the text still lands
+        // (mirrors the synchronous-detached path; a rejection can't have partially inserted).
         void Promise.resolve(wc.debugger.sendCommand('Input.insertText', { text })).catch(() => {
-          /* insert failed async — rare; the next keystroke retries */
+          sendCharsFallback(wc, text)
         })
       }
       return
@@ -340,13 +352,7 @@ export function applyOsrIme(wc: OsrImeTarget, kind: OsrImeKind, text: string): v
     /* debugger gone mid-call → fall through to the sendInputEvent fallback */
   }
   // No CDP: can't preview a composition, but a commit must still land — type each code point.
-  if (kind === 'commit') {
-    try {
-      for (const ch of text) wc.sendInputEvent({ type: 'char', keyCode: ch })
-    } catch {
-      /* window gone */
-    }
-  }
+  if (kind === 'commit') sendCharsFallback(wc, text)
 }
 
 /** The offscreen page's current cursor, mirrored onto the host <canvas> so the preview

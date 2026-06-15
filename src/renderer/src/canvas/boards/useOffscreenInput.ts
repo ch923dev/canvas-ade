@@ -234,9 +234,6 @@ function attachInput(
     proxy.value = ''
   }
   let composing = false
-  // After a composition commits, the browser fires a trailing `input` (insertCompositionText) we've
-  // already handled on compositionend — skip exactly one to avoid a double-insert.
-  let skipNextInput = false
 
   const onKeyDown = (e: KeyboardEvent): void => {
     const cls = classifyKeydown(e)
@@ -278,19 +275,16 @@ function attachInput(
   }
   const onCompositionEnd = (e: CompositionEvent): void => {
     composing = false
-    const text = e.data ?? ''
+    const text = e.data ?? '' // empty on a CANCELLED composition (Escape) — no commit
     if (text) void window.api.osrIme(boardId, 'commit', text) // commit replaces the composing range
-    skipNextInput = true // the trailing `input` (insertCompositionText) is already committed
+    // Clear the proxy so the trailing `input` (insertCompositionText) reads '' → no double-insert.
+    // No skip flag: the `composing` guard catches an input that fires BEFORE compositionend, and the
+    // clear catches one that fires AFTER — so both event orderings (and a cancel) are no-ops here.
     clearProxy()
   }
   const onInput = (): void => {
     if (composing) return // mid-composition; the compose path drives the page
-    if (skipNextInput) {
-      skipNextInput = false
-      clearProxy()
-      return
-    }
-    const text = proxy.value
+    const text = proxy.value // '' after a commit/cancel cleared it → no-op
     if (text) void window.api.osrIme(boardId, 'commit', text)
     clearProxy()
   }
