@@ -9,7 +9,7 @@
  * add-board tool.
  */
 
-export type PlanTool = 'select' | 'note' | 'text' | 'check' | 'arrow' | 'pen' | 'erase'
+export type PlanTool = 'select' | 'note' | 'text' | 'check' | 'arrow' | 'pen' | 'erase' | 'diagram'
 
 const SHORTCUTS: Record<string, PlanTool> = {
   s: 'select',

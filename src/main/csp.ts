@@ -28,6 +28,29 @@ export const PROD_CSP =
   "img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; " +
   HARDENING
 
+/**
+ * Scoped CSP for the HIDDEN diagram render worker ONLY (S4 — Mermaid Diagram element). Mermaid 11
+ * needs `unsafe-eval` (dagre / `new Function` / its bundled layout engines); the worker is a
+ * never-shown `BrowserWindow` (src/main/diagramWorker.ts) loading `resources/diagram-worker/
+ * worker.html`, so this eval grant is confined to that one invisible window — the MAIN window's
+ * PROD_CSP above stays `script-src 'self'` (no eval) and MUST NOT change to ship this feature.
+ *
+ * `'self'` resolves to the worker HTML's own directory (out/main/diagram-worker/), authorizing the
+ * sibling vendored `mermaid.min.js`. `default-src 'none'` blocks ALL network — the single-file
+ * Mermaid build is self-contained (zero dynamic chunk imports), so the worker renders fully offline
+ * and an untrusted diagram source can never exfiltrate or pull remote code. `style-src
+ * 'unsafe-inline'` is required (Mermaid injects a <style> block into the rendered SVG); `img-src
+ * 'self' data:` covers any data-URI marker assets. SVG output is sanitized by Mermaid's
+ * `securityLevel:'strict'` (DOMPurify) and ultimately displayed as an inert <img> in the renderer.
+ *
+ * This string is loaded as a <meta http-equiv="Content-Security-Policy"> in worker.html (a file://
+ * page, where webRequest.onHeadersReceived is unreliable). csp.test.ts reads worker.html and
+ * asserts its meta matches this constant, so csp.ts stays the single source of truth.
+ */
+export const DIAGRAM_WORKER_CSP =
+  "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'unsafe-inline'; " +
+  "img-src 'self' data:; font-src 'self' data:; base-uri 'none'; form-action 'none'"
+
 const CSP_META_RE = /(<meta\s+http-equiv="Content-Security-Policy"\s+content=")[^"]*(")/
 
 /**

@@ -242,6 +242,25 @@ function renderElement(
         embedded: false
       }
     }
+    case 'diagram': {
+      // Embed the derived SVG cache as an inline <image> data URI (same path as a bitmap image);
+      // a missing/unrendered cache draws the dashed fallback tile so export never throws.
+      const uri = el.svgCache ? assets[el.svgCache] : undefined
+      if (uri) {
+        return {
+          markup:
+            `<image x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" ` +
+            `preserveAspectRatio="xMidYMid meet" href="${esc(uri)}"/>`,
+          embedded: true
+        }
+      }
+      return {
+        markup:
+          `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}" rx="${R_INNER}" ` +
+          `fill="none" stroke="${EXPORT_COLORS.border}" stroke-width="1" stroke-dasharray="4 3"/>`,
+        embedded: false
+      }
+    }
     default:
       return { markup: '', embedded: false }
   }

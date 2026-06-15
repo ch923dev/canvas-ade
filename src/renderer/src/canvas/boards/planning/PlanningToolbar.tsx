@@ -13,12 +13,13 @@ import type { PlanTool } from './tools'
 
 const TOOLS: ReadonlyArray<{
   tool: PlanTool
-  icon: 'select' | 'note' | 'text' | 'check' | 'arrow' | 'pen' | 'erase'
+  icon: 'select' | 'note' | 'text' | 'check' | 'arrow' | 'pen' | 'erase' | 'diagram'
 }> = [
   { tool: 'select', icon: 'select' },
   { tool: 'note', icon: 'note' },
   { tool: 'text', icon: 'text' },
   { tool: 'check', icon: 'check' },
+  { tool: 'diagram', icon: 'diagram' },
   { tool: 'arrow', icon: 'arrow' },
   { tool: 'pen', icon: 'pen' },
   { tool: 'erase', icon: 'erase' }

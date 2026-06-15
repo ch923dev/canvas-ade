@@ -9,6 +9,8 @@ design-reference/
 .playwright-mcp/
 # Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand). Do not reflow.
 src/vendor/
+# Vendored Mermaid bundle for the diagram render worker (S4) — minified, never reflow.
+resources/diagram-worker/mermaid.min.js
 pnpm-lock.yaml
 # Hand-authored docs (tables/prose) — keep Prettier's markdown reflow off them.
 *.md

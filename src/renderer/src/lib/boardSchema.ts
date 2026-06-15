@@ -201,6 +201,26 @@ export interface ImageElement extends ElementCommon {
   assetId: string
 }
 
+/**
+ * v11: a themed Mermaid diagram element (S4). `source` is canonical — the SVG is a DERIVED cache
+ * (`svgCache`, a content-addressed `assets/<sha1>.svg`) re-rendered from the source by the hidden
+ * MAIN worker; a source change invalidates it. Rendered as an inert `<img>` of the cached SVG,
+ * exactly like ImageElement (≈80% reuse). A new element kind is breaking → schema v11 / floor 11.
+ */
+export interface DiagramElement extends ElementCommon {
+  kind: 'diagram'
+  /** Canonical diagram source text (Mermaid). */
+  source: string
+  /** Source dialect / render engine. Only 'mermaid' today; the field pins it for future engines. */
+  engine: 'mermaid'
+  /** Display box (board-local px). */
+  w: number
+  h: number
+  /** Derived content-addressed SVG cache `assets/<sha1>.svg`. Absent ⇒ not yet rendered / pending;
+   *  a source edit clears it and the renderer re-renders + rewrites it (a silent, non-undoable patch). */
+  svgCache?: string
+}
+
 export type PlanningElement =
   | NoteElement
   | TextElement
@@ -208,6 +228,7 @@ export type PlanningElement =
   | StrokeElement
   | ChecklistElement
   | ImageElement
+  | DiagramElement
 
 export interface PlanningBoard extends BoardCommon {
   type: 'planning'
@@ -468,7 +489,11 @@ const MIGRATIONS: Record<number, Migration> = {
   8: (doc) => ({ ...doc, schemaVersion: 9 }),
   // v10: optional TerminalBoard agentKind + monitorActivity (agent presets). All-optional →
   // identity bump; absent agentKind reads as "no preset", absent monitorActivity reads as true.
-  9: (doc) => ({ ...doc, schemaVersion: 10 })
+  9: (doc) => ({ ...doc, schemaVersion: 10 }),
+  // v11: the `diagram` element kind (S4). The kind only appears on newly-authored diagram elements,
+  // so existing docs have nothing to backfill — the migration only bumps the version. BREAKING
+  // (floor → 11): a pre-11 reader can't validate the new kind (boardSchemaVersion.ts).
+  10: (doc) => ({ ...doc, schemaVersion: 11 })
 }
 
 /**
@@ -646,6 +671,20 @@ export function assertPlanningElement(el: unknown): void {
       if (!isPositiveNum(el.w) || !isPositiveNum(el.h)) fail('image element has non-positive w/h')
       if (typeof el.assetId !== 'string' || el.assetId.length === 0) {
         fail('image element has an empty/non-string assetId')
+      }
+      return
+    case 'diagram':
+      if (typeof el.source !== 'string') fail('diagram element is missing string source')
+      if (el.engine !== 'mermaid')
+        fail(`diagram element has unsupported engine ${String(el.engine)}`)
+      if (!isPositiveNum(el.w) || !isPositiveNum(el.h)) fail('diagram element has non-positive w/h')
+      // svgCache is an OPTIONAL derived cache: absent (not-yet-rendered) is valid; present must be a
+      // non-empty assetId-shaped string. The asset GC (collectAssetIds) keeps it from being swept.
+      if (
+        el.svgCache !== undefined &&
+        (typeof el.svgCache !== 'string' || el.svgCache.length === 0)
+      ) {
+        fail('diagram element has an empty/non-string svgCache')
       }
       return
     default:

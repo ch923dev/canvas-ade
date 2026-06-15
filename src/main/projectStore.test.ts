@@ -88,10 +88,10 @@ describe('projectStore', () => {
     const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
     const onDisk = JSON.parse(readFileSync(join(dir, 'canvas.json'), 'utf8'))
-    // On-disk writer version must equal the renderer's authoritative SCHEMA_VERSION (10).
+    // On-disk writer version must equal the renderer's authoritative SCHEMA_VERSION.
     expect(onDisk.schemaVersion).toBe(RENDERER_SCHEMA_VERSION)
     // ADR 0007: fresh docs also carry the compat floor, lock-stepped with
-    // boardSchema.MIN_READER_VERSION (still 9 — v10 is additive).
+    // boardSchema.MIN_READER_VERSION (now 11 — the v11 diagram kind is breaking).
     expect(onDisk.minReaderVersion).toBe(RENDERER_MIN_READER_VERSION)
     // The fresh doc must also carry the connectors field added at v4->v5 migration.
     expect(onDisk).toHaveProperty('connectors')

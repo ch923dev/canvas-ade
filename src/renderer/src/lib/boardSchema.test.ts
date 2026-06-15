@@ -417,6 +417,42 @@ describe('fromObject deep validation', () => {
     }
     expect(() => fromObject(wrap(planning))).toThrow()
   })
+
+  // v11/S4 diagram element validation.
+  const mkDiagram = (diagram: unknown): unknown => ({
+    id: 'p',
+    type: 'planning',
+    title: 'P',
+    x: 0,
+    y: 0,
+    w: 1,
+    h: 1,
+    elements: [diagram]
+  })
+  const okDiagram = {
+    id: 'd1',
+    kind: 'diagram',
+    x: 0,
+    y: 0,
+    w: 280,
+    h: 200,
+    source: 'graph TD\n A-->B',
+    engine: 'mermaid'
+  }
+
+  it('accepts a valid diagram element (svgCache optional)', () => {
+    expect(() => fromObject(wrap(mkDiagram(okDiagram)))).not.toThrow()
+    expect(() =>
+      fromObject(wrap(mkDiagram({ ...okDiagram, svgCache: 'assets/abc.svg' })))
+    ).not.toThrow()
+  })
+
+  it('throws on a diagram with a non-string source, bad engine, non-positive size, or empty svgCache', () => {
+    expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, source: 42 })))).toThrow()
+    expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, engine: 'graphviz' })))).toThrow()
+    expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, w: 0 })))).toThrow()
+    expect(() => fromObject(wrap(mkDiagram({ ...okDiagram, svgCache: '' })))).toThrow()
+  })
 })
 
 // ── Degenerate geometry + load-floor clamp (BUG-025) ───────────────────────────
@@ -486,6 +522,24 @@ describe('migrate', () => {
   it('is a no-op at the current schemaVersion', () => {
     const doc = toObject(sampleBoards(), null)
     expect(migrate(doc)).toEqual(doc)
+  })
+
+  // v11/S4: the diagram kind is breaking → SCHEMA_VERSION and the compat floor both move to 11.
+  it('migrates a v10 doc to v11 (diagram kind) without touching existing elements', () => {
+    const note = { id: 'n', kind: 'note', x: 0, y: 0, w: 10, h: 10, text: 'hi', tint: 'yellow' }
+    const v10 = {
+      schemaVersion: 10,
+      viewport: null,
+      connectors: [],
+      boards: [
+        { id: 'p', type: 'planning', title: 'P', x: 0, y: 0, w: 300, h: 200, elements: [note] }
+      ]
+    }
+    const out = migrate(structuredClone(v10) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(SCHEMA_VERSION).toBe(11)
+    expect(MIN_READER_VERSION).toBe(11)
+    expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
 
   it('throws when a newer doc has NO minReaderVersion (pre-floor strict behavior)', () => {
@@ -560,15 +614,15 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 10', () => {
-    expect(SCHEMA_VERSION).toBe(10)
+  it('SCHEMA_VERSION is 11', () => {
+    expect(SCHEMA_VERSION).toBe(11)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 10,
-      minReaderVersion: 9,
+      schemaVersion: 11,
+      minReaderVersion: 11,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -753,8 +807,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 10', () => {
-    expect(SCHEMA_VERSION).toBe(10)
+  it('SCHEMA_VERSION is 11', () => {
+    expect(SCHEMA_VERSION).toBe(11)
   })
 
   it('round-trips a valid image element', () => {
@@ -807,8 +861,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 10', () => {
-    expect(SCHEMA_VERSION).toBe(10)
+  it('SCHEMA_VERSION is 11', () => {
+    expect(SCHEMA_VERSION).toBe(11)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -1444,8 +1498,11 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('keeps the compat floor at 9 (additive — older apps still open it)', () => {
-    expect(toObject([], null).minReaderVersion).toBe(9)
+  it('v10 was additive (no floor move of its own) — the current writer stamps floor 11 (v11 diagram kind)', () => {
+    // v10 (agentKind/monitorActivity) was additive; the compat floor only moved with the v11
+    // breaking `diagram` element kind. toObject stamps the CURRENT floor (MIN_READER_VERSION = 11).
+    expect(toObject([], null).minReaderVersion).toBe(11)
+    expect(MIN_READER_VERSION).toBe(11)
   })
 
   it('round-trips agentKind + monitorActivity', () => {
