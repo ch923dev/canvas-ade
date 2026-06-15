@@ -116,14 +116,20 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
         chips: ['F2'],
         run: () => verbs.renameBoard(id)
       },
-      {
-        id: 'duplicate-board',
-        section: 'Selected board',
-        title: 'Duplicate board',
-        keywords: 'copy clone',
-        glyph: '⧉',
-        run: () => verbs.duplicateBoard(id)
-      },
+      // The Command board is a singleton — omit the Duplicate verb for it (mirrors the hidden
+      // ⋯-menu item; the store + action guard it too). (PR #175 reviewer.)
+      ...(selected.type !== 'command'
+        ? [
+            {
+              id: 'duplicate-board',
+              section: 'Selected board',
+              title: 'Duplicate board',
+              keywords: 'copy clone',
+              glyph: '⧉',
+              run: () => verbs.duplicateBoard(id)
+            } as PaletteCommand
+          ]
+        : []),
       {
         id: 'fullview-board',
         section: 'Selected board',
