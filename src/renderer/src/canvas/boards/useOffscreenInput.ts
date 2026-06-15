@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import type { RefObject } from 'react'
+import { VIEWPORT_PRESETS } from '../../lib/browserLayout'
+import type { BrowserViewport } from '../../lib/boardSchema'
 
 /**
  * SPIKE (feat/preview-offscreen-spike) — M3 input forwarding for the offscreen preview.
@@ -13,8 +15,9 @@ import type { RefObject } from 'react'
  *   - **Coordinates.** Screen → page-logical px via the canvas's live `getBoundingClientRect`.
  *     That rect already reflects the React Flow camera (`translate/scale`) AND the device-frame
  *     letterboxing, so no camera-transform math is needed here — the ratio maps straight onto
- *     the page's fixed 1280×800 logical space (OSR_PAGE_W/H, the MAIN render size; DPR-independent,
- *     so this stays correct when M1 bumps the buffer to 2× for sharpness).
+ *     the page's LOGICAL space = the active preset's CSS box (M4: Mobile 390 / Tablet 834 /
+ *     Desktop 1280, mirroring previewOsr.ts). Logical space is DPR- and supersample-independent,
+ *     so this stays correct as M1 bumps the render buffer for sharpness.
  *   - **Mouse** down/up/move(+wheel). Move is rAF-coalesced (one event/frame) to bound IPC — an
  *     M2 throughput factor. `setPointerCapture` keeps a drag (text-select / slider) alive past the
  *     canvas edge.
@@ -28,11 +31,6 @@ import type { RefObject } from 'react'
  *
  * No-op unless `enabled` (VITE_PREVIEW_OSR + not full view). Isolated from the native path.
  */
-
-/** MAIN render size (mirror of previewOsr.ts OSR_WIDTH/OSR_HEIGHT) — the page's logical
- *  coordinate space that `sendInputEvent` expects, independent of frame-buffer DPR. */
-const OSR_PAGE_W = 1280
-const OSR_PAGE_H = 800
 
 type OsrInput = Parameters<typeof window.api.sendOsrInput>[1]
 type Modifier = 'shift' | 'control' | 'alt' | 'meta'
@@ -51,19 +49,22 @@ function buttonOf(button: number): 'left' | 'middle' | 'right' {
   return MOUSE_BUTTON[button] ?? 'left'
 }
 
-/** Map a DOM event's client coords to page-logical px, or null if the canvas has no size. */
+/** Map a DOM event's client coords to page-logical px (the active preset's CSS box), or null
+ *  if the canvas has no size. `pageW/pageH` = the live preset logical size (M4 reflow). */
 function toPage(
   canvas: HTMLCanvasElement,
   clientX: number,
-  clientY: number
+  clientY: number,
+  pageW: number,
+  pageH: number
 ): { x: number; y: number } | null {
   const r = canvas.getBoundingClientRect()
   if (r.width === 0 || r.height === 0) return null
-  const x = Math.round(((clientX - r.left) / r.width) * OSR_PAGE_W)
-  const y = Math.round(((clientY - r.top) / r.height) * OSR_PAGE_H)
+  const x = Math.round(((clientX - r.left) / r.width) * pageW)
+  const y = Math.round(((clientY - r.top) / r.height) * pageH)
   return {
-    x: Math.max(0, Math.min(OSR_PAGE_W - 1, x)),
-    y: Math.max(0, Math.min(OSR_PAGE_H - 1, y))
+    x: Math.max(0, Math.min(pageW - 1, x)),
+    y: Math.max(0, Math.min(pageH - 1, y))
   }
 }
 
@@ -144,8 +145,14 @@ const CURSOR_CSS: Record<string, string> = {
   grabbing: 'grabbing'
 }
 
-/** Wire all input listeners onto a present canvas; returns a detach fn. */
-function attachInput(boardId: string, canvas: HTMLCanvasElement): () => void {
+/** Wire all input listeners onto a present canvas; returns a detach fn. `pageW/pageH` is the
+ *  active preset's logical size — the page-coordinate space the offscreen window lays out in. */
+function attachInput(
+  boardId: string,
+  canvas: HTMLCanvasElement,
+  pageW: number,
+  pageH: number
+): () => void {
   const send = (ev: OsrInput): void => void window.api.sendOsrInput(boardId, ev)
 
   // rAF-coalesced move: keep only the latest position, flush once per frame.
@@ -171,7 +178,7 @@ function attachInput(boardId: string, canvas: HTMLCanvasElement): () => void {
   }
 
   const onPointerDown = (e: PointerEvent): void => {
-    const p = toPage(canvas, e.clientX, e.clientY)
+    const p = toPage(canvas, e.clientX, e.clientY, pageW, pageH)
     if (!p) return
     try {
       canvas.setPointerCapture(e.pointerId) // keep drag alive past the canvas edge
@@ -188,13 +195,13 @@ function attachInput(boardId: string, canvas: HTMLCanvasElement): () => void {
     })
   }
   const onPointerMove = (e: PointerEvent): void => {
-    const p = toPage(canvas, e.clientX, e.clientY)
+    const p = toPage(canvas, e.clientX, e.clientY, pageW, pageH)
     if (!p) return
     pendingMove = { ...p, modifiers: modifiersOf(e) }
     if (!rafId) rafId = requestAnimationFrame(flushMove)
   }
   const onPointerUp = (e: PointerEvent): void => {
-    const p = toPage(canvas, e.clientX, e.clientY)
+    const p = toPage(canvas, e.clientX, e.clientY, pageW, pageH)
     if (!p) return
     flushPendingSync() // exact endpoint: drain any pending move before the up
     try {
@@ -215,7 +222,7 @@ function attachInput(boardId: string, canvas: HTMLCanvasElement): () => void {
     // (forwarded mouseMove drives element hover; viewport mouseLeave does not — Electron
     // #4912), and drop the mirrored cursor so a stale I-beam doesn't bleed onto app chrome.
     flushPendingSync()
-    const p = toPage(canvas, e.clientX, e.clientY)
+    const p = toPage(canvas, e.clientX, e.clientY, pageW, pageH)
     if (p) send({ type: 'mouseMove', ...p, modifiers: modifiersOf(e) })
     canvas.style.cursor = 'default'
   }
@@ -223,10 +230,10 @@ function attachInput(boardId: string, canvas: HTMLCanvasElement): () => void {
     // Non-passive: stop React Flow from zooming the canvas and scroll the page instead.
     e.preventDefault()
     e.stopPropagation()
-    const p = toPage(canvas, e.clientX, e.clientY)
+    const p = toPage(canvas, e.clientX, e.clientY, pageW, pageH)
     if (!p) return
     // deltaMode: 0=pixel, 1=line, 2=page → approximate non-pixel modes to pixels.
-    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? OSR_PAGE_H : 1
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? pageH : 1
     // DOM wheel deltaY>0 scrolls down; Electron mouseWheel deltaY>0 scrolls up → negate.
     send({
       type: 'mouseWheel',
@@ -308,10 +315,15 @@ function attachInput(boardId: string, canvas: HTMLCanvasElement): () => void {
 export function useOffscreenInput(
   boardId: string,
   canvasRef: RefObject<HTMLCanvasElement | null>,
+  viewport: BrowserViewport,
   enabled: boolean
 ): void {
   useEffect(() => {
     if (!enabled) return
+    // M4: forward coordinates in the ACTIVE preset's logical space (the width the page lays
+    // out at in MAIN). A preset switch re-attaches with the new size — infrequent (a control
+    // click), so the listener churn is negligible.
+    const preset = VIEWPORT_PRESETS[viewport]
     let raf = 0
     let tries = 0
     let detach: (() => void) | null = null
@@ -320,7 +332,7 @@ export function useOffscreenInput(
     const waitForCanvas = (): void => {
       const canvas = canvasRef.current
       if (canvas) {
-        detach = attachInput(boardId, canvas)
+        detach = attachInput(boardId, canvas, preset.w, preset.h)
         return
       }
       if (tries++ > 180) return // ~3s of frames; give up rather than spin forever
@@ -331,5 +343,5 @@ export function useOffscreenInput(
       if (raf) cancelAnimationFrame(raf)
       if (detach) detach()
     }
-  }, [boardId, enabled, canvasRef])
+  }, [boardId, enabled, canvasRef, viewport])
 }

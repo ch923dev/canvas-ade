@@ -33,6 +33,7 @@ import type { BoardViewProps } from '../BoardNode'
 import { isHttpUrl } from '../../lib/autoConnect'
 import { useOffscreenPreview } from './useOffscreenPreview'
 import { useOffscreenInput } from './useOffscreenInput'
+import { useOffscreenSizing } from './useOffscreenSizing'
 
 // SPIKE (feat/preview-offscreen-spike): when set, Browser previews render OFFSCREEN
 // and paint into a DOM <canvas> here (occlusion fix under test, ADR 0002) instead of
@@ -146,9 +147,14 @@ export function BrowserBoard({
   useOffscreenPreview(board.id, board.url, osrCanvasRef, OSR_PREVIEW)
   // SPIKE M3: forward pointer/wheel/keyboard on the canvas to the offscreen page.
   // Open fidelity gaps + the productionization plan (P1: IME / native <select> / clipboard /
-  // dialogs / audio / downloads · M1 sharpness · M2 throughput · M4 responsive presets) are
-  // tracked in docs/feature-proposals.md › OS-3 and the spike spec §8c (the gap register).
-  useOffscreenInput(board.id, osrCanvasRef, OSR_PREVIEW)
+  // dialogs / audio / downloads · M2 throughput · P2 polish) are tracked in
+  // docs/feature-proposals.md › OS-3 and the spike spec §8c (the gap register).
+  useOffscreenInput(board.id, osrCanvasRef, board.viewport, OSR_PREVIEW)
+  // OS-3 Phase 1 (M1 sharpness + M4 responsive reflow): drive the offscreen render size from
+  // the board geometry + settled camera zoom + DPR via a settle-gated preview:osrResize — the
+  // page renders supersampled (crisp) and lays out at the preset width (real breakpoint reflow).
+  // Low-frequency only (settle/preset/resize), so the OSR path keeps its zero-per-frame-IPC win.
+  useOffscreenSizing(board.id, board.w, board.h, board.viewport, OSR_PREVIEW)
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
   // board.url changes underneath (e.g. set elsewhere), re-sync the draft DURING
