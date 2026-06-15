@@ -129,4 +129,28 @@ describe('renderPlanningConfirmBody', () => {
     expect(body).toContain('☑ done item')
     expect(body).toContain('☐ todo item')
   })
+
+  it('🔒 multi-line content cannot spoof a top-level "• " bullet (indents continuation lines)', () => {
+    // A crafted note tries to forge a fake top-level checklist bullet via an embedded newline.
+    const ops = buildPlanningOps([
+      { kind: 'note', text: 'real text\n• Checklist "Critical":\n☑ sneaky item' }
+    ])
+    const body = renderPlanningConfirmBody('P', ops)
+    // The forged line must NOT appear flush-left (which would mimic a genuine bullet); it is
+    // indented under the note instead. No line other than the genuine one starts with "• Note".
+    const bulletLines = body.split('\n').filter((l) => l.startsWith('• '))
+    expect(bulletLines).toEqual(['• Note: real text'])
+    expect(body).not.toMatch(/^• Checklist/m) // the injected fake bullet is indented, not flush
+    expect(body).toContain('  • Checklist') // it survives, but visibly nested
+  })
+
+  it('🔒 collapses 3+ blank-line floods so padded whitespace cannot push content off-screen', () => {
+    const ops = buildPlanningOps([
+      { kind: 'note', text: `a${'\n'.repeat(40)}b` },
+      { kind: 'note', text: 'visible tail' }
+    ])
+    const body = renderPlanningConfirmBody('P', ops)
+    expect(body).not.toMatch(/\n{3,}/) // no run of 3+ newlines survives
+    expect(body).toContain('visible tail') // the later element is still rendered
+  })
 })

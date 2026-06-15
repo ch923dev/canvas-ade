@@ -173,9 +173,22 @@ export function buildPlanningOps(elements: unknown): PlanningOp[] {
 }
 
 /**
+ * 🔒 Render ONE agent text field for the confirm body without letting it spoof the body's
+ * structure. Embedded newlines are kept (a note is legitimately multi-line) but every
+ * continuation line is INDENTED so it can't masquerade as a top-level "• " bullet or a
+ * checklist row — and runs of 3+ blank lines are collapsed so padded whitespace can't push
+ * the real subsequent elements out of the scrollable confirm viewport. Both close the
+ * confirm-body injection vector: the human must see the TRUE structure (ADR 0003).
+ */
+function confirmField(text: string, indent: string): string {
+  return text.replace(/\n{3,}/g, '\n\n').replace(/\n/g, `\n${indent}`)
+}
+
+/**
  * Render the FULL human-readable content of a batch for the write-time confirm body. Shows
  * every note/text body and every checklist item (✓/☐) so injected content is visible and
- * can't be rubber-stamped — never a bare count (ADR 0003).
+ * can't be rubber-stamped — never a bare count (ADR 0003). Each field is run through
+ * {@link confirmField} so multi-line content can't forge the bullet/row structure.
  */
 export function renderPlanningConfirmBody(boardTitle: string, ops: PlanningOp[]): string {
   const lines: string[] = [
@@ -186,14 +199,16 @@ export function renderPlanningConfirmBody(boardTitle: string, ops: PlanningOp[])
   for (const op of ops) {
     switch (op.kind) {
       case 'note':
-        lines.push(`• Note: ${op.text}`)
+        lines.push(`• Note: ${confirmField(op.text, '  ')}`)
         break
       case 'text':
-        lines.push(`• Text: ${op.text}`)
+        lines.push(`• Text: ${confirmField(op.text, '  ')}`)
         break
       case 'checklist':
-        lines.push(`• Checklist "${op.title}" (${op.items.length} item(s)):`)
-        for (const it of op.items) lines.push(`    ${it.done ? '☑' : '☐'} ${it.label}`)
+        lines.push(`• Checklist "${confirmField(op.title, '  ')}" (${op.items.length} item(s)):`)
+        for (const it of op.items) {
+          lines.push(`    ${it.done ? '☑' : '☐'} ${confirmField(it.label, '      ')}`)
+        }
         break
       case 'arrow':
         lines.push(`• Arrow (Δx ${op.dx}, Δy ${op.dy})`)
