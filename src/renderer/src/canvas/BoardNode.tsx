@@ -48,6 +48,9 @@ const BrowserBoard = lazy(() =>
 const PlanningBoard = lazy(() =>
   import('./boards/PlanningBoard').then((m) => ({ default: m.PlanningBoard }))
 )
+const CommandBoard = lazy(() =>
+  import('./boards/CommandBoard').then((m) => ({ default: m.CommandBoard }))
+)
 
 /** Hidden, non-connectable anchor handles so RF can attach the preview edge to any
  *  board without exposing a connection UX or stealing pointer events (Slice C′). */
@@ -251,6 +254,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
               <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
             )}
             {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+            {board.type === 'command' && <CommandBoard board={board} {...common} {...actions} />}
           </ErrorBoundary>
         </Suspense>
       </div>

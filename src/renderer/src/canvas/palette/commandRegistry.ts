@@ -70,7 +70,8 @@ export interface PaletteSnapshot {
 const TYPE_LABEL: Record<BoardType, string> = {
   terminal: 'terminal',
   browser: 'browser',
-  planning: 'planning'
+  planning: 'planning',
+  command: 'command'
 }
 
 export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): PaletteCommand[] {
@@ -81,7 +82,7 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
       : undefined
 
   // ── Boards ──
-  for (const type of ['terminal', 'browser', 'planning'] as const) {
+  for (const type of ['terminal', 'browser', 'planning', 'command'] as const) {
     out.push({
       id: `new-${type}`,
       section: 'Boards',

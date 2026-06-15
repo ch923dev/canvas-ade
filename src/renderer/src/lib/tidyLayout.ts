@@ -28,7 +28,7 @@ export interface TidyBoard {
   y: number
   w: number
   h: number
-  type?: 'terminal' | 'browser' | 'planning'
+  type?: 'terminal' | 'browser' | 'planning' | 'command'
   viewport?: 'mobile' | 'tablet' | 'desktop'
   previewSourceId?: string | null
 }

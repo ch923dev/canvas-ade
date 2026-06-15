@@ -519,6 +519,8 @@ function CanvasInner(): ReactElement {
     (type: BoardType) => {
       const el = paneRef.current
       if (!el) return
+      // (The Command board is a singleton — `addBoard` selects the existing one instead of
+      // minting a second, so every add path stays single-orchestrator without special-casing here.)
       const r = el.getBoundingClientRect()
       const c = rf.screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
       const size = DEFAULT_BOARD_SIZE[type]

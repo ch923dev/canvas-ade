@@ -52,6 +52,7 @@ describe('buildCommands — visibility matrix', () => {
       'new-terminal',
       'new-browser',
       'new-planning',
+      'new-command',
       'tidy',
       'fit',
       'reset-zoom',

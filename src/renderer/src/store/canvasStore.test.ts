@@ -19,6 +19,7 @@ import {
 } from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { useToastStore } from './toastStore'
+import { useCommandStore } from './commandStore'
 
 const get = () => useCanvasStore.getState()
 
@@ -115,6 +116,18 @@ describe('addBoard', () => {
     const a = get().addBoard('terminal', { x: 0, y: 0 })
     const b = get().addBoard('terminal', { x: 0, y: 0 })
     expect(a).not.toBe(b)
+  })
+
+  it('treats the command board as a singleton — a second add selects the existing one', () => {
+    const first = get().addBoard('command', { x: 0, y: 0 })
+    // Move selection elsewhere so the re-select is observable.
+    const term = get().addBoard('terminal', { x: 900, y: 900 })
+    expect(get().selectedId).toBe(term)
+    // A second 'command' add must NOT create a board — it returns + selects the existing one.
+    const again = get().addBoard('command', { x: 500, y: 500 })
+    expect(again).toBe(first)
+    expect(get().boards.filter((b) => b.type === 'command')).toHaveLength(1)
+    expect(get().selectedId).toBe(first)
   })
 
   it('uses an injected id when provided (the MCP spawn_board path)', () => {
@@ -450,6 +463,15 @@ describe('serialization bridge', () => {
     expect(get().boards).toHaveLength(1)
     expect(get().boards[0].id).toBe('b1')
     expect(get().selectedId).toBeNull()
+  })
+
+  it('loadObject() resets the ephemeral command store (no cross-project view/collapse leak)', () => {
+    useCommandStore.setState({ collapsed: true, view: 'groups', expandedHeight: 440 })
+    get().loadObject(toObject([], null))
+    const cs = useCommandStore.getState()
+    expect(cs.collapsed).toBe(false)
+    expect(cs.view).toBe('kanban')
+    expect(cs.expandedHeight).toBeNull()
   })
 })
 

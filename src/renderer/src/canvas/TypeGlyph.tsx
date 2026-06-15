@@ -61,6 +61,23 @@ export function TypeGlyph({ type, running = false }: TypeGlyphProps): ReactEleme
         <circle cx={6.4} cy={7} r={0.6} fill="currentColor" stroke="none" />
       </svg>
     )
+  if (type === 'command')
+    // The orchestrator mark — the ⌘ command glyph (matches the approved production mock), set in
+    // the mono face like the terminal caret so it reads as a control surface, not an illustration.
+    return (
+      <span
+        style={{
+          fontFamily: 'var(--mono)',
+          fontSize: 13,
+          fontWeight: 500,
+          lineHeight: 1,
+          display: 'inline-flex',
+          alignItems: 'center'
+        }}
+      >
+        ⌘
+      </span>
+    )
   // planning
   return (
     <svg
