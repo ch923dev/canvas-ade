@@ -2,10 +2,15 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import { useReactFlow, useOnViewportChange } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 import type { BrowserBoard } from '../../lib/boardSchema'
 import { stageScreenRect } from '../../lib/previewGeom'
-import { isOsrVisible } from '../../lib/osrLiveness'
+import { isOsrVisible, rankOsrAlive, type OsrAliveCandidate } from '../../lib/osrLiveness'
 import { LOD_ZOOM } from '../../lib/canvasView'
+
+/** Max concurrent EXISTING offscreen windows (2B — the RAM cap). Matches the native path's
+ *  `MAX_LIVE`: a hidden offscreen renderer costs about as much RAM as a native preview view. */
+const OSR_MAX_LIVE = 4
 
 /**
  * OS-3 Phase 2 (M2 / 2A) — the offscreen-preview LIVENESS manager.
@@ -50,22 +55,48 @@ export function useOffscreenLiveness(
     const vp = getViewport()
     const paneOffset = { x: pane.left, y: pane.top }
     const paneBox = { x: pane.left, y: pane.top, width: pane.width, height: pane.height }
+    const center = { x: pane.left + pane.width / 2, y: pane.top + pane.height / 2 }
     const boards = useCanvasStore
       .getState()
       .boards.filter((b): b is BrowserBoard => b.type === 'browser')
-    const sent = sentRef.current
-    const seen = new Set<string>()
-    for (const b of boards) {
-      seen.add(b.id)
+
+    // First pass: each board's screen rect + visibility (2A).
+    const candidates: OsrAliveCandidate[] = boards.map((b) => {
       const screen = stageScreenRect(
         { x: b.x, y: b.y, w: b.w, h: b.h, viewport: b.viewport },
         vp,
         paneOffset
       )
-      const want = isOsrVisible({ screen, pane: paneBox, zoom: vp.zoom, lod: LOD_ZOOM })
-      if (sent.get(b.id) !== want) {
-        sent.set(b.id, want)
-        void window.api.setOsrPaint(b.id, want)
+      return {
+        id: b.id,
+        screen,
+        visible: isOsrVisible({ screen, pane: paneBox, zoom: vp.zoom, lod: LOD_ZOOM })
+      }
+    })
+
+    // 2B — rank for the MAX_LIVE existence cap (visible-first, then nearest the pane centre) and
+    // publish each board's alive flag. useOffscreenPreview gates its window open/close on it.
+    const aliveSet = rankOsrAlive({ candidates, cap: OSR_MAX_LIVE, center })
+    const aliveRecord: Record<string, boolean> = {}
+    for (const c of candidates) aliveRecord[c.id] = aliveSet.has(c.id)
+    useOsrLivenessStore.getState().setAlive(aliveRecord)
+
+    // 2A — paint-gate only the ALIVE boards (an evicted board's window is closed, so a setPaint
+    // is moot). paint = visible; an alive-but-off-screen board is kept WARM (loaded, frozen) so
+    // panning to it resumes instantly. Diff-skipped → no IPC on a no-flip settle.
+    const sent = sentRef.current
+    const seen = new Set<string>()
+    for (const c of candidates) {
+      if (!aliveSet.has(c.id)) {
+        // Evicted: drop the diff entry so a future revive re-sends its paint state fresh.
+        sent.delete(c.id)
+        continue
+      }
+      seen.add(c.id)
+      const want = c.visible
+      if (sent.get(c.id) !== want) {
+        sent.set(c.id, want)
+        void window.api.setOsrPaint(c.id, want)
       }
     }
     // Forget boards that no longer exist (a deleted board's window is disposed already), so a

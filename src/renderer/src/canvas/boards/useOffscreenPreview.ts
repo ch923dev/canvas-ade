@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { RefObject } from 'react'
 import { usePreviewStore } from '../../store/previewStore'
+import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 import { bgraToRgba } from '../../lib/bgraToRgba'
 
 /**
@@ -12,8 +13,12 @@ import { bgraToRgba } from '../../lib/bgraToRgba'
  * 0002). There is NO camera-sync IPC: the canvas moves with the DOM, so the entire
  * `setBoundsBatch` rAF pump the native path needs is gone.
  *
- * First slice = frames only (spec M1/M2). Input forwarding (M3) and DPR/responsive
- * sizing (M1/M4) are later increments. A URL change re-opens (close → open).
+ * OS-3 Phase 2 (2B): the window's open/close is gated on the board's `alive` flag (the
+ * liveness manager's MAX_LIVE existence cap). An evicted (over-cap) board's window is
+ * CLOSED — its renderer freed — but its last frame stays on the <canvas> as a frozen
+ * snapshot (a "paused" badge over it); it re-opens when it climbs back into the cap. So
+ * the canvas-clear is split into its OWN effect (url-change / unmount only) — the
+ * lifecycle effect closes WITHOUT clearing so an evict keeps the frame.
  */
 export function useOffscreenPreview(
   boardId: string,
@@ -21,11 +26,26 @@ export function useOffscreenPreview(
   canvasRef: RefObject<HTMLCanvasElement | null>,
   enabled: boolean
 ): void {
+  // 2B — the MAX_LIVE existence flag for this board. Default true so a freshly-mounted board
+  // opens immediately; the manager flips it false to evict (over-cap), true to revive.
+  const alive = useOsrLivenessStore((s) => s.alive[boardId] ?? true)
+
+  // Clear the canvas on a URL change or unmount — but NOT on an evict (alive→false), which keeps
+  // the frozen last frame. Its own effect (deps exclude `alive`) so the lifecycle effect can
+  // close-without-clearing. A failed-load / crash clear stays in the event handler below.
   useEffect(() => {
-    if (!enabled || !url) return
-    // Clear any previously-painted frame so a stale page bitmap never sits OVER the board's
-    // Connecting / Couldn't-load / Crashed fallback. A re-open (URL change), a failed load, or a
-    // crash all stop the frame stream, leaving the last good frame frozen on the canvas otherwise.
+    if (!enabled) return
+    const clearCanvas = (): void => {
+      const cv = canvasRef.current
+      cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
+    }
+    return () => clearCanvas()
+  }, [boardId, url, enabled, canvasRef])
+
+  useEffect(() => {
+    if (!enabled || !url || !alive) return
+    // Clear a stale page bitmap so it never sits OVER the board's Couldn't-load / Crashed
+    // fallback. Used by the fail/crash handlers (the stream stops, leaving the last frame frozen).
     const clearCanvas = (): void => {
       const cv = canvasRef.current
       cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
@@ -112,10 +132,9 @@ export function useOffscreenPreview(
     return () => {
       off()
       offEvent()
+      // Close the offscreen window. On a URL change the separate clear effect wipes the canvas;
+      // on an EVICT (alive→false) it does NOT, so the frozen last frame stays as a snapshot.
       void window.api.closeOsrPreview(boardId)
-      // On a URL change the effect re-runs (close → open); clear so the OLD page's last frame
-      // doesn't linger over "Connecting…" until the new page's first frame arrives.
-      clearCanvas()
     }
-  }, [boardId, url, enabled, canvasRef])
+  }, [boardId, url, enabled, alive, canvasRef])
 }
