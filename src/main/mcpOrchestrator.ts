@@ -13,6 +13,7 @@ import { createDispatchGuard } from './dispatchGuard'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
+import { buildAppModel, type AppModel } from './appModel'
 import {
   deriveStatus,
   makeSessionLookup,
@@ -851,6 +852,34 @@ export function buildOrchestrator(
       let end = GITDIFF_MAX_BYTES
       while (end > 0 && (buf[end] & 0xc0) === 0x80) end-- // 0b10xxxxxx = a continuation byte
       return buf.subarray(0, end).toString('utf8')
+    },
+    async describeApp(): Promise<AppModel> {
+      // 🔒 PR-3: assemble the read-only app self-model (hybrid agency layer). Read-only — no write
+      // path, no token. boards/connectors are projected from the live mirror; rules come from this
+      // orchestrator's own cap/TTL budget; groups stay [] until PR-5 mirrors Named Groups to MAIN.
+      const summaries = await listBoardSummaries()
+      return buildAppModel({
+        boards: summaries.map((b) => ({
+          id: b.id,
+          type: b.type,
+          title: b.title,
+          status: b.status ?? 'static',
+          ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
+          ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
+        })),
+        connectors: registry.listConnectors().map((c) => ({
+          id: c.id,
+          sourceId: c.sourceId,
+          targetId: c.targetId,
+          kind: c.kind
+        })),
+        rules: {
+          spawnCap: cap,
+          everyWriteGated: true,
+          idleTtlMs,
+          idleActivityMs
+        }
+      })
     }
   }
 }
