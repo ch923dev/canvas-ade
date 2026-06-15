@@ -71,6 +71,8 @@ import {
 } from './agentTranscript'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 import { registerRecapIpc } from './recapIpc'
+import { computeRecapFacts } from './recapFacts'
+import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -79,6 +81,9 @@ let mcp: RunningMcp | null = null
 let stopRecapWatch: (() => void) | null = null
 // Terminal recap (Task 11 — Slice B): hands-free mtime watcher; one per app lifetime.
 let recapWatcher: RecapWatcher | null = null
+// PR-4 (Command-board prerequisite): synthesize a board's BoardResult from its recap transcript
+// when the worker agent settles. Driven off the SAME mtime watcher; torn down in shutdown().
+let resultSynth: ResultSynthesizer | null = null
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
 
@@ -392,12 +397,42 @@ app.whenReady().then(async () => {
       }
     }
   })
+  // PR-4: derive a board's BoardResult from its recap transcript. getFacts resolves the SAME
+  // trusted transcript tail the recap face reads (no egress, no consent — local read only) and
+  // returns null when there is no transcript yet (nothing to verdict). The synthesizer records a
+  // result only for a SETTLED agent and never clobbers an explicit `write_result` (see
+  // boardResultSynth.ts). Driven below off the watcher's onIntent settle signal.
+  resultSynth = createResultSynthesizer({
+    getFacts: (boardId) => {
+      const path = resolveLiveTranscriptPath(recapMap.get(boardId)?.transcriptPath)
+      if (!path || !isTrustedTranscriptPath(path) || !existsSync(path)) return null
+      let runtime: ReturnType<typeof getTerminalRuntime> | undefined
+      try {
+        runtime = getTerminalRuntime(boardId)
+      } catch {
+        runtime = undefined
+      }
+      let tail = ''
+      try {
+        tail = readTranscriptTail(path)
+      } catch {
+        return null // unreadable/vanished transcript — no verdict
+      }
+      if (!tail) return null
+      return computeRecapFacts(tail, runtime, Date.now())
+    }
+  })
   // Terminal recap (Task 11 — Slice B): create the ONE mtime watcher for this app lifetime.
   // Each learned transcript path (from the recap:learned flow below) is registered here so
   // any write to the transcript file debounce-fires summaryLoop.onIntent → auto-refreshed recap.
+  // PR-4: the same settle ALSO drives the result synthesizer (a transcript write is the agent's
+  // task-progress/finish signal).
   recapWatcher = createRecapWatcher({
     debounceMs: 25_000,
-    onIntent: (id) => void summaryLoop.onIntent({ boardId: id })
+    onIntent: (id) => {
+      void summaryLoop.onIntent({ boardId: id })
+      resultSynth?.onSettle(id)
+    }
   })
   const memoryEngine = createMemoryEngine({
     onIntent: (intent) => void summaryLoop.onIntent(intent)
@@ -467,6 +502,8 @@ app.whenReady().then(async () => {
     // but whose watchers were torn down by a prior retain() call (switch-away path).
     (liveBoardIds) => {
       recapWatcher?.retain(liveBoardIds)
+      // PR-4: drop pending result-synthesis re-check timers for boards no longer live.
+      resultSynth?.retain(liveBoardIds)
       pruneBoardResults(liveBoardIds)
       // Re-arm watchers for live boards that the in-memory recapMap knows about but whose
       // fs.watch handle was disposed when we switched away from this project.
@@ -572,7 +609,9 @@ app.whenReady().then(async () => {
   // (The MCP dispatch audit trail is now registered earlier, before startMcpServer — BUG-025.)
 
   createWindow()
-  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp)
+  // PR-4: pass a live getter for the result synthesizer so the CANVAS_E2E seam can drive
+  // `onSettle` deterministically (it is created above in this same setup scope).
+  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth)
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
@@ -615,6 +654,9 @@ function shutdown(): Promise<void> {
   // and pending debounce timers) so nothing fires post-teardown.
   recapWatcher?.dispose()
   recapWatcher = null
+  // PR-4: cancel any pending result-synthesis re-check timers so nothing fires post-teardown.
+  resultSynth?.dispose()
+  resultSynth = null
   return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 

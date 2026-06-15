@@ -16,13 +16,14 @@ import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
 import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
-import { recordBoardResult } from './boardResults'
+import { readBoardResult, recordBoardResult } from './boardResults'
 import { __setMemoryDirForTest } from './boardMemory'
 import { listConnectors } from './boardRegistry'
 import { sendMcpCommand, type McpCommandAck } from './mcpCommand'
 import type { BoardResult } from '@expanse-ade/mcp'
 import type { RunningMcp } from './mcp'
 import type { AppModel } from './appModel'
+import type { ResultSynthesizer } from './boardResultSynth'
 
 /** The fixed board id the e2e/mcp.e2e.ts worker token binds to, so the write_result
  *  probe can read its own structured result back via canvas://board/{id}/result. */
@@ -115,6 +116,15 @@ export interface E2EMain {
   mcpSeedOutput(id: string, text: string): boolean
   /** Record a board's structured result (drives the empty→filled `canvas://board/{id}/result` probe). */
   mcpRecordResult(id: string, result: BoardResult): void
+  /**
+   * PR-4: synchronously drive the result synthesizer's settle path for a board — the same
+   * `resultSynth.onSettle` the recap-mtime watcher fires, but WITHOUT its 25s debounce — so the
+   * e2e proves the REAL wiring (learned transcript → `computeRecapFacts` → synthesized
+   * `BoardResult`) deterministically. No-op if the synthesizer never came up.
+   */
+  synthesizeResultNow(boardId: string): void
+  /** PR-4: read a board's recorded result back (the synthesize / non-clobber probe asserts off this). */
+  boardResultFor(id: string): BoardResult
   /** Round-trip a MAIN→renderer `ping` command — the inverse-of-the-mirror command-channel probe. */
   mcpPingCommand(): Promise<McpCommandAck>
   /** The orchestration connector mirror (the relay-cable probe asserts A→B landed in MAIN). */
@@ -219,7 +229,12 @@ declare global {
 }
 
 /** Install the registry. No-op unless CANVAS_E2E is set. Call once after the window exists. */
-export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: RunningMcp | null): void {
+export function installE2EMain(
+  win: BrowserWindow,
+  localUrl: string,
+  mcp: RunningMcp | null,
+  getResultSynth: () => ResultSynthesizer | null
+): void {
   if (!process.env.CANVAS_E2E) return
   globalThis.__canvasE2EMain = {
     terminalPid: debugTerminalPid,
@@ -312,6 +327,12 @@ export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: Runnin
     },
     mcpRecordResult(id, result) {
       recordBoardResult(id, result)
+    },
+    synthesizeResultNow(boardId) {
+      getResultSynth()?.onSettle(boardId)
+    },
+    boardResultFor(id) {
+      return readBoardResult(id)
     },
     mcpPingCommand() {
       return sendMcpCommand(ipcMain, () => win, { type: 'ping' })
