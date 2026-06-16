@@ -108,6 +108,37 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     }
   })
 
+  test('markdown opens in rendered preview; toggle switches to source', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3md-', 'Md')
+    try {
+      await mainCall(
+        electronApp,
+        'writeProjectFile',
+        tmp,
+        'doc.md',
+        '# Title\n\nHello **world**.\n'
+      )
+      const id = await seed(page, 'file', { path: 'doc.md' })
+      const node = `.react-flow__node[data-id="${id}"]`
+      // Auto-recognition: a .md board opens straight into the rendered preview.
+      const preview = page.locator(`${node} .cm-md-preview`)
+      await expect(preview).toBeVisible({ timeout: 6000 })
+      await expect(preview.locator('h1')).toHaveText('Title')
+      await expect(preview.locator('strong')).toHaveText('world')
+      // The Source toggle swaps to the editable view (snapshot), hiding the preview.
+      await page.getByRole('button', { name: 'Source', exact: true }).click()
+      await expect(page.locator(`${node} [data-test="file-snapshot"]`)).toBeVisible({
+        timeout: 4000
+      })
+      await expect(preview).toHaveCount(0)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+
   test('renders an image file as an <img>, not the editor', async ({ page, electronApp }) => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3img-', 'FileS3Img')
     try {

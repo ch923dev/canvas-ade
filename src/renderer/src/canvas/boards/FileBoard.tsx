@@ -50,13 +50,15 @@ import {
   buildSnapshotHtml,
   clampFileFont,
   extOf,
+  fileCaps,
   formatBytes,
   looksBinary,
   readStickyFileFont,
   resolveLanguage,
   writeStickyFileFont
 } from './fileBoardSyntax'
-import { Centered, EmptyState, FileActionsMenu, GuardCard } from './fileBoardUi'
+import { renderMarkdownToHtml } from './fileBoardMarkdown'
+import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
 
 type Kind = 'loading' | 'empty' | 'text' | 'image' | 'large' | 'binary' | 'error'
 
@@ -90,6 +92,8 @@ export function FileBoard({
   const [errMsg, setErrMsg] = useState('')
   const [saving, setSaving] = useState(false)
   const [pathDraft, setPathDraft] = useState('')
+  // Markdown boards toggle between the rendered preview and the source editor (set per path).
+  const [mode, setMode] = useState<'preview' | 'source'>('source')
   // Viewer font: seeded from the sticky global default; A-/A+ (+ Ctrl/Cmd +/-) adjust this board
   // live and update the sticky default (so new boards + reloads inherit it). No per-board schema.
   const [fontSize, setFontSize] = useState(readStickyFileFont)
@@ -125,6 +129,8 @@ export function FileBoard({
   const ext = path ? extOf(path) : ''
   const fileName = path ? baseName(path) : ''
   const isImageExt = ext in IMAGE_MIME_BY_EXT
+  const caps = useMemo(() => fileCaps(ext), [ext])
+  const isMarkdown = caps.preview === 'markdown'
 
   // -- Load (read live from disk; never persisted) ------------------------------
   useEffect(() => {
@@ -137,6 +143,8 @@ export function FileBoard({
     setEditing(false)
     setImgUrl(null)
     setErrMsg('')
+    // Auto-recognition: previewable+editable (Markdown) opens in Preview; everything else Source.
+    setMode(fileCaps(ext).preview === 'markdown' ? 'preview' : 'source')
 
     if (!path) {
       setKind('empty')
@@ -212,6 +220,11 @@ export function FileBoard({
   const { support, parser } = useMemo(() => resolveLanguage(ext), [ext])
   const extensions = useMemo(() => buildEditorExtensions(support), [support])
   const snapshotHtml = useMemo(() => buildSnapshotHtml(text, parser), [text, parser])
+  // Render Markdown only when this is a markdown board showing the preview (cheap to skip).
+  const markdownHtml = useMemo(
+    () => (isMarkdown && mode === 'preview' ? renderMarkdownToHtml(text) : ''),
+    [isMarkdown, mode, text]
+  )
 
   // -- Save (atomic write via the S1 contract) ----------------------------------
   const doSave = useCallback(async (): Promise<void> => {
@@ -265,14 +278,18 @@ export function FileBoard({
   // Open the find-in-file panel: if the live editor is up, open it; otherwise enter edit mode
   // and open it once the editor mounts (onCreateEditor consumes pendingSearchRef).
   const openFind = useCallback((): void => {
-    if (viewRef.current && editing) {
+    // The live editor exists only in source mode; if it's up, open search there. Otherwise (the
+    // snapshot, or a Markdown preview) switch to source + mount the editor, then open search.
+    const editorUp = !!viewRef.current && editing && !(isMarkdown && mode === 'preview')
+    if (editorUp && viewRef.current) {
       openSearchPanel(viewRef.current)
       viewRef.current.focus()
-    } else {
-      pendingSearchRef.current = true
-      setEditing(true)
+      return
     }
-  }, [editing])
+    if (isMarkdown) setMode('source')
+    pendingSearchRef.current = true
+    setEditing(true)
+  }, [editing, isMarkdown, mode])
 
   // Right-click anywhere on a bound board's content → the file actions menu (suppress the
   // native menu + keep it off the canvas).
@@ -342,6 +359,38 @@ export function FileBoard({
   const actions =
     kind === 'text' ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 'none' }}>
+        {isMarkdown && (
+          <span
+            style={{
+              display: 'inline-flex',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--r-ctl)',
+              overflow: 'hidden',
+              flex: 'none'
+            }}
+          >
+            {(['preview', 'source'] as const).map((m) => (
+              <button
+                key={m}
+                className="nodrag"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setMode(m)}
+                style={{
+                  fontFamily: 'var(--ui)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  padding: '2px 8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: mode === m ? 'var(--accent-wash)' : 'transparent',
+                  color: mode === m ? 'var(--text)' : 'var(--text-3)'
+                }}
+              >
+                {m === 'preview' ? 'Preview' : 'Source'}
+              </button>
+            ))}
+          </span>
+        )}
         <span
           style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 'none' }}
           title={`Font size ${fontSize}px (Ctrl/Cmd +/-)`}
@@ -365,7 +414,7 @@ export function FileBoard({
             A+
           </button>
         </span>
-        {!readOnly && dirty && (
+        {!readOnly && mode === 'source' && dirty && (
           <span
             title="Unsaved changes"
             aria-label="Unsaved changes"
@@ -378,7 +427,7 @@ export function FileBoard({
             }}
           />
         )}
-        {!readOnly && (
+        {!readOnly && mode === 'source' && (
           <button
             className="nodrag"
             title="Save (Cmd/Ctrl+S)"
@@ -446,7 +495,9 @@ export function FileBoard({
         )}
 
         {kind === 'text' &&
-          (editing && !readOnly ? (
+          (isMarkdown && mode === 'preview' ? (
+            <MarkdownPreview html={markdownHtml} />
+          ) : editing && !readOnly ? (
             <EditorHost
               zoom={zoom}
               fontPx={fontSize}

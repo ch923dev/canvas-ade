@@ -8,6 +8,57 @@ import { Menu } from '../Menu'
 import { showToast } from '../../store/toastStore'
 import { baseName } from './fileBoardSyntax'
 
+// -- Markdown preview (rendered, read-only) ----------------------------------------
+// Dark, token-aligned styling for `renderMarkdownToHtml`'s output. Injected once into <head>
+// (CSP allows inline <style>); scoped under `.cm-md-preview` so it can't leak to other boards.
+const MD_CSS = `
+.cm-md-preview { font-family: var(--ui); font-size: 14px; line-height: 1.6; color: var(--text); padding: 14px 18px; }
+.cm-md-preview > :first-child { margin-top: 0; }
+.cm-md-preview h1,.cm-md-preview h2,.cm-md-preview h3,.cm-md-preview h4,.cm-md-preview h5,.cm-md-preview h6 { font-weight: 600; line-height: 1.3; margin: 1.2em 0 0.5em; }
+.cm-md-preview h1 { font-size: 1.7em; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.3em; }
+.cm-md-preview h2 { font-size: 1.4em; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.2em; }
+.cm-md-preview h3 { font-size: 1.2em; }
+.cm-md-preview p { margin: 0.6em 0; }
+.cm-md-preview a { color: var(--accent); text-decoration: none; }
+.cm-md-preview a:hover { text-decoration: underline; }
+.cm-md-preview strong { font-weight: 600; }
+.cm-md-preview code { font-family: var(--mono); font-size: 0.88em; background: var(--inset); padding: 0.15em 0.4em; border-radius: var(--r-ctl); }
+.cm-md-preview pre.cm-md-code { background: var(--inset); border: 1px solid var(--border-subtle); border-radius: var(--r-inner); padding: 10px 12px; overflow: auto; }
+.cm-md-preview pre.cm-md-code code { background: none; padding: 0; font-size: 12.5px; line-height: 1.5; white-space: pre; }
+.cm-md-preview blockquote { margin: 0.6em 0; padding: 0.2em 0.9em; border-left: 3px solid var(--border-strong); color: var(--text-2); }
+.cm-md-preview ul,.cm-md-preview ol { margin: 0.5em 0; padding-left: 1.5em; }
+.cm-md-preview li { margin: 0.2em 0; }
+.cm-md-preview hr { border: none; border-top: 1px solid var(--border-subtle); margin: 1.2em 0; }
+.cm-md-preview table { border-collapse: collapse; margin: 0.8em 0; font-size: 0.95em; }
+.cm-md-preview th,.cm-md-preview td { border: 1px solid var(--border-subtle); padding: 5px 10px; text-align: left; }
+.cm-md-preview th { background: var(--surface-raised); font-weight: 600; }
+.cm-md-preview img { max-width: 100%; }
+`
+let mdStylesInjected = false
+function ensureMarkdownStyles(): void {
+  if (mdStylesInjected || typeof document === 'undefined') return
+  mdStylesInjected = true
+  const el = document.createElement('style')
+  el.id = 'cm-md-styles'
+  el.textContent = MD_CSS
+  document.head.appendChild(el)
+}
+
+/** Rendered Markdown view (read-only). The HTML is XSS-safe by construction (see
+ *  renderMarkdownToHtml: escaped text + fixed tags + scheme-filtered URLs only). Links navigate
+ *  through the app's will-navigate guard, which routes http(s) to the OS browser. */
+export function MarkdownPreview({ html }: { html: string }): ReactElement {
+  ensureMarkdownStyles()
+  return (
+    <div
+      className="cm-md-preview nowheel nodrag nopan"
+      style={{ position: 'absolute', inset: 0, overflow: 'auto' }}
+      // Safe: renderMarkdownToHtml emits only escaped text + fixed tags + filtered URLs.
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
+
 export function Centered({ children }: { children: ReactElement }): ReactElement {
   return (
     <div

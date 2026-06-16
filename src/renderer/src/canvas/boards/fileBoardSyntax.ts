@@ -112,6 +112,22 @@ export const IMAGE_MIME_BY_EXT: Record<string, string> = {
   avif: 'image/avif'
 }
 
+/** What a file board can DO with a given extension — drives the default view ("auto recognition"):
+ *  non-editable types (images) open straight to preview; previewable+editable types (Markdown)
+ *  default to preview with a Source toggle; everything else is the source editor. */
+export interface FileCaps {
+  editable: boolean
+  previewable: boolean
+  preview?: 'markdown' | 'image'
+}
+export function fileCaps(ext: string): FileCaps {
+  if (ext in IMAGE_MIME_BY_EXT) return { editable: false, previewable: true, preview: 'image' }
+  if (ext === 'md' || ext === 'markdown') {
+    return { editable: true, previewable: true, preview: 'markdown' }
+  }
+  return { editable: true, previewable: false }
+}
+
 // -- Syntax palette (muted, anchored to the dark surface tokens) -------------------
 // Calm hues that read on `--surface` (#141416); the accent stays the only saturated UI
 // colour (syntax colour is functional, like terminal output).
