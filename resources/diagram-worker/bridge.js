@@ -16,22 +16,31 @@
 ;(function () {
   var mermaid = window.mermaid
   window.__diagramWorkerReady = !!(mermaid && typeof mermaid.render === 'function')
+  var lastThemeKey = null
   window.__renderDiagram = async function (encodedSource, id, themeVars) {
     if (!mermaid || typeof mermaid.render !== 'function') throw new Error('mermaid unavailable')
     var source = decodeURIComponent(encodedSource)
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      htmlLabels: false,
-      theme: 'base',
-      themeVariables: themeVars && typeof themeVars === 'object' ? themeVars : {},
-      maxTextSize: 50000,
-      maxEdges: 2000,
-      fontFamily: 'Geist, ui-sans-serif, system-ui, -apple-system, sans-serif',
-      flowchart: { htmlLabels: false, useMaxWidth: false },
-      sequence: { useMaxWidth: false },
-      er: { useMaxWidth: false }
-    })
+    var vars = themeVars && typeof themeVars === 'object' ? themeVars : {}
+    // Only (re)initialize when the theme actually changes — every other setting is constant, so a
+    // per-render initialize() just re-resets Mermaid's internal state for nothing. themeVars changes
+    // only on an app theme flip (rare); on the common source-edit path this now runs exactly once.
+    var themeKey = JSON.stringify(vars)
+    if (themeKey !== lastThemeKey) {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        htmlLabels: false,
+        theme: 'base',
+        themeVariables: vars,
+        maxTextSize: 50000,
+        maxEdges: 2000,
+        fontFamily: 'Geist, ui-sans-serif, system-ui, -apple-system, sans-serif',
+        flowchart: { htmlLabels: false, useMaxWidth: false },
+        sequence: { useMaxWidth: false },
+        er: { useMaxWidth: false }
+      })
+      lastThemeKey = themeKey
+    }
     // parse() validates + throws a descriptive error BEFORE any DOM mutation.
     await mermaid.parse(source)
     var out = await mermaid.render(id, source)

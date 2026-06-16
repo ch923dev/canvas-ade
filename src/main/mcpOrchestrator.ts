@@ -529,9 +529,15 @@ export function buildOrchestrator(
         // tool-layer schema — buildPlanningOps takes `unknown` and rejects anything off-shape.
         ops = buildPlanningOps(spec.elements)
       } catch (err) {
-        if (err instanceof PlanningContentError) {
-          await auditPlanning('rejected', { detail: `invalid content: ${err.message}` })
-        }
+        // Audit EVERY rejection — ADR 0003's contract is that every terminal branch of an agent
+        // write is logged. A PlanningContentError is the agent's invalid content; anything else is
+        // an unexpected internal failure (e.g. a throw while capping the batch) — neither may leave
+        // a silent gap in the audit trail.
+        const detail =
+          err instanceof PlanningContentError
+            ? `invalid content: ${err.message}`
+            : `error building ops: ${err instanceof Error ? err.message : String(err)}`
+        await auditPlanning('rejected', { detail })
         throw err
       }
 

@@ -1,6 +1,6 @@
-import { dialog, shell } from 'electron'
+import { app, dialog, shell } from 'electron'
 import type { BrowserWindow, WebContents, Session, DownloadItem, IpcMain } from 'electron'
-import { basename, join } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import { isForeignSender } from './ipcGuard'
 
 /**
@@ -62,7 +62,7 @@ export interface OsrDownloadInfo {
   total?: number
 }
 
-const MAX_TEXT = 2000 // cap untrusted dialog/prompt strings
+const MAX_TEXT = 2000 // cap untrusted dialog/prompt strings at the trust boundary
 const MAX_OPTIONS = 256
 const MAX_LABEL = 256
 // Windows-illegal filename chars (the reserved set; space/dash are legal and kept). Control chars
@@ -392,12 +392,18 @@ export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): (
   return () => session.removeListener('will-download', onWillDownload)
 }
 
-/** Reveal a completed download in the OS file manager (the toast's Show action). */
+/** Reveal a completed download in the OS file manager (the toast's Show action). Defense-in-depth:
+ *  only ever reveal a path INSIDE the OS Downloads dir — the sole place OSR downloads are written
+ *  (`uniqueSavePath(downloadsDir, …)` above). A path that escapes the Downloads dir is dropped, so a
+ *  compromised renderer can't use this to open an arbitrary location in the OS file manager. */
 export function revealDownload(savePath: string): void {
   try {
-    shell.showItemInFolder(savePath)
+    const downloads = app.getPath('downloads')
+    const full = resolve(savePath)
+    if (full !== downloads && !full.startsWith(downloads + sep)) return
+    shell.showItemInFolder(full)
   } catch {
-    /* path gone */
+    /* path gone / app not ready */
   }
 }
 
@@ -440,7 +446,13 @@ export function registerOsrWidgetIpc(
       if (isForeignSender(ev, getWin)) return false
       const e = getEntry(args.id)
       if (!e) return false
-      respondOsrDialog(e.osrWin.webContents, args.accept === true, args.promptText)
+      // Cap the user-typed reply at MAX_TEXT before it reaches CDP (page-originated dialog text is
+      // already capped on the way in; this caps the way out for symmetry).
+      respondOsrDialog(
+        e.osrWin.webContents,
+        args.accept === true,
+        typeof args.promptText === 'string' ? args.promptText.slice(0, MAX_TEXT) : undefined
+      )
       return true
     }
   )
@@ -450,7 +462,7 @@ export function registerOsrWidgetIpc(
     if (typeof args.value !== 'string') return false
     const e = getEntry(args.id)
     if (!e) return false
-    setOsrWidgetValue(e.osrWin.webContents, args.value)
+    setOsrWidgetValue(e.osrWin.webContents, args.value.slice(0, MAX_TEXT))
     return true
   })
   // 4E — overlay dismissed (click-away / Esc) with no write. No CDP needed (no real popup opened);

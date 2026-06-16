@@ -86,7 +86,7 @@ export type PreviewEvent =
   // with a Reload CTA. Kept in sync with the main-process union.
   | { id: string; type: 'render-process-gone'; reason: string }
 
-// ── SPIKE (feat/preview-offscreen-spike): offscreen preview → <canvas> ──
+// ── OSR: offscreen preview → <canvas> ──
 // One offscreen-rendered frame pushed main → renderer (OS-3 Phase 2 / 2C — dirty-rect aware).
 // `buffer` is the NativeImage bitmap (BGRA) of the DIRTY region only; the renderer keeps its
 // <canvas> at `full` size and blits the swizzled buffer at `dirty`'s offset. A full repaint
