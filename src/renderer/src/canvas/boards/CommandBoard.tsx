@@ -28,6 +28,7 @@ import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import { SubmitWell } from './command/SubmitWell'
 import { TaskCard } from './command/TaskCard'
+import { WorkerConfigDialog } from './command/WorkerConfigDialog'
 import { useCommandDispatch } from './command/useCommandDispatch'
 
 /**
@@ -67,11 +68,21 @@ export function CommandBoard({
   const expandedHeight = useCommandStore((s) => s.expandedHeight)
   const setCollapsed = useCommandStore((s) => s.setCollapsed)
   const tasks = useCommandStore((s) => s.tasks)
+  const configuringTaskId = useCommandStore((s) => s.configuringTaskId)
+  const lastWorkerConfig = useCommandStore((s) => s.lastWorkerConfig)
 
   const pool = useMemo(() => deriveWorkerPool(boards, running), [boards, running])
-  // The Phase C dispatch choreography: submit → spawn group → handoff → advance the kanban,
-  // serialized at the worker-pool cap. The board is a singleton, so this mounts once.
-  const { dispatch, retry, interrupt } = useCommandDispatch(pool.cap)
+  // The Phase C dispatch choreography: submit → engineer → worker-config dialog → spawn group →
+  // handoff → advance the kanban, serialized at the worker-pool cap. The board is a singleton, so
+  // this mounts once.
+  const { dispatch, confirmConfig, cancelConfig, reconfigure, retry, interrupt } =
+    useCommandDispatch(pool.cap)
+  // C2d: the task whose worker-config dialog is open (the engineered prompt + agent/flags are
+  // chosen here before the worker spawns). Looked up from the store's single-at-a-time lock.
+  const configuringTask = useMemo(
+    () => (configuringTaskId ? (tasks.find((t) => t.id === configuringTaskId) ?? null) : null),
+    [configuringTaskId, tasks]
+  )
 
   // Bucket tasks by status in ONE pass for the rail roll-up. The kanban column lists use the pure
   // `tasksInColumn` (the single source of the failed→Done bucketing); each column count badge is
@@ -135,6 +146,15 @@ export function CommandBoard({
       onRemoveFromGroup={onRemoveFromGroup}
       onStartConnect={onStartConnect}
     >
+      {configuringTask && (
+        <WorkerConfigDialog
+          zoneName={configuringTask.zoneName ?? configuringTask.title}
+          engineeredPrompt={configuringTask.prompt ?? configuringTask.title}
+          initial={lastWorkerConfig}
+          onDispatch={(r) => confirmConfig(configuringTask.id, r)}
+          onCancel={() => cancelConfig(configuringTask.id)}
+        />
+      )}
       {collapsed ? (
         <div style={railStyle}>
           <SubmitWell onSubmit={dispatch} showComposition={false} />
@@ -178,7 +198,14 @@ export function CommandBoard({
                           <div style={slotStyle} />
                         ) : (
                           colTasks.map((t) => (
-                            <TaskCard key={t.id} task={t} onRetry={retry} onInterrupt={interrupt} />
+                            <TaskCard
+                              key={t.id}
+                              task={t}
+                              configuring={configuringTaskId === t.id}
+                              onRetry={retry}
+                              onInterrupt={interrupt}
+                              onReconfigure={reconfigure}
+                            />
                           ))
                         )}
                       </div>

@@ -11,9 +11,6 @@ export type { Composition, TaskGroup } from '../store/commandStore'
 /** Terminal-only is the default composition (the signed-off decision); +planning/+browser opt-in. */
 export const DEFAULT_COMPOSITION: Composition = { planning: false, browser: false }
 
-/** The worker agent every dispatched terminal launches (v1 default; the launchCommand bin). */
-export const WORKER_LAUNCH_COMMAND = 'claude'
-
 /** A dispatched task's engineered shape: a short intent NAME for the zone + the agent INSTRUCTION. */
 export interface EngineeredDispatch {
   /** Short, Title-Case intent label — the spawned group/zone name (e.g. "Project Analysis"). */
@@ -108,9 +105,13 @@ export function canDispatch(
   return inFlightSlots(tasks) + slotsFor(comp) <= cap
 }
 
-/** The oldest still-queued, not-yet-spawned task — the pump dispatches these as slots free. */
+/**
+ * The oldest queued task that is READY to spawn — queued, no group yet, AND configured (a
+ * `launchCommand` was committed via the config dialog, C2d). Un-configured queued tasks (still in /
+ * cancelled out of the config dialog) are skipped until the user dispatches them.
+ */
 export function nextQueuedTask(tasks: ReadonlyArray<CommandTask>): CommandTask | undefined {
-  return tasks.find((t) => t.status === 'queued' && !t.group)
+  return tasks.find((t) => t.status === 'queued' && !t.group && typeof t.launchCommand === 'string')
 }
 
 /** Member tags for a task card — terminal always; planning/browser when the group spawned them. */

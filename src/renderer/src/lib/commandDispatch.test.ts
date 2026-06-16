@@ -65,15 +65,23 @@ describe('canDispatch', () => {
 })
 
 describe('nextQueuedTask', () => {
-  it('returns the oldest queued task without a group; skips spawned + non-queued', () => {
+  it('returns the oldest CONFIGURED queued task (launchCommand set, no group); skips the rest', () => {
+    // A configured task = the config dialog committed a launchCommand (C2d).
+    const cfg = (id: string, status: TaskStatus): CommandTask => ({
+      ...task(id, status),
+      launchCommand: 'claude'
+    })
     const tasks = [
-      task('a', 'done'),
-      task('b', 'queued', undefined, { groupId: 'g', terminalId: 't' }), // already spawned
-      task('c', 'queued'),
-      task('d', 'queued')
+      cfg('a', 'done'), // not queued
+      { ...cfg('b', 'queued'), group: { groupId: 'g', terminalId: 't' } }, // already spawned
+      task('u', 'queued'), // queued but NOT configured (no launchCommand) → skipped
+      cfg('c', 'queued'), // configured + queued → the answer
+      cfg('d', 'queued')
     ]
     expect(nextQueuedTask(tasks)?.id).toBe('c')
     expect(nextQueuedTask([task('x', 'executing')])).toBeUndefined()
+    // An un-configured queued task (still in / cancelled out of the dialog) is not dispatchable.
+    expect(nextQueuedTask([task('q', 'queued')])).toBeUndefined()
   })
 })
 

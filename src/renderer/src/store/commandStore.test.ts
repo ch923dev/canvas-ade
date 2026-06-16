@@ -1,9 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useCommandStore, tasksInColumn, type CommandTask, type TaskStatus } from './commandStore'
+import {
+  useCommandStore,
+  commandStoreDefaults,
+  tasksInColumn,
+  type CommandTask,
+  type TaskStatus
+} from './commandStore'
 
 beforeEach(() => {
   // The store is a global singleton (one orchestrator face) — reset to defaults per test.
-  useCommandStore.setState({ tasks: [], view: 'kanban', collapsed: false, expandedHeight: null })
+  useCommandStore.setState(commandStoreDefaults())
 })
 
 describe('commandStore', () => {
@@ -98,6 +104,52 @@ describe('commandStore — dispatch fields (Phase C)', () => {
     get().retryTask(id)
     expect(get().tasks[0].status).toBe('queued')
     expect(get().tasks[0].group).toBeUndefined()
+  })
+})
+
+describe('commandStore — config dialog (C2d)', () => {
+  const get = (): ReturnType<typeof useCommandStore.getState> => useCommandStore.getState()
+
+  it('setTaskPrompt stores the engineered prompt + smart zone name', () => {
+    const id = get().addTask('do an indepth review')!
+    get().setTaskPrompt(id, 'Analyze the repo and summarize it.', 'Project Analysis')
+    expect(get().tasks[0].prompt).toBe('Analyze the repo and summarize it.')
+    expect(get().tasks[0].zoneName).toBe('Project Analysis')
+  })
+
+  it('setConfiguring sets and clears the single-at-a-time dialog lock', () => {
+    const id = get().addTask('x')!
+    get().setConfiguring(id)
+    expect(get().configuringTaskId).toBe(id)
+    get().setConfiguring(null)
+    expect(get().configuringTaskId).toBeNull()
+  })
+
+  it('setTaskConfig commits the chosen launchCommand + the edited prompt (marks ready)', () => {
+    const id = get().addTask('x')!
+    get().setTaskPrompt(id, 'engineered', 'Zone')
+    expect(get().tasks[0].launchCommand).toBeUndefined() // not yet dispatchable
+    get().setTaskConfig(id, { launchCommand: 'claude --yolo', prompt: 'edited' })
+    expect(get().tasks[0].launchCommand).toBe('claude --yolo')
+    expect(get().tasks[0].prompt).toBe('edited')
+  })
+
+  it('setLastWorkerConfig remembers the config to pre-fill the next dispatch', () => {
+    const cfg = { presetId: 'codex', values: { 'full-auto': true }, rawOverride: null }
+    get().setLastWorkerConfig(cfg)
+    expect(get().lastWorkerConfig).toEqual(cfg)
+  })
+
+  it('retryTask KEEPS the launchCommand + prompt so the retry reuses the config', () => {
+    const id = get().addTask('x')!
+    get().setTaskConfig(id, { launchCommand: 'claude --yolo', prompt: 'go' })
+    get().setTaskGroup(id, { groupId: 'g', terminalId: 't' })
+    get().setTaskStatus(id, 'failed')
+    get().retryTask(id)
+    expect(get().tasks[0].status).toBe('queued')
+    expect(get().tasks[0].group).toBeUndefined()
+    expect(get().tasks[0].launchCommand).toBe('claude --yolo') // config preserved
+    expect(get().tasks[0].prompt).toBe('go')
   })
 })
 

@@ -259,6 +259,52 @@ options): boot-the-agent-then-handoff · optimize-if-key-else-raw · default-to-
 - **Deferred:** agent picker (Claude-only v1); `agentKind` chrome/recap polish; true agent-driven
   *decomposition* (PR-5c/PR-3b) remains the bigger future — this is prompt *optimization*, not decompose.
 
+## 6d. Slice C2d — config-on-dispatch + prompt surfacing (added 2026-06-16, supersedes C2b launch)
+
+Eyeball feedback on C2b: a freshly-spawned worker's CLI shows a **first-run "trust this folder?" gate**
+(claude code, and most agentic CLIs) BEFORE its REPL. The auto-fired handoff prompt landed in that
+trust dialog and was eaten — "the prompt won't hold." Auto-launching a bare `claude` is the wrong model;
+the worker's launch (agent + the flag that clears the trust/permission gate, e.g.
+`--dangerously-skip-permissions` / `--yolo` / `--full-auto`) belongs to the user. Decisions (signed off):
+**drop the hardcoded `claude`** · **per-dispatch, pre-filled config dialog** · **engineered prompt is
+editable + visible** · **deliver only when the agent's REPL is ready**.
+
+**New dispatch flow (Flow B — config-first):**
+```
+submit → addTask(queued, composition)          card appears
+       → engineer (LLM: zoneName + prompt)      card "engineering…"
+       → open WORKER CONFIG dialog (agent + flags + editable prompt, pre-filled from last config)
+            ├─ Dispatch → task gets {launchCommand, prompt} (= "ready"); pump picks it up at the cap
+            └─ Cancel  → task stays queued-NOT-ready (pump skips); card shows a "Configure" affordance
+       → pump: spawnGroup({name: zoneName, launchCommand}) → routing → executing
+       → awaitWorkerReady(terminalId)  (worker booted past trust gate to an idle REPL)
+       → gated handoff(terminalId, prompt) → done | failed
+```
+
+- **No hardcoded claude.** `WORKER_LAUNCH_COMMAND` is removed; the worker's `launchCommand` comes from
+  the config dialog (default preset = `claude`, but the user adds the skip flag there). The trust gate is
+  the user's to clear via the launch flags — not silently auto-answered.
+- **`WorkerConfigDialog`** (new, `canvas/boards/command/`) reuses the shipped building blocks —
+  `AGENT_PRESETS` tiles + `CommandBuilder` + `composeCommand` (same look as New Terminal) + an editable
+  **Task prompt** textarea seeded with the engineered instruction. Returns `{launchCommand, prompt,
+  config}`; `config` (preset/values/raw) is remembered as `lastWorkerConfig` to pre-fill the next dispatch.
+- **Task carries its config.** `CommandTask` gains `prompt?` (engineered, editable, delivered + revealed
+  on the card), `zoneName?` (smart group name), `launchCommand?` (set on Dispatch). The pump only spawns a
+  queued task that is **configured** (`nextQueuedTask` requires `launchCommand`); un-configured/cancelled
+  tasks wait. `retry` reuses the stored config.
+- **Readiness gate.** `awaitWorkerReady(terminalId)` waits for the worker to settle to an idle REPL after
+  boot (off the `mcp:status` stream the hook already subscribes to, bounded by a fallback timeout) BEFORE
+  the gated handoff — so the prompt lands at the REPL, not mid-boot. Complements the existing pre-gate
+  board-not-found retry (`handoffWhenReady`).
+- **Kanban card reveals the prompt.** `TaskCard` shows the engineered prompt on **hover** (preview) and
+  **click** (expanded, with copy). The card title still shows the user's raw task.
+- **Coverage.** Pure: `nextQueuedTask`-requires-config + the engineer parse (unchanged). Hook test: submit
+  → engineer → config callback → spawn with the CHOSEN launchCommand → ready-gate → handoff edited prompt →
+  settle; cancel leaves the task un-ready; cap serialize. `WorkerConfigDialog` render/return test. e2e stays
+  no-spawn (config dialog appears; chips) to avoid the MAIN cap leak.
+- **Carried:** the per-line confirm gate still fires on the handoff (locked invariant) — a v1 double-confirm
+  (config Dispatch + gate) that Phase F batch-auth collapses.
+
 ## 6c. Slice C3 — routing-edge overlay (implemented 2026-06-16)
 
 The signed-off §5.3 overlay, built exactly as planned (the last Phase C slice):
