@@ -38,7 +38,7 @@ slice-scoped `pnpm test:e2e` (Windows leg) + the manual dev check. The **full** 
 |---|---|---|---|---|
 | S1 Foundation | `feat/file-tree-s1-foundation` | ✅ MERGED (#178, squash `4e5198da`) | #178 | ✅ |
 | S2 Tree panel | `feat/file-tree-s2-tree-panel` | **READY — start now (∥ S3)** | — | — |
-| S3 File board | `feat/file-tree-s3-file-board` | **READY — start now (∥ S2)** | — | — |
+| S3 File board | `feat/file-tree-s3-file-board` | **In review (gate + Win e2e green)** | #179 | — |
 | S4 Planning ref | `feat/file-tree-s4-planning-ref` | blocked on S1,S3 | — | — |
 | S5 MCP context | `feat/file-tree-s5-mcp-context` | blocked on S3,S4 | — | — |
 
