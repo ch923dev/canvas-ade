@@ -450,6 +450,11 @@ const api = {
   // project root and re-validates (no fs/Node ever reaches the sandboxed renderer).
   file: {
     readText: (path: string): Promise<string> => ipcRenderer.invoke('file:readText', path),
+    // S3 (additive): raw bytes for the File-board image preview — `readText` is UTF-8
+    // only (lossy on binary). MAIN re-resolves + guards identically; the renderer
+    // size-gates via `stat` first and wraps the result in a Blob URL (CSP `img-src`
+    // already allows `blob:`).
+    readBytes: (path: string): Promise<Uint8Array> => ipcRenderer.invoke('file:readBytes', path),
     writeText: (path: string, text: string): Promise<boolean> =>
       ipcRenderer.invoke('file:writeText', { path, text }),
     listDir: (path: string): Promise<FileEntry[]> => ipcRenderer.invoke('file:listDir', path),

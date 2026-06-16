@@ -58,6 +58,19 @@ export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | 
     return readFile(abs, 'utf8')
   })
 
+  // S3 (cross-zone, additive): raw bytes for the File-board image preview. `readText`
+  // is UTF-8 only — it corrupts binary — so a raster image (png/jpg/gif/webp) needs a
+  // bytes channel to reach the renderer as a Blob. SAME trust boundary as every other
+  // handler: foreign-sender guard → `realResolveWithinRoot` containment → one `fs` read
+  // (the renderer never picks the op or passes flags). The renderer size-gates via
+  // `file:stat` before calling, so this stays a small read. Buffer ⊆ Uint8Array; Electron
+  // structured-clones it across the bridge (the same shape `asset:read` already returns).
+  ipcMain.handle('file:readBytes', async (e, relPath: string): Promise<Uint8Array> => {
+    if (guard(e)) throw new Error('file: foreign sender denied')
+    const abs = await resolveRel(relPath)
+    return readFile(abs)
+  })
+
   ipcMain.handle(
     'file:writeText',
     async (e, args: { path: string; text: string }): Promise<boolean> => {
