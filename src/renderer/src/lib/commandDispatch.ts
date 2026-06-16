@@ -14,33 +14,60 @@ export const DEFAULT_COMPOSITION: Composition = { planning: false, browser: fals
 /** The worker agent every dispatched terminal launches (v1 default; the launchCommand bin). */
 export const WORKER_LAUNCH_COMMAND = 'claude'
 
-/**
- * System prompt that turns the Command board into the orchestrator's PROMPT ENGINEER: it rewrites a
- * user's terse task into one clear, self-contained instruction a coding agent can act on. Sent to the
- * in-app LLM (`window.api.llm.summarize`) before dispatch; the engineered prompt is shown in the
- * confirm modal for review. Output-only contract so the result is the prompt itself, never preamble.
- */
-export const PROMPT_ENGINEER_SYSTEM =
-  'You are a prompt engineer for an autonomous coding agent (Claude Code) working inside the ' +
-  "user's project repository. Rewrite the user's short task into a SINGLE, clear, self-contained " +
-  'instruction the agent can act on directly: state the goal, any implied steps, and what "done" ' +
-  'looks like. Keep it concise and concrete; assume the agent can read, run, and edit files in the ' +
-  'repo. Output ONLY the rewritten instruction — no preamble, no surrounding quotes, no markdown ' +
-  'headings, no commentary.'
+/** A dispatched task's engineered shape: a short intent NAME for the zone + the agent INSTRUCTION. */
+export interface EngineeredDispatch {
+  /** Short, Title-Case intent label — the spawned group/zone name (e.g. "Project Analysis"). */
+  title: string
+  /** The clear, self-contained instruction handed to the worker agent. */
+  prompt: string
+}
 
 /**
- * Choose the prompt to dispatch: the LLM's engineered rewrite when it succeeded with non-empty text,
- * else the raw task (graceful fallback when no key / budget exhausted / provider error). Pure.
+ * System prompt that turns the Command board into the orchestrator's PROMPT ENGINEER. From a terse
+ * task it returns BOTH a short intent label (the zone name — a raw verbose task is a poor group name)
+ * AND a clear, self-contained instruction for the worker agent. Sent to the in-app LLM
+ * (`window.api.llm.summarize`); the instruction is shown in the confirm modal for review. The
+ * `TITLE:` line is a forgiving, parseable contract (see `parseEngineeredDispatch`).
  */
-export function chooseEngineeredPrompt(
+export const DISPATCH_ENGINEER_SYSTEM =
+  'You are an orchestrator prompt engineer for an autonomous coding agent (Claude Code) working in ' +
+  "the user's project repository. From the user's short task, output EXACTLY:\n" +
+  'TITLE: <a 2-4 word Title Case label naming the task\'s intent, e.g. "Project Analysis", "Auth ' +
+  'Flow", "Bug Triage">\n' +
+  'then a blank line, then a SINGLE clear, self-contained instruction the agent can act on directly ' +
+  '(state the goal, implied steps, and what "done" looks like; assume it can read/run/edit files). ' +
+  'Output only that — no preamble, no surrounding quotes, no markdown headings, no commentary.'
+
+/** A short, non-LLM fallback zone name from the raw task (first ~5 words, clamped). */
+export function fallbackTitle(task: string): string {
+  const words = task.trim().replace(/\s+/g, ' ').split(' ').slice(0, 5).join(' ')
+  if (!words) return 'Task'
+  return words.length > 40 ? words.slice(0, 40).trim() + '…' : words
+}
+
+/**
+ * Parse the LLM reply into `{title, prompt}`. Forgiving: a leading `TITLE: <label>` line becomes the
+ * zone name and the remainder the instruction; a reply with no TITLE line is treated as the whole
+ * instruction (title falls back to the task); an empty/failed reply falls back entirely to the raw
+ * task. Pure — the single source of the title/prompt extraction.
+ */
+export function parseEngineeredDispatch(
   result: { ok: boolean; text?: string } | null | undefined,
   rawTask: string
-): string {
-  if (result && result.ok === true && typeof result.text === 'string') {
-    const trimmed = result.text.trim()
-    if (trimmed) return trimmed
-  }
-  return rawTask
+): EngineeredDispatch {
+  const text =
+    result && result.ok === true && typeof result.text === 'string' ? result.text.trim() : ''
+  if (!text) return { title: fallbackTitle(rawTask), prompt: rawTask }
+  const lines = text.split('\n')
+  const m = lines[0].trim().match(/^TITLE:\s*(.+)$/i)
+  if (!m) return { title: fallbackTitle(rawTask), prompt: text }
+  const title =
+    m[1]
+      .trim()
+      .replace(/^["']|["']$/g, '')
+      .slice(0, 48) || fallbackTitle(rawTask)
+  const prompt = lines.slice(1).join('\n').trim() || rawTask
+  return { title, prompt }
 }
 
 /** A worker's structured result (renderer mirror of the package `BoardResult`, fields we read). */

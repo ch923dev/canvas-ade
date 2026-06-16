@@ -244,11 +244,13 @@ options): boot-the-agent-then-handoff · optimize-if-key-else-raw · default-to-
   line" pattern), so the dispatched prompt reaches an agent, not a shell. (Renderer-originated → stays
   cap-checked, not gated; the task prompt remains the confirm-gated content. The future agent-callable
   `spawn_group` (PR-5c) MUST gate the launchCommand as an exec vector.)
-- **Prompt optimization.** Before dispatch, the board asks the in-app LLM (the existing
-  `window.api.llm.summarize` — configured key/model/budget) to rewrite the terse task into a clear agent
-  instruction (`PROMPT_ENGINEER_SYSTEM`). The engineered prompt is handed off (and shown in the confirm
-  modal for review). No key / budget / error → graceful fallback to the raw task (`chooseEngineeredPrompt`).
-  Engineering + spawn run **concurrently** (the agent boots while the LLM rewrites).
+- **Prompt optimization + smart zone name.** Before dispatch, the board asks the in-app LLM (the
+  existing `window.api.llm.summarize` — configured key/model/budget) to turn the terse task into BOTH a
+  short Title-Case **intent name** for the zone (a raw verbose task is a poor group name — eyeball
+  feedback) AND a clear agent **instruction** (`DISPATCH_ENGINEER_SYSTEM`, forgiving `TITLE:` contract →
+  `parseEngineeredDispatch`). The zone spawns under the smart name; the instruction is handed off (shown
+  in the confirm for review); the kanban CARD keeps the user's raw task. No key / budget / error →
+  graceful fallback (`fallbackTitle` truncates the task; raw prompt). One LLM call, then spawn → handoff.
 - **Coverage.** The choreography wiring is pinned by a **`useCommandDispatch` hook unit test** (mocked
   `window.api`) — submit → spawn(launchCommand) → handoff(engineered) → settle, the no-key fallback, the
   failure verdict, the cap re-queue, and **serialize-at-cap** (a 5th terminal-only task waits). The real

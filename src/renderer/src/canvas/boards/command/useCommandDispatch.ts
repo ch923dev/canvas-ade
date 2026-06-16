@@ -16,35 +16,37 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useCommandStore, type CommandTask } from '../../../store/commandStore'
 import {
   canDispatch,
-  chooseEngineeredPrompt,
   compositionOf,
+  DISPATCH_ENGINEER_SYSTEM,
+  fallbackTitle,
   isCapError,
   isFailureResult,
   isWorkerNotReady,
   nextQueuedTask,
   nextStatusForBoardChange,
-  PROMPT_ENGINEER_SYSTEM,
+  parseEngineeredDispatch,
   WORKER_LAUNCH_COMMAND,
   type Composition,
+  type EngineeredDispatch,
   type WorkerResult
 } from '../../../lib/commandDispatch'
 
 /**
- * Engineer the dispatch prompt: ask the in-app LLM to rewrite the user's terse task into a clear,
- * actionable instruction for the worker agent. Falls back to the raw task whenever the LLM is
- * unavailable (no key / budget / error) so dispatch is never blocked. Runs concurrently with the
- * agent spawn (the agent boots while the LLM rewrites).
+ * Engineer the dispatch: ask the in-app LLM to turn the user's terse task into BOTH a short intent
+ * NAME for the spawned zone (a raw verbose task is a poor group name) AND a clear agent INSTRUCTION.
+ * Falls back to the raw task whenever the LLM is unavailable (no key / budget / error) so dispatch is
+ * never blocked.
  */
-async function engineerPrompt(task: string): Promise<string> {
+async function engineerDispatch(task: string): Promise<EngineeredDispatch> {
   const summarize = window.api?.llm?.summarize
-  if (!summarize) return task
+  if (!summarize) return { title: fallbackTitle(task), prompt: task }
   try {
-    return chooseEngineeredPrompt(
-      await summarize({ system: PROMPT_ENGINEER_SYSTEM, text: task }),
+    return parseEngineeredDispatch(
+      await summarize({ system: DISPATCH_ENGINEER_SYSTEM, text: task }),
       task
     )
   } catch {
-    return task
+    return { title: fallbackTitle(task), prompt: task }
   }
 }
 
@@ -124,18 +126,16 @@ export function useCommandDispatch(cap: number): CommandDispatch {
         return
       }
       try {
-        // Engineer the prompt + spawn the agent zone CONCURRENTLY — the agent (launchCommand) boots
-        // while the LLM rewrites the task; the engineered prompt is what we hand off (and what the
-        // confirm modal shows for review). The group NAME stays the user's short title.
-        const [engineered, group] = await Promise.all([
-          engineerPrompt(title),
-          api.spawnGroup({
-            name: title,
-            planning: comp.planning,
-            browser: comp.browser,
-            launchCommand: WORKER_LAUNCH_COMMAND
-          })
-        ])
+        // Engineer first → a smart zone NAME + the agent INSTRUCTION (one LLM call). Then spawn the
+        // agent zone under the smart name and hand off the engineered instruction (shown in the
+        // confirm for review). The kanban CARD keeps the user's raw task; only the zone is renamed.
+        const eng = await engineerDispatch(title)
+        const group = await api.spawnGroup({
+          name: eng.title,
+          planning: comp.planning,
+          browser: comp.browser,
+          launchCommand: WORKER_LAUNCH_COMMAND
+        })
         setTaskGroup(id, group)
         setTaskStatus(id, 'executing')
         // Authoritative done/failed verdict — handoffPrompt awaits the worker's two-gate settle
@@ -144,7 +144,7 @@ export function useCommandDispatch(cap: number): CommandDispatch {
         const result = await handoffWhenReady(
           (bid, t) => handoff(bid, t),
           group.terminalId,
-          engineered
+          eng.prompt
         )
         setTaskStatus(id, isFailureResult(result) ? 'failed' : 'done')
         pumpRef.current?.() // a slot freed → dispatch the next queued task

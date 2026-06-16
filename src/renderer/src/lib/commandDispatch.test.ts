@@ -10,7 +10,8 @@ import {
   isCapError,
   isWorkerNotReady,
   nextStatusForBoardChange,
-  chooseEngineeredPrompt,
+  parseEngineeredDispatch,
+  fallbackTitle,
   DEFAULT_COMPOSITION
 } from './commandDispatch'
 import type { CommandTask, Composition, TaskStatus } from '../store/commandStore'
@@ -112,17 +113,49 @@ describe('isCapError', () => {
   })
 })
 
-describe('chooseEngineeredPrompt', () => {
-  it('uses the LLM rewrite when it succeeded with non-empty text', () => {
-    expect(chooseEngineeredPrompt({ ok: true, text: '  Add a login form  ' }, 'login')).toBe(
-      'Add a login form'
-    )
+describe('fallbackTitle', () => {
+  it('takes the first few words of a short task verbatim', () => {
+    expect(fallbackTitle('add a login form')).toBe('add a login form')
+    expect(fallbackTitle('do an indepth review on this project')).toBe('do an indepth review on')
   })
-  it('falls back to the raw task when the LLM is unavailable / empty / errored', () => {
-    expect(chooseEngineeredPrompt({ ok: false }, 'login')).toBe('login')
-    expect(chooseEngineeredPrompt({ ok: true, text: '   ' }, 'login')).toBe('login')
-    expect(chooseEngineeredPrompt(null, 'login')).toBe('login')
-    expect(chooseEngineeredPrompt(undefined, 'login')).toBe('login')
+  it('clamps a long first-5-words run with an ellipsis', () => {
+    const t = fallbackTitle('implement comprehensive authentication authorization middleware now')
+    expect(t.endsWith('…')).toBe(true)
+    expect(t.length).toBeLessThanOrEqual(41)
+  })
+  it('never empties', () => {
+    expect(fallbackTitle('   ')).toBe('Task')
+  })
+})
+
+describe('parseEngineeredDispatch', () => {
+  it('splits a TITLE: line into the zone name + the instruction body', () => {
+    const r = parseEngineeredDispatch(
+      { ok: true, text: 'TITLE: Project Analysis\n\nAnalyze the codebase and summarize it.' },
+      'do an indepth review'
+    )
+    expect(r.title).toBe('Project Analysis')
+    expect(r.prompt).toBe('Analyze the codebase and summarize it.')
+  })
+  it('strips surrounding quotes + clamps an over-long title', () => {
+    const r = parseEngineeredDispatch({ ok: true, text: 'TITLE: "Auth Flow"\n\ndo it' }, 'x')
+    expect(r.title).toBe('Auth Flow')
+  })
+  it('treats a reply with no TITLE line as the whole instruction (title from the task)', () => {
+    const r = parseEngineeredDispatch({ ok: true, text: 'Just do the thing.' }, 'fix login bug')
+    expect(r.title).toBe('fix login bug')
+    expect(r.prompt).toBe('Just do the thing.')
+  })
+  it('falls back entirely to the raw task when the LLM is unavailable / empty', () => {
+    expect(parseEngineeredDispatch({ ok: false }, 'login')).toEqual({
+      title: 'login',
+      prompt: 'login'
+    })
+    expect(parseEngineeredDispatch(null, 'login')).toEqual({ title: 'login', prompt: 'login' })
+    expect(parseEngineeredDispatch({ ok: true, text: '   ' }, 'login')).toEqual({
+      title: 'login',
+      prompt: 'login'
+    })
   })
 })
 

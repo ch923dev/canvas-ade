@@ -29,7 +29,8 @@ function setupApi(
   const interrupt = vi.fn(async () => {})
   const onTaskStatus = vi.fn(() => () => {})
   const summarize = vi.fn(
-    opts.summarize ?? (async () => ({ ok: true, text: 'Engineered: build it' }))
+    opts.summarize ??
+      (async () => ({ ok: true, text: 'TITLE: Build Feature\n\nBuild the feature end to end.' }))
   )
   ;(window as unknown as { api: unknown }).api = {
     mcp: { spawnGroup, handoffPrompt, interrupt, onTaskStatus },
@@ -46,24 +47,26 @@ afterEach(() => {
 })
 
 describe('useCommandDispatch', () => {
-  it('spawns an agent group (launchCommand) + hands off the ENGINEERED prompt → done', async () => {
+  it('spawns under the SMART zone name + hands off the ENGINEERED instruction → done', async () => {
     const api = setupApi()
     const { result } = renderHook(() => useCommandDispatch(4))
     result.current.dispatch('build it', TERMINAL_ONLY)
 
+    // Zone spawns under the LLM's smart intent NAME (not the raw verbose task)…
     await waitFor(() =>
       expect(api.spawnGroup).toHaveBeenCalledWith({
-        name: 'build it',
+        name: 'Build Feature',
         planning: false,
         browser: false,
         launchCommand: 'claude'
       })
     )
+    // …and the worker gets the engineered INSTRUCTION, not the terse input.
     await waitFor(() =>
-      expect(api.handoffPrompt).toHaveBeenCalledWith('t1', 'Engineered: build it')
+      expect(api.handoffPrompt).toHaveBeenCalledWith('t1', 'Build the feature end to end.')
     )
     await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('done'))
-    // The group is attached; the displayed title stays the user's terse task.
+    // The group is attached; the kanban CARD keeps the user's terse task (only the zone is renamed).
     expect(useCommandStore.getState().tasks[0].group?.terminalId).toBe('t1')
     expect(useCommandStore.getState().tasks[0].title).toBe('build it')
   })
