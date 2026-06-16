@@ -47,10 +47,13 @@ import {
   baseName,
   buildEditorExtensions,
   buildSnapshotHtml,
+  clampFileFont,
   extOf,
   formatBytes,
   looksBinary,
-  resolveLanguage
+  readStickyFileFont,
+  resolveLanguage,
+  writeStickyFileFont
 } from './fileBoardSyntax'
 
 type Kind = 'loading' | 'empty' | 'text' | 'image' | 'large' | 'binary' | 'error'
@@ -85,6 +88,16 @@ export function FileBoard({
   const [errMsg, setErrMsg] = useState('')
   const [saving, setSaving] = useState(false)
   const [pathDraft, setPathDraft] = useState('')
+  // Viewer font: seeded from the sticky global default; A-/A+ (+ Ctrl/Cmd +/-) adjust this board
+  // live and update the sticky default (so new boards + reloads inherit it). No per-board schema.
+  const [fontSize, setFontSize] = useState(readStickyFileFont)
+  const adjustFont = useCallback((delta: number): void => {
+    setFontSize((f) => {
+      const next = clampFileFont(f + delta)
+      writeStickyFileFont(next)
+      return next
+    })
+  }, [])
 
   const dirty = kind === 'text' && text !== savedText
 
@@ -240,16 +253,24 @@ export function FileBoard({
 
   // Editor host keydown: keep editor keystrokes off the canvas keymap (the canvas already
   // ignores contentEditable, but Delete / single-letter tools listen on window), and handle
-  // Cmd/Ctrl+S here (CM has no save command) so the browser save dialog never opens.
+  // Cmd/Ctrl+S (CM has no save command) + Cmd/Ctrl +/- (font size) here so the browser save
+  // dialog / page zoom never fire.
   const onEditorKeyDown = useCallback(
     (e: ReactKeyboardEvent): void => {
       e.stopPropagation()
-      if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+      if (!(e.metaKey || e.ctrlKey)) return
+      if (e.key === 's' || e.key === 'S') {
         e.preventDefault()
         void doSave()
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault()
+        adjustFont(-1)
+      } else if (e.key === '=' || e.key === '+') {
+        e.preventDefault()
+        adjustFont(1)
       }
     },
-    [doSave]
+    [doSave, adjustFont]
   )
 
   // Leave edit mode (back to the crisp snapshot) when focus leaves a CLEAN editor; a dirty
@@ -266,11 +287,50 @@ export function FileBoard({
     updateBoard(board.id, { path: next })
   }, [pathDraft, board.id, updateBoard])
 
-  // Title-bar dirty/save controls (text boards only).
+  // Title-bar controls (text boards): font steppers (always) + dirty dot/Save (editable) or a
+  // read-only tag. `onMouseDown preventDefault` keeps the editor focused (no blur -> snapshot flip).
+  const stepBtnStyle: CSSProperties = {
+    fontFamily: 'var(--ui)',
+    fontWeight: 600,
+    lineHeight: 1,
+    color: 'var(--text-2)',
+    background: 'transparent',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--r-ctl)',
+    width: 22,
+    height: 20,
+    display: 'grid',
+    placeItems: 'center',
+    cursor: 'pointer',
+    flex: 'none'
+  }
   const actions =
-    kind === 'text' && !readOnly ? (
+    kind === 'text' ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 'none' }}>
-        {dirty && (
+        <span
+          style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 'none' }}
+          title={`Font size ${fontSize}px (Ctrl/Cmd +/-)`}
+        >
+          <button
+            className="nodrag"
+            aria-label="Decrease font size"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => adjustFont(-1)}
+            style={{ ...stepBtnStyle, fontSize: 11 }}
+          >
+            A-
+          </button>
+          <button
+            className="nodrag"
+            aria-label="Increase font size"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => adjustFont(1)}
+            style={{ ...stepBtnStyle, fontSize: 13 }}
+          >
+            A+
+          </button>
+        </span>
+        {!readOnly && dirty && (
           <span
             title="Unsaved changes"
             aria-label="Unsaved changes"
@@ -283,34 +343,41 @@ export function FileBoard({
             }}
           />
         )}
-        <button
-          className="nodrag"
-          title="Save (Cmd/Ctrl+S)"
-          disabled={!dirty || saving}
-          // preventDefault on mousedown keeps the editor focused (no blur -> no snapshot flip).
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => void doSave()}
-          style={{
-            fontFamily: 'var(--ui)',
-            fontSize: 11,
-            fontWeight: 500,
-            color: dirty ? 'var(--text)' : 'var(--text-faint)',
-            background: dirty ? 'var(--surface-overlay)' : 'transparent',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--r-ctl)',
-            padding: '2px 8px',
-            cursor: dirty && !saving ? 'pointer' : 'default'
-          }}
-        >
-          {saving ? 'Saving...' : 'Save'}
-        </button>
+        {!readOnly && (
+          <button
+            className="nodrag"
+            title="Save (Cmd/Ctrl+S)"
+            disabled={!dirty || saving}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void doSave()}
+            style={{
+              fontFamily: 'var(--ui)',
+              fontSize: 11,
+              fontWeight: 500,
+              color: dirty ? 'var(--text)' : 'var(--text-faint)',
+              background: dirty ? 'var(--surface-overlay)' : 'transparent',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--r-ctl)',
+              padding: '2px 8px',
+              cursor: dirty && !saving ? 'pointer' : 'default'
+            }}
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        )}
+        {readOnly && (
+          <span
+            style={{
+              fontFamily: 'var(--mono)',
+              fontSize: 11,
+              color: 'var(--text-3)',
+              flex: 'none'
+            }}
+          >
+            read-only
+          </span>
+        )}
       </div>
-    ) : readOnly && path ? (
-      <span
-        style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)', flex: 'none' }}
-      >
-        read-only
-      </span>
     ) : undefined
 
   return (
@@ -344,7 +411,12 @@ export function FileBoard({
 
       {kind === 'text' &&
         (editing && !readOnly ? (
-          <EditorHost zoom={zoom} onBlur={onEditorBlur} onKeyDown={onEditorKeyDown}>
+          <EditorHost
+            zoom={zoom}
+            fontPx={fontSize}
+            onBlur={onEditorBlur}
+            onKeyDown={onEditorKeyDown}
+          >
             <CodeMirror
               value={text}
               height="100%"
@@ -382,7 +454,7 @@ export function FileBoard({
               overflow: 'auto',
               padding: '8px 12px',
               fontFamily: 'var(--mono)',
-              fontSize: 12.5,
+              fontSize: fontSize,
               lineHeight: 1.55,
               color: 'var(--text)',
               whiteSpace: 'pre',
@@ -450,11 +522,13 @@ export function FileBoard({
  *  the same). */
 function EditorHost({
   zoom,
+  fontPx,
   onBlur,
   onKeyDown,
   children
 }: {
   zoom: number
+  fontPx: number
   onBlur: (e: ReactFocusEvent) => void
   onKeyDown: (e: ReactKeyboardEvent) => void
   children: ReactElement
@@ -469,13 +543,20 @@ function EditorHost({
     transform: `scale(${1 / z})`,
     transformOrigin: 'top left'
   }
+  // `--cm-font` drives the EDITOR_THEME font-size (content + gutters) so it tracks the snapshot.
+  const host = {
+    position: 'absolute',
+    inset: 0,
+    overflow: 'hidden',
+    '--cm-font': `${fontPx}px`
+  } as CSSProperties
   return (
     <div
       className="nowheel nodrag nopan"
       data-test="file-editor"
       onBlur={onBlur}
       onKeyDown={onKeyDown}
-      style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
+      style={host}
     >
       <div style={inner}>{children}</div>
     </div>

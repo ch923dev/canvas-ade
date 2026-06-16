@@ -47,7 +47,23 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       const html = await snap.innerHTML()
       expect(html, 'snapshot is syntax-highlighted').toContain('<span style="color:')
 
-      // 2) Click to enter edit -> a live CodeMirror mounts; type + Ctrl+S.
+      // 2) Font stepper: A+ in the title bar grows the viewer font (read the snapshot's inline
+      //    font-size via a string eval — DOM globals aren't typed in the e2e tsconfig).
+      const readFont = (): Promise<number> =>
+        evalIn<number>(
+          page,
+          `parseFloat(document.querySelector('.react-flow__node[data-id="${id}"] [data-test="file-snapshot"]').style.fontSize)`
+        )
+      const fontBefore = await readFont()
+      const incBtn = page.locator(
+        `.react-flow__node[data-id="${id}"] button[aria-label="Increase font size"]`
+      )
+      await incBtn.click()
+      await incBtn.click()
+      const fontAfter = await readFont()
+      expect(fontAfter, 'A+ increases the viewer font').toBeGreaterThan(fontBefore)
+
+      // 3) Click to enter edit -> a live CodeMirror mounts; type + Ctrl+S.
       await snap.click()
       const editor = page.locator(
         `.react-flow__node[data-id="${id}"] [data-test="file-editor"] .cm-content`

@@ -25,6 +25,37 @@ const HIGHLIGHT_MAX_CHARS = 200_000
 /** Chars sniffed for a NUL -> "this is binary, don't show it as code". */
 const BINARY_SNIFF_CHARS = 4096
 
+// -- Viewer font size (sticky, localStorage-backed; NO per-board schema) -----------
+// A global "viewer font" preference, mirroring the terminal's sticky default. Boards open at
+// this size; A-/A+ (or Ctrl/Cmd +/-) adjust the live board AND update the sticky default, so
+// new boards + reloads inherit it. Deliberately not persisted per-board (keeps S3 schema-free).
+export const DEFAULT_FILE_FONT = 13
+const FILE_FONT_MIN = 9
+const FILE_FONT_MAX = 28
+const FILE_FONT_KEY = 'canvas-ade:file-font'
+
+export function clampFileFont(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_FILE_FONT
+  return Math.min(FILE_FONT_MAX, Math.max(FILE_FONT_MIN, Math.round(n)))
+}
+
+export function readStickyFileFont(): number {
+  try {
+    const raw = localStorage.getItem(FILE_FONT_KEY)
+    return raw ? clampFileFont(Number(raw)) : DEFAULT_FILE_FONT
+  } catch {
+    return DEFAULT_FILE_FONT
+  }
+}
+
+export function writeStickyFileFont(n: number): void {
+  try {
+    localStorage.setItem(FILE_FONT_KEY, String(clampFileFont(n)))
+  } catch {
+    /* private mode / quota — sticky persistence is best-effort */
+  }
+}
+
 /** ext -> CM language pack name (`@uiw/codemirror-extensions-langs`; its keys are the short,
  *  extension-style names like `ts`/`js`/`rs`). Only modern `LanguageSupport` packs are mapped;
  *  anything unmapped renders as plain text (still editable). Typed as `LanguageName` so a bad
@@ -160,9 +191,11 @@ const SNAPSHOT_HIGHLIGHTER: Highlighter = {
 const EDITOR_THEME = EditorView.theme(
   {
     '&': { color: 'var(--text)', backgroundColor: 'transparent', height: '100%' },
+    // Font size is driven by the `--cm-font` CSS var (set per-board by FileBoard) so the live
+    // editor and the static snapshot scale together; line-height stays unitless (scales with it).
     '.cm-content': {
       fontFamily: 'var(--mono)',
-      fontSize: '12.5px',
+      fontSize: 'var(--cm-font, 13px)',
       padding: '8px 0',
       caretColor: 'var(--accent)'
     },
@@ -172,7 +205,8 @@ const EDITOR_THEME = EditorView.theme(
       backgroundColor: 'transparent',
       color: 'var(--text-faint)',
       border: 'none',
-      fontFamily: 'var(--mono)'
+      fontFamily: 'var(--mono)',
+      fontSize: 'var(--cm-font, 13px)'
     },
     '.cm-lineNumbers .cm-gutterElement': { padding: '0 6px 0 10px' },
     '.cm-activeLine': { backgroundColor: 'rgba(255, 255, 255, 0.035)' },
