@@ -130,6 +130,27 @@ describe('addBoard', () => {
     expect(get().selectedId).toBe(first)
   })
 
+  it('minting a fresh command board clears stale ephemeral commandStore state (N1)', () => {
+    // Leftover state from a prior (since-deleted) command board.
+    useCommandStore.setState({ collapsed: true, view: 'groups', expandedHeight: 200 })
+    // No command board exists at test start (beforeEach clears boards) → addBoard mints a fresh
+    // one and must reset the ephemeral store, so the old view/collapse can't bleed onto it.
+    get().addBoard('command', { x: 0, y: 0 })
+    const cs = useCommandStore.getState()
+    expect(cs.collapsed).toBe(false)
+    expect(cs.view).toBe('kanban')
+    expect(cs.expandedHeight).toBeNull()
+  })
+
+  it('a second command add (returns existing) leaves ephemeral state untouched', () => {
+    get().addBoard('command', { x: 0, y: 0 })
+    useCommandStore.setState({ collapsed: true, view: 'groups' })
+    // The re-select path must NOT reset the store (only minting a NEW board does).
+    get().addBoard('command', { x: 0, y: 0 })
+    expect(useCommandStore.getState().collapsed).toBe(true)
+    expect(useCommandStore.getState().view).toBe('groups')
+  })
+
   it('uses an injected id when provided (the MCP spawn_board path)', () => {
     // spawn_board mints the id in MAIN and passes it to the renderer so the tool
     // can return that exact id to the agent; the store must honour it verbatim.

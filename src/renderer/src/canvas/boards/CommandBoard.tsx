@@ -63,24 +63,32 @@ export function CommandBoard({
 
   const pool = useMemo(() => deriveWorkerPool(boards, running), [boards, running])
 
-  // Task tallies for the rail roll-up (all 0 in Phase A — the queue is empty until Phase C).
-  const counts = useMemo(() => {
-    const c = { running: 0, reporting: 0, failed: 0, done: 0, total: tasks.length }
-    for (const t of tasks) {
-      if (t.status === 'executing' || t.status === 'routing') c.running++
-      else if (t.status === 'reporting') c.reporting++
-      else if (t.status === 'failed') c.failed++
-      else if (t.status === 'done') c.done++
+  // Bucket tasks by status in ONE pass, then derive both the rail roll-up and the per-column
+  // counts from it (all 0 in Phase A — the queue is empty until Phase C; Phase B fills it).
+  const buckets = useMemo(() => {
+    const b: Record<TaskStatus, number> = {
+      queued: 0,
+      routing: 0,
+      executing: 0,
+      reporting: 0,
+      done: 0,
+      failed: 0
     }
-    return c
+    for (const t of tasks) b[t.status]++
+    return b
   }, [tasks])
+  const counts = {
+    running: buckets.routing + buckets.executing,
+    reporting: buckets.reporting,
+    failed: buckets.failed,
+    done: buckets.done,
+    total: tasks.length
+  }
   const progress = counts.total ? counts.done / counts.total : 0
   // `failed` is not its own column — failed tasks bucket into Done (matches the COLUMNS note + the
   // mock's Done column, which shows a failed card with a retry affordance). Phase B renders cards.
   const countFor = (status: TaskStatus): number =>
-    status === 'done'
-      ? tasks.filter((t) => t.status === 'done' || t.status === 'failed').length
-      : tasks.filter((t) => t.status === status).length
+    status === 'done' ? buckets.done + buckets.failed : buckets[status]
 
   // Collapse swaps the board to a compact rail footprint (a real geometry change so the hub takes
   // less canvas space); expand restores the remembered height. The collapsed flag is ephemeral —
@@ -194,6 +202,7 @@ function Seg({
   const tab = (v: CommandView, label: string): ReactElement => (
     <button
       className="nodrag"
+      aria-pressed={view === v}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation()

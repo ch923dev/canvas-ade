@@ -568,6 +568,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         get().setSelection([existing.id])
         return existing.id
       }
+      // Minting a brand-new orchestrator: clear any ephemeral commandStore state a prior
+      // (since-deleted) command board left behind, so its collapse/view doesn't bleed onto the
+      // fresh board. applyLoadedDoc resets this on project load; this covers delete-then-re-add
+      // within a session. (Undo-restore goes through history, not addBoard, so it's unaffected —
+      // a restored board keeps the view it had at delete time.)
+      useCommandStore.setState(commandStoreDefaults())
     }
     const id = opts?.id ?? newId()
     const size = opts?.size ?? DEFAULT_BOARD_SIZE[type]
