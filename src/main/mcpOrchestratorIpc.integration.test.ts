@@ -37,6 +37,7 @@ function spyMcp(): OrchestratorDrive {
       planningId: 'p1'
     })),
     dispatchPrompt: vi.fn(async () => {}),
+    handoffPrompt: vi.fn(async () => ({ present: true, status: 'success', summary: 'done' })),
     interrupt: vi.fn(async () => {})
   }
 }
@@ -76,6 +77,23 @@ describe('registerOrchestratorIpc', () => {
     expect(mcp.dispatchPrompt).toHaveBeenCalledWith('t1', 'go')
   })
 
+  it('handoffPrompt: dispatches + awaits, returning the worker result', async () => {
+    const mcp = spyMcp()
+    const { ipc, handlers } = fakeIpc()
+    registerOrchestratorIpc(
+      ipc,
+      () => liveWin,
+      () => mcp
+    )
+
+    const res = await handlers.get('mcp:handoffPrompt')!(ev(mainFrame), {
+      boardId: 't1',
+      text: 'go'
+    })
+    expect(mcp.handoffPrompt).toHaveBeenCalledWith('t1', 'go')
+    expect(res).toEqual({ present: true, status: 'success', summary: 'done' })
+  })
+
   it('interrupt: forwards the board id', async () => {
     const mcp = spyMcp()
     const { ipc, handlers } = fakeIpc()
@@ -105,9 +123,13 @@ describe('registerOrchestratorIpc', () => {
     await expect(
       handlers.get('mcp:dispatchPrompt')!(foreign, { boardId: 't1', text: 'go' })
     ).rejects.toThrow('forbidden')
+    await expect(
+      handlers.get('mcp:handoffPrompt')!(foreign, { boardId: 't1', text: 'go' })
+    ).rejects.toThrow('forbidden')
     await expect(handlers.get('mcp:interrupt')!(foreign, 't1')).rejects.toThrow('forbidden')
     expect(mcp.spawnGroup).not.toHaveBeenCalled()
     expect(mcp.dispatchPrompt).not.toHaveBeenCalled()
+    expect(mcp.handoffPrompt).not.toHaveBeenCalled()
     expect(mcp.interrupt).not.toHaveBeenCalled()
   })
 

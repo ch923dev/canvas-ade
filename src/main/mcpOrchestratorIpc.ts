@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
+import type { BoardResult } from '@expanse-ade/mcp'
 import { isForeignSender } from './ipcGuard'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
@@ -23,6 +24,7 @@ import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 export interface OrchestratorDrive {
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   dispatchPrompt(boardId: string, text: string): Promise<void>
+  handoffPrompt(boardId: string, text: string): Promise<BoardResult>
   interrupt(boardId: string): Promise<void>
 }
 
@@ -69,6 +71,16 @@ export function registerOrchestratorIpc(
       throw new Error('mcp:dispatchPrompt requires { boardId, text }')
     }
     await mcp.dispatchPrompt(boardId, text) // gated: sanitize → nonce → confirm → write → audit
+  })
+
+  ipc.handle('mcp:handoffPrompt', async (e, arg: unknown): Promise<BoardResult> => {
+    const mcp = resolve(e)
+    const boardId = asString((arg as { boardId?: unknown })?.boardId)
+    const text = asString((arg as { text?: unknown })?.text)
+    if (boardId === null || text === null) {
+      throw new Error('mcp:handoffPrompt requires { boardId, text }')
+    }
+    return mcp.handoffPrompt(boardId, text) // gated dispatch + await the worker's two-gate settle
   })
 
   ipc.handle('mcp:interrupt', async (e, boardId: unknown): Promise<void> => {

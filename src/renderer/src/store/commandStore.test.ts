@@ -74,6 +74,33 @@ describe('commandStore — task lifecycle (Phase B)', () => {
   })
 })
 
+describe('commandStore — dispatch fields (Phase C)', () => {
+  const get = (): ReturnType<typeof useCommandStore.getState> => useCommandStore.getState()
+
+  it('addTask stores the requested composition (omitted ⇒ undefined = terminal-only)', () => {
+    const a = get().addTask('plain')!
+    const b = get().addTask('rich', { planning: true, browser: true })!
+    const tasks = get().tasks
+    expect(tasks.find((t) => t.id === a)?.composition).toBeUndefined()
+    expect(tasks.find((t) => t.id === b)?.composition).toEqual({ planning: true, browser: true })
+  })
+
+  it('setTaskGroup attaches the spawned worker group', () => {
+    const id = get().addTask('x')!
+    get().setTaskGroup(id, { groupId: 'g', terminalId: 't', planningId: 'p' })
+    expect(get().tasks[0].group).toEqual({ groupId: 'g', terminalId: 't', planningId: 'p' })
+  })
+
+  it('retryTask clears the old group so the dispatch pump re-spawns a fresh one', () => {
+    const id = get().addTask('x')!
+    get().setTaskGroup(id, { groupId: 'g', terminalId: 't' })
+    get().setTaskStatus(id, 'failed')
+    get().retryTask(id)
+    expect(get().tasks[0].status).toBe('queued')
+    expect(get().tasks[0].group).toBeUndefined()
+  })
+})
+
 describe('tasksInColumn (failed → Done bucketing)', () => {
   const T = (status: TaskStatus): CommandTask => ({ id: status, title: status, status })
   const tasks = [T('queued'), T('routing'), T('executing'), T('reporting'), T('done'), T('failed')]

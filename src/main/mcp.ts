@@ -1,5 +1,5 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
-import type { TokenStore } from '@expanse-ade/mcp'
+import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
@@ -69,6 +69,12 @@ export interface RunningMcp {
    * drive it without a token; every write still pays the gate.
    */
   dispatchPrompt(boardId: string, text: string): Promise<void>
+  /**
+   * Phase C / C2: dispatch a prompt AND await the worker's two-gate settle (PR-0), resolving with
+   * its `BoardResult`. The Command board's authoritative done/failed signal — same gate as
+   * `dispatchPrompt`, plus the await-idle. A long-pending call (resolves on settle).
+   */
+  handoffPrompt(boardId: string, text: string): Promise<BoardResult>
   /** Phase C / C1: gated Ctrl-C into a board's PTY (same gate, terminator `\x03`, no sanitize). */
   interrupt(boardId: string): Promise<void>
   close(): Promise<void>
@@ -117,6 +123,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       describeApp: () => orchestrator.describeApp(),
       spawnGroup: (input) => orchestrator.spawnGroup(input),
       dispatchPrompt: (boardId, text) => orchestrator.dispatchPrompt(boardId, text),
+      handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
       interrupt: (boardId) => orchestrator.interrupt(boardId),
       close: () => {
         clearInterval(reapTimer)

@@ -27,15 +27,21 @@ const boardById = (
     return boards.find((b) => b.id === boardId)
   }, id)
 
-const commandCount = (page: Page): Promise<number> =>
+const boardTypeCount = (page: Page, type: string): Promise<number> =>
   page.evaluate(
-    () =>
+    (t) =>
       ((globalThis as any).__canvasE2E.getBoards() as { type: string }[]).filter(
-        (b) => b.type === 'command'
-      ).length
+        (b) => b.type === t
+      ).length,
+    type
   )
+const commandCount = (page: Page): Promise<number> => boardTypeCount(page, 'command')
 
-test.describe('@core command board shell (Phase A/B)', () => {
+// Drive the trusted confirm modal like a human (the dispatch gate blocks on it). Mirrors mcp.e2e.ts.
+const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
+const APPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
+
+test.describe('@core command board shell (Phase A/B/C)', () => {
   test('renders the orchestrator frame: COMMAND tag · worker pool · empty kanban', async ({
     page
   }) => {
@@ -85,26 +91,48 @@ test.describe('@core command board shell (Phase A/B)', () => {
     await expect(node.getByText('No tasks yet')).toBeVisible()
   })
 
-  test('Phase B: submitting a task enqueues a Queued card (Enter + Dispatch button)', async ({
+  test('Phase C: composition chips — Terminal locked, +Planning/+Browser opt-in', async ({
     page
   }) => {
     const id = await seed(page, 'command')
     await evalIn(page, `window.__canvasE2E.fitView()`)
     await page.waitForTimeout(300)
     const node = page.locator(`[data-id="${id}"]`)
+    // Terminal is always-on (locked); the two opt-ins start OFF (terminal-only default).
+    await expect(node.getByText('Terminal', { exact: true })).toBeVisible()
+    const planning = node.getByRole('button', { name: '+ Planning' })
+    const browser = node.getByRole('button', { name: '+ Browser' })
+    await expect(planning).toHaveAttribute('aria-pressed', 'false')
+    await expect(browser).toHaveAttribute('aria-pressed', 'false')
+    await browser.click()
+    await expect(browser).toHaveAttribute('aria-pressed', 'true')
+    await expect(planning).toHaveAttribute('aria-pressed', 'false') // independent toggles
+  })
+
+  test('Phase C: dispatch spawns a worker group + advances the card (confirm-gated)', async ({
+    page
+  }) => {
+    test.slow() // real spawn → PTY → confirm gate → settle
+    const id = await seed(page, 'command')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+    const node = page.locator(`[data-id="${id}"]`)
     await expect(node.getByText('No tasks yet')).toBeVisible()
 
-    // Enter submits: a queued card appears and the empty hint clears.
+    // Submit: the card appears immediately (synchronous enqueue) and the empty hint clears.
     const input = node.locator('input.cmd-submit-input')
-    await input.fill('Build the auth flow')
+    await input.fill('Wire the login form')
     await input.press('Enter')
-    await expect(node.getByText('Build the auth flow')).toBeVisible()
+    await expect(node.getByText('Wire the login form')).toBeVisible()
     await expect(node.getByText('No tasks yet')).toHaveCount(0)
 
-    // The Dispatch button submits a second task → two cards live in the queue.
-    await input.fill('Add dark mode')
-    await node.getByRole('button', { name: /Dispatch/ }).click()
-    await expect(node.getByText('Add dark mode')).toBeVisible()
-    await expect(node.getByText('Build the auth flow')).toBeVisible()
+    // The dispatch choreography spawns a worker terminal through the renderer→MAIN→renderer path…
+    await expect.poll(async () => boardTypeCount(page, 'terminal'), { timeout: 15_000 }).toBe(1)
+    // …attaches the group to the card (the `term` member tag) and moves it out of Queued.
+    await expect(node.getByText('term', { exact: true })).toBeVisible()
+
+    // handoffPrompt's write is confirm-gated — drive the human gate so it doesn't dangle.
+    await expect.poll(async () => evalIn<boolean>(page, MODAL), { timeout: 15_000 }).toBe(true)
+    await evalIn(page, APPROVE)
   })
 })

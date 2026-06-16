@@ -580,6 +580,12 @@ const api = {
       ipcRenderer.invoke('mcp:spawnGroup', input),
     dispatchPrompt: (boardId: string, text: string): Promise<void> =>
       ipcRenderer.invoke('mcp:dispatchPrompt', { boardId, text }),
+    // Dispatch AND await the worker's settle, resolving with its result (the kanban's done signal).
+    handoffPrompt: (
+      boardId: string,
+      text: string
+    ): Promise<{ present?: boolean; status?: string; summary?: string; refs?: string[] }> =>
+      ipcRenderer.invoke('mcp:handoffPrompt', { boardId, text }),
     interrupt: (boardId: string): Promise<void> => ipcRenderer.invoke('mcp:interrupt', boardId),
 
     // MAIN → renderer: per-board coarse status stream that drives the kanban (status only,
