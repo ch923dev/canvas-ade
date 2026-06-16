@@ -337,6 +337,34 @@ instead of a gated handoff write.
   settle early; a slow-boot (>window with no output) could false-positive. Tunable; a richer signal
   (write_result adoption / transcript-aware) is the follow-up. `handoffPrompt` stays for the MCP path.
 
+## 6f. Slice C2f — gated REPL delivery, NOT a shell arg (added 2026-06-16, supersedes C2e delivery)
+
+C2e was wrong on two counts (an automated security review flagged it HIGH + an eyeball reproduced the
+break): putting a free-text prompt in the **shell launch line** (`claude "<prompt>"`) is (1) **unsafe**
+— double-quotes don't neutralize `$(…)`/backticks, so an LLM-authored prompt could be
+command-substituted — and (2) **fragile** — a long line broke PowerShell (unterminated string, `>>`),
+and the shell can't run a prose prompt anyway. Fix (user chose **Gated** authorization): deliver the
+prompt to the agent's **REPL input box**, never the shell.
+
+- **`appendPromptArg` removed** → `singleLinePrompt(prompt)` (collapse whitespace only — the prompt is
+  REPL text, NOT shell-parsed, so NO quoting/escaping: that was the vulnerable + pointless part). The
+  launch command is now a **bare, controlled `<command>`** (preset + flags, no user prose → shell-safe).
+- **Gated REPL write.** The dispatch spawns the bare command, then (after a boot-settle, `0` under
+  vitest) delivers the prompt via the existing gated `dispatchPrompt` (sanitize → nonce → human confirm
+  → PTY write → audit) — the user's chosen "Gated" path (one confirm after the dialog; Phase F batch-auth
+  collapses the double-confirm later). Verdict still from `awaitSettled` (output silence). `retryUntilReady`
+  (generic) retries only the pre-gate board-not-found window.
+- **Trust gate cleared by default.** `WorkerConfigDialog` defaults the Claude worker to
+  `--dangerously-skip-permissions` (a `danger`-styled toggle the user can turn off), so first-run has no
+  "trust this folder?" gate → the boot-settle lands the write at a ready REPL (output-quiet = REPL-ready,
+  not trust-prompt-waiting). Matches the autonomy an orchestrated worker is dispatched to do.
+- **Security:** the prompt never reaches a shell; nothing to inject. `launchCommand` stays
+  renderer-originated, trusted-user, cap-checked (the agent-callable `spawn_group` still gates it).
+- **Coverage updated:** `singleLinePrompt` (collapse / no-escape / blank); the hook test asserts the BARE
+  spawn command + `dispatchPrompt(terminalId, single-lined prompt)` + `awaitSettled` verdict + multi-line
+  collapse; the dialog test asserts the skip-permissions default. Gate green: typecheck + lint + format,
+  2888 unit/integration.
+
 ## 6c. Slice C3 — routing-edge overlay (implemented 2026-06-16)
 
 The signed-off §5.3 overlay, built exactly as planned (the last Phase C slice):

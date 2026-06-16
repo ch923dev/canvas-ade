@@ -19,6 +19,14 @@ import { composeCommand, type OptionValues } from '../terminal/composeCommand'
 import type { WorkerConfig } from '../../../store/commandStore'
 
 const DEFAULT_PRESET = 'claude'
+/**
+ * First-dispatch defaults (no prior config): a Claude worker with `--dangerously-skip-permissions` on
+ * (the `skip-permissions` toggle id). This clears the first-run "trust this folder?" gate so the
+ * orchestrator's boot-settle lands the dispatched prompt at a ready REPL — and matches the autonomy an
+ * orchestrated worker is dispatched to do. It's a `danger`-styled toggle the user can turn OFF; the
+ * value is claude-specific (composeCommand ignores it for other presets, which reset on switch).
+ */
+const DEFAULT_WORKER_VALUES: OptionValues = { 'skip-permissions': true }
 
 export function WorkerConfigDialog({
   zoneName,
@@ -39,7 +47,7 @@ export function WorkerConfigDialog({
   onCancel: () => void
 }): ReactElement {
   const [presetId, setPresetId] = useState(initial?.presetId ?? DEFAULT_PRESET)
-  const [values, setValues] = useState<OptionValues>(initial?.values ?? {})
+  const [values, setValues] = useState<OptionValues>(initial?.values ?? DEFAULT_WORKER_VALUES)
   const [rawOverride, setRawOverride] = useState<string | null>(initial?.rawOverride ?? null)
   const [prompt, setPrompt] = useState(engineeredPrompt)
 

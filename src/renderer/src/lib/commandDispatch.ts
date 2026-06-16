@@ -36,20 +36,15 @@ export const DISPATCH_ENGINEER_SYSTEM =
   'Output only that — no preamble, no surrounding quotes, no markdown headings, no commentary.'
 
 /**
- * Compose the worker's full launch command for INLINE-PROMPT delivery (C2e): append the engineered
- * prompt as a single quoted positional arg (`claude --flags "<prompt>"`), so the agent runs it as its
- * first message. This survives the first-run "trust this folder?" gate — the arg is parsed at startup
- * and queued, NOT typed into stdin, so it can't be eaten by the trust dialog — and removes the
- * boot-race + the separate gated handoff. The prompt is collapsed to ONE line (a PTY launch line is
- * single-line) and double-quoted with POSIX-style `\`/`"` escaping; the dialog's editable Command
- * field is the escape hatch for shell-specific quirks. An empty `command` (the Shell preset) gets NO
- * arg — a bare shell can't take a prompt as a launch arg — so it stays a plain shell.
+ * Collapse the engineered prompt to a SINGLE line for the gated REPL write (C2f). The prompt is
+ * delivered into the agent's input box (the gated `dispatchPrompt` PTY write) — NOT a shell command —
+ * so it is NEVER shell-parsed: no shell quoting/escaping is applied (that was both unsafe — `$`/
+ * backtick command-substitution — and pointless for REPL text). We only collapse whitespace because
+ * the shared write gate rejects an embedded CR/LF (one approval = one line); a paragraph prompt
+ * becomes one line the agent reads as a single message.
  */
-export function appendPromptArg(command: string, prompt: string): string {
-  const base = command.trim()
-  const line = prompt.replace(/\s+/g, ' ').trim()
-  if (!base || !line) return base
-  return `${base} "${line.replace(/[\\"]/g, '\\$&')}"`
+export function singleLinePrompt(prompt: string): string {
+  return prompt.replace(/\s+/g, ' ').trim()
 }
 
 /** A short, non-LLM fallback zone name from the raw task (first ~5 words, clamped). */

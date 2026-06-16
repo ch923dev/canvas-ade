@@ -10,10 +10,11 @@ import { useCommandDispatch } from './useCommandDispatch'
 
 /**
  * Deterministic coverage of the Phase C dispatch choreography (the side-effecting hook) with a mocked
- * `window.api` — no real spawn, no MAIN cap leak. The real spawn primitive is covered by spawnGroup.e2e;
- * here we pin the C2d/C2e WIRING: submit → engineer (zoneName + prompt) → open the config dialog → on
- * Dispatch spawn the group with the chosen command AND the engineered prompt appended as a quoted arg
- * (inline delivery, C2e) → awaitSettled drives the verdict. Plus cancel (un-ready) and cap serialize.
+ * `window.api` — no real spawn, no MAIN cap leak. The real spawn/gate are covered by spawnGroup.e2e /
+ * mcp.e2e; here we pin the C2d/C2f WIRING: submit → engineer (zoneName + prompt) → open the config
+ * dialog → on Dispatch spawn the group with the chosen BARE command → deliver the prompt to the REPL
+ * via the gated dispatchPrompt (never the shell) → awaitSettled drives the verdict. Plus cancel
+ * (un-ready) and cap serialize. (The boot-settle is 0 under vitest.)
  */
 type Result = { present?: boolean; status?: string }
 
@@ -22,16 +23,19 @@ const CFG: WorkerConfig = { presetId: 'claude', values: {}, rawOverride: null }
 function setupApi(
   opts: {
     spawnGroup?: () => Promise<{ groupId: string; terminalId: string }>
+    dispatchPrompt?: () => Promise<void>
     awaitSettled?: () => Promise<Result>
     summarize?: () => Promise<{ ok: boolean; text?: string; reason?: string }>
   } = {}
 ): {
   spawnGroup: ReturnType<typeof vi.fn>
+  dispatchPrompt: ReturnType<typeof vi.fn>
   awaitSettled: ReturnType<typeof vi.fn>
   interrupt: ReturnType<typeof vi.fn>
   summarize: ReturnType<typeof vi.fn>
 } {
   const spawnGroup = vi.fn(opts.spawnGroup ?? (async () => ({ groupId: 'g1', terminalId: 't1' })))
+  const dispatchPrompt = vi.fn(opts.dispatchPrompt ?? (async () => {}))
   const awaitSettled = vi.fn(opts.awaitSettled ?? (async () => ({ present: false })))
   const interrupt = vi.fn(async () => {})
   const onTaskStatus = vi.fn(() => () => {})
@@ -40,10 +44,10 @@ function setupApi(
       (async () => ({ ok: true, text: 'TITLE: Build Feature\n\nBuild the feature end to end.' }))
   )
   ;(window as unknown as { api: unknown }).api = {
-    mcp: { spawnGroup, awaitSettled, interrupt, onTaskStatus },
+    mcp: { spawnGroup, dispatchPrompt, awaitSettled, interrupt, onTaskStatus },
     llm: { summarize }
   }
-  return { spawnGroup, awaitSettled, interrupt, summarize }
+  return { spawnGroup, dispatchPrompt, awaitSettled, interrupt, summarize }
 }
 
 const TERMINAL_ONLY = { planning: false, browser: false }
@@ -68,7 +72,7 @@ describe('useCommandDispatch', () => {
     })
   })
 
-  it('on Dispatch: spawns with the chosen command + the prompt appended as a quoted arg → done', async () => {
+  it('on Dispatch: spawns the BARE command, then delivers the prompt to the REPL → done', async () => {
     const api = setupApi()
     const { result } = renderHook(() => useCommandDispatch(4))
     result.current.dispatch('build it', TERMINAL_ONLY)
@@ -85,17 +89,21 @@ describe('useCommandDispatch', () => {
       }
     })
 
-    // The zone spawns under the smart name; the worker launches the user's command WITH the engineered
-    // prompt appended as a quoted positional arg (inline delivery — runs as the agent's first message).
+    // The zone spawns under the smart name with the user's chosen command — BARE, no prompt in the
+    // shell line (the prompt is delivered to the REPL, never shell-parsed).
     await waitFor(() =>
       expect(api.spawnGroup).toHaveBeenCalledWith({
         name: 'Build Feature',
         planning: false,
         browser: false,
-        launchCommand: 'claude --dangerously-skip-permissions "Do the thing, carefully."'
+        launchCommand: 'claude --dangerously-skip-permissions'
       })
     )
-    // The verdict comes from awaitSettled (read-only output-silence), not a handoff write.
+    // The engineered prompt is delivered into the agent's input box via the gated dispatchPrompt…
+    await waitFor(() =>
+      expect(api.dispatchPrompt).toHaveBeenCalledWith('t1', 'Do the thing, carefully.')
+    )
+    // …and the verdict comes from awaitSettled (read-only output-silence).
     await waitFor(() => expect(api.awaitSettled).toHaveBeenCalledWith('t1'))
     await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('done'))
     // The kanban CARD keeps the user's terse task; the dialog lock is released.
@@ -105,6 +113,22 @@ describe('useCommandDispatch', () => {
     // The chosen config is remembered to pre-fill the next dispatch.
     expect(useCommandStore.getState().lastWorkerConfig?.rawOverride).toBe(
       'claude --dangerously-skip-permissions'
+    )
+  })
+
+  it('delivers a multi-line prompt as a single line (the gated write rejects embedded CR/LF)', async () => {
+    const api = setupApi()
+    const { result } = renderHook(() => useCommandDispatch(4))
+    result.current.dispatch('x', TERMINAL_ONLY)
+    await waitFor(() => expect(useCommandStore.getState().configuringTaskId).not.toBeNull())
+    const id = useCommandStore.getState().configuringTaskId as string
+    result.current.confirmConfig(id, {
+      launchCommand: 'claude',
+      prompt: 'line one\nline two\n\nline three',
+      config: CFG
+    })
+    await waitFor(() =>
+      expect(api.dispatchPrompt).toHaveBeenCalledWith('t1', 'line one line two line three')
     )
   })
 
@@ -160,7 +184,8 @@ describe('useCommandDispatch', () => {
   })
 
   it('serializes at the cap — 5 configured terminal-only tasks, only 4 spawn', async () => {
-    // spawnGroup resolves (unique ids) but awaitSettled never resolves → 4 tasks hold all 4 slots.
+    // spawnGroup resolves (unique ids), dispatchPrompt resolves, but awaitSettled never resolves →
+    // 4 tasks hold all 4 slots.
     let n = 0
     setupApi({
       spawnGroup: async () => ({ groupId: `g${++n}`, terminalId: `t${n}` }),

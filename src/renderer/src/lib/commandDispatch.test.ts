@@ -12,7 +12,7 @@ import {
   nextStatusForBoardChange,
   parseEngineeredDispatch,
   fallbackTitle,
-  appendPromptArg,
+  singleLinePrompt,
   DEFAULT_COMPOSITION
 } from './commandDispatch'
 import type { CommandTask, Composition, TaskStatus } from '../store/commandStore'
@@ -137,33 +137,24 @@ describe('fallbackTitle', () => {
   })
 })
 
-describe('appendPromptArg', () => {
-  it('appends the prompt as a single quoted positional arg', () => {
-    expect(appendPromptArg('claude', 'do an indepth review')).toBe('claude "do an indepth review"')
-    expect(appendPromptArg('claude --dangerously-skip-permissions', 'go')).toBe(
-      'claude --dangerously-skip-permissions "go"'
+describe('singleLinePrompt', () => {
+  it('collapses all whitespace (incl. newlines) to single spaces for the gated REPL write', () => {
+    expect(singleLinePrompt('line one\nline two\n\nline three')).toBe(
+      'line one line two line three'
+    )
+    expect(singleLinePrompt('  spaced   out  ')).toBe('spaced out')
+    expect(singleLinePrompt('tabs\tand\r\nCRLF')).toBe('tabs and CRLF')
+  })
+
+  it('does NOT shell-quote/escape — the prompt is REPL text, never shell-parsed', () => {
+    // `$(...)`, backticks, quotes are passed through verbatim (no shell sees them).
+    expect(singleLinePrompt('use $(env) and "quotes" and `ticks`')).toBe(
+      'use $(env) and "quotes" and `ticks`'
     )
   })
 
-  it('collapses the prompt to a single line (a PTY launch line is single-line)', () => {
-    expect(appendPromptArg('claude', 'line one\nline two\n\nline three')).toBe(
-      'claude "line one line two line three"'
-    )
-    expect(appendPromptArg('claude', '  spaced   out  ')).toBe('claude "spaced out"')
-  })
-
-  it('escapes embedded backslashes and double-quotes (POSIX double-quote)', () => {
-    expect(appendPromptArg('claude', 'say "hi"')).toBe('claude "say \\"hi\\""')
-    expect(appendPromptArg('claude', 'a\\b')).toBe('claude "a\\\\b"')
-  })
-
-  it('appends nothing for an empty command (Shell preset stays a bare shell)', () => {
-    expect(appendPromptArg('', 'prompt')).toBe('')
-    expect(appendPromptArg('   ', 'prompt')).toBe('')
-  })
-
-  it('appends nothing for a blank prompt', () => {
-    expect(appendPromptArg('claude', '   ')).toBe('claude')
+  it('trims to empty for a blank prompt', () => {
+    expect(singleLinePrompt('   \n  ')).toBe('')
   })
 })
 

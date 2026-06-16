@@ -8,13 +8,13 @@ import { WorkerConfigDialog } from './WorkerConfigDialog'
 afterEach(cleanup)
 
 /**
- * The C2d worker-config dialog: it seeds the engineered prompt + the default `claude` command, lets the
- * user add the trust-skip flag + edit the prompt, and on Dispatch returns `{launchCommand, prompt,
- * config}` (the config is remembered to pre-fill the next dispatch). Reuses the terminal command
- * builder, so the default preset composes to a bare `claude`.
+ * The C2d/C2f worker-config dialog: it seeds the engineered prompt + a default Claude command WITH
+ * `--dangerously-skip-permissions` on (so the worker boots past the first-run trust gate), lets the
+ * user edit both, and on Dispatch returns `{launchCommand, prompt, config}` (config is remembered to
+ * pre-fill the next dispatch).
  */
 describe('WorkerConfigDialog', () => {
-  it('seeds the engineered prompt + default claude command; Dispatch returns the edited values', () => {
+  it('seeds the engineered prompt + default claude command (skip-permissions on); Dispatch returns them', () => {
     const onDispatch = vi.fn()
     render(
       <WorkerConfigDialog
@@ -28,40 +28,31 @@ describe('WorkerConfigDialog', () => {
     const prompt = screen.getByTestId('worker-prompt') as HTMLTextAreaElement
     expect(prompt.value).toBe('Analyze the repo and summarize it.')
     const command = screen.getByTestId('worker-command') as HTMLInputElement
-    expect(command.value).toBe('claude') // default preset, no flags
+    // First-dispatch default: Claude with the trust-clearing skip flag.
+    expect(command.value).toBe('claude --dangerously-skip-permissions')
 
-    // The user adds the trust-skip flag (so the worker boots past the first-run gate) + edits the prompt.
-    fireEvent.change(command, { target: { value: 'claude --dangerously-skip-permissions' } })
     fireEvent.change(prompt, { target: { value: 'Do it carefully.' } })
     fireEvent.click(screen.getByTestId('worker-dispatch'))
 
     expect(onDispatch).toHaveBeenCalledWith({
       launchCommand: 'claude --dangerously-skip-permissions',
       prompt: 'Do it carefully.',
-      config: {
-        presetId: 'claude',
-        values: {},
-        rawOverride: 'claude --dangerously-skip-permissions'
-      }
+      config: { presetId: 'claude', values: { 'skip-permissions': true }, rawOverride: null }
     })
   })
 
-  it('pre-fills the command from a prior config (initial)', () => {
+  it('pre-fills the command from a prior config (initial wins over the default)', () => {
     render(
       <WorkerConfigDialog
         zoneName="Z"
         engineeredPrompt="p"
-        initial={{
-          presetId: 'claude',
-          values: {},
-          rawOverride: 'claude --dangerously-skip-permissions'
-        }}
+        initial={{ presetId: 'claude', values: {}, rawOverride: 'claude --permission-mode plan' }}
         onDispatch={() => {}}
         onCancel={() => {}}
       />
     )
     expect((screen.getByTestId('worker-command') as HTMLInputElement).value).toBe(
-      'claude --dangerously-skip-permissions'
+      'claude --permission-mode plan'
     )
   })
 

@@ -5,17 +5,21 @@
  *
  *   submit → addTask(queued) → engineer (LLM: zoneName + prompt) → WORKER CONFIG dialog
  *          → Dispatch (task gets {launchCommand, prompt} = "ready") → [pump] → routing (spawnGroup,
- *            launching `<command> "<prompt>"`) → executing → awaitSettled → done | failed
+ *            BARE `<command>`) → executing → boot-settle → gated dispatchPrompt → awaitSettled →
+ *            done | failed
  *
  * Why the config dialog (C2d): a freshly-spawned worker's CLI shows a first-run "trust this folder?"
  * gate that ate an auto-fired prompt. The user now picks the agent + its skip/auto flag and
  * reviews/edits the engineered instruction BEFORE the worker spawns. No hardcoded launch command.
  *
- * Why inline-prompt delivery (C2e): the engineered prompt is appended to the launch command as a
- * quoted arg (`appendPromptArg`), so the agent runs it as its FIRST message — parsed at startup,
- * queued (not typed into stdin), so it survives the trust gate with no boot-race and NO separate
- * handoff write (so no second confirm; the config dialog is the single authorization). The done/
- * failed verdict comes from `awaitSettled` (output silence after activity — read-only, no write).
+ * Why REPL delivery (C2f): the prompt is delivered into the agent's INPUT BOX via the gated
+ * `dispatchPrompt` PTY write — NEVER the shell launch line. Putting a free-text prompt in the shell
+ * line was unsafe (`$()`/backtick command-substitution) AND broke on long lines (PowerShell `>>`); the
+ * shell can't run a prose prompt anyway. The launch command is a BARE, controlled `<command>` (no user
+ * prose → shell-safe); the prompt rides the existing human-confirm gate (the user's chosen "Gated"
+ * authorization). A `--dangerously-skip-permissions`-class flag (the worker-config default) clears the
+ * trust gate so the boot-settle lands the write at a ready REPL. Verdict from `awaitSettled` (output
+ * silence — read-only, no write).
  *
  * A **pump** still serializes spawns at the orchestrator's concurrency cap; only CONFIGURED queued
  * tasks (a `launchCommand` committed via the dialog) are spawned. The renderer holds NO token. The
@@ -24,7 +28,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useCommandStore, type CommandTask, type WorkerConfig } from '../../../store/commandStore'
 import {
-  appendPromptArg,
   canDispatch,
   compositionOf,
   DISPATCH_ENGINEER_SYSTEM,
@@ -35,9 +38,9 @@ import {
   nextQueuedTask,
   nextStatusForBoardChange,
   parseEngineeredDispatch,
+  singleLinePrompt,
   type Composition,
-  type EngineeredDispatch,
-  type WorkerResult
+  type EngineeredDispatch
 } from '../../../lib/commandDispatch'
 
 /**
@@ -59,25 +62,29 @@ async function engineerDispatch(task: string): Promise<EngineeredDispatch> {
   }
 }
 
-// The just-spawned terminal must reach MAIN's board mirror (publish debounced ~150ms) before
-// awaitSettled can resolve it. Retry only the initial board-not-found window with backoff (~5s).
+// The just-spawned terminal must reach MAIN's board mirror (publish debounced ~150ms) before a
+// dispatch / await-settle can resolve it. Retry only the initial board-not-found window (~5s).
 const READY_RETRIES = 25
 const READY_BACKOFF_MS = 200
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+// Give the freshly-launched worker a boot window before the gated prompt write so it lands at a
+// ready REPL (with the trust gate cleared by the worker's skip-permissions flag), not mid-boot. The
+// human confirm-gate approval adds further margin. Zero under vitest so the deterministic hook test
+// isn't paced by a real-time delay (the sequence is unchanged).
+const WORKER_BOOT_SETTLE_MS = import.meta.env.MODE === 'test' ? 0 : 1500
+
 /**
- * Await the worker's settle once it is addressable: retry ONLY the pre-resolution readiness failure
- * (board-not-found / not-a-terminal — no side effect) while the just-spawned board reaches MAIN's
- * mirror. Once resolved, `awaitSettled` is a long-pending call (resolves on output-silence) — no
- * retry past that. Resolves with the worker's result, or throws the underlying error.
+ * Run a worker operation once the worker is addressable: retry ONLY the pre-side-effect readiness
+ * failure (board-not-found / not-a-terminal — thrown before the gate / before any write, so no
+ * confirm and no PTY write happened) while the just-spawned board reaches MAIN's mirror. A post-gate
+ * error (denied / write-failed) or a settled result is NEVER retried (so a retry can't re-pop the
+ * confirm). Resolves with the op's value, or throws the underlying error.
  */
-async function awaitSettledWhenReady(
-  awaitSettled: (boardId: string) => Promise<WorkerResult>,
-  terminalId: string
-): Promise<WorkerResult> {
+async function retryUntilReady<T>(op: () => Promise<T>): Promise<T> {
   for (let attempt = 0; attempt < READY_RETRIES; attempt++) {
     try {
-      return await awaitSettled(terminalId)
+      return await op()
     } catch (err) {
       if (isWorkerNotReady(err) && attempt < READY_RETRIES - 1) {
         await sleep(READY_BACKOFF_MS)
@@ -86,7 +93,7 @@ async function awaitSettledWhenReady(
       throw err
     }
   }
-  throw new Error('awaitSettled: worker never became ready') // unreachable (loop returns or throws)
+  throw new Error('worker never became ready') // unreachable (loop returns or throws)
 }
 
 export interface CommandDispatch {
@@ -137,29 +144,34 @@ export function useCommandDispatch(cap: number): CommandDispatch {
     const store = useCommandStore.getState()
     const task = store.tasks.find((t) => t.id === id)
     const api = window.api?.mcp
-    if (!task || !api?.spawnGroup || !api?.awaitSettled) {
+    if (!task || !api?.spawnGroup || !api?.dispatchPrompt || !api?.awaitSettled) {
       store.setTaskStatus(id, 'failed')
       return
     }
     const comp = compositionOf(task)
     try {
-      // Launch the worker with the USER-CHOSEN command AND the engineered prompt appended as a quoted
-      // arg (`<command> "<prompt>"`), under the smart zone name — so the agent runs the prompt as its
-      // first message (no separate handoff write, no boot-race, no second confirm). The kanban CARD
-      // keeps the user's raw task; the prompt is the task's `prompt`.
-      const launchCommand = appendPromptArg(task.launchCommand ?? '', task.prompt ?? task.title)
+      // Spawn the agent zone under the smart name with the user's BARE chosen command (NO prompt in
+      // the shell line — the prompt goes to the REPL, see below; the kanban CARD keeps the raw task).
       const group = await api.spawnGroup({
         name: task.zoneName ?? task.title,
         planning: comp.planning,
         browser: comp.browser,
-        launchCommand
+        ...(typeof task.launchCommand === 'string' ? { launchCommand: task.launchCommand } : {})
       })
+      const { terminalId } = group
       useCommandStore.getState().setTaskGroup(id, group)
       useCommandStore.getState().setTaskStatus(id, 'executing')
+      // Boot-settle so the prompt lands at a ready REPL (trust gate cleared by skip-permissions), then
+      // deliver it into the agent's INPUT BOX via the GATED dispatchPrompt write (shell-safe: REPL
+      // text, never shell-parsed). Retry only the pre-gate board-not-found window.
+      await sleep(WORKER_BOOT_SETTLE_MS)
+      const dispatchPrompt = api.dispatchPrompt
+      const prompt = singleLinePrompt(task.prompt ?? task.title)
+      await retryUntilReady(() => dispatchPrompt(terminalId, prompt))
       // Authoritative done/failed verdict — awaitSettled resolves on output silence after the worker
-      // finishes (read-only; retried through the post-spawn readiness window until it is addressable).
+      // finishes (read-only; the board is already addressable here, but guard the window anyway).
       const awaitSettled = api.awaitSettled
-      const result = await awaitSettledWhenReady((bid) => awaitSettled(bid), group.terminalId)
+      const result = await retryUntilReady(() => awaitSettled(terminalId))
       useCommandStore.getState().setTaskStatus(id, isFailureResult(result) ? 'failed' : 'done')
       pumpRef.current?.() // a slot freed → dispatch the next queued task
     } catch (err) {
