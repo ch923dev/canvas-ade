@@ -26,9 +26,9 @@ let tracingStarted = false
  * HTML report (`pnpm exec playwright show-report`); on success the chunk is discarded so
  * green runs stay cheap. Set `E2E_VIDEO=1` to also record a `.webm` per spec into
  * `test-results/videos` (best-effort — video under xvfb on the Linux leg is unreliable,
- * Playwright #8936, so trace is the canonical artifact). The renderer screenshot shows
- * HTML chrome only; native WebContentsView content is captured separately via the MAIN
- * `captureViewToFile` helper (a native view paints above all HTML).
+ * Playwright #8936, so trace is the canonical artifact). The renderer screenshot now captures the
+ * full DOM, including each Browser board's OSR `<canvas>`; a MAIN-side PNG of one board's offscreen
+ * page is available via the `captureOsrToFile` helper.
  */
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   electronApp: [
@@ -109,8 +109,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
     }
     if (failed) {
-      // Renderer DOM only — native WebContentsView content is blank here by design;
-      // use the MAIN captureViewToFile helper for native-view evidence.
+      // Full renderer DOM, including each Browser board's OSR <canvas>. For a board's offscreen
+      // page on its own, the MAIN captureOsrToFile helper grabs it directly.
       const shotPath = testInfo.outputPath('failure.png')
       try {
         await page.screenshot({ path: shotPath })

@@ -274,7 +274,12 @@ function attachInput(
   const onCompositionEnd = (e: CompositionEvent): void => {
     composing = false
     const text = e.data ?? '' // empty on a CANCELLED composition (Escape) — no commit
-    if (text) void window.api.osrIme(boardId, 'commit', text) // commit replaces the composing range
+    if (text)
+      void window.api.osrIme(boardId, 'commit', text) // commit replaces the composing range
+    // A cancelled composition (Escape) otherwise leaves the page's composing range + underline
+    // decoration dangling until the next input. Send an empty compose to collapse it so a mid-IME
+    // Escape doesn't leave a stray underline on the offscreen page.
+    else void window.api.osrIme(boardId, 'compose', '')
     // Clear the proxy so the trailing `input` (insertCompositionText) reads '' → no double-insert.
     // No skip flag: the `composing` guard catches an input that fires BEFORE compositionend, and the
     // clear catches one that fires AFTER — so both event orderings (and a cancel) are no-ops here.

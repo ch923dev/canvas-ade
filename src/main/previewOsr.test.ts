@@ -13,9 +13,9 @@ import {
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
 // else, so a blocked (non-http(s)) scheme skipped the load AND emitted no lifecycle event ->
 // useOffscreenPreview stayed on 'connecting' forever and leaked an idle offscreen renderer. The
-// native path (preview.ts preview:open / preview:navigate) emits a synthetic did-fail-load
-// (errorCode -1, 'blocked scheme') on the rejected branch; applyOsrInitialLoad — the exact gate
-// ensureOsr now calls — must mirror it. These drive the REAL gate (no faked status).
+// fix: applyOsrInitialLoad — the exact gate ensureOsr now calls — latches `failed` and emits a
+// synthetic did-fail-load (errorCode -1, 'blocked scheme') on the rejected branch, so the renderer
+// transitions to 'load-failed'. These drive the REAL gate (no faked status).
 describe('applyOsrInitialLoad (BUG-005 blocked-scheme terminal failure)', () => {
   it('loads an allowed http(s) url and emits NO failure', () => {
     const e = { failed: false }

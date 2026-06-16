@@ -20,24 +20,21 @@ import {
 } from './previewOsrWidgets'
 
 /**
- * SPIKE (feat/preview-offscreen-spike) — offscreen Browser-preview producer.
+ * Offscreen Browser-preview producer (OSR) — the SOLE preview engine since OS-3 Phase 5C deleted
+ * the legacy native `WebContentsView` path (ADR 0002).
  *
- * Renders a Browser board's page OFFSCREEN (the view is NEVER added to the window's
- * native view tree) and streams its frames to the renderer over `preview:osrFrame`,
- * where they paint into a DOM `<canvas>`. This is the occlusion fix under test — see
- * `docs/reviews/2026-06-14-electron-to-flutter-assessment/preview-offscreen-spike-spec.md`:
- * a `<canvas>` clips/rounds/z-orders like any DOM node, so the native-overlay occlusion
- * (ADR 0002) disappears.
+ * Renders a Browser board's page OFFSCREEN (the window is NEVER added to the host window's native
+ * view tree) and streams its frames to the renderer over `preview:osrFrame`, where they paint into
+ * a DOM `<canvas>`. That is the occlusion fix: a `<canvas>` clips / rounds / z-orders like any DOM
+ * node, so the native-overlay occlusion problem (ADR 0002) disappears.
  *
- * Deliberately ISOLATED from the shipping native path in `preview.ts` — its own `osr`
- * Map and its own session partition — so the spike can be toggled or deleted without
- * touching the proven path. Security + lifecycle carry-overs now mirrored from the native
- * path: per-view in-memory session, deny-all permissions, http(s) nav-scheme allowlist,
- * frame-guarded IPC, the window.open deny+open-external limiter, and the shared
- * load-latch / crash-ready gate (emitting the same `preview:event` channel). Input (M3) is
- * forwarded via `preview:osrInput`; cursor + per-interaction focus-emulation feed back the
- * browser-like feel. Known-deferred: M1 DPR sharpness, M2 throughput, M4 responsive presets,
- * and the P1 fidelity gaps (IME, native select, clipboard) in the spike spec's gap register.
+ * Each board gets its own `osr` Map entry + session partition. Security + lifecycle: per-view
+ * in-memory session, deny-all permissions, http(s) nav-scheme allowlist, frame-guarded IPC, the
+ * window.open deny + open-external limiter, and the shared load-latch / crash-ready gate (emitting
+ * on the `preview:event` channel). Input (M3) is forwarded via `preview:osrInput`; cursor +
+ * per-interaction focus-emulation feed back the browser-like feel; IME / clipboard / AltGr ride the
+ * attached CDP debugger (Phase 3). M1 DPR sharpness, M2 throughput gating, and M4 responsive
+ * presets all shipped.
  */
 
 interface OsrEntry {
@@ -444,7 +441,7 @@ function setOsrFocus(e: OsrEntry, focused: boolean): void {
 /** Initial-load gate, shared by ensureOsr and its unit test. Scheme allowlist at the trust
  *  boundary (Bug #32): only http(s) loads. A rejected (non-http(s)) scheme must NOT silently
  *  skip the load — that left useOffscreenPreview stuck on 'connecting' forever and leaked an
- *  idle offscreen renderer (BUG-005). Mirror the native path (preview.ts preview:open): latch
+ *  idle offscreen renderer (BUG-005). On the rejected branch, latch
  *  `failed` and emit a terminal synthetic did-fail-load (errorCode -1, 'blocked scheme') so the
  *  renderer transitions to 'load-failed'. */
 export function applyOsrInitialLoad(
@@ -482,8 +479,8 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      // Distinct from the native path's `preview-${id}` so the two never share a
-      // session (cache / zoom / cookies) even if both exist across a spike toggle.
+      // Per-board partition: each Browser board gets its own session (cache / zoom / cookies), so
+      // Chromium's per-host-per-session zoom doesn't sync across boards (ADR 0002).
       partition: `preview-osr-${id}`
     }
   })
@@ -499,12 +496,12 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   }
   osr.set(id, e)
   const wc = osrWin.webContents
-  // Deny-all permissions on this view's session (untrusted localhost content) — same
-  // posture as the native path (preview.ts).
+  // Deny-all permissions on this view's session — untrusted localhost content never needs
+  // camera / mic / geolocation / notifications, so reject every request + check.
   const sess = wc.session
   sess.setPermissionRequestHandler((_w, _p, cb) => cb(false))
   sess.setPermissionCheckHandler(() => false)
-  // http(s)-only nav scheme allowlist, shared with the native path.
+  // http(s)-only nav scheme allowlist.
   registerPreviewNavGuards(wc)
   // Page-driven popups: a previewed page's window.open / target=_blank / OAuth popup would
   // otherwise mint a REAL on-screen window OUTSIDE this view's deny-all/nav-guard/partition
@@ -549,7 +546,7 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   wc.on('media-started-playing', () => emitAudible(e, id, true))
   wc.on('media-paused', () => emitAudible(e, id, false))
   // Frame cap (M2 knob). The window size already set the render surface; the window is
-  // never shown, so nothing paints above the HTML — the whole point of the spike.
+  // never shown, so nothing paints above the HTML — the whole point of OSR (occlusion-free).
   wc.setFrameRate(OSR_FRAME_RATE)
   wc.on('paint', (_ev, dirty, image) => {
     const size = image.getSize()
@@ -708,14 +705,11 @@ export function getOsrWindow(id: string): BrowserWindow | undefined {
 }
 
 /**
- * SPIKE probe (spec §5 Q1) — does an OFF-TREE offscreen WebContentsView actually paint?
- *
- * Creates a throwaway offscreen view (NEVER added to the window's view tree), loads
- * `url`, and resolves on the FIRST `paint` with the frame size — or a timeout/failure
- * verdict. Answers the make-or-break question headlessly (no headed app, no human eyes):
- * if this resolves `painted:true` with non-zero dimensions, the whole offscreen→canvas
- * approach is alive and M1/M2 can proceed. Standalone (its own session, not in the live
- * `osr` Map) so it never collides with real spike views. Surfaced via the self-test.
+ * Self-test paint probe — does an OFF-TREE offscreen `WebContentsView` actually paint? Creates a
+ * throwaway offscreen view (NEVER added to the window's view tree), loads `url`, and resolves on
+ * the FIRST `paint` with the frame size — or a timeout/failure verdict. A headless viability check
+ * (no headed app, no human eyes) for the offscreen→canvas approach. Standalone (its own session,
+ * not in the live `osr` Map) so it never collides with real preview windows. Surfaced via the self-test.
  */
 export function probeOsrPaint(
   url: string,
@@ -786,11 +780,10 @@ export function probeOsrPaint(
 }
 
 /**
- * SPIKE probe variant (spec §5 Q1, transport choice) — the DOCUMENTED OSR host: a
- * hidden offscreen `BrowserWindow` whose size drives the render surface. The plain
- * `WebContentsView` probe above renders 0×0 off-tree (no window → no size); this checks
- * whether a hidden window paints a real frame, which would make "one hidden OSR window
- * per Browser board" the viable producer instead of a bare WebContentsView.
+ * Self-test paint probe variant — the production OSR host: a hidden offscreen `BrowserWindow` whose
+ * size drives the render surface. The plain `WebContentsView` probe above renders 0×0 off-tree (no
+ * window → no size); this confirms a hidden window paints a real frame, which is why "one hidden OSR
+ * window per Browser board" is the producer rather than a bare WebContentsView.
  */
 export function probeOsrPaintWindow(
   url: string,
@@ -944,7 +937,10 @@ export function registerPreviewOsrHandlers(
     if (typeof args.text !== 'string') return false
     const e = osr.get(args.id)
     if (!e) return false
-    applyOsrIme(e.osrWin.webContents, args.kind, args.text)
+    // Cap untrusted IME text at 2000 chars — the same trust-boundary cap as page dialog/prompt
+    // strings (previewOsrWidgets MAX_TEXT). A composed commit is short in practice; this just
+    // bounds a pathological proxy-textarea paste.
+    applyOsrIme(e.osrWin.webContents, args.kind, args.text.slice(0, 2000))
     return true
   })
   // URL-bar Back/Forward for an OSR board (the native preview:goBack/goForward operate on a

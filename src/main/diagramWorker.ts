@@ -164,6 +164,8 @@ export function renderDiagram(req: DiagramRenderRequest): Promise<DiagramRenderR
   if (req.source.length === 0) return Promise.resolve({ ok: false, error: 'empty diagram source' })
   if (req.source.length > DIAGRAM_MAX_SOURCE)
     return Promise.resolve({ ok: false, error: `source exceeds ${DIAGRAM_MAX_SOURCE} characters` })
+  if (typeof req.id !== 'string' || req.id.length === 0)
+    return Promise.resolve({ ok: false, error: 'id must be a non-empty string' })
   const run = queue.then(() => renderOnce(req))
   // Keep the queue chained even when a render throws, but never let a rejection poison the chain.
   queue = run.then(

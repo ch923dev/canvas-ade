@@ -5,11 +5,11 @@ import { useOsrLivenessStore } from '../../store/osrLivenessStore'
 import { bgraToRgba } from '../../lib/bgraToRgba'
 
 /**
- * SPIKE (feat/preview-offscreen-spike): drive a Browser board's offscreen preview.
+ * Drive a Browser board's offscreen preview (OSR — the sole preview engine since OS-3 Phase 5C).
  *
  * Opens an offscreen render in MAIN, paints each streamed frame into the board's
  * `<canvas>`, and closes it on unmount. The canvas is a normal DOM node inside
- * `.bb-frame`, so it clips / rounds / z-orders — the occlusion fix under test (ADR
+ * `.bb-frame`, so it clips / rounds / z-orders — the occlusion fix (ADR
  * 0002). There is NO camera-sync IPC: the canvas moves with the DOM, so the entire
  * `setBoundsBatch` rAF pump the native path needs is gone.
  *
@@ -98,6 +98,10 @@ export function useOffscreenPreview(
         clearCanvas()
       }
     })
+    // Reused across same-size frames (full repaints + repeated same-region dirty rects, e.g. a
+    // blinking caret) so steady-state painting allocates nothing. ImageData requires
+    // length === w*h*4 exactly, so only reuse when the size matches; reallocate on a size change.
+    let reuseRgba: Uint8ClampedArray<ArrayBuffer> | undefined
     const off = window.api.onPreviewOsrFrame((f) => {
       if (f.id !== boardId) return
       const cv = canvasRef.current
@@ -124,7 +128,9 @@ export function useOffscreenPreview(
       // swizzle (bgraToRgba) replaces the old per-byte loop (~4× fewer typed-array ops). Blit
       // ONLY the dirty sub-rect; the rest of the canvas keeps the previous frame's pixels.
       const src = f.buffer instanceof Uint8Array ? f.buffer : new Uint8Array(f.buffer)
-      const rgba = bgraToRgba(src)
+      if (!reuseRgba || reuseRgba.length !== src.length)
+        reuseRgba = new Uint8ClampedArray(src.length)
+      const rgba = bgraToRgba(src, reuseRgba)
       ctx.putImageData(new ImageData(rgba, f.dirty.width, f.dirty.height), f.dirty.x, f.dirty.y)
     })
     return () => {
