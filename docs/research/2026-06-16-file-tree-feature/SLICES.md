@@ -36,8 +36,8 @@ slice-scoped `pnpm test:e2e` (Windows leg) + the manual dev check. The **full** 
 
 | Slice | Branch | State | PR | Eyeballed |
 |---|---|---|---|---|
-| S1 Foundation | `feat/file-tree-s1-foundation` | not started | — | — |
-| S2 Tree panel | `feat/file-tree-s2-tree-panel` | blocked on S1 | — | — |
+| S1 Foundation | `feat/file-tree-s1-foundation` | **in review** | **#178** | pending |
+| S2 Tree panel | `feat/file-tree-s2-tree-panel` | ready (after S1 merges) | — | — |
 | S3 File board | `feat/file-tree-s3-file-board` | blocked on S1 | — | — |
 | S4 Planning ref | `feat/file-tree-s4-planning-ref` | blocked on S1,S3 | — | — |
 | S5 MCP context | `feat/file-tree-s5-mcp-context` | blocked on S3,S4 | — | — |
