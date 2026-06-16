@@ -348,6 +348,105 @@
   opacity: 0;
 }
 
+/* ── File-tree side panel (S2): docked left, auto-hide like the dock ──────────── */
+.ca-sidepanel-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 50;
+  /* Hidden panel lets canvas clicks through; the revealed panel opts back in (CSS). */
+  pointer-events: none;
+}
+.ca-sidepanel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  pointer-events: auto;
+  transition:
+    opacity 0.14s ease-out,
+    transform 0.14s ease-out;
+}
+.ca-sidepanel[data-revealed='false'] {
+  opacity: 0;
+  transform: translateX(-12px);
+  pointer-events: none;
+}
+.ca-sidepanel-head {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* The handle: a slim vertical grabber marking where the panel lives — NEVER interactive
+   (the reveal is the window-level zone listener). Fades out under the revealed panel. */
+.ca-sidepanel-handle {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  transition: opacity 0.14s ease-out;
+}
+.ca-sidepanel-handle::after {
+  content: '';
+  width: 5px;
+  height: 56px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.ca-sidepanel-handle[data-revealed='true'] {
+  opacity: 0;
+}
+.ca-ftree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 4px 0;
+}
+.ca-ftree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding-right: 8px;
+  font-size: 13px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.ca-ftree-row:hover {
+  background: var(--surface-overlay);
+}
+.ca-ftree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ca-ftree-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-progress-bar,
   .ca-blink,
@@ -370,6 +469,8 @@
   .ca-t-fill,
   .ca-dock-pill,
   .ca-dock-handle,
+  .ca-sidepanel,
+  .ca-sidepanel-handle,
   .ca-zone,
   .ca-tidy-preset,
   .bb-navbtn,
@@ -2442,7 +2543,8 @@ body {
 .digest-panel {
   position: fixed;
   top: 0;
-  left: 0;
+  /* Docked RIGHT so it doesn't collide with the file-tree side panel on the left (S2). */
+  right: 0;
   bottom: 0;
   width: 300px;
   z-index: 70;
@@ -2451,7 +2553,7 @@ body {
   gap: var(--space-8);
   padding: var(--space-12);
   background: var(--surface);
-  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   color: var(--text);
   font-family: var(--ui);
   font-size: var(--fs-body);
@@ -2460,7 +2562,7 @@ body {
   transition: transform 200ms ease;
 }
 .digest-panel[data-open='false'] {
-  transform: translateX(-100%);
+  transform: translateX(100%);
 }
 .digest-head {
   display: flex;
@@ -2580,15 +2682,16 @@ body {
 .digest-reopen {
   position: fixed;
   top: 50%;
-  left: 0;
+  /* Right-edge tab to match the right-docked panel (S2 left/right reconcile). */
+  right: 0;
   transform: translateY(-50%);
   z-index: 70;
   writing-mode: vertical-rl;
   padding: var(--space-12) var(--space-4);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-left: none;
-  border-radius: 0 var(--r-inner) var(--r-inner) 0;
+  border-right: none;
+  border-radius: var(--r-inner) 0 0 var(--r-inner);
   color: var(--text-2);
   font-family: var(--ui);
   font-size: var(--fs-label);

@@ -33,6 +33,7 @@ import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
 import { BackdropPicker } from './BackdropPicker'
 import { RecapConsentModal } from './RecapConsentModal'
+import { SidePanel } from './SidePanel'
 
 export interface AppChromeProps {
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
@@ -78,6 +79,7 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
         onSettings={() => setShowSettings(true)}
         onFocusGroup={onFocusGroup}
       />
+      <SidePanel />
       <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {/* Guard: MAIN/renderer dir desync can leave askRecap=true with no project open. */}
