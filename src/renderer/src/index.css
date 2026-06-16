@@ -2641,6 +2641,12 @@ body {
   text-transform: capitalize;
 }
 
+/* Command board submit-well input: faint placeholder to match the inert Phase-A well it replaced. */
+.cmd-submit-input::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+}
+
 /* Named board groups — outline box + name tab (S2). Outline only; one accent. */
 .group-box {
   border: 1.5px solid var(--accent-wash);
