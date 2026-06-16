@@ -25,6 +25,17 @@ describe('renderMarkdownToHtml', () => {
     expect(ok).toContain('>the label</a>')
   })
 
+  it('drops protocol-relative, data:, and keeps relative file links', () => {
+    // Protocol-relative escapes the app origin → must NOT become an href/src.
+    expect(renderMarkdownToHtml('[x](//evil.com)')).not.toContain('href="//')
+    expect(renderMarkdownToHtml('![x](//evil.com/a.png)')).not.toContain('src="//')
+    // data: links/images are dropped too.
+    expect(renderMarkdownToHtml('[x](data:text/html,<b>)')).not.toContain('href="data:')
+    // A legitimate same-origin relative link still renders.
+    const rel = renderMarkdownToHtml('[doc](./README.md)')
+    expect(rel).toContain('href="./README.md"')
+  })
+
   it('renders lists, blockquote, fenced code', () => {
     const h = renderMarkdownToHtml('- a\n- b\n\n> quote\n\n```\ncode\n```\n')
     expect(h).toContain('<ul>')

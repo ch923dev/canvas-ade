@@ -18,9 +18,13 @@ function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ESCAPES[c])
 }
 
-/** Allow only safe link/image schemes; drop javascript:/data:/etc. */
+/** Allow only safe link/image schemes; drop javascript:/data:/protocol-relative/etc. */
 function safeUrl(url: string): string {
   const u = url.trim()
+  // Protocol-relative (`//host`, `\\host`, `/\host`) inherits the page scheme, so it points OFF
+  // the app origin — the nav guard would hand it to the OS browser. A real relative path never
+  // starts with two separators, so reject the form outright (defense-in-depth above the guard).
+  if (/^[/\\]{2}/.test(u)) return ''
   return /^(https?:\/\/|mailto:|#|\/|\.\.?\/|[\w.-]+\.[\w]{1,8})/i.test(u) ? esc(u) : ''
 }
 

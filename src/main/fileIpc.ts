@@ -25,6 +25,14 @@ import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
 import { realResolveWithinRoot } from './pathSafe'
 
+/**
+ * MAIN-side read ceiling (DoS backstop). The renderer already size-gates for UX far below this
+ * (LARGE_TEXT_BYTES 2 MiB / MAX_IMAGE_BYTES 32 MiB in fileBoardSyntax), but a buggy or misbehaving
+ * renderer must not be able to make MAIN slurp an arbitrarily large file into memory. 64 MiB sits
+ * safely above the largest renderer gate; a read over it is rejected before the file is touched.
+ */
+const MAX_READ_BYTES = 64 * 1024 * 1024
+
 /** One directory entry surfaced to the tree (no symlink following — report-only kind). */
 export interface FileEntry {
   name: string
@@ -60,12 +68,26 @@ async function resolveRel(relPath: unknown): Promise<string> {
   return realResolveWithinRoot(root, relPath)
 }
 
+/**
+ * Resolve a read target AND enforce the MAIN-side size ceiling before any bytes are loaded.
+ * Throws when the file is larger than `MAX_READ_BYTES` so an oversized read can never OOM MAIN
+ * regardless of what the renderer requests (the renderer's own UX gate is advisory only).
+ */
+async function resolveReadable(relPath: unknown): Promise<string> {
+  const abs = await resolveRel(relPath)
+  const s = await stat(abs)
+  if (s.size > MAX_READ_BYTES) {
+    throw new Error(`file: too large to read (${s.size} bytes > ${MAX_READ_BYTES})`)
+  }
+  return abs
+}
+
 export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
   ipcMain.handle('file:readText', async (e, relPath: string): Promise<string> => {
     if (guard(e)) throw new Error('file: foreign sender denied')
-    const abs = await resolveRel(relPath)
+    const abs = await resolveReadable(relPath)
     return readFile(abs, 'utf8')
   })
 
@@ -78,7 +100,7 @@ export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | 
   // structured-clones it across the bridge (the same shape `asset:read` already returns).
   ipcMain.handle('file:readBytes', async (e, relPath: string): Promise<Uint8Array> => {
     if (guard(e)) throw new Error('file: foreign sender denied')
-    const abs = await resolveRel(relPath)
+    const abs = await resolveReadable(relPath)
     return readFile(abs)
   })
 
