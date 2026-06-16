@@ -50,6 +50,7 @@ import {
   subscribeBoardStatus
 } from './boardRegistry'
 import { sendMcpCommand } from './mcpCommand'
+import { registerOrchestratorIpc, forwardBoardStatus } from './mcpOrchestratorIpc'
 import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
@@ -339,6 +340,16 @@ app.whenReady().then(async () => {
     // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
     recordResult: (id, result) => recordBoardResult(id, result)
   })
+  // Phase C / C1: the renderer → MAIN orchestrator drive (Command board). Frame-guarded
+  // handle() channels (spawnGroup/dispatchPrompt/interrupt) + the per-board status push that
+  // advances the kanban. `() => mcp` is null until the loopback server is up (or if it failed
+  // to bind) → handlers reject cleanly. Renderer holds no token; every write still pays the gate.
+  registerOrchestratorIpc(
+    ipcMain,
+    () => mainWindow,
+    () => mcp
+  )
+  forwardBoardStatus(() => mainWindow, subscribeBoardStatus)
   registerPreviewOsrHandlers(ipcMain, () => mainWindow) // offscreen preview → <canvas>
   registerDiagramHandlers(ipcMain, () => mainWindow) // S4: hidden Mermaid render worker
   registerPreviewScreenshotHandler(ipcMain, () => mainWindow)

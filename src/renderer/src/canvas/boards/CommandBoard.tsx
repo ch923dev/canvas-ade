@@ -1,19 +1,18 @@
 /**
- * Command board content (Phase A — the SHELL of the orchestrator's on-canvas face).
+ * Command board content — the orchestrator's on-canvas face (Combined ⑤). The BoardFrame chrome + a
+ * titlebar seg (Kanban / Groups) + the submit well + worker-pool discovery strip + the five-column
+ * lifecycle kanban, plus a collapsed one-line rail. SINGLETON (enforced in `canvasStore.addBoard`).
  *
- * Realizes the approved Combined (⑤) production mock: the BoardFrame chrome + a titlebar seg
- * control (Kanban / Groups) + an inert submit well + the worker-pool discovery strip + the empty
- * five-column lifecycle kanban, plus a collapsed one-line rail. SINGLETON (one orchestrator face;
- * enforced in `canvasStore.addBoard`).
+ * Phase C makes dispatch live: `SubmitWell` (with composition chips) hands a task to
+ * `useCommandDispatch`, which spawns a worker group + dispatches over the renderer→MAIN orchestrator
+ * IPC and marches each `TaskCard` through the kanban (queued → routing → executing → done/failed),
+ * serialized at the worker-pool cap. Recap/diff is Phase D; group roll-up content is Phase E. All
+ * task state is ephemeral `commandStore` — never serialized; pool counts derive from the live boards.
  *
- * Phase B makes it live: the submit well enqueues a `queued` task (no worker dispatch yet — that is
- * Phase C), and tasks render as cards bucketed into the lifecycle columns (failed → Done, with a
- * retry). There is still no recap/diff (Phase D) or group roll-up content (Phase E). All state is
- * ephemeral `commandStore` — never serialized. Worker-pool counts derive from the live board list.
- *
- * Owns this file; the shared surface (BoardFrame, schema, stores) is consumed, never modified.
+ * Owns this file; the shared surface (BoardFrame, schema, stores) is consumed, never modified. The
+ * submit well, task card, and dispatch hook live in `./command/`.
  */
-import { useMemo, useState, type CSSProperties, type ReactElement } from 'react'
+import { useMemo, type CSSProperties, type ReactElement } from 'react'
 import type { CommandBoard as CommandBoardData } from '../../lib/boardSchema'
 import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
@@ -21,13 +20,16 @@ import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import {
   useCommandStore,
   tasksInColumn,
-  type CommandTask,
   type CommandView,
   type TaskStatus
 } from '../../store/commandStore'
 import { deriveWorkerPool } from '../../store/workerPool'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
+import { SubmitWell } from './command/SubmitWell'
+import { TaskCard } from './command/TaskCard'
+import { WorkerConfigDialog } from './command/WorkerConfigDialog'
+import { useCommandDispatch } from './command/useCommandDispatch'
 
 /**
  * Collapsed (rail) board height. The 34px titlebar + the rail's well/track/counts stack need ≈130px;
@@ -66,10 +68,21 @@ export function CommandBoard({
   const expandedHeight = useCommandStore((s) => s.expandedHeight)
   const setCollapsed = useCommandStore((s) => s.setCollapsed)
   const tasks = useCommandStore((s) => s.tasks)
-  const addTask = useCommandStore((s) => s.addTask)
-  const retryTask = useCommandStore((s) => s.retryTask)
+  const configuringTaskId = useCommandStore((s) => s.configuringTaskId)
+  const lastWorkerConfig = useCommandStore((s) => s.lastWorkerConfig)
 
   const pool = useMemo(() => deriveWorkerPool(boards, running), [boards, running])
+  // The Phase C dispatch choreography: submit → engineer → worker-config dialog → spawn group →
+  // handoff → advance the kanban, serialized at the worker-pool cap. The board is a singleton, so
+  // this mounts once.
+  const { dispatch, confirmConfig, cancelConfig, reconfigure, retry, interrupt } =
+    useCommandDispatch(pool.cap)
+  // C2d: the task whose worker-config dialog is open (the engineered prompt + agent/flags are
+  // chosen here before the worker spawns). Looked up from the store's single-at-a-time lock.
+  const configuringTask = useMemo(
+    () => (configuringTaskId ? (tasks.find((t) => t.id === configuringTaskId) ?? null) : null),
+    [configuringTaskId, tasks]
+  )
 
   // Bucket tasks by status in ONE pass for the rail roll-up. The kanban column lists use the pure
   // `tasksInColumn` (the single source of the failed→Done bucketing); each column count badge is
@@ -133,9 +146,18 @@ export function CommandBoard({
       onRemoveFromGroup={onRemoveFromGroup}
       onStartConnect={onStartConnect}
     >
+      {configuringTask && (
+        <WorkerConfigDialog
+          zoneName={configuringTask.zoneName ?? configuringTask.title}
+          engineeredPrompt={configuringTask.prompt ?? configuringTask.title}
+          initial={lastWorkerConfig}
+          onDispatch={(r) => confirmConfig(configuringTask.id, r)}
+          onCancel={() => cancelConfig(configuringTask.id)}
+        />
+      )}
       {collapsed ? (
         <div style={railStyle}>
-          <SubmitWell onSubmit={addTask} />
+          <SubmitWell onSubmit={dispatch} showComposition={false} />
           <div style={railTrackStyle}>
             <span style={{ ...fillStyle, width: `${Math.round(progress * 100)}%` }} />
           </div>
@@ -158,7 +180,7 @@ export function CommandBoard({
         </div>
       ) : (
         <div style={bodyStyle}>
-          <SubmitWell onSubmit={addTask} />
+          <SubmitWell onSubmit={dispatch} />
           <PoolStrip pool={pool} />
           {view === 'kanban' ? (
             <>
@@ -175,7 +197,16 @@ export function CommandBoard({
                         {colTasks.length === 0 ? (
                           <div style={slotStyle} />
                         ) : (
-                          colTasks.map((t) => <TaskCard key={t.id} task={t} onRetry={retryTask} />)
+                          colTasks.map((t) => (
+                            <TaskCard
+                              key={t.id}
+                              task={t}
+                              configuring={configuringTaskId === t.id}
+                              onRetry={retry}
+                              onInterrupt={interrupt}
+                              onReconfigure={reconfigure}
+                            />
+                          ))
                         )}
                       </div>
                     </div>
@@ -186,8 +217,7 @@ export function CommandBoard({
                 <div style={emptyHintStyle}>
                   <div style={emptyBigStyle}>No tasks yet</div>
                   <div style={emptySubStyle}>
-                    Describe a task above to queue it; dispatch to a feature zone lands in
-                    Phase&nbsp;C.
+                    Describe a task above and Dispatch — it spawns a worker zone and runs.
                   </div>
                 </div>
               )}
@@ -196,7 +226,7 @@ export function CommandBoard({
             <div style={emptyHintStyle}>
               <div style={emptyBigStyle}>No groups yet</div>
               <div style={emptySubStyle}>
-                Each dispatched task spawns its own named group of worker boards (Phase&nbsp;C).
+                Each dispatched task spawns its own named group of worker boards.
               </div>
             </div>
           )}
@@ -288,92 +318,6 @@ function CtlBtn({
     >
       {label}
     </button>
-  )
-}
-
-// ── The submit well: enqueue a task on Enter / Dispatch (Phase B; worker dispatch is Phase C) ──
-function SubmitWell({ onSubmit }: { onSubmit: (title: string) => string | null }): ReactElement {
-  const [value, setValue] = useState('')
-  const submit = (): void => {
-    if (!value.trim()) return
-    onSubmit(value)
-    setValue('')
-  }
-  return (
-    <div style={submitWellStyle}>
-      <span style={{ color: 'var(--accent)', fontFamily: 'var(--mono)' }}>›</span>
-      <input
-        // nodrag + stopPropagation so typing/clicking in the field never drags the board or fires
-        // canvas keybindings (e.g. `t` tidy, Backspace delete) while a task is being composed.
-        className="cmd-submit-input nodrag"
-        value={value}
-        placeholder="Describe a task to dispatch…"
-        onChange={(e) => setValue(e.target.value)}
-        onPointerDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          e.stopPropagation()
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            submit()
-          }
-        }}
-        style={submitInputStyle}
-      />
-      <button
-        className="nodrag"
-        title="Dispatch (Enter)"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => {
-          e.stopPropagation()
-          submit()
-        }}
-        style={dispatchBtnStyle}
-      >
-        Dispatch ⏎
-      </button>
-    </div>
-  )
-}
-
-// ── A single task card in a kanban column ──────────────────────────────────────
-const STATUS_DOT: Record<TaskStatus, string> = {
-  queued: 'var(--text-faint)',
-  routing: 'var(--accent)',
-  executing: 'var(--ok)',
-  reporting: 'var(--warn)',
-  done: 'var(--ok)',
-  failed: 'var(--err)'
-}
-function TaskCard({
-  task,
-  onRetry
-}: {
-  task: CommandTask
-  onRetry: (id: string) => void
-}): ReactElement {
-  return (
-    <div className="nodrag" style={cardStyle} onPointerDown={(e) => e.stopPropagation()}>
-      <span style={{ ...cardDotStyle, background: STATUS_DOT[task.status] }} />
-      <span style={cardBodyStyle}>
-        <span style={cardTitleStyle}>{task.title}</span>
-        {task.status === 'executing' && <span style={cardSubStyle}>awaiting completion…</span>}
-      </span>
-      {task.status === 'failed' && (
-        <button
-          className="nodrag"
-          title="Retry"
-          aria-label="Retry task"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onRetry(task.id)
-          }}
-          style={retryBtnStyle}
-        >
-          ↻
-        </button>
-      )}
-    </div>
   )
 }
 
@@ -562,87 +506,6 @@ const colBodyStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 6
-}
-const submitWellStyle: CSSProperties = {
-  background: 'var(--inset)',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--r-inner)',
-  padding: '6px 8px 6px 10px',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  flex: 'none'
-}
-const submitInputStyle: CSSProperties = {
-  color: 'var(--text)',
-  fontFamily: 'var(--mono)',
-  fontSize: 11.5,
-  flex: 1,
-  minWidth: 0,
-  border: 'none',
-  outline: 'none',
-  background: 'transparent'
-}
-const dispatchBtnStyle: CSSProperties = {
-  color: 'var(--text-3)',
-  fontSize: 11,
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--r-ctl)',
-  padding: '3px 9px',
-  flex: 'none',
-  background: 'transparent',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap'
-}
-const cardStyle: CSSProperties = {
-  display: 'flex',
-  gap: 7,
-  alignItems: 'flex-start',
-  padding: '6px 8px',
-  background: 'var(--surface-raised)',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--r-ctl)',
-  flex: 'none'
-}
-const cardDotStyle: CSSProperties = {
-  width: 7,
-  height: 7,
-  borderRadius: 999,
-  flex: 'none',
-  marginTop: 4
-}
-const cardBodyStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2,
-  flex: 1,
-  minWidth: 0
-}
-const cardTitleStyle: CSSProperties = {
-  color: 'var(--text-2)',
-  fontSize: 11,
-  lineHeight: 1.3,
-  overflowWrap: 'anywhere'
-}
-const cardSubStyle: CSSProperties = {
-  color: 'var(--text-faint)',
-  fontFamily: 'var(--mono)',
-  fontSize: 9.5
-}
-const retryBtnStyle: CSSProperties = {
-  flex: 'none',
-  width: 18,
-  height: 18,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  borderRadius: 'var(--r-ctl)',
-  border: '1px solid var(--border-subtle)',
-  background: 'transparent',
-  color: 'var(--text-3)',
-  fontSize: 11,
-  cursor: 'pointer',
-  padding: 0
 }
 const emptyHintStyle: CSSProperties = {
   display: 'flex',

@@ -92,6 +92,13 @@ export type LifecycleOrchestrator = Orchestrator & {
    * Cap-checked (reserves all member slots), not human-gated (content-less empty boards).
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
+  /**
+   * C2e: await a dispatched worker's task to SETTLE (output silence after activity / its own
+   * `write_result` / a backstop) WITHOUT a write — the verdict for a dispatch whose prompt was
+   * delivered as a launch arg. App-local (NOT on the package `Orchestrator` interface), read-only:
+   * no nonce, no confirm, no PTY write. Resolves with the board's result.
+   */
+  awaitSettled(boardId: string): Promise<BoardResult>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */

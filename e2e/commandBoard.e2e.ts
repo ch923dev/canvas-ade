@@ -35,7 +35,7 @@ const commandCount = (page: Page): Promise<number> =>
       ).length
   )
 
-test.describe('@core command board shell (Phase A/B)', () => {
+test.describe('@core command board shell (Phase A/B/C)', () => {
   test('renders the orchestrator frame: COMMAND tag · worker pool · empty kanban', async ({
     page
   }) => {
@@ -85,26 +85,68 @@ test.describe('@core command board shell (Phase A/B)', () => {
     await expect(node.getByText('No tasks yet')).toBeVisible()
   })
 
-  test('Phase B: submitting a task enqueues a Queued card (Enter + Dispatch button)', async ({
+  test('Phase C: composition chips — Terminal locked, +Planning/+Browser opt-in', async ({
     page
   }) => {
     const id = await seed(page, 'command')
     await evalIn(page, `window.__canvasE2E.fitView()`)
     await page.waitForTimeout(300)
     const node = page.locator(`[data-id="${id}"]`)
-    await expect(node.getByText('No tasks yet')).toBeVisible()
-
-    // Enter submits: a queued card appears and the empty hint clears.
-    const input = node.locator('input.cmd-submit-input')
-    await input.fill('Build the auth flow')
-    await input.press('Enter')
-    await expect(node.getByText('Build the auth flow')).toBeVisible()
-    await expect(node.getByText('No tasks yet')).toHaveCount(0)
-
-    // The Dispatch button submits a second task → two cards live in the queue.
-    await input.fill('Add dark mode')
-    await node.getByRole('button', { name: /Dispatch/ }).click()
-    await expect(node.getByText('Add dark mode')).toBeVisible()
-    await expect(node.getByText('Build the auth flow')).toBeVisible()
+    // Terminal is always-on (locked); the two opt-ins start OFF (terminal-only default).
+    await expect(node.getByText('Terminal', { exact: true })).toBeVisible()
+    const planning = node.getByRole('button', { name: '+ Planning' })
+    const browser = node.getByRole('button', { name: '+ Browser' })
+    await expect(planning).toHaveAttribute('aria-pressed', 'false')
+    await expect(browser).toHaveAttribute('aria-pressed', 'false')
+    await browser.click()
+    await expect(browser).toHaveAttribute('aria-pressed', 'true')
+    await expect(planning).toHaveAttribute('aria-pressed', 'false') // independent toggles
   })
+
+  test('Phase C: the routing overlay edge appears while in flight, vanishes on settle', async ({
+    page
+  }) => {
+    await seed(page, 'command')
+    const term = await seed(page, 'terminal')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+
+    const routingEdge = page.locator('.react-flow__edge-routing')
+    await expect(routingEdge).toHaveCount(0) // no in-flight task yet
+
+    // Inject an EXECUTING task whose group's terminal is the seeded worker (no real spawn — that
+    // would leak MAIN's cap). The overlay derives from the live task→group map, so the edge from
+    // the Command board to its worker appears immediately.
+    await page.evaluate(
+      (tid) =>
+        (globalThis as any).__canvasE2E.setCommandTasks([
+          {
+            id: 'task-c3',
+            title: 'analyze repo',
+            status: 'executing',
+            group: { groupId: 'g-c3', terminalId: tid }
+          }
+        ]),
+      term
+    )
+    await expect(routingEdge).toHaveCount(1)
+    await expect(page.locator(`.react-flow__edge[data-id="routing-task-c3-${term}"]`)).toHaveCount(
+      1
+    )
+
+    // Settle the task → the derived overlay vanishes (no teardown bookkeeping).
+    await page.evaluate(() =>
+      (globalThis as any).__canvasE2E.setCommandTasks([
+        { id: 'task-c3', title: 'analyze repo', status: 'done' }
+      ])
+    )
+    await expect(routingEdge).toHaveCount(0)
+  })
+
+  // The full dispatch choreography (submit → spawn an agent group → engineer the prompt → hand off,
+  // confirm-gated → advance) is covered deterministically by the useCommandDispatch hook unit test
+  // (mocked window.api) + the spawn primitive by spawnGroup.e2e + the confirm gate by mcp.e2e. A
+  // real-spawn e2e here would leak a worker into MAIN's spawn-cap `tracked` (freed only past
+  // spawnGraceMs — see mcpLifecycle.reconcile), tipping the cap-edge spawnGroup.e2e over. So this
+  // spec stays at the no-spawn board UI; the chips test above is its Phase-C surface.
 })

@@ -1,5 +1,5 @@
 import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrchestrator'
-import type { TokenStore } from '@expanse-ade/mcp'
+import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
@@ -62,6 +62,27 @@ export interface RunningMcp {
    * follow-up (PR-5c), so it is not yet wire-reachable — same split as gitDiff/PR-2b.
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
+  /**
+   * Phase C / C1: dispatch a prompt into a board's PTY through the SAME gated path the
+   * `assign_prompt` MCP tool uses (sanitize → single-use nonce → human confirm → audit). Exposed
+   * here so the Command board's frame-guarded renderer → MAIN IPC (`mcpOrchestratorIpc.ts`) can
+   * drive it without a token; every write still pays the gate.
+   */
+  dispatchPrompt(boardId: string, text: string): Promise<void>
+  /**
+   * Phase C / C2: dispatch a prompt AND await the worker's two-gate settle (PR-0), resolving with
+   * its `BoardResult`. The Command board's authoritative done/failed signal — same gate as
+   * `dispatchPrompt`, plus the await-idle. A long-pending call (resolves on settle).
+   */
+  handoffPrompt(boardId: string, text: string): Promise<BoardResult>
+  /**
+   * Phase C / C2e: await a worker's task to SETTLE (output silence after activity / its own
+   * `write_result` / a backstop) WITHOUT a write — the verdict half of a dispatch whose prompt was
+   * delivered as a launch arg (`claude "<prompt>"`). Read-only (no gate). Resolves with its result.
+   */
+  awaitSettled(boardId: string): Promise<BoardResult>
+  /** Phase C / C1: gated Ctrl-C into a board's PTY (same gate, terminator `\x03`, no sanitize). */
+  interrupt(boardId: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -107,6 +128,10 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       gitDiff: (boardId) => orchestrator.gitDiff(boardId),
       describeApp: () => orchestrator.describeApp(),
       spawnGroup: (input) => orchestrator.spawnGroup(input),
+      dispatchPrompt: (boardId, text) => orchestrator.dispatchPrompt(boardId, text),
+      handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
+      awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),
+      interrupt: (boardId) => orchestrator.interrupt(boardId),
       close: () => {
         clearInterval(reapTimer)
         return server.close()
