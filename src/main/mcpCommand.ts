@@ -40,7 +40,9 @@ export type McpCommand =
       type: 'spawnGroup'
       group: { id: string; name: string }
       members: {
-        terminal: { id: string }
+        // Phase C: the terminal member may boot an agentic CLI (sanitized to a single line in
+        // `mcpLifecycle.spawnGroup`) so a dispatched prompt reaches an agent, not a bare shell.
+        terminal: { id: string; launchCommand?: string }
         planning?: { id: string }
         browser?: { id: string }
       }

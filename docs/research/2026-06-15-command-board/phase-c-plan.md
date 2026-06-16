@@ -231,6 +231,32 @@ stay under 700.
 
 ---
 
+## 6b. Slice C2b — agentic dispatch + prompt optimization (added 2026-06-16, signed off)
+
+Eyeball feedback on C2: the worker spawned a **bare shell** (the raw task ran as a shell command —
+`Is …` → "not recognized"), and the prompt was passed **verbatim**. The Command board should act like
+an orchestrator: run a real **agent** worker and **engineer** the prompt. Forks resolved (recommended
+options): boot-the-agent-then-handoff · optimize-if-key-else-raw · default-to-Claude.
+
+- **Agentic worker.** `spawnGroup` carries a `launchCommand` (default `claude`, `WORKER_LAUNCH_COMMAND`)
+  threaded `SpawnGroupInput → McpCommand → canvasStore.spawnGroup → createBoard`. MAIN sanitizes it to a
+  single PTY-safe line. The terminal boots the agent (the shipped "write launchCommand as the first PTY
+  line" pattern), so the dispatched prompt reaches an agent, not a shell. (Renderer-originated → stays
+  cap-checked, not gated; the task prompt remains the confirm-gated content. The future agent-callable
+  `spawn_group` (PR-5c) MUST gate the launchCommand as an exec vector.)
+- **Prompt optimization.** Before dispatch, the board asks the in-app LLM (the existing
+  `window.api.llm.summarize` — configured key/model/budget) to rewrite the terse task into a clear agent
+  instruction (`PROMPT_ENGINEER_SYSTEM`). The engineered prompt is handed off (and shown in the confirm
+  modal for review). No key / budget / error → graceful fallback to the raw task (`chooseEngineeredPrompt`).
+  Engineering + spawn run **concurrently** (the agent boots while the LLM rewrites).
+- **Coverage.** The choreography wiring is pinned by a **`useCommandDispatch` hook unit test** (mocked
+  `window.api`) — submit → spawn(launchCommand) → handoff(engineered) → settle, the no-key fallback, the
+  failure verdict, the cap re-queue, and **serialize-at-cap** (a 5th terminal-only task waits). The real
+  spawn/gate stay covered by `spawnGroup.e2e`/`mcp.e2e`; the command-board e2e stays at the no-spawn UI
+  (a real-spawn e2e leaks MAIN's cap `tracked`, freed only past `spawnGraceMs`).
+- **Deferred:** agent picker (Claude-only v1); `agentKind` chrome/recap polish; true agent-driven
+  *decomposition* (PR-5c/PR-3b) remains the bigger future — this is prompt *optimization*, not decompose.
+
 ## 7. Schema impact
 
 **None.** Phase C is runtime-only — the task→group map lives in the ephemeral `commandStore`; routing

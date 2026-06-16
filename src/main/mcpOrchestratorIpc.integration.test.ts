@@ -64,6 +64,24 @@ describe('registerOrchestratorIpc', () => {
     expect(res).toEqual({ groupId: 'g1', terminalId: 't1', planningId: 'p1' })
   })
 
+  it('spawnGroup: forwards an agentic launchCommand for the worker terminal', async () => {
+    const mcp = spyMcp()
+    const { ipc, handlers } = fakeIpc()
+    registerOrchestratorIpc(
+      ipc,
+      () => liveWin,
+      () => mcp
+    )
+
+    await handlers.get('mcp:spawnGroup')!(ev(mainFrame), { name: 'x', launchCommand: 'claude' })
+    expect(mcp.spawnGroup).toHaveBeenCalledWith({
+      name: 'x',
+      planning: false,
+      browser: false,
+      launchCommand: 'claude'
+    })
+  })
+
   it('dispatchPrompt: forwards { boardId, text } to the gated orchestrator path', async () => {
     const mcp = spyMcp()
     const { ipc, handlers } = fakeIpc()

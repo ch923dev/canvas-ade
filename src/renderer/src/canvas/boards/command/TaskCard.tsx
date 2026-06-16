@@ -23,6 +23,13 @@ const TAG_COLOR: Record<'term' | 'plan' | 'brow', string> = {
   brow: 'var(--accent-hover)'
 }
 
+/** Honest in-flight sub-state copy per status (none for terminal/queued states). */
+const SUBLABEL: Partial<Record<TaskStatus, string>> = {
+  routing: 'engineering prompt…',
+  executing: 'awaiting completion…',
+  reporting: 'collecting result…'
+}
+
 const stop = (e: { stopPropagation: () => void }): void => e.stopPropagation()
 
 export function TaskCard({
@@ -35,19 +42,20 @@ export function TaskCard({
   onInterrupt: (task: CommandTask) => void
 }): ReactElement {
   const tags = memberTags(task.group)
+  const sub = SUBLABEL[task.status]
   return (
     <div className="nodrag" style={cardStyle} onPointerDown={stop}>
       <span style={{ ...cardDotStyle, background: STATUS_DOT[task.status] }} />
       <span style={cardBodyStyle}>
         <span style={cardTitleStyle}>{task.title}</span>
-        {(tags.length > 0 || task.status === 'executing') && (
+        {(tags.length > 0 || sub) && (
           <span style={metaRowStyle}>
             {tags.map((t) => (
               <span key={t} style={{ ...tagStyle, color: TAG_COLOR[t] }}>
                 {t}
               </span>
             ))}
-            {task.status === 'executing' && <span style={cardSubStyle}>awaiting completion…</span>}
+            {sub && <span style={cardSubStyle}>{sub}</span>}
           </span>
         )}
       </span>

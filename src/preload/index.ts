@@ -576,6 +576,8 @@ const api = {
       name: string
       planning?: boolean
       browser?: boolean
+      // Agentic CLI the worker terminal boots (e.g. 'claude'); MAIN sanitizes it to a single line.
+      launchCommand?: string
     }): Promise<{ groupId: string; terminalId: string; planningId?: string; browserId?: string }> =>
       ipcRenderer.invoke('mcp:spawnGroup', input),
     dispatchPrompt: (boardId: string, text: string): Promise<void> =>

@@ -27,19 +27,13 @@ const boardById = (
     return boards.find((b) => b.id === boardId)
   }, id)
 
-const boardTypeCount = (page: Page, type: string): Promise<number> =>
+const commandCount = (page: Page): Promise<number> =>
   page.evaluate(
-    (t) =>
+    () =>
       ((globalThis as any).__canvasE2E.getBoards() as { type: string }[]).filter(
-        (b) => b.type === t
-      ).length,
-    type
+        (b) => b.type === 'command'
+      ).length
   )
-const commandCount = (page: Page): Promise<number> => boardTypeCount(page, 'command')
-
-// Drive the trusted confirm modal like a human (the dispatch gate blocks on it). Mirrors mcp.e2e.ts.
-const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
-const APPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
 
 test.describe('@core command board shell (Phase A/B/C)', () => {
   test('renders the orchestrator frame: COMMAND tag · worker pool · empty kanban', async ({
@@ -109,30 +103,10 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     await expect(planning).toHaveAttribute('aria-pressed', 'false') // independent toggles
   })
 
-  test('Phase C: dispatch spawns a worker group + advances the card (confirm-gated)', async ({
-    page
-  }) => {
-    test.slow() // real spawn → PTY → confirm gate → settle
-    const id = await seed(page, 'command')
-    await evalIn(page, `window.__canvasE2E.fitView()`)
-    await page.waitForTimeout(300)
-    const node = page.locator(`[data-id="${id}"]`)
-    await expect(node.getByText('No tasks yet')).toBeVisible()
-
-    // Submit: the card appears immediately (synchronous enqueue) and the empty hint clears.
-    const input = node.locator('input.cmd-submit-input')
-    await input.fill('Wire the login form')
-    await input.press('Enter')
-    await expect(node.getByText('Wire the login form')).toBeVisible()
-    await expect(node.getByText('No tasks yet')).toHaveCount(0)
-
-    // The dispatch choreography spawns a worker terminal through the renderer→MAIN→renderer path…
-    await expect.poll(async () => boardTypeCount(page, 'terminal'), { timeout: 15_000 }).toBe(1)
-    // …attaches the group to the card (the `term` member tag) and moves it out of Queued.
-    await expect(node.getByText('term', { exact: true })).toBeVisible()
-
-    // handoffPrompt's write is confirm-gated — drive the human gate so it doesn't dangle.
-    await expect.poll(async () => evalIn<boolean>(page, MODAL), { timeout: 15_000 }).toBe(true)
-    await evalIn(page, APPROVE)
-  })
+  // The full dispatch choreography (submit → spawn an agent group → engineer the prompt → hand off,
+  // confirm-gated → advance) is covered deterministically by the useCommandDispatch hook unit test
+  // (mocked window.api) + the spawn primitive by spawnGroup.e2e + the confirm gate by mcp.e2e. A
+  // real-spawn e2e here would leak a worker into MAIN's spawn-cap `tracked` (freed only past
+  // spawnGraceMs — see mcpLifecycle.reconcile), tipping the cap-edge spawnGroup.e2e over. So this
+  // spec stays at the no-spawn board UI; the chips test above is its Phase-C surface.
 })

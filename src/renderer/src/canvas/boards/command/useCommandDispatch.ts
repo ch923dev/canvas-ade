@@ -16,15 +16,37 @@ import { useCallback, useEffect, useRef } from 'react'
 import { useCommandStore, type CommandTask } from '../../../store/commandStore'
 import {
   canDispatch,
+  chooseEngineeredPrompt,
   compositionOf,
   isCapError,
   isFailureResult,
   isWorkerNotReady,
   nextQueuedTask,
   nextStatusForBoardChange,
+  PROMPT_ENGINEER_SYSTEM,
+  WORKER_LAUNCH_COMMAND,
   type Composition,
   type WorkerResult
 } from '../../../lib/commandDispatch'
+
+/**
+ * Engineer the dispatch prompt: ask the in-app LLM to rewrite the user's terse task into a clear,
+ * actionable instruction for the worker agent. Falls back to the raw task whenever the LLM is
+ * unavailable (no key / budget / error) so dispatch is never blocked. Runs concurrently with the
+ * agent spawn (the agent boots while the LLM rewrites).
+ */
+async function engineerPrompt(task: string): Promise<string> {
+  const summarize = window.api?.llm?.summarize
+  if (!summarize) return task
+  try {
+    return chooseEngineeredPrompt(
+      await summarize({ system: PROMPT_ENGINEER_SYSTEM, text: task }),
+      task
+    )
+  } catch {
+    return task
+  }
+}
 
 // The just-spawned terminal must reach MAIN's board mirror (publish debounced ~150ms) + spawn its
 // PTY before a handoff can resolve it. Retry the PRE-gate readiness window with backoff (~5s total).
@@ -102,17 +124,28 @@ export function useCommandDispatch(cap: number): CommandDispatch {
         return
       }
       try {
-        const group = await api.spawnGroup({
-          name: title,
-          planning: comp.planning,
-          browser: comp.browser
-        })
+        // Engineer the prompt + spawn the agent zone CONCURRENTLY — the agent (launchCommand) boots
+        // while the LLM rewrites the task; the engineered prompt is what we hand off (and what the
+        // confirm modal shows for review). The group NAME stays the user's short title.
+        const [engineered, group] = await Promise.all([
+          engineerPrompt(title),
+          api.spawnGroup({
+            name: title,
+            planning: comp.planning,
+            browser: comp.browser,
+            launchCommand: WORKER_LAUNCH_COMMAND
+          })
+        ])
         setTaskGroup(id, group)
         setTaskStatus(id, 'executing')
         // Authoritative done/failed verdict — handoffPrompt awaits the worker's two-gate settle
-        // (retried through the post-spawn readiness window until the worker is addressable).
+        // (retried through the post-spawn readiness window until the agent is addressable).
         const handoff = api.handoffPrompt
-        const result = await handoffWhenReady((bid, t) => handoff(bid, t), group.terminalId, title)
+        const result = await handoffWhenReady(
+          (bid, t) => handoff(bid, t),
+          group.terminalId,
+          engineered
+        )
         setTaskStatus(id, isFailureResult(result) ? 'failed' : 'done')
         pumpRef.current?.() // a slot freed → dispatch the next queued task
       } catch (err) {

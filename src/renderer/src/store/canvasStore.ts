@@ -157,7 +157,9 @@ export interface CanvasState {
     at: { x: number; y: number }
     group: { id: string; name: string }
     members: {
-      terminal: { id: string }
+      // Phase C: an optional agentic-CLI launchCommand (MAIN-sanitized) the terminal boots, so a
+      // dispatched prompt reaches an agent, not a bare shell.
+      terminal: { id: string; launchCommand?: string }
       planning?: { id: string }
       browser?: { id: string }
     }
@@ -625,6 +627,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // terminal, N/A within a single-worker zone).
       if (board.type === 'browser' && members.browser) {
         return { ...board, previewSourceId: members.terminal.id }
+      }
+      // Phase C: boot the terminal member's agentic CLI (the dispatched prompt then reaches an
+      // agent, not a bare shell). MAIN already sanitized the launchCommand to a single PTY line.
+      if (board.type === 'terminal' && typeof members.terminal.launchCommand === 'string') {
+        return { ...board, launchCommand: members.terminal.launchCommand }
       }
       return board
     })

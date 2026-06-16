@@ -10,6 +10,7 @@ import {
   isCapError,
   isWorkerNotReady,
   nextStatusForBoardChange,
+  chooseEngineeredPrompt,
   DEFAULT_COMPOSITION
 } from './commandDispatch'
 import type { CommandTask, Composition, TaskStatus } from '../store/commandStore'
@@ -108,6 +109,20 @@ describe('isCapError', () => {
     expect(isCapError(new Error('spawn_group failed: no-window'))).toBe(false)
     expect(isCapError('not an error')).toBe(false)
     expect(isCapError(undefined)).toBe(false)
+  })
+})
+
+describe('chooseEngineeredPrompt', () => {
+  it('uses the LLM rewrite when it succeeded with non-empty text', () => {
+    expect(chooseEngineeredPrompt({ ok: true, text: '  Add a login form  ' }, 'login')).toBe(
+      'Add a login form'
+    )
+  })
+  it('falls back to the raw task when the LLM is unavailable / empty / errored', () => {
+    expect(chooseEngineeredPrompt({ ok: false }, 'login')).toBe('login')
+    expect(chooseEngineeredPrompt({ ok: true, text: '   ' }, 'login')).toBe('login')
+    expect(chooseEngineeredPrompt(null, 'login')).toBe('login')
+    expect(chooseEngineeredPrompt(undefined, 'login')).toBe('login')
   })
 })
 

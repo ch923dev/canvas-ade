@@ -11,6 +11,38 @@ export type { Composition, TaskGroup } from '../store/commandStore'
 /** Terminal-only is the default composition (the signed-off decision); +planning/+browser opt-in. */
 export const DEFAULT_COMPOSITION: Composition = { planning: false, browser: false }
 
+/** The worker agent every dispatched terminal launches (v1 default; the launchCommand bin). */
+export const WORKER_LAUNCH_COMMAND = 'claude'
+
+/**
+ * System prompt that turns the Command board into the orchestrator's PROMPT ENGINEER: it rewrites a
+ * user's terse task into one clear, self-contained instruction a coding agent can act on. Sent to the
+ * in-app LLM (`window.api.llm.summarize`) before dispatch; the engineered prompt is shown in the
+ * confirm modal for review. Output-only contract so the result is the prompt itself, never preamble.
+ */
+export const PROMPT_ENGINEER_SYSTEM =
+  'You are a prompt engineer for an autonomous coding agent (Claude Code) working inside the ' +
+  "user's project repository. Rewrite the user's short task into a SINGLE, clear, self-contained " +
+  'instruction the agent can act on directly: state the goal, any implied steps, and what "done" ' +
+  'looks like. Keep it concise and concrete; assume the agent can read, run, and edit files in the ' +
+  'repo. Output ONLY the rewritten instruction — no preamble, no surrounding quotes, no markdown ' +
+  'headings, no commentary.'
+
+/**
+ * Choose the prompt to dispatch: the LLM's engineered rewrite when it succeeded with non-empty text,
+ * else the raw task (graceful fallback when no key / budget exhausted / provider error). Pure.
+ */
+export function chooseEngineeredPrompt(
+  result: { ok: boolean; text?: string } | null | undefined,
+  rawTask: string
+): string {
+  if (result && result.ok === true && typeof result.text === 'string') {
+    const trimmed = result.text.trim()
+    if (trimmed) return trimmed
+  }
+  return rawTask
+}
+
 /** A worker's structured result (renderer mirror of the package `BoardResult`, fields we read). */
 export interface WorkerResult {
   present?: boolean

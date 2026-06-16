@@ -43,6 +43,13 @@ export interface SpawnGroupInput {
   planning?: boolean
   /** Add a Browser member, pre-wired to the terminal via `previewSourceId`. */
   browser?: boolean
+  /**
+   * Agentic CLI the terminal member boots as its first PTY line (e.g. `claude`) so a dispatched
+   * prompt reaches an AGENT, not a bare shell. Sanitized to a single line here (it becomes a PTY
+   * write). Renderer-originated for the Command board (the user's chosen agent); the future
+   * agent-callable `spawn_group` tool (PR-5c) MUST gate/validate this as an exec vector.
+   */
+  launchCommand?: string
 }
 
 /** The minted ids a {@link McpLifecycle.spawnGroup} returns so the orchestrator can address the zone. */
@@ -142,6 +149,15 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     if (name.length === 0) {
       throw new Error('spawn_group: a non-empty group name is required')
     }
+    // Sanitize the worker launchCommand → a single PTY-safe line: strip control chars (CR/LF would
+    // inject extra PTY lines — the exec-vector class), trim, clamp. Empty ⇒ a bare shell (legacy).
+    const rawSrc = typeof input.launchCommand === 'string' ? input.launchCommand : ''
+    const launchClean = Array.from(rawSrc)
+      .filter((c) => c >= ' ')
+      .join('')
+      .trim()
+      .slice(0, 400)
+    const launchCommand = launchClean || undefined
     // Compose the cluster: terminal always; planning/browser opt-in. The member COUNT is the
     // cap budget this spawn consumes (the group record itself isn't a board, so it's uncapped).
     const wantPlanning = input.planning === true
@@ -177,7 +193,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         type: 'spawnGroup',
         group: { id: groupId, name },
         members: {
-          terminal: { id: terminalId },
+          terminal: { id: terminalId, ...(launchCommand ? { launchCommand } : {}) },
           ...(planningId ? { planning: { id: planningId } } : {}),
           ...(browserId ? { browser: { id: browserId } } : {})
         }

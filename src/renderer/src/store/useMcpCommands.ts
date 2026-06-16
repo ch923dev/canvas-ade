@@ -27,7 +27,9 @@ export type McpCommandIn =
       type: 'spawnGroup'
       group: { id: string; name: string }
       members: {
-        terminal: { id: string }
+        // Phase C: the terminal may boot an agentic CLI (MAIN-sanitized) so a dispatched prompt
+        // reaches an agent, not a bare shell.
+        terminal: { id: string; launchCommand?: string }
         planning?: { id: string }
         browser?: { id: string }
       }

@@ -58,9 +58,19 @@ export function registerOrchestratorIpc(
     const mcp = resolve(e)
     const name = asString((input as { name?: unknown })?.name)
     if (name === null) throw new Error('mcp:spawnGroup requires a string name')
-    const { planning, browser } = (input ?? {}) as { planning?: unknown; browser?: unknown }
-    // Booleans coerced defensively; the orchestrator validates/clamps the name + caps the cluster.
-    return mcp.spawnGroup({ name, planning: planning === true, browser: browser === true })
+    const { planning, browser, launchCommand } = (input ?? {}) as {
+      planning?: unknown
+      browser?: unknown
+      launchCommand?: unknown
+    }
+    // Booleans coerced defensively; the orchestrator validates/clamps the name, sanitizes the
+    // launchCommand to a single PTY line, and caps the cluster.
+    return mcp.spawnGroup({
+      name,
+      planning: planning === true,
+      browser: browser === true,
+      ...(typeof launchCommand === 'string' ? { launchCommand } : {})
+    })
   })
 
   ipc.handle('mcp:dispatchPrompt', async (e, arg: unknown): Promise<void> => {
