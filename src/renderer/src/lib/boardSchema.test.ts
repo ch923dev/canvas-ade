@@ -65,9 +65,17 @@ describe('createBoard', () => {
   })
 
   it('gives each type a non-empty default title', () => {
-    for (const type of ['terminal', 'browser', 'planning'] as const) {
+    for (const type of ['terminal', 'browser', 'planning', 'command'] as const) {
       expect(createBoard(type, { id: type, x: 0, y: 0 }).title.length).toBeGreaterThan(0)
     }
+  })
+
+  it('creates a command board with type only (no per-type persisted fields)', () => {
+    const b = createBoard('command', { id: 'c1', x: 5, y: 6 })
+    expect(b.type).toBe('command')
+    expect(b.title).toBe('Orchestrator')
+    // The persisted shape is just BoardCommon — the queue is ephemeral commandStore state.
+    expect(Object.keys(b).sort()).toEqual(['h', 'id', 'title', 'type', 'w', 'x', 'y'])
   })
 })
 
@@ -80,7 +88,8 @@ describe('size constants', () => {
     expect(DEFAULT_BOARD_SIZE).toEqual({
       terminal: { w: 420, h: 340 },
       browser: { w: 700, h: 500 },
-      planning: { w: 516, h: 366 }
+      planning: { w: 516, h: 366 },
+      command: { w: 760, h: 440 }
     })
   })
 })
@@ -259,6 +268,11 @@ describe('fromObject deep validation', () => {
     expect(() =>
       fromObject(wrap({ id: 'x', type: 'sticky', title: 'x', x: 0, y: 0, w: 1, h: 1 }))
     ).toThrow()
+  })
+
+  it('round-trips a valid command board (common fields only)', () => {
+    const cmd = createBoard('command', { id: 'c1', x: 12, y: 34 })
+    expect(fromObject(toObject([cmd], null)).boards).toEqual([cmd])
   })
 
   it('throws when a browser board is missing its url', () => {
@@ -524,8 +538,9 @@ describe('migrate', () => {
     expect(migrate(doc)).toEqual(doc)
   })
 
-  // v11/S4: the diagram kind is breaking → SCHEMA_VERSION and the compat floor both move to 11.
-  it('migrates a v10 doc to v11 (diagram kind) without touching existing elements', () => {
+  // v11/S4 (diagram kind) + v12 (command board type) are both breaking → SCHEMA_VERSION and the
+  // compat floor both moved with each. migrate() always brings a doc to the CURRENT version (12).
+  it('migrates a v10 doc forward to the current version without touching existing elements', () => {
     const note = { id: 'n', kind: 'note', x: 0, y: 0, w: 10, h: 10, text: 'hi', tint: 'yellow' }
     const v10 = {
       schemaVersion: 10,
@@ -537,9 +552,26 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(11)
-    expect(MIN_READER_VERSION).toBe(11)
+    expect(SCHEMA_VERSION).toBe(12)
+    expect(MIN_READER_VERSION).toBe(12)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
+  })
+
+  // v12: a NEW BOARD TYPE is breaking (a pre-12 assertBoard throws on the unknown type), so both
+  // SCHEMA_VERSION and the floor move to 12. The migration is identity — `command` only appears on
+  // newly-authored boards, so a v11 doc has nothing to backfill.
+  it('migrates a v11 doc to v12 (command type) as an identity bump', () => {
+    const v11 = {
+      schemaVersion: 11,
+      minReaderVersion: 11,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [{ id: 't', type: 'terminal', title: 'T', x: 0, y: 0, w: 300, h: 200 }]
+    }
+    const out = migrate(structuredClone(v11) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(12)
+    expect(out.boards).toEqual(v11.boards)
   })
 
   it('throws when a newer doc has NO minReaderVersion (pre-floor strict behavior)', () => {
@@ -614,15 +646,15 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 11', () => {
-    expect(SCHEMA_VERSION).toBe(11)
+  it('SCHEMA_VERSION is 12', () => {
+    expect(SCHEMA_VERSION).toBe(12)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 11,
-      minReaderVersion: 11,
+      schemaVersion: 12,
+      minReaderVersion: 12,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -807,8 +839,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 11', () => {
-    expect(SCHEMA_VERSION).toBe(11)
+  it('SCHEMA_VERSION is 12', () => {
+    expect(SCHEMA_VERSION).toBe(12)
   })
 
   it('round-trips a valid image element', () => {
@@ -861,8 +893,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 11', () => {
-    expect(SCHEMA_VERSION).toBe(11)
+  it('SCHEMA_VERSION is 12', () => {
+    expect(SCHEMA_VERSION).toBe(12)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -1498,11 +1530,11 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('v10 was additive (no floor move of its own) — the current writer stamps floor 11 (v11 diagram kind)', () => {
-    // v10 (agentKind/monitorActivity) was additive; the compat floor only moved with the v11
-    // breaking `diagram` element kind. toObject stamps the CURRENT floor (MIN_READER_VERSION = 11).
-    expect(toObject([], null).minReaderVersion).toBe(11)
-    expect(MIN_READER_VERSION).toBe(11)
+  it('v10 was additive (no floor move of its own) — the current writer stamps the CURRENT floor', () => {
+    // v10 (agentKind/monitorActivity) was additive; the compat floor only moved with the breaking
+    // v11 `diagram` element kind and the v12 `command` board type. toObject stamps the CURRENT floor.
+    expect(toObject([], null).minReaderVersion).toBe(12)
+    expect(MIN_READER_VERSION).toBe(12)
   })
 
   it('round-trips agentKind + monitorActivity', () => {

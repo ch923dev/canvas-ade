@@ -85,7 +85,7 @@ import { useFullView } from './hooks/useFullView'
 import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
 import { useGroupInteractions } from './hooks/useGroupInteractions'
 import { useZoomSettle } from './hooks/useZoomSettle'
-import { TypeGlyph } from './TypeGlyph'
+import { PlacementCaptureOverlay } from './PlacementCaptureOverlay'
 import { MinimapIsland } from './wayfinding/MinimapIsland'
 import { useWayfindingStore } from '../store/wayfindingStore'
 
@@ -155,7 +155,6 @@ function CanvasInner(): ReactElement {
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
   const viewport = useCanvasStore((s) => s.viewport)
-  const tool = useCanvasStore((s) => s.tool)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -512,6 +511,8 @@ function CanvasInner(): ReactElement {
     (type: BoardType) => {
       const el = paneRef.current
       if (!el) return
+      // (The Command board is a singleton — `addBoard` selects the existing one instead of
+      // minting a second, so every add path stays single-orchestrator without special-casing here.)
       const r = el.getBoundingClientRect()
       const c = rf.screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
       const size = DEFAULT_BOARD_SIZE[type]
@@ -527,10 +528,9 @@ function CanvasInner(): ReactElement {
   // surfaced — the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button.
   const { tidyAndFit } = useTidyTile({ paneRef, rf, setActiveTile, setFocusedId, activeTileRef })
 
-  // Drag-to-create placement gesture (redesign 2026-06-06): while a board type is armed via
-  // the dock, a capture overlay intercepts pointer events; startPlacement begins the drag that
-  // draws the ghost rect and commits addBoard on release.
-  const { armed, ghost, startPlacement } = useBoardPlacement(rf)
+  // Drag/place capture overlay state (redesign 2026-06-06; command place-to-create 2026-06-16):
+  // drag tools rubber-band, the Command board follows-and-clicks. Forwarded to the overlay below.
+  const placement = useBoardPlacement(rf)
 
   // D4-B keyboard-first board nav: Tab cycle · arrow move / Alt+arrow resize (one undo
   // step per burst) · Enter focus. focusBoardById is the SAME camera-fit + dim path the
@@ -860,25 +860,9 @@ function CanvasInner(): ReactElement {
 
           <AlignmentGuides guides={guides} overlaps={overlaps} />
 
-          {/* Drag-to-create (redesign 2026-06-06): while a dock button is armed, a transparent
-              overlay owns the pointer — boards go non-interactive and React Flow can't pan, so a
-              press→drag draws a new board. The ghost is a screen-space rect; world conversion +
-              addBoard happen on release (useBoardPlacement). Chrome (z-50) stays above this (z-40),
-              so the Select button / dock buttons remain clickable to re-arm or cancel. */}
-          {armed && (
-            <div className="placement-capture" onPointerDown={startPlacement}>
-              {ghost && (
-                <div
-                  className="placement-ghost"
-                  style={{ left: ghost.x, top: ghost.y, width: ghost.w, height: ghost.h }}
-                >
-                  <span className="placement-ghost-chip">
-                    <TypeGlyph type={tool as BoardType} /> {tool}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+          {/* Drag/place capture overlay (extracted — file-size doctrine). Mounts only while armed;
+              see PlacementCaptureOverlay / useBoardPlacement. */}
+          <PlacementCaptureOverlay {...placement} />
 
           {/* M2 connector rubber-band: a calm dashed line from the source board's center to
               the live pointer while a connector drag is in flight (ephemeral — drawn only,

@@ -19,6 +19,7 @@ import {
 } from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { useToastStore } from './toastStore'
+import { useCommandStore } from './commandStore'
 
 const get = () => useCanvasStore.getState()
 
@@ -115,6 +116,39 @@ describe('addBoard', () => {
     const a = get().addBoard('terminal', { x: 0, y: 0 })
     const b = get().addBoard('terminal', { x: 0, y: 0 })
     expect(a).not.toBe(b)
+  })
+
+  it('treats the command board as a singleton — a second add selects the existing one', () => {
+    const first = get().addBoard('command', { x: 0, y: 0 })
+    // Move selection elsewhere so the re-select is observable.
+    const term = get().addBoard('terminal', { x: 900, y: 900 })
+    expect(get().selectedId).toBe(term)
+    // A second 'command' add must NOT create a board — it returns + selects the existing one.
+    const again = get().addBoard('command', { x: 500, y: 500 })
+    expect(again).toBe(first)
+    expect(get().boards.filter((b) => b.type === 'command')).toHaveLength(1)
+    expect(get().selectedId).toBe(first)
+  })
+
+  it('minting a fresh command board clears stale ephemeral commandStore state (N1)', () => {
+    // Leftover state from a prior (since-deleted) command board.
+    useCommandStore.setState({ collapsed: true, view: 'groups', expandedHeight: 200 })
+    // No command board exists at test start (beforeEach clears boards) → addBoard mints a fresh
+    // one and must reset the ephemeral store, so the old view/collapse can't bleed onto it.
+    get().addBoard('command', { x: 0, y: 0 })
+    const cs = useCommandStore.getState()
+    expect(cs.collapsed).toBe(false)
+    expect(cs.view).toBe('kanban')
+    expect(cs.expandedHeight).toBeNull()
+  })
+
+  it('a second command add (returns existing) leaves ephemeral state untouched', () => {
+    get().addBoard('command', { x: 0, y: 0 })
+    useCommandStore.setState({ collapsed: true, view: 'groups' })
+    // The re-select path must NOT reset the store (only minting a NEW board does).
+    get().addBoard('command', { x: 0, y: 0 })
+    expect(useCommandStore.getState().collapsed).toBe(true)
+    expect(useCommandStore.getState().view).toBe('groups')
   })
 
   it('uses an injected id when provided (the MCP spawn_board path)', () => {
@@ -228,6 +262,12 @@ describe('idle-on-mount registry (M-1: restored terminals stay idle)', () => {
     const src = get().addBoard('terminal', { x: 0, y: 0 })
     const cloneId = get().duplicateBoard(src)!
     expect(isIdleOnMount(cloneId)).toBe(true)
+  })
+
+  it('duplicateBoard no-ops the singleton Command board (returns null; no second one)', () => {
+    const id = get().addBoard('command', { x: 0, y: 0 })
+    expect(get().duplicateBoard(id)).toBeNull()
+    expect(get().boards.filter((b) => b.type === 'command')).toHaveLength(1)
   })
 
   it('clearIdleOnMount drops the flag so an explicit Start / later respawn spawns', () => {
@@ -450,6 +490,15 @@ describe('serialization bridge', () => {
     expect(get().boards).toHaveLength(1)
     expect(get().boards[0].id).toBe('b1')
     expect(get().selectedId).toBeNull()
+  })
+
+  it('loadObject() resets the ephemeral command store (no cross-project view/collapse leak)', () => {
+    useCommandStore.setState({ collapsed: true, view: 'groups', expandedHeight: 440 })
+    get().loadObject(toObject([], null))
+    const cs = useCommandStore.getState()
+    expect(cs.collapsed).toBe(false)
+    expect(cs.view).toBe('kanban')
+    expect(cs.expandedHeight).toBeNull()
   })
 })
 

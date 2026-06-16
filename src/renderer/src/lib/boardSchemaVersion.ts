@@ -21,8 +21,13 @@
  *   the unknown kind, so the compat floor moves to 11 too (see MIN_READER_VERSION below). The
  *   migration itself is identity (the kind only appears on newly-authored diagram elements).
  *   Do not silently reuse a version for a new shape.
+ * - v12 = the `command` board TYPE (Command board, Phase A). A NEW board type is BREAKING per
+ *   ADR 0007: a pre-12 validator's `assertBoard` default branch throws on the unknown type, so the
+ *   compat floor moves to 12 too. The migration is identity (the type only appears on newly-authored
+ *   command boards; the orchestrator's task queue is ephemeral `commandStore` state, never serialized,
+ *   so a persisted command board is just `BoardCommon` with `type:'command'` — no new fields).
  */
-export const SCHEMA_VERSION = 11
+export const SCHEMA_VERSION = 12
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -36,10 +41,12 @@ export const SCHEMA_VERSION = 11
  *   would DROP it): bump BOTH to the same value.
  *
  * Floor was 9 (v9's root `background` key — a v8 reader would DROP the user's wallpaper on its next
- * save). Floor moves to 11 with the v11 `diagram` element kind (S4): an app older than 11 has no
+ * save). Floor moved to 11 with the v11 `diagram` element kind (S4): an app older than 11 has no
  * `diagram` case in `assertPlanningElement`, so it would HARD-FAIL deep validation on a doc that
- * contains one. Stamping `minReaderVersion: 11` makes pre-11 apps show the clean "update the app to
- * open it" message (assertReadableVersion) instead of a confusing `.bak`-fallback parse failure.
- * Every app from 11 on can read all future additive docs.
+ * contains one. Floor moves to 12 with the v12 `command` board type (Phase A): an app older than 12
+ * has no `command` case in `assertBoard`, so it would HARD-FAIL on a doc containing one. Stamping
+ * `minReaderVersion: 12` makes pre-12 apps show the clean "update the app to open it" message
+ * (assertReadableVersion) instead of a confusing `.bak`-fallback parse failure. Every app from 12 on
+ * can read all future additive docs.
  */
-export const MIN_READER_VERSION = 11
+export const MIN_READER_VERSION = 12

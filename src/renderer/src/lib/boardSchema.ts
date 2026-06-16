@@ -41,6 +41,11 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
  * - **v10 = optional TerminalBoard `agentKind` + `monitorActivity`** (New Terminal agent presets).
  *   Both optional + defaulted-at-read → identity bump; ADDITIVE so MIN_READER_VERSION stays 9 (an
  *   older reader opens v10 docs; the two fields ride through `structuredClone` and survive a save).
+ * - **v11 = the Planning `diagram` element kind** (S4 — Mermaid). NEW element kind ⇒ BREAKING
+ *   (floor → 11): a pre-11 `assertPlanningElement` throws on the unknown kind. Identity migration.
+ * - **v12 = the `command` board type** (Command board, Phase A). NEW board type ⇒ BREAKING
+ *   (floor → 12): a pre-12 `assertBoard` throws on the unknown type. Identity migration; the board
+ *   persists only `BoardCommon` (the orchestrator queue is ephemeral `commandStore` state).
  *   Do not silently reuse a version for a new shape.
  */
 // SCHEMA_VERSION + MIN_READER_VERSION are defined in ./boardSchemaVersion (a dependency-free module)
@@ -67,7 +72,7 @@ export { SCHEMA_VERSION, MIN_READER_VERSION }
  */
 // MIN_READER_VERSION is imported + re-exported above from ./boardSchemaVersion (see BUG-013/014).
 
-export type BoardType = 'terminal' | 'browser' | 'planning'
+export type BoardType = 'terminal' | 'browser' | 'planning' | 'command'
 
 /** Browser responsive presets (widths live in cameraBounds/the Browser board). */
 export type BrowserViewport = 'mobile' | 'tablet' | 'desktop'
@@ -235,7 +240,19 @@ export interface PlanningBoard extends BoardCommon {
   elements: PlanningElement[]
 }
 
-export type Board = TerminalBoard | BrowserBoard | PlanningBoard
+/**
+ * v12: the Command board — the orchestrator's on-canvas face (Phase A). A SINGLETON board that
+ * (in later phases) drives the MCP orchestrator: decompose a task → spawn a Named Group of worker
+ * boards → dispatch → collect/merge. The PERSISTED shape is just `BoardCommon` with `type:'command'`:
+ * the task queue + view/collapse state live in the EPHEMERAL `commandStore` (Zustand, runtime-only)
+ * and are NEVER serialized into `canvas.json` (the scene/session split). A new board type is breaking
+ * → schema v12 / floor 12.
+ */
+export interface CommandBoard extends BoardCommon {
+  type: 'command'
+}
+
+export type Board = TerminalBoard | BrowserBoard | PlanningBoard | CommandBoard
 
 // ── Connectors (M2 — spatial board↔board edges) ────────────────────────────────
 // A typed cable between two boards. `preview` mirrors the runtime `previewSourceId`
@@ -350,13 +367,17 @@ export const MIN_BOARD_SIZE = { w: 240, h: 160 } as const
 export const DEFAULT_BOARD_SIZE: Record<BoardType, { w: number; h: number }> = {
   terminal: { w: 420, h: 340 },
   browser: { w: 700, h: 500 },
-  planning: { w: 516, h: 366 }
+  planning: { w: 516, h: 366 },
+  // Wide enough for the five-column kanban body + the submit well + worker-pool strip (the
+  // approved Phase-A production mock); collapses to a one-line rail when minimized.
+  command: { w: 760, h: 440 }
 }
 
 const DEFAULT_TITLE: Record<BoardType, string> = {
   terminal: 'Terminal',
   browser: 'Browser',
-  planning: 'Planning'
+  planning: 'Planning',
+  command: 'Orchestrator'
 }
 
 /** Seed URL for a new Browser board (basic edit lands in 2.2; port assignment Phase 3). */
@@ -399,6 +420,9 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
       return { ...base, type, url: DEFAULT_BROWSER_URL, viewport: 'desktop' }
     case 'planning':
       return { ...base, type, elements: [] }
+    case 'command':
+      // No per-type persisted fields — the orchestrator queue lives in the ephemeral commandStore.
+      return { ...base, type }
   }
 }
 
@@ -493,7 +517,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v11: the `diagram` element kind (S4). The kind only appears on newly-authored diagram elements,
   // so existing docs have nothing to backfill — the migration only bumps the version. BREAKING
   // (floor → 11): a pre-11 reader can't validate the new kind (boardSchemaVersion.ts).
-  10: (doc) => ({ ...doc, schemaVersion: 11 })
+  10: (doc) => ({ ...doc, schemaVersion: 11 }),
+  // v12: the `command` board type (Phase A). The type only appears on newly-authored command boards,
+  // so existing docs have nothing to backfill — the migration only bumps the version. BREAKING
+  // (floor → 12): a pre-12 reader's assertBoard default branch throws on the unknown type.
+  11: (doc) => ({ ...doc, schemaVersion: 12 })
 }
 
 /**
@@ -741,6 +769,10 @@ function assertBoard(b: unknown): void {
     case 'planning':
       if (!Array.isArray(b.elements)) fail('planning board elements is not an array')
       b.elements.forEach(assertPlanningElement)
+      return
+    case 'command':
+      // v12: the Command board persists no per-type fields — the orchestrator queue is ephemeral
+      // commandStore state. The common-field checks above (id/title/x/y/w/h/z) are the whole contract.
       return
     default:
       fail(`board has an unknown type ${String(b.type)}`)

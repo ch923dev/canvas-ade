@@ -48,6 +48,9 @@ const BrowserBoard = lazy(() =>
 const PlanningBoard = lazy(() =>
   import('./boards/PlanningBoard').then((m) => ({ default: m.PlanningBoard }))
 )
+const CommandBoard = lazy(() =>
+  import('./boards/CommandBoard').then((m) => ({ default: m.CommandBoard }))
+)
 
 /** Hidden, non-connectable anchor handles so RF can attach the preview edge to any
  *  board without exposing a connection UX or stealing pointer events (Slice C′). */
@@ -152,7 +155,10 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const showCard = useLingeringPresence(cardActive)
   const showDetail = useLingeringPresence(!cardActive)
   const onFull = acts ? (): void => acts.requestFullView(board.id) : undefined
-  const onDuplicate = acts ? (): void => acts.duplicate(board.id) : undefined
+  // The Command board is a singleton — no Duplicate affordance (BoardFrame hides the ⋯ menu
+  // item when onDuplicate is undefined), so a no-op duplicate can't fire the full-view side effects.
+  const onDuplicate =
+    acts && board.type !== 'command' ? (): void => acts.duplicate(board.id) : undefined
   const onDelete = acts ? (): void => acts.remove(board.id) : undefined
   const onAddToGroup = acts
     ? (groupId: string): void => acts.addToGroup(board.id, groupId)
@@ -251,6 +257,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
               <BrowserBoard board={board} {...common} {...actions} fullView={fullView} />
             )}
             {board.type === 'planning' && <PlanningBoard board={board} {...common} {...actions} />}
+            {board.type === 'command' && <CommandBoard board={board} {...common} {...actions} />}
           </ErrorBoundary>
         </Suspense>
       </div>
