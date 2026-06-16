@@ -22,7 +22,6 @@ import {
 import {
   Background,
   BackgroundVariant,
-  MarkerType,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -56,8 +55,8 @@ import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { buildBoardNodes, type NodeCache } from './boardNodes'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { OrchestrationEdge } from './edges/OrchestrationEdge'
-import { previewEdges } from '../lib/previewEdges'
-import { orchestrationEdges } from '../lib/orchestrationEdges'
+import { RoutingEdge } from './edges/RoutingEdge'
+import { buildCanvasEdges } from './canvasEdges'
 import { planNodeRemovalCleanup } from '../lib/canvasDecisions'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { BoardActionsContext } from './boardActions'
@@ -89,9 +88,14 @@ import { useZoomSettle } from './hooks/useZoomSettle'
 import { PlacementCaptureOverlay } from './PlacementCaptureOverlay'
 import { MinimapIsland } from './wayfinding/MinimapIsland'
 import { useWayfindingStore } from '../store/wayfindingStore'
+import { useCommandStore } from '../store/commandStore'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
-const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
+const edgeTypes: EdgeTypes = {
+  preview: PreviewEdge,
+  orchestration: OrchestrationEdge,
+  routing: RoutingEdge
+}
 // Fit/reset framing now lives in lib/canvasView (FIT_FRAME / RESET_FRAME) so the
 // camera-cluster buttons in AppChrome share the exact same presets. Used instant for
 // fit-on-load & initial mount; user-triggered fit/reset wrap them in `cameraAnim`.
@@ -333,29 +337,22 @@ function CanvasInner(): ReactElement {
     () => new Set(Object.keys(running).filter((id) => running[id])),
     [running]
   )
-  // Preview edges (accent) + orchestration connectors (neutral). Both derive from store
-  // state via pure helpers (previewEdges / orchestrationEdges, dangling-skipped); Canvas
-  // only decorates them with the marker, selection state, and the delete callback.
-  const edges = useMemo(() => {
-    // Marker colors are CSS vars (D0-3): React Flow passes the color into the marker
-    // polyline's inline style and quotes the marker-id url, so var() resolves cleanly.
-    const preview = previewEdges(boards, runningIds).map((e) => ({
-      ...e,
-      markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--accent)', width: 16, height: 16 }
-    }))
-    const orchestration = orchestrationEdges(connectors, boards).map((e) => ({
-      ...e,
-      selected: e.id === selectedConnectorId,
-      data: { onDelete: () => removeConnector(e.id) },
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: e.id === selectedConnectorId ? 'var(--connector-selected)' : 'var(--connector)',
-        width: 16,
-        height: 16
-      }
-    }))
-    return [...preview, ...orchestration]
-  }, [boards, runningIds, connectors, selectedConnectorId, removeConnector])
+  // C3: the routing overlay derives from the Command board's live task queue (stable ref until a
+  // task mutates). Edge assembly lives in buildCanvasEdges (Canvas god-file ratchet); it recomputes
+  // only when one of these inputs changes.
+  const commandTasks = useCommandStore((s) => s.tasks)
+  const edges = useMemo(
+    () =>
+      buildCanvasEdges({
+        boards,
+        runningIds,
+        connectors,
+        selectedConnectorId,
+        commandTasks,
+        onRemoveConnector: removeConnector
+      }),
+    [boards, runningIds, connectors, selectedConnectorId, removeConnector, commandTasks]
+  )
 
   // Translate React Flow changes into store mutations. Position covers both node
   // drag and the origin shift from N/W/NW resize; dimensions (only while actively

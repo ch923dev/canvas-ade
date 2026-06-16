@@ -259,6 +259,32 @@ options): boot-the-agent-then-handoff · optimize-if-key-else-raw · default-to-
 - **Deferred:** agent picker (Claude-only v1); `agentKind` chrome/recap polish; true agent-driven
   *decomposition* (PR-5c/PR-3b) remains the bigger future — this is prompt *optimization*, not decompose.
 
+## 6c. Slice C3 — routing-edge overlay (implemented 2026-06-16)
+
+The signed-off §5.3 overlay, built exactly as planned (the last Phase C slice):
+
+- **Pure derivation `routingEdges(tasks, boards)`** (`lib/routingEdges.ts`) — one RF edge per
+  (in-flight task → present group member), from the Command board (singleton, `type:'command'`) to
+  each `terminalId`/`planningId`/`browserId` that is still on the canvas. Skips not-in-flight tasks,
+  tasks with no group yet, and dangling members (mirrors `previewEdges`/`orchestrationEdges`).
+  Carries `data.phase` (`routing` | `executing`).
+- **Custom edge type `routing`** (`canvas/edges/RoutingEdge.tsx`) — a flowing **dashed accent**
+  (`.ca-routing-edge`: a brief fade-in + a slow dash-flow toward the worker, suppressed under
+  reduced-motion). Fainter at `routing` (group still spawning, opacity 0.5) than `executing`
+  (worker busy, 0.8). Floating geometry via the shared `floatingPath` → reroutes for free on board
+  move; no separate SVG layer to camera-sync. Not selectable/deletable (not a persisted connector).
+- **DERIVED, never persisted** — fed by a `useCommandStore((s) => s.tasks)` selector into the edges
+  memo, so an edge appears on `routing`, stays through `executing`, and **vanishes the instant** the
+  task settles (done/failed) or its card clears. No teardown bookkeeping. (The §5.3 "fades out" is
+  an instant derived removal, per the locked note — only the entry fades.)
+- **File-size doctrine:** the edges assembly was extracted from `Canvas.tsx` (a ratcheted god-file)
+  into `canvas/canvasEdges.ts` (`buildCanvasEdges`, the `buildBoardNodes` sibling) so the new family
+  stayed under the `max-lines` pin instead of raising it.
+- **Coverage:** `routingEdges.test.ts` (7 cases — in-flight filter, phase, dangling-skip, no-command,
+  empty). A deterministic `@core` e2e drives the overlay via a new `setCommandTasks` e2e seam
+  (inject an `executing` task → edge present; flip to `done` → edge gone) — **no real spawn**, so it
+  never leaks MAIN's spawn-cap `tracked` (the C2 e2e lesson).
+
 ## 7. Schema impact
 
 **None.** Phase C is runtime-only — the task→group map lives in the ephemeral `commandStore`; routing

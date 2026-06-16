@@ -103,6 +103,46 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     await expect(planning).toHaveAttribute('aria-pressed', 'false') // independent toggles
   })
 
+  test('Phase C: the routing overlay edge appears while in flight, vanishes on settle', async ({
+    page
+  }) => {
+    await seed(page, 'command')
+    const term = await seed(page, 'terminal')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+
+    const routingEdge = page.locator('.react-flow__edge-routing')
+    await expect(routingEdge).toHaveCount(0) // no in-flight task yet
+
+    // Inject an EXECUTING task whose group's terminal is the seeded worker (no real spawn — that
+    // would leak MAIN's cap). The overlay derives from the live task→group map, so the edge from
+    // the Command board to its worker appears immediately.
+    await page.evaluate(
+      (tid) =>
+        (globalThis as any).__canvasE2E.setCommandTasks([
+          {
+            id: 'task-c3',
+            title: 'analyze repo',
+            status: 'executing',
+            group: { groupId: 'g-c3', terminalId: tid }
+          }
+        ]),
+      term
+    )
+    await expect(routingEdge).toHaveCount(1)
+    await expect(page.locator(`.react-flow__edge[data-id="routing-task-c3-${term}"]`)).toHaveCount(
+      1
+    )
+
+    // Settle the task → the derived overlay vanishes (no teardown bookkeeping).
+    await page.evaluate(() =>
+      (globalThis as any).__canvasE2E.setCommandTasks([
+        { id: 'task-c3', title: 'analyze repo', status: 'done' }
+      ])
+    )
+    await expect(routingEdge).toHaveCount(0)
+  })
+
   // The full dispatch choreography (submit → spawn an agent group → engineer the prompt → hand off,
   // confirm-gated → advance) is covered deterministically by the useCommandDispatch hook unit test
   // (mocked window.api) + the spawn primitive by spawnGroup.e2e + the confirm gate by mcp.e2e. A
