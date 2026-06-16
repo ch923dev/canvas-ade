@@ -543,12 +543,17 @@ function EditorHost({
     transform: `scale(${1 / z})`,
     transformOrigin: 'top left'
   }
-  // `--cm-font` drives the EDITOR_THEME font-size (content + gutters) so it tracks the snapshot.
+  // `--cm-font` drives the EDITOR_THEME font-size. The editor is counter-scaled to net 1x, so a
+  // logical font of `fontPx` would render a CONSTANT on-screen size — but the snapshot is canvas
+  // content that scales with the camera (on-screen `fontPx * z`). To make EDIT and VIEW match at
+  // every zoom, the editor renders at the EFFECTIVE font `fontPx * z`: after the inner `scale(1/z)`
+  // and RF's `scale(z)` that lands at `fontPx * z` on screen too (the terminal's effective-font
+  // trick). Net scale stays 1, so the caret still hit-tests correctly.
   const host = {
     position: 'absolute',
     inset: 0,
     overflow: 'hidden',
-    '--cm-font': `${fontPx}px`
+    '--cm-font': `${fontPx * z}px`
   } as CSSProperties
   return (
     <div
