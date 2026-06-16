@@ -17,7 +17,9 @@
  * lands in S2 — the channel/types are defined in the preload now so the contract is stable).
  */
 import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { relative as pathRelative, sep } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
+import { simpleGit } from 'simple-git'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
@@ -27,6 +29,15 @@ import { realResolveWithinRoot } from './pathSafe'
 export interface FileEntry {
   name: string
   isDir: boolean
+}
+
+/** Result of `file:gitPermalink` — a GitHub blob URL pinned to HEAD, or a reason it couldn't. */
+export type GitPermalinkResult = { ok: true; url: string } | { ok: false; reason: string }
+
+/** Parse an `origin` remote URL into `{owner, repo}` for GitHub forms (https / ssh / git@). */
+function parseGithubRemote(url: string): { owner: string; repo: string } | null {
+  const m = url.trim().match(/github\.com[:/]+([^/]+)\/(.+?)(?:\.git)?\/?$/i)
+  return m ? { owner: m[1], repo: m[2] } : null
 }
 
 /** A file/dir stat projection (the minimum the tree/board need). */
@@ -69,6 +80,45 @@ export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | 
     if (guard(e)) throw new Error('file: foreign sender denied')
     const abs = await resolveRel(relPath)
     return readFile(abs)
+  })
+
+  // S3 (additive): the resolved ABSOLUTE on-disk path — for the board's "Copy absolute path"
+  // action. `resolveRel` already realpath-resolves + containment-checks; we just return it
+  // (the renderer never learns the project root except for a file it already references).
+  ipcMain.handle('file:realPath', async (e, relPath: string): Promise<string> => {
+    if (guard(e)) throw new Error('file: foreign sender denied')
+    return resolveRel(relPath)
+  })
+
+  // S3 (additive): a GitHub permalink (blob URL @ HEAD) for the board's "Copy GitHub link"
+  // action. `simple-git` runs ONLY in MAIN (CLAUDE.md) behind this sender-guarded handler; the
+  // path is containment-checked first. Returns a structured reason (never throws to the
+  // renderer) when the project isn't a GitHub-remote repo / has no commits. The blob path is
+  // relative to the GIT root (which may sit above the project root), so a project that is a
+  // sub-directory of a larger repo still links correctly.
+  ipcMain.handle('file:gitPermalink', async (e, relPath: string): Promise<GitPermalinkResult> => {
+    if (guard(e)) throw new Error('file: foreign sender denied')
+    const abs = await resolveRel(relPath)
+    const dir = getCurrentDir()
+    if (!dir) return { ok: false, reason: 'No project open' }
+    try {
+      const git = simpleGit(dir)
+      if (!(await git.checkIsRepo())) return { ok: false, reason: 'Not a git repository' }
+      let remoteUrl = ''
+      try {
+        remoteUrl = (await git.remote(['get-url', 'origin']))?.toString().trim() ?? ''
+      } catch {
+        return { ok: false, reason: 'No "origin" remote' }
+      }
+      const gh = remoteUrl ? parseGithubRemote(remoteUrl) : null
+      if (!gh) return { ok: false, reason: 'origin is not a GitHub remote' }
+      const sha = (await git.revparse(['HEAD'])).trim()
+      const root = await realpath((await git.revparse(['--show-toplevel'])).trim())
+      const relInRepo = pathRelative(root, abs).split(sep).join('/')
+      return { ok: true, url: `https://github.com/${gh.owner}/${gh.repo}/blob/${sha}/${relInRepo}` }
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'git error' }
+    }
   })
 
   ipcMain.handle(

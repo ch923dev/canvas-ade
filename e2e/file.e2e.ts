@@ -86,6 +86,28 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     }
   })
 
+  test('right-click -> Copy path puts the relative path on the clipboard', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3copy-', 'Copy')
+    try {
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'demo.ts', 'export const x = 1\n')
+      const id = await seed(page, 'file', { path: 'demo.ts' })
+      const snap = page.locator(`.react-flow__node[data-id="${id}"] [data-test="file-snapshot"]`)
+      await expect(snap).toBeVisible({ timeout: 6000 })
+      // Seed a sentinel so the assertion proves a real clipboard write, not a stale value.
+      await mainCall(electronApp, 'putTextOnClipboard', 'SENTINEL')
+      await snap.click({ button: 'right' })
+      await page.getByRole('menuitem', { name: 'Copy path' }).click()
+      await expect
+        .poll(() => mainCall<string>(electronApp, 'readClipboardText'), { timeout: 4000 })
+        .toBe('demo.ts')
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+
   test('renders an image file as an <img>, not the editor', async ({ page, electronApp }) => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3img-', 'FileS3Img')
     try {

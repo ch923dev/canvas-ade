@@ -8,10 +8,11 @@
  * CSP `script-src 'self'` (no eval / no blob workers) - that is the whole reason it replaced
  * Monaco (KICKOFF section 3).
  */
-import { EditorView } from '@uiw/react-codemirror'
+import { EditorView, keymap } from '@uiw/react-codemirror'
 import type { Extension } from '@uiw/react-codemirror'
 import { loadLanguage, type LanguageName } from '@uiw/codemirror-extensions-langs'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { search, searchKeymap } from '@codemirror/search'
 import { highlightCode, tags as t } from '@lezer/highlight'
 import type { Highlighter, Tag } from '@lezer/highlight'
 
@@ -217,7 +218,27 @@ const EDITOR_THEME = EditorView.theme(
     '.cm-matchingBracket': {
       backgroundColor: 'rgba(79, 140, 255, 0.16)',
       outline: '1px solid var(--border)'
-    }
+    },
+    // Find-in-file search panel (dark, token-aligned).
+    '.cm-panels': { backgroundColor: 'var(--surface-raised)', color: 'var(--text)' },
+    '.cm-panels.cm-panels-top': { borderBottom: '1px solid var(--border-subtle)' },
+    '.cm-search': { fontFamily: 'var(--ui)', fontSize: '12px', padding: '4px 8px' },
+    '.cm-search label': { color: 'var(--text-2)' },
+    '.cm-textfield': {
+      backgroundColor: 'var(--inset)',
+      color: 'var(--text)',
+      border: '1px solid var(--border-subtle)',
+      borderRadius: 'var(--r-ctl)'
+    },
+    '.cm-button': {
+      backgroundColor: 'var(--surface-overlay)',
+      backgroundImage: 'none',
+      color: 'var(--text)',
+      border: '1px solid var(--border-subtle)',
+      borderRadius: 'var(--r-ctl)'
+    },
+    '.cm-searchMatch': { backgroundColor: 'rgba(232, 179, 57, 0.28)' },
+    '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgba(79, 140, 255, 0.4)' }
   },
   { dark: true }
 )
@@ -273,9 +294,16 @@ export function resolveLanguage(ext: string): {
   return { support, parser }
 }
 
-/** The editor extension stack: our theme + syntax highlighting, with the language first. */
+/** The editor extension stack: our theme + syntax highlighting + find-in-file, language first. */
 export function buildEditorExtensions(support: Extension | null): Extension[] {
-  const exts: Extension[] = [EDITOR_THEME, syntaxHighlighting(HIGHLIGHT_STYLE)]
+  const exts: Extension[] = [
+    EDITOR_THEME,
+    syntaxHighlighting(HIGHLIGHT_STYLE),
+    // Find-in-file: the search panel infra + Cmd/Ctrl+F (open) / Enter (next) / Esc (close)
+    // keymap. The panel renders at the top of the editor (themed below for dark).
+    search({ top: true }),
+    keymap.of(searchKeymap)
+  ]
   if (support) exts.unshift(support)
   return exts
 }

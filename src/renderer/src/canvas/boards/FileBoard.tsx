@@ -35,6 +35,7 @@ import {
 } from 'react'
 import { useStore } from '@xyflow/react'
 import CodeMirror, { type EditorView } from '@uiw/react-codemirror'
+import { openSearchPanel } from '@codemirror/search'
 import type { FileBoard as FileBoardData } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { showToast } from '../../store/toastStore'
@@ -55,6 +56,7 @@ import {
   resolveLanguage,
   writeStickyFileFont
 } from './fileBoardSyntax'
+import { Centered, EmptyState, FileActionsMenu, GuardCard } from './fileBoardUi'
 
 type Kind = 'loading' | 'empty' | 'text' | 'image' | 'large' | 'binary' | 'error'
 
@@ -115,6 +117,10 @@ export function FileBoard({
   })
 
   const pendingCaretRef = useRef<{ x: number; y: number } | null>(null)
+  const viewRef = useRef<EditorView | null>(null)
+  const pendingSearchRef = useRef(false)
+  // Right-click context menu (copy actions + find), opened at the pointer.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   const ext = path ? extOf(path) : ''
   const fileName = path ? baseName(path) : ''
@@ -229,8 +235,11 @@ export function FileBoard({
   }, [board.id])
 
   const onCreateEditor = useCallback((view: EditorView): void => {
+    viewRef.current = view
     const at = pendingCaretRef.current
     pendingCaretRef.current = null
+    const wantSearch = pendingSearchRef.current
+    pendingSearchRef.current = false
     // Defer one frame so the editor has laid out, then place the caret at the click point
     // (its rect == the snapshot's, so `posAtCoords` with the original screen coords maps).
     requestAnimationFrame(() => {
@@ -239,16 +248,42 @@ export function FileBoard({
         if (pos != null) view.dispatch({ selection: { anchor: pos } })
       }
       view.focus()
+      if (wantSearch) openSearchPanel(view)
     })
   }, [])
 
   const enterEdit = useCallback(
     (e: ReactMouseEvent): void => {
-      if (readOnly || kind !== 'text') return
+      // Left-click only — a right-click opens the context menu (and must not also edit).
+      if (e.button !== 0 || readOnly || kind !== 'text') return
       pendingCaretRef.current = { x: e.clientX, y: e.clientY }
       setEditing(true)
     },
     [readOnly, kind]
+  )
+
+  // Open the find-in-file panel: if the live editor is up, open it; otherwise enter edit mode
+  // and open it once the editor mounts (onCreateEditor consumes pendingSearchRef).
+  const openFind = useCallback((): void => {
+    if (viewRef.current && editing) {
+      openSearchPanel(viewRef.current)
+      viewRef.current.focus()
+    } else {
+      pendingSearchRef.current = true
+      setEditing(true)
+    }
+  }, [editing])
+
+  // Right-click anywhere on a bound board's content → the file actions menu (suppress the
+  // native menu + keep it off the canvas).
+  const onContextMenu = useCallback(
+    (e: ReactMouseEvent): void => {
+      if (!path) return
+      e.preventDefault()
+      e.stopPropagation()
+      setCtxMenu({ x: e.clientX, y: e.clientY })
+    },
+    [path]
   )
 
   // Editor host keydown: keep editor keystrokes off the canvas keymap (the canvas already
@@ -397,116 +432,128 @@ export function FileBoard({
       onRemoveFromGroup={onRemoveFromGroup}
       onStartConnect={onStartConnect}
     >
-      {kind === 'empty' && (
-        <EmptyState pathDraft={pathDraft} onDraftChange={setPathDraft} onBind={bindPath} />
-      )}
+      <div style={{ position: 'absolute', inset: 0 }} onContextMenu={onContextMenu}>
+        {kind === 'empty' && (
+          <EmptyState pathDraft={pathDraft} onDraftChange={setPathDraft} onBind={bindPath} />
+        )}
 
-      {kind === 'loading' && (
-        <Centered>
-          <span style={{ fontFamily: 'var(--ui)', fontSize: 12, color: 'var(--text-3)' }}>
-            Loading {fileName}...
-          </span>
-        </Centered>
-      )}
+        {kind === 'loading' && (
+          <Centered>
+            <span style={{ fontFamily: 'var(--ui)', fontSize: 12, color: 'var(--text-3)' }}>
+              Loading {fileName}...
+            </span>
+          </Centered>
+        )}
 
-      {kind === 'text' &&
-        (editing && !readOnly ? (
-          <EditorHost
-            zoom={zoom}
-            fontPx={fontSize}
-            onBlur={onEditorBlur}
-            onKeyDown={onEditorKeyDown}
-          >
-            <CodeMirror
-              value={text}
-              height="100%"
-              style={{ height: '100%' }}
-              theme="none"
-              editable={!readOnly}
-              readOnly={readOnly}
-              extensions={extensions}
-              basicSetup={{
-                lineNumbers: true,
-                foldGutter: false,
-                highlightActiveLine: true,
-                highlightActiveLineGutter: true,
-                autocompletion: false,
-                searchKeymap: false,
-                highlightSelectionMatches: false,
-                syntaxHighlighting: false,
-                closeBrackets: true,
-                bracketMatching: true
+        {kind === 'text' &&
+          (editing && !readOnly ? (
+            <EditorHost
+              zoom={zoom}
+              fontPx={fontSize}
+              onBlur={onEditorBlur}
+              onKeyDown={onEditorKeyDown}
+            >
+              <CodeMirror
+                value={text}
+                height="100%"
+                style={{ height: '100%' }}
+                theme="none"
+                editable={!readOnly}
+                readOnly={readOnly}
+                extensions={extensions}
+                basicSetup={{
+                  lineNumbers: true,
+                  foldGutter: false,
+                  highlightActiveLine: true,
+                  highlightActiveLineGutter: true,
+                  autocompletion: false,
+                  searchKeymap: false,
+                  highlightSelectionMatches: false,
+                  syntaxHighlighting: false,
+                  closeBrackets: true,
+                  bracketMatching: true
+                }}
+                onChange={setText}
+                onCreateEditor={onCreateEditor}
+              />
+            </EditorHost>
+          ) : (
+            <pre
+              className="nowheel nodrag nopan"
+              data-test="file-snapshot"
+              title={readOnly ? undefined : 'Click to edit'}
+              onMouseDown={enterEdit}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                margin: 0,
+                overflow: 'auto',
+                padding: '8px 12px',
+                fontFamily: 'var(--mono)',
+                fontSize: fontSize,
+                lineHeight: 1.55,
+                color: 'var(--text)',
+                whiteSpace: 'pre',
+                tabSize: 2,
+                cursor: readOnly ? 'default' : 'text'
               }}
-              onChange={setText}
-              onCreateEditor={onCreateEditor}
+              // Safe: text escaped, colours are fixed palette hexes (see buildSnapshotHtml).
+              dangerouslySetInnerHTML={{ __html: snapshotHtml }}
             />
-          </EditorHost>
-        ) : (
-          <pre
-            className="nowheel nodrag nopan"
-            data-test="file-snapshot"
-            title={readOnly ? undefined : 'Click to edit'}
-            onMouseDown={enterEdit}
+          ))}
+
+        {kind === 'image' && imgUrl && (
+          <div
+            className="nowheel nodrag"
             style={{
               position: 'absolute',
               inset: 0,
-              margin: 0,
               overflow: 'auto',
-              padding: '8px 12px',
-              fontFamily: 'var(--mono)',
-              fontSize: fontSize,
-              lineHeight: 1.55,
-              color: 'var(--text)',
-              whiteSpace: 'pre',
-              tabSize: 2,
-              cursor: readOnly ? 'default' : 'text'
+              display: 'grid',
+              placeItems: 'center',
+              padding: 16,
+              background: 'var(--inset)'
             }}
-            // Safe: text escaped, colours are fixed palette hexes (see buildSnapshotHtml).
-            dangerouslySetInnerHTML={{ __html: snapshotHtml }}
+          >
+            <img
+              src={imgUrl}
+              alt={fileName}
+              data-test="file-image"
+              draggable={false}
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+            />
+          </div>
+        )}
+
+        {kind === 'large' && (
+          <GuardCard
+            title={isImageExt ? 'Image too large to preview' : 'File too large to open here'}
+            fileName={fileName}
+            detail={`${formatBytes(size)} - open it in your editor.`}
           />
-        ))}
+        )}
 
-      {kind === 'image' && imgUrl && (
-        <div
-          className="nowheel nodrag"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            overflow: 'auto',
-            display: 'grid',
-            placeItems: 'center',
-            padding: 16,
-            background: 'var(--inset)'
-          }}
-        >
-          <img
-            src={imgUrl}
-            alt={fileName}
-            data-test="file-image"
-            draggable={false}
-            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+        {kind === 'binary' && (
+          <GuardCard
+            title="Binary file"
+            fileName={fileName}
+            detail="This file isn't text - open it in your editor."
           />
-        </div>
-      )}
+        )}
 
-      {kind === 'large' && (
-        <GuardCard
-          title={isImageExt ? 'Image too large to preview' : 'File too large to open here'}
-          fileName={fileName}
-          detail={`${formatBytes(size)} - open it in your editor.`}
+        {kind === 'error' && (
+          <GuardCard title="Couldn't open this file" fileName={fileName} detail={errMsg} danger />
+        )}
+      </div>
+      {ctxMenu && path && (
+        <FileActionsMenu
+          at={ctxMenu}
+          path={path}
+          boardId={board.id}
+          canFind={kind === 'text' && !readOnly}
+          onFind={openFind}
+          onClose={() => setCtxMenu(null)}
         />
-      )}
-
-      {kind === 'binary' && (
-        <GuardCard
-          title="Binary file"
-          fileName={fileName}
-          detail="This file isn't text - open it in your editor."
-        />
-      )}
-
-      {kind === 'error' && (
-        <GuardCard title="Couldn't open this file" fileName={fileName} detail={errMsg} danger />
       )}
     </BoardFrame>
   )
@@ -565,146 +612,5 @@ function EditorHost({
     >
       <div style={inner}>{children}</div>
     </div>
-  )
-}
-
-function Centered({ children }: { children: ReactElement }): ReactElement {
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'grid',
-        placeItems: 'center',
-        padding: 16,
-        textAlign: 'center'
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
-function GuardCard({
-  title,
-  fileName,
-  detail,
-  danger = false
-}: {
-  title: string
-  fileName: string
-  detail?: string
-  danger?: boolean
-}): ReactElement {
-  return (
-    <Centered>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '100%' }}>
-        <div
-          style={{
-            fontFamily: 'var(--ui)',
-            fontSize: 13,
-            fontWeight: 500,
-            color: danger ? 'var(--err)' : 'var(--text-2)'
-          }}
-        >
-          {title}
-        </div>
-        {fileName && (
-          <div
-            style={{
-              fontFamily: 'var(--mono)',
-              fontSize: 12,
-              color: 'var(--text)',
-              wordBreak: 'break-all'
-            }}
-          >
-            {fileName}
-          </div>
-        )}
-        {detail && (
-          <div
-            style={{
-              fontFamily: 'var(--ui)',
-              fontSize: 11,
-              color: 'var(--text-3)',
-              wordBreak: 'break-word'
-            }}
-          >
-            {detail}
-          </div>
-        )}
-      </div>
-    </Centered>
-  )
-}
-
-/** Unbound board: a hint plus a project-relative path field so a file board is usable before
- *  the S2 tree lands (and as a permanent "point this board at a file" affordance). */
-function EmptyState({
-  pathDraft,
-  onDraftChange,
-  onBind
-}: {
-  pathDraft: string
-  onDraftChange: (v: string) => void
-  onBind: () => void
-}): ReactElement {
-  return (
-    <Centered>
-      <div
-        style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '82%', maxWidth: 320 }}
-      >
-        <div style={{ fontFamily: 'var(--ui)', fontSize: 13, color: 'var(--text-2)' }}>
-          No file open
-        </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input
-            className="nodrag nopan"
-            value={pathDraft}
-            placeholder="src/index.ts"
-            aria-label="Project-relative file path"
-            onChange={(e) => onDraftChange(e.target.value)}
-            onMouseDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') onBind()
-            }}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontFamily: 'var(--mono)',
-              fontSize: 12,
-              color: 'var(--text)',
-              background: 'var(--inset)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--r-ctl)',
-              padding: '5px 8px',
-              outline: 'none'
-            }}
-          />
-          <button
-            className="nodrag"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={onBind}
-            style={{
-              fontFamily: 'var(--ui)',
-              fontSize: 12,
-              fontWeight: 500,
-              color: 'var(--text)',
-              background: 'var(--surface-overlay)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--r-ctl)',
-              padding: '5px 10px',
-              cursor: 'pointer'
-            }}
-          >
-            Open
-          </button>
-        </div>
-        <div style={{ fontFamily: 'var(--ui)', fontSize: 11, color: 'var(--text-3)' }}>
-          Open a file from the tree, or type a project-relative path.
-        </div>
-      </div>
-    </Centered>
   )
 }
