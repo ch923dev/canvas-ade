@@ -22,22 +22,22 @@ const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
 
 /**
- * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (10). MAIN cannot import the
+ * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (12). MAIN cannot import the
  * renderer module in shipped code, so this constant is duplicated here. It is tested (see
  * projectStore.test.ts, which cross-imports the renderer constant and asserts equality)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation.
  */
-export const SCHEMA_VERSION = 11
+export const SCHEMA_VERSION = 12
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
- * here whenever the renderer constant bumps (breaking changes only). v11 adds the breaking
- * `diagram` element kind, so the compat floor moves to 11 — pre-11 apps get the clean
- * "update the app" message instead of failing deep validation on the unknown kind.
+ * here whenever the renderer constant bumps (breaking changes only). v12 adds the breaking
+ * `command` board type, so the compat floor moves to 12 — pre-12 apps get the clean
+ * "update the app" message instead of failing deep validation on the unknown type.
  */
-export const MIN_READER_VERSION = 11
+export const MIN_READER_VERSION = 12
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }

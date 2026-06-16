@@ -34,6 +34,7 @@ import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
+import { useCommandStore, commandStoreDefaults } from '../store/commandStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
@@ -689,6 +690,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       } catch {
         // storage unavailable — nothing sticky to clear
       }
+      // The Command board's queue/view/collapse is a GLOBAL ephemeral store (one orchestrator
+      // face) — a spec that switched the seg to 'groups' or collapsed the board would leak that
+      // into the next spec (the cross-spec global-state class). Reset to the shipped defaults.
+      useCommandStore.setState(commandStoreDefaults())
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()
