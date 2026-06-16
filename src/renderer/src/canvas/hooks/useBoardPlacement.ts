@@ -18,6 +18,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import type { ReactFlowInstance } from '@xyflow/react'
@@ -29,16 +30,32 @@ import { resolveConnectTarget } from '../../lib/resolveConnectTarget'
 export interface BoardPlacementApi {
   /** True while a board type is armed (capture overlay should mount). */
   armed: boolean
-  /** Screen-space ghost rect (client coords) while dragging, else null. */
+  /**
+   * Placement gesture for the armed tool. 'drag' = press→drag→release rubber-band (terminal /
+   * browser / planning, via startPlacement). 'follow' = the Command board's place-to-create — a
+   * fixed-size ghost follows the cursor and a single click plants it (followMove + followPlace).
+   */
+  placeMode: 'drag' | 'follow'
+  /** Screen-space ghost rect (client coords): the drag rubber-band, or the follow footprint. */
   ghost: Box | null
-  /** Capture overlay's `onPointerDown`. */
+  /** Capture overlay's `onPointerDown` (drag mode). */
   startPlacement: (e: ReactPointerEvent) => void
+  /** Capture overlay's `onPointerMove` (follow mode): move the fixed-size ghost under the cursor. */
+  followMove: (e: ReactPointerEvent) => void
+  /** Capture overlay's `onClick` (follow mode): plant the Command board centered on the cursor. */
+  followPlace: (e: ReactMouseEvent) => void
+  /** Cancel follow mode without placing (right-click / contextmenu / programmatic). */
+  cancelPlacement: () => void
 }
 
 export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
   const tool = useCanvasStore((s) => s.tool)
   const setTool = useCanvasStore((s) => s.setTool)
+  const setSelection = useCanvasStore((s) => s.setSelection)
   const armed = tool !== 'select'
+  // The Command board uses place-to-create (a fixed-size ghost that follows the cursor, click to
+  // plant); the other board types keep the press→drag→release rubber-band.
+  const placeMode: 'drag' | 'follow' = tool === 'command' ? 'follow' : 'drag'
   const [ghost, setGhost] = useState<Box | null>(null)
   // Removes the in-flight drag's window listeners; set while a drag is live, else null.
   const dragCleanupRef = useRef<(() => void) | null>(null)
@@ -68,6 +85,55 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
 
   // Safety net: tear down a live drag if the hook unmounts mid-gesture.
   useEffect(() => () => abortDrag(), [abortDrag])
+
+  // The Command board is a SINGLETON: arming it when one already exists must NOT enter place mode
+  // (a following ghost would imply you could plant a second). Re-select the existing orchestrator
+  // and disarm immediately — ghost-free — the Option-B "the +Command affordance jumps to it".
+  useEffect(() => {
+    if (!armed || tool !== 'command') return
+    const existing = useCanvasStore.getState().boards.find((b) => b.type === 'command')
+    if (existing) {
+      setSelection([existing.id])
+      setTool('select')
+    }
+  }, [armed, tool, setSelection, setTool])
+
+  // Command place-to-create — the ghost is the board's FIXED footprint scaled to the live zoom,
+  // centered on the cursor; it tracks pointermove with no button held (no rubber-band, no resize).
+  const followMove = useCallback(
+    (e: ReactPointerEvent): void => {
+      if (tool !== 'command') return
+      const zoom = rf.getZoom()
+      const w = DEFAULT_BOARD_SIZE.command.w * zoom
+      const h = DEFAULT_BOARD_SIZE.command.h * zoom
+      setGhost({ x: e.clientX - w / 2, y: e.clientY - h / 2, w, h })
+    },
+    [tool, rf]
+  )
+
+  // A single primary click plants the board with its CENTER at the cursor, placed `exact` (the
+  // user chose the spot — no freeSlot nudge), then disarms. addBoard's singleton guard is the
+  // backstop if one somehow exists (the effect above normally disarms before we reach here).
+  const followPlace = useCallback(
+    (e: ReactMouseEvent): void => {
+      if (tool !== 'command' || e.button !== 0) return
+      const size = DEFAULT_BOARD_SIZE.command
+      const pt = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      useCanvasStore
+        .getState()
+        .addBoard('command', { x: pt.x - size.w / 2, y: pt.y - size.h / 2 }, { exact: true })
+      setGhost(null)
+      setTool('select')
+    },
+    [tool, rf, setTool]
+  )
+
+  // Right-click (or programmatic) cancel for follow mode — disarm without planting. Esc is
+  // already handled by the armed keydown effect above.
+  const cancelPlacement = useCallback((): void => {
+    setGhost(null)
+    setTool('select')
+  }, [setTool])
 
   const startPlacement = useCallback(
     (e: ReactPointerEvent): void => {
@@ -131,7 +197,7 @@ export function useBoardPlacement(rf: ReactFlowInstance): BoardPlacementApi {
     [tool, rf, setTool, abortDrag]
   )
 
-  return { armed, ghost, startPlacement }
+  return { armed, placeMode, ghost, startPlacement, followMove, followPlace, cancelPlacement }
 }
 
 /**
