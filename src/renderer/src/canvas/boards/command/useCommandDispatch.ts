@@ -4,20 +4,27 @@
  * (`window.api.mcp`, the C1 surface) to turn a submitted task into real work:
  *
  *   submit → addTask(queued) → engineer (LLM: zoneName + prompt) → WORKER CONFIG dialog
- *          → Dispatch (task gets {launchCommand, prompt} = "ready") → [pump] → routing (spawnGroup)
- *          → executing → ready-gate → handoffPrompt → done | failed
+ *          → Dispatch (task gets {launchCommand, prompt} = "ready") → [pump] → routing (spawnGroup,
+ *            launching `<command> "<prompt>"`) → executing → awaitSettled → done | failed
  *
  * Why the config dialog (C2d): a freshly-spawned worker's CLI shows a first-run "trust this folder?"
- * gate that ate an auto-fired prompt. The user now picks the agent + its skip/auto flag (clearing the
- * trust gate) and reviews/edits the engineered instruction BEFORE the worker spawns. No hardcoded
- * launch command. A **pump** still serializes spawns at the orchestrator's concurrency cap; only
- * CONFIGURED queued tasks (a `launchCommand` committed via the dialog) are spawned. The renderer holds
- * NO token — every write still pays MAIN's `runGatedWrite` confirm gate. The board is a singleton, so
- * this hook (and its one `onTaskStatus` subscription) mounts once.
+ * gate that ate an auto-fired prompt. The user now picks the agent + its skip/auto flag and
+ * reviews/edits the engineered instruction BEFORE the worker spawns. No hardcoded launch command.
+ *
+ * Why inline-prompt delivery (C2e): the engineered prompt is appended to the launch command as a
+ * quoted arg (`appendPromptArg`), so the agent runs it as its FIRST message — parsed at startup,
+ * queued (not typed into stdin), so it survives the trust gate with no boot-race and NO separate
+ * handoff write (so no second confirm; the config dialog is the single authorization). The done/
+ * failed verdict comes from `awaitSettled` (output silence after activity — read-only, no write).
+ *
+ * A **pump** still serializes spawns at the orchestrator's concurrency cap; only CONFIGURED queued
+ * tasks (a `launchCommand` committed via the dialog) are spawned. The renderer holds NO token. The
+ * board is a singleton, so this hook (and its one `onTaskStatus` subscription) mounts once.
  */
 import { useCallback, useEffect, useRef } from 'react'
 import { useCommandStore, type CommandTask, type WorkerConfig } from '../../../store/commandStore'
 import {
+  appendPromptArg,
   canDispatch,
   compositionOf,
   DISPATCH_ENGINEER_SYSTEM,
@@ -52,32 +59,25 @@ async function engineerDispatch(task: string): Promise<EngineeredDispatch> {
   }
 }
 
-// The just-spawned terminal must reach MAIN's board mirror (publish debounced ~150ms) + spawn its
-// PTY before a handoff can resolve it. Retry the PRE-gate readiness window with backoff (~5s total).
+// The just-spawned terminal must reach MAIN's board mirror (publish debounced ~150ms) before
+// awaitSettled can resolve it. Retry only the initial board-not-found window with backoff (~5s).
 const READY_RETRIES = 25
 const READY_BACKOFF_MS = 200
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-// Terminal status is only PTY-alive vs exited (boardStatus.ts) — it CANNOT signal "REPL ready". So we
-// give the freshly-launched worker a fixed boot-settle window before the handoff, so the engineered
-// prompt lands at the agent's prompt rather than mid-boot (the human confirm-gate approval adds more
-// margin). A content-aware readiness probe (output quiet after boot) is a follow-up. Zero under
-// vitest so the deterministic hook test isn't paced by a real-time delay (the sequence is unchanged).
-const WORKER_BOOT_SETTLE_MS = import.meta.env.MODE === 'test' ? 0 : 2000
-
 /**
- * Hand off once the worker is ready: retry only the pre-gate readiness failure (board-not-found /
- * not-a-terminal — no side effect), never an error AFTER the confirm gate (so a retry can't re-pop
- * the confirm). Resolves with the worker's settle result, or throws the underlying error.
+ * Await the worker's settle once it is addressable: retry ONLY the pre-resolution readiness failure
+ * (board-not-found / not-a-terminal — no side effect) while the just-spawned board reaches MAIN's
+ * mirror. Once resolved, `awaitSettled` is a long-pending call (resolves on output-silence) — no
+ * retry past that. Resolves with the worker's result, or throws the underlying error.
  */
-async function handoffWhenReady(
-  handoff: (boardId: string, text: string) => Promise<WorkerResult>,
-  terminalId: string,
-  text: string
+async function awaitSettledWhenReady(
+  awaitSettled: (boardId: string) => Promise<WorkerResult>,
+  terminalId: string
 ): Promise<WorkerResult> {
   for (let attempt = 0; attempt < READY_RETRIES; attempt++) {
     try {
-      return await handoff(terminalId, text)
+      return await awaitSettled(terminalId)
     } catch (err) {
       if (isWorkerNotReady(err) && attempt < READY_RETRIES - 1) {
         await sleep(READY_BACKOFF_MS)
@@ -86,7 +86,7 @@ async function handoffWhenReady(
       throw err
     }
   }
-  throw new Error('handoff: worker never became ready') // unreachable (loop returns or throws)
+  throw new Error('awaitSettled: worker never became ready') // unreachable (loop returns or throws)
 }
 
 export interface CommandDispatch {
@@ -137,33 +137,29 @@ export function useCommandDispatch(cap: number): CommandDispatch {
     const store = useCommandStore.getState()
     const task = store.tasks.find((t) => t.id === id)
     const api = window.api?.mcp
-    if (!task || !api?.spawnGroup || !api?.handoffPrompt) {
+    if (!task || !api?.spawnGroup || !api?.awaitSettled) {
       store.setTaskStatus(id, 'failed')
       return
     }
     const comp = compositionOf(task)
     try {
-      // The agent zone + worker are launched with the USER-CHOSEN command (config dialog) under the
-      // smart zone name. The kanban CARD keeps the user's raw task; the engineered prompt is the
-      // task's `prompt` (delivered after the worker boots; shown in the gate confirm for review).
+      // Launch the worker with the USER-CHOSEN command AND the engineered prompt appended as a quoted
+      // arg (`<command> "<prompt>"`), under the smart zone name — so the agent runs the prompt as its
+      // first message (no separate handoff write, no boot-race, no second confirm). The kanban CARD
+      // keeps the user's raw task; the prompt is the task's `prompt`.
+      const launchCommand = appendPromptArg(task.launchCommand ?? '', task.prompt ?? task.title)
       const group = await api.spawnGroup({
         name: task.zoneName ?? task.title,
         planning: comp.planning,
         browser: comp.browser,
-        ...(typeof task.launchCommand === 'string' ? { launchCommand: task.launchCommand } : {})
+        launchCommand
       })
       useCommandStore.getState().setTaskGroup(id, group)
       useCommandStore.getState().setTaskStatus(id, 'executing')
-      // Boot-settle so the prompt lands at a ready REPL, not mid-boot (see WORKER_BOOT_SETTLE_MS).
-      await sleep(WORKER_BOOT_SETTLE_MS)
-      // Authoritative done/failed verdict — handoffPrompt awaits the worker's two-gate settle
-      // (retried through the post-spawn readiness window until the agent is addressable).
-      const handoff = api.handoffPrompt
-      const result = await handoffWhenReady(
-        (bid, t) => handoff(bid, t),
-        group.terminalId,
-        task.prompt ?? task.title
-      )
+      // Authoritative done/failed verdict — awaitSettled resolves on output silence after the worker
+      // finishes (read-only; retried through the post-spawn readiness window until it is addressable).
+      const awaitSettled = api.awaitSettled
+      const result = await awaitSettledWhenReady((bid) => awaitSettled(bid), group.terminalId)
       useCommandStore.getState().setTaskStatus(id, isFailureResult(result) ? 'failed' : 'done')
       pumpRef.current?.() // a slot freed → dispatch the next queued task
     } catch (err) {

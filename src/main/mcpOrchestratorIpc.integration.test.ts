@@ -38,6 +38,7 @@ function spyMcp(): OrchestratorDrive {
     })),
     dispatchPrompt: vi.fn(async () => {}),
     handoffPrompt: vi.fn(async () => ({ present: true, status: 'success', summary: 'done' })),
+    awaitSettled: vi.fn(async () => ({ present: true, status: 'success', summary: 'settled' })),
     interrupt: vi.fn(async () => {})
   }
 }
@@ -112,6 +113,20 @@ describe('registerOrchestratorIpc', () => {
     expect(res).toEqual({ present: true, status: 'success', summary: 'done' })
   })
 
+  it('awaitSettled: forwards the board id and returns the settled result (read-only)', async () => {
+    const mcp = spyMcp()
+    const { ipc, handlers } = fakeIpc()
+    registerOrchestratorIpc(
+      ipc,
+      () => liveWin,
+      () => mcp
+    )
+
+    const res = await handlers.get('mcp:awaitSettled')!(ev(mainFrame), 't1')
+    expect(mcp.awaitSettled).toHaveBeenCalledWith('t1')
+    expect(res).toEqual({ present: true, status: 'success', summary: 'settled' })
+  })
+
   it('interrupt: forwards the board id', async () => {
     const mcp = spyMcp()
     const { ipc, handlers } = fakeIpc()
@@ -144,10 +159,12 @@ describe('registerOrchestratorIpc', () => {
     await expect(
       handlers.get('mcp:handoffPrompt')!(foreign, { boardId: 't1', text: 'go' })
     ).rejects.toThrow('forbidden')
+    await expect(handlers.get('mcp:awaitSettled')!(foreign, 't1')).rejects.toThrow('forbidden')
     await expect(handlers.get('mcp:interrupt')!(foreign, 't1')).rejects.toThrow('forbidden')
     expect(mcp.spawnGroup).not.toHaveBeenCalled()
     expect(mcp.dispatchPrompt).not.toHaveBeenCalled()
     expect(mcp.handoffPrompt).not.toHaveBeenCalled()
+    expect(mcp.awaitSettled).not.toHaveBeenCalled()
     expect(mcp.interrupt).not.toHaveBeenCalled()
   })
 

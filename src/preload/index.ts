@@ -588,6 +588,12 @@ const api = {
       text: string
     ): Promise<{ present?: boolean; status?: string; summary?: string; refs?: string[] }> =>
       ipcRenderer.invoke('mcp:handoffPrompt', { boardId, text }),
+    // C2e: await a worker's task settle (output silence / own result / backstop) WITHOUT a write —
+    // the verdict for a dispatch whose prompt was delivered as a launch arg. Read-only (no gate).
+    awaitSettled: (
+      boardId: string
+    ): Promise<{ present?: boolean; status?: string; summary?: string; refs?: string[] }> =>
+      ipcRenderer.invoke('mcp:awaitSettled', boardId),
     interrupt: (boardId: string): Promise<void> => ipcRenderer.invoke('mcp:interrupt', boardId),
 
     // MAIN → renderer: per-board coarse status stream that drives the kanban (status only,

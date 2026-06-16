@@ -25,6 +25,7 @@ export interface OrchestratorDrive {
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   dispatchPrompt(boardId: string, text: string): Promise<void>
   handoffPrompt(boardId: string, text: string): Promise<BoardResult>
+  awaitSettled(boardId: string): Promise<BoardResult>
   interrupt(boardId: string): Promise<void>
 }
 
@@ -91,6 +92,13 @@ export function registerOrchestratorIpc(
       throw new Error('mcp:handoffPrompt requires { boardId, text }')
     }
     return mcp.handoffPrompt(boardId, text) // gated dispatch + await the worker's two-gate settle
+  })
+
+  ipc.handle('mcp:awaitSettled', async (e, boardId: unknown): Promise<BoardResult> => {
+    const mcp = resolve(e)
+    const id = asString(boardId)
+    if (id === null) throw new Error('mcp:awaitSettled requires a string boardId')
+    return mcp.awaitSettled(id) // read-only: await output-silence settle, return the board result
   })
 
   ipc.handle('mcp:interrupt', async (e, boardId: unknown): Promise<void> => {

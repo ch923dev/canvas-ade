@@ -649,6 +649,55 @@ export function buildOrchestrator(
       }
       return result
     },
+    /**
+     * Await a dispatched worker's task to SETTLE without a write (C2e) — the verdict half of a
+     * dispatch whose prompt was delivered as a LAUNCH ARG (`claude "<prompt>"`), so there is no
+     * handoff write to gate. READ-ONLY: no nonce, no confirm, no PTY write. A live agent shell never
+     * flips its derived status off 'running', so we settle on OUTPUT SILENCE — the PTY has been quiet
+     * for `SETTLE_QUIET_MS` AFTER first showing activity (reusing the idle-reaper's
+     * `boardActivityStaleMs`). A worker recording its OWN result (write_result) settles immediately
+     * (fast-path); a board leaving the canvas settles; a one-shot backstop bounds the wait. Returns
+     * the board's result (the same shape `handoffPrompt` returns).
+     */
+    async awaitSettled(boardId: BoardId): Promise<BoardResult> {
+      const SETTLE_QUIET_MS = 6000 // PTY silence that reads as "the worker finished its task"
+      const SETTLE_POLL_MS = 1000
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) throw new Error(`await_settled: board not found: ${boardId}`)
+      if (board.type !== 'terminal') {
+        throw new Error(`await_settled: target is not a terminal (${board.type})`)
+      }
+      await new Promise<void>((resolve) => {
+        let done = false
+        let sawActivity = false
+        let poll: ReturnType<typeof setInterval> | null = null
+        let unsubResult = (): void => {}
+        let cancelBackstop = (): void => {}
+        const finish = (): void => {
+          if (done) return
+          done = true
+          if (poll) clearInterval(poll)
+          unsubResult()
+          cancelBackstop()
+          resolve()
+        }
+        // write_result fast-path: a worker recording its own result is the real task-done marker.
+        unsubResult = onResultSettled(boardId, finish)
+        // Output-silence poll: settle once the worker — having shown activity — has been quiet for
+        // SETTLE_QUIET_MS, or the board left the canvas. `sawActivity` guards against settling on the
+        // INITIAL quiet before the agent has produced any output (still booting).
+        poll = setInterval(() => {
+          if (!registry.listBoards().some((b) => b.id === boardId)) return finish()
+          const stale = registry.boardActivityStaleMs?.(boardId)
+          if (typeof stale !== 'number') return
+          if (stale < SETTLE_QUIET_MS) sawActivity = true
+          else if (sawActivity) finish()
+        }, SETTLE_POLL_MS)
+        // One-shot backstop — bound the wait if the worker never goes quiet / never reports.
+        cancelBackstop = startBackstop(handoffTimeoutMs, finish)
+      })
+      return registry.readResult(boardId)
+    },
     async dispatchPrompt(boardId: BoardId, text: string): Promise<void> {
       // 🔒 assign_prompt (T4.4): the FIRE-AND-FORGET sibling of handoffPrompt — the SAME
       // shared write gate MINUS the blocking await-idle/result. Resolve the OPAQUE id +

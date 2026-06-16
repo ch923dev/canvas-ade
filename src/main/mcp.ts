@@ -75,6 +75,12 @@ export interface RunningMcp {
    * `dispatchPrompt`, plus the await-idle. A long-pending call (resolves on settle).
    */
   handoffPrompt(boardId: string, text: string): Promise<BoardResult>
+  /**
+   * Phase C / C2e: await a worker's task to SETTLE (output silence after activity / its own
+   * `write_result` / a backstop) WITHOUT a write — the verdict half of a dispatch whose prompt was
+   * delivered as a launch arg (`claude "<prompt>"`). Read-only (no gate). Resolves with its result.
+   */
+  awaitSettled(boardId: string): Promise<BoardResult>
   /** Phase C / C1: gated Ctrl-C into a board's PTY (same gate, terminator `\x03`, no sanitize). */
   interrupt(boardId: string): Promise<void>
   close(): Promise<void>
@@ -124,6 +130,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       spawnGroup: (input) => orchestrator.spawnGroup(input),
       dispatchPrompt: (boardId, text) => orchestrator.dispatchPrompt(boardId, text),
       handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
+      awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),
       interrupt: (boardId) => orchestrator.interrupt(boardId),
       close: () => {
         clearInterval(reapTimer)

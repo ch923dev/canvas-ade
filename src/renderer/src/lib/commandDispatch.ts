@@ -35,6 +35,23 @@ export const DISPATCH_ENGINEER_SYSTEM =
   '(state the goal, implied steps, and what "done" looks like; assume it can read/run/edit files). ' +
   'Output only that — no preamble, no surrounding quotes, no markdown headings, no commentary.'
 
+/**
+ * Compose the worker's full launch command for INLINE-PROMPT delivery (C2e): append the engineered
+ * prompt as a single quoted positional arg (`claude --flags "<prompt>"`), so the agent runs it as its
+ * first message. This survives the first-run "trust this folder?" gate — the arg is parsed at startup
+ * and queued, NOT typed into stdin, so it can't be eaten by the trust dialog — and removes the
+ * boot-race + the separate gated handoff. The prompt is collapsed to ONE line (a PTY launch line is
+ * single-line) and double-quoted with POSIX-style `\`/`"` escaping; the dialog's editable Command
+ * field is the escape hatch for shell-specific quirks. An empty `command` (the Shell preset) gets NO
+ * arg — a bare shell can't take a prompt as a launch arg — so it stays a plain shell.
+ */
+export function appendPromptArg(command: string, prompt: string): string {
+  const base = command.trim()
+  const line = prompt.replace(/\s+/g, ' ').trim()
+  if (!base || !line) return base
+  return `${base} "${line.replace(/[\\"]/g, '\\$&')}"`
+}
+
 /** A short, non-LLM fallback zone name from the raw task (first ~5 words, clamped). */
 export function fallbackTitle(task: string): string {
   const words = task.trim().replace(/\s+/g, ' ').split(' ').slice(0, 5).join(' ')

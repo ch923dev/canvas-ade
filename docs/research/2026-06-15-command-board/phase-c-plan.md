@@ -302,8 +302,40 @@ submit → addTask(queued, composition)          card appears
   → engineer → config callback → spawn with the CHOSEN launchCommand → ready-gate → handoff edited prompt →
   settle; cancel leaves the task un-ready; cap serialize. `WorkerConfigDialog` render/return test. e2e stays
   no-spawn (config dialog appears; chips) to avoid the MAIN cap leak.
-- **Carried:** the per-line confirm gate still fires on the handoff (locked invariant) — a v1 double-confirm
-  (config Dispatch + gate) that Phase F batch-auth collapses.
+- **Carried (superseded by C2e):** C2d delivered via the gated handoff (a v1 double-confirm). C2e moves
+  delivery to the launch arg, so there is no longer a second confirm.
+
+## 6e. Slice C2e — inline-prompt delivery + read-only settle (added 2026-06-16, supersedes C2d delivery)
+
+Eyeball on C2d: confirmed the CLI feature `claude "query"` — **"Start interactive session with initial
+prompt"** (official CLI reference). The initial-prompt arg is parsed at startup and queued as the
+agent's FIRST message — NOT typed into stdin — so it survives the first-run trust gate (the arg runs
+after trust is cleared) with no boot-race. Adopted (signed off): deliver the prompt as a launch arg
+instead of a gated handoff write.
+
+- **Inline delivery.** `appendPromptArg(command, prompt)` (pure) appends the engineered prompt as a
+  single quoted positional arg → the worker spawns `claude [flags] "<prompt>"` and runs it as its first
+  message. The prompt is collapsed to one line (a PTY launch line is single-line) + `\`/`"`-escaped;
+  the dialog's editable Command field is the escape hatch. Empty command (Shell preset) → no arg.
+- **No gated handoff for the prompt → no double-confirm.** The prompt rides the renderer-originated,
+  trusted-user `launchCommand` (cap-checked, not gated); the config dialog (review + edit) is the single
+  authorization point. (The future agent-callable `spawn_group` still gates its launchCommand.)
+- **Read-only verdict `awaitSettled`** (new MAIN orchestrator method + `mcp:awaitSettled` IPC + preload).
+  A live agent shell never flips its derived status off 'running', so the verdict settles on **output
+  silence**: the worker, having shown activity, has had no PTY output for `SETTLE_QUIET_MS` (reusing the
+  idle-reaper's `boardActivityStaleMs`); a worker's own `write_result` is a fast-path; a backstop bounds
+  it. No nonce, no confirm, no write. App-local on `LifecycleOrchestrator` (like `spawnGroup`).
+- **Dispatch** (`useCommandDispatch`): spawnGroup(launchCommand = `appendPromptArg(...)`) → executing →
+  `awaitSettled(terminalId)` (board-not-found retry until addressable) → done/failed. Dropped the
+  boot-settle heuristic + the handoff delivery.
+- **Coverage.** `appendPromptArg` unit tests (quote/escape/single-line/shell/empty); the hook test now
+  asserts spawnGroup carries the appended-arg command + `awaitSettled` drives the verdict; an
+  `awaitSettled` orchestrator test (output-quiet settle + read-only: no write/confirm + reject
+  unknown/non-terminal); the `mcp:awaitSettled` IPC handler + frame-guard test. Gate green: typecheck +
+  lint + format, 2889 unit/integration.
+- **Known v1 limit.** `SETTLE_QUIET_MS` is a heuristic — a worker that pauses > the window mid-task could
+  settle early; a slow-boot (>window with no output) could false-positive. Tunable; a richer signal
+  (write_result adoption / transcript-aware) is the follow-up. `handoffPrompt` stays for the MCP path.
 
 ## 6c. Slice C3 — routing-edge overlay (implemented 2026-06-16)
 

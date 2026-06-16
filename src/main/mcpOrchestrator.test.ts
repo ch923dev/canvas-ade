@@ -644,6 +644,38 @@ describe('buildOrchestrator', () => {
       expect(audits[0]).toMatchObject({ targetId: 'b1', status: 'rejected', nonce: '' })
     })
 
+    it('awaitSettled: read-only verdict — settles done once the worker goes output-quiet', async () => {
+      vi.useFakeTimers()
+      try {
+        let stale = 100 // a fresh worker is "active" (lastActivityAt = spawn); climbs when it finishes
+        const { registry, writes, confirms } = dispatchReg({
+          boards: [{ id: 't1', type: 'terminal', title: 'Worker' }],
+          result: { present: true, status: 'success', summary: 'reviewed' }
+        })
+        ;(registry as { boardActivityStaleMs(id: string): number }).boardActivityStaleMs = () =>
+          stale
+        const orch = buildOrchestrator(registry)
+        const settled = orch.awaitSettled('t1')
+
+        await vi.advanceTimersByTimeAsync(1000) // tick: active → records sawActivity, NOT done
+        stale = 7000 // worker finished → PTY output quiet ≥ SETTLE_QUIET_MS
+        await vi.advanceTimersByTimeAsync(1000) // tick: quiet after activity → settle
+
+        await expect(settled).resolves.toMatchObject({ status: 'success', summary: 'reviewed' })
+        expect(writes).toEqual([]) // read-only: never wrote to the PTY
+        expect(confirms).toEqual([]) // read-only: never opened the human gate
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('awaitSettled: rejects an unknown / non-terminal target (read-only)', async () => {
+      const { registry } = dispatchReg({ boards: [{ id: 'b1', type: 'browser', title: 'Web' }] })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.awaitSettled('ghost')).rejects.toThrow(/not found/i)
+      await expect(orch.awaitSettled('b1')).rejects.toThrow(/terminal/i)
+    })
+
     it('🔒 rejects a payload with an embedded CR — one approval must run ONE command (no confirm, no write)', async () => {
       const { registry, audits, writes, confirms } = dispatchReg({
         boards: [{ id: 't1', type: 'terminal', title: 'Term' }]
