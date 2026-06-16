@@ -6,19 +6,25 @@
  * five-column lifecycle kanban, plus a collapsed one-line rail. SINGLETON (one orchestrator face;
  * enforced in `canvasStore.addBoard`).
  *
- * Phase A is read-only/inert: the well does NOT dispatch (Phase C), cards do not flow (Phase B),
- * and there is no recap/diff (Phase D) or group roll-up content (Phase E). All state is ephemeral
- * `commandStore` — never serialized. Worker-pool counts derive from the live board list (PR-3's
- * app-model `canvas` tier, mirrored renderer-side).
+ * Phase B makes it live: the submit well enqueues a `queued` task (no worker dispatch yet — that is
+ * Phase C), and tasks render as cards bucketed into the lifecycle columns (failed → Done, with a
+ * retry). There is still no recap/diff (Phase D) or group roll-up content (Phase E). All state is
+ * ephemeral `commandStore` — never serialized. Worker-pool counts derive from the live board list.
  *
  * Owns this file; the shared surface (BoardFrame, schema, stores) is consumed, never modified.
  */
-import { useMemo, type CSSProperties, type ReactElement } from 'react'
+import { useMemo, useState, type CSSProperties, type ReactElement } from 'react'
 import type { CommandBoard as CommandBoardData } from '../../lib/boardSchema'
 import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
-import { useCommandStore, type CommandView, type TaskStatus } from '../../store/commandStore'
+import {
+  useCommandStore,
+  tasksInColumn,
+  type CommandTask,
+  type CommandView,
+  type TaskStatus
+} from '../../store/commandStore'
 import { deriveWorkerPool } from '../../store/workerPool'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
@@ -60,11 +66,14 @@ export function CommandBoard({
   const expandedHeight = useCommandStore((s) => s.expandedHeight)
   const setCollapsed = useCommandStore((s) => s.setCollapsed)
   const tasks = useCommandStore((s) => s.tasks)
+  const addTask = useCommandStore((s) => s.addTask)
+  const retryTask = useCommandStore((s) => s.retryTask)
 
   const pool = useMemo(() => deriveWorkerPool(boards, running), [boards, running])
 
-  // Bucket tasks by status in ONE pass, then derive both the rail roll-up and the per-column
-  // counts from it (all 0 in Phase A — the queue is empty until Phase C; Phase B fills it).
+  // Bucket tasks by status in ONE pass for the rail roll-up. The kanban column lists use the pure
+  // `tasksInColumn` (the single source of the failed→Done bucketing); each column count badge is
+  // just that list's length, so a badge can never disagree with the cards rendered beneath it.
   const buckets = useMemo(() => {
     const b: Record<TaskStatus, number> = {
       queued: 0,
@@ -85,10 +94,6 @@ export function CommandBoard({
     total: tasks.length
   }
   const progress = counts.total ? counts.done / counts.total : 0
-  // `failed` is not its own column — failed tasks bucket into Done (matches the COLUMNS note + the
-  // mock's Done column, which shows a failed card with a retry affordance). Phase B renders cards.
-  const countFor = (status: TaskStatus): number =>
-    status === 'done' ? buckets.done + buckets.failed : buckets[status]
 
   // Collapse swaps the board to a compact rail footprint (a real geometry change so the hub takes
   // less canvas space); expand restores the remembered height. The collapsed flag is ephemeral —
@@ -130,7 +135,7 @@ export function CommandBoard({
     >
       {collapsed ? (
         <div style={railStyle}>
-          <SubmitWell />
+          <SubmitWell onSubmit={addTask} />
           <div style={railTrackStyle}>
             <span style={{ ...fillStyle, width: `${Math.round(progress * 100)}%` }} />
           </div>
@@ -153,26 +158,36 @@ export function CommandBoard({
         </div>
       ) : (
         <div style={bodyStyle}>
-          <SubmitWell />
+          <SubmitWell onSubmit={addTask} />
           <PoolStrip pool={pool} />
           {view === 'kanban' ? (
             <>
               <div style={kanbanStyle}>
-                {COLUMNS.map((col) => (
-                  <div key={col.key} style={colStyle(col.key === 'executing')}>
-                    <div style={colHeadStyle}>
-                      <span style={colNameStyle}>{col.label}</span>
-                      <span style={colCountStyle}>{countFor(col.key)}</span>
+                {COLUMNS.map((col) => {
+                  const colTasks = tasksInColumn(tasks, col.key)
+                  return (
+                    <div key={col.key} style={colStyle(col.key === 'executing')}>
+                      <div style={colHeadStyle}>
+                        <span style={colNameStyle}>{col.label}</span>
+                        <span style={colCountStyle}>{colTasks.length}</span>
+                      </div>
+                      <div style={colBodyStyle}>
+                        {colTasks.length === 0 ? (
+                          <div style={slotStyle} />
+                        ) : (
+                          colTasks.map((t) => <TaskCard key={t.id} task={t} onRetry={retryTask} />)
+                        )}
+                      </div>
                     </div>
-                    <div style={slotStyle} />
-                  </div>
-                ))}
+                  )
+                })}
               </div>
               {tasks.length === 0 && (
                 <div style={emptyHintStyle}>
                   <div style={emptyBigStyle}>No tasks yet</div>
                   <div style={emptySubStyle}>
-                    Describe a task above to dispatch a feature zone (Phase&nbsp;C).
+                    Describe a task above to queue it; dispatch to a feature zone lands in
+                    Phase&nbsp;C.
                   </div>
                 </div>
               )}
@@ -276,48 +291,88 @@ function CtlBtn({
   )
 }
 
-// ── The inert submit well (renders, but dispatch is Phase C) ───────────────────
-function SubmitWell(): ReactElement {
+// ── The submit well: enqueue a task on Enter / Dispatch (Phase B; worker dispatch is Phase C) ──
+function SubmitWell({ onSubmit }: { onSubmit: (title: string) => string | null }): ReactElement {
+  const [value, setValue] = useState('')
+  const submit = (): void => {
+    if (!value.trim()) return
+    onSubmit(value)
+    setValue('')
+  }
   return (
-    <div
-      style={{
-        background: 'var(--inset)',
-        border: '1px solid var(--border-subtle)',
-        borderRadius: 'var(--r-inner)',
-        padding: '8px 10px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        flex: 'none'
-      }}
-    >
+    <div style={submitWellStyle}>
       <span style={{ color: 'var(--accent)', fontFamily: 'var(--mono)' }}>›</span>
-      <span
-        style={{
-          color: 'var(--text-faint)',
-          fontFamily: 'var(--mono)',
-          fontSize: 11.5,
-          flex: 1,
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
+      <input
+        // nodrag + stopPropagation so typing/clicking in the field never drags the board or fires
+        // canvas keybindings (e.g. `t` tidy, Backspace delete) while a task is being composed.
+        className="cmd-submit-input nodrag"
+        value={value}
+        placeholder="Describe a task to dispatch…"
+        onChange={(e) => setValue(e.target.value)}
+        onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            submit()
+          }
         }}
-      >
-        Describe a task to dispatch…
-      </span>
-      <span
-        style={{
-          color: 'var(--text-faint)',
-          fontSize: 11,
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--r-ctl)',
-          padding: '3px 9px',
-          flex: 'none'
+        style={submitInputStyle}
+      />
+      <button
+        className="nodrag"
+        title="Dispatch (Enter)"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          submit()
         }}
+        style={dispatchBtnStyle}
       >
         Dispatch ⏎
+      </button>
+    </div>
+  )
+}
+
+// ── A single task card in a kanban column ──────────────────────────────────────
+const STATUS_DOT: Record<TaskStatus, string> = {
+  queued: 'var(--text-faint)',
+  routing: 'var(--accent)',
+  executing: 'var(--ok)',
+  reporting: 'var(--warn)',
+  done: 'var(--ok)',
+  failed: 'var(--err)'
+}
+function TaskCard({
+  task,
+  onRetry
+}: {
+  task: CommandTask
+  onRetry: (id: string) => void
+}): ReactElement {
+  return (
+    <div className="nodrag" style={cardStyle} onPointerDown={(e) => e.stopPropagation()}>
+      <span style={{ ...cardDotStyle, background: STATUS_DOT[task.status] }} />
+      <span style={cardBodyStyle}>
+        <span style={cardTitleStyle}>{task.title}</span>
+        {task.status === 'executing' && <span style={cardSubStyle}>awaiting completion…</span>}
       </span>
+      {task.status === 'failed' && (
+        <button
+          className="nodrag"
+          title="Retry"
+          aria-label="Retry task"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onRetry(task.id)
+          }}
+          style={retryBtnStyle}
+        >
+          ↻
+        </button>
+      )}
     </div>
   )
 }
@@ -499,6 +554,95 @@ const slotStyle: CSSProperties = {
   border: '1px dashed var(--border-subtle)',
   borderRadius: 'var(--r-ctl)',
   minHeight: 30
+}
+const colBodyStyle: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6
+}
+const submitWellStyle: CSSProperties = {
+  background: 'var(--inset)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--r-inner)',
+  padding: '6px 8px 6px 10px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flex: 'none'
+}
+const submitInputStyle: CSSProperties = {
+  color: 'var(--text)',
+  fontFamily: 'var(--mono)',
+  fontSize: 11.5,
+  flex: 1,
+  minWidth: 0,
+  border: 'none',
+  outline: 'none',
+  background: 'transparent'
+}
+const dispatchBtnStyle: CSSProperties = {
+  color: 'var(--text-3)',
+  fontSize: 11,
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--r-ctl)',
+  padding: '3px 9px',
+  flex: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap'
+}
+const cardStyle: CSSProperties = {
+  display: 'flex',
+  gap: 7,
+  alignItems: 'flex-start',
+  padding: '6px 8px',
+  background: 'var(--surface-raised)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--r-ctl)',
+  flex: 'none'
+}
+const cardDotStyle: CSSProperties = {
+  width: 7,
+  height: 7,
+  borderRadius: 999,
+  flex: 'none',
+  marginTop: 4
+}
+const cardBodyStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  flex: 1,
+  minWidth: 0
+}
+const cardTitleStyle: CSSProperties = {
+  color: 'var(--text-2)',
+  fontSize: 11,
+  lineHeight: 1.3,
+  overflowWrap: 'anywhere'
+}
+const cardSubStyle: CSSProperties = {
+  color: 'var(--text-faint)',
+  fontFamily: 'var(--mono)',
+  fontSize: 9.5
+}
+const retryBtnStyle: CSSProperties = {
+  flex: 'none',
+  width: 18,
+  height: 18,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: 'var(--r-ctl)',
+  border: '1px solid var(--border-subtle)',
+  background: 'transparent',
+  color: 'var(--text-3)',
+  fontSize: 11,
+  cursor: 'pointer',
+  padding: 0
 }
 const emptyHintStyle: CSSProperties = {
   display: 'flex',

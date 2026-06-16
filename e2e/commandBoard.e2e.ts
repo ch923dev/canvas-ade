@@ -35,7 +35,7 @@ const commandCount = (page: Page): Promise<number> =>
       ).length
   )
 
-test.describe('@core command board shell (Phase A)', () => {
+test.describe('@core command board shell (Phase A/B)', () => {
   test('renders the orchestrator frame: COMMAND tag · worker pool · empty kanban', async ({
     page
   }) => {
@@ -83,5 +83,28 @@ test.describe('@core command board shell (Phase A)', () => {
     await node.getByRole('button', { name: /expand/ }).click()
     await expect.poll(async () => (await boardById(page, id))?.h).toBe(expanded)
     await expect(node.getByText('No tasks yet')).toBeVisible()
+  })
+
+  test('Phase B: submitting a task enqueues a Queued card (Enter + Dispatch button)', async ({
+    page
+  }) => {
+    const id = await seed(page, 'command')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+    const node = page.locator(`[data-id="${id}"]`)
+    await expect(node.getByText('No tasks yet')).toBeVisible()
+
+    // Enter submits: a queued card appears and the empty hint clears.
+    const input = node.locator('input.cmd-submit-input')
+    await input.fill('Build the auth flow')
+    await input.press('Enter')
+    await expect(node.getByText('Build the auth flow')).toBeVisible()
+    await expect(node.getByText('No tasks yet')).toHaveCount(0)
+
+    // The Dispatch button submits a second task → two cards live in the queue.
+    await input.fill('Add dark mode')
+    await node.getByRole('button', { name: /Dispatch/ }).click()
+    await expect(node.getByText('Add dark mode')).toBeVisible()
+    await expect(node.getByText('Build the auth flow')).toBeVisible()
   })
 })
