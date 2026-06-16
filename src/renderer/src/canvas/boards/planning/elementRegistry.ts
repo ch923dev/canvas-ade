@@ -243,6 +243,11 @@ const ELEMENT_GEOMETRY: ElementGeometryRegistry = {
   diagram: {
     bbox: (el) => ({ x: el.x, y: el.y, w: el.w, h: el.h }),
     hitTest: (el, p, tol) => inRect(p, el.x, el.y, el.w, el.h, tol)
+  },
+  // v12/file-tree S1: file-reference chip — an explicit w/h box with a tolerance-padded hit rect.
+  fileref: {
+    bbox: (el) => ({ x: el.x, y: el.y, w: el.w, h: el.h }),
+    hitTest: (el, p, tol) => inRect(p, el.x, el.y, el.w, el.h, tol)
   }
 }
 

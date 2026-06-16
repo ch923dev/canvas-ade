@@ -142,10 +142,20 @@ export interface CanvasState {
       size?: { w: number; h: number }
       exact?: boolean
       configPending?: boolean
+      /** File board only (v12): bind the new board to this relative path. */
+      path?: string
     }
   ) => string
   /** Clear the New Terminal config-pending flag (dialog Create/Cancel), releasing the spawn. */
   clearConfigPending: () => void
+  /**
+   * Open a File board bound to `relPath` (file-tree epic, the S1 contract the tree-row click +
+   * the file-ref chip click both call). If a File board for that EXACT path is already open,
+   * SELECTS it instead of duplicating; otherwise creates a fresh `'file'` board near the
+   * current viewport via the normal add-board path (one undo step, freeSlot-placed). Returns
+   * the board id (the existing one when re-focusing).
+   */
+  openFileBoard: (relPath: string) => string
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
@@ -533,7 +543,10 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     'monitorActivity'
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
-  planning: [...COMMON_KEYS, 'elements']
+  planning: [...COMMON_KEYS, 'elements'],
+  // v12 file board (file-tree S1): the bound relative path + the read-only flag, on top of
+  // the common geometry/title keys. Content is never persisted (read live from disk).
+  file: [...COMMON_KEYS, 'path', 'readOnly']
 }
 
 /**
@@ -586,7 +599,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // exact:true honours a deliberately-drawn rectangle (drag-create) verbatim; otherwise
     // nudge off any overlap (click-spawn / the MCP spawn path).
     const pos = opts?.exact ? at : freeSlot(get().boards, at, size)
-    const board = createBoard(type, { id, x: pos.x, y: pos.y, w: size.w, h: size.h })
+    const board = createBoard(type, {
+      id,
+      x: pos.x,
+      y: pos.y,
+      w: size.w,
+      h: size.h,
+      // File board only: bind the relative path (createBoard ignores it for other types).
+      ...(opts?.path ? { path: opts.path } : {})
+    })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
     // Place-first New Terminal flow: a user-placed terminal holds its spawn until the
@@ -606,6 +627,26 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   clearConfigPending: () => set({ configPendingId: null }),
+
+  openFileBoard: (relPath) => {
+    // Re-focus an already-open File board for the EXACT same path instead of duplicating.
+    const existing = get().boards.find((b) => b.type === 'file' && b.path === relPath)
+    if (existing) {
+      get().selectBoard(existing.id)
+      return existing.id
+    }
+    // Place near the current viewport centre when a camera transform is known (derive the
+    // world-space centre from the persisted viewport + the window size); else fall back to
+    // the origin. freeSlot nudges off any overlap, exactly like the dock add-board path.
+    const vp = get().viewport
+    const w = typeof window !== 'undefined' ? window.innerWidth : 1280
+    const h = typeof window !== 'undefined' ? window.innerHeight : 800
+    const size = DEFAULT_BOARD_SIZE.file
+    const at = vp
+      ? { x: (w / 2 - vp.x) / vp.zoom - size.w / 2, y: (h / 2 - vp.y) / vp.zoom - size.h / 2 }
+      : { x: -size.w / 2, y: -size.h / 2 }
+    return get().addBoard('file', at, { path: relPath })
+  },
 
   removeBoard: (id) =>
     set((s) => {

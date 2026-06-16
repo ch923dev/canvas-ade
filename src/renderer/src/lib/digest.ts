@@ -10,6 +10,7 @@ import type {
   BrowserBoard,
   CanvasDoc,
   ChecklistElement,
+  FileBoard,
   PlanningBoard,
   TerminalBoard
 } from './boardSchema'
@@ -91,6 +92,18 @@ function digestPlanning(b: PlanningBoard): BoardDigest {
   return { boardId: b.id, type: 'planning', title: b.title, status, lines }
 }
 
+function digestFile(b: FileBoard): BoardDigest {
+  const lines: string[] = b.path ? [`File ${b.path}`] : ['No file bound']
+  if (b.readOnly) lines.push('Read-only')
+  return {
+    boardId: b.id,
+    type: 'file',
+    title: b.title,
+    status: b.path ? 'bound' : 'unbound',
+    lines
+  }
+}
+
 function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
   switch (b.type) {
     case 'terminal':
@@ -99,6 +112,8 @@ function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
       return digestBrowser(b, d)
     case 'planning':
       return digestPlanning(b)
+    case 'file':
+      return digestFile(b)
   }
 }
 

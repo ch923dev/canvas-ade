@@ -31,6 +31,7 @@ import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
 import { registerProjectHandlers } from './projectIpc'
+import { registerFileIpc } from './fileIpc'
 import { runSummarize, defaultDeps } from './llmService'
 import { registerLlmHandlers } from './llmIpc'
 import type { Encryptor } from './llmKeyStore'
@@ -280,6 +281,9 @@ app.whenReady().then(async () => {
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerClipboardHandlers(ipcMain, () => mainWindow)
+  // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The
+  // chokidar watcher that emits file:treeEvent lands in S2; the channel is reserved here.
+  registerFileIpc(ipcMain, () => mainWindow)
   registerBoardRegistryHandler(ipcMain, () => mainWindow)
   // 🔒 MCP dispatch audit trail (T4.1) — wired BEFORE startMcpServer (BUG-025) so the
   // getAuditLog() seam the dispatch tools append through is already non-null the instant

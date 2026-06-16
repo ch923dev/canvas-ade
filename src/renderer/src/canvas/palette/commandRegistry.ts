@@ -70,7 +70,8 @@ export interface PaletteSnapshot {
 const TYPE_LABEL: Record<BoardType, string> = {
   terminal: 'terminal',
   browser: 'browser',
-  planning: 'planning'
+  planning: 'planning',
+  file: 'file'
 }
 
 export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): PaletteCommand[] {

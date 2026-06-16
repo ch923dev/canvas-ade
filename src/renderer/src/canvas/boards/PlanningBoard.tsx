@@ -31,6 +31,7 @@ import type {
 import { useCanvasStore } from '../../store/canvasStore'
 import { screenToBoard, screenScale } from '../../lib/pen'
 import { BoardFrame } from '../BoardFrame'
+import { TypeGlyph } from '../TypeGlyph'
 import type { BoardViewProps } from '../BoardNode'
 import { NoteCard } from './planning/NoteCard'
 import { FreeText } from './planning/FreeText'
@@ -672,6 +673,74 @@ export function PlanningBoard({
                 onCache={onDiagramCache}
                 onResize={resizeDiagram}
               />
+            )
+          }
+          if (el.kind === 'fileref') {
+            // file-tree S1 PLACEHOLDER chip: the real clickable FileRefCard (open-on-click +
+            // drag-to-create) lands in S4. This minimal render keeps a `fileref` element from
+            // ever being dropped silently, so a v12 doc carrying one is visible end-to-end.
+            return (
+              <div
+                key={el.id}
+                className="pl-fileref"
+                style={{
+                  position: 'absolute',
+                  left: el.x,
+                  top: el.y,
+                  width: el.w,
+                  height: el.h,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '0 10px',
+                  borderRadius: 'var(--r-inner)',
+                  background: 'var(--surface-raised)',
+                  border: '1px solid var(--border-subtle)',
+                  outline: selectedIds.has(el.id) ? '1.5px solid var(--accent)' : 'none',
+                  outlineOffset: 2,
+                  cursor: interactive ? 'grab' : 'default',
+                  overflow: 'hidden'
+                }}
+                onPointerDown={(e) => {
+                  if (!interactive || e.button !== 0) return
+                  e.stopPropagation()
+                  selectOnPress(el.id, e.shiftKey)
+                  onDragStartStable(e, el.id)
+                }}
+              >
+                <span style={{ color: 'var(--text-3)', display: 'inline-flex', flex: 'none' }}>
+                  <TypeGlyph type="file" />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontFamily: 'var(--ui)',
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      color: 'var(--text)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
+                    {el.label}
+                  </span>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontFamily: 'var(--mono)',
+                      fontSize: 11,
+                      color: 'var(--text-3)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
+                    {el.path}
+                  </span>
+                </span>
+              </div>
             )
           }
           return null
