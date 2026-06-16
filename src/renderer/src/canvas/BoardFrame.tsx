@@ -18,7 +18,8 @@ import { TypeGlyph } from './TypeGlyph'
 const TYPE_TAG: Record<BoardType, string> = {
   terminal: 'TERMINAL',
   browser: 'BROWSER',
-  planning: 'PLANNING'
+  planning: 'PLANNING',
+  file: 'FILE'
 }
 
 /** Status indicator: a coloured dot (`--ok` pulses) + optional mono label. */

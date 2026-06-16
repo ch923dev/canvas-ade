@@ -42,6 +42,13 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
  *   Both optional + defaulted-at-read → identity bump; ADDITIVE so MIN_READER_VERSION stays 9 (an
  *   older reader opens v10 docs; the two fields ride through `structuredClone` and survive a save).
  *   Do not silently reuse a version for a new shape.
+ * - **v11 = the Planning `diagram` element kind** (S4 — Mermaid Diagram). A new element kind is
+ *   BREAKING (floor → 11): a pre-11 `assertPlanningElement` throws on the unknown kind. Identity
+ *   migration (the kind only appears on newly-authored diagram elements).
+ * - **v12 = the file-tree foundation** (S1). Adds BOTH the `'file'` BOARD type and the `'fileref'`
+ *   Planning ELEMENT kind at once. Both are BREAKING (floor → 12): a pre-12 `assertBoard` /
+ *   `assertPlanningElement` throws on the unknown type/kind. Identity migration (the new type/kind
+ *   only appear on newly-authored content). The foundation slice owns the WHOLE v12 bump.
  */
 // SCHEMA_VERSION + MIN_READER_VERSION are defined in ./boardSchemaVersion (a dependency-free module)
 // so a main-side lock-step test can import the authoritative numbers without dragging in this file's
@@ -67,7 +74,7 @@ export { SCHEMA_VERSION, MIN_READER_VERSION }
  */
 // MIN_READER_VERSION is imported + re-exported above from ./boardSchemaVersion (see BUG-013/014).
 
-export type BoardType = 'terminal' | 'browser' | 'planning'
+export type BoardType = 'terminal' | 'browser' | 'planning' | 'file'
 
 /** Browser responsive presets (widths live in cameraBounds/the Browser board). */
 export type BrowserViewport = 'mobile' | 'tablet' | 'desktop'
@@ -125,6 +132,21 @@ export interface BrowserBoard extends BoardCommon {
   viewport: BrowserViewport
   /** Slice C′: the Terminal board id that pushed this preview (the link/arrow source). */
   previewSourceId?: string
+}
+
+/**
+ * v12: an on-canvas file viewer/editor board (file-tree epic). `path` is RELATIVE to the
+ * project root (the same root every `file:*` IPC re-resolves against); absent ⇒ an UNBOUND
+ * placeholder (no file opened yet — the dock creates one of these). File CONTENT is NOT
+ * persisted — it is read live from disk via `window.api.file`, respecting the scene/session
+ * split. `readOnly` (optional) marks a board the editor opens view-only (S3 consumes it).
+ */
+export interface FileBoard extends BoardCommon {
+  type: 'file'
+  /** Relative POSIX path to the file under the project root. Absent ⇒ unbound placeholder. */
+  path?: string
+  /** Open the file view-only (S3). Absent ⇒ editable. */
+  readOnly?: boolean
 }
 
 // ── Planning elements (whiteboard content; 2.3 owns the rich impl) ────────────
@@ -221,6 +243,23 @@ export interface DiagramElement extends ElementCommon {
   svgCache?: string
 }
 
+/**
+ * v12: a Planning file-reference chip (file-tree epic). A clickable card that points at a
+ * project file by RELATIVE path (same root as the `file:*` IPC); clicking it opens the file
+ * as a File board (S4 wires the click + the drop-to-create gesture). `label` is the display
+ * name (typically the basename). A new element kind is breaking → schema v12 / floor 12.
+ */
+export interface FileRefElement extends ElementCommon {
+  kind: 'fileref'
+  /** Relative POSIX path to the referenced file under the project root. */
+  path: string
+  /** Display label (typically the file's basename). */
+  label: string
+  /** Display box (board-local px). */
+  w: number
+  h: number
+}
+
 export type PlanningElement =
   | NoteElement
   | TextElement
@@ -229,13 +268,14 @@ export type PlanningElement =
   | ChecklistElement
   | ImageElement
   | DiagramElement
+  | FileRefElement
 
 export interface PlanningBoard extends BoardCommon {
   type: 'planning'
   elements: PlanningElement[]
 }
 
-export type Board = TerminalBoard | BrowserBoard | PlanningBoard
+export type Board = TerminalBoard | BrowserBoard | PlanningBoard | FileBoard
 
 // ── Connectors (M2 — spatial board↔board edges) ────────────────────────────────
 // A typed cable between two boards. `preview` mirrors the runtime `previewSourceId`
@@ -350,13 +390,15 @@ export const MIN_BOARD_SIZE = { w: 240, h: 160 } as const
 export const DEFAULT_BOARD_SIZE: Record<BoardType, { w: number; h: number }> = {
   terminal: { w: 420, h: 340 },
   browser: { w: 700, h: 500 },
-  planning: { w: 516, h: 366 }
+  planning: { w: 516, h: 366 },
+  file: { w: 520, h: 380 }
 }
 
 const DEFAULT_TITLE: Record<BoardType, string> = {
   terminal: 'Terminal',
   browser: 'Browser',
-  planning: 'Planning'
+  planning: 'Planning',
+  file: 'File'
 }
 
 /** Seed URL for a new Browser board (basic edit lands in 2.2; port assignment Phase 3). */
@@ -372,6 +414,8 @@ export interface CreateBoardOpts {
   w?: number
   h?: number
   z?: number
+  /** File board only (v12): bind the new board to this RELATIVE path; omitted ⇒ unbound. */
+  path?: string
 }
 
 /**
@@ -399,6 +443,9 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
       return { ...base, type, url: DEFAULT_BROWSER_URL, viewport: 'desktop' }
     case 'planning':
       return { ...base, type, elements: [] }
+    case 'file':
+      // Unbound by default; openFileBoard passes opts.path to bind it to a file.
+      return { ...base, type, ...(opts.path ? { path: opts.path } : {}) }
   }
 }
 
@@ -493,7 +540,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v11: the `diagram` element kind (S4). The kind only appears on newly-authored diagram elements,
   // so existing docs have nothing to backfill — the migration only bumps the version. BREAKING
   // (floor → 11): a pre-11 reader can't validate the new kind (boardSchemaVersion.ts).
-  10: (doc) => ({ ...doc, schemaVersion: 11 })
+  10: (doc) => ({ ...doc, schemaVersion: 11 }),
+  // v12: the `file` board type AND `fileref` element kind (file-tree S1). Both only appear on
+  // newly-authored content, so existing docs have nothing to backfill — identity bump. BREAKING
+  // (floor → 12): a pre-12 reader can't validate either new type/kind (boardSchemaVersion.ts).
+  11: (doc) => ({ ...doc, schemaVersion: 12 })
 }
 
 /**
@@ -687,6 +738,15 @@ export function assertPlanningElement(el: unknown): void {
         fail('diagram element has an empty/non-string svgCache')
       }
       return
+    case 'fileref':
+      if (typeof el.path !== 'string' || el.path.length === 0) {
+        fail('fileref element has an empty/non-string path')
+      }
+      if (typeof el.label !== 'string' || el.label.length === 0) {
+        fail('fileref element has an empty/non-string label')
+      }
+      if (!isPositiveNum(el.w) || !isPositiveNum(el.h)) fail('fileref element has non-positive w/h')
+      return
     default:
       fail(`planning element has an unknown kind ${String(el.kind)}`)
   }
@@ -741,6 +801,16 @@ function assertBoard(b: unknown): void {
     case 'planning':
       if (!Array.isArray(b.elements)) fail('planning board elements is not an array')
       b.elements.forEach(assertPlanningElement)
+      return
+    case 'file':
+      // path is optional (absent = unbound placeholder); when present it must be a string
+      // — MAIN re-validates + root-confines it on every file:* op (the renderer trusts no
+      // path), so this is a shape check, not a containment check.
+      if (b.path !== undefined && typeof b.path !== 'string')
+        fail('file board path is not a string')
+      if (b.readOnly !== undefined && typeof b.readOnly !== 'boolean') {
+        fail('file board readOnly is not a boolean')
+      }
       return
     default:
       fail(`board has an unknown type ${String(b.type)}`)

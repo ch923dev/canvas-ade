@@ -80,7 +80,8 @@ describe('size constants', () => {
     expect(DEFAULT_BOARD_SIZE).toEqual({
       terminal: { w: 420, h: 340 },
       browser: { w: 700, h: 500 },
-      planning: { w: 516, h: 366 }
+      planning: { w: 516, h: 366 },
+      file: { w: 520, h: 380 }
     })
   })
 })
@@ -537,8 +538,27 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(11)
-    expect(MIN_READER_VERSION).toBe(11)
+    expect(SCHEMA_VERSION).toBe(12)
+    expect(MIN_READER_VERSION).toBe(12)
+    expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
+  })
+
+  // v12/file-tree S1: the `file` board type + `fileref` element kind are breaking → both
+  // SCHEMA_VERSION and the compat floor move to 12. The migration is identity (the new
+  // type/kind only appear on newly-authored content) — an existing v11 doc bumps untouched.
+  it('migrates a v11 doc to v12 (file board + fileref kind) without touching existing boards', () => {
+    const note = { id: 'n', kind: 'note', x: 0, y: 0, w: 10, h: 10, text: 'hi', tint: 'yellow' }
+    const v11 = {
+      schemaVersion: 11,
+      minReaderVersion: 11,
+      viewport: null,
+      connectors: [],
+      boards: [
+        { id: 'p', type: 'planning', title: 'P', x: 0, y: 0, w: 300, h: 200, elements: [note] }
+      ]
+    }
+    const out = migrate(structuredClone(v11) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(12)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
 
@@ -614,15 +634,15 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 11', () => {
-    expect(SCHEMA_VERSION).toBe(11)
+  it('SCHEMA_VERSION is 12', () => {
+    expect(SCHEMA_VERSION).toBe(12)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 11,
-      minReaderVersion: 11,
+      schemaVersion: 12,
+      minReaderVersion: 12,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -807,8 +827,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 11', () => {
-    expect(SCHEMA_VERSION).toBe(11)
+  it('SCHEMA_VERSION is 12', () => {
+    expect(SCHEMA_VERSION).toBe(12)
   })
 
   it('round-trips a valid image element', () => {
@@ -861,8 +881,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 11', () => {
-    expect(SCHEMA_VERSION).toBe(11)
+  it('SCHEMA_VERSION is 12', () => {
+    expect(SCHEMA_VERSION).toBe(12)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -1498,11 +1518,12 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('v10 was additive (no floor move of its own) — the current writer stamps floor 11 (v11 diagram kind)', () => {
-    // v10 (agentKind/monitorActivity) was additive; the compat floor only moved with the v11
-    // breaking `diagram` element kind. toObject stamps the CURRENT floor (MIN_READER_VERSION = 11).
-    expect(toObject([], null).minReaderVersion).toBe(11)
-    expect(MIN_READER_VERSION).toBe(11)
+  it('v10 was additive (no floor move of its own) — the current writer stamps floor 12 (v11 diagram + v12 file kinds)', () => {
+    // v10 (agentKind/monitorActivity) was additive; the compat floor moved with the v11 breaking
+    // `diagram` element kind and again with the v12 breaking `file` board + `fileref` element
+    // kinds. toObject stamps the CURRENT floor (MIN_READER_VERSION = 12).
+    expect(toObject([], null).minReaderVersion).toBe(12)
+    expect(MIN_READER_VERSION).toBe(12)
   })
 
   it('round-trips agentKind + monitorActivity', () => {
@@ -1531,6 +1552,102 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
   it('rejects a non-boolean monitorActivity', () => {
     expect(() => fromObject(v9doc({ monitorActivity: 'yes' }))).toThrow(
       /monitorActivity is not a boolean/
+    )
+  })
+})
+
+// ── File-tree foundation (schema v12): `file` board type + `fileref` element kind ─────
+describe('schema v12 — file board + fileref element', () => {
+  const fileBoard = (extra: Record<string, unknown>): unknown => ({
+    schemaVersion: 12,
+    minReaderVersion: 12,
+    viewport: null,
+    connectors: [],
+    boards: [{ id: 'f1', type: 'file', title: 'File', x: 0, y: 0, w: 520, h: 380, ...extra }]
+  })
+  const filerefDoc = (el: Record<string, unknown>): unknown => ({
+    schemaVersion: 12,
+    minReaderVersion: 12,
+    viewport: null,
+    connectors: [],
+    boards: [{ id: 'p1', type: 'planning', title: 'P', x: 0, y: 0, w: 300, h: 200, elements: [el] }]
+  })
+  const goodFileref = {
+    id: 'r1',
+    kind: 'fileref',
+    x: 5,
+    y: 6,
+    path: 'src/index.ts',
+    label: 'index.ts',
+    w: 200,
+    h: 56
+  }
+
+  it('createBoard makes an UNBOUND file board (no path) by default', () => {
+    const b = createBoard('file', { id: 'f1', x: 1, y: 2 })
+    expect(b).toMatchObject({ id: 'f1', type: 'file', x: 1, y: 2, w: 520, h: 380 })
+    expect(b).not.toHaveProperty('path')
+  })
+
+  it('createBoard binds opts.path when provided', () => {
+    const b = createBoard('file', { id: 'f1', x: 0, y: 0, path: 'README.md' })
+    expect(b.type).toBe('file')
+    if (b.type === 'file') expect(b.path).toBe('README.md')
+  })
+
+  it('round-trips a bound, read-only file board', () => {
+    const back = fromObject(fileBoard({ path: 'src/a.ts', readOnly: true }))
+    const b = back.boards[0]
+    expect(b.type).toBe('file')
+    if (b.type === 'file') {
+      expect(b.path).toBe('src/a.ts')
+      expect(b.readOnly).toBe(true)
+    }
+  })
+
+  it('accepts an unbound file board (no path / no readOnly)', () => {
+    const back = fromObject(fileBoard({}))
+    const b = back.boards[0]
+    if (b.type === 'file') {
+      expect(b.path).toBeUndefined()
+      expect(b.readOnly).toBeUndefined()
+    }
+  })
+
+  it('rejects a non-string file board path', () => {
+    expect(() => fromObject(fileBoard({ path: 42 }))).toThrow(/file board path is not a string/)
+  })
+
+  it('rejects a non-boolean file board readOnly', () => {
+    expect(() => fromObject(fileBoard({ readOnly: 'yes' }))).toThrow(
+      /file board readOnly is not a boolean/
+    )
+  })
+
+  it('round-trips a fileref element', () => {
+    const back = fromObject(filerefDoc(goodFileref))
+    const p = back.boards[0]
+    expect(p.type).toBe('planning')
+    if (p.type === 'planning') expect(p.elements[0]).toEqual(goodFileref)
+  })
+
+  it('rejects a fileref with an empty path', () => {
+    expect(() => fromObject(filerefDoc({ ...goodFileref, path: '' }))).toThrow(
+      /fileref element has an empty\/non-string path/
+    )
+  })
+
+  it('rejects a fileref with a missing label', () => {
+    const { label: _label, ...noLabel } = goodFileref
+    void _label
+    expect(() => fromObject(filerefDoc(noLabel))).toThrow(
+      /fileref element has an empty\/non-string label/
+    )
+  })
+
+  it('rejects a fileref with non-positive w/h', () => {
+    expect(() => fromObject(filerefDoc({ ...goodFileref, w: 0 }))).toThrow(
+      /fileref element has non-positive w\/h/
     )
   })
 })
