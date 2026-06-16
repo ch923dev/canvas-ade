@@ -95,6 +95,21 @@ export default defineConfig({
     resolve: {
       alias: { '@renderer': resolve('src/renderer/src') }
     },
-    plugins: [react(), cspMeta()]
+    plugins: [react(), cspMeta()],
+    // Pre-bundle the CodeMirror 6 stack (file-tree S3) at dev startup. The File board is a
+    // LAZY chunk (BoardNode code-splits it), and CM6 fans out into many small packages
+    // (@codemirror/*, @lezer/*) that Vite's initial scan misses. Without this, the FIRST file
+    // board mount makes Vite re-optimize on demand, which 504s the in-flight dynamic import
+    // ("Outdated Optimize Dep") and the board renders the ErrorBoundary fallback. Listing the
+    // entry packages makes Vite pre-bundle the whole graph up front (dev-only; build is
+    // unaffected). The langs pack pulls in every grammar transitively.
+    optimizeDeps: {
+      include: [
+        '@uiw/react-codemirror',
+        '@uiw/codemirror-extensions-langs',
+        '@codemirror/language',
+        '@lezer/highlight'
+      ]
+    }
   }
 })
