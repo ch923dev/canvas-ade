@@ -126,6 +126,43 @@ export function nextQueuedTask(tasks: ReadonlyArray<CommandTask>): CommandTask |
   return tasks.find((t) => t.status === 'queued' && !t.group && typeof t.launchCommand === 'string')
 }
 
+/**
+ * Phase E — the Groups roll-up: one ZONE row per task (each dispatched task IS a feature zone), with
+ * its LIVE name resolved from the Named Group it spawned (`canvasStore.groups[groupId].name`, so a
+ * rename reflects) falling back to the engineered zoneName then the raw title; plus aggregate counts
+ * + a done-fraction. Pure + unit-testable — the single source of the zone index the Groups tab + its
+ * header render. `groups` is typed minimally (`{id,name}`) so this stays decoupled from boardSchema.
+ */
+export interface ZoneRow {
+  task: CommandTask
+  name: string
+}
+export interface GroupRollupResult {
+  zones: ZoneRow[]
+  counts: { total: number; done: number; running: number; queued: number; failed: number }
+  /** done / total (0 when empty) — the header's aggregate progress fill. */
+  progress: number
+}
+const RUNNING_STATUSES: ReadonlySet<TaskStatus> = new Set(['routing', 'executing', 'reporting'])
+export function groupRollup(
+  tasks: ReadonlyArray<CommandTask>,
+  groups: ReadonlyArray<{ id: string; name: string }>
+): GroupRollupResult {
+  const nameById = new Map(groups.map((g) => [g.id, g.name]))
+  const zones: ZoneRow[] = tasks.map((task) => ({
+    task,
+    name: (task.group ? nameById.get(task.group.groupId) : undefined) ?? task.zoneName ?? task.title
+  }))
+  const counts = { total: tasks.length, done: 0, running: 0, queued: 0, failed: 0 }
+  for (const t of tasks) {
+    if (t.status === 'done') counts.done++
+    else if (t.status === 'failed') counts.failed++
+    else if (t.status === 'queued') counts.queued++
+    else if (RUNNING_STATUSES.has(t.status)) counts.running++
+  }
+  return { zones, counts, progress: counts.total ? counts.done / counts.total : 0 }
+}
+
 /** Member tags for a task card — terminal always; planning/browser when the group spawned them. */
 export function memberTags(group: TaskGroup | undefined): Array<'term' | 'plan' | 'brow'> {
   if (!group) return []

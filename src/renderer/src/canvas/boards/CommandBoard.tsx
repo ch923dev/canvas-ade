@@ -28,10 +28,12 @@ import {
 import { deriveWorkerPool } from '../../store/workerPool'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
+import { prefersReducedMotion } from '../../lib/motion'
 import { useTerminalFlip } from './useTerminalFlip'
 import { SubmitWell } from './command/SubmitWell'
 import { TaskCard } from './command/TaskCard'
 import { CommandRecapView } from './command/CommandRecapView'
+import { GroupsView } from './command/GroupsView'
 import { WorkerConfigDialog } from './command/WorkerConfigDialog'
 import { useCommandDispatch } from './command/useCommandDispatch'
 
@@ -87,6 +89,9 @@ export function CommandBoard({
   // Command board is a node, so it lives inside the RF provider). Missing member ids are ignored.
   const flip = useTerminalFlip()
   const rf = useReactFlow()
+  // Phase E motion polish: a reduced-motion-gated crossfade on the Kanban↔Groups seg switch + an
+  // eased progress fill (the `.ca-t-fill` class, itself reduced-motion-gated in index.css).
+  const reducedMotion = prefersReducedMotion()
   const jumpToZone = useCallback(
     (task: CommandTask): void => {
       const g = task.group
@@ -194,7 +199,10 @@ export function CommandBoard({
         <div style={railStyle}>
           <SubmitWell onSubmit={dispatch} showComposition={false} />
           <div style={railTrackStyle}>
-            <span style={{ ...fillStyle, width: `${Math.round(progress * 100)}%` }} />
+            <span
+              className="ca-t-fill"
+              style={{ ...fillStyle, width: `${Math.round(progress * 100)}%` }}
+            />
           </div>
           <div style={railCountsStyle}>
             <Count
@@ -221,55 +229,64 @@ export function CommandBoard({
             <div style={{ ...bodyStyle, pointerEvents: flip.flipped ? 'none' : 'auto' }}>
               <SubmitWell onSubmit={dispatch} />
               <PoolStrip pool={pool} />
-              {view === 'kanban' ? (
-                <>
-                  <div style={kanbanStyle}>
-                    {COLUMNS.map((col) => {
-                      const colTasks = tasksInColumn(tasks, col.key)
-                      return (
-                        <div key={col.key} style={colStyle(col.key === 'executing')}>
-                          <div style={colHeadStyle}>
-                            <span style={colNameStyle}>{col.label}</span>
-                            <span style={colCountStyle}>{colTasks.length}</span>
+              {/* Phase E: the seg-body is keyed by `view` so a Kanban↔Groups switch remounts +
+                  plays a short crossfade (gated under prefers-reduced-motion). */}
+              <div
+                key={view}
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 11,
+                  ...(reducedMotion ? null : { animation: 'ca-lod-fade-in 120ms ease-out' })
+                }}
+              >
+                {view === 'kanban' ? (
+                  <>
+                    <div style={kanbanStyle}>
+                      {COLUMNS.map((col) => {
+                        const colTasks = tasksInColumn(tasks, col.key)
+                        return (
+                          <div key={col.key} style={colStyle(col.key === 'executing')}>
+                            <div style={colHeadStyle}>
+                              <span style={colNameStyle}>{col.label}</span>
+                              <span style={colCountStyle}>{colTasks.length}</span>
+                            </div>
+                            <div style={colBodyStyle}>
+                              {colTasks.length === 0 ? (
+                                <div style={slotStyle} />
+                              ) : (
+                                colTasks.map((t) => (
+                                  <TaskCard
+                                    key={t.id}
+                                    task={t}
+                                    configuring={configuringTaskId === t.id}
+                                    onRetry={retry}
+                                    onInterrupt={interrupt}
+                                    onReconfigure={reconfigure}
+                                    onJumpToZone={jumpToZone}
+                                  />
+                                ))
+                              )}
+                            </div>
                           </div>
-                          <div style={colBodyStyle}>
-                            {colTasks.length === 0 ? (
-                              <div style={slotStyle} />
-                            ) : (
-                              colTasks.map((t) => (
-                                <TaskCard
-                                  key={t.id}
-                                  task={t}
-                                  configuring={configuringTaskId === t.id}
-                                  onRetry={retry}
-                                  onInterrupt={interrupt}
-                                  onReconfigure={reconfigure}
-                                  onJumpToZone={jumpToZone}
-                                />
-                              ))
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {tasks.length === 0 && (
-                    <div style={emptyHintStyle}>
-                      <div style={emptyBigStyle}>No tasks yet</div>
-                      <div style={emptySubStyle}>
-                        Describe a task above and Dispatch — it spawns a worker zone and runs.
-                      </div>
+                        )
+                      })}
                     </div>
-                  )}
-                </>
-              ) : (
-                <div style={emptyHintStyle}>
-                  <div style={emptyBigStyle}>No groups yet</div>
-                  <div style={emptySubStyle}>
-                    Each dispatched task spawns its own named group of worker boards.
-                  </div>
-                </div>
-              )}
+                    {tasks.length === 0 && (
+                      <div style={emptyHintStyle}>
+                        <div style={emptyBigStyle}>No tasks yet</div>
+                        <div style={emptySubStyle}>
+                          Describe a task above and Dispatch — it spawns a worker zone and runs.
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <GroupsView onJumpToZone={jumpToZone} />
+                )}
+              </div>
             </div>
             {flip.flipped && <CommandRecapView onJumpToZone={jumpToZone} onRetry={retry} />}
           </div>

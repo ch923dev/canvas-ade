@@ -219,6 +219,48 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     await expect(node.getByText('Timeline')).toHaveCount(0)
   })
 
+  test('Phase E: the Groups tab rolls up spawned zones — names · counts · focus', async ({
+    page
+  }) => {
+    const id = await seed(page, 'command')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+    const node = page.locator(`[data-id="${id}"]`)
+
+    await page.evaluate(() =>
+      (globalThis as any).__canvasE2E.setCommandTasks([
+        {
+          id: 'z-1',
+          title: 'auth',
+          zoneName: 'Auth Feature',
+          status: 'done',
+          group: { groupId: 'g-1', terminalId: 't-1', planningId: 'p-1' },
+          result: { present: true, status: 'success', summary: 'shipped' },
+          diff: 'diff --git a/x b/x\n+a\n+b\n-c'
+        },
+        {
+          id: 'z-2',
+          title: 'dark',
+          zoneName: 'Dark Mode',
+          status: 'executing',
+          group: { groupId: 'g-2', terminalId: 't-2' }
+        },
+        { id: 'z-3', title: 'signup', zoneName: 'Signup Flow', status: 'queued' }
+      ])
+    )
+
+    await node.getByRole('button', { name: 'Groups' }).click()
+    // One zone row per task (the queued one too), labelled by its zone name.
+    await expect(node.getByText('Auth Feature')).toBeVisible()
+    await expect(node.getByText('Dark Mode')).toBeVisible()
+    await expect(node.getByText('Signup Flow')).toBeVisible()
+    // Header roll-up counts.
+    await expect(node.getByText('3 zones')).toBeVisible()
+    await expect(node.getByText('1 done')).toBeVisible()
+    // ↗ focus only for spawned zones (done + executing own a group; the queued one does not).
+    await expect(node.getByRole('button', { name: /focus/ })).toHaveCount(2)
+  })
+
   // The full dispatch choreography (submit → spawn an agent group → engineer the prompt → hand off,
   // confirm-gated → advance) is covered deterministically by the useCommandDispatch hook unit test
   // (mocked window.api) + the spawn primitive by spawnGroup.e2e + the confirm gate by mcp.e2e. A

@@ -13,6 +13,7 @@ import {
   parseEngineeredDispatch,
   fallbackTitle,
   singleLinePrompt,
+  groupRollup,
   DEFAULT_COMPOSITION
 } from './commandDispatch'
 import type { CommandTask, Composition, TaskStatus } from '../store/commandStore'
@@ -212,5 +213,47 @@ describe('nextStatusForBoardChange', () => {
   it('ignores a gone for a task that is not in flight', () => {
     expect(nextStatusForBoardChange('queued', 'gone')).toBeNull()
     expect(nextStatusForBoardChange('done', 'gone')).toBeNull()
+  })
+})
+
+describe('groupRollup (Phase E)', () => {
+  it('rolls up counts + done-fraction across all task statuses', () => {
+    const tasks = [
+      task('a', 'done', undefined, { groupId: 'g-a', terminalId: 't-a' }),
+      task('b', 'executing', undefined, { groupId: 'g-b', terminalId: 't-b' }),
+      task('c', 'reporting', undefined, { groupId: 'g-c', terminalId: 't-c' }),
+      task('d', 'queued'),
+      task('e', 'failed', undefined, { groupId: 'g-e', terminalId: 't-e' })
+    ]
+    const { counts, progress, zones } = groupRollup(tasks, [])
+    expect(counts).toEqual({ total: 5, done: 1, running: 2, queued: 1, failed: 1 })
+    expect(progress).toBeCloseTo(1 / 5)
+    expect(zones).toHaveLength(5) // every task is a zone row (queued ones too)
+  })
+
+  it('resolves the LIVE group name (canvasStore.groups) over zoneName over title', () => {
+    const withGroup: CommandTask = {
+      id: 'x',
+      title: 'raw title',
+      status: 'executing',
+      zoneName: 'Engineered Name',
+      group: { groupId: 'g1', terminalId: 't1' }
+    }
+    const renamedToLive = groupRollup([withGroup], [{ id: 'g1', name: 'Renamed Live' }])
+    expect(renamedToLive.zones[0].name).toBe('Renamed Live') // live group name wins
+
+    const noLive = groupRollup([withGroup], []) // group not in canvasStore mirror
+    expect(noLive.zones[0].name).toBe('Engineered Name') // falls back to zoneName
+
+    const bare: CommandTask = { id: 'y', title: 'bare title', status: 'queued' }
+    expect(groupRollup([bare], []).zones[0].name).toBe('bare title') // no group/zoneName → title
+  })
+
+  it('is empty for no tasks (progress 0, not NaN)', () => {
+    expect(groupRollup([], [])).toEqual({
+      zones: [],
+      counts: { total: 0, done: 0, running: 0, queued: 0, failed: 0 },
+      progress: 0
+    })
   })
 })
