@@ -33,7 +33,12 @@ test.describe('@core describeApp (read-only app self-model via the app-side seam
     expect(m, 'describeApp should resolve a model (MCP server mounted)').not.toBeNull()
     const model = m as AppModelShape
     expect(model.version).toBe(1)
-    expect(model.boardTypes.map((t) => t.type)).toEqual(['terminal', 'browser', 'planning'])
+    expect(model.boardTypes.map((t) => t.type)).toEqual([
+      'terminal',
+      'browser',
+      'planning',
+      'command'
+    ])
     // worker-tier is EXACTLY ping + write_result; everything else is orchestrator-tier
     const worker = model.tools
       .filter((t) => t.tier === 'worker')

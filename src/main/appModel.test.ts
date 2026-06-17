@@ -12,7 +12,7 @@ describe('buildAppModel (PR-3 app self-model)', () => {
   it('stamps version 1 and includes the static board-type + tool tables', () => {
     const m = buildAppModel(baseInputs())
     expect(m.version).toBe(1)
-    expect(m.boardTypes.map((t) => t.type)).toEqual(['terminal', 'browser', 'planning'])
+    expect(m.boardTypes.map((t) => t.type)).toEqual(['terminal', 'browser', 'planning', 'command'])
     expect(m.tools).toHaveLength(APP_TOOLS.length)
   })
 
@@ -34,6 +34,9 @@ describe('buildAppModel (PR-3 app self-model)', () => {
     expect(byType.terminal.seedable).toBe(true)
     expect(byType.browser.seedable).toBe(false)
     expect(byType.planning.seedable).toBe(true)
+    // command is the orchestrator's own face — not agent-spawnable, no tools target it
+    expect(byType.command.seedable).toBe(false)
+    expect(byType.command.tools).toEqual([])
   })
 
   it('every per-board-type tool references a tool in the global catalog', () => {

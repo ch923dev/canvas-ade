@@ -155,9 +155,10 @@ export const APP_TOOLS: readonly AppModelTool[] = [
 ]
 
 /**
- * The board-type capability table, mirrored from `boardSchema.ts` `BoardType`. (The `command`
- * board type is minted in Phase A and will be added here then.) `autowire` for browser is the
- * shipped runtime port-detect -> push-to-preview (Slice C').
+ * The board-type capability table, mirrored from `boardSchema.ts` `BoardType`. The `command` board
+ * (Phase A) is the orchestrator's OWN singleton dock board — listed for self-model completeness (a
+ * canvas can contain one) but NOT agent-spawnable and with no tools targeting it. `autowire` for
+ * browser is the shipped runtime port-detect -> push-to-preview (Slice C').
  */
 export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
   {
@@ -191,6 +192,15 @@ export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
     tools: ['spawn_board', 'add_planning_elements', 'close_board'],
     states: ['static'],
     seedable: true, // add_planning_elements (flag-gated)
+    autowire: null
+  },
+  {
+    type: 'command',
+    purpose:
+      "The orchestrator's own dock board: dispatches tasks to worker groups and collects their results. Singleton; user-created, NOT agent-spawnable.",
+    tools: [], // no agent tool targets the command board — it IS the orchestrator's face
+    states: ['static'],
+    seedable: false,
     autowire: null
   }
 ]
