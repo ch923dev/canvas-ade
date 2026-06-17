@@ -44,6 +44,18 @@ describe('renderMarkdownToHtml', () => {
     expect(h).toContain('cm-md-code')
   })
 
+  it('escapes image alt exactly once (alt-sanitization regression)', () => {
+    // Alt is escaped ONCE at the attribute — not regex tag-stripped (the CodeQL
+    // incomplete-multi-character-sanitization finding) and not double-escaped.
+    const h = renderMarkdownToHtml('![a < b](https://e.com/a.png)')
+    expect(h).toContain('src="https://e.com/a.png"')
+    expect(h).toContain('alt="a &lt; b"')
+    expect(h).not.toContain('&amp;') // a single-escaped "<" never becomes "&amp;lt;"
+    // A markup-looking alt label can never produce an unescaped tag in the output.
+    const evil = renderMarkdownToHtml('![<x onerror=y>](https://e.com/a.png)')
+    expect(evil).not.toContain('<x onerror')
+  })
+
   it('renders GFM tables + strikethrough', () => {
     const h = renderMarkdownToHtml('| A | B |\n| --- | --- |\n| 1 | 2 |\n\n~~no~~\n')
     expect(h).toContain('<table>')

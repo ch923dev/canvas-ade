@@ -72,8 +72,10 @@ function renderInline(node: SyntaxNode, src: string): string {
     case 'Image': {
       const url = node.getChild('URL')
       const srcUrl = url ? safeUrl(src.slice(url.from, url.to)) : ''
-      const alt = esc(linkAltText(node, src))
-      return srcUrl ? `<img src="${srcUrl}" alt="${alt}"/>` : esc(`![${alt}]`)
+      // `linkAltText` returns RAW text; escape it exactly once here (whether it lands in the
+      // `alt` attribute or the `![alt]` fallback) — never twice.
+      const alt = linkAltText(node, src)
+      return srcUrl ? `<img src="${srcUrl}" alt="${esc(alt)}"/>` : esc(`![${alt}]`)
     }
     case 'URL':
     case 'Autolink': {
@@ -105,8 +107,31 @@ function linkText(node: SyntaxNode, src: string): string {
   }
   return out.replace(/^\[|\]$/g, '')
 }
+/** Plain-text alt for an image: the label's source text with delimiter marks dropped. Built
+ *  straight from source (NO HTML, NO regex tag-stripping) so the `Image` caller can escape it
+ *  exactly once. This replaces a `.replace(/<[^>]+>/g,'')` strip that (a) CodeQL flags as
+ *  incomplete multi-character sanitization and (b) double-escaped an already-escaped string. */
 function linkAltText(node: SyntaxNode, src: string): string {
-  return linkText(node, src).replace(/<[^>]+>/g, '')
+  let out = ''
+  let pos = node.from
+  let stopped = false
+  for (const c of kids(node)) {
+    if (c.name === 'URL' || c.name === 'LinkTitle') {
+      stopped = true
+      break
+    }
+    if (c.from > pos) out += src.slice(pos, c.from)
+    if (c.name.endsWith('Mark')) {
+      pos = c.to
+      continue
+    }
+    out += linkAltText(c, src)
+    pos = c.to
+  }
+  // Trailing text after the last inline child — and the whole text of a LEAF node (no children).
+  // Skipped when we stopped at the URL: the rest is the link target, never alt text.
+  if (!stopped && pos < node.to) out += src.slice(pos, node.to)
+  return out
 }
 
 function listItems(node: SyntaxNode, src: string): string {

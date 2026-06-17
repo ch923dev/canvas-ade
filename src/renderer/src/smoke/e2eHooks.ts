@@ -697,6 +697,17 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // face) — a spec that switched the seg to 'groups' or collapsed the board would leak that
       // into the next spec (the cross-spec global-state class). Reset to the shipped defaults.
       useCommandStore.setState(commandStoreDefaults())
+      // S3: the File-board viewer font is sticky too (localStorage, persistent userData); the
+      // A-/A+ steppers ratchet it across runs (same self-ratchet class as the minimap above), so
+      // file.e2e's A+ assertion eventually fails once the base hits FILE_FONT_MAX. Clear it so
+      // each test starts from DEFAULT_FILE_FONT. Literal, not imported: fileBoardSyntax statically
+      // pulls in CodeMirror and e2eHooks is in the eager main bundle — importing the key would
+      // drag the lazy ~2.5MB CM6 chunk into startup.
+      try {
+        window.localStorage.removeItem('canvas-ade:file-font')
+      } catch {
+        // storage unavailable — nothing sticky to clear
+      }
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()

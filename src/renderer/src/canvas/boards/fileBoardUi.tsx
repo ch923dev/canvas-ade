@@ -244,9 +244,19 @@ export function FileActionsMenu({
     }
   }
   const copyGit = async (): Promise<void> => {
-    const res = await window.api.file.gitPermalink(path)
-    if (res.ok) await copyText(res.url, 'GitHub link', boardId)
-    else showToast({ id: `file-copy-${boardId}`, kind: 'error', message: res.reason })
+    // Guard like copyAbs: gitPermalink returns {ok:false} for expected misses, but the IPC can
+    // still reject (foreign-sender / unexpected MAIN error) — don't leak an unhandled rejection.
+    try {
+      const res = await window.api.file.gitPermalink(path)
+      if (res.ok) await copyText(res.url, 'GitHub link', boardId)
+      else showToast({ id: `file-copy-${boardId}`, kind: 'error', message: res.reason })
+    } catch {
+      showToast({
+        id: `file-copy-${boardId}`,
+        kind: 'error',
+        message: "Couldn't build a GitHub link"
+      })
+    }
   }
   return (
     <Menu anchor={at} label="File actions" className="board-menu" onClose={onClose}>
