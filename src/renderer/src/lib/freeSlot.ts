@@ -57,3 +57,23 @@ export function freeSlot(
   }
   return { x: at.x + PLACE_GAP, y: at.y + PLACE_GAP }
 }
+
+/**
+ * World-space point at the CENTRE of the current viewport — the spawn anchor for a user-initiated
+ * board/zone, so it lands where the user is looking instead of a fixed canvas origin. React Flow's
+ * transform is `screen = world * zoom + pan`, so the world point under screen-centre `(W/2, H/2)` is
+ * `(W/2 - pan.x) / zoom`. Returns `fallback` when there is no viewport yet (fresh project, pre-fit).
+ * Pure — the caller passes the live window size; `freeSlot` then nudges off any overlap (e.g. the
+ * Command board itself sitting at centre), so the zone tucks in beside it, in view.
+ */
+export function viewportCenterWorld(
+  viewport: { x: number; y: number; zoom: number } | null | undefined,
+  screen: { w: number; h: number },
+  fallback: { x: number; y: number }
+): { x: number; y: number } {
+  if (!viewport || viewport.zoom <= 0) return fallback
+  return {
+    x: (screen.w / 2 - viewport.x) / viewport.zoom,
+    y: (screen.h / 2 - viewport.y) / viewport.zoom
+  }
+}

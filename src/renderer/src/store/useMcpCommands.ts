@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
 import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
+import { viewportCenterWorld } from '../lib/freeSlot'
 import {
   materializePlanningOps,
   neededBoardHeight,
@@ -169,7 +170,21 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       // exists is a no-op + ack ok, so it can't push a duplicate zone.
       const store = useCanvasStore.getState()
       if (store.groups.some((g) => g.id === group.id)) return { ok: true, type: 'spawnGroup' }
-      store.spawnGroup({ at: SPAWN_ANCHOR, group, members })
+      // Land the zone where the USER is looking (the Command board is a user-driven dispatch, unlike
+      // an agent's headless spawn). The viewport centre maps to a world point; freeSlot then nudges
+      // it off the Command board sitting there, so the zone tucks in beside it IN VIEW — not at the
+      // fixed canvas-origin anchor (which lands off-screen once the user has panned). BUG: off-screen
+      // spawn reported 2026-06-18. Falls back to SPAWN_ANCHOR before the first fit (no viewport yet)
+      // OR outside a DOM (the node-env unit tests, where `window` is absent).
+      const at =
+        typeof window === 'undefined'
+          ? SPAWN_ANCHOR
+          : viewportCenterWorld(
+              store.viewport,
+              { w: window.innerWidth, h: window.innerHeight },
+              SPAWN_ANCHOR
+            )
+      store.spawnGroup({ at, group, members })
       return { ok: true, type: 'spawnGroup' }
     }
     default:
