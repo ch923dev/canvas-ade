@@ -495,6 +495,8 @@ const api = {
     publishBoards: (payload: {
       boards: Array<{ id: string; type: string; title: string; status: string }>
       connectors: Array<{ id: string; sourceId: string; targetId: string; kind: string }>
+      // PR-5: Named Board Groups (feature zones) — feeds the app-model's live canvas.groups.
+      groups?: Array<{ id: string; name: string; boardIds: string[] }>
     }): void => ipcRenderer.send('mcp:boards', payload),
 
     // MAIN → renderer command channel (the inverse of publishBoards). The handler
@@ -533,6 +535,52 @@ const api = {
       }
       ipcRenderer.on('mcp:confirm', listener)
       return () => ipcRenderer.removeListener('mcp:confirm', listener)
+    },
+
+    // ── Phase C / C1 · renderer → MAIN orchestrator drive (the Command board's face) ──
+    // The renderer holds NO token; it only requests actions MAIN's orchestrator executes.
+    // `spawnGroup` is content-less (cap-checked); `dispatchPrompt`/`interrupt` carry content,
+    // so MAIN's runGatedWrite pops the confirm modal (via onConfirm above) before the write —
+    // the invoke stays pending until the human answers, then resolves/rejects.
+    spawnGroup: (input: {
+      name: string
+      planning?: boolean
+      browser?: boolean
+      // Agentic CLI the worker terminal boots (e.g. 'claude'); MAIN sanitizes it to a single line.
+      launchCommand?: string
+    }): Promise<{ groupId: string; terminalId: string; planningId?: string; browserId?: string }> =>
+      ipcRenderer.invoke('mcp:spawnGroup', input),
+    dispatchPrompt: (boardId: string, text: string): Promise<void> =>
+      ipcRenderer.invoke('mcp:dispatchPrompt', { boardId, text }),
+    // Dispatch AND await the worker's settle, resolving with its result (the kanban's done signal).
+    handoffPrompt: (
+      boardId: string,
+      text: string
+    ): Promise<{ present?: boolean; status?: string; summary?: string; refs?: string[] }> =>
+      ipcRenderer.invoke('mcp:handoffPrompt', { boardId, text }),
+    // C2e: await a worker's task settle (output silence / own result / backstop) WITHOUT a write —
+    // the verdict for a dispatch whose prompt was delivered as a launch arg. Read-only (no gate).
+    awaitSettled: (
+      boardId: string
+    ): Promise<{ present?: boolean; status?: string; summary?: string; refs?: string[] }> =>
+      ipcRenderer.invoke('mcp:awaitSettled', boardId),
+    interrupt: (boardId: string): Promise<void> => ipcRenderer.invoke('mcp:interrupt', boardId),
+    // Phase D: read-only working-tree diff for a board (result-zone diffstat + view-diff). The
+    // orchestrator does the terminal-check + 100 KB clamp in MAIN; returns the raw unified diff
+    // ('' when the board has no known cwd or its cwd is not a repo).
+    gitDiff: (boardId: string): Promise<string> => ipcRenderer.invoke('mcp:gitDiff', boardId),
+
+    // MAIN → renderer: per-board coarse status stream that drives the kanban (status only,
+    // never content). Returns an unsubscribe fn.
+    onTaskStatus: (
+      cb: (change: { id: string; status: string; monitorActivity?: boolean }) => void
+    ): (() => void) => {
+      const listener = (
+        _e: IpcRendererEvent,
+        change: { id: string; status: string; monitorActivity?: boolean }
+      ): void => cb(change)
+      ipcRenderer.on('mcp:status', listener)
+      return () => ipcRenderer.removeListener('mcp:status', listener)
     }
   }
 }

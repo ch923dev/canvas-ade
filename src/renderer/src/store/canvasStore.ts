@@ -33,6 +33,8 @@ import { recordPast, applyUndo, applyRedo } from './history'
 import { nextViewport } from '../lib/viewportCycle'
 import { tidyLayout, type TidyMode } from '../lib/tidyLayout'
 import { tileLayout, type TileTemplate } from '../lib/tileLayout'
+import { freeSlot, PLACE_GAP } from '../lib/freeSlot'
+import { useCommandStore, commandStoreDefaults } from './commandStore'
 import { createConnectorSlice } from './slices/connectorSlice'
 import { createGroupSlice, pruneBoardFromGroups } from './slices/groupSlice'
 import type { SetCanvasState } from './slices/sliceTypes'
@@ -144,6 +146,24 @@ export interface CanvasState {
       configPending?: boolean
     }
   ) => string
+  /**
+   * Spawn a feature-zone CLUSTER in ONE undoable step (PR-5b, the MCP `spawnGroup` write path):
+   * the boards (terminal always; planning/browser per `members`) laid out as a row near `at`, a
+   * Named Group over them, and — when a browser member is present — its `previewSourceId` folded
+   * onto the terminal (the runtime source of truth the preview edge derives from). MAIN mints
+   * every id; the renderer owns placement. Returns the group id.
+   */
+  spawnGroup: (spec: {
+    at: { x: number; y: number }
+    group: { id: string; name: string }
+    members: {
+      // Phase C: an optional agentic-CLI launchCommand (MAIN-sanitized) the terminal boots, so a
+      // dispatched prompt reaches an agent, not a bare shell.
+      terminal: { id: string; launchCommand?: string }
+      planning?: { id: string }
+      browser?: { id: string }
+    }
+  }) => { groupId: string }
   /** Clear the New Terminal config-pending flag (dialog Create/Cancel), releasing the spawn. */
   clearConfigPending: () => void
   /** Remove a board; clears the selection if it was the selected one. */
@@ -422,6 +442,10 @@ function applyLoadedDoc(
     configPendingId: null,
     ...(project ? { project } : {})
   })
+  // The Command board's queue/view/collapse is GLOBAL ephemeral state (one orchestrator face) —
+  // reset it on a project load so the prior project's collapsed/groups view can't render the new
+  // project's command board wrong (the same fresh-start intent as configPendingId above).
+  useCommandStore.setState(commandStoreDefaults())
 }
 
 /**
@@ -452,56 +476,8 @@ export function releaseProjectSwitchLock(): void {
   projectSwitchInFlight = false
 }
 
-/** Gap (world px) kept between boards when auto-placing a new one. */
-const PLACE_GAP = 28
-/** How many expanding rings the free-slot search probes before giving up. */
-const PLACE_RINGS = 16
-/** Search directions for the outward spiral: right/down/left/up first, then diagonals. */
-const RING_DIRS = [
-  [1, 0],
-  [0, 1],
-  [-1, 0],
-  [0, -1],
-  [1, 1],
-  [-1, 1],
-  [-1, -1],
-  [1, -1]
-] as const
-
-/**
- * Find a top-left for a new board of `size` near `at` (the viewport centre) that does
- * NOT overlap — with a PLACE_GAP margin — any board already on the canvas, so a freshly
- * added board never lands on top of and hides an existing one (the canvas stays tidy).
- * Returns `at` when it is already clear; otherwise searches outward in expanding rings
- * (one board-step per ring, nearest direction first) and returns the closest free slot,
- * so the new board tucks into open space beside the existing cluster instead of covering
- * it. Deterministic (no randomness) so undo/redo + persistence stay reproducible.
- */
-function freeSlot(
-  boards: Board[],
-  at: { x: number; y: number },
-  size: { w: number; h: number }
-): { x: number; y: number } {
-  const overlaps = (x: number, y: number): boolean =>
-    boards.some(
-      (b) =>
-        x < b.x + b.w + PLACE_GAP &&
-        b.x < x + size.w + PLACE_GAP &&
-        y < b.y + b.h + PLACE_GAP &&
-        b.y < y + size.h + PLACE_GAP
-    )
-  if (!overlaps(at.x, at.y)) return at
-  const strideX = size.w + PLACE_GAP
-  const strideY = size.h + PLACE_GAP
-  for (let ring = 1; ring <= PLACE_RINGS; ring++) {
-    for (const [dx, dy] of RING_DIRS) {
-      const x = at.x + dx * ring * strideX
-      const y = at.y + dy * ring * strideY
-      if (!overlaps(x, y)) return { x, y }
-    }
-  }
-  return { x: at.x + PLACE_GAP, y: at.y + PLACE_GAP }
-}
+// Board auto-placement (freeSlot) + the shared PLACE_GAP margin now live in lib/freeSlot.ts
+// (file-size doctrine — pure geometry → lib). addBoard/spawnGroup import them above.
 
 /**
  * Patch keys a board of each type may accept — id/type are never patchable, and an
@@ -533,7 +509,10 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     'monitorActivity'
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
-  planning: [...COMMON_KEYS, 'elements']
+  planning: [...COMMON_KEYS, 'elements'],
+  // The Command board persists no per-type fields (its task queue is ephemeral commandStore
+  // state) — only the common geometry/title keys are patchable (e.g. the collapse height swap).
+  command: [...COMMON_KEYS]
 }
 
 /**
@@ -581,6 +560,23 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   project: { dir: null, name: null, status: 'welcome' },
 
   addBoard: (type, at, opts) => {
+    // Singleton orchestrator (Phase A): the Command board is the single face of the MCP
+    // orchestrator (one 'app' token, one ephemeral commandStore). Never mint a second — select and
+    // return the existing one. Covers the dock/palette/empty-state add paths (all route through
+    // addBoard); duplicateBoard guards the singleton separately (it does NOT route through here).
+    if (type === 'command') {
+      const existing = get().boards.find((b) => b.type === 'command')
+      if (existing) {
+        get().setSelection([existing.id])
+        return existing.id
+      }
+      // Minting a brand-new orchestrator: clear any ephemeral commandStore state a prior
+      // (since-deleted) command board left behind, so its collapse/view doesn't bleed onto the
+      // fresh board. applyLoadedDoc resets this on project load; this covers delete-then-re-add
+      // within a session. (Undo-restore goes through history, not addBoard, so it's unaffected —
+      // a restored board keeps the view it had at delete time.)
+      useCommandStore.setState(commandStoreDefaults())
+    }
     const id = opts?.id ?? newId()
     const size = opts?.size ?? DEFAULT_BOARD_SIZE[type]
     // exact:true honours a deliberately-drawn rectangle (drag-create) verbatim; otherwise
@@ -603,6 +599,61 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     )
     if (pending) set({ configPendingId: id })
     return id
+  },
+
+  spawnGroup: (spec) => {
+    const { at, group, members } = spec
+    // Build the ordered member list (terminal first; planning/browser opt-in) → the row layout
+    // + the group's boardIds both follow this order.
+    const order: { id: string; type: BoardType }[] = [
+      { id: members.terminal.id, type: 'terminal' },
+      ...(members.planning ? [{ id: members.planning.id, type: 'planning' as BoardType }] : []),
+      ...(members.browser ? [{ id: members.browser.id, type: 'browser' as BoardType }] : [])
+    ]
+    // Find ONE free slot for the whole cluster's bounding box, then tile the members left-to-right
+    // inside it — so the zone lands as a contiguous, non-overlapping row (freeSlot only nudges a
+    // single box, so sizing it to the full width keeps the cluster together).
+    const sizes = order.map((m) => DEFAULT_BOARD_SIZE[m.type])
+    const totalW = sizes.reduce((sum, s) => sum + s.w, 0) + PLACE_GAP * (sizes.length - 1)
+    const maxH = Math.max(...sizes.map((s) => s.h))
+    const origin = freeSlot(get().boards, at, { w: totalW, h: maxH })
+    let cursorX = origin.x
+    const newBoards: Board[] = order.map((m, i) => {
+      const s = sizes[i]
+      const board = createBoard(m.type, { id: m.id, x: cursorX, y: origin.y, w: s.w, h: s.h })
+      cursorX += s.w + PLACE_GAP
+      // Wire the browser member to the terminal: previewSourceId is the runtime SoT the preview
+      // edge derives from (the cluster's only "connector" — orchestration cables are terminal↔
+      // terminal, N/A within a single-worker zone).
+      if (board.type === 'browser' && members.browser) {
+        return { ...board, previewSourceId: members.terminal.id }
+      }
+      // Phase C: boot the terminal member's agentic CLI (the dispatched prompt then reaches an
+      // agent, not a bare shell). MAIN already sanitized the launchCommand to a single PTY line.
+      if (board.type === 'terminal' && typeof members.terminal.launchCommand === 'string') {
+        return { ...board, launchCommand: members.terminal.launchCommand }
+      }
+      return board
+    })
+    const namedGroup: NamedGroup = {
+      id: group.id,
+      name: group.name,
+      boardIds: order.map((m) => m.id)
+    }
+    // ONE tracked step covers the whole zone (boards + group + wiring) → a single undo removes it.
+    // reflectPresent:false matches addBoard/addGroup (granularly undoable; the tolerated #BUG M3
+    // post-no-op phantom). Select the terminal (the zone's anchor) + the whole cluster.
+    set((s) =>
+      trackedChange(
+        s,
+        { boards: [...s.boards, ...newBoards], groups: [...s.groups, namedGroup] },
+        {
+          selection: { selectedId: members.terminal.id, selectedIds: order.map((m) => m.id) },
+          reflectPresent: false
+        }
+      )
+    )
+    return { groupId: group.id }
   },
 
   clearConfigPending: () => set({ configPendingId: null }),
@@ -667,6 +718,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   duplicateBoard: (id) => {
     const src = get().boards.find((b) => b.id === id)
     if (!src) return null
+    // The Command board is a singleton (one orchestrator face) — duplicating it would forge a
+    // second one, and this path bypasses addBoard's guard. No-op it. (#175 reviewer.)
+    if (src.type === 'command') return null
     const cloneId = newId()
     const clone = structuredClone(src)
     clone.id = cloneId

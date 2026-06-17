@@ -12,14 +12,41 @@ import type { BoardResult } from '@expanse-ade/mcp'
  */
 const results = new Map<string, BoardResult>()
 
+/**
+ * PR-4: the subset of {@link results} whose entry was SYNTHESIZED from the board's recap
+ * transcript (the local "for claude, derive a result from the transcript" fallback in
+ * `boardResultSynth.ts`) rather than written by the worker itself via `write_result`. The
+ * synthesizer consults this so it only ever overwrites its OWN prior synthesis — an explicit
+ * worker self-report (recorded WITHOUT `{ synthesized: true }`) owns the id and is never
+ * clobbered by a later derived snapshot. Kept in lock-step with `results` by every writer +
+ * the prune/reset paths below.
+ */
+const synthesized = new Set<string>()
+
 /** Read a board's last recorded result, or the empty shell if none. Read-only. */
 export function readBoardResult(id: string): BoardResult {
   return results.get(id) ?? { present: false }
 }
 
-/** Record a board's last result (M4 `write_result` entry point; e2e drives it too). */
-export function recordBoardResult(id: string, result: BoardResult): void {
+/** PR-4: true when this board's current result was synthesized (not a worker self-report). */
+export function isResultSynthesized(id: string): boolean {
+  return synthesized.has(id)
+}
+
+/**
+ * Record a board's last result (M4 `write_result` entry point; e2e drives it too).
+ * PR-4: `opts.synthesized` tags a result derived from the recap transcript; a record WITHOUT
+ * it (the explicit `write_result` path, line `recordResult` delegate in index.ts) clears the
+ * tag, so an explicit self-report takes ownership of the id and the synthesizer won't overwrite it.
+ */
+export function recordBoardResult(
+  id: string,
+  result: BoardResult,
+  opts?: { synthesized?: boolean }
+): void {
   results.set(id, result)
+  if (opts?.synthesized) synthesized.add(id)
+  else synthesized.delete(id)
 }
 
 /**
@@ -33,9 +60,15 @@ export function pruneBoardResults(liveBoardIds: Set<string>): void {
   for (const id of results.keys()) {
     if (!liveBoardIds.has(id)) results.delete(id)
   }
+  // PR-4: keep the synthesized-id set in lock-step so a deleted/cross-project board cannot leave
+  // a stale "this was synthesized" mark that would let a future result be silently overwritten.
+  for (const id of synthesized) {
+    if (!liveBoardIds.has(id)) synthesized.delete(id)
+  }
 }
 
 /** Test-only: clear the store between cases. */
 export function __resetBoardResults(): void {
   results.clear()
+  synthesized.clear()
 }

@@ -6,7 +6,9 @@ beforeEach(() => {
   useCanvasStore.setState({
     boards: [],
     connectors: [],
+    groups: [],
     selectedId: null,
+    selectedIds: [],
     tool: 'select',
     past: [],
     future: []
@@ -308,6 +310,96 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
       })
       expect(ack.ok).toBe(false)
       expect((find('plan-1')?.elements as unknown[]).length).toBe(299) // unchanged
+    })
+  })
+
+  describe('spawnGroup (PR-5b — feature-zone cluster)', () => {
+    const full = (over?: Partial<{ name: string }>) => ({
+      type: 'spawnGroup' as const,
+      group: { id: 'grp-1', name: over?.name ?? 'Auth zone' },
+      members: { terminal: { id: 't-1' }, planning: { id: 'p-1' }, browser: { id: 'b-1' } }
+    })
+
+    it('creates the boards + the Named Group + the browser→terminal preview wiring, acks ok', () => {
+      const ack = applyMcpCommand(full())
+      expect(ack).toEqual({ ok: true, type: 'spawnGroup' })
+      const st = useCanvasStore.getState()
+      expect(st.boards.map((b) => b.id).sort()).toEqual(['b-1', 'p-1', 't-1'])
+      expect(st.groups).toEqual([
+        { id: 'grp-1', name: 'Auth zone', boardIds: ['t-1', 'p-1', 'b-1'] }
+      ])
+      const browser = st.boards.find((b) => b.id === 'b-1') as { previewSourceId?: string }
+      expect(browser.previewSourceId).toBe('t-1') // wired to the terminal
+    })
+
+    it('lays the cluster out as a non-overlapping row (terminal | planning | browser)', () => {
+      applyMcpCommand(full())
+      const st = useCanvasStore.getState()
+      const t = st.boards.find((b) => b.id === 't-1')!
+      const p = st.boards.find((b) => b.id === 'p-1')!
+      const b = st.boards.find((b) => b.id === 'b-1')!
+      // strictly increasing x, each starting at/after the previous board's right edge.
+      expect(p.x).toBeGreaterThanOrEqual(t.x + t.w)
+      expect(b.x).toBeGreaterThanOrEqual(p.x + p.w)
+    })
+
+    it('spawns a terminal-only zone when planning/browser are omitted', () => {
+      const ack = applyMcpCommand({
+        type: 'spawnGroup',
+        group: { id: 'grp-2', name: 'Solo' },
+        members: { terminal: { id: 't-9' } }
+      })
+      expect(ack.ok).toBe(true)
+      const st = useCanvasStore.getState()
+      expect(st.boards.map((b) => b.id)).toEqual(['t-9'])
+      expect(st.groups[0].boardIds).toEqual(['t-9'])
+    })
+
+    it('is ONE undo step that removes the whole zone (boards + group)', () => {
+      applyMcpCommand(full())
+      expect(useCanvasStore.getState().past).toHaveLength(1)
+      useCanvasStore.getState().undo()
+      const st = useCanvasStore.getState()
+      expect(st.boards).toHaveLength(0)
+      expect(st.groups).toHaveLength(0)
+    })
+
+    it('is idempotent by group id — a re-delivered spawnGroup yields one zone and acks ok both times', () => {
+      const first = applyMcpCommand(full())
+      const second = applyMcpCommand(full())
+      expect(first.ok).toBe(true)
+      expect(second.ok).toBe(true)
+      expect(useCanvasStore.getState().groups).toHaveLength(1)
+      expect(useCanvasStore.getState().boards).toHaveLength(3)
+    })
+
+    it('rejects a malformed envelope (missing terminal / empty name) without mutating the canvas', () => {
+      const noName = applyMcpCommand({
+        type: 'spawnGroup',
+        group: { id: 'g', name: '' },
+        members: { terminal: { id: 't' } }
+      })
+      expect(noName.ok).toBe(false)
+      const noTerminal = applyMcpCommand({
+        type: 'spawnGroup',
+        group: { id: 'g', name: 'X' },
+        // @ts-expect-error — terminal member is required; a missing one must be rejected
+        members: { planning: { id: 'p' } }
+      })
+      expect(noTerminal.ok).toBe(false)
+      expect(useCanvasStore.getState().boards).toHaveLength(0)
+      expect(useCanvasStore.getState().groups).toHaveLength(0)
+    })
+
+    it('rejects a malformed optional member rather than silently dropping it', () => {
+      const ack = applyMcpCommand({
+        type: 'spawnGroup',
+        group: { id: 'g', name: 'X' },
+        // @ts-expect-error — browser member present but malformed (no id)
+        members: { terminal: { id: 't' }, browser: {} }
+      })
+      expect(ack.ok).toBe(false)
+      expect(useCanvasStore.getState().boards).toHaveLength(0)
     })
   })
 })

@@ -10,6 +10,7 @@ import type {
   BrowserBoard,
   CanvasDoc,
   ChecklistElement,
+  CommandBoard,
   PlanningBoard,
   TerminalBoard
 } from './boardSchema'
@@ -32,7 +33,11 @@ export interface CanvasDigest {
 function buildHeader(boards: Board[]): string {
   const n = boards.length
   const by = (t: BoardType): number => boards.filter((b) => b.type === t).length
-  return `${n} board${n === 1 ? '' : 's'} — ${by('terminal')} terminal, ${by('browser')} browser, ${by('planning')} planning`
+  const cmd = by('command')
+  return (
+    `${n} board${n === 1 ? '' : 's'} — ${by('terminal')} terminal, ${by('browser')} browser, ${by('planning')} planning` +
+    (cmd ? `, ${cmd} command` : '')
+  )
 }
 
 function digestTerminal(b: TerminalBoard, d: CanvasDoc): BoardDigest {
@@ -91,6 +96,18 @@ function digestPlanning(b: PlanningBoard): BoardDigest {
   return { boardId: b.id, type: 'planning', title: b.title, status, lines }
 }
 
+function digestCommand(b: CommandBoard): BoardDigest {
+  // The Command board persists no content (its task queue is ephemeral commandStore state), so the
+  // Tier-1 digest is just its identity — the orchestrator face for feature-zone tasks.
+  return {
+    boardId: b.id,
+    type: 'command',
+    title: b.title,
+    status: 'orchestrator',
+    lines: ['Orchestrates feature-zone tasks (terminal + planning + browser groups)']
+  }
+}
+
 function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
   switch (b.type) {
     case 'terminal':
@@ -99,6 +116,8 @@ function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
       return digestBrowser(b, d)
     case 'planning':
       return digestPlanning(b)
+    case 'command':
+      return digestCommand(b)
   }
 }
 

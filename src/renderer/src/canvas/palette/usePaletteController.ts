@@ -23,7 +23,7 @@ import { sendPaletteIntent } from './paletteIntentStore'
 export interface PaletteControllerDeps {
   rf: ReactFlowInstance
   boardActions: BoardActions
-  addCentered: (type: 'terminal' | 'browser' | 'planning') => void
+  addCentered: (type: 'terminal' | 'browser' | 'planning' | 'command') => void
   selectBoard: (id: string | null) => void
   setFocusedId: (id: string | null) => void
   groupSelection: () => void

@@ -22,7 +22,6 @@ import {
 import {
   Background,
   BackgroundVariant,
-  MarkerType,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -55,8 +54,8 @@ import { BoardNode, type BoardFlowNode } from './BoardNode'
 import { buildBoardNodes, type NodeCache } from './boardNodes'
 import { PreviewEdge } from './edges/PreviewEdge'
 import { OrchestrationEdge } from './edges/OrchestrationEdge'
-import { previewEdges } from '../lib/previewEdges'
-import { orchestrationEdges } from '../lib/orchestrationEdges'
+import { RoutingEdge } from './edges/RoutingEdge'
+import { buildCanvasEdges } from './canvasEdges'
 import { planNodeRemovalCleanup } from '../lib/canvasDecisions'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { BoardActionsContext } from './boardActions'
@@ -85,12 +84,17 @@ import { useFullView } from './hooks/useFullView'
 import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
 import { useGroupInteractions } from './hooks/useGroupInteractions'
 import { useZoomSettle } from './hooks/useZoomSettle'
-import { TypeGlyph } from './TypeGlyph'
+import { PlacementCaptureOverlay } from './PlacementCaptureOverlay'
 import { MinimapIsland } from './wayfinding/MinimapIsland'
 import { useWayfindingStore } from '../store/wayfindingStore'
+import { useCommandStore } from '../store/commandStore'
 
 const nodeTypes: NodeTypes = { board: BoardNode }
-const edgeTypes: EdgeTypes = { preview: PreviewEdge, orchestration: OrchestrationEdge }
+const edgeTypes: EdgeTypes = {
+  preview: PreviewEdge,
+  orchestration: OrchestrationEdge,
+  routing: RoutingEdge
+}
 // Fit/reset framing now lives in lib/canvasView (FIT_FRAME / RESET_FRAME) so the
 // camera-cluster buttons in AppChrome share the exact same presets. Used instant for
 // fit-on-load & initial mount; user-triggered fit/reset wrap them in `cameraAnim`.
@@ -155,7 +159,6 @@ function CanvasInner(): ReactElement {
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
   const viewport = useCanvasStore((s) => s.viewport)
-  const tool = useCanvasStore((s) => s.tool)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -327,29 +330,22 @@ function CanvasInner(): ReactElement {
     () => new Set(Object.keys(running).filter((id) => running[id])),
     [running]
   )
-  // Preview edges (accent) + orchestration connectors (neutral). Both derive from store
-  // state via pure helpers (previewEdges / orchestrationEdges, dangling-skipped); Canvas
-  // only decorates them with the marker, selection state, and the delete callback.
-  const edges = useMemo(() => {
-    // Marker colors are CSS vars (D0-3): React Flow passes the color into the marker
-    // polyline's inline style and quotes the marker-id url, so var() resolves cleanly.
-    const preview = previewEdges(boards, runningIds).map((e) => ({
-      ...e,
-      markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--accent)', width: 16, height: 16 }
-    }))
-    const orchestration = orchestrationEdges(connectors, boards).map((e) => ({
-      ...e,
-      selected: e.id === selectedConnectorId,
-      data: { onDelete: () => removeConnector(e.id) },
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        color: e.id === selectedConnectorId ? 'var(--connector-selected)' : 'var(--connector)',
-        width: 16,
-        height: 16
-      }
-    }))
-    return [...preview, ...orchestration]
-  }, [boards, runningIds, connectors, selectedConnectorId, removeConnector])
+  // C3: the routing overlay derives from the Command board's live task queue (stable ref until a
+  // task mutates). Edge assembly lives in buildCanvasEdges (Canvas god-file ratchet); it recomputes
+  // only when one of these inputs changes.
+  const commandTasks = useCommandStore((s) => s.tasks)
+  const edges = useMemo(
+    () =>
+      buildCanvasEdges({
+        boards,
+        runningIds,
+        connectors,
+        selectedConnectorId,
+        commandTasks,
+        onRemoveConnector: removeConnector
+      }),
+    [boards, runningIds, connectors, selectedConnectorId, removeConnector, commandTasks]
+  )
 
   // Translate React Flow changes into store mutations. Position covers both node
   // drag and the origin shift from N/W/NW resize; dimensions (only while actively
@@ -512,6 +508,8 @@ function CanvasInner(): ReactElement {
     (type: BoardType) => {
       const el = paneRef.current
       if (!el) return
+      // (The Command board is a singleton — `addBoard` selects the existing one instead of
+      // minting a second, so every add path stays single-orchestrator without special-casing here.)
       const r = el.getBoundingClientRect()
       const c = rf.screenToFlowPosition({ x: r.left + r.width / 2, y: r.top + r.height / 2 })
       const size = DEFAULT_BOARD_SIZE[type]
@@ -527,10 +525,9 @@ function CanvasInner(): ReactElement {
   // surfaced — the keymap's `t` (via useCanvasKeybindings) and AppChrome's Tidy button.
   const { tidyAndFit } = useTidyTile({ paneRef, rf, setActiveTile, setFocusedId, activeTileRef })
 
-  // Drag-to-create placement gesture (redesign 2026-06-06): while a board type is armed via
-  // the dock, a capture overlay intercepts pointer events; startPlacement begins the drag that
-  // draws the ghost rect and commits addBoard on release.
-  const { armed, ghost, startPlacement } = useBoardPlacement(rf)
+  // Drag/place capture overlay state (redesign 2026-06-06; command place-to-create 2026-06-16):
+  // drag tools rubber-band, the Command board follows-and-clicks. Forwarded to the overlay below.
+  const placement = useBoardPlacement(rf)
 
   // D4-B keyboard-first board nav: Tab cycle · arrow move / Alt+arrow resize (one undo
   // step per burst) · Enter focus. focusBoardById is the SAME camera-fit + dim path the
@@ -860,25 +857,9 @@ function CanvasInner(): ReactElement {
 
           <AlignmentGuides guides={guides} overlaps={overlaps} />
 
-          {/* Drag-to-create (redesign 2026-06-06): while a dock button is armed, a transparent
-              overlay owns the pointer — boards go non-interactive and React Flow can't pan, so a
-              press→drag draws a new board. The ghost is a screen-space rect; world conversion +
-              addBoard happen on release (useBoardPlacement). Chrome (z-50) stays above this (z-40),
-              so the Select button / dock buttons remain clickable to re-arm or cancel. */}
-          {armed && (
-            <div className="placement-capture" onPointerDown={startPlacement}>
-              {ghost && (
-                <div
-                  className="placement-ghost"
-                  style={{ left: ghost.x, top: ghost.y, width: ghost.w, height: ghost.h }}
-                >
-                  <span className="placement-ghost-chip">
-                    <TypeGlyph type={tool as BoardType} /> {tool}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+          {/* Drag/place capture overlay (extracted — file-size doctrine). Mounts only while armed;
+              see PlacementCaptureOverlay / useBoardPlacement. */}
+          <PlacementCaptureOverlay {...placement} />
 
           {/* M2 connector rubber-band: a calm dashed line from the source board's center to
               the live pointer while a connector drag is in flight (ephemeral — drawn only,
