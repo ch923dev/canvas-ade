@@ -728,7 +728,12 @@ describe('buildOrchestrator', () => {
       const res = await orch.handoffPrompt('t1', 'pnpm build')
       expect(res).toEqual(result)
       expect(confirms).toHaveLength(1)
-      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }]) // CR appended so the shell runs it
+      // The prompt text + the submit CR are written as two discrete chunks (the agent TUI only
+      // submits on a `\r` delivered as its own keystroke, never one fused onto a pasted block).
+      expect(writes).toEqual([
+        { id: 't1', text: 'pnpm build' },
+        { id: 't1', text: '\r' }
+      ])
       // a successful write records a `dispatched` entry (at write time) AND a `completed` one.
       expect(audits.some((a) => a.status === 'dispatched')).toBe(true)
       const done = audits.find((a) => a.status === 'completed')
@@ -809,7 +814,10 @@ describe('buildOrchestrator', () => {
       // Despite BOTH the dispatched + completed audit appends throwing, the handoff RESOLVES
       // (it does not reject) and the write committed exactly once.
       await expect(orch.handoffPrompt('t1', 'pnpm build')).resolves.toBeDefined()
-      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }])
+      expect(writes).toEqual([
+        { id: 't1', text: 'pnpm build' },
+        { id: 't1', text: '\r' }
+      ])
     })
 
     it('await-idle: parks on the status stream while running, resolves on the idle event', async () => {
@@ -824,7 +832,10 @@ describe('buildOrchestrator', () => {
       emitStatus({ id: 't1', status: 'idle' })
       const res = await p
       expect(hasListener()).toBe(false)
-      expect(writes).toEqual([{ id: 't1', text: 'x\r' }])
+      expect(writes).toEqual([
+        { id: 't1', text: 'x' },
+        { id: 't1', text: '\r' }
+      ])
       expect(res).toEqual(result)
     })
 
@@ -1039,7 +1050,10 @@ describe('buildOrchestrator', () => {
       const orch = buildOrchestrator(registry)
       await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toBeUndefined()
       expect(confirms).toHaveLength(1)
-      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }])
+      expect(writes).toEqual([
+        { id: 't1', text: 'pnpm build' },
+        { id: 't1', text: '\r' }
+      ])
       const dispatched = audits.find((a) => a.status === 'dispatched')
       expect(dispatched).toMatchObject({
         type: 'assign_prompt',
@@ -1408,7 +1422,10 @@ describe('buildOrchestrator', () => {
       const orch = buildOrchestrator(registry)
       await expect(orch.relayPrompt('A', 'B', 'pnpm build')).resolves.toBeUndefined()
       expect(confirms).toHaveLength(1)
-      expect(writes).toEqual([{ id: 'B', text: 'pnpm build\r' }]) // written to the TARGET
+      expect(writes).toEqual([
+        { id: 'B', text: 'pnpm build' }, // written to the TARGET
+        { id: 'B', text: '\r' }
+      ])
       const dispatched = audits.find((a) => a.status === 'dispatched')
       expect(dispatched).toMatchObject({
         type: 'relay_prompt',

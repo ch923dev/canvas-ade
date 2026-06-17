@@ -58,6 +58,25 @@ const WRITE_RESULT_MAX_REF_LEN = 256
 const GITDIFF_MAX_BYTES = 100_000
 
 /**
+ * 🔒 Submit settle (Command-board dispatch fix, 2026-06-18): an interactive agent TUI (e.g. Claude
+ * Code) treats a carriage-return that arrives in the SAME stdin burst as a multi-character, paste-like
+ * prompt as a LITERAL newline inside the message — so a prompt written as one `text + \r` chunk lands
+ * in the input box UNSENT (the reported bug). The gate therefore writes the prompt TEXT and the SUBMIT
+ * (`\r`) as TWO separate PTY writes with this brief gap between them, so the `\r` is delivered as a
+ * discrete Enter keystroke and the prompt is actually submitted. Zero under test (NODE_ENV==='test')
+ * so unit tests stay instant + deterministic; the two-write split itself is unconditional (and is
+ * independent of the `opts.sleep` backstop seam, so a never-resolving test sleep can't stall a write).
+ */
+const SUBMIT_SETTLE_MS = process.env.NODE_ENV === 'test' ? 0 : 100
+const settleBeforeSubmit = (): Promise<void> =>
+  SUBMIT_SETTLE_MS <= 0
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, SUBMIT_SETTLE_MS)
+        t.unref?.()
+      })
+
+/**
  * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
  * terminal boards. Pure (type-only package imports → contract test loads no
  * node-pty). spawnBoard/dispatchPrompt stay phase-gated; gitDiff is live (PR-2, via registry).
@@ -293,9 +312,21 @@ export function buildOrchestrator(
       throw new Error(`${type}: nonce already consumed (replay rejected)`)
     }
 
-    // (write) Write into the PTY (safeText + the terminator). A false means no live terminal
-    // session held the id — audit failed + throw.
-    if (!registry.writeToPty(targetId, safeText + terminator)) {
+    // (write) Write the prompt TEXT and the submit TERMINATOR as TWO separate PTY writes, with a
+    // brief settle between them. An interactive agent TUI (Claude Code) treats a `\r` arriving in the
+    // SAME stdin burst as the (multi-char, paste-like) prompt as a LITERAL newline — the prompt lands
+    // in the input box UNSENT — and only submits on a `\r` delivered as its OWN discrete keystroke.
+    // A content-less write (interrupt: text '') has nothing to settle → terminator only. A false
+    // return means no live terminal session held the id — audit failed + throw on the TEXT write
+    // FIRST, so a vanished session never receives a lone orphan submit.
+    if (safeText.length > 0) {
+      if (!registry.writeToPty(targetId, safeText)) {
+        await audit('failed', { detail: `pty write failed; ${seqDetail}` })
+        throw new Error(`${type}: PTY write failed (no live terminal session)`)
+      }
+      await settleBeforeSubmit()
+    }
+    if (!registry.writeToPty(targetId, terminator)) {
       await audit('failed', { detail: `pty write failed; ${seqDetail}` })
       throw new Error(`${type}: PTY write failed (no live terminal session)`)
     }
