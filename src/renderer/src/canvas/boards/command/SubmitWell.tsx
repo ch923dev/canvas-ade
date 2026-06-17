@@ -5,9 +5,16 @@
  * read at submit and handed to the dispatch choreography. In the collapsed rail the chips are hidden
  * (the rail just submits with the sticky composition). `nodrag` + `stopPropagation` keep typing from
  * dragging the board or firing canvas keybindings.
+ *
+ * Multi-line input (2026-06-18): the well is a chat-style auto-growing `<textarea>` — Enter dispatches,
+ * Shift+Enter inserts a newline (mirroring the terminal's Shift+Enter, see commandRegistry). It grows
+ * from one row up to MAX_INPUT_PX then scrolls, and snaps back to one row after a submit.
  */
-import { useState, type CSSProperties, type ReactElement } from 'react'
+import { useRef, useState, type CSSProperties, type ReactElement } from 'react'
 import { DEFAULT_COMPOSITION, type Composition } from '../../../lib/commandDispatch'
+
+/** Cap (px) the well grows to (~6 rows) before the textarea scrolls instead of growing further. */
+const MAX_INPUT_PX = 112
 
 export function SubmitWell({
   onSubmit,
@@ -19,26 +26,47 @@ export function SubmitWell({
   const [value, setValue] = useState('')
   // Sticky across submits — dispatching several browser tasks keeps the toggle on.
   const [comp, setComp] = useState<Composition>(DEFAULT_COMPOSITION)
+  const taRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-grow: collapse to the content height (capped at MAX_INPUT_PX) so the well expands with
+  // multi-line input and shrinks back when it is cleared. Reset to 'auto' first so it can shrink.
+  const autoGrow = (): void => {
+    const el = taRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_PX)}px`
+  }
 
   const submit = (): void => {
     if (!value.trim()) return
     onSubmit(value, comp)
     setValue('')
+    // Snap the grown well back to a single row once the text is cleared.
+    const el = taRef.current
+    if (el) el.style.height = 'auto'
   }
 
   return (
     <div style={wrapStyle}>
       <div style={wellStyle}>
-        <span style={{ color: 'var(--accent)', fontFamily: 'var(--mono)' }}>›</span>
-        <input
+        <span style={promptCharStyle}>›</span>
+        <textarea
+          ref={taRef}
           className="cmd-submit-input nodrag"
           value={value}
+          rows={1}
           placeholder="Describe a task to dispatch…"
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            setValue(e.target.value)
+            autoGrow()
+          }}
           onPointerDown={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
             e.stopPropagation()
-            if (e.key === 'Enter') {
+            // Enter dispatches; Shift+Enter inserts a newline (let the default run). Never submit
+            // mid-IME-composition — an Enter that only commits a candidate must not fire dispatch.
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               submit()
             }
@@ -47,7 +75,7 @@ export function SubmitWell({
         />
         <button
           className="nodrag"
-          title="Dispatch (Enter)"
+          title="Dispatch (Enter · Shift+Enter for a newline)"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation()
@@ -58,6 +86,9 @@ export function SubmitWell({
           Dispatch ⏎
         </button>
       </div>
+      {showComposition && (
+        <div style={hintStyle}>Enter to dispatch · Shift+Enter for a newline</div>
+      )}
       {showComposition && (
         <div style={composeRowStyle}>
           <span style={composeLabelStyle}>spawn</span>
@@ -118,18 +149,34 @@ const wellStyle: CSSProperties = {
   borderRadius: 'var(--r-inner)',
   padding: '6px 8px 6px 10px',
   display: 'flex',
-  alignItems: 'center',
+  // Top-aligned so the well grows DOWN with multi-line input; the prompt char rides the first row and
+  // the Dispatch button anchors to the bottom-right (chat-style) instead of floating to the middle.
+  alignItems: 'flex-start',
   gap: 8
+}
+const promptCharStyle: CSSProperties = {
+  color: 'var(--accent)',
+  fontFamily: 'var(--mono)',
+  fontSize: 11.5,
+  lineHeight: '17px',
+  flex: 'none'
 }
 const inputStyle: CSSProperties = {
   color: 'var(--text)',
   fontFamily: 'var(--mono)',
   fontSize: 11.5,
+  lineHeight: '17px',
   flex: 1,
   minWidth: 0,
   border: 'none',
   outline: 'none',
-  background: 'transparent'
+  background: 'transparent',
+  resize: 'none',
+  overflowY: 'auto',
+  maxHeight: MAX_INPUT_PX,
+  padding: 0,
+  margin: 0,
+  display: 'block'
 }
 const dispatchBtnStyle: CSSProperties = {
   color: 'var(--text-3)',
@@ -138,9 +185,17 @@ const dispatchBtnStyle: CSSProperties = {
   borderRadius: 'var(--r-ctl)',
   padding: '3px 9px',
   flex: 'none',
+  alignSelf: 'flex-end',
   background: 'transparent',
   cursor: 'pointer',
   whiteSpace: 'nowrap'
+}
+const hintStyle: CSSProperties = {
+  color: 'var(--text-faint)',
+  fontFamily: 'var(--mono)',
+  fontSize: 9.5,
+  padding: '0 2px',
+  marginTop: -2
 }
 const composeRowStyle: CSSProperties = {
   display: 'flex',
