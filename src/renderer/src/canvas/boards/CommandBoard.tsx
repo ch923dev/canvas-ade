@@ -12,7 +12,8 @@
  * Owns this file; the shared surface (BoardFrame, schema, stores) is consumed, never modified. The
  * submit well, task card, and dispatch hook live in `./command/`.
  */
-import { useMemo, type CSSProperties, type ReactElement } from 'react'
+import { useCallback, useMemo, type CSSProperties, type ReactElement } from 'react'
+import { useReactFlow } from '@xyflow/react'
 import type { CommandBoard as CommandBoardData } from '../../lib/boardSchema'
 import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
@@ -20,14 +21,17 @@ import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
 import {
   useCommandStore,
   tasksInColumn,
+  type CommandTask,
   type CommandView,
   type TaskStatus
 } from '../../store/commandStore'
 import { deriveWorkerPool } from '../../store/workerPool'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
+import { useTerminalFlip } from './useTerminalFlip'
 import { SubmitWell } from './command/SubmitWell'
 import { TaskCard } from './command/TaskCard'
+import { CommandRecapView } from './command/CommandRecapView'
 import { WorkerConfigDialog } from './command/WorkerConfigDialog'
 import { useCommandDispatch } from './command/useCommandDispatch'
 
@@ -77,6 +81,29 @@ export function CommandBoard({
   // this mounts once.
   const { dispatch, confirmConfig, cancelConfig, reconfigure, retry, interrupt } =
     useCommandDispatch(pool.cap)
+
+  // Phase D — flip-to-recap (reuses the terminal's generic 3D fold; ephemeral, never persisted) and
+  // the ↗ zone jump: camera-fit a finished task's spawned group via the React Flow instance (the
+  // Command board is a node, so it lives inside the RF provider). Missing member ids are ignored.
+  const flip = useTerminalFlip()
+  const rf = useReactFlow()
+  const jumpToZone = useCallback(
+    (task: CommandTask): void => {
+      const g = task.group
+      if (!g) return
+      const ids = [g.terminalId, g.planningId, g.browserId].filter(
+        (x): x is string => typeof x === 'string'
+      )
+      if (ids.length === 0) return
+      void rf.fitView({
+        nodes: ids.map((id) => ({ id })),
+        padding: 0.25,
+        duration: 200,
+        maxZoom: 1.5
+      })
+    },
+    [rf]
+  )
   // C2d: the task whose worker-config dialog is open (the engineered prompt + agent/flags are
   // chosen here before the worker spawns). Looked up from the store's single-at-a-time lock.
   const configuringTask = useMemo(
@@ -121,11 +148,19 @@ export function CommandBoard({
   }
 
   // ── Titlebar actions (the BoardFrame `actions` slot, left of maximize/⋯) ──
+  // Phase D: a ⟲ recap toggle flips to the orchestrator recap face; the Kanban/Groups seg is hidden
+  // while flipped (it governs the front face only). Collapse stays available from either face.
   const actions = collapsed ? (
     <CtlBtn label="⤢ expand" title="Expand" onClick={expand} />
   ) : (
     <>
-      <Seg view={view} onSelect={setView} />
+      {!flip.flipped && <Seg view={view} onSelect={setView} />}
+      <CtlBtn
+        label="⟲ recap"
+        title={flip.flipped ? 'Back to kanban' : 'Flip to recap'}
+        active={flip.flipped}
+        onClick={flip.toggle}
+      />
       <CtlBtn label="⤡ collapse" title="Collapse to rail" onClick={collapse} />
     </>
   )
@@ -179,57 +214,65 @@ export function CommandBoard({
           </div>
         </div>
       ) : (
-        <div style={bodyStyle}>
-          <SubmitWell onSubmit={dispatch} />
-          <PoolStrip pool={pool} />
-          {view === 'kanban' ? (
-            <>
-              <div style={kanbanStyle}>
-                {COLUMNS.map((col) => {
-                  const colTasks = tasksInColumn(tasks, col.key)
-                  return (
-                    <div key={col.key} style={colStyle(col.key === 'executing')}>
-                      <div style={colHeadStyle}>
-                        <span style={colNameStyle}>{col.label}</span>
-                        <span style={colCountStyle}>{colTasks.length}</span>
-                      </div>
-                      <div style={colBodyStyle}>
-                        {colTasks.length === 0 ? (
-                          <div style={slotStyle} />
-                        ) : (
-                          colTasks.map((t) => (
-                            <TaskCard
-                              key={t.id}
-                              task={t}
-                              configuring={configuringTaskId === t.id}
-                              onRetry={retry}
-                              onInterrupt={interrupt}
-                              onReconfigure={reconfigure}
-                            />
-                          ))
-                        )}
+        // Phase D: the body is a flip STAGE (flat at rest). FRONT = kanban/groups (always mounted);
+        // BACK = the opaque CommandRecapView overlay, rendered only while flipped.
+        <div style={{ position: 'absolute', inset: 0, ...flip.perspectiveStyle }}>
+          <div style={flip.stageStyle}>
+            <div style={{ ...bodyStyle, pointerEvents: flip.flipped ? 'none' : 'auto' }}>
+              <SubmitWell onSubmit={dispatch} />
+              <PoolStrip pool={pool} />
+              {view === 'kanban' ? (
+                <>
+                  <div style={kanbanStyle}>
+                    {COLUMNS.map((col) => {
+                      const colTasks = tasksInColumn(tasks, col.key)
+                      return (
+                        <div key={col.key} style={colStyle(col.key === 'executing')}>
+                          <div style={colHeadStyle}>
+                            <span style={colNameStyle}>{col.label}</span>
+                            <span style={colCountStyle}>{colTasks.length}</span>
+                          </div>
+                          <div style={colBodyStyle}>
+                            {colTasks.length === 0 ? (
+                              <div style={slotStyle} />
+                            ) : (
+                              colTasks.map((t) => (
+                                <TaskCard
+                                  key={t.id}
+                                  task={t}
+                                  configuring={configuringTaskId === t.id}
+                                  onRetry={retry}
+                                  onInterrupt={interrupt}
+                                  onReconfigure={reconfigure}
+                                  onJumpToZone={jumpToZone}
+                                />
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {tasks.length === 0 && (
+                    <div style={emptyHintStyle}>
+                      <div style={emptyBigStyle}>No tasks yet</div>
+                      <div style={emptySubStyle}>
+                        Describe a task above and Dispatch — it spawns a worker zone and runs.
                       </div>
                     </div>
-                  )
-                })}
-              </div>
-              {tasks.length === 0 && (
+                  )}
+                </>
+              ) : (
                 <div style={emptyHintStyle}>
-                  <div style={emptyBigStyle}>No tasks yet</div>
+                  <div style={emptyBigStyle}>No groups yet</div>
                   <div style={emptySubStyle}>
-                    Describe a task above and Dispatch — it spawns a worker zone and runs.
+                    Each dispatched task spawns its own named group of worker boards.
                   </div>
                 </div>
               )}
-            </>
-          ) : (
-            <div style={emptyHintStyle}>
-              <div style={emptyBigStyle}>No groups yet</div>
-              <div style={emptySubStyle}>
-                Each dispatched task spawns its own named group of worker boards.
-              </div>
             </div>
-          )}
+            {flip.flipped && <CommandRecapView onJumpToZone={jumpToZone} onRetry={retry} />}
+          </div>
         </div>
       )}
     </BoardFrame>
@@ -285,16 +328,20 @@ function Seg({
 function CtlBtn({
   label,
   title,
-  onClick
+  onClick,
+  active = false
 }: {
   label: string
   title: string
   onClick: () => void
+  /** Accent (selected) styling — used for the ⟲ recap toggle while the board is flipped. */
+  active?: boolean
 }): ReactElement {
   return (
     <button
       className="nodrag"
       title={title}
+      aria-pressed={active}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         e.stopPropagation()
@@ -307,10 +354,10 @@ function CtlBtn({
         alignItems: 'center',
         gap: 6,
         borderRadius: 'var(--r-ctl)',
-        border: '1px solid var(--border-subtle)',
-        color: 'var(--text-3)',
+        border: `1px solid ${active ? 'rgba(79,140,255,.4)' : 'var(--border-subtle)'}`,
+        color: active ? 'var(--accent-hover)' : 'var(--text-3)',
         fontSize: 11,
-        background: 'transparent',
+        background: active ? 'var(--accent-wash)' : 'transparent',
         cursor: 'pointer',
         flex: 'none',
         whiteSpace: 'nowrap'

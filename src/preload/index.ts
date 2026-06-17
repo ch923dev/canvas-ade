@@ -565,6 +565,10 @@ const api = {
     ): Promise<{ present?: boolean; status?: string; summary?: string; refs?: string[] }> =>
       ipcRenderer.invoke('mcp:awaitSettled', boardId),
     interrupt: (boardId: string): Promise<void> => ipcRenderer.invoke('mcp:interrupt', boardId),
+    // Phase D: read-only working-tree diff for a board (result-zone diffstat + view-diff). The
+    // orchestrator does the terminal-check + 100 KB clamp in MAIN; returns the raw unified diff
+    // ('' when the board has no known cwd or its cwd is not a repo).
+    gitDiff: (boardId: string): Promise<string> => ipcRenderer.invoke('mcp:gitDiff', boardId),
 
     // MAIN → renderer: per-board coarse status stream that drives the kanban (status only,
     // never content). Returns an unsubscribe fn.

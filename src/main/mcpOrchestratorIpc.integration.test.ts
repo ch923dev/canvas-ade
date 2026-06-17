@@ -39,7 +39,8 @@ function spyMcp(): OrchestratorDrive {
     dispatchPrompt: vi.fn(async () => {}),
     handoffPrompt: vi.fn(async () => ({ present: true, status: 'success', summary: 'done' })),
     awaitSettled: vi.fn(async () => ({ present: true, status: 'success', summary: 'settled' })),
-    interrupt: vi.fn(async () => {})
+    interrupt: vi.fn(async () => {}),
+    gitDiff: vi.fn(async () => 'diff --git a/x b/x\n+added\n-removed')
   }
 }
 
@@ -140,6 +141,21 @@ describe('registerOrchestratorIpc', () => {
     expect(mcp.interrupt).toHaveBeenCalledWith('t1')
   })
 
+  it('gitDiff: forwards the board id and returns the raw diff (read-only, Phase D)', async () => {
+    const mcp = spyMcp()
+    const { ipc, handlers } = fakeIpc()
+    registerOrchestratorIpc(
+      ipc,
+      () => liveWin,
+      () => mcp
+    )
+
+    const res = await handlers.get('mcp:gitDiff')!(ev(mainFrame), 't1')
+    expect(mcp.gitDiff).toHaveBeenCalledWith('t1')
+    expect(res).toBe('diff --git a/x b/x\n+added\n-removed')
+    await expect(handlers.get('mcp:gitDiff')!(ev(mainFrame), 123)).rejects.toThrow(/boardId/)
+  })
+
   it('🔒 a foreign sender frame is denied on every channel (no orchestrator call)', async () => {
     const mcp = spyMcp()
     const { ipc, handlers } = fakeIpc()
@@ -161,11 +177,13 @@ describe('registerOrchestratorIpc', () => {
     ).rejects.toThrow('forbidden')
     await expect(handlers.get('mcp:awaitSettled')!(foreign, 't1')).rejects.toThrow('forbidden')
     await expect(handlers.get('mcp:interrupt')!(foreign, 't1')).rejects.toThrow('forbidden')
+    await expect(handlers.get('mcp:gitDiff')!(foreign, 't1')).rejects.toThrow('forbidden')
     expect(mcp.spawnGroup).not.toHaveBeenCalled()
     expect(mcp.dispatchPrompt).not.toHaveBeenCalled()
     expect(mcp.handoffPrompt).not.toHaveBeenCalled()
     expect(mcp.awaitSettled).not.toHaveBeenCalled()
     expect(mcp.interrupt).not.toHaveBeenCalled()
+    expect(mcp.gitDiff).not.toHaveBeenCalled()
   })
 
   it('rejects when the orchestrator is unavailable (loopback server down)', async () => {

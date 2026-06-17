@@ -172,6 +172,17 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       // finishes (read-only; the board is already addressable here, but guard the window anyway).
       const awaitSettled = api.awaitSettled
       const result = await retryUntilReady(() => awaitSettled(terminalId))
+      // Phase D (collect/merge): settle → Reporting while the diff loads → snapshot the result + the
+      // captured raw diff onto the task (the result zone + recap timeline read them) → done/failed.
+      // gitDiff is read-only + best-effort: a missing api / non-repo cwd / error → no diff (chip hidden).
+      useCommandStore.getState().setTaskStatus(id, 'reporting')
+      let diff = ''
+      try {
+        diff = (await api.gitDiff?.(terminalId)) ?? ''
+      } catch {
+        diff = ''
+      }
+      useCommandStore.getState().setTaskResult(id, result, diff)
       useCommandStore.getState().setTaskStatus(id, isFailureResult(result) ? 'failed' : 'done')
       pumpRef.current?.() // a slot freed → dispatch the next queued task
     } catch (err) {

@@ -34,6 +34,19 @@ export interface TaskGroup {
 }
 
 /**
+ * A settled worker's structured result, snapshotted onto the task in Phase D (collect/merge). The
+ * dispatch hook already reads this off `awaitSettled` — we just keep it. Structurally a mirror of
+ * the package `BoardResult` / `commandDispatch.WorkerResult` (the fields we surface); declared here
+ * because commandStore is a LEAF — `commandDispatch.ts` imports from it, so it can't import back.
+ */
+export interface TaskResult {
+  present?: boolean
+  status?: string
+  summary?: string
+  refs?: string[]
+}
+
+/**
  * The worker-launch config chosen in the dispatch dialog (C2d) — remembered as `lastWorkerConfig`
  * to pre-fill the next dispatch. Structural mirror of the terminal command-builder state (presetId
  * + per-option values + a manual raw override); kept layer-independent (no import from the terminal
@@ -67,6 +80,12 @@ export interface CommandTask {
    * config cancelled. No hardcoded default — the dialog (default preset `claude`) owns it.
    */
   launchCommand?: string
+  /** Phase D — the worker's settled result (status·summary·refs), snapshotted at settle. */
+  result?: TaskResult
+  /** Phase D — the raw `git diff HEAD` captured at settle (cached for the chip + view-diff; '' = none). */
+  diff?: string
+  /** Phase D — wall-clock ms when the task reached done/failed (the recap TIMELINE timestamp). */
+  finishedAt?: number
 }
 
 /**
@@ -81,6 +100,27 @@ export function tasksInColumn(
   return column === 'done'
     ? tasks.filter((t) => t.status === 'done' || t.status === 'failed')
     : tasks.filter((t) => t.status === column)
+}
+
+/**
+ * Phase D — split tasks into the flip-to-recap face's two zones. NOW = in-flight tasks (routing ·
+ * executing · reporting) in queue order; TIMELINE = finished tasks (done · failed) NEWEST-FIRST
+ * (by `finishedAt`, falling back to a stable order when a timestamp is absent — e.g. a board-gone
+ * failure). Pure + unit-testable; the single source of the recap bucketing.
+ */
+const NOW_STATUSES: ReadonlySet<TaskStatus> = new Set(['routing', 'executing', 'reporting'])
+export function recapBuckets(tasks: ReadonlyArray<CommandTask>): {
+  now: CommandTask[]
+  timeline: CommandTask[]
+} {
+  const now = tasks.filter((t) => NOW_STATUSES.has(t.status))
+  const timeline = tasks
+    .filter((t) => t.status === 'done' || t.status === 'failed')
+    .map((t, i) => ({ t, i }))
+    // newest first; ties / missing timestamps keep their relative array order (stable).
+    .sort((a, b) => (b.t.finishedAt ?? 0) - (a.t.finishedAt ?? 0) || a.i - b.i)
+    .map(({ t }) => t)
+  return { now, timeline }
 }
 
 /** Monotonic per-session task id. Internal to commandStore (tasks are ephemeral, never serialized). */
@@ -129,6 +169,12 @@ interface CommandState {
   setLastWorkerConfig: (config: WorkerConfig) => void
   /** Attach the spawned worker group to a task (set when routing starts). Runtime-only. */
   setTaskGroup: (id: string, group: TaskGroup) => void
+  /**
+   * Phase D (collect/merge) — snapshot a settled worker's result + its captured raw diff onto the
+   * task and stamp `finishedAt`. Called once at settle, before the final done/failed transition;
+   * the recap TIMELINE + the card result zone read it. No-op if the task is gone (cleared mid-flight).
+   */
+  setTaskResult: (id: string, result: TaskResult, diff: string) => void
   /**
    * Move a task to a new lifecycle status — the kanban transition primitive. Phase C drives this
    * live from the dispatch choreography + the worker status push.
@@ -186,12 +232,27 @@ export const useCommandStore = create<CommandState>((set) => ({
   setLastWorkerConfig: (config) => set({ lastWorkerConfig: config }),
   setTaskGroup: (id, group) =>
     set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? { ...t, group } : t)) })),
+  setTaskResult: (id, result, diff) =>
+    set((s) => ({
+      tasks: s.tasks.map((t) => (t.id === id ? { ...t, result, diff, finishedAt: Date.now() } : t))
+    })),
   setTaskStatus: (id, status) =>
     set((s) => ({ tasks: s.tasks.map((t) => (t.id === id ? { ...t, status } : t)) })),
   retryTask: (id) =>
     set((s) => ({
+      // failed → queued; clear the group AND the prior run's result/diff/finishedAt so the
+      // re-spawn starts clean (KEEPS launchCommand/prompt so the retry reuses the config).
       tasks: s.tasks.map((t) =>
-        t.id === id && t.status === 'failed' ? { ...t, status: 'queued', group: undefined } : t
+        t.id === id && t.status === 'failed'
+          ? {
+              ...t,
+              status: 'queued',
+              group: undefined,
+              result: undefined,
+              diff: undefined,
+              finishedAt: undefined
+            }
+          : t
       )
     })),
   clearTasks: () => set({ tasks: [], configuringTaskId: null })

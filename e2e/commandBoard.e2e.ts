@@ -143,6 +143,82 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
     await expect(routingEdge).toHaveCount(0)
   })
 
+  test('Phase D: a done task shows the result zone — summary · refs · diffstat · view diff', async ({
+    page
+  }) => {
+    const id = await seed(page, 'command')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+    const node = page.locator(`[data-id="${id}"]`)
+
+    // Inject a SETTLED done task carrying a result + a captured raw diff (no real spawn). The card's
+    // collect/merge result zone derives from the task fields, so it renders immediately.
+    await page.evaluate(() =>
+      (globalThis as any).__canvasE2E.setCommandTasks([
+        {
+          id: 'task-d1',
+          title: 'bump deps',
+          zoneName: 'Bump Deps',
+          status: 'done',
+          group: { groupId: 'g-d1', terminalId: 't-d1' },
+          result: {
+            present: true,
+            status: 'success',
+            summary: 'Updated 12 deps; lockfile clean.',
+            refs: ['package.json', 'pnpm-lock.yaml']
+          },
+          diff: 'diff --git a/package.json b/package.json\n+  "left-pad": "1.3.0"\n-  "left-pad": "1.2.0"'
+        }
+      ])
+    )
+
+    await expect(node.getByText('Updated 12 deps; lockfile clean.')).toBeVisible()
+    await expect(node.getByText('package.json', { exact: true })).toBeVisible()
+    await expect(node.getByText('+1', { exact: true })).toBeVisible() // diffstat insertion
+    await expect(node.getByRole('button', { name: /zone/ })).toBeVisible() // ↗ zone (group set)
+
+    // view diff expands the raw unified diff inline.
+    await node.getByRole('button', { name: 'view diff' }).click()
+    await expect(node.getByText('git diff HEAD')).toBeVisible()
+    await expect(node.getByText(/left-pad.*1\.3\.0/)).toBeVisible()
+  })
+
+  test('Phase D: flip to recap shows the finished-task TIMELINE (NOW empty)', async ({ page }) => {
+    const id = await seed(page, 'command')
+    await evalIn(page, `window.__canvasE2E.fitView()`)
+    await page.waitForTimeout(300)
+    const node = page.locator(`[data-id="${id}"]`)
+
+    await page.evaluate(() =>
+      (globalThis as any).__canvasE2E.setCommandTasks([
+        {
+          id: 'task-d2',
+          title: 'auth',
+          zoneName: 'Auth Feature',
+          status: 'done',
+          result: { present: true, status: 'success', summary: 'Added reset-token flow.' },
+          finishedAt: 222
+        }
+      ])
+    )
+
+    // Flip to the recap face. "Timeline" / "No active tasks." / "newest first" are recap-ONLY
+    // markers (the kanban front face has none of them): TIMELINE is non-empty, NOW is empty. The
+    // summary itself renders on BOTH faces (the kanban Done card stays mounted behind the opaque
+    // recap overlay — the terminal-flip discipline), so it legitimately resolves twice → `.first()`.
+    await node.getByRole('button', { name: /recap/ }).click()
+    await expect(node.getByText('Timeline')).toBeVisible()
+    await expect(node.getByText(/newest first/)).toBeVisible()
+    await expect(node.getByText('No active tasks.')).toBeVisible()
+    await expect(node.getByText('Added reset-token flow.').first()).toBeVisible()
+
+    // Flip back (let the fold settle so the toggle's re-entrancy guard doesn't drop the click):
+    // the recap face unmounts, so its unique "Timeline" marker is gone.
+    await page.waitForTimeout(350)
+    await node.getByRole('button', { name: /recap/ }).click()
+    await expect(node.getByText('Timeline')).toHaveCount(0)
+  })
+
   // The full dispatch choreography (submit → spawn an agent group → engineer the prompt → hand off,
   // confirm-gated → advance) is covered deterministically by the useCommandDispatch hook unit test
   // (mocked window.api) + the spawn primitive by spawnGroup.e2e + the confirm gate by mcp.e2e. A

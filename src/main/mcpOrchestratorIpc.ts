@@ -27,6 +27,8 @@ export interface OrchestratorDrive {
   handoffPrompt(boardId: string, text: string): Promise<BoardResult>
   awaitSettled(boardId: string): Promise<BoardResult>
   interrupt(boardId: string): Promise<void>
+  /** Phase D — read-only working-tree diff for a board (terminal-check + 100 KB clamp in MAIN). */
+  gitDiff(boardId: string): Promise<string>
 }
 
 /** Coarse per-board status change forwarded to the kanban (raw `subscribeBoardStatus` shape). */
@@ -106,6 +108,16 @@ export function registerOrchestratorIpc(
     const id = asString(boardId)
     if (id === null) throw new Error('mcp:interrupt requires a string boardId')
     await mcp.interrupt(id) // gated Ctrl-C (no sanitize, terminator = \x03)
+  })
+
+  // Phase D (collect/merge) — read-only working-tree diff for the Command board's result zone +
+  // recap timeline. The orchestrator owns board-resolution + the terminal-type check + the 100 KB
+  // clamp; simple-git stays MAIN-only. No write, no gate (read-only); frame-guarded like the rest.
+  ipc.handle('mcp:gitDiff', async (e, boardId: unknown): Promise<string> => {
+    const mcp = resolve(e)
+    const id = asString(boardId)
+    if (id === null) throw new Error('mcp:gitDiff requires a string boardId')
+    return mcp.gitDiff(id)
   })
 }
 

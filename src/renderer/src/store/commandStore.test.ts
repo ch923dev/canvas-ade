@@ -3,6 +3,7 @@ import {
   useCommandStore,
   commandStoreDefaults,
   tasksInColumn,
+  recapBuckets,
   type CommandTask,
   type TaskStatus
 } from './commandStore'
@@ -150,6 +151,80 @@ describe('commandStore — config dialog (C2d)', () => {
     expect(get().tasks[0].group).toBeUndefined()
     expect(get().tasks[0].launchCommand).toBe('claude --yolo') // config preserved
     expect(get().tasks[0].prompt).toBe('go')
+  })
+})
+
+describe('commandStore — collect/merge (Phase D)', () => {
+  const get = (): ReturnType<typeof useCommandStore.getState> => useCommandStore.getState()
+
+  it('setTaskResult snapshots the result + raw diff and stamps finishedAt', () => {
+    const id = get().addTask('x')!
+    const before = Date.now()
+    get().setTaskResult(
+      id,
+      { present: true, status: 'success', summary: 'done it', refs: ['a.ts', 'b.ts'] },
+      'diff --git a/a b/a\n+x'
+    )
+    const t = get().tasks[0]
+    expect(t.result).toEqual({
+      present: true,
+      status: 'success',
+      summary: 'done it',
+      refs: ['a.ts', 'b.ts']
+    })
+    expect(t.diff).toBe('diff --git a/a b/a\n+x')
+    expect(typeof t.finishedAt).toBe('number')
+    expect(t.finishedAt!).toBeGreaterThanOrEqual(before)
+  })
+
+  it('retryTask clears the prior run result/diff/finishedAt (KEEPS the config)', () => {
+    const id = get().addTask('x')!
+    get().setTaskConfig(id, { launchCommand: 'claude', prompt: 'go' })
+    get().setTaskGroup(id, { groupId: 'g', terminalId: 't' })
+    get().setTaskResult(id, { status: 'failure', summary: 'boom' }, 'diff')
+    get().setTaskStatus(id, 'failed')
+    get().retryTask(id)
+    const t = get().tasks[0]
+    expect(t.status).toBe('queued')
+    expect(t.result).toBeUndefined()
+    expect(t.diff).toBeUndefined()
+    expect(t.finishedAt).toBeUndefined()
+    expect(t.launchCommand).toBe('claude') // config preserved
+  })
+})
+
+describe('recapBuckets (NOW + TIMELINE)', () => {
+  const mk = (id: string, status: TaskStatus, finishedAt?: number): CommandTask => ({
+    id,
+    title: id,
+    status,
+    ...(finishedAt !== undefined ? { finishedAt } : {})
+  })
+
+  it('NOW = in-flight (routing/executing/reporting) in queue order', () => {
+    const tasks = [
+      mk('a', 'queued'),
+      mk('b', 'routing'),
+      mk('c', 'executing'),
+      mk('d', 'reporting'),
+      mk('e', 'done', 1)
+    ]
+    expect(recapBuckets(tasks).now.map((t) => t.id)).toEqual(['b', 'c', 'd'])
+  })
+
+  it('TIMELINE = done/failed newest-first by finishedAt (stable on ties/missing)', () => {
+    const tasks = [
+      mk('old', 'done', 100),
+      mk('new', 'failed', 300),
+      mk('mid', 'done', 200),
+      mk('notimestamp', 'failed') // missing finishedAt → sorts to the end, stable
+    ]
+    expect(recapBuckets(tasks).timeline.map((t) => t.id)).toEqual([
+      'new',
+      'mid',
+      'old',
+      'notimestamp'
+    ])
   })
 })
 
