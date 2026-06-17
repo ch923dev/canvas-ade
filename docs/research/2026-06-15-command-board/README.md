@@ -203,6 +203,9 @@ Each phase ends runnable + committed, on a `feat/*` worktree, merged sequentiall
 ---
 
 ## 7. Pointers
+- **Post-A–E follow-ups** (user asks 2026-06-18: terminal→connected-planning diagrams · terminal→connected-browser
+  dev-URL · orchestrator-as-chat-agent): `orchestrator-followups.md` (this folder) — phased G/H proposal;
+  umbrella scope stays frozen at A–E.
 - Existing orchestrator map + the running→idle root cause: this session's scout reports.
 - `docs/feature-proposals.md` › OS-3 (the other active build) · the deferred **Feature Workspaces** entry
   in `docs/roadmap.md` (this design realizes it).
