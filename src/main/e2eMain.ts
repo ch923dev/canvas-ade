@@ -143,6 +143,14 @@ export interface E2EMain {
   /** The orchestration connector mirror (the relay-cable probe asserts A→B landed in MAIN). */
   mcpListConnectors(): Array<{ sourceId: string; targetId: string; kind: string }>
   /**
+   * Agent Orchestration P4: mint a `connected`-tier MCP token bound to `boardId` (the same token
+   * the spawn-time provisioner mints for a consented terminal), so the e2e can connect a real
+   * connected client over loopback and prove cable-authorized relay end-to-end. Returns
+   * `{ token, port }` (the tier is always `connected`), or null when the MCP server never mounted.
+   * 🔒 The token is returned ONLY to the in-process e2e seam; it is NEVER logged.
+   */
+  mcpMintConnectedToken(boardId: string): { token: string; port: number } | null
+  /**
    * Memory probe (T1.7): point the Brain/Memory engine at a fresh EMPTY temp dir and
    * return its root — `canvas://memory` must then read the graceful-empty shell. Always
    * pair with `mcpMemoryEnd` to revert the global dir override + delete the temp root.
@@ -328,6 +336,11 @@ export function installE2EMain(
         workerToken: mcp.mintWorkerToken(MCP_E2E_WORKER_BOARD),
         workerBoardId: MCP_E2E_WORKER_BOARD
       }
+    },
+    mcpMintConnectedToken(boardId) {
+      if (!mcp) return null
+      const { token, port } = mcp.mintConnectedToken(boardId)
+      return { token, port }
     },
     gitDiff(boardId) {
       return mcp?.gitDiff(boardId) ?? Promise.resolve('')

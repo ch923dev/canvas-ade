@@ -2,6 +2,12 @@ import { buildOrchestrator, MCP_IDLE_TTL_MS, type BoardRegistry } from './mcpOrc
 import type { BoardResult, TokenStore } from '@expanse-ade/mcp'
 import type { AppModel } from './appModel'
 import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
+import { getCurrentDir } from './projectStore'
+import {
+  isOrchestrationEnabled,
+  __setTerminalTokenMinter,
+  type TerminalToken
+} from './orchestration/seam'
 
 /**
  * Parse a positive-millisecond env override, falling back to `fallback` when the value
@@ -22,16 +28,26 @@ const IDLE_TTL_MS = positiveMsEnv(process.env.CANVAS_MCP_IDLE_TTL_MS, MCP_IDLE_T
 const REAP_INTERVAL_MS = positiveMsEnv(process.env.CANVAS_MCP_REAP_INTERVAL_MS, 60_000)
 
 /**
- * 🔒 S2 planning content-write path is FLAG-GATED for the first release (ADR 0003): the
- * `add_planning_elements` tool + the `spawn_board` planning `seed` are registered ONLY when
- * this returns true. Always on under the e2e harness (CANVAS_E2E) so the @planning MCP e2e
- * can exercise it; otherwise opt-in via `CANVAS_MCP_PLANNING_WRITE` (1/true). Off by default
- * in production until the write/confirm UX is proven (the P4 "Run"-wiring follow-up).
+ * 🔒 S2 planning content-write path gate (ADR 0003): the `add_planning_elements` tool + the
+ * `spawn_board` planning `seed` are registered ONLY when this returns true. True when:
+ *   - the e2e harness is on (`CANVAS_E2E`) so the @planning MCP e2e can exercise it, OR
+ *   - the dev opt-in flag is set (`CANVAS_MCP_PLANNING_WRITE` = 1/true), OR
+ *   - **orchestration consent is granted for `projectDir`** (Agent Orchestration v1) — the
+ *     per-project Enable replaces the dev-only flag in PROD. Still ConfirmModal-gated per write.
+ *
+ * `projectDir` defaults to the live current project (`getCurrentDir()`); the package re-evaluates
+ * this PER SESSION (the MCP server is a process singleton but consent is per-project + runtime-
+ * toggleable), so a terminal that connects after Enable sees the write tool. A null dir (no project
+ * open) ⇒ no consent path, exactly as before.
  */
-export function planningWriteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function planningWriteEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+  projectDir: string | null = getCurrentDir()
+): boolean {
   if (env.CANVAS_E2E === '1') return true
   const v = env.CANVAS_MCP_PLANNING_WRITE
-  return v === '1' || v === 'true'
+  if (v === '1' || v === 'true') return true
+  return projectDir ? isOrchestrationEnabled(projectDir) : false
 }
 
 export interface RunningMcp {
@@ -40,6 +56,14 @@ export interface RunningMcp {
   orchestratorToken: string
   /** Mint a worker-tier token bound to a board id (consumer: a later .mcp.json slice / the smoke). */
   mintWorkerToken(boardId: string): string
+  /**
+   * Mint a `connected`-tier MCP token bound to a Terminal board (Agent Orchestration v1). Returns
+   * `{ token, tier:'connected', port }` — what the P3 spawn-time provisioner writes into the
+   * agent's per-CLI MCP config so a consented terminal can `relay_prompt` along its own cables +
+   * spawn/configure/plan-write the canvas. The seam's `mintTerminalToken` delegates here. 🔒 NEVER
+   * log the token (PLAN §6).
+   */
+  mintConnectedToken(boardId: string): TerminalToken
   /** Run an idle-reap sweep now; returns the reaped board ids (T3.4 — drives the live smoke). */
   reapIdle(): Promise<string[]>
   /**
@@ -104,14 +128,25 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
     // 🔒 BUG-021: bind relay_prompt to the single command-orchestrator board ('app', minted
     // just above). A second orchestrator-tier token (bound to a different board) then can't
     // drive orchestration cables it doesn't own. Matches the orchestratorToken's boardId.
-    // 🔒 S2: `planningWrite` flag-gates the `add_planning_elements` content-write tool +
-    // `spawn_board` seed (off by default for the first release, ADR 0003).
+    // 🔒 S2 / Agent Orchestration: `planningWrite` is a LAZY getter — re-evaluated per session by
+    // the package (the server is a process singleton but orchestration consent is per-project +
+    // runtime-toggleable). Gates the `add_planning_elements` content-write tool + `spawn_board`
+    // seed for the orchestrator AND `connected` tiers (ADR 0003 + consent, ConfirmModal-gated).
     const server = await createMcpHttpServer({
       orchestrator,
       tokens,
       commandBoardId: 'app',
-      planningWrite: planningWriteEnabled()
+      planningWrite: () => planningWriteEnabled()
     })
+    // 🔒 Agent Orchestration v1: mint a `connected`-tier token bound to a Terminal board. NEVER
+    // logged (PLAN §6). Registered as the seam's `mintTerminalToken` delegate so the P3 spawn-time
+    // provisioner can mint a per-board token without importing the ESM-only package or the store.
+    const mintConnectedToken = (boardId: string): TerminalToken => ({
+      token: mintBoardToken(tokens, { boardId, tier: 'connected' }).token,
+      tier: 'connected',
+      port: server.port
+    })
+    __setTerminalTokenMinter(mintConnectedToken)
     // 🔒 Idle-reap sweep (T3.4): periodically close MCP-spawned boards that have gone
     // idle past the TTL, so the swarm can't accrete dormant boards. unref() so the
     // timer never keeps the process alive at shutdown.
@@ -124,6 +159,7 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       tokens,
       orchestratorToken,
       mintWorkerToken: (boardId) => mintBoardToken(tokens, { boardId, tier: 'worker' }).token,
+      mintConnectedToken,
       reapIdle: () => orchestrator.reapIdle(),
       gitDiff: (boardId) => orchestrator.gitDiff(boardId),
       describeApp: () => orchestrator.describeApp(),
@@ -133,6 +169,8 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),
       interrupt: (boardId) => orchestrator.interrupt(boardId),
       close: () => {
+        // Clear the seam minter so a post-close `mintTerminalToken` fails loud (no bogus token).
+        __setTerminalTokenMinter(null)
         clearInterval(reapTimer)
         return server.close()
       }
