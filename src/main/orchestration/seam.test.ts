@@ -1,10 +1,12 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import type { ConnectorMirror } from '../boardRegistry'
 import {
   canRelay,
   mintTerminalToken,
+  __setTerminalTokenMinter,
   setOrchestrationEnabled,
-  isOrchestrationEnabled
+  isOrchestrationEnabled,
+  type TerminalToken
 } from './seam'
 
 const cable = (
@@ -48,11 +50,30 @@ describe('canRelay (P0 seam — real pure body)', () => {
   })
 })
 
-describe('seam stubs (owned by later phases — must not silently succeed)', () => {
-  it('mintTerminalToken throws until P0 implements it', () => {
-    expect(() => mintTerminalToken('board-1')).toThrow(/not implemented until P0/)
+describe('mintTerminalToken (P0 seam — delegates to the registered server minter)', () => {
+  afterEach(() => __setTerminalTokenMinter(null))
+
+  it('throws when no MCP server is mounted (no minter registered) — fails loud, never bogus', () => {
+    __setTerminalTokenMinter(null)
+    expect(() => mintTerminalToken('board-1')).toThrow(/MCP server not mounted/)
   })
 
+  it('delegates to the registered minter, returning its connected-tier token', () => {
+    const minted: TerminalToken = { token: 'tok-abc', tier: 'connected', port: 4321 }
+    __setTerminalTokenMinter((boardId) => ({ ...minted, token: `${minted.token}:${boardId}` }))
+    const out = mintTerminalToken('board-7')
+    expect(out).toEqual({ token: 'tok-abc:board-7', tier: 'connected', port: 4321 })
+  })
+
+  it('throws again once the minter is cleared (server closed)', () => {
+    __setTerminalTokenMinter(() => ({ token: 't', tier: 'connected', port: 1 }))
+    expect(mintTerminalToken('b').token).toBe('t')
+    __setTerminalTokenMinter(null)
+    expect(() => mintTerminalToken('b')).toThrow(/MCP server not mounted/)
+  })
+})
+
+describe('seam stubs (owned by later phases — must not silently succeed)', () => {
   it('setOrchestrationEnabled throws until P1 implements it', () => {
     expect(() => setOrchestrationEnabled('/proj', true)).toThrow(/not implemented until P1/)
   })

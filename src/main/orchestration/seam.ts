@@ -1,16 +1,14 @@
-import type { ConnectorMirror } from '../boardRegistry'
-
 /**
  * Shared seam for the **Agent Orchestration Onboarding** umbrella (PLAN §3, 2026-06-19).
  *
  * This file is the CONTRACT the three parallel lanes code against — it is stubbed FIRST on
- * the integration branch so every worktree compiles against it immediately. Only `canRelay`
- * carries a real body (it is a pure predicate, no I/O); the stateful entries are typed stubs
- * each owning lane fills in. **Do NOT implement the stubs here** — that is each phase's job:
+ * the integration branch so every worktree compiles against it immediately. Each owning lane
+ * fills in its part:
  *
- *   - WT-authority  (P0): `mintTerminalToken`; consumes `canRelay` in the relay path
- *   - WT-onboarding (P1): `isOrchestrationEnabled` / `setOrchestrationEnabled`
- *   - WT-provision  (P3): `CliProvisioner` implementations + the spawn-time auto-sync hook
+ *   - WT-authority  (P0, this lane): `mintTerminalToken` (via a registered minter) + `canRelay`,
+ *     consumed by the relay path in `mcpOrchestrator.ts`. ✅ IMPLEMENTED.
+ *   - WT-onboarding (P1): `isOrchestrationEnabled` / `setOrchestrationEnabled` (still stubs here).
+ *   - WT-provision  (P3): `CliProvisioner` implementations + the spawn-time auto-sync hook.
  *
  * Spec: `docs/research/2026-06-19-agent-orchestration-onboarding/PLAN.md`.
  * Security invariants (PLAN §6): never log tokens; provisioner files `0o600`; `unsync` on
@@ -30,14 +28,46 @@ export interface TerminalToken {
 }
 
 /**
- * Mint a `connected`-tier MCP token bound to `boardId`.
+ * The minter the running MCP server registers (`mcp.ts` → `startMcpServer`). Module-scoped so the
+ * pure seam never imports the ESM-only `@expanse-ade/mcp` package nor holds the TokenStore — the
+ * server owns both and injects a closure. `null` whenever no server is mounted (boot window /
+ * after `close()`), so a premature mint fails loudly instead of relaying with a bogus token.
+ */
+let terminalTokenMinter: ((boardId: string) => TerminalToken) | null = null
+
+/**
+ * Register (or clear, with `null`) the connected-tier token minter. Called by `startMcpServer`
+ * once the loopback server is up, and again with `null` on `close()`. Internal seam wiring — not
+ * a public API. NEVER log the minted token (PLAN §6).
+ */
+export function __setTerminalTokenMinter(
+  minter: ((boardId: string) => TerminalToken) | null
+): void {
+  terminalTokenMinter = minter
+}
+
+/**
+ * Mint a `connected`-tier MCP token bound to `boardId`, against the running MCP server's token
+ * store. The returned `{ token, tier:'connected', port }` is what the P3 spawn-time provisioner
+ * writes into the agent's per-CLI MCP config. Throws when no server is mounted (the minter is
+ * unregistered) so a premature caller fails loudly rather than provisioning a dead token.
  *
- * STUB — implemented by WT-authority (P0). The real body derives/registers the token against
- * the running MCP server (NEVER logged — PLAN §6). Throws until P0 lands so a premature caller
- * fails loudly rather than relaying with a bogus token.
+ * 🔒 NEVER log the returned token (PLAN §6).
  */
 export function mintTerminalToken(boardId: string): TerminalToken {
-  throw new Error(`mintTerminalToken(${boardId}): not implemented until P0 (WT-authority)`)
+  if (!terminalTokenMinter) {
+    throw new Error(`mintTerminalToken(${boardId}): MCP server not mounted (no minter registered)`)
+  }
+  return terminalTokenMinter(boardId)
+}
+
+/** The minimal connector shape {@link canRelay} reads. Satisfied by both the renderer mirror's
+ *  `ConnectorMirror` (boardRegistry) and the orchestrator's `ConnectorMirrorEntry` (mcpRegistry),
+ *  so this predicate is the SINGLE source of truth the relay path consumes by construction. */
+export interface RelayConnector {
+  sourceId: string
+  targetId: string
+  kind: string
 }
 
 /**
@@ -46,13 +76,10 @@ export function mintTerminalToken(boardId: string): TerminalToken {
  *
  * Pure predicate — no I/O, no side effects. The caller still applies the unbounded-await TOCTOU
  * re-check and the per-action ConfirmModal (PLAN §2); this only resolves "is there a directed
- * cable". Mirrors the relay-gate resolution in `mcpOrchestrator.ts` so both agree by construction.
+ * cable". `mcpOrchestrator.ts`'s relay path calls THIS for both its initial check and its TOCTOU
+ * re-check, so the seam and the live gate agree by construction.
  */
-export function canRelay(
-  src: string,
-  dst: string,
-  connectors: readonly ConnectorMirror[]
-): boolean {
+export function canRelay(src: string, dst: string, connectors: readonly RelayConnector[]): boolean {
   return connectors.some(
     (c) => c.kind === 'orchestration' && c.sourceId === src && c.targetId === dst
   )
