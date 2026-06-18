@@ -65,6 +65,7 @@ import {
   type RecapMapEntry
 } from './agentRecapMap'
 import { registerRecapHandlers, readConsent } from './recapConsent'
+import { registerOrchestrationHandlers } from './orchestrationConsent'
 import {
   extractMilestones,
   isTrustedTranscriptPath,
@@ -583,6 +584,28 @@ app.whenReady().then(async () => {
           // the map file could not be rewritten.
         }
       }
+    }
+  )
+
+  // ── Orchestration consent IPC (Agent Orchestration Onboarding P1) ───────────────────
+  // orchestration:getConsent / orchestration:setConsent (frame-guarded inside the module).
+  // Binds the seam consent store to `userData` as a side effect, so the seam's
+  // isOrchestrationEnabled() — consumed by the P3 spawn-time provisioner hook (pty.ts) and the
+  // P0 plan-write gate (mcp.ts) — resolves the right store with only a projectDir.
+  //
+  // onChange fires AFTER a decision is durably persisted. It is the WT-provision (P3) seam:
+  // 'enabled' → write each detected CLI's MCP config; 'declined' → remove them (unsync, 0o600
+  // files per PLAN §6). Until P3 lands the provisioners, this is a documented best-effort
+  // placeholder — the primary sync path is spawn-time (pty.ts), so a consent flip with no
+  // provisioner wiring yet is safe (the next terminal spawn re-syncs). Never throw here (the
+  // decision is already durable); P3's body must own its own async errors.
+  registerOrchestrationHandlers(
+    ipcMain,
+    () => mainWindow,
+    userData,
+    getCurrentDir,
+    (_projectPath, _on) => {
+      // WT-provision (P3): drive the per-CLI provisioner sync/unsync here.
     }
   )
 

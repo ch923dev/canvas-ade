@@ -191,6 +191,11 @@ export type LlmWriteResult = { ok: boolean; reason?: string }
 // ── Terminal-recap T12: consent state ──
 export type RecapConsentState = 'enabled' | 'declined' | 'undecided'
 
+// ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
+// MIRRORS src/main/orchestrationConsent.ts OrchestrationConsentState (process boundary → no
+// shared import). A SEPARATE consent from recap (decision 2026-06-19).
+export type OrchestrationConsentState = 'enabled' | 'declined' | 'undecided'
+
 // ── Recap redesign S1: the recap face's data bundle. MIRRORS src/main (recapFacts.ts +
 // summaryLoop.ts RecapNarrative + recapIpc.ts RecapBundle) — the process boundary means no
 // shared import (tsconfig.preload ⊥ tsconfig.node); keep the three in lockstep, same as PtyState.
@@ -487,6 +492,18 @@ const api = {
       ipcRenderer.on('recap:learned', h)
       return () => ipcRenderer.removeListener('recap:learned', h)
     }
+  },
+
+  // ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
+  // The one-time "Enable agent orchestration?" grant (the mock's Step 1). Separate from recap
+  // consent (separate userData store). getConsent drives the once-per-project first-init prompt
+  // + the Settings toggle; setConsent persists the grant/revoke and (in MAIN) fires the P3
+  // provisioner sync/unsync.
+  orchestration: {
+    getConsent: (): Promise<OrchestrationConsentState> =>
+      ipcRenderer.invoke('orchestration:getConsent'),
+    setConsent: (decision: 'enabled' | 'declined'): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('orchestration:setConsent', decision)
   },
 
   // ── MCP board mirror (control plane; metadata only — id/type/title + coarse status

@@ -33,6 +33,7 @@ import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
 import { BackdropPicker } from './BackdropPicker'
 import { RecapConsentModal } from './RecapConsentModal'
+import { OrchestrationModals } from './OrchestrationModals'
 
 export interface AppChromeProps {
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
@@ -82,6 +83,9 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {/* Guard: MAIN/renderer dir desync can leave askRecap=true with no project open. */}
       {askRecap && projectDir !== null && <RecapConsentModal onClose={() => setAskRecap(false)} />}
+      {/* Agent Orchestration Onboarding (P2): the Enable/Sync host owns its own first-init
+          trigger + per-project hydration (self-guarded against firing with no project open). */}
+      <OrchestrationModals />
     </>
   )
 }

@@ -73,12 +73,15 @@ describe('mintTerminalToken (P0 seam — delegates to the registered server mint
   })
 })
 
-describe('seam stubs (owned by later phases — must not silently succeed)', () => {
-  it('setOrchestrationEnabled throws until P1 implements it', () => {
-    expect(() => setOrchestrationEnabled('/proj', true)).toThrow(/not implemented until P1/)
+describe('seam consent accessors (P1 — delegate to the userData consent store)', () => {
+  // P1 (WT-onboarding) is now IMPLEMENTED — these delegate to the consent store
+  // (orchestrationConsent.ts), exercised in full there. The seam's only observable behaviour
+  // before the store is bound at boot: the getter stays closed, the setter refuses to no-op.
+  it('isOrchestrationEnabled defaults closed (false) before the consent store is bound', () => {
+    expect(isOrchestrationEnabled('/proj')).toBe(false)
   })
 
-  it('isOrchestrationEnabled defaults closed (false) until P1 implements it', () => {
-    expect(isOrchestrationEnabled('/proj')).toBe(false)
+  it('setOrchestrationEnabled throws when the consent store is not bound (no silent no-op)', () => {
+    expect(() => setOrchestrationEnabled('/proj', true)).toThrow(/not bound/)
   })
 })
