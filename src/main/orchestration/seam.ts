@@ -1,3 +1,5 @@
+import { isEnabled, setEnabled } from '../orchestrationConsent'
+
 /**
  * Shared seam for the **Agent Orchestration Onboarding** umbrella (PLAN §3, 2026-06-19).
  *
@@ -91,24 +93,23 @@ export function canRelay(src: string, dst: string, connectors: readonly RelayCon
  * Per-project orchestration consent (the one-time **Enable**). Read from the userData consent
  * store — NEVER the project folder (CLAUDE.md persistence rule).
  *
- * STUB — implemented by WT-onboarding (P1). Defaults **closed** (`false`) until then: no consent
- * ⇒ no orchestration, so the P3 spawn-time hook + the plan-write gate scaffold safely against it.
+ * P1 (WT-onboarding) — delegates to the consent store (`orchestrationConsent.ts`), which resolves
+ * userData through the boot-time binding. Defaults **closed** (`false`) before the store is bound,
+ * so the P3 spawn-time hook + the plan-write gate scaffold safely against it.
  */
 export function isOrchestrationEnabled(projectDir: string): boolean {
-  void projectDir
-  return false
+  return isEnabled(projectDir)
 }
 
 /**
  * Grant / revoke per-project orchestration consent.
  *
- * STUB — implemented by WT-onboarding (P1); persists to the userData consent store and drives
- * provisioner `sync`/`unsync`. Throws until then so a consent write can't silently no-op.
+ * P1 (WT-onboarding) — persists to the userData consent store. PERSIST-ONLY: the user-facing
+ * path is the `orchestration:setConsent` IPC handler, which ALSO fires the provisioner
+ * sync/unsync hook. Throws if the store is unbound so a consent write can never silently no-op.
  */
 export function setOrchestrationEnabled(projectDir: string, on: boolean): void {
-  throw new Error(
-    `setOrchestrationEnabled(${projectDir}, ${on}): not implemented until P1 (WT-onboarding)`
-  )
+  setEnabled(projectDir, on)
 }
 
 // ── WT-provision (P3) implements + consumes the two above ────────────────────
