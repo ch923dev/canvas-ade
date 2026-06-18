@@ -38,6 +38,13 @@ function liveReg(opts: { drained?: string[]; removeFailId?: () => string | null 
     sendCommand: async (cmd) => {
       if (cmd.type === 'addBoard')
         boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T', status: 'running' })
+      if (cmd.type === 'spawnGroup') {
+        // Mirror the whole cluster, exactly as the renderer republishes a spawned zone.
+        const { terminal, planning, browser } = cmd.members
+        boards.push({ id: terminal.id, type: 'terminal', title: 'T', status: 'running' })
+        if (planning) boards.push({ id: planning.id, type: 'planning', title: 'T', status: 'idle' })
+        if (browser) boards.push({ id: browser.id, type: 'browser', title: 'T', status: 'idle' })
+      }
       if (cmd.type === 'removeBoard') {
         if (opts.removeFailId?.() === cmd.id) return { ok: false, error: 'no-window' }
         const i = boards.findIndex((b) => b.id === cmd.id)
@@ -269,5 +276,156 @@ describe('createMcpLifecycle (DI factory — extracted from buildOrchestrator)',
     })
     await expect(life.spawnBoard({ type: 'evil' })).rejects.toThrow(/type|spawnable/i)
     expect(seen).toEqual([]) // nothing reached the renderer / mint path
+  })
+})
+
+describe('createMcpLifecycle.spawnGroup (PR-5b — feature-zone cluster)', () => {
+  type MirrorBoard = { id: string; type: string; title: string; status?: string }
+
+  /**
+   * Capture the commands the lifecycle sends, so a test can assert the spawnGroup envelope.
+   * `failGroupSend` fails ONLY the spawnGroup ack (addBoard still succeeds), so a release test can
+   * spawn afterwards to prove the reserved cluster slots were freed.
+   */
+  function recordingReg(opts: { failGroupSend?: boolean } = {}): {
+    registry: BoardRegistry
+    sent: Array<{ type: string; [k: string]: unknown }>
+    boards: MirrorBoard[]
+  } {
+    const sent: Array<{ type: string; [k: string]: unknown }> = []
+    const boards: MirrorBoard[] = []
+    const registry: BoardRegistry = {
+      listBoards: () => boards,
+      listSessions: () => [],
+      readOutput: () => EMPTY_OUTPUT,
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => {
+        sent.push(cmd as never)
+        if (cmd.type === 'spawnGroup') {
+          if (opts.failGroupSend) return { ok: false, error: 'no-window' }
+          const { terminal, planning, browser } = cmd.members
+          boards.push({ id: terminal.id, type: 'terminal', title: 'T', status: 'running' })
+          if (planning) boards.push({ id: planning.id, type: 'planning', title: 'T' })
+          if (browser) boards.push({ id: browser.id, type: 'browser', title: 'T' })
+        }
+        if (cmd.type === 'addBoard')
+          boards.push({ id: cmd.board.id, type: cmd.board.type, title: 'T', status: 'running' })
+        return { ok: true, type: cmd.type }
+      },
+      drainPty: async () => {},
+      ...DISPATCH_DEFAULTS
+    }
+    return { registry, sent, boards }
+  }
+
+  const makeLife = (
+    registry: BoardRegistry,
+    boards: MirrorBoard[],
+    cap = 4
+  ): ReturnType<typeof createMcpLifecycle> =>
+    createMcpLifecycle({
+      registry,
+      now: () => 0,
+      cap,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: listBoardsFrom(boards)
+    })
+
+  it('spawns a terminal-only zone by default (planning/browser absent → omitted from the envelope + result)', async () => {
+    const { registry, sent, boards } = recordingReg()
+    const life = makeLife(registry, boards)
+    const res = await life.spawnGroup({ name: 'Auth zone' })
+    expect(res.terminalId).toBeTruthy()
+    expect(res.groupId).toBeTruthy()
+    expect(res.planningId).toBeUndefined()
+    expect(res.browserId).toBeUndefined()
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toMatchObject({
+      type: 'spawnGroup',
+      group: { id: res.groupId, name: 'Auth zone' },
+      members: { terminal: { id: res.terminalId } }
+    })
+    // No optional members in the envelope.
+    expect((sent[0].members as Record<string, unknown>).planning).toBeUndefined()
+    expect((sent[0].members as Record<string, unknown>).browser).toBeUndefined()
+    expect(boards).toHaveLength(1) // only the terminal landed in the mirror
+  })
+
+  it('spawns a full {terminal, planning, browser} cluster — all ids minted + returned + in the envelope', async () => {
+    const { registry, sent, boards } = recordingReg()
+    const life = makeLife(registry, boards)
+    const res = await life.spawnGroup({ name: 'Checkout', planning: true, browser: true })
+    expect(res.planningId).toBeTruthy()
+    expect(res.browserId).toBeTruthy()
+    // Every id is distinct (group + 3 boards).
+    const ids = [res.groupId, res.terminalId, res.planningId, res.browserId]
+    expect(new Set(ids).size).toBe(4)
+    expect(sent[0]).toMatchObject({
+      members: {
+        terminal: { id: res.terminalId },
+        planning: { id: res.planningId },
+        browser: { id: res.browserId }
+      }
+    })
+    expect(boards).toHaveLength(3)
+  })
+
+  it('🔒 cap: rejects a cluster whose member count would exceed the budget — BEFORE any send (no half-built zone)', async () => {
+    const { registry, sent, boards } = recordingReg()
+    const life = makeLife(registry, boards, 4)
+    // Pre-fill 2 of 4 slots.
+    await life.spawnBoard({ type: 'terminal' })
+    await life.spawnBoard({ type: 'terminal' })
+    sent.length = 0
+    // A 3-member group (2 + 3 = 5 > cap 4) must reject with no spawnGroup command sent.
+    await expect(
+      life.spawnGroup({ name: 'Too big', planning: true, browser: true })
+    ).rejects.toThrow(/cap/i)
+    expect(sent.find((c) => c.type === 'spawnGroup')).toBeUndefined()
+    // A 2-member group (2 + 2 = 4, exactly at cap) fits.
+    await expect(life.spawnGroup({ name: 'Fits', planning: true })).resolves.toMatchObject({
+      planningId: expect.any(String)
+    })
+  })
+
+  it('🔒 cap: a 3-board group consumes 3 slots — only 1 remains, so a further 2-member group rejects but a single spawn fits', async () => {
+    const { registry, boards } = recordingReg()
+    const life = makeLife(registry, boards, 4)
+    await life.spawnGroup({ name: 'Zone', planning: true, browser: true }) // 3 slots used
+    await expect(life.spawnGroup({ name: 'Nope', planning: true })).rejects.toThrow(/cap/i)
+    await expect(life.spawnBoard({ type: 'terminal' })).resolves.toHaveProperty('id') // the last slot
+    await expect(life.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i) // now full
+  })
+
+  it('🔒 release-all-on-fail: a rejected ack frees EVERY reserved slot (no leaked budget)', async () => {
+    const { registry, boards } = recordingReg({ failGroupSend: true })
+    const life = makeLife(registry, boards, 4)
+    // A 3-member group fails its ack → all 3 reserved slots must be released.
+    await expect(
+      life.spawnGroup({ name: 'Doomed', planning: true, browser: true })
+    ).rejects.toThrow(/spawn_group failed/i)
+    expect(boards).toHaveLength(0) // the failed group landed NOTHING in the mirror
+    // The whole budget is free again (no leaked reservation): the FULL cap of 4 single spawns
+    // succeeds (addBoard acks ok here), the 5th rejects — exactly as on a fresh lifecycle.
+    for (let i = 0; i < 4; i++) await life.spawnBoard({ type: 'terminal' })
+    await expect(life.spawnBoard({ type: 'terminal' })).rejects.toThrow(/cap/i)
+  })
+
+  it('rejects an empty / whitespace-only name; collapses whitespace + clamps a long one', async () => {
+    const { registry, sent, boards } = recordingReg()
+    const life = makeLife(registry, boards)
+    await expect(life.spawnGroup({ name: '   ' })).rejects.toThrow(/name/i)
+    expect(sent).toHaveLength(0) // bad name → no side effects
+    // Whitespace (incl. newlines/tabs) collapses to single spaces; trimmed.
+    await life.spawnGroup({ name: '  Auth\n\tflow  ' })
+    expect((sent[0].group as { name: string }).name).toBe('Auth flow')
+    // A >80-char name is clamped.
+    sent.length = 0
+    await life.spawnGroup({ name: 'x'.repeat(200) })
+    expect((sent[0].group as { name: string }).name).toHaveLength(80)
   })
 })

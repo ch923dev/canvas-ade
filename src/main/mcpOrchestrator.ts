@@ -13,6 +13,7 @@ import { createDispatchGuard } from './dispatchGuard'
 import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
+import { buildAppModel, type AppModel } from './appModel'
 import {
   deriveStatus,
   makeSessionLookup,
@@ -50,10 +51,36 @@ const WRITE_RESULT_MAX_REFS = 256
 const WRITE_RESULT_MAX_REF_LEN = 256
 
 /**
+ * 🔒 BUG-009-style belt-and-suspenders cap on the read-only gitDiff output (PR-2). A repo diff
+ * is untrusted, potentially-huge text (a large/hostile working tree); clamp in MAIN — the sink —
+ * mirroring WRITE_RESULT_MAX_SUMMARY. The caller gets a bounded, possibly-truncated diff.
+ */
+const GITDIFF_MAX_BYTES = 100_000
+
+/**
+ * 🔒 Submit settle (Command-board dispatch fix, 2026-06-18): an interactive agent TUI (e.g. Claude
+ * Code) treats a carriage-return that arrives in the SAME stdin burst as a multi-character, paste-like
+ * prompt as a LITERAL newline inside the message — so a prompt written as one `text + \r` chunk lands
+ * in the input box UNSENT (the reported bug). The gate therefore writes the prompt TEXT and the SUBMIT
+ * (`\r`) as TWO separate PTY writes with this brief gap between them, so the `\r` is delivered as a
+ * discrete Enter keystroke and the prompt is actually submitted. Zero under test (NODE_ENV==='test')
+ * so unit tests stay instant + deterministic; the two-write split itself is unconditional (and is
+ * independent of the `opts.sleep` backstop seam, so a never-resolving test sleep can't stall a write).
+ */
+const SUBMIT_SETTLE_MS = process.env.NODE_ENV === 'test' ? 0 : 100
+const settleBeforeSubmit = (): Promise<void> =>
+  SUBMIT_SETTLE_MS <= 0
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, SUBMIT_SETTLE_MS)
+        t.unref?.()
+      })
+
+/**
  * Build an Orchestrator backed by the board mirror, with PTY status overlaid on
  * terminal boards. Pure (type-only package imports → contract test loads no
- * node-pty). spawnBoard/dispatchPrompt/gitDiff stay phase-gated. `addPlanningElements`
- * (S2) implements the package's content-write method (`@expanse-ade/mcp` ≥ 0.11.0).
+ * node-pty). spawnBoard/dispatchPrompt stay phase-gated; gitDiff is live (PR-2, via registry).
+ * `addPlanningElements` (S2) implements the package's content-write method (`@expanse-ade/mcp` ≥ 0.11.0).
  */
 export function buildOrchestrator(
   registry: BoardRegistry,
@@ -285,9 +312,21 @@ export function buildOrchestrator(
       throw new Error(`${type}: nonce already consumed (replay rejected)`)
     }
 
-    // (write) Write into the PTY (safeText + the terminator). A false means no live terminal
-    // session held the id — audit failed + throw.
-    if (!registry.writeToPty(targetId, safeText + terminator)) {
+    // (write) Write the prompt TEXT and the submit TERMINATOR as TWO separate PTY writes, with a
+    // brief settle between them. An interactive agent TUI (Claude Code) treats a `\r` arriving in the
+    // SAME stdin burst as the (multi-char, paste-like) prompt as a LITERAL newline — the prompt lands
+    // in the input box UNSENT — and only submits on a `\r` delivered as its OWN discrete keystroke.
+    // A content-less write (interrupt: text '') has nothing to settle → terminator only. A false
+    // return means no live terminal session held the id — audit failed + throw on the TEXT write
+    // FIRST, so a vanished session never receives a lone orphan submit.
+    if (safeText.length > 0) {
+      if (!registry.writeToPty(targetId, safeText)) {
+        await audit('failed', { detail: `pty write failed; ${seqDetail}` })
+        throw new Error(`${type}: PTY write failed (no live terminal session)`)
+      }
+      await settleBeforeSubmit()
+    }
+    if (!registry.writeToPty(targetId, terminator)) {
       await audit('failed', { detail: `pty write failed; ${seqDetail}` })
       throw new Error(`${type}: PTY write failed (no live terminal session)`)
     }
@@ -647,6 +686,55 @@ export function buildOrchestrator(
       }
       return result
     },
+    /**
+     * Await a dispatched worker's task to SETTLE without a write (C2e) — the verdict half of a
+     * dispatch whose prompt was delivered as a LAUNCH ARG (`claude "<prompt>"`), so there is no
+     * handoff write to gate. READ-ONLY: no nonce, no confirm, no PTY write. A live agent shell never
+     * flips its derived status off 'running', so we settle on OUTPUT SILENCE — the PTY has been quiet
+     * for `SETTLE_QUIET_MS` AFTER first showing activity (reusing the idle-reaper's
+     * `boardActivityStaleMs`). A worker recording its OWN result (write_result) settles immediately
+     * (fast-path); a board leaving the canvas settles; a one-shot backstop bounds the wait. Returns
+     * the board's result (the same shape `handoffPrompt` returns).
+     */
+    async awaitSettled(boardId: BoardId): Promise<BoardResult> {
+      const SETTLE_QUIET_MS = 6000 // PTY silence that reads as "the worker finished its task"
+      const SETTLE_POLL_MS = 1000
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) throw new Error(`await_settled: board not found: ${boardId}`)
+      if (board.type !== 'terminal') {
+        throw new Error(`await_settled: target is not a terminal (${board.type})`)
+      }
+      await new Promise<void>((resolve) => {
+        let done = false
+        let sawActivity = false
+        let poll: ReturnType<typeof setInterval> | null = null
+        let unsubResult = (): void => {}
+        let cancelBackstop = (): void => {}
+        const finish = (): void => {
+          if (done) return
+          done = true
+          if (poll) clearInterval(poll)
+          unsubResult()
+          cancelBackstop()
+          resolve()
+        }
+        // write_result fast-path: a worker recording its own result is the real task-done marker.
+        unsubResult = onResultSettled(boardId, finish)
+        // Output-silence poll: settle once the worker — having shown activity — has been quiet for
+        // SETTLE_QUIET_MS, or the board left the canvas. `sawActivity` guards against settling on the
+        // INITIAL quiet before the agent has produced any output (still booting).
+        poll = setInterval(() => {
+          if (!registry.listBoards().some((b) => b.id === boardId)) return finish()
+          const stale = registry.boardActivityStaleMs?.(boardId)
+          if (typeof stale !== 'number') return
+          if (stale < SETTLE_QUIET_MS) sawActivity = true
+          else if (sawActivity) finish()
+        }, SETTLE_POLL_MS)
+        // One-shot backstop — bound the wait if the worker never goes quiet / never reports.
+        cancelBackstop = startBackstop(handoffTimeoutMs, finish)
+      })
+      return registry.readResult(boardId)
+    },
     async dispatchPrompt(boardId: BoardId, text: string): Promise<void> {
       // 🔒 assign_prompt (T4.4): the FIRE-AND-FORGET sibling of handoffPrompt — the SAME
       // shared write gate MINUS the blocking await-idle/result. Resolve the OPAQUE id +
@@ -831,8 +919,59 @@ export function buildOrchestrator(
         confirmBody: () => `Send Ctrl-C (interrupt) to terminal "${board.title}" (${boardId})?`
       })
     },
-    async gitDiff(_boardId: BoardId): Promise<string> {
-      throw new Error('gitDiff not available until Phase 6')
+    async gitDiff(boardId: BoardId): Promise<string> {
+      // The orchestrator owns the policy (board resolution + terminal-check); the git work is a
+      // MAIN-injected capability (registry.gitDiff → gitDiff.ts → simple-git, MAIN-only, read-only).
+      const board = registry.listBoards().find((b) => b.id === boardId)
+      if (!board) throw new Error(`gitDiff: board not found: ${boardId}`)
+      if (board.type !== 'terminal') {
+        throw new Error(`gitDiff: not a terminal board: ${boardId}`)
+      }
+      if (!registry.gitDiff) throw new Error('gitDiff not available')
+      const raw = await registry.gitDiff(boardId)
+      // 🔒 clamp the untrusted diff to a true BYTE bound (BUG-009 pattern). Measure UTF-8
+      // bytes — NOT UTF-16 code units (`.length`) — so a multibyte-heavy diff can't slip past
+      // the stated cap, and cut on a char boundary (back off any split trailing multibyte
+      // sequence) so the result is STRICTLY <= GITDIFF_MAX_BYTES with no U+FFFD expansion.
+      const buf = Buffer.from(raw, 'utf8')
+      if (buf.length <= GITDIFF_MAX_BYTES) return raw
+      let end = GITDIFF_MAX_BYTES
+      while (end > 0 && (buf[end] & 0xc0) === 0x80) end-- // 0b10xxxxxx = a continuation byte
+      return buf.subarray(0, end).toString('utf8')
+    },
+    async describeApp(): Promise<AppModel> {
+      // 🔒 PR-3/PR-5: assemble the read-only app self-model (hybrid agency layer). Read-only — no
+      // write path, no token. boards/connectors/groups are projected from the live renderer mirror;
+      // rules come from this orchestrator's own cap/TTL budget. (PR-5 made `groups` live; a registry
+      // that doesn't wire listGroups reads [].)
+      const summaries = await listBoardSummaries()
+      return buildAppModel({
+        boards: summaries.map((b) => ({
+          id: b.id,
+          type: b.type,
+          title: b.title,
+          status: b.status ?? 'static',
+          ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
+          ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
+        })),
+        connectors: registry.listConnectors().map((c) => ({
+          id: c.id,
+          sourceId: c.sourceId,
+          targetId: c.targetId,
+          kind: c.kind
+        })),
+        groups: (registry.listGroups?.() ?? []).map((g) => ({
+          id: g.id,
+          name: g.name,
+          boardIds: [...g.boardIds]
+        })),
+        rules: {
+          spawnCap: cap,
+          everyWriteGated: true,
+          idleTtlMs,
+          idleActivityMs
+        }
+      })
     }
   }
 }

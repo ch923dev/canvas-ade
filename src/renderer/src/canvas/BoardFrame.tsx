@@ -19,6 +19,7 @@ const TYPE_TAG: Record<BoardType, string> = {
   terminal: 'TERMINAL',
   browser: 'BROWSER',
   planning: 'PLANNING',
+  command: 'COMMAND',
   file: 'FILE'
 }
 

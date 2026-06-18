@@ -7,7 +7,7 @@ import { useCanvasStore } from '../../store/canvasStore'
 
 // Mock rf.screenToFlowPosition as identity (world == screen). Transform correctness is the
 // e2e's job; here we test the hook's wiring + click/drag branching.
-const rf = { screenToFlowPosition: (p: { x: number; y: number }) => p } as never
+const rf = { screenToFlowPosition: (p: { x: number; y: number }) => p, getZoom: () => 1 } as never
 
 function Harness(): ReactElement {
   const { armed, ghost, startPlacement } = useBoardPlacement(rf)
@@ -180,6 +180,77 @@ describe('useBoardPlacement', () => {
     act(() => void window.dispatchEvent(new Event('pointercancel')))
     up(400, 300)
     expect(useCanvasStore.getState().boards).toHaveLength(0)
+  })
+})
+
+// ── Command place-to-create (follow mode) ──────────────────────────────────────────────
+function FollowHarness(): ReactElement {
+  const { armed, ghost, placeMode, followMove, followPlace, cancelPlacement } =
+    useBoardPlacement(rf)
+  return (
+    <div
+      data-testid="cap"
+      data-armed={armed}
+      data-mode={placeMode}
+      data-ghost={ghost ? `${ghost.w}x${ghost.h}` : 'none'}
+      onPointerMove={followMove}
+      onClick={followPlace}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        cancelPlacement()
+      }}
+    />
+  )
+}
+
+describe('useBoardPlacement — command place-to-create (follow mode)', () => {
+  // The outer beforeEach clears boards + sets tool:'terminal'; override to arm the command tool.
+  beforeEach(() => useCanvasStore.setState({ tool: 'command' }))
+
+  it('the command tool uses follow mode (not drag)', () => {
+    const { getByTestId } = render(<FollowHarness />)
+    expect(getByTestId('cap').getAttribute('data-mode')).toBe('follow')
+  })
+
+  it('pointermove shows a fixed-size ghost (the command footprint at the live zoom)', () => {
+    const { getByTestId } = render(<FollowHarness />)
+    expect(getByTestId('cap').getAttribute('data-ghost')).toBe('none')
+    fireEvent.pointerMove(getByTestId('cap'), { clientX: 500, clientY: 400 })
+    // DEFAULT_BOARD_SIZE.command = 760×440 at zoom 1 — a fixed footprint, not a dragged rect.
+    expect(getByTestId('cap').getAttribute('data-ghost')).toBe('760x440')
+  })
+
+  it('a single click plants the board centered on the cursor (exact), then disarms', () => {
+    const { getByTestId } = render(<FollowHarness />)
+    fireEvent.click(getByTestId('cap'), { clientX: 500, clientY: 400 })
+    const boards = useCanvasStore.getState().boards
+    expect(boards).toHaveLength(1)
+    // centered: top-left = cursor − size/2 (screenToFlowPosition is identity here)
+    expect(boards[0]).toMatchObject({ type: 'command', x: 120, y: 180, w: 760, h: 440 })
+    expect(useCanvasStore.getState().tool).toBe('select')
+  })
+
+  it('arming when a command board already exists re-selects it (no ghost, no second board)', () => {
+    const id = useCanvasStore.getState().addBoard('command', { x: 0, y: 0 })
+    const { getByTestId } = render(<FollowHarness />)
+    expect(useCanvasStore.getState().boards.filter((b) => b.type === 'command')).toHaveLength(1)
+    expect(useCanvasStore.getState().tool).toBe('select')
+    expect(useCanvasStore.getState().selectedId).toBe(id)
+    expect(getByTestId('cap').getAttribute('data-ghost')).toBe('none')
+  })
+
+  it('right-click cancels follow mode without planting a board', () => {
+    const { getByTestId } = render(<FollowHarness />)
+    fireEvent.contextMenu(getByTestId('cap'), { clientX: 300, clientY: 300 })
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+    expect(useCanvasStore.getState().tool).toBe('select')
+  })
+
+  it('Escape cancels follow mode without planting a board', () => {
+    render(<FollowHarness />)
+    act(() => void window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+    expect(useCanvasStore.getState().boards).toHaveLength(0)
+    expect(useCanvasStore.getState().tool).toBe('select')
   })
 })
 

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
 import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
+import { viewportCenterWorld } from '../lib/freeSlot'
 import {
   materializePlanningOps,
   neededBoardHeight,
@@ -23,6 +24,17 @@ export type McpCommandIn =
       patch: { shell?: string; launchCommand?: string; cwd?: string }
     }
   | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
+  | {
+      type: 'spawnGroup'
+      group: { id: string; name: string }
+      members: {
+        // Phase C: the terminal may boot an agentic CLI (MAIN-sanitized) so a dispatched prompt
+        // reaches an agent, not a bare shell.
+        terminal: { id: string; launchCommand?: string }
+        planning?: { id: string }
+        browser?: { id: string }
+      }
+    }
 
 /** The ack shape MAIN's `sendMcpCommand` awaits (`McpCommandAck`). */
 export type McpAck = { ok: true; type: string } | { ok: false; error: string }
@@ -129,6 +141,51 @@ export function applyMcpCommand(command: McpCommandIn): McpAck {
       const needed = neededBoardHeight(nextElements)
       if (needed > board.h) store.growBoardHeight(command.id, needed)
       return { ok: true, type: 'patchPlanning' }
+    }
+    case 'spawnGroup': {
+      // 🔒 PR-5b: create a feature-zone cluster (boards + Named Group + preview wiring) in one
+      // undoable step. MAIN minted every id + clamped the name; the renderer re-validates the
+      // envelope (defense in depth, mirroring addBoard) before it lands on the canvas.
+      const { group, members } = command
+      const validId = (m: { id?: unknown } | undefined): m is { id: string } =>
+        m !== null && typeof m === 'object' && typeof m.id === 'string' && m.id.length > 0
+      if (group === null || typeof group !== 'object' || !validId(group)) {
+        return { ok: false, error: `invalid spawnGroup group: ${JSON.stringify(group)}` }
+      }
+      if (typeof group.name !== 'string' || group.name.length === 0) {
+        return { ok: false, error: `invalid spawnGroup name: ${JSON.stringify(group.name)}` }
+      }
+      if (members === null || typeof members !== 'object' || !validId(members.terminal)) {
+        return { ok: false, error: `invalid spawnGroup members: ${JSON.stringify(members)}` }
+      }
+      // Optional members, when present, must be well-formed (reject a malformed `{}` member rather
+      // than silently dropping it — the agent should learn the spec was bad).
+      if (members.planning !== undefined && !validId(members.planning)) {
+        return { ok: false, error: `invalid spawnGroup planning member` }
+      }
+      if (members.browser !== undefined && !validId(members.browser)) {
+        return { ok: false, error: `invalid spawnGroup browser member` }
+      }
+      // Idempotent by group id (mirrors addBoard): a re-delivered spawnGroup whose group already
+      // exists is a no-op + ack ok, so it can't push a duplicate zone.
+      const store = useCanvasStore.getState()
+      if (store.groups.some((g) => g.id === group.id)) return { ok: true, type: 'spawnGroup' }
+      // Land the zone where the USER is looking (the Command board is a user-driven dispatch, unlike
+      // an agent's headless spawn). The viewport centre maps to a world point; freeSlot then nudges
+      // it off the Command board sitting there, so the zone tucks in beside it IN VIEW — not at the
+      // fixed canvas-origin anchor (which lands off-screen once the user has panned). BUG: off-screen
+      // spawn reported 2026-06-18. Falls back to SPAWN_ANCHOR before the first fit (no viewport yet)
+      // OR outside a DOM (the node-env unit tests, where `window` is absent).
+      const at =
+        typeof window === 'undefined'
+          ? SPAWN_ANCHOR
+          : viewportCenterWorld(
+              store.viewport,
+              { w: window.innerWidth, h: window.innerHeight },
+              SPAWN_ANCHOR
+            )
+      store.spawnGroup({ at, group, members })
+      return { ok: true, type: 'spawnGroup' }
     }
     default:
       return { ok: false, error: `unknown command: ${(command as { type: string }).type}` }

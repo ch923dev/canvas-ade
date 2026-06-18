@@ -217,9 +217,50 @@ describe('buildOrchestrator', () => {
     expect(await orch.boardSummary('ghost')).toEqual(EMPTY_MEMORY)
   })
 
-  it('gitDiff stays phase-gated (M6)', async () => {
-    const orch = buildOrchestrator(reg([]))
-    await expect(orch.gitDiff('b')).rejects.toThrow(/Phase 6/)
+  describe('gitDiff (PR-2, read-only diff)', () => {
+    const termBoard = { id: 't1', type: 'terminal', title: 'Work' }
+
+    it('returns the registry diff for a terminal board', async () => {
+      const orch = buildOrchestrator({
+        ...reg([termBoard]),
+        gitDiff: async (id) => (id === 't1' ? 'diff --git a/x b/x\n+y' : '')
+      })
+      expect(await orch.gitDiff('t1')).toBe('diff --git a/x b/x\n+y')
+    })
+
+    it('rejects an unknown board id', async () => {
+      const orch = buildOrchestrator({ ...reg([termBoard]), gitDiff: async () => 'x' })
+      await expect(orch.gitDiff('ghost')).rejects.toThrow(/not found/)
+    })
+
+    it('rejects a non-terminal board', async () => {
+      const orch = buildOrchestrator({
+        ...reg([{ id: 'b1', type: 'browser', title: 'Preview' }]),
+        gitDiff: async () => 'x'
+      })
+      await expect(orch.gitDiff('b1')).rejects.toThrow(/not a terminal/)
+    })
+
+    it('throws when the registry does not wire gitDiff', async () => {
+      const orch = buildOrchestrator(reg([termBoard]))
+      await expect(orch.gitDiff('t1')).rejects.toThrow(/not available/)
+    })
+
+    it('clamps the diff to GITDIFF_MAX_BYTES (100k)', async () => {
+      const huge = 'x'.repeat(100_000 + 50)
+      const orch = buildOrchestrator({ ...reg([termBoard]), gitDiff: async () => huge })
+      expect((await orch.gitDiff('t1')).length).toBe(100_000)
+    })
+
+    it('clamps by BYTES, not UTF-16 code units (multibyte diff)', async () => {
+      // 40k 3-byte chars = 120k bytes but only 40k code units; the old `.length` check
+      // (40k < 100k) would have passed it through unclamped.
+      const cjk = '世'.repeat(40_000)
+      const orch = buildOrchestrator({ ...reg([termBoard]), gitDiff: async () => cjk })
+      const out = await orch.gitDiff('t1')
+      expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(100_000)
+      expect(out.length).toBeLessThan(40_000) // genuinely truncated
+    })
   })
 
   describe('spawnBoard (T3.1, lifecycle write)', () => {
@@ -603,6 +644,38 @@ describe('buildOrchestrator', () => {
       expect(audits[0]).toMatchObject({ targetId: 'b1', status: 'rejected', nonce: '' })
     })
 
+    it('awaitSettled: read-only verdict — settles done once the worker goes output-quiet', async () => {
+      vi.useFakeTimers()
+      try {
+        let stale = 100 // a fresh worker is "active" (lastActivityAt = spawn); climbs when it finishes
+        const { registry, writes, confirms } = dispatchReg({
+          boards: [{ id: 't1', type: 'terminal', title: 'Worker' }],
+          result: { present: true, status: 'success', summary: 'reviewed' }
+        })
+        ;(registry as { boardActivityStaleMs(id: string): number }).boardActivityStaleMs = () =>
+          stale
+        const orch = buildOrchestrator(registry)
+        const settled = orch.awaitSettled('t1')
+
+        await vi.advanceTimersByTimeAsync(1000) // tick: active → records sawActivity, NOT done
+        stale = 7000 // worker finished → PTY output quiet ≥ SETTLE_QUIET_MS
+        await vi.advanceTimersByTimeAsync(1000) // tick: quiet after activity → settle
+
+        await expect(settled).resolves.toMatchObject({ status: 'success', summary: 'reviewed' })
+        expect(writes).toEqual([]) // read-only: never wrote to the PTY
+        expect(confirms).toEqual([]) // read-only: never opened the human gate
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('awaitSettled: rejects an unknown / non-terminal target (read-only)', async () => {
+      const { registry } = dispatchReg({ boards: [{ id: 'b1', type: 'browser', title: 'Web' }] })
+      const orch = buildOrchestrator(registry)
+      await expect(orch.awaitSettled('ghost')).rejects.toThrow(/not found/i)
+      await expect(orch.awaitSettled('b1')).rejects.toThrow(/terminal/i)
+    })
+
     it('🔒 rejects a payload with an embedded CR — one approval must run ONE command (no confirm, no write)', async () => {
       const { registry, audits, writes, confirms } = dispatchReg({
         boards: [{ id: 't1', type: 'terminal', title: 'Term' }]
@@ -655,7 +728,12 @@ describe('buildOrchestrator', () => {
       const res = await orch.handoffPrompt('t1', 'pnpm build')
       expect(res).toEqual(result)
       expect(confirms).toHaveLength(1)
-      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }]) // CR appended so the shell runs it
+      // The prompt text + the submit CR are written as two discrete chunks (the agent TUI only
+      // submits on a `\r` delivered as its own keystroke, never one fused onto a pasted block).
+      expect(writes).toEqual([
+        { id: 't1', text: 'pnpm build' },
+        { id: 't1', text: '\r' }
+      ])
       // a successful write records a `dispatched` entry (at write time) AND a `completed` one.
       expect(audits.some((a) => a.status === 'dispatched')).toBe(true)
       const done = audits.find((a) => a.status === 'completed')
@@ -736,7 +814,10 @@ describe('buildOrchestrator', () => {
       // Despite BOTH the dispatched + completed audit appends throwing, the handoff RESOLVES
       // (it does not reject) and the write committed exactly once.
       await expect(orch.handoffPrompt('t1', 'pnpm build')).resolves.toBeDefined()
-      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }])
+      expect(writes).toEqual([
+        { id: 't1', text: 'pnpm build' },
+        { id: 't1', text: '\r' }
+      ])
     })
 
     it('await-idle: parks on the status stream while running, resolves on the idle event', async () => {
@@ -751,7 +832,10 @@ describe('buildOrchestrator', () => {
       emitStatus({ id: 't1', status: 'idle' })
       const res = await p
       expect(hasListener()).toBe(false)
-      expect(writes).toEqual([{ id: 't1', text: 'x\r' }])
+      expect(writes).toEqual([
+        { id: 't1', text: 'x' },
+        { id: 't1', text: '\r' }
+      ])
       expect(res).toEqual(result)
     })
 
@@ -966,7 +1050,10 @@ describe('buildOrchestrator', () => {
       const orch = buildOrchestrator(registry)
       await expect(orch.dispatchPrompt('t1', 'pnpm build')).resolves.toBeUndefined()
       expect(confirms).toHaveLength(1)
-      expect(writes).toEqual([{ id: 't1', text: 'pnpm build\r' }])
+      expect(writes).toEqual([
+        { id: 't1', text: 'pnpm build' },
+        { id: 't1', text: '\r' }
+      ])
       const dispatched = audits.find((a) => a.status === 'dispatched')
       expect(dispatched).toMatchObject({
         type: 'assign_prompt',
@@ -1335,7 +1422,10 @@ describe('buildOrchestrator', () => {
       const orch = buildOrchestrator(registry)
       await expect(orch.relayPrompt('A', 'B', 'pnpm build')).resolves.toBeUndefined()
       expect(confirms).toHaveLength(1)
-      expect(writes).toEqual([{ id: 'B', text: 'pnpm build\r' }]) // written to the TARGET
+      expect(writes).toEqual([
+        { id: 'B', text: 'pnpm build' }, // written to the TARGET
+        { id: 'B', text: '\r' }
+      ])
       const dispatched = audits.find((a) => a.status === 'dispatched')
       expect(dispatched).toMatchObject({
         type: 'relay_prompt',

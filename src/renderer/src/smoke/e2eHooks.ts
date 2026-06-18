@@ -34,6 +34,7 @@ import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
+import { useCommandStore, commandStoreDefaults, type CommandTask } from '../store/commandStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
@@ -62,6 +63,12 @@ export interface CanvasE2E {
   getBackground: () => CanvasBackground | null
   /** PR 3: registered bundled-scene ids, so e2e coverage is registry-derived. */
   listSceneIds: () => string[]
+  /**
+   * C3: inject the Command board's ephemeral task queue directly (bypassing the real spawn
+   * choreography) so the routing-edge overlay can be driven deterministically — a real dispatch
+   * would leak a worker into MAIN's spawn-cap `tracked`. e2e only.
+   */
+  setCommandTasks: (tasks: CommandTask[]) => void
   /** Named groups (plain data — serializable). */
   getGroups: () => { id: string; name: string; boardIds: string[] }[]
   /** Create a group from ids (mirrors Ctrl+G's store path); returns the new group id. */
@@ -345,6 +352,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     listSceneIds() {
       return listScenes().map((s) => s.id)
+    },
+    setCommandTasks(tasks) {
+      useCommandStore.setState({ tasks })
     },
     getGroups() {
       return useCanvasStore.getState().groups
@@ -683,6 +693,10 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       } catch {
         // storage unavailable — nothing sticky to clear
       }
+      // The Command board's queue/view/collapse is a GLOBAL ephemeral store (one orchestrator
+      // face) — a spec that switched the seg to 'groups' or collapsed the board would leak that
+      // into the next spec (the cross-spec global-state class). Reset to the shipped defaults.
+      useCommandStore.setState(commandStoreDefaults())
       // 3. Tear down native resources: close all preview views + kill live AND parked
       //    PTY trees (the canonical project-switch teardown). Idempotent / best-effort.
       await disposeLiveResources()

@@ -2,6 +2,8 @@ import type { McpCommand, McpCommandAck } from './mcpCommand'
 import type { AuditInput } from './auditLog'
 import type { DispatchGuard } from './dispatchGuard'
 import type { BoardOutput, BoardResult, MemoryDoc, Orchestrator } from '@expanse-ade/mcp'
+import type { AppModel } from './appModel'
+import type { SpawnGroupInput, SpawnGroupResult } from './mcpLifecycle'
 
 /**
  * 🔒 Hard cap on the number of live boards a single MCP session may have spawned
@@ -77,6 +79,26 @@ export interface OrchestratorOpts {
 export type LifecycleOrchestrator = Orchestrator & {
   /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
   reapIdle(): Promise<string[]>
+  /**
+   * PR-3: assemble the read-only app self-model (board types · tool catalog · live canvas · rules).
+   * App-local (NOT on the package `Orchestrator` interface) until the agent-facing MCP resource
+   * (`canvas://app-model`) lands in PR-3b. Read-only — no write path, no token.
+   */
+  describeApp(): Promise<AppModel>
+  /**
+   * PR-5b: spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group +
+   * preview wiring) in one undoable step. App-local (NOT on the package `Orchestrator` interface)
+   * until the agent-facing `spawn_group` MCP tool lands in PR-5c — same split as gitDiff/PR-2b.
+   * Cap-checked (reserves all member slots), not human-gated (content-less empty boards).
+   */
+  spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
+  /**
+   * C2e: await a dispatched worker's task to SETTLE (output silence after activity / its own
+   * `write_result` / a backstop) WITHOUT a write — the verdict for a dispatch whose prompt was
+   * delivered as a launch arg. App-local (NOT on the package `Orchestrator` interface), read-only:
+   * no nonce, no confirm, no PTY write. Resolves with the board's result.
+   */
+  awaitSettled(boardId: string): Promise<BoardResult>
 }
 
 /** A board↔board connector the renderer mirrors to MAIN (M2). Direction: source → target. */
@@ -85,6 +107,13 @@ export interface ConnectorMirrorEntry {
   sourceId: string
   targetId: string
   kind: string
+}
+
+/** A Named Board Group the renderer mirrors to MAIN (PR-5) — a feature zone of boards. */
+export interface GroupMirrorEntry {
+  id: string
+  name: string
+  boardIds: string[]
 }
 
 /** MAIN-owned board sources the adapter reads: the renderer mirror + the PTY map. */
@@ -105,6 +134,13 @@ export interface BoardRegistry {
    * from `boardRegistry.ts`.
    */
   listConnectors(): ConnectorMirrorEntry[]
+  /**
+   * PR-5: the Named Board Group mirror (feature zones). MAIN injects `boardRegistry.ts`'s
+   * `listGroups`; the app self-model projects it as `canvas.groups` so the orchestrator/agent can
+   * reason about feature zones. Optional so a registry/test that does not wire it keeps the
+   * empty-groups behaviour (read-only — groups are metadata, no action surface).
+   */
+  listGroups?(): GroupMirrorEntry[]
   listSessions(): Array<{ id: string; status: string }>
   /**
    * BUG-007: ms since terminal board `id` last produced PTY output (its dormancy measure for the
@@ -183,6 +219,14 @@ export interface BoardRegistry {
    * only write its own result. No PTY write, no confirm — the agent reports its outcome.
    */
   recordResult(id: string, result: BoardResult): void
+  /**
+   * PR-2: read-only working-tree diff for a board. MAIN injects gitDiff.ts's `boardGitDiff`,
+   * which resolves the board's resolved spawn cwd (pty.ts `getTerminalCwd`) and runs `simple-git`
+   * (MAIN-only, read-only). The orchestrator owns board-resolution + terminal-check + the output
+   * bound (GITDIFF_MAX_BYTES); this returns the raw diff ('' for a non-repo / unknown cwd).
+   * Optional so a registry/test that does not wire it keeps the "unavailable" behaviour.
+   */
+  gitDiff?(id: string): Promise<string>
 }
 
 /**

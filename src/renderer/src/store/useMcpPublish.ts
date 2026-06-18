@@ -26,6 +26,10 @@ export function useMcpPublish(): void {
   // alongside boards so the dispatch adapter can resolve a relay edge. Subscribing
   // re-publishes when a cable is drawn/removed.
   const connectors = useCanvasStore((s) => s.connectors)
+  // PR-5: mirror Named Board Groups (feature zones) to MAIN alongside boards/connectors so the
+  // app self-model's `canvas.groups` goes live. Subscribing re-publishes when a group is
+  // created/renamed/membership-changed.
+  const groups = useCanvasStore((s) => s.groups)
   // Subscribe to the runtime slices so a liveness change (terminal start/exit, a
   // browser load/fail) re-publishes even when the durable `boards` array is unchanged.
   const running = useTerminalRuntimeStore((s) => s.running)
@@ -45,9 +49,10 @@ export function useMcpPublish(): void {
     const t = setTimeout(() => {
       publish({
         boards: buildBoardSnapshot(boards, { running, preview: previewById }),
-        connectors
+        connectors,
+        groups
       })
     }, 150)
     return () => clearTimeout(t)
-  }, [boards, connectors, running, previewById])
+  }, [boards, connectors, groups, running, previewById])
 }

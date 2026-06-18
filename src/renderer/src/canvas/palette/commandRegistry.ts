@@ -71,6 +71,7 @@ const TYPE_LABEL: Record<BoardType, string> = {
   terminal: 'terminal',
   browser: 'browser',
   planning: 'planning',
+  command: 'command',
   file: 'file'
 }
 
@@ -82,7 +83,7 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
       : undefined
 
   // ── Boards ──
-  for (const type of ['terminal', 'browser', 'planning'] as const) {
+  for (const type of ['terminal', 'browser', 'planning', 'command'] as const) {
     out.push({
       id: `new-${type}`,
       section: 'Boards',
@@ -116,14 +117,20 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
         chips: ['F2'],
         run: () => verbs.renameBoard(id)
       },
-      {
-        id: 'duplicate-board',
-        section: 'Selected board',
-        title: 'Duplicate board',
-        keywords: 'copy clone',
-        glyph: '⧉',
-        run: () => verbs.duplicateBoard(id)
-      },
+      // The Command board is a singleton — omit the Duplicate verb for it (mirrors the hidden
+      // ⋯-menu item; the store + action guard it too). (PR #175 reviewer.)
+      ...(selected.type !== 'command'
+        ? [
+            {
+              id: 'duplicate-board',
+              section: 'Selected board',
+              title: 'Duplicate board',
+              keywords: 'copy clone',
+              glyph: '⧉',
+              run: () => verbs.duplicateBoard(id)
+            } as PaletteCommand
+          ]
+        : []),
       {
         id: 'fullview-board',
         section: 'Selected board',

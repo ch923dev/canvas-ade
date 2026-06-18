@@ -14,8 +14,10 @@ import {
   writeToPty,
   getTerminalRuntime,
   getTerminalActivityStaleMs,
+  getTerminalCwd,
   setRecapEnvProvider
 } from './pty'
+import { boardGitDiff } from './gitDiff'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
 import { registerDiagramHandlers, disposeDiagramWorker } from './diagramWorker'
 import { registerPreviewScreenshotHandler } from './previewScreenshot'
@@ -45,10 +47,12 @@ import { startMcpServer, type RunningMcp } from './mcp'
 import {
   listBoardMirror,
   listConnectors,
+  listGroups,
   registerBoardRegistryHandler,
   subscribeBoardStatus
 } from './boardRegistry'
 import { sendMcpCommand } from './mcpCommand'
+import { registerOrchestratorIpc, forwardBoardStatus } from './mcpOrchestratorIpc'
 import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
@@ -71,6 +75,8 @@ import {
 } from './agentTranscript'
 import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 import { registerRecapIpc } from './recapIpc'
+import { computeRecapFacts } from './recapFacts'
+import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -81,6 +87,9 @@ let stopRecapWatch: (() => void) | null = null
 let recapWatcher: RecapWatcher | null = null
 // File-tree epic (S2): the chokidar tree watcher; re-pointed on project open, closed on quit.
 let fileWatcher: FileWatcher | null = null
+// PR-4 (Command-board prerequisite): synthesize a board's BoardResult from its recap transcript
+// when the worker agent settles. Driven off the SAME mtime watcher; torn down in shutdown().
+let resultSynth: ResultSynthesizer | null = null
 
 const SMOKE = process.env.CANVAS_SMOKE // "1"=self-test (keep open), "exit"=self-test+quit
 
@@ -303,6 +312,8 @@ app.whenReady().then(async () => {
     listBoards: listBoardMirror,
     // The orchestration connector graph (T4.6 relay_prompt) — mirrored from the renderer.
     listConnectors,
+    // PR-5: the Named Group mirror (feature zones) — feeds the app-model's live canvas.groups.
+    listGroups,
     listSessions: listPtySessions,
     // BUG-007: ms-since-last-PTY-output per board, so the MCP idle-reaper measures dormancy by
     // output silence instead of the never-flipping 'running' status bucket of a live agent shell.
@@ -319,6 +330,8 @@ app.whenReady().then(async () => {
     // 🔒 MCP dispatch (T4.3 handoff_prompt): write into a terminal's PTY ONLY after a
     // single-use nonce + a mandatory human confirm + an audit entry have authorized it.
     writeToPty: (id, text) => writeToPty(id, text),
+    // 🔒 PR-2: read-only working-tree diff for a board (simple-git in MAIN, via gitDiff.ts).
+    gitDiff: (id) => boardGitDiff(id, getTerminalCwd),
     // The human-confirm gate (T4.2) — fail-closed; blocks until the user answers.
     confirm: (req) => requestConfirm(ipcMain, () => mainWindow, req),
     // Append to the append-only dispatch audit trail (T4.1). The log is wired just above
@@ -338,6 +351,16 @@ app.whenReady().then(async () => {
     // result → canvas://board/{id}/result. Bound to the caller's token board by the tool.
     recordResult: (id, result) => recordBoardResult(id, result)
   })
+  // Phase C / C1: the renderer → MAIN orchestrator drive (Command board). Frame-guarded
+  // handle() channels (spawnGroup/dispatchPrompt/interrupt) + the per-board status push that
+  // advances the kanban. `() => mcp` is null until the loopback server is up (or if it failed
+  // to bind) → handlers reject cleanly. Renderer holds no token; every write still pays the gate.
+  registerOrchestratorIpc(
+    ipcMain,
+    () => mainWindow,
+    () => mcp
+  )
+  forwardBoardStatus(() => mainWindow, subscribeBoardStatus)
   registerPreviewOsrHandlers(ipcMain, () => mainWindow) // offscreen preview → <canvas>
   registerDiagramHandlers(ipcMain, () => mainWindow) // S4: hidden Mermaid render worker
   registerPreviewScreenshotHandler(ipcMain, () => mainWindow)
@@ -399,12 +422,42 @@ app.whenReady().then(async () => {
       }
     }
   })
+  // PR-4: derive a board's BoardResult from its recap transcript. getFacts resolves the SAME
+  // trusted transcript tail the recap face reads (no egress, no consent — local read only) and
+  // returns null when there is no transcript yet (nothing to verdict). The synthesizer records a
+  // result only for a SETTLED agent and never clobbers an explicit `write_result` (see
+  // boardResultSynth.ts). Driven below off the watcher's onIntent settle signal.
+  resultSynth = createResultSynthesizer({
+    getFacts: (boardId) => {
+      const path = resolveLiveTranscriptPath(recapMap.get(boardId)?.transcriptPath)
+      if (!path || !isTrustedTranscriptPath(path) || !existsSync(path)) return null
+      let runtime: ReturnType<typeof getTerminalRuntime> | undefined
+      try {
+        runtime = getTerminalRuntime(boardId)
+      } catch {
+        runtime = undefined
+      }
+      let tail = ''
+      try {
+        tail = readTranscriptTail(path)
+      } catch {
+        return null // unreadable/vanished transcript — no verdict
+      }
+      if (!tail) return null
+      return computeRecapFacts(tail, runtime, Date.now())
+    }
+  })
   // Terminal recap (Task 11 — Slice B): create the ONE mtime watcher for this app lifetime.
   // Each learned transcript path (from the recap:learned flow below) is registered here so
   // any write to the transcript file debounce-fires summaryLoop.onIntent → auto-refreshed recap.
+  // PR-4: the same settle ALSO drives the result synthesizer (a transcript write is the agent's
+  // task-progress/finish signal).
   recapWatcher = createRecapWatcher({
     debounceMs: 25_000,
-    onIntent: (id) => void summaryLoop.onIntent({ boardId: id })
+    onIntent: (id) => {
+      void summaryLoop.onIntent({ boardId: id })
+      resultSynth?.onSettle(id)
+    }
   })
   const memoryEngine = createMemoryEngine({
     onIntent: (intent) => void summaryLoop.onIntent(intent)
@@ -477,6 +530,8 @@ app.whenReady().then(async () => {
     // but whose watchers were torn down by a prior retain() call (switch-away path).
     (liveBoardIds) => {
       recapWatcher?.retain(liveBoardIds)
+      // PR-4: drop pending result-synthesis re-check timers for boards no longer live.
+      resultSynth?.retain(liveBoardIds)
       pruneBoardResults(liveBoardIds)
       // Re-arm watchers for live boards that the in-memory recapMap knows about but whose
       // fs.watch handle was disposed when we switched away from this project.
@@ -582,7 +637,9 @@ app.whenReady().then(async () => {
   // (The MCP dispatch audit trail is now registered earlier, before startMcpServer — BUG-025.)
 
   createWindow()
-  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp)
+  // PR-4: pass a live getter for the result synthesizer so the CANVAS_E2E seam can drive
+  // `onSettle` deterministically (it is created above in this same setup scope).
+  if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth)
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
@@ -628,6 +685,9 @@ function shutdown(): Promise<void> {
   // File-tree epic (S2): release the chokidar tree watcher's fs handles on quit.
   void fileWatcher?.close()
   fileWatcher = null
+  // PR-4: cancel any pending result-synthesis re-check timers so nothing fires post-teardown.
+  resultSynth?.dispose()
+  resultSynth = null
   return Promise.all([drained, mcpClosed]).then(() => undefined)
 }
 

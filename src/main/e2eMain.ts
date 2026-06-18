@@ -16,12 +16,15 @@ import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
 import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
-import { recordBoardResult } from './boardResults'
+import { readBoardResult, recordBoardResult } from './boardResults'
 import { __setMemoryDirForTest } from './boardMemory'
 import { listConnectors } from './boardRegistry'
 import { sendMcpCommand, type McpCommandAck } from './mcpCommand'
 import type { BoardResult } from '@expanse-ade/mcp'
 import type { RunningMcp } from './mcp'
+import type { AppModel } from './appModel'
+import type { SpawnGroupResult } from './mcpLifecycle'
+import type { ResultSynthesizer } from './boardResultSynth'
 
 /** The fixed board id the e2e/mcp.e2e.ts worker token binds to, so the write_result
  *  probe can read its own structured result back via canvas://board/{id}/result. */
@@ -97,10 +100,44 @@ export interface E2EMain {
     workerToken: string
     workerBoardId: string
   } | null
+  /**
+   * PR-2 live invoke: the read-only working-tree diff for a board, via the orchestrator path
+   * (terminal-type check + 100 KB clamp → registry.gitDiff → boardGitDiff → simple-git). Lets a
+   * driver seed a terminal in a git repo and SEE a real diff, since the package exposes no
+   * `git_diff` MCP tool yet. Resolves '' when the server never mounted.
+   */
+  gitDiff(boardId: string): Promise<string>
+  /**
+   * PR-3 live invoke: the read-only app self-model (board types · tool catalog · live canvas ·
+   * rules), via the orchestrator. Lets the e2e assert the live model shape before any UI consumes
+   * it. Resolves null when the MCP server never mounted.
+   */
+  describeApp(): Promise<AppModel | null>
+  /**
+   * PR-5b live invoke: spawn a feature-zone cluster (terminal + optional planning/browser + a
+   * Named Group + browser→terminal preview wiring) through the orchestrator's `spawnGroup` —
+   * the same cap-checked write path the agent-facing `spawn_group` tool (PR-5c) will use. Lets
+   * the e2e drive the REAL command path (MAIN mints ids → sendCommand → renderer cluster +
+   * group) and assert the zone landed. Resolves null when the MCP server never mounted.
+   */
+  spawnGroupNow(input: {
+    name: string
+    planning?: boolean
+    browser?: boolean
+  }): Promise<SpawnGroupResult | null>
   /** Seed a board's live PTY output ring with known ANSI content (output-pagination probe). */
   mcpSeedOutput(id: string, text: string): boolean
   /** Record a board's structured result (drives the empty→filled `canvas://board/{id}/result` probe). */
   mcpRecordResult(id: string, result: BoardResult): void
+  /**
+   * PR-4: synchronously drive the result synthesizer's settle path for a board — the same
+   * `resultSynth.onSettle` the recap-mtime watcher fires, but WITHOUT its 25s debounce — so the
+   * e2e proves the REAL wiring (learned transcript → `computeRecapFacts` → synthesized
+   * `BoardResult`) deterministically. No-op if the synthesizer never came up.
+   */
+  synthesizeResultNow(boardId: string): void
+  /** PR-4: read a board's recorded result back (the synthesize / non-clobber probe asserts off this). */
+  boardResultFor(id: string): BoardResult
   /** Round-trip a MAIN→renderer `ping` command — the inverse-of-the-mirror command-channel probe. */
   mcpPingCommand(): Promise<McpCommandAck>
   /** The orchestration connector mirror (the relay-cable probe asserts A→B landed in MAIN). */
@@ -205,7 +242,12 @@ declare global {
 }
 
 /** Install the registry. No-op unless CANVAS_E2E is set. Call once after the window exists. */
-export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: RunningMcp | null): void {
+export function installE2EMain(
+  win: BrowserWindow,
+  localUrl: string,
+  mcp: RunningMcp | null,
+  getResultSynth: () => ResultSynthesizer | null
+): void {
   if (!process.env.CANVAS_E2E) return
   globalThis.__canvasE2EMain = {
     terminalPid: debugTerminalPid,
@@ -287,11 +329,26 @@ export function installE2EMain(win: BrowserWindow, localUrl: string, mcp: Runnin
         workerBoardId: MCP_E2E_WORKER_BOARD
       }
     },
+    gitDiff(boardId) {
+      return mcp?.gitDiff(boardId) ?? Promise.resolve('')
+    },
+    describeApp() {
+      return mcp?.describeApp() ?? Promise.resolve(null)
+    },
+    spawnGroupNow(input) {
+      return mcp?.spawnGroup(input) ?? Promise.resolve(null)
+    },
     mcpSeedOutput(id, text) {
       return debugSeedOutput(id, text)
     },
     mcpRecordResult(id, result) {
       recordBoardResult(id, result)
+    },
+    synthesizeResultNow(boardId) {
+      getResultSynth()?.onSettle(boardId)
+    },
+    boardResultFor(id) {
+      return readBoardResult(id)
     },
     mcpPingCommand() {
       return sendMcpCommand(ipcMain, () => win, { type: 'ping' })

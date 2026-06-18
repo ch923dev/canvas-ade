@@ -72,6 +72,11 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
         }
       },
       duplicate: (id) => {
+        // The Command board is a singleton — duplicateBoard no-ops it. Bail BEFORE the
+        // full-view/focus side effects, or a no-op duplicate would silently close the user's
+        // full view with nothing created (PR #175 reviewer). The ⋯ menu + palette also hide
+        // the Duplicate affordance for it; this guards any remaining caller.
+        if (useCanvasStore.getState().boards.find((b) => b.id === id)?.type === 'command') return
         hardCloseFullView()
         if (cameraFullViewIdRef.current === id) exitCameraFullView()
         // Exit focus so the clone isn't born dimmed (mirrors addCentered, #14 / STATE-1).

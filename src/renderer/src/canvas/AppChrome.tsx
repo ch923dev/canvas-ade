@@ -591,7 +591,7 @@ export function Dock(): ReactElement {
           onClick={() => setTool('select')}
         />
         <span style={styles.divider} />
-        {(['terminal', 'browser', 'planning', 'file'] as const).map((type) => (
+        {(['terminal', 'browser', 'planning', 'command', 'file'] as const).map((type) => (
           <DockBtn key={type} type={type} active={tool === type} onClick={() => setTool(type)} />
         ))}
       </div>

@@ -52,6 +52,7 @@ describe('buildCommands — visibility matrix', () => {
       'new-terminal',
       'new-browser',
       'new-planning',
+      'new-command',
       'tidy',
       'fit',
       'reset-zoom',
@@ -84,6 +85,15 @@ describe('buildCommands — visibility matrix', () => {
     expect(multi.some((c) => c.section === 'Selected board')).toBe(false)
     expect(single.some((c) => c.id === 'rename-board')).toBe(true)
     expect(single.some((c) => c.id === 'delete-board')).toBe(true)
+  })
+
+  it('hides the Duplicate verb for the singleton Command board (keeps rename/delete)', () => {
+    const C = { id: 'c1', type: 'command', title: 'Orchestrator' } as const
+    const cmds = buildCommands(snap({ boards: [C], selectedIds: ['c1'] }), verbsMock())
+    const ids = cmds.map((c) => c.id)
+    expect(ids).toContain('rename-board')
+    expect(ids).toContain('delete-board')
+    expect(ids).not.toContain('duplicate-board')
   })
 
   it('terminal restart rows: new always (when terminal selected), resume only with agentSessionId', () => {

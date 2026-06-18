@@ -22,23 +22,23 @@ const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
 
 /**
- * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (12). MAIN cannot import the
+ * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (13). MAIN cannot import the
  * renderer module in shipped code, so this constant is duplicated here. It is tested (see
  * projectStore.test.ts, which cross-imports the renderer constant and asserts equality)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation.
  */
-export const SCHEMA_VERSION = 12
+export const SCHEMA_VERSION = 13
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
- * here whenever the renderer constant bumps (breaking changes only). v12 adds the breaking
- * `file` board type AND `fileref` element kind (file-tree S1), so the compat floor moves to
- * 12 — pre-12 apps get the clean "update the app" message instead of failing deep validation
- * on the unknown type/kind.
+ * here whenever the renderer constant bumps (breaking changes only). The floor moved to 12 with
+ * the breaking `command` board type (v12) and again to 13 with the breaking `file` board type AND
+ * `fileref` element kind (v13, file-tree S1) — pre-13 apps get the clean "update the app" message
+ * instead of failing deep validation on the unknown type/kind.
  */
-export const MIN_READER_VERSION = 12
+export const MIN_READER_VERSION = 13
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }

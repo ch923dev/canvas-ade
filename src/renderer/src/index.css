@@ -274,6 +274,26 @@
   }
 }
 
+/* C3: ephemeral routing-overlay edge (Command board to an in-flight worker board). A brief
+   fade-in on mount + a slow dash-flow toward the worker reads as "routing in progress". The
+   edge set is DERIVED (lib/routingEdges) so it vanishes instantly on settle — no fade-out. The
+   dashoffset target (-20) is two full 6+4 dash periods, so the flow loops seamlessly. */
+.ca-routing-edge {
+  animation:
+    ca-routing-fade 160ms ease-out,
+    ca-routing-flow 0.7s linear infinite;
+}
+@keyframes ca-routing-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ca-routing-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
 /* Board chrome shell: focus-dim opacity + select ring at §9's 120ms ease-out, hover
    border at 100ms. A class (not an inline style) so the reduced-motion block below
    can suppress it — inline transitions win over the @media rule (A12). */
@@ -454,6 +474,7 @@
   .ca-pulse,
   .ca-lod-card,
   .ca-lod-out,
+  .ca-routing-edge,
   .react-flow__resize-control.handle {
     animation: none !important;
   }
@@ -2742,6 +2763,12 @@ body {
   font-size: 11px;
   font-weight: 500;
   text-transform: capitalize;
+}
+
+/* Command board submit-well input: faint placeholder to match the inert Phase-A well it replaced. */
+.cmd-submit-input::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
 }
 
 /* Named board groups — outline box + name tab (S2). Outline only; one accent. */
