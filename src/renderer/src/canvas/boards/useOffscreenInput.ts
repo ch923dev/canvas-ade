@@ -226,7 +226,21 @@ function attachInput(
   // or app chrome) disables it so the page's blur/focusout fires (menus close, on-blur validation
   // runs). DOM focus is singular, so only the active board is ever emulated-focused.
   const onFocus = (): void => void window.api.setOsrFocus(boardId, true)
-  const onBlur = (): void => void window.api.setOsrFocus(boardId, false)
+  // React Flow focuses the board's `.react-flow__node` wrapper on a canvas click (node selection),
+  // stealing DOM focus from the proxy. Left unhandled that BREAKS typing: keystrokes then route to
+  // the node (board shortcuts), never reaching the proxy → `osrIme` never fires, AND the page's
+  // focus-emulation drops (no caret — `document.hasFocus()` goes false). When the blur's incoming
+  // focus target is an ANCESTOR of the proxy (i.e. our own node wrapper grabbed it), re-claim focus
+  // so the live preview keeps receiving keys. A blur to anything else (another board, app chrome, a
+  // native widget overlay) is honored → the page's blur/focusout fires as before.
+  const onBlur = (e: FocusEvent): void => {
+    const next = e.relatedTarget as Node | null
+    if (next && next !== proxy && next.contains(proxy)) {
+      proxy.focus({ preventScroll: true }) // the `focus` handler re-asserts emulation
+      return
+    }
+    void window.api.setOsrFocus(boardId, false)
+  }
 
   const clearProxy = (): void => {
     proxy.value = ''
