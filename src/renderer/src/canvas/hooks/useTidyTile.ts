@@ -41,7 +41,7 @@ export function tileArea(
 }
 
 export interface TidyTileDeps {
-  paneRef: RefObject<HTMLDivElement>
+  paneRef: RefObject<HTMLDivElement | null>
   rf: ReactFlowInstance
   setActiveTile: Dispatch<SetStateAction<TileTemplate | null>>
   setFocusedId: Dispatch<SetStateAction<string | null>>
