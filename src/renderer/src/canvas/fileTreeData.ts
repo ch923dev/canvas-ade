@@ -9,6 +9,30 @@
 /** The DnD MIME the tree emits and the S4 Planning drop handler will read (S1 contract). */
 export const FILEREF_MIME = 'application/x-canvas-ade-fileref'
 
+// ── File glyphs (shared by the tree row AND the S4 file-reference chip) ─────────
+// File glyphs all share the folded-corner silhouette + a type mark inside, so they read as a
+// family. Kept NEUTRAL (no per-type colour) to honour the one-accent design contract (DESIGN.md);
+// the differentiation is by shape, like a minimal icon theme. Pure (path string in/out), so they
+// live in this React-free module — one source of truth the tree and the chip both draw from.
+const FILE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4'
+const CODE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M10 12l-1.6 2 1.6 2M14 12l1.6 2-1.6 2' // </>
+const DOC_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9.5 13h5M9.5 16h3.5' // text lines
+const IMG_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9 17l2-2.4 1.5 1.5L15.5 13l1.5 2' // mountain
+
+const CODE_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'])
+const DOC_EXT = new Set(['md', 'mdx', 'markdown', 'txt'])
+const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'avif'])
+
+/** The folded-file glyph (SVG path data) for a filename, picked by extension. */
+export function fileGlyphPath(name: string): string {
+  const dot = name.lastIndexOf('.')
+  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
+  if (CODE_EXT.has(ext)) return CODE_PATH
+  if (DOC_EXT.has(ext)) return DOC_PATH
+  if (IMG_EXT.has(ext)) return IMG_PATH
+  return FILE_PATH
+}
+
 /** Mirrors the preload `FileEntry` (S1) — what `file.listDir` returns per directory entry. */
 export interface FileEntry {
   name: string

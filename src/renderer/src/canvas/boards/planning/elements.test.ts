@@ -32,6 +32,8 @@ import {
   TEXT_NOMINAL,
   makeImage,
   fitImageSize,
+  makeFileRef,
+  FILEREF_SIZE,
   setArrowEndpoint
 } from './elements'
 import { TINT_CYCLE } from './tints'
@@ -548,6 +550,27 @@ describe('W4 image helpers', () => {
       assetId: 'assets/a.png'
     }
     expect(shiftElement(el, 10, -3)).toMatchObject({ x: 15, y: 3, w: 30, h: 40 })
+  })
+})
+
+describe('S4 file-reference chip', () => {
+  it('makeFileRef centers the box on the point and carries path + label', () => {
+    const el = makeFileRef('f1', { x: 300, y: 150 }, 'src/a.ts', 'a.ts')
+    expect(el).toMatchObject({
+      id: 'f1',
+      kind: 'fileref',
+      x: Math.round(300 - FILEREF_SIZE.w / 2),
+      y: Math.round(150 - FILEREF_SIZE.h / 2),
+      w: FILEREF_SIZE.w,
+      h: FILEREF_SIZE.h,
+      path: 'src/a.ts',
+      label: 'a.ts'
+    })
+  })
+  it('elementBBox returns the chip box; shiftElement moves its top-left', () => {
+    const el = makeFileRef('f1', { x: 100, y: 100 }, 'a.ts', 'a.ts')
+    expect(elementBBox(el)).toEqual({ x: el.x, y: el.y, w: FILEREF_SIZE.w, h: FILEREF_SIZE.h })
+    expect(shiftElement(el, 10, -4)).toMatchObject({ x: el.x + 10, y: el.y - 4 })
   })
 })
 

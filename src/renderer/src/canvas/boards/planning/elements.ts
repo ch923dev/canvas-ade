@@ -12,6 +12,7 @@ import type {
   ChecklistElement,
   ChecklistItem,
   DiagramElement,
+  FileRefElement,
   ImageElement,
   NoteElement,
   NoteTint,
@@ -168,6 +169,34 @@ export function makeDiagram(id: string, at: { x: number; y: number }): DiagramEl
     h: DIAGRAM_SIZE.h,
     source: DIAGRAM_STARTER_SOURCE,
     engine: 'mermaid'
+  }
+}
+
+// ── File-reference chip (file-tree S4) ─────────────────────────────────────────
+
+/** Default board-local size for a freshly-dropped file-reference chip. */
+export const FILEREF_SIZE = { w: 224, h: 46 } as const
+
+/**
+ * A new file-reference chip centred on the drop point (top-left like a note/image). `path` is the
+ * project-relative POSIX path (the `openFileBoard`/`file:*` contract); `label` is the display name
+ * (typically the basename). Clicking the rendered chip opens `path` as a File board.
+ */
+export function makeFileRef(
+  id: string,
+  at: { x: number; y: number },
+  path: string,
+  label: string
+): FileRefElement {
+  return {
+    id,
+    kind: 'fileref',
+    x: Math.round(at.x - FILEREF_SIZE.w / 2),
+    y: Math.round(at.y - FILEREF_SIZE.h / 2),
+    w: FILEREF_SIZE.w,
+    h: FILEREF_SIZE.h,
+    path,
+    label
   }
 }
 

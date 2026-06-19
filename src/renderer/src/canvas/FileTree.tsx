@@ -35,6 +35,7 @@ import {
   FILEREF_MIME,
   applyListing,
   compactTree,
+  fileGlyphPath,
   findNode,
   parentOf,
   type FileNode
@@ -67,28 +68,9 @@ function Glyph({ d, style }: { d: string; style?: CSSProperties }): ReactElement
   )
 }
 
+// Folders use this glyph; files use the extension-picked `fileGlyphPath` (now shared from
+// fileTreeData.ts so the S4 file-reference chip draws the SAME icon as its tree row).
 const FOLDER_PATH = 'M4 7a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z'
-// File glyphs all share the folded-corner silhouette + a type mark inside, so they read as a
-// family. Kept NEUTRAL (no per-type colour) to honour the one-accent design contract (DESIGN.md);
-// the differentiation is by shape, like a minimal icon theme.
-const FILE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4'
-const CODE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M10 12l-1.6 2 1.6 2M14 12l1.6 2-1.6 2' // </>
-const DOC_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9.5 13h5M9.5 16h3.5' // text lines
-const IMG_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9 17l2-2.4 1.5 1.5L15.5 13l1.5 2' // mountain
-
-const CODE_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'])
-const DOC_EXT = new Set(['md', 'mdx', 'markdown', 'txt'])
-const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'avif'])
-
-/** The folded-file glyph for a filename, picked by extension (folders use FOLDER_PATH). */
-function fileGlyphPath(name: string): string {
-  const dot = name.lastIndexOf('.')
-  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
-  if (CODE_EXT.has(ext)) return CODE_PATH
-  if (DOC_EXT.has(ext)) return DOC_PATH
-  if (IMG_EXT.has(ext)) return IMG_PATH
-  return FILE_PATH
-}
 
 // ── row renderer ───────────────────────────────────────────────────────────────
 

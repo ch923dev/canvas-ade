@@ -497,3 +497,77 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     }
   })
 })
+
+/**
+ * File-tree S4 — Planning file-reference chip. A file dragged out of the tree (the FILEREF_MIME
+ * drag-source, S2) and dropped on a Planning board leaves a clickable chip (`fileref` element); the
+ * chip persists like any whiteboard element and clicking it opens the file as a File board. Tagged
+ * @core (always runs) + @planning so the planning-scoped pre-push subset picks it up.
+ */
+test.describe('@core @planning S4 planning file-reference chip (DnD drop + click-to-open)', () => {
+  test('drop a tree file-ref → a chip on the Planning board; clicking the chip opens a File board', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s4chip-', 'Chip')
+    try {
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A_FILE = 1\n')
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+
+      // A Planning board on screen (fitView so its well has a real on-screen rect for the drop).
+      const planId = await seed(page, 'planning')
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+      const wellSel = `.react-flow__node[data-id="${planId}"] .pl-well`
+      await expect(page.locator(wellSel)).toBeVisible({ timeout: 6000 })
+
+      // Dispatch a synthetic file-ref drop (the MIME the tree emits) at the well centre.
+      await evalIn(
+        page,
+        `(() => {
+          const well = document.querySelector(${JSON.stringify(wellSel)})
+          const r = well.getBoundingClientRect()
+          const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+          const dt = new DataTransfer()
+          dt.setData('application/x-canvas-ade-fileref', JSON.stringify({ path: 'a.ts', label: 'a.ts' }))
+          well.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: cx, clientY: cy }))
+        })()`
+      )
+
+      // A fileref element now lives on the planning board, bound to a.ts.
+      const fileRefPaths = (): Promise<string[]> =>
+        evalIn<string[]>(
+          page,
+          `(() => { const b = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(planId)}); return ((b && b.elements) || []).filter((e) => e.kind === 'fileref').map((e) => e.path) })()`
+        )
+      await expect.poll(fileRefPaths).toEqual(['a.ts'])
+
+      // The chip renders inside the board.
+      const chipSel = `.react-flow__node[data-id="${planId}"] [data-test="fileref-chip"]`
+      await expect(page.locator(chipSel)).toBeVisible({ timeout: 6000 })
+
+      const fileBoardPaths = (): Promise<string[]> =>
+        evalIn<string[]>(
+          page,
+          `window.__canvasE2E.getBoards().filter((b) => b.type === 'file').map((b) => b.path)`
+        )
+      expect(await fileBoardPaths()).toEqual([]) // the drop made a chip, NOT a File board
+
+      // Click the chip (press + release, no movement) → opens a File board for a.ts. The drag setup
+      // calls setPointerCapture, which throws on a synthetic pointer, so the pointerdown dispatch is
+      // wrapped; the click resolver is armed BEFORE that setup, so the window pointerup still opens.
+      await evalIn(
+        page,
+        `(() => {
+          const chip = document.querySelector(${JSON.stringify(chipSel)})
+          const r = chip.getBoundingClientRect()
+          const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+          try { chip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: cx, clientY: cy })) } catch (e) {}
+          window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: cx, clientY: cy }))
+        })()`
+      )
+      await expect.poll(fileBoardPaths).toEqual(['a.ts'])
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+})
