@@ -74,6 +74,28 @@ describe('OrchestrationSyncModal', () => {
     expect(screen.getByTestId('orch-sync-result-codex').textContent).toContain('failed')
   })
 
+  it('after a sync completes, the footer swaps to a primary Done + a demoted Sync again', async () => {
+    const results: SyncRowResult[] = [
+      { id: 'claude', status: 'synced', detail: 'Wrote .mcp.json', path: '.mcp.json' }
+    ]
+    const onSync = vi.fn().mockResolvedValue(results)
+    const onClose = vi.fn()
+    render(<OrchestrationSyncModal status={STATUS} onSync={onSync} onClose={onClose} />)
+
+    // Pre-sync: Later + Sync now.
+    expect(screen.getByTestId('orch-sync-later')).toBeTruthy()
+    expect(screen.getByTestId('orch-sync-now').textContent).toContain('Sync now')
+
+    fireEvent.click(screen.getByTestId('orch-sync-now'))
+    await screen.findByTestId('orch-sync-result-claude')
+
+    // Post-sync: Later is gone; a primary Done closes; the re-run is demoted to "Sync again".
+    expect(screen.queryByTestId('orch-sync-later')).toBeNull()
+    expect(screen.getByTestId('orch-sync-now').textContent).toContain('Sync again')
+    fireEvent.click(screen.getByTestId('orch-sync-done'))
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('toggling a detected CLI off removes it from the sync set', () => {
     const onSync = vi.fn().mockResolvedValue([])
     render(<OrchestrationSyncModal status={STATUS} onSync={onSync} onClose={vi.fn()} />)

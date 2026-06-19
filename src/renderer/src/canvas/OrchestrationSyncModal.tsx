@@ -109,6 +109,10 @@ export function OrchestrationSyncModal({
 
   const endpoint = status?.endpoint
   const nSelected = selected.size
+  // A sync has completed at least once → the footer offers a clear close (Done) and demotes the
+  // re-run to a secondary "Sync again" instead of keeping a primary "Sync now" that reads as
+  // unfinished work after every row already shows SYNCED.
+  const hasSynced = results.size > 0
 
   return (
     <Modal
@@ -188,20 +192,45 @@ export function OrchestrationSyncModal({
         </div>
       </div>
 
-      {/* footer */}
+      {/* footer — pre-sync: [Later] [Sync now]. After a sync completes the primary action becomes
+          [Done] (a clear close), with the re-run demoted to a secondary [Sync again]. */}
       <div style={mfoot}>
-        <button style={btn} onClick={onClose} disabled={busy} data-test="orch-sync-later">
-          Later
-        </button>
-        <button
-          style={{ ...btn, ...btnPrimary, opacity: busy || !status ? 0.6 : 1 }}
-          onClick={() => void runSync()}
-          disabled={busy || !status || nSelected === 0}
-          data-test="orch-sync-now"
-        >
-          <RefreshIcon size={13} style={{ marginRight: 6, verticalAlign: -1 }} />
-          {busy ? 'Syncing…' : 'Sync now'}
-        </button>
+        {hasSynced ? (
+          <>
+            <button
+              style={{ ...btn, opacity: busy || !status ? 0.6 : 1 }}
+              onClick={() => void runSync()}
+              disabled={busy || !status || nSelected === 0}
+              data-test="orch-sync-now"
+            >
+              <RefreshIcon size={13} style={{ marginRight: 6, verticalAlign: -1 }} />
+              {busy ? 'Syncing…' : 'Sync again'}
+            </button>
+            <button
+              style={{ ...btn, ...btnPrimary }}
+              onClick={onClose}
+              disabled={busy}
+              data-test="orch-sync-done"
+            >
+              Done
+            </button>
+          </>
+        ) : (
+          <>
+            <button style={btn} onClick={onClose} disabled={busy} data-test="orch-sync-later">
+              Later
+            </button>
+            <button
+              style={{ ...btn, ...btnPrimary, opacity: busy || !status ? 0.6 : 1 }}
+              onClick={() => void runSync()}
+              disabled={busy || !status || nSelected === 0}
+              data-test="orch-sync-now"
+            >
+              <RefreshIcon size={13} style={{ marginRight: 6, verticalAlign: -1 }} />
+              {busy ? 'Syncing…' : 'Sync now'}
+            </button>
+          </>
+        )}
       </div>
     </Modal>
   )
