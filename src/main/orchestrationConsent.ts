@@ -138,7 +138,15 @@ export function registerOrchestrationHandlers(
     const dir = getCurrentDir()
     if (!dir || (decision !== 'enabled' && decision !== 'declined')) return { ok: false }
     writeDecision(userDataDir, dir, decision)
-    onChange(dir, decision === 'enabled') // install / remove the P3 provisioner configs
+    try {
+      onChange(dir, decision === 'enabled') // install / remove the P3 provisioner configs
+    } catch (err) {
+      // onChange contract: must not throw synchronously (the decision is already durable above).
+      // Swallow so the guaranteed { ok: true } always returns once the write has completed — a
+      // synchronous throw from a future P3 provisioner body must never surface as a false IPC
+      // rejection ("Couldn't save your choice") to the renderer.
+      console.error('[orchestration] onChange threw synchronously; decision is persisted', err)
+    }
     return { ok: true }
   })
 }

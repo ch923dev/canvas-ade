@@ -4,7 +4,7 @@
  * Integration tier: registerOrchestrationHandlers via ipcTestHarness — exercises the
  * foreign-sender guard on both channels (same pattern as recapConsent.test.ts).
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -107,7 +107,10 @@ describe('registerOrchestrationHandlers', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  function setup(projectDir: string | null = '/proj/test') {
+  function setup(
+    projectDir: string | null = '/proj/test',
+    onChange?: (path: string, on: boolean) => void
+  ) {
     const cap = createIpcCapture()
     const changes: Array<{ path: string; on: boolean }> = []
     registerOrchestrationHandlers(
@@ -115,7 +118,7 @@ describe('registerOrchestrationHandlers', () => {
       mainWin,
       dir,
       () => projectDir,
-      (path, on) => changes.push({ path, on })
+      onChange ?? ((path, on) => changes.push({ path, on }))
     )
     return { cap, changes }
   }
@@ -138,6 +141,21 @@ describe('registerOrchestrationHandlers', () => {
     await cap.invoke('orchestration:setConsent', 'declined')
     expect(changes[0]).toEqual({ path: '/proj/test', on: false })
     expect(await cap.invoke('orchestration:getConsent')).toBe('declined')
+  })
+
+  it('returns {ok:true} (decision still persisted) when onChange throws synchronously', async () => {
+    // The P3 provisioner hook fires from onChange. A synchronous throw there (e.g. a failing
+    // sync fs call) must NOT surface as a false IPC rejection — the decision was already durably
+    // written on the line above. Regression guard for the PR #184 [warning].
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { cap } = setup('/proj/test', () => {
+      throw new Error('boom from a P3 provisioner')
+    })
+    const r = await cap.invoke('orchestration:setConsent', 'enabled')
+    expect(r).toEqual({ ok: true })
+    expect(await cap.invoke('orchestration:getConsent')).toBe('enabled')
+    expect(errSpy).toHaveBeenCalled()
+    errSpy.mockRestore()
   })
 
   it('setConsent rejects an invalid decision value', async () => {
