@@ -143,17 +143,23 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       openOrchestrationModal('enable')
       return
     }
+    // Guard the async revoke like `save`/`clear`: setBusy(true) + a busy-disabled button so a
+    // rapid double-click can't fire two concurrent setConsent('declined') IPC calls whose
+    // setError/setOrchestrationCache side-effects interleave in confusing order.
+    setBusy(true)
     setError(null)
     try {
       const r = await window.api.orchestration.setConsent('declined')
       if (!r.ok) {
         setError('Could not update agent orchestration — please try again.')
+        setBusy(false)
         return
       }
       setOrchestrationCache(false)
     } catch {
       setError('Could not update agent orchestration — please try again.')
     }
+    setBusy(false)
   }
 
   const save = async (): Promise<void> => {
@@ -368,7 +374,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
           role="switch"
           aria-checked={orchestrationEnabled}
           aria-label="Agent orchestration (this project)"
-          disabled={projectDir === null}
+          disabled={busy || projectDir === null}
           onClick={() => void onOrchestrationToggle()}
           data-test="settings-orchestration-toggle"
           style={{
