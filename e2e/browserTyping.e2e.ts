@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures'
-import { evalIn, pollEval, seed } from './helpers'
+import { evalIn, seed } from './helpers'
 import { createServer, type Server } from 'node:http'
-import type { ElectronApplication } from '@playwright/test'
+import type { ElectronApplication, Page } from '@playwright/test'
 
 // Regression for the "clicks work, typing doesn't" OSR Browser-board bug: React Flow focuses the
 // `.react-flow__node` wrapper on a canvas click, stealing DOM focus from the hidden `.bb-ime-proxy`
@@ -19,8 +19,27 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>init</titl
   t.addEventListener('input', function(){ document.title = 'VAL:' + t.value; });
 </script></body></html>`
 
-const runtimeStatus = (id: string, status: string) =>
-  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+/** Wait until a board's preview runtime reaches `status` (typed `page.evaluate` arg — no eval). */
+function waitForStatus(page: Page, id: string, status: string, timeoutMs: number): Promise<void> {
+  return expect
+    .poll(
+      () =>
+        page.evaluate(
+          ({ bid, want }) => {
+            const api = (
+              globalThis as unknown as {
+                __canvasE2E: { getRuntime(boardId: string): { status?: string } | null }
+              }
+            ).__canvasE2E
+            const r = api.getRuntime(bid)
+            return !!r && r.status === want
+          },
+          { bid: id, want: status }
+        ),
+      { timeout: timeoutMs, message: `board ${id} reaches ${status}` }
+    )
+    .toBe(true)
+}
 
 /** Read the offscreen preview page's focus + field value from MAIN (the hidden window is in MAIN). */
 function readOsrField(app: ElectronApplication, urlPrefix: string): Promise<string | null> {
@@ -63,7 +82,7 @@ test.describe('@preview browser typing (OSR keyboard → offscreen page)', () =>
     const id = await seed(page, 'browser', { url, viewport: 'desktop' })
     await page.waitForTimeout(150)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000), 'connected').toBe(true)
+    await waitForStatus(page, id, 'connected', 12_000)
     await page.waitForTimeout(500) // let the first frame paint
 
     // Click the live canvas (the <input> fills the page, so the click lands on it).
