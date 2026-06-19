@@ -278,19 +278,31 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(function FileT
     dataRef.current = data
   }, [data])
 
+  // Monotonic load generation — bumped on every project switch. An in-flight cascade captures the
+  // generation it started in and abandons itself (skips setData) the moment a switch supersedes it,
+  // so a slow listing from the OLD project can never bleed into the NEW project's freshly-reset tree.
+  const loadGenRef = useRef(0)
+
   // Load one directory's children lazily ('' = root). Preserves expanded subtrees on refresh.
   // Cascade-loads a sole sub-folder so single-folder chains render compact (see compactTree)
   // without a flash; capped depth guards against a runaway descent on a deep one-child chain.
-  const loadDir = useCallback(async function load(parentId: string, depth = 0): Promise<void> {
+  // `gen` defaults to the current generation (toggle / live-event callers); the project-switch
+  // effect passes its freshly-bumped generation so a superseded cascade self-cancels.
+  const loadDir = useCallback(async function load(
+    parentId: string,
+    depth = 0,
+    gen = loadGenRef.current
+  ): Promise<void> {
     const listDir = window.api?.file?.listDir
     if (!listDir) return
     try {
       const entries = await listDir(parentId)
+      if (gen !== loadGenRef.current) return // a project switch superseded this cascade — drop it
       setData((prev) => applyListing(prev, parentId, entries))
       if (parentId === '') setRootLoaded(true)
       if (depth < 16 && entries.length === 1 && entries[0].isDir) {
         const childId = parentId ? `${parentId}/${entries[0].name}` : entries[0].name
-        await load(childId, depth + 1)
+        await load(childId, depth + 1, gen)
       }
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -314,9 +326,10 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(function FileT
   // and runs once on mount. loadDir also cascade-loads a sole root sub-folder (compact folders).
   const projectDir = useCanvasStore((s) => s.project.dir)
   useEffect(() => {
+    const gen = ++loadGenRef.current // supersede any in-flight cascade from the previous project
     setData([])
     setRootLoaded(false)
-    void loadDir('')
+    void loadDir('', 0, gen)
   }, [projectDir, loadDir])
 
   // Live updates: re-list only the affected (and currently-loaded) parent folder, debounced.
