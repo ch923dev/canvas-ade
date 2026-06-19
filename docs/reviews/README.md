@@ -6,15 +6,21 @@ collapsed into a dated summary here once every finding is fixed). To recover a
 round's raw cards: `git log --all --oneline -- <path-listed-below>` then check out that
 path at the commit shown.
 
-**No open review/bug-hunt findings on `main`** — every CODE
-review/bug-hunt round is fully remediated, including the **2026-06-15 codebase bug hunt
-(16 findings — 1 High · 2 Med · 13 Low — all fixed)**, the 2026-06-13 DX audit (process track, COMPLETE #131/#132/#144/#145/#148) — the 2026-06-10 full-app audit (72 findings,
-#107 + #109) and the **2026-06-10 design/UX audit umbrella, COMPLETE 2026-06-12** (D0 #108 ·
-D1 #111/#112/#113 · D2 #114/#115/#116/#117 · D3 #118/#119/#120 · D4 #121/#123/#124). When the next
-review run happens, add a dated file here and update this line.
+**Open: the 2026-06-19 feature-improvement audit.** A forward-looking perf/UX/a11y/code-quality sweep
+(NOT a bug hunt) — 43 confirmed findings (3 High · 17 Med · 23 Low) decomposed into the file-disjoint
+**"PA" remediation umbrella** (10 slices + 1 lint ratchet). **PA-1 done** (canvas camera per-frame
+re-render High + 3 cleanups); PA-2…PA-10 + PA-R are parallel-runnable — see the package below.
+
+Every prior **CODE review/bug-hunt round is fully remediated**, including the **2026-06-15 codebase bug
+hunt** (16 findings — 1 High · 2 Med · 13 Low — all fixed), the 2026-06-13 DX audit (process track,
+COMPLETE #131/#132/#144/#145/#148), the 2026-06-10 full-app audit (72 findings, #107 + #109), and the
+**2026-06-10 design/UX audit umbrella, COMPLETE 2026-06-12** (D0 #108 · D1 #111/#112/#113 ·
+D2 #114/#115/#116/#117 · D3 #118/#119/#120 · D4 #121/#123/#124). When the next review run happens, add a
+dated file here and update this line.
 
 | # | File / status |
 |---|---|
+| Feature-improvement audit (2026-06-19) | [`2026-06-19-feature-audit/`](2026-06-19-feature-audit/) — forward-looking perf/UX/a11y/code-quality audit of all shipped-on-`main` features (excludes File Tree + Command Board per user). Adversarial multi-agent verify: 52 raw → **43 confirmed** (3 High · 17 Med · 23 Low) + 7 verify-first terminal notes. Decomposed into the file-disjoint **"PA" remediation umbrella** ([`REMEDIATION-EPIC.md`](2026-06-19-feature-audit/REMEDIATION-EPIC.md) · [`HANDOFFS.md`](2026-06-19-feature-audit/HANDOFFS.md)): 10 slices + PA-R lint ratchet. **PA-1 ✅** (this PR — CANVAS-01 digest per-frame re-render High + 02/04/06 cleanups). PA-2…PA-10 + PA-R **OPEN**. |
 | Bug hunt (2026-06-15) | [`2026-06-15-bug-hunt/`](2026-06-15-bug-hunt/) — 16 confirmed (1 High · 2 Med · 13 Low · 0 Crit), **all fixed**. 18 file-disjoint discovery slices → an independent adversarial verifier per candidate (44 agents; 25 candidates → 16). High = recap-watcher app-crash guard; the MCP-cluster fix closes the live-agent handoff-barrier gap (per-task settle). Verified: gate 2550/2550 + full e2e matrix (Win 127 · Linux 126+1skip). Raw cards + [`FIX-REPORT.md`](2026-06-15-bug-hunt/FIX-REPORT.md) in the package. |
 | Electron-to-Flutter assessment + OSR spike (2026-06-14) | [`2026-06-14-electron-to-flutter-assessment/`](2026-06-14-electron-to-flutter-assessment/) - 20-agent NO-GO-on-Flutter feasibility study; recommended the offscreen-to-canvas preview spike, SHIPPED flag-gated #151 (proving native-view occlusion is fixable IN Electron). Open productionization tracked as OS-3 in [`../feature-proposals.md`](../feature-proposals.md). |
 | DX & code-quality audit (2026-06-13) | [`2026-06-13-dx-audit.md`](2026-06-13-dx-audit.md) — process audit (review noise · pre-push e2e cost · architecture · testing): the two pain points multiply (each review round re-pays the full 2-OS matrix + a full re-review). 5-PR plan, all slices landed: PR-1 reviewer tuning **MERGED #131** · PR-2 pre-push Linux-leg path-gating (Option B, local) **MERGED #132** · PR-3 e2e tags + path-scoped selection **MERGED #144** · PR-4 e2e thinning **MERGED #145** · PR-5 `e2e/mcp.e2e.ts` port — retires the last `CANVAS_SMOKE` harness — **MERGED #148** (`7bfb093`). The per-slice plan doc was deleted by PR-5 (doc-lifecycle: a plan dies with its last slice). |

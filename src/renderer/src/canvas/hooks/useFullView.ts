@@ -19,11 +19,13 @@ import {
 } from 'react'
 import type { ReactFlowInstance, Viewport } from '@xyflow/react'
 import { cameraAnim } from '../../lib/motion'
-import { Z_MAX } from '../../lib/canvasView'
+import { focusMaxZoom } from '../../lib/canvasView'
 
 /** Planning "full view" fits TIGHTER than focus (fills more of the viewport). It's a CAMERA fit
- *  (Option A), not the portal modal — vector content re-rasterises crisp at any zoom, so Z_MAX. */
-const FULLVIEW_OPTIONS = { padding: 0.1, maxZoom: Z_MAX } as const
+ *  (Option A), not the portal modal. Camera full view is planning-only (a vector board), and
+ *  `focusMaxZoom('planning')` is the shared "vector boards focus to Z_MAX" rule (CANVAS-04) — so
+ *  the cap comes from the same helper the Enter/double-click focus uses, never a stray Z_MAX. */
+const FULLVIEW_OPTIONS = { padding: 0.1, maxZoom: focusMaxZoom('planning') } as const
 
 export interface FullViewDeps {
   rf: ReactFlowInstance
@@ -34,7 +36,6 @@ export interface FullViewApi {
   fullViewId: string | null
   fullViewHost: HTMLElement | null
   fullViewClosing: boolean
-  fullViewMotion: boolean
   cameraFullViewId: string | null
   setFullViewId: Dispatch<SetStateAction<string | null>>
   setFullViewHost: Dispatch<SetStateAction<HTMLElement | null>>
@@ -58,14 +59,9 @@ export function useFullView(deps: FullViewDeps): FullViewApi {
   // The modal's portal host element — the full-view BoardNode portals its live subtree into this so
   // the board is relocated (not remounted) and its session survives.
   const [fullViewHost, setFullViewHost] = useState<HTMLElement | null>(null)
-  // Slice 5 motion flags. `entering`: from open until the enter tween settles. `closing`: from a
-  // close request until the exit tween settles (fullViewId stays set throughout).
-  const [fullViewEntering, setFullViewEntering] = useState(false)
+  // `closing`: set from a close request until the exit tween settles (fullViewId stays set
+  // throughout so the live board stays relocated in the modal host until the fade completes).
   const [fullViewClosing, setFullViewClosing] = useState(false)
-  // The native WebContentsView can't be CSS-animated and a frame scale() pollutes the rect it binds
-  // to, so the full-view Browser view is HELD detached while the frame is mid-transform (enter OR
-  // exit) and snaps in at settle.
-  const fullViewMotion = fullViewEntering || fullViewClosing
   // Read the live full-view id inside the (stable) boardActions/Esc toggles without re-memoizing
   // them on every open/close. Synced in an effect (no ref writes in render).
   const fullViewIdRef = useRef<string | null>(fullViewId)
@@ -84,10 +80,9 @@ export function useFullView(deps: FullViewDeps): FullViewApi {
   }, [cameraFullViewId])
   const priorViewportRef = useRef<Viewport | null>(null)
 
-  // Open full view on a board: start the enter tween, mark it as the relocated board.
+  // Open full view on a board: clear any in-flight close and mark it as the relocated board.
   const openFullView = useCallback((id: string) => {
     setFullViewClosing(false)
-    setFullViewEntering(true)
     setFullViewId(id)
   }, [])
   // Request the exit tween; keep fullViewId set so the board stays relocated in the modal host
@@ -100,9 +95,12 @@ export function useFullView(deps: FullViewDeps): FullViewApi {
   const hardCloseFullView = useCallback(() => {
     setFullViewId(null)
     setFullViewClosing(false)
-    setFullViewEntering(false)
   }, [])
-  const handleFullViewEntered = useCallback(() => setFullViewEntering(false), [])
+  // Enter-settle hook for FullViewModal's (required) onEntered. The OSR preview <canvas> moves
+  // with the DOM transform, so — unlike the deleted native WebContentsView path — there is nothing
+  // to re-attach at settle; retained as a no-op so the modal's lifecycle contract is unchanged
+  // (CANVAS-02: the old fullViewEntering / fullViewMotion detach flags are gone).
+  const handleFullViewEntered = useCallback(() => {}, [])
   const handleFullViewExited = useCallback(() => hardCloseFullView(), [hardCloseFullView])
 
   // Enter camera full view on a (Planning) board: save the viewport, fit the camera to the board,
@@ -134,7 +132,6 @@ export function useFullView(deps: FullViewDeps): FullViewApi {
     fullViewId,
     fullViewHost,
     fullViewClosing,
-    fullViewMotion,
     cameraFullViewId,
     setFullViewId,
     setFullViewHost,
