@@ -7,7 +7,10 @@ import { useOrchestrationStore } from '../store/orchestrationStore'
 
 const orchestration = {
   getConsent: vi.fn(),
-  setConsent: vi.fn()
+  setConsent: vi.fn(),
+  // The Sync step's container probes status on mount; null keeps the modal in its loading state.
+  getProvisionStatus: vi.fn(),
+  sync: vi.fn()
 }
 // The trigger yields to an UNDECIDED recap prompt — default recap to a decided state so the
 // orchestration prompt is free to fire in the baseline tests.
@@ -20,6 +23,8 @@ describe('OrchestrationModals (first-init trigger + hydration)', () => {
     vi.clearAllMocks()
     orchestration.getConsent.mockResolvedValue('undecided')
     orchestration.setConsent.mockResolvedValue({ ok: true })
+    orchestration.getProvisionStatus.mockResolvedValue(null)
+    orchestration.sync.mockResolvedValue([])
     recap.getConsent.mockResolvedValue('declined')
     ;(window as unknown as { api: object }).api = { orchestration, recap }
     useOrchestrationStore.setState({ enabled: false, modal: 'none' })
@@ -66,7 +71,7 @@ describe('OrchestrationModals (first-init trigger + hydration)', () => {
     render(<OrchestrationModals />)
     const dialog = await screen.findByRole('dialog', { name: /agent orchestration/i })
     fireEvent.click(within(dialog).getByRole('button', { name: /enable orchestration/i }))
-    expect(await screen.findByRole('dialog', { name: /^sync$/i })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: /sync agent orchestration/i })).toBeTruthy()
     expect(useOrchestrationStore.getState().modal).toBe('sync')
   })
 })

@@ -196,6 +196,21 @@ export type RecapConsentState = 'enabled' | 'declined' | 'undecided'
 // shared import). A SEPARATE consent from recap (decision 2026-06-19).
 export type OrchestrationConsentState = 'enabled' | 'declined' | 'undecided'
 
+// The Sync modal's data plane. Shapes MIRROR src/main/cliProvisioners/shared.ts
+// (CliId / ProvisionStatus / SyncResult) across the process boundary — keep in lockstep.
+// 🔒 the endpoint token is PRE-MASKED in MAIN; the raw token never crosses the bridge.
+export type OrchestrationCliId = 'claude' | 'codex' | 'gemini' | 'opencode'
+export interface OrchestrationProvisionStatus {
+  endpoint: { host: string; port: number; maskedToken: string }
+  rows: { id: OrchestrationCliId; label: string; configLabel: string; detected: boolean }[]
+}
+export interface OrchestrationSyncResult {
+  id: OrchestrationCliId
+  status: 'synced' | 'error'
+  detail: string
+  path?: string
+}
+
 // ── Recap redesign S1: the recap face's data bundle. MIRRORS src/main (recapFacts.ts +
 // summaryLoop.ts RecapNarrative + recapIpc.ts RecapBundle) — the process boundary means no
 // shared import (tsconfig.preload ⊥ tsconfig.node); keep the three in lockstep, same as PtyState.
@@ -503,7 +518,13 @@ const api = {
     getConsent: (): Promise<OrchestrationConsentState> =>
       ipcRenderer.invoke('orchestration:getConsent'),
     setConsent: (decision: 'enabled' | 'declined'): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('orchestration:setConsent', decision)
+      ipcRenderer.invoke('orchestration:setConsent', decision),
+    // The Sync modal's data plane (P3 provisioners, wired by the onboarding lane). Status is
+    // null while MAIN probes / when no server is mounted; sync resolves a per-CLI result.
+    getProvisionStatus: (): Promise<OrchestrationProvisionStatus | null> =>
+      ipcRenderer.invoke('orchestration:getProvisionStatus'),
+    sync: (ids: OrchestrationCliId[]): Promise<OrchestrationSyncResult[]> =>
+      ipcRenderer.invoke('orchestration:syncProvisioners', ids)
   },
 
   // ── MCP board mirror (control plane; metadata only — id/type/title + coarse status

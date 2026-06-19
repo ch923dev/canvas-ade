@@ -12,11 +12,16 @@
  * mount point + the `modal === 'sync'` gating are the seam; the placeholder keeps the Enable→Sync
  * flow demonstrable until then.
  */
-import { useEffect, type CSSProperties, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useCanvasStore } from '../store/canvasStore'
 import { useOrchestrationStore } from '../store/orchestrationStore'
 import { OrchestrationConsentModal } from './OrchestrationConsentModal'
-import { Modal } from './Modal'
+import {
+  OrchestrationSyncModal,
+  type SyncCliId,
+  type SyncRowResult,
+  type SyncStatusData
+} from './OrchestrationSyncModal'
 
 export function OrchestrationModals(): ReactElement {
   const projectDir = useCanvasStore((s) => s.project.dir)
@@ -82,77 +87,38 @@ export function OrchestrationModals(): ReactElement {
           onEnabled={() => setModal('sync')}
         />
       )}
-      {/* ⚠️ WT-provision (P3): swap this placeholder for the real <OrchestrationSyncModal/>. */}
-      {modal === 'sync' && <SyncStepPlaceholder onClose={() => setModal('none')} />}
+      {modal === 'sync' && <OrchestrationSyncStep onClose={() => setModal('none')} />}
     </>
   )
 }
 
 /**
- * Temporary stand-in for WT-provision's Sync modal. Keeps the Enable→Sync flow (and the Settings
- * "Sync" button) demonstrable in the manual dev check before the provisioners land. P3 replaces
- * this with the endpoint/per-CLI-target UI; the host's mount point and gating stay unchanged.
+ * Container for WT-provision's presentational `<OrchestrationSyncModal/>` (the swap-point the
+ * onboarding lane owed P3). Fetches the provision status (endpoint + per-CLI detect rows) on
+ * mount and provides the `onSync` that runs the selected provisioners — both over the
+ * frame-guarded orchestration IPC. The modal owns the selection + per-row result UI; this owns
+ * only the data wiring. Status stays null (the modal's "detecting endpoint" loading state) if the
+ * bridge/IPC is unavailable; a sync IPC rejection propagates so the modal marks the rows failed.
  */
-function SyncStepPlaceholder({ onClose }: { onClose: () => void }): ReactElement {
-  return (
-    <Modal
-      label="Sync"
-      onClose={onClose}
-      zIndex={1000}
-      scrimProps={{ 'data-test': 'orchestration-sync-scrim' }}
-      cardProps={{ 'data-test': 'orchestration-sync-modal' }}
-      cardStyle={ph.card}
-    >
-      <h2 style={ph.title}>Sync</h2>
-      <p style={ph.body}>
-        Push this canvas&apos;s connection to every agent CLI on your machine. Re-runs automatically
-        when a terminal starts.
-      </p>
-      <p style={ph.note}>The per-CLI sync targets arrive with the provisioners (P3).</p>
-      <div style={ph.foot}>
-        <button style={ph.ghost} onClick={onClose} data-test="orchestration-sync-later">
-          Later
-        </button>
-        <button style={ph.primary} disabled data-test="orchestration-sync-now">
-          Sync now
-        </button>
-      </div>
-    </Modal>
+function OrchestrationSyncStep({ onClose }: { onClose: () => void }): ReactElement {
+  const [status, setStatus] = useState<SyncStatusData | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const s = await window.api?.orchestration?.getProvisionStatus?.()
+        if (!cancelled && s) setStatus(s)
+      } catch {
+        // Leave status null → the modal shows its "detecting endpoint" loading state.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const onSync = useCallback(
+    (ids: SyncCliId[]): Promise<SyncRowResult[]> => window.api.orchestration.sync(ids),
+    []
   )
-}
-
-const ph: Record<string, CSSProperties> = {
-  card: {
-    width: 446,
-    padding: 20,
-    border: '1px solid var(--border)',
-    borderRadius: 'var(--r-board)'
-  },
-  title: { margin: 0, fontSize: 15, lineHeight: '22px', fontWeight: 600, letterSpacing: '-.01em' },
-  body: { fontSize: 13, lineHeight: '20px', color: 'var(--text-2)', margin: '10px 0 0' },
-  note: { fontSize: 11.5, lineHeight: '16px', color: 'var(--text-3)', margin: '8px 0 0' },
-  foot: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 },
-  ghost: {
-    height: 30,
-    padding: '0 14px',
-    borderRadius: 'var(--r-ctl)',
-    border: '1px solid var(--border)',
-    background: 'transparent',
-    color: 'var(--text-2)',
-    fontSize: 12.5,
-    fontWeight: 500,
-    cursor: 'pointer'
-  },
-  primary: {
-    height: 30,
-    padding: '0 14px',
-    borderRadius: 'var(--r-ctl)',
-    border: '1px solid var(--accent)',
-    background: 'var(--accent)',
-    color: '#fff',
-    fontSize: 12.5,
-    fontWeight: 500,
-    cursor: 'not-allowed',
-    opacity: 0.55
-  }
+  return <OrchestrationSyncModal status={status} onSync={onSync} onClose={onClose} />
 }
