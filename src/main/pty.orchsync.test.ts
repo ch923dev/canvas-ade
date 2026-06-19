@@ -90,15 +90,25 @@ describe('setOrchestrationSyncProvider', () => {
     const { setOrchestrationSyncProvider, registerPtyHandlers } = await import('./pty')
     const order: string[] = []
     setOrchestrationSyncProvider(() => void order.push('sync'))
+    // Record 'write' in REAL TIME (when proc.write is actually called), not retroactively after
+    // the spawn resolves — otherwise the assertion would read ['sync','write'] regardless of the
+    // true order and a write-before-sync regression would slip through.
+    const writeSpy = vi.fn(() => void order.push('write'))
+    spawnSpy.mockImplementationOnce(() => ({
+      pid: 9999,
+      write: writeSpy,
+      resize: vi.fn(),
+      kill: vi.fn(),
+      onData: vi.fn(),
+      onExit: vi.fn()
+    }))
 
     const { ipcMain, invoke } = buildIpc()
     registerPtyHandlers(ipcMain, makeGetWin())
     await invoke('pty:spawn', { id: 'b1', launchCommand: 'claude' })
 
-    const proc = spawnSpy.mock.results[0].value as { write: ReturnType<typeof vi.fn> }
-    proc.write.mock.calls.forEach(() => order.push('write'))
     expect(order).toEqual(['sync', 'write'])
-    expect(proc.write).toHaveBeenCalledWith('claude\r')
+    expect(writeSpy).toHaveBeenCalledWith('claude\r')
   })
 
   it('a throwing provider never breaks the spawn', async () => {

@@ -22,7 +22,7 @@
  * `os.homedir()`, so this whole subtree stays unit-testable without an electron mock and adds no
  * electron coupling to `pty.ts`'s import graph.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { McpJson } from '@expanse-ade/mcp'
@@ -169,11 +169,27 @@ export function readJsonConfig<T = Record<string, unknown>>(file: string): T | u
   }
 }
 
+/**
+ * Force owner-only perms AFTER a write. `writeFileSync`'s `mode` only applies when it CREATES the
+ * file — an existing config (e.g. a CLI installer's `~/.gemini/settings.json` left at 0o644) keeps
+ * its old, possibly world-readable mode, which would expose the embedded bearer token (PLAN §6).
+ * chmod closes that hole on every write, new or existing. Best-effort: Windows has no POSIX mode
+ * bits, so a throw/no-op there is harmless.
+ */
+function enforceOwnerOnly(file: string): void {
+  try {
+    chmodSync(file, 0o600)
+  } catch {
+    /* best-effort — Windows has no POSIX perms; nothing to enforce */
+  }
+}
+
 /** Write a JSON config owner-only (0o600), creating the parent dir if needed. */
 export function writeJsonConfig(file: string, data: unknown): void {
   const dir = dirname(file)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
   writeFileSync(file, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
+  enforceOwnerOnly(file)
 }
 
 /** Write a raw text config owner-only (0o600), creating the parent dir if needed. */
@@ -181,6 +197,7 @@ export function writeTextConfig(file: string, text: string): void {
   const dir = dirname(file)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
   writeFileSync(file, text, { encoding: 'utf8', mode: 0o600 })
+  enforceOwnerOnly(file)
 }
 
 /** Read a raw text config, or `undefined` if absent. */
