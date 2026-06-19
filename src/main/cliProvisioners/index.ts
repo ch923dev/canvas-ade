@@ -58,8 +58,9 @@ export const PROVISIONERS: Record<CliId, AppCliProvisioner> = {
 
 export const CLI_IDS = PROVISIONERS_LIST.map((p) => p.id) as readonly CliId[]
 
-/** Known package runners we skip when reading a launch command's CLI. */
+/** Leading wrappers we skip when reading a launch command's CLI: package runners + `env`/`sudo`. */
 const RUNNERS = new Set([
+  'env',
   'npx',
   'npm',
   'bunx',
@@ -73,6 +74,9 @@ const RUNNERS = new Set([
   'sudo'
 ])
 
+/** A leading `KEY=value` env assignment (`env FOO=bar claude`, or the bare `FOO=bar claude`). */
+const ENV_ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/
+
 /**
  * Which CLI a launch command starts, or `null` (plain shell / unknown). Skips leading flags and
  * package runners, then matches the first real command token's basename against a known CLI id —
@@ -82,6 +86,9 @@ export function cliIdForLaunchCommand(cmd: string | undefined): CliId | null {
   if (!cmd) return null
   for (const tok of cmd.trim().split(/\s+/)) {
     if (tok === '' || tok.startsWith('-')) continue
+    // Skip leading `KEY=value` env assignments so `env FOO=bar claude` (and bare `FOO=bar claude`)
+    // still resolve to the CLI rather than dead-ending on the assignment token.
+    if (ENV_ASSIGN_RE.test(tok)) continue
     const base = tok
       .split(/[\\/]/)
       .pop()

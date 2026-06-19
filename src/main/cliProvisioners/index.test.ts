@@ -64,6 +64,9 @@ describe('cliIdForLaunchCommand', () => {
     expect(cliIdForLaunchCommand('pnpm dlx opencode')).toBe('opencode')
     expect(cliIdForLaunchCommand('C:\\bin\\codex.exe --model o4')).toBe('codex')
     expect(cliIdForLaunchCommand('/usr/local/bin/claude')).toBe('claude')
+    // Leading env wrapper / inline `KEY=value` assignments are skipped, not dead-ended on.
+    expect(cliIdForLaunchCommand('env ANTHROPIC_API_KEY=xxx claude')).toBe('claude')
+    expect(cliIdForLaunchCommand('FOO=bar claude --resume')).toBe('claude')
   })
   it('returns null for a plain shell / unknown command / empty', () => {
     expect(cliIdForLaunchCommand(undefined)).toBeNull()
