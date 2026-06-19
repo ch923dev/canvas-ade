@@ -30,6 +30,14 @@ export interface CanvasDigest {
   boards: BoardDigest[]
 }
 
+/**
+ * The digest is a pure function of the persisted BOARDS — it reads neither the camera
+ * `viewport` (so a settled-camera pan must NOT invalidate the memoised digest in Canvas —
+ * CANVAS-01) nor `schemaVersion`. Taking the doc sans camera makes that independence
+ * explicit in the type.
+ */
+type DigestDoc = Omit<CanvasDoc, 'viewport'>
+
 function buildHeader(boards: Board[]): string {
   const n = boards.length
   const by = (t: BoardType): number => boards.filter((b) => b.type === t).length
@@ -40,7 +48,7 @@ function buildHeader(boards: Board[]): string {
   )
 }
 
-function digestTerminal(b: TerminalBoard, d: CanvasDoc): BoardDigest {
+function digestTerminal(b: TerminalBoard, d: DigestDoc): BoardDigest {
   const lines: string[] = []
   if (b.launchCommand) lines.push(`Runs \`${b.launchCommand}\``)
   else lines.push('No launch command set')
@@ -58,7 +66,7 @@ function digestTerminal(b: TerminalBoard, d: CanvasDoc): BoardDigest {
     lines
   }
 }
-function digestBrowser(b: BrowserBoard, d: CanvasDoc): BoardDigest {
+function digestBrowser(b: BrowserBoard, d: DigestDoc): BoardDigest {
   const lines: string[] = [`URL ${b.url}`, `Viewport ${b.viewport}`]
   if (b.previewSourceId) {
     const src = d.boards.find((o) => o.id === b.previewSourceId)
@@ -108,7 +116,7 @@ function digestCommand(b: CommandBoard): BoardDigest {
   }
 }
 
-function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
+function digestBoard(b: Board, d: DigestDoc): BoardDigest {
   switch (b.type) {
     case 'terminal':
       return digestTerminal(b, d)
@@ -121,7 +129,7 @@ function digestBoard(b: Board, d: CanvasDoc): BoardDigest {
   }
 }
 
-export function buildDigest(d: CanvasDoc): CanvasDigest {
+export function buildDigest(d: DigestDoc): CanvasDigest {
   return { header: buildHeader(d.boards), boards: d.boards.map((b) => digestBoard(b, d)) }
 }
 

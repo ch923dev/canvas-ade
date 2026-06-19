@@ -38,7 +38,14 @@ import {
   SCHEMA_VERSION,
   type BoardType
 } from '../lib/boardSchema'
-import { FIT_FRAME, GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
+import {
+  FIT_FRAME,
+  GRID_DOT_COLOR,
+  GRID_GAP,
+  Z_MAX,
+  Z_MIN,
+  gridDotOpacity
+} from '../lib/canvasView'
 import {
   computeAlignment,
   computeResizeSnap,
@@ -117,8 +124,9 @@ function FadingDots(): ReactElement | null {
       gap={GRID_GAP}
       // RF size = dot radius (1) / cross arm length (6, its default); ignored for lines.
       size={variant === BackgroundVariant.Cross ? 6 : 1}
-      // Mirror of the --grid-dot token (SVG fill can't read a CSS var reliably).
-      color="#202022"
+      // One shared constant mirrors the --grid-dot token (RF's SVG fill can't read a CSS var
+      // reliably), so the Background colour and the token can't silently drift.
+      color={GRID_DOT_COLOR}
       style={{ opacity: gridDotOpacity(zoom) }}
     />
   )
@@ -158,7 +166,6 @@ function CanvasInner(): ReactElement {
   const groups = useCanvasStore((s) => s.groups)
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
-  const viewport = useCanvasStore((s) => s.viewport)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -254,9 +261,12 @@ function CanvasInner(): ReactElement {
     setDigestProjectKey(openedProjectKey)
     setDigestOpen(true)
   }
+  // Tier-1 digest: a pure function of the persisted boards (DigestDoc = the doc minus the
+  // camera). It does NOT read the camera `viewport`, so a pan/zoom must not recompute it
+  // (CANVAS-01: subscribing to `s.viewport` here re-rendered CanvasInner every camera frame).
   const digest = useMemo(
-    () => buildDigest({ schemaVersion: SCHEMA_VERSION, viewport, boards, connectors }),
-    [boards, viewport, connectors]
+    () => buildDigest({ schemaVersion: SCHEMA_VERSION, boards, connectors }),
+    [boards, connectors]
   )
 
   // T-M4: cached Tier-2 prose by board id, fetched once per project open (pure disk read,

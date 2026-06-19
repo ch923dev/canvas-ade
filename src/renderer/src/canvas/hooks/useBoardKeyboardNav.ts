@@ -37,7 +37,7 @@ import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../../store/canvasStore'
 import type { Board } from '../../lib/boardSchema'
 import { cameraAnim } from '../../lib/motion'
-import { Z_MAX } from '../../lib/canvasView'
+import { Z_MAX, focusMaxZoom } from '../../lib/canvasView'
 
 /** Single-board focus framing (DESIGN.md §5/§9: ~70px pad), shared by Enter and
  *  double-click. Animated via `cameraAnim`. (Moved verbatim from Canvas.tsx.) */
@@ -199,13 +199,14 @@ export function useBoardKeyboardNav(deps: BoardKeyboardNavDeps): BoardKeyboardNa
       if (!board) return
       setFocusedId(id)
       useCanvasStore.getState().selectBoard(id)
-      // Terminal/browser content is a raster bitmap (xterm WebGL/canvas, native-view
-      // snapshot) that the camera transform UPSCALES past 100% → blurry text. Cap their
-      // focus zoom at 1 so a focused board lands pixel-crisp; vector boards (planning
-      // notes/pen) re-rasterize sharp at any zoom and may fill the viewport (Z_MAX).
-      const raster = board.type === 'terminal' || board.type === 'browser'
-      const maxZoom = raster ? 1 : Z_MAX
-      void rf.fitView(cameraAnim({ ...FOCUS_OPTIONS, maxZoom, nodes: [{ id }] }))
+      // Terminal/browser content is a raster bitmap (xterm WebGL/canvas, OSR snapshot) that the
+      // camera transform UPSCALES past 100% → blurry text, so their focus zoom caps at 1; vector
+      // boards (planning notes/pen/diagram) re-rasterize sharp at any zoom and may fill the
+      // viewport (Z_MAX). The raster-vs-vector rule lives in focusMaxZoom (CANVAS-04), shared
+      // with useFullView's camera full view so the two can't drift.
+      void rf.fitView(
+        cameraAnim({ ...FOCUS_OPTIONS, maxZoom: focusMaxZoom(board.type), nodes: [{ id }] })
+      )
     },
     [rf, setFocusedId]
   )
