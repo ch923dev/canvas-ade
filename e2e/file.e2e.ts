@@ -344,4 +344,59 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  test('peek board shows the filename in ITALICS; the Pin button promotes it (upright, still one board)', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3italic-', 'Italic')
+    try {
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'note.ts', 'export const N = 1\n')
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await expect
+        .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
+          timeout: 6000
+        })
+        .toBeGreaterThan(0)
+
+      // computed font-style of the board title showing `name` ('italic' | 'normal' | null if absent).
+      const titleStyle = (name: string): Promise<string | null> =>
+        evalIn<string | null>(
+          page,
+          `(() => { const t = Array.from(document.querySelectorAll('.board-title')).find((e) => e.textContent === ${JSON.stringify(name)}); return t ? getComputedStyle(t).fontStyle : null })()`
+        )
+      const pinPresent = (): Promise<boolean> =>
+        evalIn<boolean>(
+          page,
+          `Array.from(document.querySelectorAll('button')).some((b) => b.textContent === 'Pin' && (b.title||'').startsWith('Pin this board'))`
+        )
+
+      // Single-click → peek: the title is the FILENAME, rendered italic (VS Code's preview cue).
+      await evalIn(
+        page,
+        `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === 'note.ts'); if (r) r.click() })()`
+      )
+      await expect.poll(() => titleStyle('note.ts')).toBe('italic')
+      expect(await pinPresent()).toBe(true)
+
+      // Click the Pin button (DOM click bypasses any e2e modal scrim) → promoted: title goes upright,
+      // the Pin button is gone, and the board itself survives (one board, now permanent).
+      expect(
+        await evalIn<boolean>(
+          page,
+          `(() => { const b = Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Pin' && (b.title||'').startsWith('Pin this board')); if (b) b.click(); return !!b })()`
+        )
+      ).toBe(true)
+      await expect.poll(() => titleStyle('note.ts')).toBe('normal')
+      expect(await pinPresent()).toBe(false)
+      expect(
+        await evalIn<number>(
+          page,
+          `window.__canvasE2E.getBoards().filter((b) => b.type === 'file').length`
+        )
+      ).toBe(1)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
 })

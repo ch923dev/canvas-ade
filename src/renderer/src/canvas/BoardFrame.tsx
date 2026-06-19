@@ -71,11 +71,15 @@ function SrBoardStatus({ label }: { label?: string }): ReactElement {
 function BoardTitle({
   boardId,
   title,
-  selected
+  selected,
+  italic = false
 }: {
   boardId?: string
   title: string
   selected: boolean
+  /** Render the title italic — the File board uses this for a "preview" (peek) board, the canvas
+   *  analog of VS Code's italic preview tab. */
+  italic?: boolean
 }): ReactElement {
   const [editing, setEditing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -220,6 +224,7 @@ function BoardTitle({
       style={{
         fontSize: 12,
         fontWeight: 500,
+        fontStyle: italic ? 'italic' : undefined,
         color: selected ? 'var(--text)' : 'var(--text-2)',
         whiteSpace: 'nowrap',
         overflow: 'hidden',
@@ -470,6 +475,8 @@ export interface BoardFrameProps {
   /** This board's id — threaded to the ⋯ menu for the S6 add/remove-group items. */
   boardId?: string
   title: string
+  /** Render the title italic (File board: a "preview"/peek board — VS Code's italic-tab cue). */
+  titleItalic?: boolean
   selected?: boolean
   hovered?: boolean
   dimmed?: boolean
@@ -505,6 +512,7 @@ export function BoardFrame({
   type,
   boardId,
   title,
+  titleItalic = false,
   selected = false,
   hovered = false,
   dimmed = false,
@@ -702,7 +710,7 @@ export function BoardFrame({
             {TYPE_TAG[type]}
           </span>
           {/* D2-A: inline-editable title (double-click / F2) — see BoardTitle. */}
-          <BoardTitle boardId={boardId} title={title} selected={selected} />
+          <BoardTitle boardId={boardId} title={title} selected={selected} italic={titleItalic} />
           {/* D0-6 (A5): persistent polite live region so status TRANSITIONS are announced
               (the visible label is hover-only, so it can't serve as the live region). The
               text strips the per-frame spinner glyph and maps the per-second elapsed timer

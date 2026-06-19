@@ -248,6 +248,13 @@ Decisions confirmed by the user:
 left-over peek board saving as a normal board is harmless. Browsing must **not** spam undo: peek
 *rebind* uses a non-recording path set; only spawn keeps its single undo step.
 
+**Legibility refinement (2026-06-20, after live review).** The first cut signalled "peek" with a
+faint dashed border — invisible in practice ("I don't even know what this is"). Replaced with VS
+Code's actual cue: the **File board title now shows the filename**, rendered **italic** while it is
+the peek board (upright once pinned). The dashed border was dropped. The title-bar **Pin** control
+stays (e2e-proven to promote: italic → upright, button gone, board survives) — the earlier "Pin not
+working" was the invisible state change, now an obvious one.
+
 - **Inc 1 — Peek + Pin core.** Add `peekBoardId` + actions (`peekFile`, `pinFile`/`pin-on-edit`,
   ephemeral rebind) in a canvas-store slice (keeps `canvasStore.ts` under the 700-line cap). Wire
   single-click → peek (rebind/spawn), double-click → pin, edit → auto-pin, drag-out → pinned. Ghosted

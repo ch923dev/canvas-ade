@@ -152,6 +152,10 @@ export function FileBoard({
 
   const ext = path ? extOf(path) : ''
   const fileName = path ? baseName(path) : ''
+  // Title bar shows the FILE NAME (VS Code shows the filename in its tab), not the generic "File".
+  // A user rename (title differs from the 'File' default) still wins. Italicised when this is the
+  // peek/preview board — VS Code's italic-tab cue, the clear signal that it will be recycled.
+  const displayTitle = board.title && board.title !== 'File' ? board.title : fileName || 'File'
   const isImageExt = ext in IMAGE_MIME_BY_EXT
   const caps = useMemo(() => fileCaps(ext), [ext])
   const isMarkdown = caps.preview === 'markdown'
@@ -602,7 +606,8 @@ export function FileBoard({
     <BoardFrame
       type="file"
       boardId={board.id}
-      title={board.title}
+      title={displayTitle}
+      titleItalic={isPeek}
       selected={selected}
       hovered={hovered}
       dimmed={dimmed}
@@ -734,24 +739,6 @@ export function FileBoard({
               Drop to open here
             </span>
           </div>
-        )}
-
-        {/* Peek (preview) board: a faded dashed inset frames the content — the canvas analog of
-            VS Code's italic preview tab. pointer-events:none so it never eats input; hidden while a
-            drop is being advertised (that overlay owns the frame then). */}
-        {isPeek && !dragOver && (
-          <div
-            aria-hidden
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-              border: '1.5px dashed var(--accent)',
-              borderRadius: 'var(--r-inner)',
-              opacity: 0.45,
-              zIndex: 1
-            }}
-          />
         )}
       </div>
       {ctxMenu && path && (
