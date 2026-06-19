@@ -29,7 +29,8 @@ import {
   useStoreApi,
   type EdgeTypes,
   type NodeChange,
-  type NodeTypes
+  type NodeTypes,
+  type OnNodeDrag
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import {
@@ -560,8 +561,8 @@ function CanvasInner(): ReactElement {
 
   // Drag start: checkpoint for undo. (Browser previews paint into a clipping DOM <canvas>
   // since OS-3, so a dragged board z-orders normally over them — no live-view detach needed.)
-  const onNodeDragStart = useCallback(
-    (_e: MouseEvent, node: BoardFlowNode) => {
+  const onNodeDragStart = useCallback<OnNodeDrag<BoardFlowNode>>(
+    (_e, node) => {
       dragNodeIdRef.current = node.id
       beginChange()
       // Disarm any in-flight reflow: if a drag starts inside the ~340ms absorb window the dragged
@@ -575,13 +576,13 @@ function CanvasInner(): ReactElement {
   )
   // S6 drag-onto-box: hit-test the dragged board's center against group boxes (lights the hovered
   // box as a drop target) — logic lives in useGroupInteractions.
-  const onNodeDrag = useCallback(
-    (_e: MouseEvent, node: BoardFlowNode) => onNodeDragGroupHitTest(node),
+  const onNodeDrag = useCallback<OnNodeDrag<BoardFlowNode>>(
+    (_e, node) => onNodeDragGroupHitTest(node),
     [onNodeDragGroupHitTest]
   )
 
-  const onNodeDragStop = useCallback(
-    (_e: MouseEvent, node: BoardFlowNode) => {
+  const onNodeDragStop = useCallback<OnNodeDrag<BoardFlowNode>>(
+    (_e, node) => {
       dragNodeIdRef.current = null
       setGuides((g) => (g.length ? [] : g))
       setOverlaps((o) => (o.length ? [] : o))

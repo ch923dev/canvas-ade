@@ -67,7 +67,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
-    "@xyflow/react": "^12.3.0",
+    "@xyflow/react": "^12.11.0",
     "electron": "^42.3.3",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
