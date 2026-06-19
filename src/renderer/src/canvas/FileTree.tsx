@@ -7,23 +7,45 @@
  * re-listing only the affected — and currently-loaded — parent folder, debounced.
  *
  * Rows are native HTML5 drag sources emitting the `application/x-canvas-ade-fileref` payload
- * (the drop target lands in S4); clicking a file opens it as a File board via the S1
- * `openFileBoard` action (placeholder board until S3). react-arborist provides the windowing
- * + collapse; its internal react-dnd reordering is disabled (`disableDrag`/`disableDrop`) so the
- * native drag-out is unobstructed. The pure data model lives in `fileTreeData.ts`.
+ * (S3 drop targets: a File board rebinds to the dropped file; empty canvas opens a new File
+ * board); clicking a file opens it as a File board via the S1 `openFileBoard` action.
+ * react-arborist provides the windowing + collapse; its internal react-dnd reordering is disabled
+ * (`disableDrag`/`disableDrop`). Because that disables arborist's `canDrag`, we must NOT attach its
+ * `dragHandle` to the row (react-dnd would cancel the native dragstart) — see FileRow. The pure
+ * data model lives in `fileTreeData.ts`.
  */
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactElement
 } from 'react'
-import { Tree, type NodeRendererProps } from 'react-arborist'
+import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
+import { HTML5Backend } from 'react-dnd-html5-backend'
+import { createDragDropManager } from 'dnd-core'
 import { useCanvasStore } from '../store/canvasStore'
+import { useFileTreeUiStore } from '../store/fileTreeUiStore'
 import { Icon } from './Icon'
-import { FILEREF_MIME, applyListing, findNode, parentOf, type FileNode } from './fileTreeData'
+import {
+  FILEREF_MIME,
+  applyListing,
+  compactTree,
+  findNode,
+  parentOf,
+  type FileNode
+} from './fileTreeData'
+
+// ONE shared react-dnd manager for every <Tree>. react-arborist otherwise spins up its own
+// <DndProvider backend={HTML5Backend}> per Tree instance; when the SidePanel unmounts + remounts
+// on a project switch the old and new backends briefly overlap and react-dnd throws "Cannot have
+// two HTML5 backends at the same time" (crashing the whole canvas to the ErrorBoundary). A single
+// module-level manager means exactly one backend, reused across mounts, so a remount never conflicts.
+const dndManager = createDragDropManager(HTML5Backend)
 
 // ── glyphs ───────────────────────────────────────────────────────────────────
 
@@ -46,37 +68,125 @@ function Glyph({ d, style }: { d: string; style?: CSSProperties }): ReactElement
 }
 
 const FOLDER_PATH = 'M4 7a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z'
+// File glyphs all share the folded-corner silhouette + a type mark inside, so they read as a
+// family. Kept NEUTRAL (no per-type colour) to honour the one-accent design contract (DESIGN.md);
+// the differentiation is by shape, like a minimal icon theme.
 const FILE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4'
+const CODE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M10 12l-1.6 2 1.6 2M14 12l1.6 2-1.6 2' // </>
+const DOC_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9.5 13h5M9.5 16h3.5' // text lines
+const IMG_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9 17l2-2.4 1.5 1.5L15.5 13l1.5 2' // mountain
+
+const CODE_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'])
+const DOC_EXT = new Set(['md', 'mdx', 'markdown', 'txt'])
+const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'avif'])
+
+/** The folded-file glyph for a filename, picked by extension (folders use FOLDER_PATH). */
+function fileGlyphPath(name: string): string {
+  const dot = name.lastIndexOf('.')
+  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
+  if (CODE_EXT.has(ext)) return CODE_PATH
+  if (DOC_EXT.has(ext)) return DOC_PATH
+  if (IMG_EXT.has(ext)) return IMG_PATH
+  return FILE_PATH
+}
 
 // ── row renderer ───────────────────────────────────────────────────────────────
 
-function FileRow({ node, dragHandle }: NodeRendererProps<FileNode>): ReactElement {
-  const openFileBoard = useCanvasStore((s) => s.openFileBoard)
+function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
+  // Single-click PEEKS (reuse the one ghosted preview board); double-click PINS a permanent board
+  // — VS Code's preview-tab discipline, so browsing the tree never litters the canvas.
+  const peekFile = useCanvasStore((s) => s.peekFile)
+  const pinFile = useCanvasStore((s) => s.pinFile)
   const d = node.data
+  // Compact-folder rows render the whole chain ("a / b / c"); the deepest path is the real target.
+  const segs = d.segments
+  const label = segs ? segs.map((s) => s.name).join(' / ') : d.name
+  const targetPath = segs ? segs[segs.length - 1].id : d.id
+  // Inc 3 — open-boards awareness: the id of a board already showing THIS file (null if none). A
+  // string|null selector → the row re-renders only when its own open-state flips, not on every
+  // board change.
+  const openBoardId = useCanvasStore((s) =>
+    d.isDir ? null : (s.boards.find((b) => b.type === 'file' && b.path === d.id)?.id ?? null)
+  )
 
   const onClick = (e: React.MouseEvent): void => {
     e.stopPropagation()
-    if (d.isDir) node.toggle()
-    else openFileBoard(d.id)
+    if (d.isDir) {
+      node.toggle()
+      return
+    }
+    // Ctrl/Cmd or Shift click BUILDS a multi-selection (for "Open N boards") — it must NOT open a
+    // board. Plain click single-selects the row (highlight) and then peeks the file.
+    if (e.metaKey || e.ctrlKey) {
+      node.selectMulti()
+      return
+    }
+    if (e.shiftKey) {
+      node.selectContiguous()
+      return
+    }
+    node.select()
+    // If an empty File board armed itself via "Browse files", bind THIS file INTO it (and focus
+    // it) rather than opening a separate board. Guard against a stale/now-bound target.
+    const pendingId = useFileTreeUiStore.getState().pendingBindId
+    if (pendingId) {
+      const cs = useCanvasStore.getState()
+      const target = cs.boards.find((b) => b.id === pendingId)
+      useFileTreeUiStore.getState().clearPendingBind()
+      if (target && target.type === 'file' && !target.path) {
+        cs.beginChange()
+        cs.updateBoard(pendingId, { path: d.id })
+        useCanvasStore.setState({ pendingFocusId: pendingId })
+        return
+      }
+    }
+    peekFile(d.id)
+  }
+  // Double-click pins: promote the peek (or focus/spawn) a PERMANENT board for this file.
+  const onDoubleClick = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (!d.isDir) pinFile(d.id)
+  }
+  // The open-board dot: jump the camera to the existing board instead of opening/rebinding one.
+  const jumpToBoard = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (openBoardId) useCanvasStore.setState({ pendingFocusId: openBoardId })
   }
   const onDragStart = (e: React.DragEvent): void => {
-    // setData is string-only — JSON-encode the {path,label} payload (the S4 drop handler parses it).
+    // setData is string-only — JSON-encode the {path,label} payload (the drop handlers parse it).
     e.dataTransfer.setData(FILEREF_MIME, JSON.stringify({ path: d.id, label: d.name }))
+    // CRITICAL: also set a react-dnd-recognised native type (text/plain). react-arborist mounts
+    // react-dnd's HTML5Backend, whose WINDOW-level dragstart listener calls preventDefault on any
+    // native drag that carries neither a react-dnd source nor a recognised native type (Files/URL/
+    // text) — which would silently cancel this drag-out. Setting text/plain makes it a "native text"
+    // drag react-dnd leaves alone; our drop targets still read the FILEREF_MIME payload. The text
+    // value (the path) is a sensible plain-text fallback for drops outside the app.
+    e.dataTransfer.setData('text/plain', d.id)
     e.dataTransfer.effectAllowed = 'copy'
   }
 
   return (
+    // NB: we deliberately do NOT attach arborist's `dragHandle` here. That handle is react-dnd's
+    // drag-source connector, and with `disableDrag` set arborist's `canDrag` is false → react-dnd
+    // would `preventDefault` the native `dragstart` and our drag-out would never begin. Leaving it
+    // unattached frees the native HTML5 drag below (the tree's only drag is this file-ref drag-out).
     <div
-      ref={dragHandle}
       className="ca-ftree-row"
-      // Own the indent (arborist's `style` only carries paddingLeft) so root rows keep a base inset.
-      style={{ paddingLeft: 8 + node.level * 12 }}
+      // Base inset only; one indent guide per ancestor level is rendered below (the per-level
+      // padding now lives in the guide spans, so the lines align with the nesting).
+      style={{ paddingLeft: 8 }}
       data-dir={d.isDir || undefined}
+      data-selected={node.isSelected || undefined}
+      data-open={openBoardId ? true : undefined}
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
-      title={d.id}
+      onDoubleClick={onDoubleClick}
+      title={targetPath}
     >
+      {Array.from({ length: node.level }, (_, i) => (
+        <span key={i} className="ca-ftree-guide" aria-hidden />
+      ))}
       {d.isDir ? (
         <Icon
           name="chevron"
@@ -91,21 +201,76 @@ function FileRow({ node, dragHandle }: NodeRendererProps<FileNode>): ReactElemen
         <span style={{ width: 13, flex: '0 0 auto' }} aria-hidden />
       )}
       <Glyph
-        d={d.isDir ? FOLDER_PATH : FILE_PATH}
+        d={d.isDir ? FOLDER_PATH : fileGlyphPath(d.name)}
         style={{ color: d.isDir ? 'var(--text-2)' : 'var(--text-3)' }}
       />
-      <span className="ca-ftree-name">{d.name}</span>
+      <span className="ca-ftree-name">{label}</span>
+      {openBoardId && (
+        <span
+          className="ca-ftree-open-dot"
+          title="Open on the canvas — click to jump to it"
+          aria-label="Open on the canvas"
+          onClick={jumpToBoard}
+        />
+      )}
     </div>
   )
 }
 
 // ── component ────────────────────────────────────────────────────────────────
 
-export function FileTree(): ReactElement {
+/** Imperative handle the SidePanel drives (collapse-all + Ctrl+Shift+B; "Open N boards"). */
+export interface FileTreeHandle {
+  collapseAll: () => void
+  /** Open every currently-selected FILE as a board (multi-select → grid). */
+  openSelected: () => void
+}
+
+interface FileTreeProps {
+  /** Reports the number of selected FILES (dirs excluded) so the SidePanel can show "Open N". */
+  onSelectionCount?: (n: number) => void
+}
+
+export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(function FileTree(
+  { onSelectionCount },
+  ref
+): ReactElement {
   const [data, setData] = useState<FileNode[]>([])
   const [rootLoaded, setRootLoaded] = useState(false)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const hostRef = useRef<HTMLDivElement>(null)
+  // react-arborist's imperative API (closeAll/selectedNodes/scrollTo) — collapse-all + open-selected.
+  const treeApiRef = useRef<TreeApi<FileNode> | null>(null)
+  // Open every selected FILE as a grid of boards (the tree's "spawn many" path). Reads the live
+  // arborist selection at call time; dirs are excluded.
+  const openSelected = useCallback((): void => {
+    const ids = (treeApiRef.current?.selectedNodes ?? [])
+      .filter((n) => !n.data.isDir)
+      .map((n) => n.data.id)
+    if (ids.length > 0) useCanvasStore.getState().openFileBoards(ids)
+  }, [])
+  useImperativeHandle(
+    ref,
+    () => ({ collapseAll: () => treeApiRef.current?.closeAll(), openSelected }),
+    [openSelected]
+  )
+  // Report the selected-file count to the SidePanel (drives the "Open N boards" button).
+  const onSelect = useCallback(
+    (nodes: NodeApi<FileNode>[]): void => {
+      onSelectionCount?.(nodes.filter((n) => !n.data.isDir).length)
+    },
+    [onSelectionCount]
+  )
+  // Enter on the focused tree opens the whole selection (VS Code's "open selected" on Enter).
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent): void => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        openSelected()
+      }
+    },
+    [openSelected]
+  )
   // Mirror `data` into a ref so the (once-registered) live-event subscription and the toggle
   // handler read the latest tree without re-subscribing on every change.
   const dataRef = useRef<FileNode[]>(data)
@@ -113,14 +278,32 @@ export function FileTree(): ReactElement {
     dataRef.current = data
   }, [data])
 
+  // Monotonic load generation — bumped on every project switch. An in-flight cascade captures the
+  // generation it started in and abandons itself (skips setData) the moment a switch supersedes it,
+  // so a slow listing from the OLD project can never bleed into the NEW project's freshly-reset tree.
+  const loadGenRef = useRef(0)
+
   // Load one directory's children lazily ('' = root). Preserves expanded subtrees on refresh.
-  const loadDir = useCallback(async (parentId: string): Promise<void> => {
+  // Cascade-loads a sole sub-folder so single-folder chains render compact (see compactTree)
+  // without a flash; capped depth guards against a runaway descent on a deep one-child chain.
+  // `gen` defaults to the current generation (toggle / live-event callers); the project-switch
+  // effect passes its freshly-bumped generation so a superseded cascade self-cancels.
+  const loadDir = useCallback(async function load(
+    parentId: string,
+    depth = 0,
+    gen = loadGenRef.current
+  ): Promise<void> {
     const listDir = window.api?.file?.listDir
     if (!listDir) return
     try {
       const entries = await listDir(parentId)
+      if (gen !== loadGenRef.current) return // a project switch superseded this cascade — drop it
       setData((prev) => applyListing(prev, parentId, entries))
       if (parentId === '') setRootLoaded(true)
+      if (depth < 16 && entries.length === 1 && entries[0].isDir) {
+        const childId = parentId ? `${parentId}/${entries[0].name}` : entries[0].name
+        await load(childId, depth + 1, gen)
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn('[FileTree] listDir failed for', parentId || '<root>', err)
@@ -139,26 +322,15 @@ export function FileTree(): ReactElement {
     return () => ro.disconnect()
   }, [])
 
-  // Initial root listing — load via a .then chain (setState stays inside a callback, mirroring
-  // AppChrome's consent effect) rather than a direct call into the async loader.
+  // (Re)list the root whenever the open project changes — resets stale data on a project switch
+  // and runs once on mount. loadDir also cascade-loads a sole root sub-folder (compact folders).
+  const projectDir = useCanvasStore((s) => s.project.dir)
   useEffect(() => {
-    const listDir = window.api?.file?.listDir
-    if (!listDir) return
-    let cancelled = false
-    listDir('')
-      .then((entries) => {
-        if (cancelled) return
-        setData((prev) => applyListing(prev, '', entries))
-        setRootLoaded(true)
-      })
-      .catch((err) => {
-        // eslint-disable-next-line no-console
-        if (!cancelled) console.warn('[FileTree] initial listDir failed', err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    const gen = ++loadGenRef.current // supersede any in-flight cascade from the previous project
+    setData([])
+    setRootLoaded(false)
+    void loadDir('', 0, gen)
+  }, [projectDir, loadDir])
 
   // Live updates: re-list only the affected (and currently-loaded) parent folder, debounced.
   useEffect(() => {
@@ -193,22 +365,27 @@ export function FileTree(): ReactElement {
     [loadDir]
   )
 
+  // Compact single-child folder chains into one row just before render (VS Code "compact folders").
+  const displayData = useMemo(() => compactTree(data), [data])
+
   return (
-    <div ref={hostRef} className="ca-ftree-scroll">
+    <div ref={hostRef} className="ca-ftree-scroll" onKeyDown={onKeyDown}>
       {size.h > 0 && (
         <Tree<FileNode>
-          data={data}
+          ref={treeApiRef}
+          dndManager={dndManager}
+          data={displayData}
           idAccessor="id"
           childrenAccessor={(n) => (n.isDir ? (n.children ?? []) : null)}
           openByDefault={false}
           disableDrag
           disableDrop
-          disableMultiSelection
           width={size.w}
           height={size.h}
           indent={12}
           rowHeight={26}
           onToggle={onToggle}
+          onSelect={onSelect}
           className="ca-ftree-list"
         >
           {FileRow}
@@ -217,4 +394,4 @@ export function FileTree(): ReactElement {
       {rootLoaded && data.length === 0 && <div className="ca-ftree-empty">Empty folder</div>}
     </div>
   )
-}
+})

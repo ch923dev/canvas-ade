@@ -82,6 +82,7 @@ import { usePaletteController } from './palette/usePaletteController'
 import { useTidyTile } from './hooks/useTidyTile'
 import { useFullView } from './hooks/useFullView'
 import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
+import { useCanvasFileGlue } from './hooks/useCanvasFileGlue'
 import { useGroupInteractions } from './hooks/useGroupInteractions'
 import { useZoomSettle } from './hooks/useZoomSettle'
 import { PlacementCaptureOverlay } from './PlacementCaptureOverlay'
@@ -548,6 +549,10 @@ function CanvasInner(): ReactElement {
     [focusBoardById]
   )
 
+  // File-tree glue (S3): camera-focus a file opened from the tree (consumes pendingFocusId) +
+  // accept a file-ref dropped from the tree onto empty canvas → new File board at the drop point.
+  const fileGlue = useCanvasFileGlue(rf, focusBoardById)
+
   // Drag start: checkpoint for undo. (Browser previews paint into a clipping DOM <canvas>
   // since OS-3, so a dragged board z-orders normally over them — no live-view detach needed.)
   const onNodeDragStart = useCallback(
@@ -795,6 +800,8 @@ function CanvasInner(): ReactElement {
           className={reflowing ? 'reflowing' : undefined}
           style={paneStyle}
           data-backdrop={backdropActive ? '' : undefined}
+          onDragOver={fileGlue.onDragOver}
+          onDrop={fileGlue.onDrop}
         >
           {/* Screen-fixed wallpaper layer (docs/canvas-backdrop). Sibling BEFORE
               <ReactFlow> ⇒ paints beneath it; [data-backdrop] turns the RF surface

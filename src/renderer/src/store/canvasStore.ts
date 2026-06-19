@@ -36,6 +36,7 @@ import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 import { freeSlot, PLACE_GAP } from '../lib/freeSlot'
 import { useCommandStore, commandStoreDefaults } from './commandStore'
 import { createConnectorSlice } from './slices/connectorSlice'
+import { createFileBoardSlice } from './slices/fileBoardSlice'
 import { createGroupSlice, pruneBoardFromGroups } from './slices/groupSlice'
 import type { SetCanvasState } from './slices/sliceTypes'
 
@@ -131,6 +132,13 @@ export interface CanvasState {
    */
   configPendingId: string | null
   /**
+   * One-shot "camera-focus this board next" request — EPHEMERAL (never serialized; optional so it
+   * needs no initializer). `openFileBoard` sets it to the opened board's id on the tree-click path;
+   * a Canvas effect consumes it (focusBoardById + dim) then clears it. Decouples the store from the
+   * React Flow instance so opening a file from the tree always pans the camera onto it.
+   */
+  pendingFocusId?: string | null
+  /**
    * Add a board of `type` at a world position; selects it; returns its id. `opts.id`
    * injects a caller-minted id (the MCP `spawn_board` path mints the id in MAIN so
    * the tool can return it to the agent); omitted → the store mints one. `opts.configPending`
@@ -171,11 +179,35 @@ export interface CanvasState {
   /**
    * Open a File board bound to `relPath` (file-tree epic, the S1 contract the tree-row click +
    * the file-ref chip click both call). If a File board for that EXACT path is already open,
-   * SELECTS it instead of duplicating; otherwise creates a fresh `'file'` board near the
-   * current viewport via the normal add-board path (one undo step, freeSlot-placed). Returns
-   * the board id (the existing one when re-focusing).
+   * SELECTS it instead of duplicating; otherwise creates a fresh `'file'` board (one undo step,
+   * freeSlot-placed). Returns the board id (the existing one when re-focusing).
+   *
+   * `at` is the world-space TOP-LEFT to place a new board (a canvas drop passes the cursor
+   * position); omit it for the tree-click path → the board lands near the viewport centre AND a
+   * camera focus is requested (`pendingFocusId`). A drop already lands under the cursor, so it
+   * does NOT yank the camera.
    */
-  openFileBoard: (relPath: string) => string
+  openFileBoard: (relPath: string, at?: { x: number; y: number }) => string
+  /**
+   * Open MANY files at once as PINNED boards in a tidy grid centred on the viewport (skips files
+   * already open → just (re)selects them); selects the resulting set. The tree's multi-select →
+   * "Open N boards" path — the canvas-native answer to VS Code's split-editor grid.
+   */
+  openFileBoards: (relPaths: string[]) => void
+  /**
+   * EPHEMERAL — the id of the single "peek" (preview) File board, or null. A board is a PEEK board
+   * ⟺ its id === `peekBoardId`: FileBoard renders it ghosted, the tree rebinds it on each
+   * single-click, and it is recycled so browsing never litters the canvas (VS Code preview-tab
+   * discipline). Pinning clears it. Never serialized. See `slices/fileBoardSlice.ts`.
+   */
+  peekBoardId: string | null
+  /** Tree SINGLE-click: open `relPath` in the ONE reusable peek board (rebinds/spawns it), or
+   *  focus a board already showing that path. */
+  peekFile: (relPath: string) => void
+  /** Promote a peek board to a permanent (pinned) board (clears `peekBoardId` iff it matches). */
+  pinBoard: (id: string) => void
+  /** Tree DOUBLE-click: open `relPath` as a PINNED board (promotes the peek, or focuses/spawns). */
+  pinFile: (relPath: string) => void
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
@@ -678,25 +710,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   clearConfigPending: () => set({ configPendingId: null }),
 
-  openFileBoard: (relPath) => {
-    // Re-focus an already-open File board for the EXACT same path instead of duplicating.
-    const existing = get().boards.find((b) => b.type === 'file' && b.path === relPath)
-    if (existing) {
-      get().selectBoard(existing.id)
-      return existing.id
-    }
-    // Place near the current viewport centre when a camera transform is known (derive the
-    // world-space centre from the persisted viewport + the window size); else fall back to
-    // the origin. freeSlot nudges off any overlap, exactly like the dock add-board path.
-    const vp = get().viewport
-    const { innerWidth: w = 1280, innerHeight: h = 800 } = globalThis
-    const size = DEFAULT_BOARD_SIZE.file
-    const at = vp
-      ? { x: (w / 2 - vp.x) / vp.zoom - size.w / 2, y: (h / 2 - vp.y) / vp.zoom - size.h / 2 }
-      : { x: -size.w / 2, y: -size.h / 2 }
-    return get().addBoard('file', at, { path: relPath })
-  },
-
   removeBoard: (id) =>
     set((s) => {
       // No such board → true no-op (don't record a dead undo step). `filter` alone would
@@ -794,6 +807,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   ...createConnectorSlice(set, get, { trackedChange, newId }),
+
+  ...createFileBoardSlice(set, get),
 
   ...createGroupSlice(set, get, { trackedChange, newId }),
 

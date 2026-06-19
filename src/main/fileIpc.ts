@@ -17,16 +17,35 @@
  * lands in S2 — the channel/types are defined in the preload now so the contract is stable).
  */
 import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { relative as pathRelative, sep } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
+import { simpleGit } from 'simple-git'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
 import { realResolveWithinRoot } from './pathSafe'
 
+/**
+ * MAIN-side read ceiling (DoS backstop). The renderer already size-gates for UX far below this
+ * (LARGE_TEXT_BYTES 2 MiB / MAX_IMAGE_BYTES 32 MiB in fileBoardSyntax), but a buggy or misbehaving
+ * renderer must not be able to make MAIN slurp an arbitrarily large file into memory. 64 MiB sits
+ * safely above the largest renderer gate; a read over it is rejected before the file is touched.
+ */
+const MAX_READ_BYTES = 64 * 1024 * 1024
+
 /** One directory entry surfaced to the tree (no symlink following — report-only kind). */
 export interface FileEntry {
   name: string
   isDir: boolean
+}
+
+/** Result of `file:gitPermalink` — a GitHub blob URL pinned to HEAD, or a reason it couldn't. */
+export type GitPermalinkResult = { ok: true; url: string } | { ok: false; reason: string }
+
+/** Parse an `origin` remote URL into `{owner, repo}` for GitHub forms (https / ssh / git@). */
+function parseGithubRemote(url: string): { owner: string; repo: string } | null {
+  const m = url.trim().match(/github\.com[:/]+([^/]+)\/(.+?)(?:\.git)?\/?$/i)
+  return m ? { owner: m[1], repo: m[2] } : null
 }
 
 /** A file/dir stat projection (the minimum the tree/board need). */
@@ -49,13 +68,79 @@ async function resolveRel(relPath: unknown): Promise<string> {
   return realResolveWithinRoot(root, relPath)
 }
 
+/**
+ * Resolve a read target AND enforce the MAIN-side size ceiling before any bytes are loaded.
+ * Throws when the file is larger than `MAX_READ_BYTES` so an oversized read can never OOM MAIN
+ * regardless of what the renderer requests (the renderer's own UX gate is advisory only).
+ */
+async function resolveReadable(relPath: unknown): Promise<string> {
+  const abs = await resolveRel(relPath)
+  const s = await stat(abs)
+  if (s.size > MAX_READ_BYTES) {
+    throw new Error(`file: too large to read (${s.size} bytes > ${MAX_READ_BYTES})`)
+  }
+  return abs
+}
+
 export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | null): void {
   const guard = (e: IpcMainInvokeEvent): boolean => isForeignSender(e, getWin)
 
   ipcMain.handle('file:readText', async (e, relPath: string): Promise<string> => {
     if (guard(e)) throw new Error('file: foreign sender denied')
-    const abs = await resolveRel(relPath)
+    const abs = await resolveReadable(relPath)
     return readFile(abs, 'utf8')
+  })
+
+  // S3 (cross-zone, additive): raw bytes for the File-board image preview. `readText`
+  // is UTF-8 only — it corrupts binary — so a raster image (png/jpg/gif/webp) needs a
+  // bytes channel to reach the renderer as a Blob. SAME trust boundary as every other
+  // handler: foreign-sender guard → `realResolveWithinRoot` containment → one `fs` read
+  // (the renderer never picks the op or passes flags). The renderer size-gates via
+  // `file:stat` before calling, so this stays a small read. Buffer ⊆ Uint8Array; Electron
+  // structured-clones it across the bridge (the same shape `asset:read` already returns).
+  ipcMain.handle('file:readBytes', async (e, relPath: string): Promise<Uint8Array> => {
+    if (guard(e)) throw new Error('file: foreign sender denied')
+    const abs = await resolveReadable(relPath)
+    return readFile(abs)
+  })
+
+  // S3 (additive): the resolved ABSOLUTE on-disk path — for the board's "Copy absolute path"
+  // action. `resolveRel` already realpath-resolves + containment-checks; we just return it
+  // (the renderer never learns the project root except for a file it already references).
+  ipcMain.handle('file:realPath', async (e, relPath: string): Promise<string> => {
+    if (guard(e)) throw new Error('file: foreign sender denied')
+    return resolveRel(relPath)
+  })
+
+  // S3 (additive): a GitHub permalink (blob URL @ HEAD) for the board's "Copy GitHub link"
+  // action. `simple-git` runs ONLY in MAIN (CLAUDE.md) behind this sender-guarded handler; the
+  // path is containment-checked first. Returns a structured reason (never throws to the
+  // renderer) when the project isn't a GitHub-remote repo / has no commits. The blob path is
+  // relative to the GIT root (which may sit above the project root), so a project that is a
+  // sub-directory of a larger repo still links correctly.
+  ipcMain.handle('file:gitPermalink', async (e, relPath: string): Promise<GitPermalinkResult> => {
+    if (guard(e)) throw new Error('file: foreign sender denied')
+    const abs = await resolveRel(relPath)
+    const dir = getCurrentDir()
+    if (!dir) return { ok: false, reason: 'No project open' }
+    try {
+      const git = simpleGit(dir)
+      if (!(await git.checkIsRepo())) return { ok: false, reason: 'Not a git repository' }
+      let remoteUrl = ''
+      try {
+        remoteUrl = (await git.remote(['get-url', 'origin']))?.toString().trim() ?? ''
+      } catch {
+        return { ok: false, reason: 'No "origin" remote' }
+      }
+      const gh = remoteUrl ? parseGithubRemote(remoteUrl) : null
+      if (!gh) return { ok: false, reason: 'origin is not a GitHub remote' }
+      const sha = (await git.revparse(['HEAD'])).trim()
+      const root = await realpath((await git.revparse(['--show-toplevel'])).trim())
+      const relInRepo = pathRelative(root, abs).split(sep).join('/')
+      return { ok: true, url: `https://github.com/${gh.owner}/${gh.repo}/blob/${sha}/${relInRepo}` }
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'git error' }
+    }
   })
 
   ipcMain.handle(

@@ -13,7 +13,8 @@
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { useCanvasStore } from '../store/canvasStore'
-import { FileTree } from './FileTree'
+import { useFileTreeUiStore } from '../store/fileTreeUiStore'
+import { FileTree, type FileTreeHandle } from './FileTree'
 
 /** Revealed panel width (px). */
 const PANEL_W = 264
@@ -30,8 +31,39 @@ export function SidePanel(): ReactElement | null {
   const hasProject = useCanvasStore((s) => s.project.dir !== null)
   const [inZone, setInZone] = useState(false)
   const [focused, setFocused] = useState(false)
+  // Forced reveal: bumped by an empty File board's "Browse files" button (fileTreeUiStore). Holds
+  // the panel open for a grace window so the user can move onto the tree (which then keeps it open
+  // via inZone/focus); auto-clears so it never sticks open on its own.
+  const [forced, setForced] = useState(false)
+  const revealNonce = useFileTreeUiStore((s) => s.revealNonce)
+  const seenNonce = useRef(revealNonce)
   const wrapRef = useRef<HTMLDivElement>(null)
-  const revealed = inZone || focused
+  const treeRef = useRef<FileTreeHandle>(null)
+  // Number of FILES currently multi-selected in the tree → drives the "Open N boards" button.
+  const [selCount, setSelCount] = useState(0)
+  const revealed = inZone || focused || forced
+
+  useEffect(() => {
+    if (revealNonce === seenNonce.current) return // ignore the mount-time value; react only to bumps
+    seenNonce.current = revealNonce
+    setForced(true)
+    const t = window.setTimeout(() => setForced(false), 5000)
+    return () => window.clearTimeout(t)
+  }, [revealNonce])
+
+  // VS Code parity: Ctrl/Cmd+Shift+B collapses every folder in the tree (registered once while a
+  // project is open; mirrors "Collapse Folders in Explorer"). Read the ref at call time.
+  useEffect(() => {
+    if (!hasProject) return
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault()
+        treeRef.current?.collapseAll()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hasProject])
 
   useEffect(() => {
     if (!hasProject) return
@@ -118,8 +150,39 @@ export function SidePanel(): ReactElement | null {
     >
       <div className="ca-sidepanel-handle" data-revealed={revealed} aria-hidden="true" />
       <aside className="ca-sidepanel" data-revealed={revealed} aria-label="Project files">
-        <div className="ca-sidepanel-head">Files</div>
-        <FileTree />
+        <div className="ca-sidepanel-head">
+          <span>Files</span>
+          {selCount >= 2 && (
+            <button
+              className="ca-sidepanel-open-btn"
+              title={`Open ${selCount} selected files as a grid of boards (Enter)`}
+              onClick={() => treeRef.current?.openSelected()}
+            >
+              Open {selCount}
+            </button>
+          )}
+          <button
+            className="ca-ftree-collapse"
+            title="Collapse folders (Ctrl+Shift+B)"
+            aria-label="Collapse all folders"
+            onClick={() => treeRef.current?.collapseAll()}
+          >
+            <svg
+              width={14}
+              height={14}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.7}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M7 7l5 5 5-5M7 17l5-5 5 5" />
+            </svg>
+          </button>
+        </div>
+        <FileTree ref={treeRef} onSelectionCount={setSelCount} />
       </aside>
     </div>
   )
