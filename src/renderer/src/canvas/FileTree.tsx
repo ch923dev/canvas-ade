@@ -25,7 +25,7 @@ import {
   type CSSProperties,
   type ReactElement
 } from 'react'
-import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist'
+import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
 import { HTML5Backend } from 'react-dnd-html5-backend'
 import { createDragDropManager } from 'dnd-core'
 import { useCanvasStore } from '../store/canvasStore'
@@ -102,6 +102,12 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
   const segs = d.segments
   const label = segs ? segs.map((s) => s.name).join(' / ') : d.name
   const targetPath = segs ? segs[segs.length - 1].id : d.id
+  // Inc 3 — open-boards awareness: the id of a board already showing THIS file (null if none). A
+  // string|null selector → the row re-renders only when its own open-state flips, not on every
+  // board change.
+  const openBoardId = useCanvasStore((s) =>
+    d.isDir ? null : (s.boards.find((b) => b.type === 'file' && b.path === d.id)?.id ?? null)
+  )
 
   const onClick = (e: React.MouseEvent): void => {
     e.stopPropagation()
@@ -109,6 +115,17 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
       node.toggle()
       return
     }
+    // Ctrl/Cmd or Shift click BUILDS a multi-selection (for "Open N boards") — it must NOT open a
+    // board. Plain click single-selects the row (highlight) and then peeks the file.
+    if (e.metaKey || e.ctrlKey) {
+      node.selectMulti()
+      return
+    }
+    if (e.shiftKey) {
+      node.selectContiguous()
+      return
+    }
+    node.select()
     // If an empty File board armed itself via "Browse files", bind THIS file INTO it (and focus
     // it) rather than opening a separate board. Guard against a stale/now-bound target.
     const pendingId = useFileTreeUiStore.getState().pendingBindId
@@ -129,6 +146,11 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
   const onDoubleClick = (e: React.MouseEvent): void => {
     e.stopPropagation()
     if (!d.isDir) pinFile(d.id)
+  }
+  // The open-board dot: jump the camera to the existing board instead of opening/rebinding one.
+  const jumpToBoard = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (openBoardId) useCanvasStore.setState({ pendingFocusId: openBoardId })
   }
   const onDragStart = (e: React.DragEvent): void => {
     // setData is string-only — JSON-encode the {path,label} payload (the drop handlers parse it).
@@ -154,6 +176,8 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
       // padding now lives in the guide spans, so the lines align with the nesting).
       style={{ paddingLeft: 8 }}
       data-dir={d.isDir || undefined}
+      data-selected={node.isSelected || undefined}
+      data-open={openBoardId ? true : undefined}
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
@@ -181,25 +205,72 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
         style={{ color: d.isDir ? 'var(--text-2)' : 'var(--text-3)' }}
       />
       <span className="ca-ftree-name">{label}</span>
+      {openBoardId && (
+        <span
+          className="ca-ftree-open-dot"
+          title="Open on the canvas — click to jump to it"
+          aria-label="Open on the canvas"
+          onClick={jumpToBoard}
+        />
+      )}
     </div>
   )
 }
 
 // ── component ────────────────────────────────────────────────────────────────
 
-/** Imperative handle the SidePanel drives (collapse-all button + Ctrl+Shift+B). */
+/** Imperative handle the SidePanel drives (collapse-all + Ctrl+Shift+B; "Open N boards"). */
 export interface FileTreeHandle {
   collapseAll: () => void
+  /** Open every currently-selected FILE as a board (multi-select → grid). */
+  openSelected: () => void
 }
 
-export const FileTree = forwardRef<FileTreeHandle>(function FileTree(_props, ref): ReactElement {
+interface FileTreeProps {
+  /** Reports the number of selected FILES (dirs excluded) so the SidePanel can show "Open N". */
+  onSelectionCount?: (n: number) => void
+}
+
+export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(function FileTree(
+  { onSelectionCount },
+  ref
+): ReactElement {
   const [data, setData] = useState<FileNode[]>([])
   const [rootLoaded, setRootLoaded] = useState(false)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const hostRef = useRef<HTMLDivElement>(null)
-  // react-arborist's imperative API (closeAll/openParents/scrollTo) — used for collapse-all now.
+  // react-arborist's imperative API (closeAll/selectedNodes/scrollTo) — collapse-all + open-selected.
   const treeApiRef = useRef<TreeApi<FileNode> | null>(null)
-  useImperativeHandle(ref, () => ({ collapseAll: () => treeApiRef.current?.closeAll() }), [])
+  // Open every selected FILE as a grid of boards (the tree's "spawn many" path). Reads the live
+  // arborist selection at call time; dirs are excluded.
+  const openSelected = useCallback((): void => {
+    const ids = (treeApiRef.current?.selectedNodes ?? [])
+      .filter((n) => !n.data.isDir)
+      .map((n) => n.data.id)
+    if (ids.length > 0) useCanvasStore.getState().openFileBoards(ids)
+  }, [])
+  useImperativeHandle(
+    ref,
+    () => ({ collapseAll: () => treeApiRef.current?.closeAll(), openSelected }),
+    [openSelected]
+  )
+  // Report the selected-file count to the SidePanel (drives the "Open N boards" button).
+  const onSelect = useCallback(
+    (nodes: NodeApi<FileNode>[]): void => {
+      onSelectionCount?.(nodes.filter((n) => !n.data.isDir).length)
+    },
+    [onSelectionCount]
+  )
+  // Enter on the focused tree opens the whole selection (VS Code's "open selected" on Enter).
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent): void => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        openSelected()
+      }
+    },
+    [openSelected]
+  )
   // Mirror `data` into a ref so the (once-registered) live-event subscription and the toggle
   // handler read the latest tree without re-subscribing on every change.
   const dataRef = useRef<FileNode[]>(data)
@@ -285,7 +356,7 @@ export const FileTree = forwardRef<FileTreeHandle>(function FileTree(_props, ref
   const displayData = useMemo(() => compactTree(data), [data])
 
   return (
-    <div ref={hostRef} className="ca-ftree-scroll">
+    <div ref={hostRef} className="ca-ftree-scroll" onKeyDown={onKeyDown}>
       {size.h > 0 && (
         <Tree<FileNode>
           ref={treeApiRef}
@@ -296,12 +367,12 @@ export const FileTree = forwardRef<FileTreeHandle>(function FileTree(_props, ref
           openByDefault={false}
           disableDrag
           disableDrop
-          disableMultiSelection
           width={size.w}
           height={size.h}
           indent={12}
           rowHeight={26}
           onToggle={onToggle}
+          onSelect={onSelect}
           className="ca-ftree-list"
         >
           {FileRow}

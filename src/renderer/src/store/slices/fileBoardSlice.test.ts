@@ -83,3 +83,27 @@ describe('pinBoard / pinFile — promote the peek', () => {
     expect(get().peekBoardId).toBeNull()
   })
 })
+
+describe('openFileBoards — multi-select → spawn a grid', () => {
+  it('spawns one PINNED board per fresh file and selects the whole set', () => {
+    get().openFileBoards(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+    const fb = fileBoards()
+    expect(fb.map((b) => b.path).sort()).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+    expect(get().peekBoardId).toBeNull() // grid boards are pinned, not peeks
+    expect(get().selectedIds).toHaveLength(3) // the whole set is selected
+  })
+
+  it('lays boards out without overlapping (a tidy grid, not a stack)', () => {
+    get().openFileBoards(['a.ts', 'b.ts', 'c.ts', 'd.ts'])
+    const positions = get().boards.map((b) => `${b.x},${b.y}`)
+    expect(new Set(positions).size).toBe(positions.length) // every board at a distinct slot
+  })
+
+  it('skips files that already have a board (no duplicates) and de-dupes the input', () => {
+    const firstId = get().openFileBoard('a.ts') // pre-open one
+    get().openFileBoards(['a.ts', 'a.ts', 'b.ts']) // dup input + an already-open file
+    const fb = fileBoards()
+    expect(fb).toHaveLength(2) // a.ts (reused) + b.ts (fresh) — never a 2nd a.ts
+    expect(fb.some((b) => b.id === firstId && b.path === 'a.ts')).toBe(true)
+  })
+})

@@ -399,4 +399,101 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  test('multi-select (Ctrl-click) → "Open N boards" spawns a grid of pinned boards', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3grid-', 'Grid')
+    try {
+      for (const f of ['a.ts', 'b.ts', 'c.ts']) {
+        await mainCall(electronApp, 'writeProjectFile', tmp, f, `export const X = '${f}'\n`)
+      }
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await expect
+        .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
+          timeout: 6000
+        })
+        .toBeGreaterThan(0)
+
+      // Ctrl-click builds a multi-selection (a real native click carrying ctrlKey → React onClick).
+      const ctrlClick = (name: string): Promise<boolean> =>
+        evalIn<boolean>(
+          page,
+          `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === ${JSON.stringify(name)}); if (r) r.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return !!r })()`
+        )
+      for (const f of ['a.ts', 'b.ts', 'c.ts']) expect(await ctrlClick(f)).toBe(true)
+
+      // The header "Open N" button appears once 2+ files are selected; it reads the live count.
+      await expect
+        .poll(() =>
+          evalIn<string | null>(
+            page,
+            `(() => { const b = document.querySelector('.ca-sidepanel-open-btn'); return b ? b.textContent.trim() : null })()`
+          )
+        )
+        .toBe('Open 3')
+
+      await evalIn(page, `document.querySelector('.ca-sidepanel-open-btn').click()`)
+
+      // Three pinned File boards, one per selected file — the canvas-native "spawn many".
+      await expect
+        .poll(() =>
+          evalIn<string>(
+            page,
+            `window.__canvasE2E.getBoards().filter((b) => b.type === 'file').map((b) => b.path).sort().join(',')`
+          )
+        )
+        .toBe('a.ts,b.ts,c.ts')
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+
+  test('a file with a board shows the open-dot; clicking the dot jumps (does not open a 2nd board)', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3dot-', 'Dot')
+    try {
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'x.ts', 'export const X = 1\n')
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await expect
+        .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
+          timeout: 6000
+        })
+        .toBeGreaterThan(0)
+
+      const dotPresent = (): Promise<boolean> =>
+        evalIn<boolean>(
+          page,
+          `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === 'x.ts'); return r ? !!r.querySelector('.ca-ftree-open-dot') : false })()`
+        )
+      const fileCount = (): Promise<number> =>
+        evalIn<number>(
+          page,
+          `window.__canvasE2E.getBoards().filter((b) => b.type === 'file').length`
+        )
+
+      // No board yet → no dot.
+      expect(await dotPresent()).toBe(false)
+
+      // Open x.ts (single-click peek) → the row gains the open-dot.
+      await evalIn(
+        page,
+        `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === 'x.ts'); if (r) r.click() })()`
+      )
+      await expect.poll(dotPresent).toBe(true)
+      expect(await fileCount()).toBe(1)
+
+      // Clicking the dot JUMPS to the existing board — it must not spawn a second one.
+      await evalIn(
+        page,
+        `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === 'x.ts'); const dot = r && r.querySelector('.ca-ftree-open-dot'); if (dot) dot.click() })()`
+      )
+      expect(await fileCount()).toBe(1)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
 })

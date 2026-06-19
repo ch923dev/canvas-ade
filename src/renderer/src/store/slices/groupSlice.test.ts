@@ -36,6 +36,7 @@ function makeState(boards: Board[] = [], groups: NamedGroup[] = []): CanvasState
     spawnGroup: vi.fn() as never,
     clearConfigPending: vi.fn() as never,
     openFileBoard: vi.fn() as never,
+    openFileBoards: vi.fn() as never,
     peekBoardId: null,
     peekFile: vi.fn() as never,
     pinBoard: vi.fn() as never,

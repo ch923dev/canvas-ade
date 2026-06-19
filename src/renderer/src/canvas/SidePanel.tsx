@@ -39,6 +39,8 @@ export function SidePanel(): ReactElement | null {
   const seenNonce = useRef(revealNonce)
   const wrapRef = useRef<HTMLDivElement>(null)
   const treeRef = useRef<FileTreeHandle>(null)
+  // Number of FILES currently multi-selected in the tree → drives the "Open N boards" button.
+  const [selCount, setSelCount] = useState(0)
   const revealed = inZone || focused || forced
 
   useEffect(() => {
@@ -150,6 +152,15 @@ export function SidePanel(): ReactElement | null {
       <aside className="ca-sidepanel" data-revealed={revealed} aria-label="Project files">
         <div className="ca-sidepanel-head">
           <span>Files</span>
+          {selCount >= 2 && (
+            <button
+              className="ca-sidepanel-open-btn"
+              title={`Open ${selCount} selected files as a grid of boards (Enter)`}
+              onClick={() => treeRef.current?.openSelected()}
+            >
+              Open {selCount}
+            </button>
+          )}
           <button
             className="ca-ftree-collapse"
             title="Collapse folders (Ctrl+Shift+B)"
@@ -171,7 +182,7 @@ export function SidePanel(): ReactElement | null {
             </svg>
           </button>
         </div>
-        <FileTree ref={treeRef} />
+        <FileTree ref={treeRef} onSelectionCount={setSelCount} />
       </aside>
     </div>
   )

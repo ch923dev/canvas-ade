@@ -26,7 +26,10 @@ import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
 export function createFileBoardSlice(
   set: SetCanvasState,
   get: GetCanvasState
-): Pick<CanvasState, 'peekBoardId' | 'openFileBoard' | 'peekFile' | 'pinBoard' | 'pinFile'> {
+): Pick<
+  CanvasState,
+  'peekBoardId' | 'openFileBoard' | 'openFileBoards' | 'peekFile' | 'pinBoard' | 'pinFile'
+> {
   /** World-space TOP-LEFT near the viewport centre for a freshly opened File board. */
   const centerSlot = (): { x: number; y: number } => {
     const s = DEFAULT_BOARD_SIZE.file
@@ -90,6 +93,47 @@ export function createFileBoardSlice(
         return
       }
       st.openFileBoard(relPath) // spawn a permanent (un-marked) board — pinned by construction
+    },
+
+    openFileBoards: (relPaths) => {
+      // The tree's multi-select → "Open N boards": spawn one PINNED board per fresh file in a tidy
+      // grid centred on the viewport (skips files already open → just (re)selects them), then select
+      // the whole resulting set so the user can immediately Tidy / drag it. The canvas-native answer
+      // to VS Code's split-editor grid — except here you can open as MANY as you select.
+      const st = get()
+      const files = relPaths.filter((p, i) => relPaths.indexOf(p) === i) // de-dupe input
+      const openByPath = new Map<string, string>()
+      for (const b of st.boards) {
+        if (b.type === 'file' && b.path) openByPath.set(b.path, b.id)
+      }
+      const fresh = files.filter((p) => !openByPath.has(p))
+      const size = DEFAULT_BOARD_SIZE.file
+      const GAP = 32
+      const newIds: string[] = []
+      if (fresh.length > 0) {
+        const cols = Math.ceil(Math.sqrt(fresh.length))
+        const rowCount = Math.ceil(fresh.length / cols)
+        const totalW = cols * size.w + (cols - 1) * GAP
+        const totalH = rowCount * size.h + (rowCount - 1) * GAP
+        const vp = get().viewport
+        const { innerWidth: w = 1280, innerHeight: h = 800 } = globalThis
+        const cx = vp ? (w / 2 - vp.x) / vp.zoom : 0
+        const cy = vp ? (h / 2 - vp.y) / vp.zoom : 0
+        const x0 = cx - totalW / 2
+        const y0 = cy - totalH / 2
+        fresh.forEach((p, i) => {
+          const at = {
+            x: x0 + (i % cols) * (size.w + GAP),
+            y: y0 + Math.floor(i / cols) * (size.h + GAP)
+          }
+          newIds.push(get().addBoard('file', at, { path: p, exact: true }))
+        })
+      }
+      const allIds = [
+        ...newIds,
+        ...files.filter((p) => openByPath.has(p)).map((p) => openByPath.get(p) as string)
+      ]
+      if (allIds.length > 0) get().setSelection(allIds)
     }
   }
 }

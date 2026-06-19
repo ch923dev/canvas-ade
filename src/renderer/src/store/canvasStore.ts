@@ -189,6 +189,12 @@ export interface CanvasState {
    */
   openFileBoard: (relPath: string, at?: { x: number; y: number }) => string
   /**
+   * Open MANY files at once as PINNED boards in a tidy grid centred on the viewport (skips files
+   * already open → just (re)selects them); selects the resulting set. The tree's multi-select →
+   * "Open N boards" path — the canvas-native answer to VS Code's split-editor grid.
+   */
+  openFileBoards: (relPaths: string[]) => void
+  /**
    * EPHEMERAL — the id of the single "peek" (preview) File board, or null. A board is a PEEK board
    * ⟺ its id === `peekBoardId`: FileBoard renders it ghosted, the tree rebinds it on each
    * single-click, and it is recycled so browsing never litters the canvas (VS Code preview-tab

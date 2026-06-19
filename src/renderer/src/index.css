@@ -437,6 +437,27 @@
   background: var(--surface-overlay);
   color: var(--text);
 }
+/* "Open N boards" — appears in the header only when 2+ files are multi-selected. The one accent,
+   functional (not decorative): the explicit "spawn many" trigger alongside Enter. */
+.ca-sidepanel-open-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-right: 6px;
+  padding: 2px 8px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-sidepanel-open-btn:hover {
+  border-color: var(--accent);
+}
 /* One vertical indent guide per ancestor level (VS Code tree lines). align-self: stretch makes
    the 1px left border span the full row height, so the lines read as continuous across rows. */
 .ca-ftree-guide {
@@ -520,11 +541,29 @@
 .ca-ftree-row:hover {
   background: var(--surface-overlay);
 }
+/* Multi-selected rows (Ctrl/Shift-click) — the "Open N boards" set, washed in the one accent. */
+.ca-ftree-row[data-selected] {
+  background: var(--accent-wash);
+}
 .ca-ftree-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Open-boards awareness (Inc 3): a small accent dot marks a file that already has a board on the
+   canvas; clicking it jumps the camera there (instead of opening another). */
+.ca-ftree-open-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  cursor: pointer;
+}
+.ca-ftree-open-dot:hover {
+  box-shadow: 0 0 0 3px var(--accent-wash);
 }
 .ca-ftree-empty {
   padding: 10px 12px;

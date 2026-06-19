@@ -260,9 +260,13 @@ working" was the invisible state change, now an obvious one.
   single-click → peek (rebind/spawn), double-click → pin, edit → auto-pin, drag-out → pinned. Ghosted
   peek chrome in `FileBoard` (dashed/faded, optional Pin control). e2e: 1 board on browse + rebind,
   double-click pins, edit auto-pins.
-- **Inc 2 — Multi-select → spawn grid.** `openFileBoards(paths)` spawns one pinned board per fresh
-  file in a grid at viewport center (skips already-open → focuses), camera fits the new grid; tree
-  multi-select + Enter / context-menu action. e2e: N selected → N boards in a grid.
-- **Inc 3 — Open-boards awareness.** Tree derives the open-file-path set from `boards`, marks rows
-  (● dot), click-to-jump camera; peek vs pinned shown distinctly. e2e: dot appears + jumps.
+- **Inc 2 — Multi-select → spawn grid. ✅ SHIPPED.** `openFileBoards(paths)` spawns one pinned board
+  per fresh file in a tidy grid centred on the viewport (skips already-open → (re)selects), then
+  selects the whole set. Tree multi-select (Ctrl/Shift-click, no open) + **Enter** + a header
+  **"Open N"** button (appears at 2+). No camera fit needed — the grid lands at the viewport centre.
+  e2e: Ctrl-click 3 → "Open 3" → 3 boards.
+- **Inc 3 — Open-boards awareness. ✅ SHIPPED.** Each file row carries a `string|null` open-board
+  selector; a file already on the canvas shows a small accent **● dot**, and clicking it jumps the
+  camera (reuses `pendingFocusId`) instead of opening a 2nd board. e2e: dot appears + jump keeps the
+  board count at 1.
 
