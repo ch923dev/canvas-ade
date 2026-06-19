@@ -19,16 +19,33 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactElement
 } from 'react'
 import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist'
+import { HTML5Backend } from 'react-dnd-html5-backend'
+import { createDragDropManager } from 'dnd-core'
 import { useCanvasStore } from '../store/canvasStore'
 import { useFileTreeUiStore } from '../store/fileTreeUiStore'
 import { Icon } from './Icon'
-import { FILEREF_MIME, applyListing, findNode, parentOf, type FileNode } from './fileTreeData'
+import {
+  FILEREF_MIME,
+  applyListing,
+  compactTree,
+  findNode,
+  parentOf,
+  type FileNode
+} from './fileTreeData'
+
+// ONE shared react-dnd manager for every <Tree>. react-arborist otherwise spins up its own
+// <DndProvider backend={HTML5Backend}> per Tree instance; when the SidePanel unmounts + remounts
+// on a project switch the old and new backends briefly overlap and react-dnd throws "Cannot have
+// two HTML5 backends at the same time" (crashing the whole canvas to the ErrorBoundary). A single
+// module-level manager means exactly one backend, reused across mounts, so a remount never conflicts.
+const dndManager = createDragDropManager(HTML5Backend)
 
 // ── glyphs ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +95,10 @@ function fileGlyphPath(name: string): string {
 function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
   const openFileBoard = useCanvasStore((s) => s.openFileBoard)
   const d = node.data
+  // Compact-folder rows render the whole chain ("a / b / c"); the deepest path is the real target.
+  const segs = d.segments
+  const label = segs ? segs.map((s) => s.name).join(' / ') : d.name
+  const targetPath = segs ? segs[segs.length - 1].id : d.id
 
   const onClick = (e: React.MouseEvent): void => {
     e.stopPropagation()
@@ -128,7 +149,7 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
-      title={d.id}
+      title={targetPath}
     >
       {Array.from({ length: node.level }, (_, i) => (
         <span key={i} className="ca-ftree-guide" aria-hidden />
@@ -150,7 +171,7 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
         d={d.isDir ? FOLDER_PATH : fileGlyphPath(d.name)}
         style={{ color: d.isDir ? 'var(--text-2)' : 'var(--text-3)' }}
       />
-      <span className="ca-ftree-name">{d.name}</span>
+      <span className="ca-ftree-name">{label}</span>
     </div>
   )
 }
@@ -178,13 +199,19 @@ export const FileTree = forwardRef<FileTreeHandle>(function FileTree(_props, ref
   }, [data])
 
   // Load one directory's children lazily ('' = root). Preserves expanded subtrees on refresh.
-  const loadDir = useCallback(async (parentId: string): Promise<void> => {
+  // Cascade-loads a sole sub-folder so single-folder chains render compact (see compactTree)
+  // without a flash; capped depth guards against a runaway descent on a deep one-child chain.
+  const loadDir = useCallback(async function load(parentId: string, depth = 0): Promise<void> {
     const listDir = window.api?.file?.listDir
     if (!listDir) return
     try {
       const entries = await listDir(parentId)
       setData((prev) => applyListing(prev, parentId, entries))
       if (parentId === '') setRootLoaded(true)
+      if (depth < 16 && entries.length === 1 && entries[0].isDir) {
+        const childId = parentId ? `${parentId}/${entries[0].name}` : entries[0].name
+        await load(childId, depth + 1)
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn('[FileTree] listDir failed for', parentId || '<root>', err)
@@ -203,26 +230,14 @@ export const FileTree = forwardRef<FileTreeHandle>(function FileTree(_props, ref
     return () => ro.disconnect()
   }, [])
 
-  // Initial root listing — load via a .then chain (setState stays inside a callback, mirroring
-  // AppChrome's consent effect) rather than a direct call into the async loader.
+  // (Re)list the root whenever the open project changes — resets stale data on a project switch
+  // and runs once on mount. loadDir also cascade-loads a sole root sub-folder (compact folders).
+  const projectDir = useCanvasStore((s) => s.project.dir)
   useEffect(() => {
-    const listDir = window.api?.file?.listDir
-    if (!listDir) return
-    let cancelled = false
-    listDir('')
-      .then((entries) => {
-        if (cancelled) return
-        setData((prev) => applyListing(prev, '', entries))
-        setRootLoaded(true)
-      })
-      .catch((err) => {
-        // eslint-disable-next-line no-console
-        if (!cancelled) console.warn('[FileTree] initial listDir failed', err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    setData([])
+    setRootLoaded(false)
+    void loadDir('')
+  }, [projectDir, loadDir])
 
   // Live updates: re-list only the affected (and currently-loaded) parent folder, debounced.
   useEffect(() => {
@@ -257,12 +272,16 @@ export const FileTree = forwardRef<FileTreeHandle>(function FileTree(_props, ref
     [loadDir]
   )
 
+  // Compact single-child folder chains into one row just before render (VS Code "compact folders").
+  const displayData = useMemo(() => compactTree(data), [data])
+
   return (
     <div ref={hostRef} className="ca-ftree-scroll">
       {size.h > 0 && (
         <Tree<FileNode>
           ref={treeApiRef}
-          data={data}
+          dndManager={dndManager}
+          data={displayData}
           idAccessor="id"
           childrenAccessor={(n) => (n.isDir ? (n.children ?? []) : null)}
           openByDefault={false}

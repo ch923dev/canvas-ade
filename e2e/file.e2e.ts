@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { test, expect } from './fixtures'
 import { evalIn, mainCall, seed } from './helpers'
 
@@ -238,6 +240,53 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       expect(res.draggable, 'tree row is natively draggable').toBe(true)
       expect(res.prevented, 'react-dnd must NOT cancel the native dragstart').toBe(false)
       expect(res.hasRef, 'dragstart carries the file-ref payload').toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+
+  test('compact folders: a single-child folder chain renders as one "pkg / sub" row', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'file-s3compact-',
+      'Compact'
+    )
+    try {
+      // pkg → sub → leaf.ts is a single-folder chain; zzz.txt keeps the ROOT multi-child so the
+      // chain is reached by expanding 'pkg' (deterministic, regardless of canvas.json at root).
+      mkdirSync(join(tmp, 'pkg', 'sub'), { recursive: true })
+      writeFileSync(join(tmp, 'pkg', 'sub', 'leaf.ts'), 'export const L = 1\n')
+      writeFileSync(join(tmp, 'zzz.txt'), 'root sibling\n')
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await expect
+        .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
+          timeout: 6000
+        })
+        .toBeGreaterThan(0)
+      // Expand the pkg row (programmatic click — rows live in the DOM even if the panel is collapsed).
+      await evalIn(
+        page,
+        `(() => {
+          const rows = Array.from(document.querySelectorAll('.ca-ftree-row'))
+          const pkg = rows.find((r) => (r.getAttribute('title') || '').startsWith('pkg'))
+          if (pkg) pkg.click()
+        })()`
+      )
+      // pkg's sole sub-folder cascade-loads → the row compacts to a single "pkg / sub" label.
+      await expect
+        .poll(
+          () =>
+            evalIn<boolean>(
+              page,
+              `Array.from(document.querySelectorAll('.ca-ftree-name')).some((n) => n.textContent === 'pkg / sub')`
+            ),
+          { timeout: 6000 }
+        )
+        .toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }

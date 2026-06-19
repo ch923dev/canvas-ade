@@ -26,6 +26,9 @@ export interface FileNode {
   isDir: boolean
   children?: FileNode[]
   loaded?: boolean
+  /** Present only on a COMPACT-folder display node (see compactTree): the merged chain of
+   *  single-child folders, top→deepest, rendered as one "a / b / c" row. */
+  segments?: { id: string; name: string }[]
 }
 
 /** Dirs before files, then case-insensitive name — a stable, conventional order. */
@@ -93,4 +96,31 @@ export function findNode(nodes: FileNode[], id: string): FileNode | null {
 export function parentOf(rel: string): string {
   const i = rel.lastIndexOf('/')
   return i < 0 ? '' : rel.slice(0, i)
+}
+
+/**
+ * VS Code-style "compact folders": collapse a chain of single-child folders into ONE display node
+ * labelled "a / b / c". Pure transform over the (lazily loaded) source tree — apply just before
+ * rendering. The compound node KEEPS the TOP folder's id (so react-arborist's open state stays
+ * stable at the moment a chain first loads) but exposes the DEEPEST folder's children; `segments`
+ * carry the chain for the label. Only LOADED single-folder links merge, so a chain extends as its
+ * folders load (FileTree cascade-loads sole sub-folders so the merge happens without a flash).
+ */
+export function compactTree(nodes: FileNode[]): FileNode[] {
+  return nodes.map(compactNode)
+}
+
+function compactNode(n: FileNode): FileNode {
+  if (!n.isDir) return n
+  const segments = [{ id: n.id, name: n.name }]
+  let cur = n
+  while (cur.loaded && cur.children && cur.children.length === 1 && cur.children[0].isDir) {
+    cur = cur.children[0]
+    segments.push({ id: cur.id, name: cur.name })
+  }
+  const children = cur.children ? cur.children.map(compactNode) : cur.children
+  if (segments.length > 1) {
+    return { id: n.id, name: cur.name, isDir: true, loaded: cur.loaded, children, segments }
+  }
+  return { ...n, children }
 }

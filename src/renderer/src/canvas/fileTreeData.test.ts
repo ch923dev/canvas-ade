@@ -3,6 +3,7 @@ import {
   toNodes,
   mergeChildren,
   applyListing,
+  compactTree,
   findNode,
   parentOf,
   type FileNode
@@ -97,5 +98,56 @@ describe('fileTreeData.findNode / parentOf', () => {
   it('parentOf returns the parent dir or "" at root', () => {
     expect(parentOf('src/lib/x.ts')).toBe('src/lib')
     expect(parentOf('top.ts')).toBe('')
+  })
+})
+
+describe('fileTreeData.compactTree', () => {
+  it('merges a loaded single-folder chain into one compound row (top id kept, deepest children)', () => {
+    const tree: FileNode[] = [
+      {
+        id: 'a',
+        name: 'a',
+        isDir: true,
+        loaded: true,
+        children: [
+          {
+            id: 'a/b',
+            name: 'b',
+            isDir: true,
+            loaded: true,
+            children: [{ id: 'a/b/c.ts', name: 'c.ts', isDir: false }]
+          }
+        ]
+      }
+    ]
+    const [node] = compactTree(tree)
+    expect(node.id).toBe('a') // top id kept → arborist open state stays stable
+    expect(node.segments?.map((s) => s.name)).toEqual(['a', 'b'])
+    expect(node.children?.map((c) => c.id)).toEqual(['a/b/c.ts']) // deepest's children exposed
+  })
+
+  it('does NOT merge across an unloaded link, a multi-child folder, or a file child', () => {
+    const tree: FileNode[] = [
+      { id: 'unl', name: 'unl', isDir: true, children: [{ id: 'unl/x', name: 'x', isDir: true }] },
+      {
+        id: 'multi',
+        name: 'multi',
+        isDir: true,
+        loaded: true,
+        children: [
+          { id: 'multi/a', name: 'a', isDir: true },
+          { id: 'multi/b', name: 'b', isDir: true }
+        ]
+      },
+      {
+        id: 'leaf',
+        name: 'leaf',
+        isDir: true,
+        loaded: true,
+        children: [{ id: 'leaf/f.ts', name: 'f.ts', isDir: false }]
+      }
+    ]
+    const out = compactTree(tree)
+    expect(out.every((n) => n.segments === undefined)).toBe(true)
   })
 })
