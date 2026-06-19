@@ -93,7 +93,10 @@ function fileGlyphPath(name: string): string {
 // ── row renderer ───────────────────────────────────────────────────────────────
 
 function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
-  const openFileBoard = useCanvasStore((s) => s.openFileBoard)
+  // Single-click PEEKS (reuse the one ghosted preview board); double-click PINS a permanent board
+  // — VS Code's preview-tab discipline, so browsing the tree never litters the canvas.
+  const peekFile = useCanvasStore((s) => s.peekFile)
+  const pinFile = useCanvasStore((s) => s.pinFile)
   const d = node.data
   // Compact-folder rows render the whole chain ("a / b / c"); the deepest path is the real target.
   const segs = d.segments
@@ -120,7 +123,12 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
         return
       }
     }
-    openFileBoard(d.id)
+    peekFile(d.id)
+  }
+  // Double-click pins: promote the peek (or focus/spawn) a PERMANENT board for this file.
+  const onDoubleClick = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (!d.isDir) pinFile(d.id)
   }
   const onDragStart = (e: React.DragEvent): void => {
     // setData is string-only — JSON-encode the {path,label} payload (the drop handlers parse it).
@@ -149,6 +157,7 @@ function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       title={targetPath}
     >
       {Array.from({ length: node.level }, (_, i) => (

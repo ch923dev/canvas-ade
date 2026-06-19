@@ -291,4 +291,57 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await mainCall(electronApp, 'teardownProject', tmp)
     }
   })
+
+  test('tree single-click peeks ONE reusable board; double-click pins; next click spawns a fresh peek', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3peek-', 'Peek')
+    try {
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A = 1\n')
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'b.ts', 'export const B = 2\n')
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      await expect
+        .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
+          timeout: 6000
+        })
+        .toBeGreaterThan(0)
+
+      // Drive REAL DOM events on the tree rows (title === the file's relative path). A synthetic
+      // 'dblclick' fires React's onDoubleClick (pin) the same way a user's would.
+      const click = (name: string): Promise<boolean> =>
+        evalIn<boolean>(
+          page,
+          `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === ${JSON.stringify(name)}); if (r) r.click(); return !!r })()`
+        )
+      const dblclick = (name: string): Promise<boolean> =>
+        evalIn<boolean>(
+          page,
+          `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === ${JSON.stringify(name)}); if (r) r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return !!r })()`
+        )
+      const filePaths = (): Promise<string[]> =>
+        evalIn<string[]>(
+          page,
+          `window.__canvasE2E.getBoards().filter((b) => b.type === 'file').map((b) => b.path)`
+        )
+
+      // Single-click a.ts → exactly one (peek) board bound to it.
+      expect(await click('a.ts')).toBe(true)
+      await expect.poll(filePaths).toEqual(['a.ts'])
+
+      // Single-click b.ts → the SAME board rebinds (still ONE board) — preview-tab reuse.
+      expect(await click('b.ts')).toBe(true)
+      await expect.poll(filePaths).toEqual(['b.ts'])
+
+      // Double-click b.ts → pin it (still one board; it's now permanent, no longer recyclable).
+      expect(await dblclick('b.ts')).toBe(true)
+      await expect.poll(filePaths).toEqual(['b.ts'])
+
+      // Single-click a.ts → a FRESH peek spawns alongside the pinned b.ts (two boards now).
+      expect(await click('a.ts')).toBe(true)
+      await expect.poll(filePaths).toEqual(['b.ts', 'a.ts'])
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
 })

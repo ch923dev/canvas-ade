@@ -80,6 +80,10 @@ export function FileBoard({
   const readOnly = !!board.readOnly
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const selectBoard = useCanvasStore((s) => s.selectBoard)
+  // This board is the single reusable "peek" (preview) board ⟺ its id is the store's peekBoardId:
+  // render it ghosted (dashed) and offer an explicit Pin. Pinning (here, a double-click in the tree,
+  // or the first edit below) promotes it to a permanent board.
+  const isPeek = useCanvasStore((s) => s.peekBoardId === board.id)
   // Empty-board "Browse files": arms this board so the next tree-file click fills it (S3 redesign).
   const armed = useFileTreeUiStore((s) => s.pendingBindId === board.id)
   const requestBrowse = useFileTreeUiStore((s) => s.requestBrowse)
@@ -133,6 +137,12 @@ export function FileBoard({
     pathRef.current = path
     savingRef.current = saving
   })
+
+  // Auto-pin on edit (VS Code parity): the moment a peek board becomes dirty, promote it so the
+  // edited buffer can never be recycled out from under the user. `pinBoard` no-ops once pinned.
+  useEffect(() => {
+    if (dirty) useCanvasStore.getState().pinBoard(board.id)
+  }, [dirty, board.id])
 
   const pendingCaretRef = useRef<{ x: number; y: number } | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -400,9 +410,34 @@ export function FileBoard({
     cursor: 'pointer',
     flex: 'none'
   }
+  // Peek → Pin: the explicit affordance + the visual "this is a preview" cue in the title bar
+  // (the canvas analog of VS Code's italic preview tab). Shown for ANY peek board (text or image).
+  const pinPill = isPeek ? (
+    <button
+      className="nodrag"
+      title="Pin this board (or double-click it in the tree / start editing)"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => useCanvasStore.getState().pinBoard(board.id)}
+      style={{
+        fontFamily: 'var(--ui)',
+        fontSize: 11,
+        fontWeight: 500,
+        color: 'var(--accent)',
+        background: 'var(--accent-wash)',
+        border: '1px dashed var(--accent)',
+        borderRadius: 'var(--r-ctl)',
+        padding: '2px 8px',
+        cursor: 'pointer',
+        flex: 'none'
+      }}
+    >
+      Pin
+    </button>
+  ) : null
   const actions =
     kind === 'text' ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 'none' }}>
+        {pinPill}
         {isMarkdown && (
           <span
             style={{
@@ -506,6 +541,8 @@ export function FileBoard({
           </span>
         )}
       </div>
+    ) : isPeek ? (
+      <div style={{ display: 'flex', alignItems: 'center', flex: 'none' }}>{pinPill}</div>
     ) : undefined
 
   // The text content's left/sole pane: the live editor on the focused board, else the crisp
@@ -697,6 +734,24 @@ export function FileBoard({
               Drop to open here
             </span>
           </div>
+        )}
+
+        {/* Peek (preview) board: a faded dashed inset frames the content — the canvas analog of
+            VS Code's italic preview tab. pointer-events:none so it never eats input; hidden while a
+            drop is being advertised (that overlay owns the frame then). */}
+        {isPeek && !dragOver && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              border: '1.5px dashed var(--accent)',
+              borderRadius: 'var(--r-inner)',
+              opacity: 0.45,
+              zIndex: 1
+            }}
+          />
         )}
       </div>
       {ctxMenu && path && (

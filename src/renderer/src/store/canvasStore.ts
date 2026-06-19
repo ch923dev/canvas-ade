@@ -36,6 +36,7 @@ import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 import { freeSlot, PLACE_GAP } from '../lib/freeSlot'
 import { useCommandStore, commandStoreDefaults } from './commandStore'
 import { createConnectorSlice } from './slices/connectorSlice'
+import { createFileBoardSlice } from './slices/fileBoardSlice'
 import { createGroupSlice, pruneBoardFromGroups } from './slices/groupSlice'
 import type { SetCanvasState } from './slices/sliceTypes'
 
@@ -187,6 +188,20 @@ export interface CanvasState {
    * does NOT yank the camera.
    */
   openFileBoard: (relPath: string, at?: { x: number; y: number }) => string
+  /**
+   * EPHEMERAL — the id of the single "peek" (preview) File board, or null. A board is a PEEK board
+   * ⟺ its id === `peekBoardId`: FileBoard renders it ghosted, the tree rebinds it on each
+   * single-click, and it is recycled so browsing never litters the canvas (VS Code preview-tab
+   * discipline). Pinning clears it. Never serialized. See `slices/fileBoardSlice.ts`.
+   */
+  peekBoardId: string | null
+  /** Tree SINGLE-click: open `relPath` in the ONE reusable peek board (rebinds/spawns it), or
+   *  focus a board already showing that path. */
+  peekFile: (relPath: string) => void
+  /** Promote a peek board to a permanent (pinned) board (clears `peekBoardId` iff it matches). */
+  pinBoard: (id: string) => void
+  /** Tree DOUBLE-click: open `relPath` as a PINNED board (promotes the peek, or focuses/spawns). */
+  pinFile: (relPath: string) => void
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
@@ -689,25 +704,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   clearConfigPending: () => set({ configPendingId: null }),
 
-  openFileBoard: (relPath, at) => {
-    // Re-focus an already-open File board for the EXACT same path instead of duplicating. A tree
-    // click (no `at`) ALSO requests a camera focus so an off-screen board is brought into view; a
-    // canvas drop (`at` given) only selects + places under the cursor. `center` derives the
-    // world-space viewport centre (persisted viewport + window size, origin fallback); freeSlot
-    // nudges off any overlap, exactly like the dock add-board path.
-    const existing = get().boards.find((b) => b.type === 'file' && b.path === relPath)
-    if (existing) get().selectBoard(existing.id)
-    const s = DEFAULT_BOARD_SIZE.file
-    const vp = get().viewport
-    const { innerWidth: w = 1280, innerHeight: h = 800 } = globalThis
-    const center = vp
-      ? { x: (w / 2 - vp.x) / vp.zoom - s.w / 2, y: (h / 2 - vp.y) / vp.zoom - s.h / 2 }
-      : { x: -s.w / 2, y: -s.h / 2 }
-    const id = existing ? existing.id : get().addBoard('file', at ?? center, { path: relPath })
-    if (!at) set({ pendingFocusId: id })
-    return id
-  },
-
   removeBoard: (id) =>
     set((s) => {
       // No such board → true no-op (don't record a dead undo step). `filter` alone would
@@ -805,6 +801,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   ...createConnectorSlice(set, get, { trackedChange, newId }),
+
+  ...createFileBoardSlice(set, get),
 
   ...createGroupSlice(set, get, { trackedChange, newId }),
 
