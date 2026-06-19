@@ -9,7 +9,15 @@
  */
 import { app, clipboard, ipcMain, Menu, nativeImage, type BrowserWindow } from 'electron'
 import { execFileSync } from 'child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
@@ -60,6 +68,12 @@ export interface E2EMain {
   putRedBitmapOnClipboard(w: number, h: number): void
   /** True if an absolute path exists on disk (assert a pasted blob landed). */
   fileExists(absPath: string): boolean
+  /**
+   * Read a UTF-8 file's contents, or null if absent. The orchestration-onboarding e2e asserts the
+   * SHAPE of a provisioner-written `.mcp.json` (loopback url + Bearer header) off this.
+   * 🔒 The caller asserts the Authorization header shape only (`/^Bearer .+/`) — never the token.
+   */
+  readTextFile(absPath: string): string | null
   /** Join a temp-project path with a relative asset path (cross-platform). */
   joinPath(...parts: string[]): string
   /** The in-process local preview server URL — a deterministic page the browser probe seeds. */
@@ -308,6 +322,9 @@ export function installE2EMain(
     },
     fileExists(absPath) {
       return existsSync(absPath)
+    },
+    readTextFile(absPath) {
+      return existsSync(absPath) ? readFileSync(absPath, 'utf8') : null
     },
     joinPath(...parts) {
       return join(...parts)

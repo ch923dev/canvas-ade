@@ -9,7 +9,8 @@ import { isEnabled, setEnabled } from '../orchestrationConsent'
  *
  *   - WT-authority  (P0, this lane): `mintTerminalToken` (via a registered minter) + `canRelay`,
  *     consumed by the relay path in `mcpOrchestrator.ts`. ✅ IMPLEMENTED.
- *   - WT-onboarding (P1): `isOrchestrationEnabled` / `setOrchestrationEnabled` (still stubs here).
+ *   - WT-onboarding (P1): `isOrchestrationEnabled` / `setOrchestrationEnabled` (✅ IMPLEMENTED —
+ *     delegate to the consent store in `orchestrationConsent.ts`).
  *   - WT-provision  (P3): `CliProvisioner` implementations + the spawn-time auto-sync hook.
  *
  * Spec: `docs/research/2026-06-19-agent-orchestration-onboarding/PLAN.md`.

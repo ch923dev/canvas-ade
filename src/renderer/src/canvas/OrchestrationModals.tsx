@@ -7,10 +7,9 @@
  *   3. rendering exactly one of { Enable, Sync } per the shared `modal` channel — so the Settings
  *      re-open controls (toggle → Enable, "Sync" button → Sync) drive the same single surface.
  *
- * The Sync step is owned by WT-provision (P3): replace <SyncStepPlaceholder/> below with the real
- * `<OrchestrationSyncModal/>` they export (endpoint row + per-CLI target rows + Sync now). The
- * mount point + the `modal === 'sync'` gating are the seam; the placeholder keeps the Enable→Sync
- * flow demonstrable until then.
+ * The Sync step (P3) is wired: when `modal === 'sync'` the `OrchestrationSyncStep` container below
+ * fetches provisioner status and renders the real `<OrchestrationSyncModal/>` (endpoint row +
+ * per-CLI target rows + Sync now), running the sync over `window.api.orchestration`.
  */
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { useCanvasStore } from '../store/canvasStore'
