@@ -28,7 +28,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type FocusEvent as ReactFocusEvent,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement
@@ -38,6 +38,7 @@ import CodeMirror, { type EditorView } from '@uiw/react-codemirror'
 import { openSearchPanel } from '@codemirror/search'
 import type { FileBoard as FileBoardData } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useFileTreeUiStore } from '../../store/fileTreeUiStore'
 import { showToast } from '../../store/toastStore'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
@@ -59,6 +60,7 @@ import {
 } from './fileBoardSyntax'
 import { renderMarkdownToHtml } from './fileBoardMarkdown'
 import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
+import { FILEREF_MIME } from '../fileTreeData'
 
 type Kind = 'loading' | 'empty' | 'text' | 'image' | 'large' | 'binary' | 'error'
 
@@ -77,6 +79,11 @@ export function FileBoard({
   const path = board.path
   const readOnly = !!board.readOnly
   const updateBoard = useCanvasStore((s) => s.updateBoard)
+  const selectBoard = useCanvasStore((s) => s.selectBoard)
+  // Empty-board "Browse files": arms this board so the next tree-file click fills it (S3 redesign).
+  const armed = useFileTreeUiStore((s) => s.pendingBindId === board.id)
+  const requestBrowse = useFileTreeUiStore((s) => s.requestBrowse)
+  const clearPendingBind = useFileTreeUiStore((s) => s.clearPendingBind)
 
   // Live camera zoom (RF store): drives the edit-mode counter-scale. Object.is equality ->
   // re-renders only when the zoom actually changes; the snapshot HTML is memoised so a zoom
@@ -86,14 +93,16 @@ export function FileBoard({
   const [kind, setKind] = useState<Kind>(path ? 'loading' : 'empty')
   const [text, setText] = useState('')
   const [savedText, setSavedText] = useState('')
-  const [editing, setEditing] = useState(false)
   const [imgUrl, setImgUrl] = useState<string | null>(null)
   const [size, setSize] = useState(0)
   const [errMsg, setErrMsg] = useState('')
   const [saving, setSaving] = useState(false)
   const [pathDraft, setPathDraft] = useState('')
-  // Markdown boards toggle between the rendered preview and the source editor (set per path).
-  const [mode, setMode] = useState<'preview' | 'source'>('source')
+  // Markdown boards switch between the rendered preview, a side-by-side split, and the source
+  // editor (set per path; auto-recognised to 'preview' for .md, 'source' otherwise).
+  const [mode, setMode] = useState<'preview' | 'split' | 'source'>('source')
+  // True while a file-ref is dragged over this board (drop → rebind it to that file).
+  const [dragOver, setDragOver] = useState(false)
   // Viewer font: seeded from the sticky global default; A-/A+ (+ Ctrl/Cmd +/-) adjust this board
   // live and update the sticky default (so new boards + reloads inherit it). No per-board schema.
   const [fontSize, setFontSize] = useState(readStickyFileFont)
@@ -106,6 +115,11 @@ export function FileBoard({
   }, [])
 
   const dirty = kind === 'text' && text !== savedText
+  // "Live editor on the focused board" (the locked S3 behaviour): the SELECTED text board shows
+  // the live, counter-scaled CodeMirror straight away — no click-to-edit step; every other File
+  // board shows the cheap, crisp static snapshot. A dirty board stays live even while deselected
+  // so its unsaved buffer + CM undo history survive losing selection.
+  const showEditor = !readOnly && kind === 'text' && (selected || dirty)
 
   // Refs the save handler + the blur handler read (so they see the latest values). Synced in
   // an effect, not during render, so no ref is written/read in the render phase.
@@ -140,7 +154,6 @@ export function FileBoard({
     // stale view" pattern; cf. BoardNode's LOD hover-clear). Runs once per path/ext change, not
     // per render, so the cascading-render concern the rule guards against doesn't apply.
     /* eslint-disable react-hooks/set-state-in-effect */
-    setEditing(false)
     setImgUrl(null)
     setErrMsg('')
     // Auto-recognition: previewable+editable (Markdown) opens in Preview; everything else Source.
@@ -220,10 +233,11 @@ export function FileBoard({
   const { support, parser } = useMemo(() => resolveLanguage(ext), [ext])
   const extensions = useMemo(() => buildEditorExtensions(support), [support])
   const snapshotHtml = useMemo(() => buildSnapshotHtml(text, parser), [text, parser])
-  // Render Markdown only when this is a markdown board showing the preview (cheap to skip).
+  // Render Markdown only when a markdown board is showing the preview or the split (cheap to skip).
+  const showMarkdown = isMarkdown && (mode === 'preview' || mode === 'split')
   const markdownHtml = useMemo(
-    () => (isMarkdown && mode === 'preview' ? renderMarkdownToHtml(text) : ''),
-    [isMarkdown, mode, text]
+    () => (showMarkdown ? renderMarkdownToHtml(text) : ''),
+    [showMarkdown, text]
   )
 
   // -- Save (atomic write via the S1 contract) ----------------------------------
@@ -267,29 +281,30 @@ export function FileBoard({
 
   const enterEdit = useCallback(
     (e: ReactMouseEvent): void => {
-      // Left-click only — a right-click opens the context menu (and must not also edit).
+      // Left-click only — a right-click opens the context menu (and must not also edit). Record the
+      // click point so the caret lands there once the editor mounts, then SELECT this board — that
+      // flips `showEditor` on (selected), swapping the snapshot for the live editor in place.
       if (e.button !== 0 || readOnly || kind !== 'text') return
       pendingCaretRef.current = { x: e.clientX, y: e.clientY }
-      setEditing(true)
+      selectBoard(board.id)
     },
-    [readOnly, kind]
+    [readOnly, kind, selectBoard, board.id]
   )
 
-  // Open the find-in-file panel: if the live editor is up, open it; otherwise enter edit mode
-  // and open it once the editor mounts (onCreateEditor consumes pendingSearchRef).
+  // Open the find-in-file panel: if the live editor is up, open it; otherwise mount it (select the
+  // board → showEditor) and open it once it mounts (onCreateEditor consumes pendingSearchRef).
   const openFind = useCallback((): void => {
-    // The live editor exists only in source mode; if it's up, open search there. Otherwise (the
-    // snapshot, or a Markdown preview) switch to source + mount the editor, then open search.
-    const editorUp = !!viewRef.current && editing && !(isMarkdown && mode === 'preview')
+    const editorUp = !!viewRef.current && showEditor && !(isMarkdown && mode === 'preview')
     if (editorUp && viewRef.current) {
       openSearchPanel(viewRef.current)
       viewRef.current.focus()
       return
     }
-    if (isMarkdown) setMode('source')
+    // Leave the rendered-only preview (no editor there), select the board, search on mount.
+    if (isMarkdown && mode === 'preview') setMode('source')
     pendingSearchRef.current = true
-    setEditing(true)
-  }, [editing, isMarkdown, mode])
+    selectBoard(board.id)
+  }, [showEditor, isMarkdown, mode, selectBoard, board.id])
 
   // Right-click anywhere on a bound board's content → the file actions menu (suppress the
   // native menu + keep it off the canvas).
@@ -325,12 +340,41 @@ export function FileBoard({
     [doSave, adjustFont]
   )
 
-  // Leave edit mode (back to the crisp snapshot) when focus leaves a CLEAN editor; a dirty
-  // editor stays mounted so unsaved work + undo history survive losing focus.
-  const onEditorBlur = useCallback((e: ReactFocusEvent): void => {
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-    if (!dirtyRef.current) setEditing(false)
+  // Drop a file-ref (dragged from the tree) ONTO this board → rebind it to that file. Wired in the
+  // CAPTURE phase (see the wrapper) so this fires BEFORE the live CodeMirror editor's own built-in
+  // drag/drop — otherwise CM swallows the drop on a focused board and the rebind never happens.
+  // stopPropagation then keeps the canvas drop handler from ALSO opening a second board behind it.
+  const onBoardDragOver = useCallback((e: ReactDragEvent): void => {
+    if (!e.dataTransfer.types.includes(FILEREF_MIME)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+    setDragOver(true)
   }, [])
+  const onBoardDragLeave = useCallback((e: ReactDragEvent): void => {
+    // Ignore leaves into descendants (dragleave fires crossing child boundaries).
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+    setDragOver(false)
+  }, [])
+  const onBoardDrop = useCallback(
+    (e: ReactDragEvent): void => {
+      const raw = e.dataTransfer.getData(FILEREF_MIME)
+      setDragOver(false)
+      if (!raw) return
+      e.preventDefault()
+      e.stopPropagation()
+      let next = ''
+      try {
+        next = String(JSON.parse(raw).path ?? '')
+      } catch {
+        return
+      }
+      if (!next || next === path) return
+      useCanvasStore.getState().beginChange()
+      updateBoard(board.id, { path: next })
+    },
+    [board.id, path, updateBoard]
+  )
 
   const bindPath = useCallback((): void => {
     const next = pathDraft.trim().replace(/\\/g, '/')
@@ -369,7 +413,7 @@ export function FileBoard({
               flex: 'none'
             }}
           >
-            {(['preview', 'source'] as const).map((m) => (
+            {(['preview', 'split', 'source'] as const).map((m) => (
               <button
                 key={m}
                 className="nodrag"
@@ -386,7 +430,7 @@ export function FileBoard({
                   color: mode === m ? 'var(--text)' : 'var(--text-3)'
                 }}
               >
-                {m === 'preview' ? 'Preview' : 'Source'}
+                {m === 'preview' ? 'Preview' : m === 'split' ? 'Split' : 'Source'}
               </button>
             ))}
           </span>
@@ -414,7 +458,7 @@ export function FileBoard({
             A+
           </button>
         </span>
-        {!readOnly && mode === 'source' && dirty && (
+        {!readOnly && mode !== 'preview' && dirty && (
           <span
             title="Unsaved changes"
             aria-label="Unsaved changes"
@@ -427,7 +471,7 @@ export function FileBoard({
             }}
           />
         )}
-        {!readOnly && mode === 'source' && (
+        {!readOnly && mode !== 'preview' && (
           <button
             className="nodrag"
             title="Save (Cmd/Ctrl+S)"
@@ -464,6 +508,59 @@ export function FileBoard({
       </div>
     ) : undefined
 
+  // The text content's left/sole pane: the live editor on the focused board, else the crisp
+  // snapshot. Built once so the plain (source) view and the split view's left half share it.
+  const textPane: ReactElement = showEditor ? (
+    <EditorHost zoom={zoom} fontPx={fontSize} onKeyDown={onEditorKeyDown}>
+      <CodeMirror
+        value={text}
+        height="100%"
+        style={{ height: '100%' }}
+        theme="none"
+        editable={!readOnly}
+        readOnly={readOnly}
+        extensions={extensions}
+        basicSetup={{
+          lineNumbers: true,
+          foldGutter: false,
+          highlightActiveLine: true,
+          highlightActiveLineGutter: true,
+          autocompletion: false,
+          searchKeymap: false,
+          highlightSelectionMatches: false,
+          syntaxHighlighting: false,
+          closeBrackets: true,
+          bracketMatching: true
+        }}
+        onChange={setText}
+        onCreateEditor={onCreateEditor}
+      />
+    </EditorHost>
+  ) : (
+    <pre
+      className="nowheel nodrag nopan"
+      data-test="file-snapshot"
+      title={readOnly ? undefined : 'Click to edit'}
+      onMouseDown={enterEdit}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        margin: 0,
+        overflow: 'auto',
+        padding: '8px 12px',
+        fontFamily: 'var(--mono)',
+        fontSize: fontSize,
+        lineHeight: 1.55,
+        color: 'var(--text)',
+        whiteSpace: 'pre',
+        tabSize: 2,
+        cursor: readOnly ? 'default' : 'text'
+      }}
+      // Safe: text escaped, colours are fixed palette hexes (see buildSnapshotHtml).
+      dangerouslySetInnerHTML={{ __html: snapshotHtml }}
+    />
+  )
+
   return (
     <BoardFrame
       type="file"
@@ -481,9 +578,22 @@ export function FileBoard({
       onRemoveFromGroup={onRemoveFromGroup}
       onStartConnect={onStartConnect}
     >
-      <div style={{ position: 'absolute', inset: 0 }} onContextMenu={onContextMenu}>
+      <div
+        style={{ position: 'absolute', inset: 0 }}
+        onContextMenu={onContextMenu}
+        onDragOverCapture={onBoardDragOver}
+        onDragLeaveCapture={onBoardDragLeave}
+        onDropCapture={onBoardDrop}
+      >
         {kind === 'empty' && (
-          <EmptyState pathDraft={pathDraft} onDraftChange={setPathDraft} onBind={bindPath} />
+          <EmptyState
+            pathDraft={pathDraft}
+            onDraftChange={setPathDraft}
+            onBind={bindPath}
+            onBrowse={() => requestBrowse(board.id)}
+            armed={armed}
+            onCancelBrowse={clearPendingBind}
+          />
         )}
 
         {kind === 'loading' && (
@@ -497,60 +607,24 @@ export function FileBoard({
         {kind === 'text' &&
           (isMarkdown && mode === 'preview' ? (
             <MarkdownPreview html={markdownHtml} />
-          ) : editing && !readOnly ? (
-            <EditorHost
-              zoom={zoom}
-              fontPx={fontSize}
-              onBlur={onEditorBlur}
-              onKeyDown={onEditorKeyDown}
-            >
-              <CodeMirror
-                value={text}
-                height="100%"
-                style={{ height: '100%' }}
-                theme="none"
-                editable={!readOnly}
-                readOnly={readOnly}
-                extensions={extensions}
-                basicSetup={{
-                  lineNumbers: true,
-                  foldGutter: false,
-                  highlightActiveLine: true,
-                  highlightActiveLineGutter: true,
-                  autocompletion: false,
-                  searchKeymap: false,
-                  highlightSelectionMatches: false,
-                  syntaxHighlighting: false,
-                  closeBrackets: true,
-                  bracketMatching: true
+          ) : isMarkdown && mode === 'split' ? (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  position: 'relative',
+                  borderRight: '1px solid var(--border-subtle)'
                 }}
-                onChange={setText}
-                onCreateEditor={onCreateEditor}
-              />
-            </EditorHost>
+              >
+                {textPane}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+                <MarkdownPreview html={markdownHtml} />
+              </div>
+            </div>
           ) : (
-            <pre
-              className="nowheel nodrag nopan"
-              data-test="file-snapshot"
-              title={readOnly ? undefined : 'Click to edit'}
-              onMouseDown={enterEdit}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                margin: 0,
-                overflow: 'auto',
-                padding: '8px 12px',
-                fontFamily: 'var(--mono)',
-                fontSize: fontSize,
-                lineHeight: 1.55,
-                color: 'var(--text)',
-                whiteSpace: 'pre',
-                tabSize: 2,
-                cursor: readOnly ? 'default' : 'text'
-              }}
-              // Safe: text escaped, colours are fixed palette hexes (see buildSnapshotHtml).
-              dangerouslySetInnerHTML={{ __html: snapshotHtml }}
-            />
+            textPane
           ))}
 
         {kind === 'image' && imgUrl && (
@@ -595,6 +669,35 @@ export function FileBoard({
         {kind === 'error' && (
           <GuardCard title="Couldn't open this file" fileName={fileName} detail={errMsg} danger />
         )}
+
+        {/* Drop affordance: a file-ref dragged from the tree is hovering this board → drop rebinds
+            it to that file. pointer-events:none so it never eats the drop it advertises. */}
+        {dragOver && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              display: 'grid',
+              placeItems: 'center',
+              background: 'var(--accent-wash)',
+              border: '2px dashed var(--accent)',
+              borderRadius: 'var(--r-inner)',
+              zIndex: 2
+            }}
+          >
+            <span
+              style={{
+                fontFamily: 'var(--ui)',
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--accent)'
+              }}
+            >
+              Drop to open here
+            </span>
+          </div>
+        )}
       </div>
       {ctxMenu && path && (
         <FileActionsMenu
@@ -621,13 +724,11 @@ export function FileBoard({
 function EditorHost({
   zoom,
   fontPx,
-  onBlur,
   onKeyDown,
   children
 }: {
   zoom: number
   fontPx: number
-  onBlur: (e: ReactFocusEvent) => void
   onKeyDown: (e: ReactKeyboardEvent) => void
   children: ReactElement
 }): ReactElement {
@@ -657,7 +758,6 @@ function EditorHost({
     <div
       className="nowheel nodrag nopan"
       data-test="file-editor"
-      onBlur={onBlur}
       onKeyDown={onKeyDown}
       style={host}
     >

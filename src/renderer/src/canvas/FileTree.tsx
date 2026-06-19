@@ -7,21 +7,26 @@
  * re-listing only the affected — and currently-loaded — parent folder, debounced.
  *
  * Rows are native HTML5 drag sources emitting the `application/x-canvas-ade-fileref` payload
- * (the drop target lands in S4); clicking a file opens it as a File board via the S1
- * `openFileBoard` action (placeholder board until S3). react-arborist provides the windowing
- * + collapse; its internal react-dnd reordering is disabled (`disableDrag`/`disableDrop`) so the
- * native drag-out is unobstructed. The pure data model lives in `fileTreeData.ts`.
+ * (S3 drop targets: a File board rebinds to the dropped file; empty canvas opens a new File
+ * board); clicking a file opens it as a File board via the S1 `openFileBoard` action.
+ * react-arborist provides the windowing + collapse; its internal react-dnd reordering is disabled
+ * (`disableDrag`/`disableDrop`). Because that disables arborist's `canDrag`, we must NOT attach its
+ * `dragHandle` to the row (react-dnd would cancel the native dragstart) — see FileRow. The pure
+ * data model lives in `fileTreeData.ts`.
  */
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type CSSProperties,
   type ReactElement
 } from 'react'
-import { Tree, type NodeRendererProps } from 'react-arborist'
+import { Tree, type NodeRendererProps, type TreeApi } from 'react-arborist'
 import { useCanvasStore } from '../store/canvasStore'
+import { useFileTreeUiStore } from '../store/fileTreeUiStore'
 import { Icon } from './Icon'
 import { FILEREF_MIME, applyListing, findNode, parentOf, type FileNode } from './fileTreeData'
 
@@ -46,37 +51,88 @@ function Glyph({ d, style }: { d: string; style?: CSSProperties }): ReactElement
 }
 
 const FOLDER_PATH = 'M4 7a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z'
+// File glyphs all share the folded-corner silhouette + a type mark inside, so they read as a
+// family. Kept NEUTRAL (no per-type colour) to honour the one-accent design contract (DESIGN.md);
+// the differentiation is by shape, like a minimal icon theme.
 const FILE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4'
+const CODE_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M10 12l-1.6 2 1.6 2M14 12l1.6 2-1.6 2' // </>
+const DOC_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9.5 13h5M9.5 16h3.5' // text lines
+const IMG_PATH = 'M7 4h7l4 4v12H7zM14 4v4h4M9 17l2-2.4 1.5 1.5L15.5 13l1.5 2' // mountain
+
+const CODE_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'])
+const DOC_EXT = new Set(['md', 'mdx', 'markdown', 'txt'])
+const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'avif'])
+
+/** The folded-file glyph for a filename, picked by extension (folders use FOLDER_PATH). */
+function fileGlyphPath(name: string): string {
+  const dot = name.lastIndexOf('.')
+  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
+  if (CODE_EXT.has(ext)) return CODE_PATH
+  if (DOC_EXT.has(ext)) return DOC_PATH
+  if (IMG_EXT.has(ext)) return IMG_PATH
+  return FILE_PATH
+}
 
 // ── row renderer ───────────────────────────────────────────────────────────────
 
-function FileRow({ node, dragHandle }: NodeRendererProps<FileNode>): ReactElement {
+function FileRow({ node }: NodeRendererProps<FileNode>): ReactElement {
   const openFileBoard = useCanvasStore((s) => s.openFileBoard)
   const d = node.data
 
   const onClick = (e: React.MouseEvent): void => {
     e.stopPropagation()
-    if (d.isDir) node.toggle()
-    else openFileBoard(d.id)
+    if (d.isDir) {
+      node.toggle()
+      return
+    }
+    // If an empty File board armed itself via "Browse files", bind THIS file INTO it (and focus
+    // it) rather than opening a separate board. Guard against a stale/now-bound target.
+    const pendingId = useFileTreeUiStore.getState().pendingBindId
+    if (pendingId) {
+      const cs = useCanvasStore.getState()
+      const target = cs.boards.find((b) => b.id === pendingId)
+      useFileTreeUiStore.getState().clearPendingBind()
+      if (target && target.type === 'file' && !target.path) {
+        cs.beginChange()
+        cs.updateBoard(pendingId, { path: d.id })
+        useCanvasStore.setState({ pendingFocusId: pendingId })
+        return
+      }
+    }
+    openFileBoard(d.id)
   }
   const onDragStart = (e: React.DragEvent): void => {
-    // setData is string-only — JSON-encode the {path,label} payload (the S4 drop handler parses it).
+    // setData is string-only — JSON-encode the {path,label} payload (the drop handlers parse it).
     e.dataTransfer.setData(FILEREF_MIME, JSON.stringify({ path: d.id, label: d.name }))
+    // CRITICAL: also set a react-dnd-recognised native type (text/plain). react-arborist mounts
+    // react-dnd's HTML5Backend, whose WINDOW-level dragstart listener calls preventDefault on any
+    // native drag that carries neither a react-dnd source nor a recognised native type (Files/URL/
+    // text) — which would silently cancel this drag-out. Setting text/plain makes it a "native text"
+    // drag react-dnd leaves alone; our drop targets still read the FILEREF_MIME payload. The text
+    // value (the path) is a sensible plain-text fallback for drops outside the app.
+    e.dataTransfer.setData('text/plain', d.id)
     e.dataTransfer.effectAllowed = 'copy'
   }
 
   return (
+    // NB: we deliberately do NOT attach arborist's `dragHandle` here. That handle is react-dnd's
+    // drag-source connector, and with `disableDrag` set arborist's `canDrag` is false → react-dnd
+    // would `preventDefault` the native `dragstart` and our drag-out would never begin. Leaving it
+    // unattached frees the native HTML5 drag below (the tree's only drag is this file-ref drag-out).
     <div
-      ref={dragHandle}
       className="ca-ftree-row"
-      // Own the indent (arborist's `style` only carries paddingLeft) so root rows keep a base inset.
-      style={{ paddingLeft: 8 + node.level * 12 }}
+      // Base inset only; one indent guide per ancestor level is rendered below (the per-level
+      // padding now lives in the guide spans, so the lines align with the nesting).
+      style={{ paddingLeft: 8 }}
       data-dir={d.isDir || undefined}
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
       title={d.id}
     >
+      {Array.from({ length: node.level }, (_, i) => (
+        <span key={i} className="ca-ftree-guide" aria-hidden />
+      ))}
       {d.isDir ? (
         <Icon
           name="chevron"
@@ -91,7 +147,7 @@ function FileRow({ node, dragHandle }: NodeRendererProps<FileNode>): ReactElemen
         <span style={{ width: 13, flex: '0 0 auto' }} aria-hidden />
       )}
       <Glyph
-        d={d.isDir ? FOLDER_PATH : FILE_PATH}
+        d={d.isDir ? FOLDER_PATH : fileGlyphPath(d.name)}
         style={{ color: d.isDir ? 'var(--text-2)' : 'var(--text-3)' }}
       />
       <span className="ca-ftree-name">{d.name}</span>
@@ -101,11 +157,19 @@ function FileRow({ node, dragHandle }: NodeRendererProps<FileNode>): ReactElemen
 
 // ── component ────────────────────────────────────────────────────────────────
 
-export function FileTree(): ReactElement {
+/** Imperative handle the SidePanel drives (collapse-all button + Ctrl+Shift+B). */
+export interface FileTreeHandle {
+  collapseAll: () => void
+}
+
+export const FileTree = forwardRef<FileTreeHandle>(function FileTree(_props, ref): ReactElement {
   const [data, setData] = useState<FileNode[]>([])
   const [rootLoaded, setRootLoaded] = useState(false)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const hostRef = useRef<HTMLDivElement>(null)
+  // react-arborist's imperative API (closeAll/openParents/scrollTo) — used for collapse-all now.
+  const treeApiRef = useRef<TreeApi<FileNode> | null>(null)
+  useImperativeHandle(ref, () => ({ collapseAll: () => treeApiRef.current?.closeAll() }), [])
   // Mirror `data` into a ref so the (once-registered) live-event subscription and the toggle
   // handler read the latest tree without re-subscribing on every change.
   const dataRef = useRef<FileNode[]>(data)
@@ -197,6 +261,7 @@ export function FileTree(): ReactElement {
     <div ref={hostRef} className="ca-ftree-scroll">
       {size.h > 0 && (
         <Tree<FileNode>
+          ref={treeApiRef}
           data={data}
           idAccessor="id"
           childrenAccessor={(n) => (n.isDir ? (n.children ?? []) : null)}
@@ -217,4 +282,4 @@ export function FileTree(): ReactElement {
       {rootLoaded && data.length === 0 && <div className="ca-ftree-empty">Empty folder</div>}
     </div>
   )
-}
+})

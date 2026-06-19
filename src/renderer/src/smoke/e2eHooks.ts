@@ -134,6 +134,9 @@ export interface CanvasE2E {
   patchBoard: (id: string, patch: Partial<Board>) => void
   /** Fit the camera to one board (id) or all boards — forces zoom ≥ LOD for capture. */
   fitView: (id?: string) => void
+  /** Select a board by id, or pass null to clear the selection (e.g. to assert a File board's
+   *  deselected snapshot rather than its selected live editor). */
+  select: (id: string | null) => void
   /** Auto-tidy: repack every board with `mode` (default smart); `aspect` steers grid. */
   tidy: (mode?: TidyMode, aspect?: number) => void
   /** Tile: resize + move every board to fill zones of `area` with `template`. */
@@ -456,6 +459,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     fitView(id) {
       const opts = { maxZoom: 1, padding: 0.2, duration: 0 } as const
       void rf.fitView(id ? { ...opts, nodes: [{ id }] } : opts)
+    },
+    select(id) {
+      useCanvasStore.getState().selectBoard(id)
     },
     tidy(mode, aspect) {
       useCanvasStore.getState().tidyBoards(mode, aspect)

@@ -129,26 +129,101 @@ export function GuardCard({
   )
 }
 
-/** Unbound board: a hint plus a project-relative path field so a file board is usable before
- *  the S2 tree lands (and as a permanent "point this board at a file" affordance). */
+/** Unbound board. Primary path: "Browse files" reveals the docked tree and ARMS this board so the
+ *  next file clicked in the tree fills it (or drag a file straight onto the board). Typing a
+ *  project-relative path is kept as a secondary affordance under an "or" divider. */
 export function EmptyState({
   pathDraft,
   onDraftChange,
-  onBind
+  onBind,
+  onBrowse,
+  armed,
+  onCancelBrowse
 }: {
   pathDraft: string
   onDraftChange: (v: string) => void
   onBind: () => void
+  onBrowse: () => void
+  armed: boolean
+  onCancelBrowse: () => void
 }): ReactElement {
   return (
     <Centered>
       <div
-        style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '82%', maxWidth: 320 }}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 10,
+          width: '86%',
+          maxWidth: 340
+        }}
       >
-        <div style={{ fontFamily: 'var(--ui)', fontSize: 13, color: 'var(--text-2)' }}>
+        <svg
+          width={26}
+          height={26}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--text-3)"
+          strokeWidth={1.4}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M7 4h7l4 4v12H7zM14 4v4h4" />
+        </svg>
+        <div
+          style={{ fontFamily: 'var(--ui)', fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}
+        >
           No file open
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+
+        <button
+          className="nodrag"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={armed ? onCancelBrowse : onBrowse}
+          style={{
+            fontFamily: 'var(--ui)',
+            fontSize: 12,
+            fontWeight: 500,
+            color: armed ? 'var(--accent)' : 'var(--text)',
+            background: armed ? 'var(--accent-wash)' : 'var(--surface-overlay)',
+            border: `1px solid ${armed ? 'var(--accent)' : 'var(--border-subtle)'}`,
+            borderRadius: 'var(--r-ctl)',
+            padding: '6px 14px',
+            cursor: 'pointer'
+          }}
+        >
+          {armed ? 'Choose a file in the tree — cancel' : 'Browse files'}
+        </button>
+        <div
+          style={{
+            fontFamily: 'var(--ui)',
+            fontSize: 11,
+            color: 'var(--text-3)',
+            textAlign: 'center'
+          }}
+        >
+          {armed
+            ? 'Pick a file from the tree on the left, or drag one onto this board.'
+            : 'Click a file in the tree, or drag one onto this board.'}
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            color: 'var(--text-faint)'
+          }}
+        >
+          <span style={{ flex: 1, height: 1, background: 'var(--border-subtle)' }} />
+          <span style={{ fontFamily: 'var(--ui)', fontSize: 10 }}>or</span>
+          <span style={{ flex: 1, height: 1, background: 'var(--border-subtle)' }} />
+        </div>
+
+        <div style={{ display: 'flex', gap: 6, width: '100%' }}>
           <input
             className="nodrag nopan"
             value={pathDraft}
@@ -191,9 +266,6 @@ export function EmptyState({
           >
             Open
           </button>
-        </div>
-        <div style={{ fontFamily: 'var(--ui)', fontSize: 11, color: 'var(--text-3)' }}>
-          Open a file from the tree, or type a project-relative path.
         </div>
       </div>
     </Centered>

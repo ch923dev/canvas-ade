@@ -131,6 +131,13 @@ export interface CanvasState {
    */
   configPendingId: string | null
   /**
+   * One-shot "camera-focus this board next" request — EPHEMERAL (never serialized; optional so it
+   * needs no initializer). `openFileBoard` sets it to the opened board's id on the tree-click path;
+   * a Canvas effect consumes it (focusBoardById + dim) then clears it. Decouples the store from the
+   * React Flow instance so opening a file from the tree always pans the camera onto it.
+   */
+  pendingFocusId?: string | null
+  /**
    * Add a board of `type` at a world position; selects it; returns its id. `opts.id`
    * injects a caller-minted id (the MCP `spawn_board` path mints the id in MAIN so
    * the tool can return it to the agent); omitted → the store mints one. `opts.configPending`
@@ -171,11 +178,15 @@ export interface CanvasState {
   /**
    * Open a File board bound to `relPath` (file-tree epic, the S1 contract the tree-row click +
    * the file-ref chip click both call). If a File board for that EXACT path is already open,
-   * SELECTS it instead of duplicating; otherwise creates a fresh `'file'` board near the
-   * current viewport via the normal add-board path (one undo step, freeSlot-placed). Returns
-   * the board id (the existing one when re-focusing).
+   * SELECTS it instead of duplicating; otherwise creates a fresh `'file'` board (one undo step,
+   * freeSlot-placed). Returns the board id (the existing one when re-focusing).
+   *
+   * `at` is the world-space TOP-LEFT to place a new board (a canvas drop passes the cursor
+   * position); omit it for the tree-click path → the board lands near the viewport centre AND a
+   * camera focus is requested (`pendingFocusId`). A drop already lands under the cursor, so it
+   * does NOT yank the camera.
    */
-  openFileBoard: (relPath: string) => string
+  openFileBoard: (relPath: string, at?: { x: number; y: number }) => string
   /** Remove a board; clears the selection if it was the selected one. */
   removeBoard: (id: string) => void
   /** Clone a board (geometry + state) offset 36px, select the copy; one undo step. Returns the new id (null if the source is gone). */
@@ -678,23 +689,23 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   clearConfigPending: () => set({ configPendingId: null }),
 
-  openFileBoard: (relPath) => {
-    // Re-focus an already-open File board for the EXACT same path instead of duplicating.
+  openFileBoard: (relPath, at) => {
+    // Re-focus an already-open File board for the EXACT same path instead of duplicating. A tree
+    // click (no `at`) ALSO requests a camera focus so an off-screen board is brought into view; a
+    // canvas drop (`at` given) only selects + places under the cursor. `center` derives the
+    // world-space viewport centre (persisted viewport + window size, origin fallback); freeSlot
+    // nudges off any overlap, exactly like the dock add-board path.
     const existing = get().boards.find((b) => b.type === 'file' && b.path === relPath)
-    if (existing) {
-      get().selectBoard(existing.id)
-      return existing.id
-    }
-    // Place near the current viewport centre when a camera transform is known (derive the
-    // world-space centre from the persisted viewport + the window size); else fall back to
-    // the origin. freeSlot nudges off any overlap, exactly like the dock add-board path.
+    if (existing) get().selectBoard(existing.id)
+    const s = DEFAULT_BOARD_SIZE.file
     const vp = get().viewport
     const { innerWidth: w = 1280, innerHeight: h = 800 } = globalThis
-    const size = DEFAULT_BOARD_SIZE.file
-    const at = vp
-      ? { x: (w / 2 - vp.x) / vp.zoom - size.w / 2, y: (h / 2 - vp.y) / vp.zoom - size.h / 2 }
-      : { x: -size.w / 2, y: -size.h / 2 }
-    return get().addBoard('file', at, { path: relPath })
+    const center = vp
+      ? { x: (w / 2 - vp.x) / vp.zoom - s.w / 2, y: (h / 2 - vp.y) / vp.zoom - s.h / 2 }
+      : { x: -s.w / 2, y: -s.h / 2 }
+    const id = existing ? existing.id : get().addBoard('file', at ?? center, { path: relPath })
+    if (!at) set({ pendingFocusId: id })
+    return id
   },
 
   removeBoard: (id) =>
