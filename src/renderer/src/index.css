@@ -802,11 +802,14 @@ body {
   font-size: 11px;
 }
 
-/* ── Board node + NodeResizer (Phase 2.0-C) ───────────────────────────────────
+/* ── Board node + NodeResizer (Phase 2.0-C; CANVAS-05) ─────────────────────────
    BoardFrame paints the box, border, selection ring and shadow itself, so the RF
    node wrapper stays chrome-less. The resizer handles are restyled to DESIGN.md
-   §6: 10px corner squares (--surface-overlay + --border-strong, r2), the SE
-   corner carrying an extra --accent ring; edge lines are an invisible hit area. */
+   §6: 8×8 corner squares (--surface-overlay + --border-strong, r2), the SE corner
+   carrying an extra --accent ring. The four edge controls keep RF's full-edge hit
+   line (a deliberate divergence from §6's discrete "edge midpoints" — a full-edge
+   target is the RF-native affordance) but now paint a faint --border-subtle line so
+   the edge resize affordance is visible on hover/select, not invisible. */
 .react-flow__node-board {
   background: transparent;
   border: none;
@@ -816,8 +819,8 @@ body {
 }
 
 .react-flow__resize-control.handle {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
   background: var(--surface-overlay);
   border: 1px solid var(--border-strong);
@@ -836,7 +839,7 @@ body {
   box-shadow: 0 0 0 1px var(--accent);
 }
 .react-flow__resize-control.line {
-  border-color: transparent;
+  border-color: var(--border-subtle);
 }
 
 /* ── Browser board (Phase 2.2, DESIGN.md §7.2) ────────────────────────────────
