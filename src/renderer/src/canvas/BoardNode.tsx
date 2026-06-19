@@ -120,18 +120,56 @@ export interface BoardViewProps<T extends Board = Board> {
   onStartConnect?: () => void
 }
 
-export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>): ReactElement {
-  const board = data.board
-  // T1.6: the LOD card's status dot is derived from the SAME bucket the MCP sees
-  // (boardStatusBucket over the live terminal/preview stores), so the zoomed-out dot
-  // and the agent's canvas://boards view never disagree. (The old type-only dot lied —
-  // a browser always read green, ignoring load-failed.) Terminals keep their own rich
-  // pill in TerminalBoard; this LOD path is taken only by browser/planning boards.
+/**
+ * The zoomed-out LOD card (non-terminal boards). Split out of BoardNode (PERF-05) so its
+ * terminal/preview runtime subscriptions + status-pill derivation run ONLY while the card is
+ * mounted, not for every board at full detail.
+ *
+ * T1.6: the status dot is derived from the SAME bucket the MCP sees (boardStatusBucket over the
+ * live terminal/preview stores), so the zoomed-out dot and the agent's canvas://boards view never
+ * disagree. (The old type-only dot lied — a browser always read green, ignoring load-failed.)
+ * Terminals keep their own rich pill in TerminalBoard; this LOD path is taken only by
+ * browser/planning boards.
+ */
+function LodBoardCard({
+  board,
+  selected,
+  dimmed,
+  cardActive
+}: {
+  board: Board
+  selected: boolean
+  dimmed: boolean
+  /** False during the ~100ms lingering fade-out before unmount → render the ca-lod-out tween. */
+  cardActive: boolean
+}): ReactElement {
   const termRunning = useTerminalRuntimeStore((s) => !!s.running[board.id])
   const previewStatus = usePreviewStore((s) => s.byId[board.id]?.status)
   const lodPill = bucketToPill(
     boardStatusBucket(board.type, { terminalRunning: termRunning, preview: previewStatus })
   )
+  return (
+    <div
+      className={cardActive ? undefined : 'ca-lod-out'}
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+    >
+      <BoardFrame
+        type={board.type}
+        title={board.title}
+        selected={selected}
+        dimmed={dimmed}
+        lod
+        status={lodPill}
+      />
+    </div>
+  )
+}
+
+export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>): ReactElement {
+  const board = data.board
+  // PERF-05: the LOD card's status pill (+ its terminal/preview runtime subscriptions) lives
+  // in LodBoardCard, mounted only when the card shows. Keeping it here made every board — at
+  // full detail, where the pill is unused — re-render on any terminal/preview status change.
   // Subscribe to the derived LOD boolean, NOT the raw zoom scalar: with Object.is
   // equality the selected value only flips at the LOD threshold, so a BoardNode
   // re-renders only at the crossover instead of on every intra-band zoom frame (#39).
@@ -291,19 +329,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
           ~100ms with ca-lod-out fading over the remounted detail, then unmounts. Rendered
           AFTER the anchor so it paints above the detail content during the overlap. */}
       {showCard && (
-        <div
-          className={cardActive ? undefined : 'ca-lod-out'}
-          style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
-        >
-          <BoardFrame
-            type={board.type}
-            title={board.title}
-            selected={selected}
-            dimmed={dimmed}
-            lod
-            status={lodPill}
-          />
-        </div>
+        <LodBoardCard board={board} selected={selected} dimmed={dimmed} cardActive={cardActive} />
       )}
       {showDetail && createPortal(subtree, contentHost)}
     </>
