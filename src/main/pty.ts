@@ -184,6 +184,27 @@ export function setRecapEnvProvider(fn: RecapEnvProvider | undefined): void {
   recapEnvProvider = fn
 }
 
+/**
+ * Injectable spawn-time hook for the Agent Orchestration provisioner (PLAN §3, 2026-06-19).
+ * Called LAST — just before the launch line is written — so the matching agent CLI's MCP config
+ * carries the LIVE loopback endpoint + bearer BEFORE the agent reads it. The endpoint+token rotate
+ * each app restart, so re-running this on every spawn is what fixes the stale-config failure
+ * ("tool doesn't exist"). The injected provider owns the policy (consent + token mint + which CLI);
+ * its write is synchronous so the file is on disk before the agent launches. Like recapEnvProvider,
+ * a provider error must NEVER break a spawn — it is called inside a try/catch. NEVER logs the token.
+ */
+type OrchestrationSyncProvider = (opts: {
+  id: string
+  launchCommand?: string
+  cwd?: string
+}) => void
+let orchestrationSyncProvider: OrchestrationSyncProvider | undefined
+
+/** index.ts wires the policy (consent + mint + provisioner) here; pty.ts stays decoupled. */
+export function setOrchestrationSyncProvider(fn: OrchestrationSyncProvider | undefined): void {
+  orchestrationSyncProvider = fn
+}
+
 /** A freshly minted port pair (real `MessageChannelMain` or a test double). */
 interface PortPair {
   port1: MessagePortMain
@@ -455,6 +476,22 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
     // Announce running, then — spawn the SHELL, not the agent — write the
     // launchCommand as the first PTY line so the agent inherits PATH/profile/auth.
     port1.postMessage({ t: 'state', state: 'running' satisfies PtyState })
+
+    // Agent Orchestration (PLAN §3): re-sync the live MCP endpoint into the matching CLI's config
+    // BEFORE the agent launches, so a real terminal agent can reach Expanse's MCP and a restart
+    // refreshes the rotated endpoint. Policy + token mint live in the injected provider; the write
+    // is synchronous (file on disk before the launch line). A failure here must NEVER break the
+    // spawn (mirrors the recapEnvProvider guard above).
+    try {
+      orchestrationSyncProvider?.({
+        id: opts.id,
+        launchCommand: opts.launchCommand,
+        cwd: spawnCwd
+      })
+    } catch {
+      /* provisioning is best-effort — never block the spawn */
+    }
+
     const launch = opts.launchCommand?.trim()
     if (launch) proc.write(launch + '\r')
 
