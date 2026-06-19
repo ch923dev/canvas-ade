@@ -15,7 +15,8 @@ import {
   getTerminalRuntime,
   getTerminalActivityStaleMs,
   getTerminalCwd,
-  setRecapEnvProvider
+  setRecapEnvProvider,
+  setOrchestrationSyncProvider
 } from './pty'
 import { boardGitDiff } from './gitDiff'
 import { registerPreviewOsrHandlers, disposeAllOsr } from './previewOsr'
@@ -66,6 +67,9 @@ import {
 } from './agentRecapMap'
 import { registerRecapHandlers, readConsent } from './recapConsent'
 import { registerOrchestrationHandlers } from './orchestrationConsent'
+import { registerOrchestrationProvisionHandlers } from './orchestrationProvision'
+import { mintTerminalToken } from './orchestration/seam'
+import { makeOrchestrationSyncProvider, unsyncProvisioners } from './cliProvisioners'
 import {
   extractMilestones,
   isTrustedTranscriptPath,
@@ -593,21 +597,34 @@ app.whenReady().then(async () => {
   // isOrchestrationEnabled() — consumed by the P3 spawn-time provisioner hook (pty.ts) and the
   // P0 plan-write gate (mcp.ts) — resolves the right store with only a projectDir.
   //
-  // onChange fires AFTER a decision is durably persisted. It is the WT-provision (P3) seam:
-  // 'enabled' → write each detected CLI's MCP config; 'declined' → remove them (unsync, 0o600
-  // files per PLAN §6). Until P3 lands the provisioners, this is a documented best-effort
-  // placeholder — the primary sync path is spawn-time (pty.ts), so a consent flip with no
-  // provisioner wiring yet is safe (the next terminal spawn re-syncs). Never throw here (the
-  // decision is already durable); P3's body must own its own async errors.
+  // onChange fires AFTER a decision is durably persisted (WT-provision P3 seam). On REVOKE,
+  // remove our `canvas-ade` entry from every CLI's config (best-effort, fire-and-forget —
+  // `unsyncProvisioners` isolates per-CLI failures and never rejects). On ENABLE nothing
+  // proactive here: the Sync modal (explicit, project-level) and the spawn-time hook (per
+  // terminal start, below) own writing the configs. Never throw here — the decision is already
+  // durable (the IPC handler also wraps this in try/catch).
   registerOrchestrationHandlers(
     ipcMain,
     () => mainWindow,
     userData,
     getCurrentDir,
-    (_projectPath, _on) => {
-      // WT-provision (P3): drive the per-CLI provisioner sync/unsync here.
+    (projectPath, on) => {
+      if (!on) void unsyncProvisioners({ projectDir: projectPath }).catch(() => {})
     }
   )
+
+  // Spawn-time auto-sync (WT-provision P3 hook): on each terminal start, if the project has
+  // orchestration consent and the launch command starts a known CLI, write that CLI's MCP config
+  // with a freshly-minted connected-tier token BEFORE the launch line runs — the live loopback
+  // endpoint + bearer rotate each app restart, so re-syncing here is what fixes the
+  // stale-config-after-restart failure ("tool doesn't exist"). Errors are swallowed by pty.ts's
+  // spawn-time try/catch, so a provisioning failure can never break a spawn. 🔒 token never logged.
+  setOrchestrationSyncProvider(
+    makeOrchestrationSyncProvider({ getProjectDir: getCurrentDir, mintToken: mintTerminalToken })
+  )
+
+  // The Sync modal's data plane (status + manual sync), frame-guarded inside the module.
+  registerOrchestrationProvisionHandlers(ipcMain, () => mainWindow, getCurrentDir)
 
   // ── Recap map watcher (Task 10 Step 3): learned transcript paths → renderer ──────────
   // The external hook appends {boardId, sessionId, transcriptPath} to the app-owned map as
