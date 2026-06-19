@@ -66,7 +66,7 @@ import { buildCanvasEdges } from './canvasEdges'
 import { planNodeRemovalCleanup } from '../lib/canvasDecisions'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { BoardActionsContext } from './boardActions'
-import { FullViewModal } from './FullViewModal'
+import { FullViewModal, type FullViewRect } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { BackdropLayer } from './backdrop/BackdropLayer'
@@ -797,6 +797,18 @@ function CanvasInner(): ReactElement {
 
   const fullViewBoard = fullViewId ? boards.find((b) => b.id === fullViewId) : undefined
 
+  // Origin rect for the full-view stretch (FLIP): the board's CURRENT on-screen rect, read
+  // live so it's right at open AND at close (even after a window resize). Identity-stable
+  // while in full view (fullViewId constant) so the modal's effects don't churn.
+  const getFullViewOriginRect = useCallback((): FullViewRect | null => {
+    if (!fullViewId) return null
+    const b = useCanvasStore.getState().boards.find((x) => x.id === fullViewId)
+    if (!b) return null
+    const tl = rf.flowToScreenPosition({ x: b.x, y: b.y })
+    const br = rf.flowToScreenPosition({ x: b.x + b.w, y: b.y + b.h })
+    return { left: tl.x, top: tl.y, width: br.x - tl.x, height: br.y - tl.y }
+  }, [rf, fullViewId])
+
   return (
     <BoardActionsContext.Provider value={boardActions}>
       <FullViewContext.Provider value={fullViewHost}>
@@ -998,6 +1010,7 @@ function CanvasInner(): ReactElement {
             onEntered={handleFullViewEntered}
             onExited={handleFullViewExited}
             onHost={setFullViewHost}
+            getOriginRect={getFullViewOriginRect}
           />
         )}
         {paletteView && (

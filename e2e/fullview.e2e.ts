@@ -106,4 +106,32 @@ test.describe('@preview full view (OSR portal relocation — real instance)', ()
     expect(fvClose.typed, 'Escape dispatched from focused TEXTAREA').toBe(true)
     expect(gone, 'modal unmounted after Esc').toBe(true)
   })
+
+  test('stretch FLIP: the frame is position:fixed and settles to the 5vh/5vw full rect', async ({
+    page
+  }) => {
+    const id = await seed(page, 'terminal', { launchCommand: 'echo stretch' })
+    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
+    await page.waitForTimeout(450) // > FULLVIEW_MS (320) + the overshoot settle
+    const m = await evalIn<{ pos: string; wFrac: number; hFrac: number }>(
+      page,
+      `(() => {
+         const f = document.querySelector('.fullview-frame');
+         if (!f) return { pos: 'none', wFrac: 0, hFrac: 0 };
+         const r = f.getBoundingClientRect();
+         return {
+           pos: getComputedStyle(f).position,
+           wFrac: r.width / window.innerWidth,
+           hFrac: r.height / window.innerHeight
+         };
+       })()`
+    )
+    await evalIn(page, 'window.__canvasE2E.setFullView(null)')
+    await page.waitForTimeout(200)
+    // position:fixed is what lets the FLIP animate left/top/width/height; the settled frame
+    // must reach the 5vh/5vw inset (~90% of the viewport), not stay stuck at the board size.
+    expect(m.pos, 'frame is position:fixed (stretch FLIP geometry)').toBe('fixed')
+    expect(Math.abs(m.wFrac - 0.9), 'frame settles to ~90vw (5vw inset)').toBeLessThan(0.03)
+    expect(Math.abs(m.hFrac - 0.9), 'frame settles to ~90vh (5vh inset)').toBeLessThan(0.03)
+  })
 })

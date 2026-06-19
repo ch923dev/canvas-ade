@@ -1841,9 +1841,9 @@ body {
   inset: 0;
   z-index: 200;
   background: rgba(0, 0, 0, 0.66);
-  display: flex;
-  padding: 5vh 5vw;
-  /* Slice 5 (§9): scrim opacity-fade. Starts closed; `[data-open]` plays it in. */
+  /* Slice 5 (§9): scrim opacity-fade. Starts closed; `[data-open]` plays it in. The frame
+     is position:fixed with JS-driven geometry (the stretch FLIP), so the scrim no longer
+     lays it out via flex/padding — the 5vh/5vw inset lives in viewportFullRect(). */
   opacity: 0;
   transition: opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -1891,7 +1891,13 @@ body {
   }
 }
 .fullview-frame {
-  flex: 1;
+  /* Stretch FLIP (USER DECISION 2026-06-20): position:fixed at the full-view rect so the
+     frame content rasterises at full res; FullViewModal animates a `transform` (origin
+     top-left) from the board's rect → identity with an overshoot spring — crisp, because the
+     full-res content is only scaled DOWN during the tween. Transform/geometry applied
+     imperatively; reduced-motion forces `transition: none` via the @media block above. */
+  position: fixed;
+  transform-origin: top left;
   display: flex;
   flex-direction: column;
   border-radius: var(--r-board);
@@ -1900,17 +1906,6 @@ body {
   box-shadow:
     0 0 0 1.5px var(--accent),
     var(--shadow-board);
-  /* Slice 5 (§9): scale/opacity tween toward the viewport centre. */
-  opacity: 0;
-  transform: scale(0.98);
-  transform-origin: center;
-  transition:
-    opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-.fullview-scrim[data-open] .fullview-frame {
-  opacity: 1;
-  transform: scale(1);
 }
 .fullview-host {
   flex: 1;
