@@ -64,6 +64,52 @@ describe('boardRegistry', () => {
     ])
   })
 
+  it('keeps a file board path + planning fileRefs, drops malformed ones (board kept) (S5)', () => {
+    const longPath = 'x'.repeat(300)
+    const out = sanitizeSnapshot([
+      { id: 'f1', type: 'file', title: 'main.ts', path: 'src/main.ts' },
+      { id: 'f2', type: 'file', title: 'Bad', path: 123 }, // non-string path → dropped
+      { id: 'f3', type: 'file', title: 'Empty', path: '' }, // empty path → dropped
+      { id: 'f4', type: 'file', title: 'Long', path: longPath }, // over-length → dropped
+      {
+        id: 'p1',
+        type: 'planning',
+        title: 'Plan',
+        fileRefs: [
+          { path: 'a.ts', label: 'a.ts' },
+          { path: 'b.ts' }, // missing label (non-string) → dropped
+          { path: '', label: 'empty' }, // empty path → dropped
+          { label: 'no-path' } // no path → dropped
+        ]
+      },
+      { id: 'p2', type: 'planning', title: 'P2', fileRefs: 'nope' } // non-array → field dropped
+    ])
+    expect(out).toEqual([
+      { id: 'f1', type: 'file', title: 'main.ts', path: 'src/main.ts' },
+      { id: 'f2', type: 'file', title: 'Bad' },
+      { id: 'f3', type: 'file', title: 'Empty' },
+      { id: 'f4', type: 'file', title: 'Long' },
+      { id: 'p1', type: 'planning', title: 'Plan', fileRefs: [{ path: 'a.ts', label: 'a.ts' }] },
+      { id: 'p2', type: 'planning', title: 'P2' }
+    ])
+  })
+
+  it('bounds fileRefs count and per-entry path/label length (S5)', () => {
+    const longLabel = 'L'.repeat(300)
+    const many = Array.from({ length: 600 }, (_, i) => ({ path: `f${i}.ts`, label: `f${i}` }))
+    const out = sanitizeSnapshot([
+      { id: 'p1', type: 'planning', title: 'P', fileRefs: many },
+      {
+        id: 'p2',
+        type: 'planning',
+        title: 'P2',
+        fileRefs: [{ path: 'ok.ts', label: longLabel }] // over-length label → entry dropped → field absent
+      }
+    ])
+    expect(out[0].fileRefs).toHaveLength(500) // MAX_FILEREFS cap
+    expect('fileRefs' in out[1]).toBe(false)
+  })
+
   it('listBoardMirror returns the last stored snapshot (empty by default)', () => {
     __setMirrorForTest([{ id: 'x', type: 'terminal', title: 'X' }])
     expect(listBoardMirror()).toEqual([{ id: 'x', type: 'terminal', title: 'X' }])

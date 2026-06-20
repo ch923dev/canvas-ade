@@ -104,4 +104,88 @@ describe('buildBoardSnapshot', () => {
     expect('agentKind' in snapshot[2]).toBe(false)
     expect('monitorActivity' in snapshot[2]).toBe(false)
   })
+
+  it('forwards a file board path (S5), omitting it for an unbound file board', () => {
+    const snapshot = buildBoardSnapshot(
+      [
+        { id: 'f1', type: 'file', title: 'main.ts', path: 'src/main.ts' },
+        { id: 'f2', type: 'file', title: 'Untitled' } // unbound placeholder — no path
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(snapshot[0]).toEqual({
+      id: 'f1',
+      type: 'file',
+      title: 'main.ts',
+      status: 'static',
+      path: 'src/main.ts'
+    })
+    expect(snapshot[1]).toEqual({ id: 'f2', type: 'file', title: 'Untitled', status: 'static' })
+    expect('path' in snapshot[1]).toBe(false)
+  })
+
+  it('aggregates a planning board fileref elements into fileRefs (S5)', () => {
+    const snapshot = buildBoardSnapshot(
+      [
+        {
+          id: 'p1',
+          type: 'planning',
+          title: 'Plan',
+          elements: [
+            { kind: 'note' }, // ignored
+            { kind: 'fileref', path: 'src/app.ts', label: 'app.ts' },
+            { kind: 'fileref', path: 'docs/spec/README.md' }, // label falls back to basename
+            { kind: 'fileref', label: 'no-path' }, // dropped: no path
+            { kind: 'stroke' } // ignored
+          ]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(snapshot[0]).toEqual({
+      id: 'p1',
+      type: 'planning',
+      title: 'Plan',
+      status: 'static',
+      fileRefs: [
+        { path: 'src/app.ts', label: 'app.ts' },
+        { path: 'docs/spec/README.md', label: 'README.md' }
+      ]
+    })
+  })
+
+  it('omits fileRefs for a planning board with no fileref elements (byte-identical) (S5)', () => {
+    const snapshot = buildBoardSnapshot(
+      [
+        {
+          id: 'p1',
+          type: 'planning',
+          title: 'Plan',
+          elements: [{ kind: 'note' }, { kind: 'arrow' }]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect(snapshot[0]).toEqual({ id: 'p1', type: 'planning', title: 'Plan', status: 'static' })
+    expect('fileRefs' in snapshot[0]).toBe(false)
+  })
+
+  it('does not cross file context across board types: path only on file, fileRefs only on planning (S5)', () => {
+    const snapshot = buildBoardSnapshot(
+      [
+        // A non-file board carrying a stray `path` must not leak it to the mirror.
+        { id: 't1', type: 'terminal', title: 'T', path: 'should/not/appear' },
+        // A non-planning board carrying stray `elements` must not produce fileRefs.
+        {
+          id: 'b1',
+          type: 'browser',
+          title: 'Web',
+          elements: [{ kind: 'fileref', path: 'x.ts', label: 'x.ts' }]
+        }
+      ],
+      { running: {}, preview: {} }
+    )
+    expect('path' in snapshot[0]).toBe(false)
+    expect('fileRefs' in snapshot[1]).toBe(false)
+  })
 })

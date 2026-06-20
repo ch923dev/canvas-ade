@@ -668,3 +668,104 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await mcp.orch.call('close_board', { id: rbId })
   })
 })
+
+/**
+ * @core @planning @mcp — file-tree S5: file boards + Planning file references reach the
+ * agent-readable `canvas://boards` resource OVER THE WIRE. This is the faithful, demonstrable proof
+ * of S5: the package serializes `orchestrator.listBoards()` verbatim into `canvas://boards`, so an
+ * MCP-connected agent that READS that resource sees a File board's `path` and a Planning board's
+ * `fileRefs` (path + label) — never file content, never via the PTY. (A live terminal-agent MCP
+ * connection — the `.mcp.json` injection — lands on a separate umbrella; here we read the same
+ * resource through a real loopback MCP client, exactly the payload such an agent receives.)
+ */
+test.describe('@core @planning @mcp S5 file context on canvas://boards (over the wire)', () => {
+  test('a File board path + a Planning fileRef appear in the agent-readable canvas://boards', async ({
+    page,
+    electronApp,
+    mcp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s5mcp-', 'S5')
+    try {
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A = 1\n')
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+
+      // A File board bound to a.ts (carries FileBoard.path → the mirror's `path`).
+      const fileId = await seed(page, 'file', { path: 'a.ts' })
+
+      // A Planning board with a fileref dropped on it (the real S4 drop path → a `fileref` element).
+      const planId = await seed(page, 'planning')
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+      await expect(page.locator(`.react-flow__node[data-id="${planId}"] .pl-well`)).toBeVisible({
+        timeout: 6000
+      })
+      // Drop a fileref on the (only) planning well. Literal selector — no value flows into the
+      // eval'd code (CodeQL js/bad-code-sanitization; the #82 structured-arg discipline).
+      await evalIn(
+        page,
+        `(() => {
+          const well = document.querySelector('.pl-well')
+          const r = well.getBoundingClientRect()
+          const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+          const dt = new DataTransfer()
+          dt.setData('application/x-canvas-ade-fileref', JSON.stringify({ path: 'a.ts', label: 'a.ts' }))
+          well.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: cx, clientY: cy }))
+        })()`
+      )
+      // Confirm the fileref element landed on the planning board before asserting the wire view.
+      // Structured-arg eval — the id is passed as DATA, never interpolated into code (the #82 pattern).
+      await expect
+        .poll(() =>
+          page.evaluate((id) => {
+            const hook = (
+              globalThis as unknown as {
+                __canvasE2E: {
+                  getBoards(): Array<{
+                    id: string
+                    elements?: Array<{ kind: string; path: string }>
+                  }>
+                }
+              }
+            ).__canvasE2E
+            const b = hook.getBoards().find((x) => x.id === id)
+            return ((b && b.elements) || []).filter((e) => e.kind === 'fileref').map((e) => e.path)
+          }, planId)
+        )
+        .toEqual(['a.ts'])
+
+      // THE PROOF: read the live `canvas://boards` resource through a real MCP client and assert the
+      // File board's path + the Planning board's fileRefs are present (mirror push is async +
+      // debounced → poll). This is exactly the JSON an MCP-connected agent would receive.
+      type WireBoard = {
+        id: string
+        type: string
+        path?: string
+        fileRefs?: Array<{ path: string; label: string }>
+      }
+      await expect
+        .poll(
+          async () => {
+            const boards = await mcp.orch.readJson<WireBoard[]>('canvas://boards')
+            const f = boards.find((b) => b.id === fileId)
+            const p = boards.find((b) => b.id === planId)
+            const fileOk = f?.type === 'file' && f.path === 'a.ts'
+            const planOk = !!p?.fileRefs?.some((r) => r.path === 'a.ts' && r.label === 'a.ts')
+            return fileOk && planOk
+          },
+          { timeout: 8000 }
+        )
+        .toBe(true)
+
+      // INVARIANT: a Terminal board carries neither field — file context never leaks across types.
+      const termId = await seed(page, 'terminal')
+      await expect
+        .poll(async () => {
+          const boards = await mcp.orch.readJson<WireBoard[]>('canvas://boards')
+          const t = boards.find((b) => b.id === termId)
+          return !!t && t.path === undefined && t.fileRefs === undefined
+        })
+        .toBe(true)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+})

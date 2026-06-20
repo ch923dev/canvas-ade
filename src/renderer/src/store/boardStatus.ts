@@ -87,6 +87,17 @@ export interface BoardStatusRuntime {
   preview: Record<string, { status: PreviewStatus }>
 }
 
+/**
+ * A single agent-readable file reference (file-tree S5). A file board's `path` and each Planning
+ * `fileref` element project to this shape on the board mirror so the MCP `canvas://boards` view can
+ * point an agent at the files the human has surfaced. `path` is the project-relative POSIX path (the
+ * `openFileBoard`/`file:*` contract); never file CONTENT.
+ */
+export interface FileRefSummary {
+  path: string
+  label: string
+}
+
 /** A board's metadata projection the mirror carries (control plane; no content). */
 export interface BoardMirrorEntry {
   id: string
@@ -103,28 +114,92 @@ export interface BoardMirrorEntry {
    * keeps a plain shell out of the agent-facing attention queue (Phase B).
    */
   monitorActivity?: boolean
+  /**
+   * File board's project-relative path (file-tree S5; `type:'file'` only) — forwarded to
+   * `canvas://boards` so an agent knows WHICH file an open File board points at. Absent on
+   * non-file boards and on an unbound (placeholder) File board.
+   */
+  path?: string
+  /**
+   * Planning board's referenced files (file-tree S5; `type:'planning'` only) — the project-
+   * relative path + display label of each `fileref` element, so an agent can see the files a human
+   * pinned to a plan. Absent (not `[]`) when a planning board has no fileref elements, keeping
+   * non-fileref snapshots byte-identical to before.
+   */
+  fileRefs?: FileRefSummary[]
+}
+
+/**
+ * The minimal board shape {@link buildBoardSnapshot} READS. A superset of the mirror's inputs: a
+ * `'file'` board's `path` and a `'planning'` board's `elements` (the latter read only to derive
+ * `fileRefs`, NEVER emitted onto the mirror). The live `Board` union satisfies this structurally;
+ * tests pass plain objects.
+ */
+export interface BoardSnapshotInput {
+  id: string
+  type: string
+  title: string
+  agentKind?: string
+  monitorActivity?: boolean
+  /** Present on a `'file'` board (FileBoard.path). */
+  path?: string
+  /** Present on a `'planning'` board (PlanningBoard.elements); read to derive `fileRefs`. */
+  elements?: ReadonlyArray<{ kind: string; path?: string; label?: string }>
+}
+
+/**
+ * Derive a planning board's agent-readable file references from its elements (S5). Keeps only
+ * well-formed `fileref` elements with a non-empty string `path`; `label` falls back to the path's
+ * basename, then the path itself, so a missing label never blanks the reference. Returns `undefined`
+ * (not `[]`) when there are none, so the conditional spread in {@link buildBoardSnapshot} omits the
+ * field for fileref-free planning boards.
+ */
+function deriveFileRefs(
+  elements: ReadonlyArray<{ kind: string; path?: string; label?: string }> | undefined
+): FileRefSummary[] | undefined {
+  if (!elements) return undefined
+  const refs: FileRefSummary[] = []
+  for (const el of elements) {
+    if (el.kind !== 'fileref') continue
+    const path = el.path
+    if (typeof path !== 'string' || path.length === 0) continue
+    const label =
+      typeof el.label === 'string' && el.label.length > 0
+        ? el.label
+        : (path.split('/').pop() ?? '') || path
+    refs.push({ path, label })
+  }
+  return refs.length > 0 ? refs : undefined
 }
 
 /**
  * Build the renderer→MAIN board snapshot: each board's `{id,type,title}` plus its
  * derived `status` bucket. Pure — no store/React access — so it is unit-testable and
- * the publish hook is a thin wiring layer over it. The v10 agent-identity fields ride
- * through only when present (a terminal that set them), so non-terminal snapshots are
- * byte-identical to before.
+ * the publish hook is a thin wiring layer over it. The v10 agent-identity fields and the
+ * S5 file-context fields (`path` / `fileRefs`) ride through only when present, so a board
+ * without them snapshots byte-identical to before.
  */
 export function buildBoardSnapshot(
-  boards: ReadonlyArray<BoardMirrorEntry>,
+  boards: ReadonlyArray<BoardSnapshotInput>,
   runtime: BoardStatusRuntime
 ): Array<BoardMirrorEntry & { status: BoardStatusBucket }> {
-  return boards.map((b) => ({
-    id: b.id,
-    type: b.type,
-    title: b.title,
-    status: boardStatusBucket(b.type, {
-      terminalRunning: runtime.running[b.id],
-      preview: runtime.preview[b.id]?.status
-    }),
-    ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
-    ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
-  }))
+  return boards.map((b) => {
+    // File-context projection (S5): a file board forwards its bound path; a planning board forwards
+    // its fileref elements as path+label summaries. Both omitted (not empty) when absent.
+    const path = b.type === 'file' && typeof b.path === 'string' ? b.path : undefined
+    const fileRefs = b.type === 'planning' ? deriveFileRefs(b.elements) : undefined
+    return {
+      id: b.id,
+      type: b.type,
+      title: b.title,
+      status: boardStatusBucket(b.type, {
+        terminalRunning: runtime.running[b.id],
+        preview: runtime.preview[b.id]?.status
+      }),
+      ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
+      ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {}),
+      ...(path !== undefined ? { path } : {}),
+      ...(fileRefs !== undefined ? { fileRefs } : {})
+    }
+  })
 }

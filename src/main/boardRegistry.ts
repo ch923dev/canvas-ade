@@ -24,6 +24,25 @@ export interface BoardMirror {
    * `canvas://attention` queue + its notifier (Phase B). Coerced to a strict boolean.
    */
   monitorActivity?: boolean
+  /**
+   * File board's project-relative path (file-tree S5; `type:'file'` only) — forwarded to the
+   * agent-facing `canvas://boards` view so an agent knows WHICH file an open File board points
+   * at. Length-capped like the other fields; absent on non-file / unbound boards. Path only,
+   * never file CONTENT.
+   */
+  path?: string
+  /**
+   * Planning board's referenced files (file-tree S5; `type:'planning'` only) — the path + label
+   * of each `fileref` element, so an agent can see the files a human pinned to a plan. Bounded
+   * ({@link MAX_FILEREFS}) and length-capped per entry. Absent when none.
+   */
+  fileRefs?: FileRefMirror[]
+}
+
+/** A single agent-readable file reference on the board mirror (file-tree S5). Path only, no content. */
+export interface FileRefMirror {
+  path: string
+  label: string
 }
 
 /**
@@ -176,7 +195,35 @@ const MAX_CONNECTORS = 1000
 const MAX_GROUPS = 200
 /** Cap a single group's membership so one forged group can't grow MAIN memory unbounded. */
 const MAX_GROUP_MEMBERS = 500
+/** Cap a single planning board's mirrored file references (file-tree S5) so a forged push can't grow MAIN memory. */
+const MAX_FILEREFS = 500
 const MAX_FIELD_LEN = 256
+
+/**
+ * Keep only well-formed {path,label} file references; drop anything else (file-tree S5). Bounded
+ * like the other snapshot fields — mcp:boards is an IPC channel — at most MAX_FILEREFS entries,
+ * each `path`/`label` at most MAX_FIELD_LEN chars (over-length / non-string entry dropped). Returns
+ * `undefined` (not `[]`) when the input is not a non-empty array of valid refs, so the entry omits
+ * the field rather than carrying an empty array.
+ */
+function sanitizeFileRefs(input: unknown): FileRefMirror[] | undefined {
+  if (!Array.isArray(input)) return undefined
+  const out: FileRefMirror[] = []
+  for (const r of input) {
+    if (out.length >= MAX_FILEREFS) break
+    if (
+      r &&
+      typeof r === 'object' &&
+      typeof (r as FileRefMirror).path === 'string' &&
+      typeof (r as FileRefMirror).label === 'string'
+    ) {
+      const { path, label } = r as FileRefMirror
+      if (path.length === 0 || path.length > MAX_FIELD_LEN || label.length > MAX_FIELD_LEN) continue
+      out.push({ path, label })
+    }
+  }
+  return out.length > 0 ? out : undefined
+}
 
 /**
  * Keep only well-formed {id,type,title} string entries; drop anything else.
@@ -198,7 +245,8 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
       typeof (b as BoardMirror).type === 'string' &&
       typeof (b as BoardMirror).title === 'string'
     ) {
-      const { id, type, title, status, agentKind, monitorActivity } = b as BoardMirror
+      const { id, type, title, status, agentKind, monitorActivity, path, fileRefs } =
+        b as BoardMirror
       if (
         id.length > MAX_FIELD_LEN ||
         type.length > MAX_FIELD_LEN ||
@@ -218,6 +266,14 @@ export function sanitizeSnapshot(input: unknown): BoardMirror[] {
         entry.agentKind = agentKind
       }
       if (typeof monitorActivity === 'boolean') entry.monitorActivity = monitorActivity
+      // file-tree S5: file board path (length-capped string) + planning fileRefs (bounded list).
+      // The renderer only sets these for the relevant board type, but mcp:boards is an IPC
+      // channel, so validate/cap rather than trust — a bad value drops the field, keeps the board.
+      if (typeof path === 'string' && path.length > 0 && path.length <= MAX_FIELD_LEN) {
+        entry.path = path
+      }
+      const refs = sanitizeFileRefs(fileRefs)
+      if (refs !== undefined) entry.fileRefs = refs
       out.push(entry)
     }
   }

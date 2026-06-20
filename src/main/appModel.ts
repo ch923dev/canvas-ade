@@ -202,6 +202,18 @@ export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
     states: ['static'],
     seedable: false,
     autowire: null
+  },
+  {
+    // file-tree S5: a human-created, read-only context surface. NOT agent-spawnable (no MCP tool
+    // seeds a file board) and not seedable; an agent READS which file it points at via the file
+    // board's `path` on `canvas://boards`, and may close it. File CONTENT is never on this model.
+    type: 'file',
+    purpose:
+      'A project file shown on the canvas (CodeMirror viewer/editor). Human-created context; an agent reads its path via canvas://boards. NOT agent-spawnable.',
+    tools: ['close_board'],
+    states: ['static'],
+    seedable: false,
+    autowire: null
   }
 ]
 

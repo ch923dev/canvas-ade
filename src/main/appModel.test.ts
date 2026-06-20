@@ -12,7 +12,13 @@ describe('buildAppModel (PR-3 app self-model)', () => {
   it('stamps version 1 and includes the static board-type + tool tables', () => {
     const m = buildAppModel(baseInputs())
     expect(m.version).toBe(1)
-    expect(m.boardTypes.map((t) => t.type)).toEqual(['terminal', 'browser', 'planning', 'command'])
+    expect(m.boardTypes.map((t) => t.type)).toEqual([
+      'terminal',
+      'browser',
+      'planning',
+      'command',
+      'file'
+    ])
     expect(m.tools).toHaveLength(APP_TOOLS.length)
   })
 
@@ -37,6 +43,12 @@ describe('buildAppModel (PR-3 app self-model)', () => {
     // command is the orchestrator's own face — not agent-spawnable, no tools target it
     expect(byType.command.seedable).toBe(false)
     expect(byType.command.tools).toEqual([])
+    // file (S5) is a passive, human-created context surface: static, not seedable, no autowire;
+    // an agent can only close it (it reads the file's path off canvas://boards, not via a tool).
+    expect(byType.file.seedable).toBe(false)
+    expect(byType.file.autowire).toBeNull()
+    expect(byType.file.states).toEqual(['static'])
+    expect(byType.file.tools).toEqual(['close_board'])
   })
 
   it('every per-board-type tool references a tool in the global catalog', () => {
