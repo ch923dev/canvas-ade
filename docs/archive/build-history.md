@@ -219,3 +219,30 @@ promoted. **Schema v12→v13** (the `'file'` board type + `'fileref'` Planning e
 - **S4 Planning file-ref** (#193, `9a1f8138`): drag a tree file → drop on Planning → a chip (single-click select / double-click open / resize); persists like any element. (Also fixed File-board gutter bleed + split scroll-sync.)
 - **S5 MCP agent context** (#198, `42b8907c`): file boards (`path`) + planning `fileref` elements (`fileRefs[]`) ride `boardRegistry` → `orchestrator.listBoards()` → the `canvas://boards` MCP resource — agent-readable file context, never content, never via the PTY. No package/schema change; extracted `PATCHABLE_KEYS`/`applyBoardPatch` → `boardPatch.ts` during the main-reconcile (file-size doctrine). Proven by a **live `claude` agent** reading `canvas://boards` end-to-end (auto-connected via #192's `.mcp.json` provisioner).
 - **Reconcile + gate:** merged latest `origin/main` (through PA-5 #200, incl. Agent-Orchestration Onboarding #192); full e2e matrix green (Win 162/1-flaky · Linux 162/1-skip), 2724 unit, CodeQL 0, reviewer clean (schema-version comment-drift warning fixed + 5 e2e CodeQL converted to the structured-arg form). **User-eyeballed (incl. the real-agent demo) before merge.**
+
+## Phase 5 packaging + Expanse brand identity — #161 (`841ba596`, 2026-06-20)
+
+Release packaging/signing infrastructure (**release-ready, unsigned-by-default**) plus the **Expanse**
+rebrand of the build identity. Branch `feat/phase5-packaging`, rebased through File Tree #201.
+- **Brand identity:** `appId com.expanse.app`, `productName Expanse`, BrowserWindow + HTML `<title>`,
+  dev-title stamp. (Deeper in-app copy — WelcomeScreen headline, consent-modal prose — left to the
+  `chore/rebrand-expanse` branch; `appId` locked here because changing it post-release orphans installs
+  from auto-update.)
+- **Icons** (Expanse "Vanishing Point" mark): full-bleed `build/icon.png` (win/linux) · multi-size
+  `build/icon.ico` with a **bold simplified** diamond+horizon at 16/32/48 so the taskbar icon stays
+  legible (the thin perspective lines vanish below ~64px) · padded `build/icon-mac.png` (Apple's
+  824/1024 grid). `scripts/gen-icon-win.mjs` + `gen-icon-mac.mjs` derive both from `icon.png`; the
+  stale `gen-icon.mjs` (old outline-diamond) was removed.
+- **Auto-update:** `src/main/autoUpdate.ts` gated behind `__ENABLE_AUTO_UPDATE__` (true only for signed
+  prod builds; `.catch` on init so a signed-build updater-import failure logs, never crashes main) +
+  `useUpdateToasts` renderer UI.
+- **electron-builder.yml:** GitHub publish feed (fixes the `publish: null` no-upload bug), mac
+  entitlements + hardened runtime, explicit `win.icon`/`mac.icon`; signing-staged `production.yml` /
+  `staging.yml`. ADR 0008 + `docs/contributing/releasing.md`.
+- **Gate:** typecheck/lint/format + unit green; full e2e matrix green both legs (Win 162 / Linux 162 +
+  1 skip-by-design; 1 placement flake retried-green). **Packaged smoke verified:** `Expanse-0.1.0-x64.exe`
+  builds, recap hook (BUG-003) at `app.asar.unpacked/out/main/hooks/recordSession.js`, `latest.yml` feed
+  manifest valid, and the multi-size `.ico` confirmed embedded in the built exe.
+- **Still owed to ship (external/manual):** a Windows Authenticode cert + macOS Developer ID +
+  notarization, then set repo variable `AUTO_UPDATE=1` **last** (after signing is verified) per
+  `releasing.md`; plus the first packaged recap-hook run-through.
