@@ -138,13 +138,16 @@ export function useAutosave(): void {
     const saver = createAutosaver({
       // BUG-009: pass the project dir this doc belongs to, so MAIN can reject the write
       // if a project switch raced the save (currentDir would point at the new project).
-      // D1-A: a successful save clears any standing failure (which dismisses the sticky
-      // save-failure toast) — the surface tracks the CURRENT disk health, not a sticky
-      // history (clear is a no-op when clean).
+      // PERSIST-03: drive the save lifecycle — mark 'saving' for the write window, then
+      // 'saved' on success (which also clears any standing failure, dismissing the sticky
+      // toast). The surface tracks the CURRENT disk health, not a sticky history; a
+      // failure routes through onError below (→ 'error').
       save: async () => {
         const s = useCanvasStore.getState()
+        const status = useSaveStatusStore.getState()
+        status.markSaving()
         const ok = await window.api.project.save(s.toObject(), s.project.dir ?? undefined)
-        if (ok) useSaveStatusStore.getState().clearSaveFailure()
+        if (ok) status.markSaved()
         return ok
       },
       // The `project` slice is added in a later task; read it defensively so the hook

@@ -1488,6 +1488,15 @@ body {
   outline: none;
   box-shadow: 0 0 0 1.5px var(--accent);
 }
+/* PA-3 (A11Y-01): chrome control clusters — dock/camera ca-t-ctl buttons, the project
+   switcher pill, and the zoom % button — fell back to Chromium's dim default outline.
+   Bring them onto the app's 1.5px accent ring like every other focusable control. */
+.ca-t-ctl:focus-visible,
+.project-switcher-trigger:focus-visible,
+.ca-zoom-pct:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
 .pl-del:focus-visible {
   opacity: 1;
 }
