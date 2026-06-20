@@ -10,6 +10,15 @@
 /** Camera-animation duration in ms (DESIGN.md §9 — fit/focus). */
 export const CAMERA_MS = 200
 
+/** Full-view stretch (FLIP) duration in ms. Longer than CAMERA_MS so the overshoot
+ *  spring has room to read as a deliberate "stretch out / stretch in". */
+export const FULLVIEW_MS = 320
+
+/** Overshoot easing (CSS timing-function string) for the full-view stretch — springs
+ *  slightly past the target then settles. CSS-string form (not the JS solver) because the
+ *  stretch runs as a CSS transition on the frame's `transform`. */
+export const EASE_OVERSHOOT_CSS = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
+
 /**
  * Cubic-bezier easing solver for the unit curve (0,0)→(1,1) with control points
  * (x1,y1),(x2,y2). Returns ease(t∈[0,1])→[0,1]. Newton-Raphson on x (8 iters) then

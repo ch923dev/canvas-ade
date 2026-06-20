@@ -1007,11 +1007,14 @@ body {
   font-size: 11px;
 }
 
-/* ── Board node + NodeResizer (Phase 2.0-C) ───────────────────────────────────
+/* ── Board node + NodeResizer (Phase 2.0-C; CANVAS-05) ─────────────────────────
    BoardFrame paints the box, border, selection ring and shadow itself, so the RF
    node wrapper stays chrome-less. The resizer handles are restyled to DESIGN.md
-   §6: 10px corner squares (--surface-overlay + --border-strong, r2), the SE
-   corner carrying an extra --accent ring; edge lines are an invisible hit area. */
+   §6: 8×8 corner squares (--surface-overlay + --border-strong, r2), the SE corner
+   carrying an extra --accent ring. The four edge controls keep RF's full-edge hit
+   line (a deliberate divergence from §6's discrete "edge midpoints" — a full-edge
+   target is the RF-native affordance) but now paint a faint --border-subtle line so
+   the edge resize affordance is visible on hover/select, not invisible. */
 .react-flow__node-board {
   background: transparent;
   border: none;
@@ -1021,8 +1024,8 @@ body {
 }
 
 .react-flow__resize-control.handle {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
   background: var(--surface-overlay);
   border: 1px solid var(--border-strong);
@@ -1041,7 +1044,7 @@ body {
   box-shadow: 0 0 0 1px var(--accent);
 }
 .react-flow__resize-control.line {
-  border-color: transparent;
+  border-color: var(--border-subtle);
 }
 
 /* ── Browser board (Phase 2.2, DESIGN.md §7.2) ────────────────────────────────
@@ -2046,9 +2049,9 @@ body {
   inset: 0;
   z-index: 200;
   background: rgba(0, 0, 0, 0.66);
-  display: flex;
-  padding: 5vh 5vw;
-  /* Slice 5 (§9): scrim opacity-fade. Starts closed; `[data-open]` plays it in. */
+  /* Slice 5 (§9): scrim opacity-fade. Starts closed; `[data-open]` plays it in. The frame
+     is position:fixed with JS-driven geometry (the stretch FLIP), so the scrim no longer
+     lays it out via flex/padding — the 5vh/5vw inset lives in viewportFullRect(). */
   opacity: 0;
   transition: opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -2096,7 +2099,13 @@ body {
   }
 }
 .fullview-frame {
-  flex: 1;
+  /* Stretch FLIP (USER DECISION 2026-06-20): position:fixed at the full-view rect so the
+     frame content rasterises at full res; FullViewModal animates a `transform` (origin
+     top-left) from the board's rect → identity with an overshoot spring — crisp, because the
+     full-res content is only scaled DOWN during the tween. Transform/geometry applied
+     imperatively; reduced-motion forces `transition: none` via the @media block above. */
+  position: fixed;
+  transform-origin: top left;
   display: flex;
   flex-direction: column;
   border-radius: var(--r-board);
@@ -2105,17 +2114,6 @@ body {
   box-shadow:
     0 0 0 1.5px var(--accent),
     var(--shadow-board);
-  /* Slice 5 (§9): scale/opacity tween toward the viewport centre. */
-  opacity: 0;
-  transform: scale(0.98);
-  transform-origin: center;
-  transition:
-    opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-.fullview-scrim[data-open] .fullview-frame {
-  opacity: 1;
-  transform: scale(1);
 }
 .fullview-host {
   flex: 1;

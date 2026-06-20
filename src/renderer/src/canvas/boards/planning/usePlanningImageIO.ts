@@ -26,7 +26,7 @@ const imageExt = (type: string): string | undefined =>
   })[type]
 
 interface PlanningImageIODeps {
-  wellRef: RefObject<HTMLDivElement>
+  wellRef: RefObject<HTMLDivElement | null>
   toBoard: (e: { clientX: number; clientY: number }) => { x: number; y: number }
   commit: (next: PlanningElement[] | ((current: PlanningElement[]) => PlanningElement[])) => void
   beginChange: () => void

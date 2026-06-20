@@ -242,6 +242,8 @@ function BoardTitle({
 export function IconBtn({
   name,
   title,
+  ariaLabel,
+  toggle = false,
   active = false,
   danger = false,
   disabled,
@@ -256,6 +258,13 @@ export function IconBtn({
 }: {
   name: IconName
   title: string
+  /** PLAN-02 (a11y): accessible name. Defaults to `title`; pass a fuller label when the
+   *  tooltip text is terse (e.g. a planning tool's "Sticky note" vs its "Note" title). */
+  ariaLabel?: string
+  /** PLAN-02 (a11y): mark this as a two-state toggle so it announces `aria-pressed={active}`.
+   *  Leave false for plain action buttons (Full view, Duplicate, …) — they get a name but no
+   *  pressed state, which would otherwise mislead AT into reading them as toggles. */
+  toggle?: boolean
   active?: boolean
   danger?: boolean
   /** When true, the button is visually muted and not clickable. */
@@ -324,6 +333,10 @@ export function IconBtn({
       // so prefers-reduced-motion can suppress it (index.css media block).
       className="ca-t-ctl"
       title={title}
+      // PLAN-02 (a11y): every icon button announces an explicit name (title is only a
+      // weak, lowest-priority name source); toggles also expose their pressed state.
+      aria-label={ariaLabel ?? title}
+      aria-pressed={toggle ? active : undefined}
       disabled={disabled}
       onClick={handleClick}
       onContextMenu={
@@ -372,6 +385,40 @@ export function IconBtn({
   )
 }
 
+/** S6 group rows for the ⋯ menu, split out so the live `groups` subscription runs ONLY while
+ *  the menu is open. Kept in BoardMenu's always-mounted trigger, the whole-array subscription
+ *  re-rendered every board's title bar on any group create/rename/membership change (PERF-04). */
+function BoardGroupMenuItems({
+  boardId,
+  onAddToGroup,
+  onRemoveFromGroup,
+  renderItem
+}: {
+  boardId?: string
+  onAddToGroup?: (groupId: string) => void
+  onRemoveFromGroup?: () => void
+  renderItem: (label: string, danger: boolean, fn?: (e: MouseEvent) => void) => ReactElement
+}): ReactElement {
+  // Read groups live so the eligible-list / membership reflect the current state.
+  const groups = useCanvasStore((s) => s.groups)
+  const eligibleGroups =
+    boardId && onAddToGroup ? groups.filter((g) => !g.boardIds.includes(boardId)) : []
+  const inAnyGroup = !!boardId && groups.some((g) => g.boardIds.includes(boardId))
+  return (
+    <>
+      {/* S6: one "Add to {name}" row per group this board is NOT already in. */}
+      {onAddToGroup &&
+        eligibleGroups.map((g) => (
+          <span key={g.id} style={{ display: 'contents' }}>
+            {renderItem(`Add to ${g.name}`, false, () => onAddToGroup(g.id))}
+          </span>
+        ))}
+      {/* S6: remove from every group the board belongs to (shown only when in one). */}
+      {onRemoveFromGroup && inAnyGroup && renderItem('Remove from group', false, onRemoveFromGroup)}
+    </>
+  )
+}
+
 /** ⋯ overflow popover: Full view · Duplicate · Add/Remove group · Delete (DESIGN §6.1; S6). */
 export function BoardMenu({
   boardId,
@@ -391,11 +438,6 @@ export function BoardMenu({
   /** S6: remove this board from every group it belongs to. Shown only when it is in one. */
   onRemoveFromGroup?: () => void
 }): ReactElement {
-  // S6: read groups live so the eligible-list / membership reflect the current state.
-  const groups = useCanvasStore((s) => s.groups)
-  const eligibleGroups =
-    boardId && onAddToGroup ? groups.filter((g) => !g.boardIds.includes(boardId)) : []
-  const inAnyGroup = !!boardId && groups.some((g) => g.boardIds.includes(boardId))
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLDivElement>(null)
 
@@ -454,15 +496,16 @@ export function BoardMenu({
         >
           {onFull && item('Full view', false, onFull)}
           {onDuplicate && item('Duplicate', false, () => onDuplicate())}
-          {/* S6: one "Add to {name}" row per group this board is NOT already in. */}
-          {onAddToGroup &&
-            eligibleGroups.map((g) => (
-              <span key={g.id} style={{ display: 'contents' }}>
-                {item(`Add to ${g.name}`, false, () => onAddToGroup(g.id))}
-              </span>
-            ))}
-          {/* S6: remove from every group the board belongs to (shown only when in one). */}
-          {onRemoveFromGroup && inAnyGroup && item('Remove from group', false, onRemoveFromGroup)}
+          {/* S6 group rows — mounted only here (menu open), so the groups subscription
+              never re-renders a closed board's title bar (PERF-04). */}
+          {(onAddToGroup || onRemoveFromGroup) && (
+            <BoardGroupMenuItems
+              boardId={boardId}
+              onAddToGroup={onAddToGroup}
+              onRemoveFromGroup={onRemoveFromGroup}
+              renderItem={item}
+            />
+          )}
           {onDelete && item('Delete', true, () => onDelete())}
         </Menu>
       )}

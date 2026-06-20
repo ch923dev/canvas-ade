@@ -26,7 +26,7 @@ Linear-Raycast feel. One accent (blue `#4f8cff`), functional only. No glassmorph
 
 ## Stack (locked)
 
-- **Electron 42** + **TypeScript** + **React 18**; **electron-vite 5** / **vite 7** (dev/build), **electron-builder 26** + **electron-updater** (package/update). (Bumped 33→42 off EOL in T9; toolchain went vite 5→7 / electron-vite 2→5 / vitest 2→4 to clear a critical vitest CVE.)
+- **Electron 42** + **TypeScript** + **React 19**; **electron-vite 5** / **vite 7** (dev/build), **electron-builder 26** + **electron-updater** (package/update). (Bumped 33→42 off EOL in T9; toolchain went vite 5→7 / electron-vite 2→5 / vitest 2→4 to clear a critical vitest CVE. React 18→19 in #194 — measured-low migration, only `useRef(null)`→`RefObject<T|null>` type fallout; scope in `docs/research/2026-06-20-react-19-migration-scope/`.)
 - **Canvas engine: `@xyflow/react` (React Flow) v12** — NOT tldraw (see ADR 0001). Each board = a custom React Flow node.
 - **Whiteboard: custom** — vendored `perfect-freehand` (pen) + React Flow edges/bezier for arrows. NOT Excalidraw (see ADR 0001).
 - **Terminal: `@xterm/xterm` ≥5.5** (+ fit + webgl addons) ⇄ **`node-pty`** in MAIN.

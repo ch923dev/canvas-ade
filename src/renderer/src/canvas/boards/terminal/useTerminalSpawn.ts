@@ -132,7 +132,7 @@ export interface TerminalSpawnDeps {
    *  counter-scale keeps GL crisp at every settled zoom); NEVER respawns the PTY. */
   lod: boolean
   /** The xterm host div, planted by the host's render (term.open() mounts into it). */
-  screenRef: RefObject<HTMLDivElement>
+  screenRef: RefObject<HTMLDivElement | null>
   /** Host font-handler bridges — the custom key handler routes Ctrl +/-/0 through these.
    *  MutableRefObject (host seeds each with a no-op) so `.current` is never null at the call site. */
   fontStepRef: MutableRefObject<(delta: number) => void>
