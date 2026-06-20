@@ -89,24 +89,27 @@ vector). The mechanism:
 
 ## Icons
 
-Two source files, both 1024×1024 RGBA PNG with the **Expanse "Vanishing Point" mark** (accent
-`#4f8cff` diamond at a vanishing point, on the `#0d0d0f` surface):
+`build/icon.png` (1024×1024 RGBA) is the **brand source of truth** — the Expanse "Vanishing Point"
+mark (accent `#4f8cff` diamond at a vanishing point, on the `#0d0d0f` surface), authored directly,
+full-bleed. The Linux AppImage uses it as-is; the Windows and macOS builds use **derived variants**:
 
-- **`build/icon.png`** — **full-bleed** (the rounded-rect fills the frame). electron-builder derives
-  the Windows `.ico` and the Linux AppImage PNG from it. This is the brand source of truth.
-- **`build/icon-mac.png`** — the **macOS** variant: the same mark inset to an 824×824 body with
-  ~100px transparent margin (Apple's app-icon grid), so the Dock/Finder icon sits at native size.
-  Wired via `electron-builder.yml › mac.icon`. **Derived from `icon.png`** — regenerate after any
-  brand-mark change so the two stay in sync:
+| File | Platform | What it is | Wired |
+|---|---|---|---|
+| `build/icon.png` | Linux | full-bleed source mark | default |
+| `build/icon.ico` | Windows | multi-size `.ico` — detailed mark at 256/128/64, a **bold simplified** variant (filled diamond + horizon) at 48/32/16 so the taskbar icon stays legible (the thin perspective lines vanish below ~64px) | `win.icon` |
+| `build/icon-mac.png` | macOS | mark inset to Apple's 824/1024 app-icon grid (~100px margin) so the Dock icon is native-sized | `mac.icon` |
 
-  ```
-  npx playwright install chromium   # one-time, if missing
-  node scripts/gen-icon-mac.mjs     # reads build/icon.png → writes build/icon-mac.png (padded)
-  ```
+Both variants are **derived from `build/icon.png`** — regenerate after any brand-mark change:
 
-> ⚠️ `scripts/gen-icon.mjs` is **legacy** — it renders the old Canvas-ADE outline-diamond, NOT the
-> shipped Vanishing Point mark. Do **not** run it (it would overwrite `icon.png` with the old brand).
-> `icon.png` is currently authored directly; update or remove `gen-icon.mjs` when convenient.
+```
+npx playwright install chromium   # one-time, if missing
+node scripts/gen-icon-win.mjs      # build/icon.png → build/icon.ico (multi-size, bold small frames)
+node scripts/gen-icon-mac.mjs      # build/icon.png → build/icon-mac.png (padded for macOS)
+```
+
+> `build/icon.png` is authored directly (it is NOT script-generated — the old
+> `scripts/gen-icon.mjs`, which rendered the legacy Canvas-ADE outline-diamond, was removed). To
+> change the brand mark, edit `build/icon.png`, then re-run the two generators above.
 
 ## Notes carried into packaging
 

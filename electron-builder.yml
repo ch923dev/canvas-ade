@@ -33,6 +33,11 @@ win:
   target:
     - target: nsis
   artifactName: ${productName}-${version}-${arch}.${ext}
+  # Multi-size .ico (scripts/gen-icon-win.mjs): detailed mark at 256/128/64, a bold
+  # simplified variant at 48/32/16 so the taskbar/Explorer icon stays legible (the
+  # thin perspective lines + small diamond turn to mush when a single 1024 PNG is
+  # auto-downscaled). Explicit so electron-builder uses these frames, not a re-derive.
+  icon: build/icon.ico
   # Phase 5 signing (STAGED): when a code-signing cert is provided via env —
   # CSC_LINK (base64 cert or a path) + CSC_KEY_PASSWORD — electron-builder
   # Authenticode-signs the app + installer automatically. Absent → unsigned build
