@@ -37,7 +37,8 @@ test.describe('@core describeApp (read-only app self-model via the app-side seam
       'terminal',
       'browser',
       'planning',
-      'command'
+      'command',
+      'file'
     ])
     // worker-tier is EXACTLY ping + write_result; everything else is orchestrator-tier
     const worker = model.tools
