@@ -149,6 +149,71 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     }
   })
 
+  test('split mode: scrolling the source scrolls the rendered preview in sync', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3sync-', 'Sync')
+    try {
+      // A long markdown doc so BOTH the source editor and the rendered preview overflow (each has a
+      // real scroll range) — the precondition for a meaningful source→preview sync.
+      const blocks: string[] = ['# Sync Test\n']
+      for (let i = 1; i <= 150; i++) {
+        blocks.push(
+          `## Section ${i}\n\nParagraph ${i} — enough prose to occupy a line and force both panes to overflow vertically so each has a real scroll range.\n`
+        )
+      }
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'long.md', blocks.join('\n'))
+
+      const id = await seed(page, 'file', { path: 'long.md' })
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      const node = `.react-flow__node[data-id="${id}"]`
+
+      // Enter Split: source editor (left, board selected) + rendered preview (right).
+      await page.getByRole('button', { name: 'Split', exact: true }).click()
+      await expect(page.locator(`${node} [data-test="file-editor"] .cm-scroller`)).toBeVisible({
+        timeout: 6000
+      })
+      await expect(page.locator(`${node} .cm-md-preview`)).toBeVisible()
+      // Let the sync effect attach its scroll listener after the editor mounts.
+      await page.waitForTimeout(200)
+
+      // Scroll the SOURCE scroller to the bottom and run the sync handler, then read both panes.
+      const res = await evalIn<{
+        srcRange: number
+        pvRange: number
+        beforePv: number
+        afterPv: number
+      }>(
+        page,
+        `(() => {
+          const root = ${JSON.stringify(node)}
+          const sc = document.querySelector(root + ' [data-test="file-editor"] .cm-scroller')
+          const pv = document.querySelector(root + ' .cm-md-preview')
+          const beforePv = pv.scrollTop
+          sc.scrollTop = sc.scrollHeight
+          sc.dispatchEvent(new Event('scroll'))
+          return {
+            srcRange: sc.scrollHeight - sc.clientHeight,
+            pvRange: pv.scrollHeight - pv.clientHeight,
+            beforePv,
+            afterPv: pv.scrollTop
+          }
+        })()`
+      )
+
+      // Preconditions: both panes overflow, and the preview began at the top.
+      expect(res.srcRange, 'source pane has scroll range').toBeGreaterThan(0)
+      expect(res.pvRange, 'preview pane has scroll range').toBeGreaterThan(0)
+      expect(res.beforePv, 'preview starts at the top').toBe(0)
+      // The fix: scrolling the source to the bottom drove the preview down too (fraction-based, so a
+      // full-source-scroll lands the preview near its own bottom).
+      expect(res.afterPv, 'preview followed the source scroll').toBeGreaterThan(res.pvRange * 0.5)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+
   test('renders an image file as an <img>, not the editor', async ({ page, electronApp }) => {
     const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3img-', 'FileS3Img')
     try {
@@ -492,6 +557,93 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
         `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === 'x.ts'); const dot = r && r.querySelector('.ca-ftree-open-dot'); if (dot) dot.click() })()`
       )
       expect(await fileCount()).toBe(1)
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+})
+
+/**
+ * File-tree S4 — Planning file-reference chip. A file dragged out of the tree (the FILEREF_MIME
+ * drag-source, S2) and dropped on a Planning board leaves a clickable chip (`fileref` element); the
+ * chip persists like any whiteboard element and clicking it opens the file as a File board. Tagged
+ * @core (always runs) + @planning so the planning-scoped pre-push subset picks it up.
+ */
+test.describe('@core @planning S4 planning file-reference chip (DnD drop + click-to-open)', () => {
+  test('drop a tree file-ref → a chip on the Planning board; clicking the chip opens a File board', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s4chip-', 'Chip')
+    try {
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A_FILE = 1\n')
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+
+      // A Planning board on screen (fitView so its well has a real on-screen rect for the drop).
+      const planId = await seed(page, 'planning')
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+      const wellSel = `.react-flow__node[data-id="${planId}"] .pl-well`
+      await expect(page.locator(wellSel)).toBeVisible({ timeout: 6000 })
+
+      // Dispatch a synthetic file-ref drop (the MIME the tree emits) at the well centre.
+      await evalIn(
+        page,
+        `(() => {
+          const well = document.querySelector(${JSON.stringify(wellSel)})
+          const r = well.getBoundingClientRect()
+          const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+          const dt = new DataTransfer()
+          dt.setData('application/x-canvas-ade-fileref', JSON.stringify({ path: 'a.ts', label: 'a.ts' }))
+          well.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: cx, clientY: cy }))
+        })()`
+      )
+
+      // A fileref element now lives on the planning board, bound to a.ts.
+      const fileRefPaths = (): Promise<string[]> =>
+        evalIn<string[]>(
+          page,
+          `(() => { const b = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(planId)}); return ((b && b.elements) || []).filter((e) => e.kind === 'fileref').map((e) => e.path) })()`
+        )
+      await expect.poll(fileRefPaths).toEqual(['a.ts'])
+
+      // The chip renders inside the board.
+      const chipSel = `.react-flow__node[data-id="${planId}"] [data-test="fileref-chip"]`
+      await expect(page.locator(chipSel)).toBeVisible({ timeout: 6000 })
+
+      const fileBoardPaths = (): Promise<string[]> =>
+        evalIn<string[]>(
+          page,
+          `window.__canvasE2E.getBoards().filter((b) => b.type === 'file').map((b) => b.path)`
+        )
+      expect(await fileBoardPaths()).toEqual([]) // the drop made a chip, NOT a File board
+
+      // `count` press+release click cycles on the chip centre, ALL inside one renderer eval so their
+      // pointerup timeStamps are < DBLCLICK_MS apart (separate IPC round-trips could exceed it). The
+      // drag setup calls setPointerCapture, which throws on a synthetic pointer, so each pointerdown
+      // is wrapped; the click resolver is armed BEFORE that setup, so the window pointerups drive it.
+      const chipClicks = (count: number): Promise<unknown> =>
+        evalIn(
+          page,
+          `(() => {
+            const chip = document.querySelector(${JSON.stringify(chipSel)})
+            const r = chip.getBoundingClientRect()
+            const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+            for (let i = 0; i < ${count}; i++) {
+              try { chip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, clientX: cx, clientY: cy })) } catch (e) {}
+              window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: cx, clientY: cy }))
+            }
+          })()`
+        )
+
+      // A SINGLE click only SELECTS the chip (so the resize handle is reachable) — it must NOT open
+      // the file. Wait past DBLCLICK_MS so it can't be the first half of a double-click.
+      await chipClicks(1)
+      await page.waitForTimeout(500)
+      expect(await fileBoardPaths(), 'single click selects, never opens').toEqual([])
+
+      // A DOUBLE click (two cycles within DBLCLICK_MS) opens the file as a File board.
+      await chipClicks(2)
+      await expect.poll(fileBoardPaths).toEqual(['a.ts'])
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }

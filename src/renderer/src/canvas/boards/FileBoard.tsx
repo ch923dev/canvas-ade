@@ -147,6 +147,12 @@ export function FileBoard({
   const pendingCaretRef = useRef<{ x: number; y: number } | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const pendingSearchRef = useRef(false)
+  // Split-mode scroll-sync: the source pane (CM6 editor or snapshot) + the preview pane wrappers.
+  const sourcePaneRef = useRef<HTMLDivElement | null>(null)
+  const previewPaneRef = useRef<HTMLDivElement | null>(null)
+  // Bumped when the CM6 view is (re)created so the split-sync effect re-runs once `viewRef.scrollDOM`
+  // actually exists — the editor mounts lazily when you switch into Split, after the effect first ran.
+  const [editorNonce, setEditorNonce] = useState(0)
   // Right-click context menu (copy actions + find), opened at the pointer.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
@@ -277,6 +283,9 @@ export function FileBoard({
 
   const onCreateEditor = useCallback((view: EditorView): void => {
     viewRef.current = view
+    // Re-run the split-sync effect now that the editor's scrollDOM exists (idempotent; the value/
+    // extensions are stable, so this re-render never recreates the view → no loop).
+    setEditorNonce((n) => n + 1)
     const at = pendingCaretRef.current
     pendingCaretRef.current = null
     const wantSearch = pendingSearchRef.current
@@ -292,6 +301,29 @@ export function FileBoard({
       if (wantSearch) openSearchPanel(view)
     })
   }, [])
+
+  // Split-mode scroll sync (source → preview): scrolling the source pane drives the rendered preview
+  // to the same scroll FRACTION, so the two panes track together. Fraction-based ⇒ correct at any
+  // camera zoom (the editor's counter-scale doesn't change scrollTop/scrollHeight ratios). Only
+  // source→preview, so writing preview.scrollTop never feeds back into a loop. The source scroller is
+  // the live CM6 editor's `scrollDOM` while editing (reliable handle — no fragile querySelector/timing,
+  // and the effect re-runs via `editorNonce` once the view exists), else the read-only `<pre>` snapshot.
+  useEffect(() => {
+    if (!(kind === 'text' && isMarkdown && mode === 'split')) return
+    const src: HTMLElement | null = showEditor
+      ? (viewRef.current?.scrollDOM ?? null)
+      : (sourcePaneRef.current?.querySelector<HTMLElement>('[data-test="file-snapshot"]') ?? null)
+    const prev = previewPaneRef.current?.querySelector<HTMLElement>('.cm-md-preview')
+    if (!src || !prev) return
+    const onScroll = (): void => {
+      const range = src.scrollHeight - src.clientHeight
+      const frac = range > 0 ? src.scrollTop / range : 0
+      prev.scrollTop = frac * (prev.scrollHeight - prev.clientHeight)
+    }
+    src.addEventListener('scroll', onScroll, { passive: true })
+    onScroll() // align once on (re)attach
+    return () => src.removeEventListener('scroll', onScroll)
+  }, [kind, isMarkdown, mode, showEditor, markdownHtml, editorNonce])
 
   const enterEdit = useCallback(
     (e: ReactMouseEvent): void => {
@@ -652,6 +684,7 @@ export function FileBoard({
           ) : isMarkdown && mode === 'split' ? (
             <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
               <div
+                ref={sourcePaneRef}
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -661,7 +694,7 @@ export function FileBoard({
               >
                 {textPane}
               </div>
-              <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+              <div ref={previewPaneRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
                 <MarkdownPreview html={markdownHtml} />
               </div>
             </div>

@@ -4,10 +4,23 @@ import {
   mergeChildren,
   applyListing,
   compactTree,
+  fileGlyphPath,
   findNode,
   parentOf,
   type FileNode
 } from './fileTreeData'
+
+describe('fileTreeData.fileGlyphPath (extension → glyph; shared by tree + S4 chip)', () => {
+  it('picks distinct glyphs for code, doc, image, and a generic fallback', () => {
+    const code = fileGlyphPath('a.ts')
+    const doc = fileGlyphPath('README.md')
+    const img = fileGlyphPath('logo.png')
+    const generic = fileGlyphPath('data.bin')
+    expect(new Set([code, doc, img, generic]).size).toBe(4) // all four differ
+    expect(fileGlyphPath('b.TSX')).toBe(code) // case-insensitive
+    expect(fileGlyphPath('Makefile')).toBe(generic) // no extension → fallback
+  })
+})
 
 describe('fileTreeData.toNodes', () => {
   it('builds forward-slashed ids and orders dirs-first then case-insensitive name', () => {
