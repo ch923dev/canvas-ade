@@ -17,6 +17,9 @@ import {
   fromObject,
   type TerminalBoard
 } from '../lib/boardSchema'
+// Namespace import so the PERSIST-01 memo test can spy on the live `previewConnectorsFor`
+// binding the store calls internally (vitest gives ESM named imports live bindings).
+import * as boardSchema from '../lib/boardSchema'
 import { makeChecklist } from '../canvas/boards/planning/elements'
 import { useToastStore } from './toastStore'
 import { useCommandStore } from './commandStore'
@@ -480,6 +483,24 @@ describe('serialization bridge', () => {
     const doc = get().toObject()
     expect(doc.schemaVersion).toBe(SCHEMA_VERSION)
     expect(doc.boards).toHaveLength(1)
+  })
+
+  // PERSIST-01: the preview-connector derivation is memoized against the boards ref, so
+  // back-to-back saves with no board change don't re-derive it every ~1s autosave tick.
+  it('toObject() memoizes previewConnectorsFor against the boards ref', () => {
+    const spy = vi.spyOn(boardSchema, 'previewConnectorsFor')
+    try {
+      get().addBoard('terminal', { x: 0, y: 0 }) // fresh boards ref → memo starts cold
+      spy.mockClear()
+      get().toObject() // cold ref → derives once
+      get().toObject() // SAME boards ref → memo hit, no re-derivation
+      expect(spy).toHaveBeenCalledTimes(1)
+      get().addBoard('browser', { x: 100, y: 0 }) // board change → new ref invalidates memo
+      get().toObject()
+      expect(spy).toHaveBeenCalledTimes(2) // exactly one fresh derivation, not three
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('loadObject() replaces boards and clears selection', () => {

@@ -545,6 +545,22 @@ function applyBoardPatch(boards: Board[], id: string, patch: Partial<Board>): Bo
   return changed ? next : null
 }
 
+// PERSIST-01: `previewConnectorsFor` is pure on `boards`, and the store replaces the
+// `boards` array by reference on every mutation (immutable updates) — so memoize the
+// derivation against that ref. An autosave tick with no board change (a camera pan, a
+// group rename, a backdrop tweak) then reuses the last result instead of re-deriving the
+// preview connectors on every ~1s save. Keyed on identity, never mutated in place, so the
+// cache can't go stale: a new boards ref ⇒ recompute; the same ref ⇒ the same connectors.
+let memoBoardsRef: Board[] | null = null
+let memoPreviewConnectors: Connector[] = []
+function memoizedPreviewConnectors(boards: Board[]): Connector[] {
+  if (boards !== memoBoardsRef) {
+    memoBoardsRef = boards
+    memoPreviewConnectors = previewConnectorsFor(boards)
+  }
+  return memoPreviewConnectors
+}
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   boards: [],
   connectors: [],
@@ -1006,11 +1022,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   // Re-derive preview connectors from board state (previewSourceId = runtime SoT) and
   // concat the in-memory orchestration connectors → the full persisted set (Decision B).
+  // PERSIST-01: the preview-derivation is memoized against the boards ref (see
+  // memoizedPreviewConnectors); the spread still builds a fresh array each call so the
+  // cached array is never aliased into the returned doc.
   toObject: () =>
     toObject(
       get().boards,
       get().viewport,
-      [...previewConnectorsFor(get().boards), ...get().connectors],
+      [...memoizedPreviewConnectors(get().boards), ...get().connectors],
       get().groups,
       get().background
     ),
