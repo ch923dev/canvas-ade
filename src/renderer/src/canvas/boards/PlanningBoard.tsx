@@ -472,6 +472,17 @@ export function PlanningBoard({
       setEditingTextId((cur) => (editing ? id : cur === id ? null : cur)),
     []
   )
+  // PLAN-07: stable identity for the vector-select handler WhiteboardSvg holds. An inline
+  // arrow here gets a fresh identity each render and would defeat the memo() above — every
+  // snap toggle / editing-state change would still re-reconcile the whole SVG layer. Both
+  // selectOnPress (useCallback) and wellRef (ref) are already stable, so this is a constant.
+  const onSelectVector = useCallback(
+    (id: string, additive: boolean) => {
+      selectOnPress(id, additive)
+      wellRef.current?.focus()
+    },
+    [selectOnPress]
+  )
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
@@ -620,10 +631,7 @@ export function PlanningBoard({
           // pen/arrow) so a note/check placement over committed ink falls through
           // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
           drawing={tool !== 'select'}
-          onSelect={(id, additive) => {
-            selectOnPress(id, additive)
-            wellRef.current?.focus()
-          }}
+          onSelect={onSelectVector}
           onDragStart={onDragStartStable}
           endpointDrag={endpointDrag}
           onEndpointDragStart={startEndpointDrag}
