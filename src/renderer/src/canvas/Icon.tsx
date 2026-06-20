@@ -155,6 +155,11 @@ function Svg({ size, sw, style, children }: SvgProps): ReactElement {
       strokeLinecap="round"
       strokeLinejoin="round"
       style={style}
+      // PLAN-02 (a11y): glyphs are decorative chrome — the labelled control around them
+      // carries the accessible name (IconBtn `aria-label`), so hide the SVG from AT and
+      // keep it out of the tab order to avoid a duplicate / nameless announcement.
+      aria-hidden="true"
+      focusable="false"
     >
       {children}
     </svg>

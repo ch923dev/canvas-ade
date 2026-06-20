@@ -8,6 +8,7 @@
  * a viewport-change subscription without DOM coupling.
  */
 import type { FitViewOptions } from '@xyflow/react'
+import type { BoardType } from './boardSchema'
 
 /** Camera zoom range (React Flow minZoom/maxZoom). */
 export const Z_MIN = 0.1
@@ -67,11 +68,29 @@ export function snapZoom(zoom: number): number {
 /** Dot-grid lattice spacing in world px. */
 export const GRID_GAP = 24
 
+/** Dot-grid colour — a mirror of the `--grid-dot` token in index.css. React Flow's
+ *  <Background> paints an SVG whose fill can't reliably read a CSS variable, so the colour
+ *  lives here as one shared constant (consumed by Canvas's FadingDots) instead of being
+ *  inlined at the call site, so the constant and the token can't silently drift. */
+export const GRID_DOT_COLOR = '#202022'
+
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
 /** True when the camera is zoomed out far enough that boards should show LOD. */
 export function isLod(zoom: number): boolean {
   return zoom < LOD_ZOOM
+}
+
+/**
+ * Focus / full-view max camera zoom for a board type. Raster boards (terminal xterm
+ * bitmap, browser OSR snapshot) blur when the camera upscales them past 100%, so their
+ * focus zoom caps at 1; vector boards (planning notes / pen / diagram) re-rasterise crisp
+ * at any zoom and may fill the viewport up to Z_MAX. One source of truth shared by the
+ * Enter / double-click focus (useBoardKeyboardNav) and the planning camera full view
+ * (useFullView) so the raster-board list can't drift between the two call sites.
+ */
+export function focusMaxZoom(boardType: BoardType): number {
+  return boardType === 'terminal' || boardType === 'browser' ? 1 : Z_MAX
 }
 
 /**

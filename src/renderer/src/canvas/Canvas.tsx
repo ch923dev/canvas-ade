@@ -29,7 +29,8 @@ import {
   useStoreApi,
   type EdgeTypes,
   type NodeChange,
-  type NodeTypes
+  type NodeTypes,
+  type OnNodeDrag
 } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import {
@@ -38,7 +39,14 @@ import {
   SCHEMA_VERSION,
   type BoardType
 } from '../lib/boardSchema'
-import { FIT_FRAME, GRID_GAP, Z_MAX, Z_MIN, gridDotOpacity } from '../lib/canvasView'
+import {
+  FIT_FRAME,
+  GRID_DOT_COLOR,
+  GRID_GAP,
+  Z_MAX,
+  Z_MIN,
+  gridDotOpacity
+} from '../lib/canvasView'
 import {
   computeAlignment,
   computeResizeSnap,
@@ -59,7 +67,7 @@ import { buildCanvasEdges } from './canvasEdges'
 import { planNodeRemovalCleanup } from '../lib/canvasDecisions'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { BoardActionsContext } from './boardActions'
-import { FullViewModal } from './FullViewModal'
+import { FullViewModal, type FullViewRect } from './FullViewModal'
 import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { BackdropLayer } from './backdrop/BackdropLayer'
@@ -118,8 +126,9 @@ function FadingDots(): ReactElement | null {
       gap={GRID_GAP}
       // RF size = dot radius (1) / cross arm length (6, its default); ignored for lines.
       size={variant === BackgroundVariant.Cross ? 6 : 1}
-      // Mirror of the --grid-dot token (SVG fill can't read a CSS var reliably).
-      color="#202022"
+      // One shared constant mirrors the --grid-dot token (RF's SVG fill can't read a CSS var
+      // reliably), so the Background colour and the token can't silently drift.
+      color={GRID_DOT_COLOR}
       style={{ opacity: gridDotOpacity(zoom) }}
     />
   )
@@ -159,7 +168,6 @@ function CanvasInner(): ReactElement {
   const groups = useCanvasStore((s) => s.groups)
   const projectStatus = useCanvasStore((s) => s.project.status)
   const projectDir = useCanvasStore((s) => s.project.dir)
-  const viewport = useCanvasStore((s) => s.viewport)
 
   const rf = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
@@ -255,9 +263,12 @@ function CanvasInner(): ReactElement {
     setDigestProjectKey(openedProjectKey)
     setDigestOpen(true)
   }
+  // Tier-1 digest: a pure function of the persisted boards (DigestDoc = the doc minus the
+  // camera). It does NOT read the camera `viewport`, so a pan/zoom must not recompute it
+  // (CANVAS-01: subscribing to `s.viewport` here re-rendered CanvasInner every camera frame).
   const digest = useMemo(
-    () => buildDigest({ schemaVersion: SCHEMA_VERSION, viewport, boards, connectors }),
-    [boards, viewport, connectors]
+    () => buildDigest({ schemaVersion: SCHEMA_VERSION, boards, connectors }),
+    [boards, connectors]
   )
 
   // T-M4: cached Tier-2 prose by board id, fetched once per project open (pure disk read,
@@ -555,8 +566,8 @@ function CanvasInner(): ReactElement {
 
   // Drag start: checkpoint for undo. (Browser previews paint into a clipping DOM <canvas>
   // since OS-3, so a dragged board z-orders normally over them — no live-view detach needed.)
-  const onNodeDragStart = useCallback(
-    (_e: MouseEvent, node: BoardFlowNode) => {
+  const onNodeDragStart = useCallback<OnNodeDrag<BoardFlowNode>>(
+    (_e, node) => {
       dragNodeIdRef.current = node.id
       beginChange()
       // Disarm any in-flight reflow: if a drag starts inside the ~340ms absorb window the dragged
@@ -570,13 +581,13 @@ function CanvasInner(): ReactElement {
   )
   // S6 drag-onto-box: hit-test the dragged board's center against group boxes (lights the hovered
   // box as a drop target) — logic lives in useGroupInteractions.
-  const onNodeDrag = useCallback(
-    (_e: MouseEvent, node: BoardFlowNode) => onNodeDragGroupHitTest(node),
+  const onNodeDrag = useCallback<OnNodeDrag<BoardFlowNode>>(
+    (_e, node) => onNodeDragGroupHitTest(node),
     [onNodeDragGroupHitTest]
   )
 
-  const onNodeDragStop = useCallback(
-    (_e: MouseEvent, node: BoardFlowNode) => {
+  const onNodeDragStop = useCallback<OnNodeDrag<BoardFlowNode>>(
+    (_e, node) => {
       dragNodeIdRef.current = null
       setGuides((g) => (g.length ? [] : g))
       setOverlaps((o) => (o.length ? [] : o))
@@ -792,6 +803,18 @@ function CanvasInner(): ReactElement {
 
   const fullViewBoard = fullViewId ? boards.find((b) => b.id === fullViewId) : undefined
 
+  // Origin rect for the full-view stretch (FLIP): the board's CURRENT on-screen rect, read
+  // live so it's right at open AND at close (even after a window resize). Identity-stable
+  // while in full view (fullViewId constant) so the modal's effects don't churn.
+  const getFullViewOriginRect = useCallback((): FullViewRect | null => {
+    if (!fullViewId) return null
+    const b = useCanvasStore.getState().boards.find((x) => x.id === fullViewId)
+    if (!b) return null
+    const tl = rf.flowToScreenPosition({ x: b.x, y: b.y })
+    const br = rf.flowToScreenPosition({ x: b.x + b.w, y: b.y + b.h })
+    return { left: tl.x, top: tl.y, width: br.x - tl.x, height: br.y - tl.y }
+  }, [rf, fullViewId])
+
   return (
     <BoardActionsContext.Provider value={boardActions}>
       <FullViewContext.Provider value={fullViewHost}>
@@ -995,6 +1018,7 @@ function CanvasInner(): ReactElement {
             onEntered={handleFullViewEntered}
             onExited={handleFullViewExited}
             onHost={setFullViewHost}
+            getOriginRect={getFullViewOriginRect}
           />
         )}
         {paletteView && (
