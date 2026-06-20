@@ -13,6 +13,8 @@
 import { memo, useEffect, useRef, type ReactElement } from 'react'
 import type { ChecklistElement } from '../../../lib/boardSchema'
 import { Icon } from '../../Icon'
+import { WidthResizeHandle } from './WidthResizeHandle'
+import { CHECKLIST_MIN_W } from './widthResize'
 
 export interface ChecklistCardProps {
   element: ChecklistElement
@@ -40,6 +42,8 @@ export interface ChecklistCardProps {
   onSelect?: (id: string, additive: boolean) => void
   /** Report the rendered board-local size for selection/snap bbox (W2). */
   onMeasure?: (id: string, w: number, h: number) => void
+  /** PLAN-05: commit a new board-local width from the right-edge resize handle. */
+  onResize?: (id: string, w: number) => void
 }
 
 /** 16px checkbox; filled `--accent` + a `--void` check glyph when done. */
@@ -84,7 +88,8 @@ export const ChecklistCard = memo(function ChecklistCard({
   onMeasureBottom,
   selected,
   onSelect,
-  onMeasure
+  onMeasure,
+  onResize
 }: ChecklistCardProps): ReactElement {
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
@@ -214,8 +219,16 @@ export const ChecklistCard = memo(function ChecklistCard({
         </span>
       </div>
 
-      {/* 3px progress bar — width animates with the live done ratio. */}
+      {/* 3px progress bar — width animates with the live done ratio. PLAN-04 (a11y): announced
+          as a real progressbar — valuenow/min/max in percent, with a human "{done} of {total}
+          done" valuetext so AT reads the raw counts, not just the percentage. */}
       <div
+        role="progressbar"
+        aria-label="Checklist progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        aria-valuetext={`${done} of ${total} done`}
         style={{
           height: 3,
           borderRadius: 'var(--r-pill)',
@@ -356,6 +369,16 @@ export const ChecklistCard = memo(function ChecklistCard({
           <Icon name="plus" size={13} />
           Add item
         </button>
+      )}
+
+      {/* PLAN-05: right-edge width handle — selected + interactive + unlocked only. */}
+      {selected && interactive && element.locked !== true && onResize && (
+        <WidthResizeHandle
+          width={element.w}
+          min={CHECKLIST_MIN_W}
+          onEditStart={() => onEditStart?.()}
+          onResize={(w) => onResize(element.id, w)}
+        />
       )}
     </div>
   )

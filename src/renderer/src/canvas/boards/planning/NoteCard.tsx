@@ -10,6 +10,8 @@
 import { memo, useEffect, useRef, type ReactElement } from 'react'
 import type { NoteElement, NoteTint } from '../../../lib/boardSchema'
 import { NOTE_TINTS, TINT_CYCLE } from './tints'
+import { WidthResizeHandle } from './WidthResizeHandle'
+import { NOTE_MIN_W } from './widthResize'
 
 export interface NoteCardProps {
   note: NoteElement
@@ -32,6 +34,8 @@ export interface NoteCardProps {
   onMeasure?: (id: string, w: number, h: number) => void
   /** Set this note's tint from the hover swatch pill (D3-A); one undo step upstream. */
   onSetTint?: (id: string, tint: NoteTint) => void
+  /** PLAN-05: commit a new board-local width from the right-edge resize handle. */
+  onResize?: (id: string, w: number) => void
 }
 
 // Memoized: PlanningBoard passes stable callbacks + a per-element object that only
@@ -47,7 +51,8 @@ export const NoteCard = memo(function NoteCard({
   selected,
   onSelect,
   onMeasure,
-  onSetTint
+  onSetTint,
+  onResize
 }: NoteCardProps): ReactElement {
   const tint = NOTE_TINTS[note.tint]
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -262,6 +267,15 @@ export const NoteCard = memo(function NoteCard({
           }}
         />
       </div>
+      {/* PLAN-05: right-edge width handle — selected + interactive + unlocked only. */}
+      {selected && interactive && note.locked !== true && onResize && (
+        <WidthResizeHandle
+          width={note.w}
+          min={NOTE_MIN_W}
+          onEditStart={() => onEditStart?.()}
+          onResize={(w) => onResize(note.id, w)}
+        />
+      )}
     </div>
   )
 })

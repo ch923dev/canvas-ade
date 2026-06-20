@@ -245,14 +245,16 @@ LOD and only the title (rendered at a zoom-compensated size) shows.
   disabled-only now). Checklists scale with the board, so resize the
   planning board to give a long list room. Toggling is live.
 - **Actions** (shipped): a mini tool cluster shown only when the planning board
-  is selected — `select · note · text · check · arrow · pen · erase` — then a
+  is selected — `select · note · text · check · diagram · arrow · pen · erase` — then a
   **snap-to-grid toggle** (magnet) and an **export popover** (PNG / SVG).
+  Each tool carries a human accessible name + a bare-letter shortcut surfaced in its
+  tooltip (s/n/x/c/d/a/p/e — `t` is reserved for the global canvas Tidy).
   Otherwise the board is just content. Source of truth: `PlanningToolbar.tsx`.
   > **Divergence note (reconciled 2026-06-15, epic slice S5).** This intentionally
   > diverges from the frozen prototype (`design-reference/project/boards.jsx`),
   > which drew a 5-tool cluster `select · note · checklist · arrow · pen`. The
-  > shipped board renamed `checklist`→`check` and added the `text`, `erase`, snap,
-  > and export controls. Per CLAUDE.md "the design wins on UX; this
+  > shipped board renamed `checklist`→`check` and added the `text`, `diagram` (Mermaid),
+  > `erase`, snap, and export controls. Per CLAUDE.md "the design wins on UX; this
   > brief/architecture wins on the stack" — the prototype stays the visual/UX
   > reference; this list is the implemented contract. Don't re-sync the prototype
   > `.jsx` to it (it is read-only intent), and don't treat the 5-tool list as a

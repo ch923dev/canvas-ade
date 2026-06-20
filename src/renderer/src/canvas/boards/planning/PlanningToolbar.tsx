@@ -9,7 +9,7 @@ import type { ReactElement } from 'react'
 import type { PlanningBoard as PlanningBoardData } from '../../../lib/boardSchema'
 import { IconBtn } from '../../BoardFrame'
 import { ExportPopover } from './ExportPopover'
-import type { PlanTool } from './tools'
+import { TOOL_META, type PlanTool } from './tools'
 
 const TOOLS: ReadonlyArray<{
   tool: PlanTool
@@ -56,16 +56,25 @@ export function PlanningToolbar({
       // Keep tool clicks from starting the title-bar drag.
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {TOOLS.map(({ tool: t, icon }) => (
-        <IconBtn
-          key={t}
-          name={icon}
-          title={t}
-          size={15}
-          active={tool === t}
-          onClick={() => onPickTool(t)}
-        />
-      ))}
+      {TOOLS.map(({ tool: t, icon }) => {
+        // PLAN-02 (a11y): a human accessible name ("Sticky note", "Eraser") instead of the
+        // bare tool id, via PA-2's IconBtn `ariaLabel`. PLAN-03: the tooltip surfaces the
+        // keyboard shortcut letter, e.g. "Sticky note (N)". `toggle` makes the active tool
+        // announce aria-pressed (it signalled active by glyph color alone before).
+        const meta = TOOL_META[t]
+        return (
+          <IconBtn
+            key={t}
+            name={icon}
+            title={`${meta.label} (${meta.key.toUpperCase()})`}
+            ariaLabel={meta.label}
+            toggle
+            size={15}
+            active={tool === t}
+            onClick={() => onPickTool(t)}
+          />
+        )
+      })}
       <div
         style={{
           width: 1,
@@ -77,6 +86,8 @@ export function PlanningToolbar({
       <IconBtn
         name="magnet"
         title={snapEnabled ? 'Snapping on' : 'Snapping off'}
+        ariaLabel="Snap to grid"
+        toggle
         size={15}
         active={snapEnabled}
         onClick={onToggleSnap}
