@@ -3091,13 +3091,18 @@ body {
 }
 /* ── PA-6 (GROUP-06): board ⋯-menu group-section caption ──────────────────────────────────
    A quiet uppercase label heading the per-group Add/Remove rows so they read as one cluster. */
+/* Mirrors the command-palette section header (.cp-section) so it reads as a quiet LABEL, not a
+   disabled menu item: --text-3 (a readable label tone, never the disabled-only --text-faint),
+   micro size, and a hairline rule above to separate it from the action rows. */
 .board-menu-cap {
-  padding: 4px 10px 2px;
-  font-size: 9.5px;
-  letter-spacing: 0.07em;
+  margin-top: 4px;
+  padding: 6px 10px 3px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-micro);
+  letter-spacing: var(--tr-micro);
   text-transform: uppercase;
-  color: var(--text-faint);
-  font-family: var(--mono);
+  color: var(--text-3);
 }
 .group-name-pop {
   background: var(--surface-raised);
