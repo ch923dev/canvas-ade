@@ -54,7 +54,7 @@ test.describe('@planning text create + edit (real OS input)', () => {
     // rendered. Poll for the Text tool button to confirm the board has mounted and React
     // has rendered the toolbar row.
     await expect
-      .poll(() => boardBtnCenter(page, planId, 'button[title="text"]'), {
+      .poll(() => boardBtnCenter(page, planId, 'button[title="Text (X)"]'), {
         message: 'Text tool button appeared in the planning board toolbar',
         timeout: 4000
       })
@@ -73,7 +73,7 @@ test.describe('@planning text create + edit (real OS input)', () => {
       .toBeCloseTo(1, 1)
 
     // Re-read button and well coords NOW (they shifted when zoom changed).
-    const tbtn = await boardBtnCenter(page, planId, 'button[title="text"]')
+    const tbtn = await boardBtnCenter(page, planId, 'button[title="Text (X)"]')
     expect(tbtn, 'Text tool button visible at zoom=1').not.toBeNull()
 
     // Click the Text tool button with real OS input.

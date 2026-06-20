@@ -3,6 +3,7 @@ import { NoteCard } from './NoteCard'
 import { ChecklistCard } from './ChecklistCard'
 import { FreeText } from './FreeText'
 import { ImageCard } from './ImageCard'
+import { WhiteboardSvg } from './WhiteboardSvg'
 
 /**
  * P0 perf — per-card render isolation. `React.memo(fn)` returns an exotic element type
@@ -23,5 +24,13 @@ describe('planning cards are memoized', () => {
     ['ImageCard', ImageCard]
   ])('%s is a React.memo component', (_name, Comp) => {
     expect(isMemo(Comp)).toBe(true)
+  })
+})
+
+describe('the whiteboard vector layer is memoized (PLAN-07)', () => {
+  it('WhiteboardSvg is a React.memo component', () => {
+    // Once PLAN-01 stops the board re-rendering per camera frame, memo lets the SVG layer
+    // skip re-renders that don't touch its (useMemo-stabilized) arrow/stroke props.
+    expect(isMemo(WhiteboardSvg)).toBe(true)
   })
 })

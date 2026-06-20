@@ -7,7 +7,7 @@
  * Includes a live "draft" overlay so an in-progress arrow/stroke renders while
  * the pointer is still down, before it is committed to the store.
  */
-import { useMemo, type PointerEvent, type ReactElement } from 'react'
+import { memo, useMemo, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
 import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
 import { isLocked, setArrowEndpoint, type ArrowEnd } from './elements'
@@ -69,7 +69,13 @@ export interface WhiteboardSvgProps {
   onEndpointDragStart?: (e: PointerEvent, id: string, end: ArrowEnd) => void
 }
 
-export function WhiteboardSvg({
+// Memoized (PLAN-07): once PLAN-01 stops the board re-rendering per camera frame, the
+// remaining re-render triggers are element edits + ephemeral session state (tool, snap,
+// editing/hover). PlanningBoard hands this stable callbacks + `useMemo`-stabilized
+// arrow/stroke arrays (keyed on viewElements), so a re-render that doesn't touch the
+// vector layer — a note keystroke, a snap toggle, an editingTextId change — skips the
+// whole SVG reconcile instead of re-walking every arrow/stroke path.
+export const WhiteboardSvg = memo(function WhiteboardSvg({
   boardId,
   arrows,
   strokes,
@@ -259,4 +265,4 @@ export function WhiteboardSvg({
       )}
     </svg>
   )
-}
+})

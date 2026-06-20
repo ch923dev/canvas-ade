@@ -66,8 +66,10 @@ export interface PlanningKeyboardDeps {
   clearSel: () => void
   commit: (next: PlanningElement[] | ((cur: PlanningElement[]) => PlanningElement[])) => void
   beginChange: () => void
-  /** Live camera zoom — screenScale fallback when the well has no layout yet. */
-  zoom: number
+  /** Lazy camera-zoom read (PLAN-01) — the screenScale fallback when the well has no
+   *  layout yet. A stable closure over the RF store API, NOT a render-bound value, so
+   *  this hook never re-subscribes the board to per-frame camera changes. */
+  getZoom: () => number
   wellRef: MutableRefObject<HTMLDivElement | null>
   measuredRef: MutableRefObject<Map<string, { w: number; h: number }>>
   buildMenuEntries: (sel: ReadonlySet<string>) => MenuEntry[]
@@ -91,7 +93,7 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
     clearSel,
     commit,
     beginChange,
-    zoom,
+    getZoom,
     wellRef,
     measuredRef,
     buildMenuEntries,
@@ -118,7 +120,7 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
     if (effective.size !== selectedIds.size) setSelectedIds(effective)
     const well = wellRef.current
     const r = well?.getBoundingClientRect()
-    const scale = screenScale(r?.width ?? 0, well?.offsetWidth ?? 0, zoom)
+    const scale = screenScale(r?.width ?? 0, well?.offsetWidth ?? 0, getZoom())
     const bbox = unionBBox(
       elements
         .filter((el) => effective.has(el.id))
@@ -137,7 +139,7 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
     selectedIds,
     setSelectedIds,
     wellRef,
-    zoom,
+    getZoom,
     measuredRef,
     buildMenuEntries,
     setContextMenu

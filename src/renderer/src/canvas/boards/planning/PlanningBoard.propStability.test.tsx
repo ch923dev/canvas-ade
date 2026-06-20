@@ -118,7 +118,8 @@ describe('PlanningBoard passes stable props to un-edited cards (memo preconditio
       'onSelect',
       'onMeasure',
       'onSetTint',
-      'onEditStart'
+      'onEditStart',
+      'onResize'
     ] as const) {
       expect(bAfter![key]).toBe(bBefore![key])
     }
