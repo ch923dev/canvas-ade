@@ -79,3 +79,31 @@ export function computeOsrSize(geom: OsrSizeGeom, settledZoom: number, dpr: numb
     supersample: quantizeSupersample(safeFit * safeZoom * safeDpr)
   }
 }
+
+/**
+ * PREV-01: the offscreen render size for a board in PORTAL full view.
+ *
+ * In full view the board's live subtree is portaled OUT of the camera-scaled canvas into the modal
+ * host (`useFullView`), so the in-canvas `deviceFitScale × settledZoom` no longer describes how big
+ * the preview is on screen — there is no camera transform, and the `.bb-frame` is sized to the
+ * preset aspect ratio at (typically) the full window height. Left at the in-canvas size the page
+ * stays a small buffer scaled UP → blurry. Here the supersample is the page's true on-screen
+ * physical scale: `S = (cssBoxWidth · dpr) / presetW`, where `cssBoxWidth` is the canvas element's
+ * laid-out width (read transform-independent via `clientWidth`, so the open/close FLIP animation
+ * doesn't perturb it). Logical stays the preset (the page still reflows to the preset width, M4);
+ * only the buffer grows — capped at OSR_MAX_SUPERSAMPLE (2×) like the in-canvas path.
+ */
+export function computeFullViewOsrSize(
+  viewport: BrowserViewport,
+  cssBoxWidth: number,
+  dpr: number
+): OsrSize {
+  const preset = VIEWPORT_PRESETS[viewport]
+  const safeDpr = Number.isFinite(dpr) && dpr > 0 ? dpr : 1
+  const safeBox = Number.isFinite(cssBoxWidth) && cssBoxWidth > 0 ? cssBoxWidth : preset.w
+  return {
+    logicalW: preset.w,
+    logicalH: preset.h,
+    supersample: quantizeSupersample((safeBox * safeDpr) / preset.w)
+  }
+}

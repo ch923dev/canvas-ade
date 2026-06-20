@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { CanvasDigest } from '../lib/digest'
 import { stripHeading } from '../lib/digest'
+import { PROSE_CLAMP_CHARS, digestStatusTone, type DigestRefreshResult } from '../lib/digestPanel'
 
 const TYPE_TAG: Record<string, string> = {
   terminal: 'TERM',
@@ -23,8 +24,10 @@ export interface DigestPanelProps {
    * T-F4: force a re-summary of one board, then refresh its prose. The container owns the IPC
    * (memory.refresh → memory.readBoards → setProse); the panel only drives the ⟳ + "updating…"
    * state. Absent → no refresh control is rendered (keeps the panel usable with no brain wired).
+   * MCP-04: may resolve to a {@link DigestRefreshResult} whose `message` the panel shows on the
+   * card when the refresh produced nothing (no key / budget / error).
    */
-  onRefresh?: (boardId: string) => Promise<void> | void
+  onRefresh?: (boardId: string) => Promise<DigestRefreshResult | void> | DigestRefreshResult | void
   open: boolean
   onOpen: () => void
   onClose: () => void
@@ -53,6 +56,27 @@ export function DigestPanel({
   // refreshing ignores repeat clicks. We never read back into prose here — the container's
   // onRefresh rewrites the prose prop; this only gates the spinner.
   const [busy, setBusy] = useState<Set<string>>(() => new Set())
+  // MCP-08: per-card "show full prose" state — long Tier-2 prose is clamped by default.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  // MCP-04: per-card transient feedback message from the last refresh that produced nothing.
+  const [feedback, setFeedback] = useState<Record<string, string>>({})
+  // Auto-dismiss the feedback a few seconds after the last one lands (it's an at-a-glance hint, not
+  // a persistent error). Re-arms whenever `feedback` changes, so a newer message resets the clock.
+  useEffect(() => {
+    if (Object.keys(feedback).length === 0) return
+    const t = setTimeout(() => setFeedback({}), 8000)
+    return () => clearTimeout(t)
+  }, [feedback])
+
+  const toggleExpanded = useCallback((boardId: string): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(boardId)) next.delete(boardId)
+      else next.add(boardId)
+      return next
+    })
+  }, [])
+
   const refresh = useCallback(
     async (boardId: string): Promise<void> => {
       if (!onRefresh) return
@@ -66,7 +90,16 @@ export function DigestPanel({
       })
       if (!started) return
       try {
-        await onRefresh(boardId)
+        const res = await onRefresh(boardId)
+        // MCP-04: surface the reason a refresh produced nothing; clear any stale note on success.
+        setFeedback((prev) => {
+          const msg = res && typeof res === 'object' ? res.message : undefined
+          if (msg) return { ...prev, [boardId]: msg }
+          if (!(boardId in prev)) return prev
+          const next = { ...prev }
+          delete next[boardId]
+          return next
+        })
       } finally {
         setBusy((prev) => {
           const next = new Set(prev)
@@ -117,7 +150,11 @@ export function DigestPanel({
               <div className="digest-card-top">
                 <span className="digest-tag">{TYPE_TAG[b.type] ?? b.type.toUpperCase()}</span>
                 <span className="digest-card-title">{b.title}</span>
-                <span className="digest-status" data-status={b.status}>
+                <span
+                  className="digest-status"
+                  data-status={b.status}
+                  data-tone={digestStatusTone(b.status)}
+                >
                   {b.status}
                 </span>
                 {onRefresh && (
@@ -138,18 +175,47 @@ export function DigestPanel({
               {(() => {
                 const raw = prose?.[b.boardId]
                 const body = raw ? stripHeading(raw) : ''
-                return body ? (
-                  <p className="digest-prose" data-test="digest-prose">
-                    {body}
-                  </p>
-                ) : (
-                  <ul className="digest-lines">
-                    {b.lines.map((l, i) => (
-                      <li key={i}>{l}</li>
-                    ))}
-                  </ul>
+                if (!body) {
+                  return (
+                    <ul className="digest-lines">
+                      {b.lines.map((l, i) => (
+                        <li key={i}>{l}</li>
+                      ))}
+                    </ul>
+                  )
+                }
+                // MCP-08: clamp long prose behind a Show more / less toggle (heuristic on length).
+                const clampable = body.length > PROSE_CLAMP_CHARS
+                const isExpanded = expanded.has(b.boardId)
+                return (
+                  <>
+                    <p
+                      className="digest-prose"
+                      data-test="digest-prose"
+                      data-clamped={clampable && !isExpanded}
+                    >
+                      {body}
+                    </p>
+                    {clampable && (
+                      <button
+                        type="button"
+                        className="digest-prose-toggle"
+                        data-test="digest-prose-toggle"
+                        aria-expanded={isExpanded}
+                        onClick={() => toggleExpanded(b.boardId)}
+                      >
+                        {isExpanded ? 'Show less' : 'Show more'}
+                      </button>
+                    )}
+                  </>
                 )
               })()}
+              {/* MCP-04: why the last refresh produced nothing (no key / budget / error). */}
+              {feedback[b.boardId] && (
+                <p className="digest-feedback" data-test="digest-feedback" role="status">
+                  {feedback[b.boardId]}
+                </p>
+              )}
             </article>
           ))}
         </div>

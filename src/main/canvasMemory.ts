@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
+import { isSafeId } from './safeId'
 
 const CANVAS_DIR = '.canvas'
 const MEMORY_DIR = 'memory'
@@ -21,11 +22,11 @@ const IGNORE_PRIVATE = '*\n'
 /** Opt-in commit: keep the prose, ignore only the volatile audit log. */
 const IGNORE_COMMITTED = 'audit/\n'
 
-/** Board ids are nanoid-style; reject anything else (and over-long) to keep writes inside memory/. */
-const SAFE_ID = /^[A-Za-z0-9_-]+$/
-const MAX_ID_LEN = 64
+/** Board ids are nanoid-style; reject anything else (and over-long) to keep writes inside memory/.
+ *  MCP-07: the regex + length cap now live in the shared `safeId` module so this and boardMemory.ts
+ *  can't drift. Kept as a named export — projectIpc imports `safeBoardId` at the IPC ingress. */
 export function safeBoardId(id: string): boolean {
-  return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LEN && SAFE_ID.test(id)
+  return isSafeId(id)
 }
 
 export interface CanvasMemoryPaths {

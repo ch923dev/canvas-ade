@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, appendFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, appendFileSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -207,5 +207,52 @@ describe('createAuditLog (append-only JSONL)', () => {
     // A huge limit is allowed but capped internally; with only 1 entry it returns 1.
     const back = await log.read({ limit: 999_999 })
     expect(back).toHaveLength(1)
+  })
+})
+
+describe('MCP-03 (rotation + tail-read — bounded audit log)', () => {
+  // Each line is ~430 B (300-char prompt); maxBytes 500 ⇒ the 2nd append rotates the active file.
+  const big = (over: Partial<AuditInput> = {}): AuditInput =>
+    input({ prompt: 'x'.repeat(300), ...over })
+
+  it('rotates the active file past maxBytes, keeping a .1 generation', async () => {
+    const log = createAuditLog({ dir, now: () => 1, maxBytes: 500 })
+    await log.append(big({ prompt: 'one'.padEnd(300, '.') }))
+    expect(existsSync(join(dir, FILE) + '.1')).toBe(false) // not yet over cap
+    await log.append(big({ prompt: 'two'.padEnd(300, '.') })) // crosses 500 B → rotate
+    expect(existsSync(join(dir, FILE) + '.1')).toBe(true) // prior generation kept
+    await log.append(big({ prompt: 'three'.padEnd(300, '.') })) // fresh active file
+    // The active file is bounded (holds only the post-rotation entry, not all three).
+    expect(statSync(join(dir, FILE)).size).toBeLessThan(500)
+  })
+
+  it('read stitches the rotated generation, newest-first, gap-free seqs', async () => {
+    const log = createAuditLog({ dir, now: () => 1, maxBytes: 500 })
+    await log.append(big({ prompt: 'p1'.padEnd(300, '.') }))
+    await log.append(big({ prompt: 'p2'.padEnd(300, '.') })) // rotates here
+    await log.append(big({ prompt: 'p3'.padEnd(300, '.') }))
+    const back = await log.read({ limit: 10 })
+    expect(back.map((e) => e.seq)).toEqual([3, 2, 1]) // active(3) stitched with .1(1,2)
+  })
+
+  it('seq stays monotonic across a rotation AND a fresh instance', async () => {
+    const a = createAuditLog({ dir, now: () => 1, maxBytes: 500 })
+    expect((await a.append(big())).seq).toBe(1)
+    expect((await a.append(big())).seq).toBe(2) // rotates
+    expect((await a.append(big())).seq).toBe(3)
+    // A NEW instance must seed from max(active, .1) + 1 — not reset, despite the rotation split.
+    const b = createAuditLog({ dir, now: () => 1, maxBytes: 500 })
+    expect((await b.append(big())).seq).toBe(4)
+  })
+
+  it('a failed write does not phantom-grow the size or trigger a false rotation', async () => {
+    const log = createAuditLog({ dir, now: () => 1, maxBytes: 500 })
+    await log.append(big()) // ~430 B, under cap
+    fsControl.failNextAppend = true
+    await expect(log.append(big())).rejects.toThrow(/ENOSPC/)
+    // The failed write never grew the tracked size, so no rotation happened off a phantom byte count.
+    expect(existsSync(join(dir, FILE) + '.1')).toBe(false)
+    // And the retry reuses seq 2 (no gap), proving the {seq,bytes} state was preserved on failure.
+    expect((await log.append(big())).seq).toBe(2)
   })
 })

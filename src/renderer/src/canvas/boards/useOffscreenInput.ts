@@ -310,8 +310,9 @@ function attachInput(
   // links). Start at 'default' (arrow) so the preview reads as a page, not the canvas-pan
   // grab cursor; cursor-changed refines it. A CSS url() MUST end in a fallback keyword.
   canvas.style.cursor = 'default'
-  const offCursor = window.api.onPreviewOsrCursor((c) => {
-    if (c.id !== boardId) return
+  // PREV-02: the shared cursor listener dispatches by board id, so this handler only ever sees
+  // THIS board's cursor — no per-event id check needed.
+  const offCursor = window.api.onPreviewOsrCursor(boardId, (c) => {
     if (c.type === 'custom' && c.image) {
       const hx = c.hotspot?.x ?? 0
       const hy = c.hotspot?.y ?? 0

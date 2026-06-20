@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   computeOsrSize,
+  computeFullViewOsrSize,
   quantizeSupersample,
   OSR_MIN_SUPERSAMPLE,
   OSR_MAX_SUPERSAMPLE,
@@ -61,5 +62,35 @@ describe('computeOsrSize — supersample (M1 sharpness)', () => {
     expect(computeOsrSize(BIG('desktop'), 0, 1).supersample).toBeGreaterThanOrEqual(1)
     expect(computeOsrSize(BIG('desktop'), 1, 0).supersample).toBeGreaterThanOrEqual(1)
     expect(computeOsrSize(BIG('desktop'), NaN, NaN).supersample).toBe(1.0) // 1.1×1×1 → 1.0
+  })
+})
+
+describe('computeFullViewOsrSize (PREV-01 — full-view supersample from the on-screen box)', () => {
+  it('keeps the preset logical size (the page still reflows to the preset width)', () => {
+    expect(computeFullViewOsrSize('mobile', 800, 1)).toMatchObject({ logicalW: 390, logicalH: 844 })
+    expect(computeFullViewOsrSize('desktop', 2000, 1)).toMatchObject({
+      logicalW: 1280,
+      logicalH: 800
+    })
+  })
+
+  it('S tracks (cssBoxWidth · dpr) / presetW — a bigger box → a crisper buffer', () => {
+    // mobile preset 390: a 780-px box at dpr 1 → 2.0 (clamped at the 2× cap).
+    expect(computeFullViewOsrSize('mobile', 780, 1).supersample).toBe(2.0)
+    // a 390-px box at dpr 1 → exactly 1.0.
+    expect(computeFullViewOsrSize('mobile', 390, 1).supersample).toBe(1.0)
+    // desktop preset 1280: a 1600-px box at dpr 1 → 1.25 → quantized to 1.25.
+    expect(computeFullViewOsrSize('desktop', 1600, 1).supersample).toBe(1.25)
+  })
+
+  it('clamps to the 2× cap for a large full-view box (the accept criterion)', () => {
+    expect(computeFullViewOsrSize('desktop', 4000, 2).supersample).toBe(OSR_MAX_SUPERSAMPLE)
+  })
+
+  it('falls back safely on a zero / non-finite box or dpr (never 0 / NaN)', () => {
+    expect(computeFullViewOsrSize('mobile', 0, 1).supersample).toBe(1.0) // box→presetW fallback
+    expect(computeFullViewOsrSize('mobile', 800, 0).supersample).toBeGreaterThanOrEqual(1)
+    expect(computeFullViewOsrSize('mobile', NaN, NaN).supersample).toBe(1.0)
+    expect(Number.isFinite(computeFullViewOsrSize('mobile', NaN, NaN).supersample)).toBe(true)
   })
 })
