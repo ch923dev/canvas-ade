@@ -26,7 +26,9 @@ beforeEach(() => {
     provider: 'openrouter',
     model: 'google/gemini-2.5-flash',
     hasKey: false,
-    encryptionAvailable: true
+    encryptionAvailable: true,
+    callsToday: 0,
+    defaultMaxCallsPerDay: 200
   })
   llm.setKey.mockResolvedValue({ ok: true })
   llm.clearKey.mockResolvedValue({ ok: true })
@@ -70,13 +72,19 @@ it('Save writes config and the key when a key is entered', async () => {
   const onClose = vi.fn()
   render(<SettingsModal onClose={onClose} />)
   const key = (await screen.findByLabelText(/api key/i)) as HTMLInputElement
+  // Wait for status() to resolve (cap prefilled to the default) so the saved payload is
+  // deterministic — model defaults to the same value before status, so it can't gate the race.
+  await waitFor(() =>
+    expect((screen.getByLabelText(/max llm calls per day/i) as HTMLInputElement).value).toBe('200')
+  )
   fireEvent.change(key, { target: { value: 'sk-secret' } })
   fireEvent.click(screen.getByRole('button', { name: /save/i }))
   await waitFor(() =>
     expect(llm.setConfig).toHaveBeenCalledWith({
       provider: 'openrouter',
       model: 'google/gemini-2.5-flash',
-      baseUrl: undefined
+      baseUrl: undefined,
+      maxCallsPerDay: 200
     })
   )
   expect(llm.setKey).toHaveBeenCalledWith({ provider: 'openrouter', key: 'sk-secret' })
@@ -89,6 +97,46 @@ it('Save does not call setKey when the key field is empty', async () => {
   fireEvent.click(screen.getByRole('button', { name: /save/i }))
   await waitFor(() => expect(llm.setConfig).toHaveBeenCalled())
   expect(llm.setKey).not.toHaveBeenCalled()
+})
+
+// ── MCP-05: per-day call cap field + usage peek ────────────────────────────────────────────────
+
+describe('MCP-05: per-day call cap field + usage peek', () => {
+  it('prefills the cap field with the configured value and shows the usage peek', async () => {
+    llm.status.mockResolvedValue({
+      hasProvider: true,
+      provider: 'openrouter',
+      model: 'google/gemini-2.5-flash',
+      hasKey: false,
+      encryptionAvailable: true,
+      callsToday: 12,
+      maxCallsPerDay: 50,
+      defaultMaxCallsPerDay: 200
+    })
+    render(<SettingsModal onClose={() => {}} />)
+    const field = (await screen.findByLabelText(/max llm calls per day/i)) as HTMLInputElement
+    await waitFor(() => expect(field.value).toBe('50'))
+    const peek = document.querySelector('[data-test="settings-usage-peek"]') as HTMLElement
+    expect(peek.textContent).toMatch(/12 of 50/)
+  })
+
+  it('falls back to the default cap when none is configured', async () => {
+    // beforeEach status: maxCallsPerDay undefined + defaultMaxCallsPerDay 200.
+    render(<SettingsModal onClose={() => {}} />)
+    const field = (await screen.findByLabelText(/max llm calls per day/i)) as HTMLInputElement
+    await waitFor(() => expect(field.value).toBe('200'))
+  })
+
+  it('Save sends an edited cap to setConfig', async () => {
+    render(<SettingsModal onClose={() => {}} />)
+    const field = (await screen.findByLabelText(/max llm calls per day/i)) as HTMLInputElement
+    await waitFor(() => expect(field.value).toBe('200'))
+    fireEvent.change(field, { target: { value: '25' } })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    await waitFor(() =>
+      expect(llm.setConfig).toHaveBeenCalledWith(expect.objectContaining({ maxCallsPerDay: 25 }))
+    )
+  })
 })
 
 it('Clear key calls clearKey for the active provider', async () => {

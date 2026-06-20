@@ -78,6 +78,7 @@ import { GroupContextMenu } from './GroupContextMenu'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
+import { useDigestProse } from './hooks/useDigestProse'
 import { buildDigest } from '../lib/digest'
 import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
@@ -271,48 +272,9 @@ function CanvasInner(): ReactElement {
     [boards, connectors]
   )
 
-  // T-M4: cached Tier-2 prose by board id, fetched once per project open (pure disk read,
-  // NO LLM call). DigestPanel renders the prose body when present, else the Tier-1 lines.
-  const [prose, setProse] = useState<Record<string, string>>({})
-  useEffect(() => {
-    if (openedProjectKey === null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setProse({})
-      return
-    }
-    let cancelled = false
-    const ids = useCanvasStore.getState().boards.map((b) => b.id)
-    void window.api.memory
-      .readBoards(ids)
-      .then((map) => {
-        if (!cancelled) setProse(map)
-      })
-      .catch(() => {
-        // The handler is written to never reject (returns {} on any guard/no-dir case);
-        // this is a defensive guard so an unexpected rejection can't surface as an
-        // unhandled promise. Prose stays empty → Tier-1 lines render.
-      })
-    return () => {
-      cancelled = true
-    }
-    // Fire once per open/switch: openedProjectKey changes on each project-open transition.
-    // boards read live (getState) so this does not re-fetch on every board edit.
-  }, [openedProjectKey])
-
-  // T-F4: manual ⟳ refresh for one card. Forces a re-summary in MAIN (budgeted + passive — no
-  // new egress), then re-reads only that board's prose and merges it in. Best-effort: a no-key /
-  // over-cap refresh leaves the prose unchanged (re-read returns the same / nothing). Never throws.
-  const refreshBoardProse = useCallback(async (boardId: string): Promise<void> => {
-    try {
-      await window.api.memory.refresh(boardId)
-      const map = await window.api.memory.readBoards([boardId])
-      const md = map[boardId]
-      if (md !== undefined) setProse((prev) => ({ ...prev, [boardId]: md }))
-    } catch {
-      // Both handlers are written to never reject; this guard keeps an unexpected rejection
-      // from surfacing as an unhandled promise. The card simply stops its "updating…" state.
-    }
-  }, [])
+  // T-M4 / T-F4: the reopen DigestPanel's cached Tier-2 prose + manual ⟳ refresh (incl. MCP-04
+  // "why a refresh produced nothing"). Extracted to a hook to keep this file under the max-lines gate.
+  const { prose, refreshBoardProse } = useDigestProse(openedProjectKey)
 
   const [diag, setDiag] = useState(import.meta.env.DEV)
 

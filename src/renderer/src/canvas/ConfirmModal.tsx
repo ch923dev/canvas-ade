@@ -88,38 +88,24 @@ export default function ConfirmModal(): React.ReactElement | null {
         {current.body}
       </p>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        {/* STYLE-01: shared modal-button grammar (filled accent primary at AA contrast). */}
         <button
           type="button"
+          className="ca-btn-ghost"
           data-testid="confirm-deny"
           onClick={() => answer(false)}
-          style={{ ...btn, color: 'var(--text-2)', background: 'var(--surface-raised)' }}
         >
           {current.denyLabel ?? 'Deny'}
         </button>
         <button
           type="button"
+          className="ca-btn-primary"
           data-testid="confirm-approve"
           onClick={() => answer(true)}
-          style={{
-            ...btn,
-            color: 'var(--text)',
-            background: 'var(--accent)',
-            borderColor: 'var(--accent)'
-          }}
         >
           {current.confirmLabel ?? 'Approve'}
         </button>
       </div>
     </Modal>
   )
-}
-
-const btn: React.CSSProperties = {
-  padding: '6px 14px',
-  fontFamily: 'var(--ui)',
-  fontSize: 'var(--fs-label)',
-  fontWeight: 500,
-  border: '1px solid var(--border)',
-  borderRadius: 6,
-  cursor: 'pointer'
 }

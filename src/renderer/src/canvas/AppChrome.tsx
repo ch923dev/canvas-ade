@@ -34,6 +34,7 @@ import { SettingsModal } from './SettingsModal'
 import { BackdropPicker } from './BackdropPicker'
 import { RecapConsentModal } from './RecapConsentModal'
 import { SidePanel } from './SidePanel'
+import { OrchestrationModals } from './OrchestrationModals'
 
 export interface AppChromeProps {
   /** Apply a layout preset, then fit — the camera-cluster Tidy picker (Smart / tiling
@@ -84,6 +85,9 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {/* Guard: MAIN/renderer dir desync can leave askRecap=true with no project open. */}
       {askRecap && projectDir !== null && <RecapConsentModal onClose={() => setAskRecap(false)} />}
+      {/* Agent Orchestration Onboarding (P2): the Enable/Sync host owns its own first-init
+          trigger + per-project hydration (self-guarded against firing with no project open). */}
+      <OrchestrationModals />
     </>
   )
 }
@@ -109,7 +113,9 @@ export function ProjectSwitcher(): ReactElement {
   // STICKY error toast with a Retry action — the toast bridge effect below.
   const saveFailure = useSaveStatusStore((s) => s.failure)
   const setSaveFailure = useSaveStatusStore((s) => s.setSaveFailure)
-  const clearSaveFailure = useSaveStatusStore((s) => s.clearSaveFailure)
+  // PERSIST-03: a successful flush/retry marks 'saved' (clearing the failure too), so the
+  // ambient indicator reflects disk health rather than merely the absence of an error.
+  const markSaved = useSaveStatusStore((s) => s.markSaved)
   // Anchor for the shared <Menu> shell — the pill button itself, so the dropdown hangs
   // under it (left-aligned) and re-clicking the pill toggles closed (the shell excludes
   // the anchor from outside-close; BUG-045 class).
@@ -156,10 +162,10 @@ export function ProjectSwitcher(): ReactElement {
         setSaveFailure('Project could not be saved — switch cancelled to avoid losing edits')
         return
       }
-      // D0-8 symmetry: the flush SUCCEEDED — clear any standing failure chip now, or
-      // the global store carries the old project's stale message into the new one
-      // (the chip would flash on the next project until its first autosave).
-      clearSaveFailure()
+      // D0-8 symmetry: the flush SUCCEEDED — mark saved (which clears any standing failure)
+      // now, or the global store carries the old project's stale message into the new one
+      // (it would flash on the next project until its first autosave).
+      markSaved()
       // 2. Suppress autosave + dispose native views/PTYs.
       setProjectLoading()
       await disposeLiveResources()
@@ -195,7 +201,7 @@ export function ProjectSwitcher(): ReactElement {
         toObject(),
         useCanvasStore.getState().project.dir ?? undefined
       )
-      if (ok) clearSaveFailure()
+      if (ok) markSaved()
       else setSaveFailure('Save failed again — check disk space and permissions')
     } catch (err) {
       // Fixed user-facing string (same rationale as useAutosave::onError) — raw OS
@@ -204,7 +210,7 @@ export function ProjectSwitcher(): ReactElement {
       console.error('project save retry failed', err)
       setSaveFailure('Save failed again — check disk space and permissions')
     }
-  }, [toObject, clearSaveFailure, setSaveFailure])
+  }, [toObject, markSaved, setSaveFailure])
 
   // D1-A: bridge the save-failure state into the app toast channel (replaces the D0-8
   // chip). STICKY — a failed save is a data-loss condition the user must act on, so it
@@ -274,8 +280,10 @@ export function ProjectSwitcher(): ReactElement {
       <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-3)' }}>
         · {count} {count === 1 ? 'board' : 'boards'}
       </span>
-      {/* D0-8 chip removed by D1-A — save failures surface as a sticky Retry toast via
-          the bridge effect above. */}
+      {/* PERSIST-03: ambient save-status confirmation. The D0-8 chip is gone — save
+          FAILURES still surface as the sticky Retry toast (bridge effect above); this is
+          the quiet positive 'Saving…'/'Saved' signal. */}
+      <SaveStatus />
       {/* Shared Menu shell (D1-C): body portal + viewport clamp (D0-4's maxHeight scroll
           cap for a long recents list), Escape/outside/resize close, menuitem roving
           tabindex + arrow keys, ADR 0002 preview-detach while open. reclampKey re-clamps
@@ -313,6 +321,29 @@ export function ProjectSwitcher(): ReactElement {
   )
 }
 
+// PERSIST-03: ambient save-status indicator — a quiet --text-3 confirmation next to the
+// board count. 'idle' reads as "Saved" (a freshly-opened project is already on disk);
+// 'saving'/'saved' give positive feedback; 'error' tints --err while the sticky Retry
+// toast carries the action. role=status (polite) so AT announces the saving→saved swap.
+// Own subscription so a state change re-renders only this span, not all of ProjectSwitcher.
+function SaveStatus(): ReactElement {
+  const state = useSaveStatusStore((s) => s.state)
+  const label = state === 'saving' ? 'Saving…' : state === 'error' ? 'Save failed' : 'Saved'
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      style={{
+        fontFamily: 'var(--mono)',
+        fontSize: 11,
+        color: state === 'error' ? 'var(--err)' : 'var(--text-3)'
+      }}
+    >
+      · {label}
+    </span>
+  )
+}
+
 // ── Top-right: camera cluster ───────────────────────────────────────────────
 function CameraCluster({
   onTidy,
@@ -336,6 +367,8 @@ function CameraCluster({
         <span style={styles.divider} />
         <ToolBtn name="minus" title="Zoom out" onClick={() => void rf.zoomOut(cameraAnim({}))} />
         <button
+          // A11Y-01: class so the shared focus-ring cluster gives it the accent ring.
+          className="ca-zoom-pct"
           style={styles.pct}
           title="Reset zoom (0)"
           onClick={() => void rf.fitView(cameraAnim(RESET_FRAME))}
@@ -420,6 +453,7 @@ function TidyMenu({ onTidy }: { onTidy: (preset: LayoutPreset) => void }): React
         name="grid"
         title="Tidy layout (T)"
         active={open}
+        expanded={open}
         onClick={() => setOpen((v) => !v)}
       />
       {open && (
@@ -497,13 +531,27 @@ export function Dock(): ReactElement {
     let hideTimer: number | null = null
     let last = { x: NaN, y: NaN }
 
-    const inRect = (x: number, y: number): boolean => {
+    // CHROME-01: the dock is anchored top-center (left:50% + translateX(-50%)), so its
+    // zone center-x and top only shift on viewport resize — never per pointermove. Cache
+    // the geometry and re-measure on resize instead of calling getBoundingClientRect on
+    // every global move (it ran on the passive window pointermove, i.e. constantly).
+    let geom: { cx: number; top: number } | null = null
+    const measure = (): void => {
       const el = wrapRef.current
-      if (!el) return false
+      if (!el) {
+        geom = null
+        return
+      }
       const r = el.getBoundingClientRect()
-      const cx = r.left + r.width / 2
-      const top = r.top - 14 // the wrapper sits 14px below the pane top (styles.dock)
-      return Math.abs(x - cx) <= DOCK_ZONE_W / 2 && y >= top && y <= top + DOCK_ZONE_H
+      geom = { cx: r.left + r.width / 2, top: r.top - 14 } // wrapper sits 14px below pane top
+    }
+    measure()
+    const inRect = (x: number, y: number): boolean => {
+      if (!geom) measure() // lazy re-measure if the wrapper wasn't laid out at mount
+      if (!geom) return false
+      return (
+        Math.abs(x - geom.cx) <= DOCK_ZONE_W / 2 && y >= geom.top && y <= geom.top + DOCK_ZONE_H
+      )
     }
     const cancelEnter = (): void => {
       if (enterTimer !== null) {
@@ -555,10 +603,12 @@ export function Dock(): ReactElement {
     window.addEventListener('pointermove', onMove, { passive: true })
     document.addEventListener('mouseleave', goOutside)
     window.addEventListener('blur', goOutside)
+    window.addEventListener('resize', measure)
     return () => {
       window.removeEventListener('pointermove', onMove)
       document.removeEventListener('mouseleave', goOutside)
       window.removeEventListener('blur', goOutside)
+      window.removeEventListener('resize', measure)
       cancelEnter()
       cancelHide()
     }
@@ -588,6 +638,7 @@ export function Dock(): ReactElement {
           title="Select"
           big
           active={tool === 'select'}
+          pressed={tool === 'select'}
           onClick={() => setTool('select')}
         />
         <span style={styles.divider} />
@@ -605,12 +656,19 @@ function ToolBtn({
   title,
   active = false,
   big = false,
+  pressed,
+  expanded,
   onClick
 }: {
   name: IconName
   title: string
   active?: boolean
   big?: boolean
+  /** CHROME-02: toggle buttons (dock arming) pass their on/off state → aria-pressed.
+   *  Omitted for plain action buttons (zoom/fit/settings) so they stay un-toggled to AT. */
+  pressed?: boolean
+  /** CHROME-02: popup triggers (Tidy) pass their open state → aria-haspopup + aria-expanded. */
+  expanded?: boolean
   onClick: () => void
 }): ReactElement {
   const [hover, setHover] = useState(false)
@@ -619,6 +677,10 @@ function ToolBtn({
       // ca-t-ctl (A12): hover transition via class so reduced-motion can suppress it.
       className="ca-t-ctl"
       title={title}
+      // CHROME-02: undefined ⇒ React omits the attr (correct for plain action buttons).
+      aria-pressed={pressed}
+      aria-haspopup={expanded === undefined ? undefined : 'menu'}
+      aria-expanded={expanded}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -662,6 +724,8 @@ function DockBtn({
       // arm-then-place model (click arms the tool; the canvas turns a click into a
       // default-size board, a drag into a sized one).
       title={`Add ${label} board — click to place, drag to size`}
+      // CHROME-02: a dock button arms a tool (a toggle) — announce its armed state.
+      aria-pressed={active}
       onClick={onClick}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}

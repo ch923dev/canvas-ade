@@ -153,7 +153,9 @@ export function BrowserBoard({
   // the board geometry + settled camera zoom + DPR via a settle-gated preview:osrResize — the
   // page renders supersampled (crisp) and lays out at the preset width (real breakpoint reflow).
   // Low-frequency only (settle/preset/resize), so the OSR path keeps its zero-per-frame-IPC win.
-  useOffscreenSizing(board.id, board.w, board.h, board.viewport)
+  // PREV-01: in full view the supersample is recomputed from the (much larger) full-view pixel box
+  // so the blown-up preview stays crisp; passing the canvas ref lets it measure that box.
+  useOffscreenSizing(board.id, board.w, board.h, board.viewport, fullView, osrCanvasRef)
   // OS-3 Phase 4: subscribe the board's native-widget event streams (JS dialog · native popup ·
   // audible flip · download) → osrWidgetStore + toasts. Drives the mute toggle + the overlay layer.
   useOsrWidgetEvents(board.id)
@@ -419,6 +421,10 @@ export function BrowserBoard({
             className="bb-url-input"
             value={draftUrl}
             spellCheck={false}
+            // PREV-04 (a11y): the field has no visible <label>, so name it; flag the invalid state
+            // for AT when the committed draft failed the scheme/host check (mirrors .bb-url-invalid).
+            aria-label="Preview URL"
+            aria-invalid={urlError ? true : undefined}
             onMouseDown={(e) => e.stopPropagation()}
             onFocus={() => {
               setEditingUrl(true)

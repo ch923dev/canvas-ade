@@ -14,6 +14,7 @@ import { createMcpLifecycle } from './mcpLifecycle'
 import { DispatchPayloadError, sanitizeDispatchText } from './dispatchSanitize'
 import { buildPlanningOps, PlanningContentError, renderPlanningConfirmBody } from './mcpPlanning'
 import { buildAppModel, type AppModel } from './appModel'
+import { canRelay } from './orchestration/seam'
 import {
   deriveStatus,
   makeSessionLookup,
@@ -825,13 +826,10 @@ export function buildOrchestrator(
       // pipeline; relay's BUG-021 TOCTOU re-check is supplied as the gate's preWriteRecheck.
 
       // (1) The cable IS the authorization: require a directed orchestration edge A→B.
-      // Resolved BEFORE the gate so an unauthorized relay has no side effect.
-      const cable = registry
-        .listConnectors()
-        .find(
-          (c) => c.kind === 'orchestration' && c.sourceId === sourceId && c.targetId === targetId
-        )
-      if (!cable) {
+      // Resolved BEFORE the gate so an unauthorized relay has no side effect. `canRelay` (the
+      // shared seam predicate) is the SINGLE source of truth — the same fn the connector-aware
+      // seam exports, so the gate here and any caller-side check agree by construction.
+      if (!canRelay(sourceId, targetId, registry.listConnectors())) {
         await writeAudit({
           type: 'relay_prompt',
           targetId,
@@ -875,15 +873,9 @@ export function buildOrchestrator(
         // mid-wait (the user can delete the cable on the canvas while the modal is open).
         // Re-verify the SAME directed orchestration edge still exists BEFORE consuming the
         // nonce / writing — a human who approved "authorized by cable X" must not have the
-        // relay fire once that cable is gone.
+        // relay fire once that cable is gone. Same `canRelay` predicate as the initial check.
         preWriteRecheck: (seq) => {
-          const cableStillLive = registry
-            .listConnectors()
-            .some(
-              (c) =>
-                c.kind === 'orchestration' && c.sourceId === sourceId && c.targetId === targetId
-            )
-          return cableStillLive
+          return canRelay(sourceId, targetId, registry.listConnectors())
             ? null
             : {
                 detail: `authorization cable removed during confirm; ${sourceId}->${targetId}; seq=${seq}`,

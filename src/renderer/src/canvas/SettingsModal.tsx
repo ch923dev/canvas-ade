@@ -7,8 +7,10 @@
  */
 import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import { Modal } from './Modal'
+import { Icon } from './Icon'
 import { DEFAULT_MODELS } from '../lib/llmModels'
 import { useCanvasStore } from '../store/canvasStore'
+import { useOrchestrationStore } from '../store/orchestrationStore'
 
 const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
   { id: 'openrouter', label: 'OpenRouter' },
@@ -35,11 +37,21 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
   const [encryptionAvailable, setEncryptionAvailable] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // MCP-05: the per-day LLM call cap (string-backed so the input can be cleared; '' = nothing
+  // loaded yet) + a small usage peek (today's calls / the effective cap) read from llm.status().
+  const [maxCalls, setMaxCalls] = useState('')
+  const [usage, setUsage] = useState<{ calls: number; cap: number } | null>(null)
 
   const projectDir = useCanvasStore((s) => s.project.dir)
   const [recapConsent, setRecapConsent] = useState<'enabled' | 'declined' | 'undecided'>(
     'undecided'
   )
+
+  // Agent Orchestration Onboarding (P1): the reactive consent cache + the cross-component modal
+  // channel (the onboarding modals are hosted in AppChrome's <OrchestrationModals/>, not here).
+  const orchestrationEnabled = useOrchestrationStore((s) => s.enabled)
+  const setOrchestrationModal = useOrchestrationStore((s) => s.setModal)
+  const setOrchestrationCache = useOrchestrationStore((s) => s.setEnabled)
 
   useEffect(() => {
     let cancelled = false
@@ -71,6 +83,11 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
         setHasKey(s.hasKey)
         setEncryptionAvailable(s.encryptionAvailable !== false) // tolerate an older no-field status
         if (s.baseUrl) setBaseUrl(s.baseUrl)
+        // MCP-05: prefill the cap field with the effective limit (configured override, else the
+        // default) + the usage peek. Robust to an older status missing these fields → '' / no peek.
+        const cap = s.maxCallsPerDay ?? s.defaultMaxCallsPerDay
+        setMaxCalls(cap != null ? String(cap) : '')
+        if (s.callsToday != null) setUsage({ calls: s.callsToday, cap: cap ?? 0 })
       })
       .catch(() => {
         // BUG-031: IPC rejection (channel unavailable, teardown race) must not produce an
@@ -119,6 +136,41 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
     }
   }
 
+  // Orchestration toggle (annotation E): the toggle re-opens the informed Enable modal, the
+  // "Sync" button re-opens Sync. Turning OFF is a direct revoke (a simple, safe action; P3
+  // unsyncs the per-CLI configs). Turning ON routes through the Enable modal so consent is always
+  // informed (capabilities + the security callout) — the grant itself happens there. Opening
+  // either onboarding modal CLOSES Settings first: the modals are hosted in AppChrome's
+  // <OrchestrationModals/>, and stacking them over Settings would duel the shared Modal's focus
+  // trap + Esc handling. The revoke path stays in Settings (the switch flips reactively).
+  const openOrchestrationModal = (view: 'enable' | 'sync'): void => {
+    onClose()
+    setOrchestrationModal(view)
+  }
+  const onOrchestrationToggle = async (): Promise<void> => {
+    if (!orchestrationEnabled) {
+      openOrchestrationModal('enable')
+      return
+    }
+    // Guard the async revoke like `save`/`clear`: setBusy(true) + a busy-disabled button so a
+    // rapid double-click can't fire two concurrent setConsent('declined') IPC calls whose
+    // setError/setOrchestrationCache side-effects interleave in confusing order.
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await window.api.orchestration.setConsent('declined')
+      if (!r.ok) {
+        setError('Could not update agent orchestration — please try again.')
+        setBusy(false)
+        return
+      }
+      setOrchestrationCache(false)
+    } catch {
+      setError('Could not update agent orchestration — please try again.')
+    }
+    setBusy(false)
+  }
+
   const save = async (): Promise<void> => {
     setBusy(true)
     setError(null)
@@ -126,10 +178,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       // BUG-007(2): a non-throwing `{ ok: false }` (e.g. frame-guard 'forbidden', or a rejected
       // baseUrl) would otherwise fall through to setKey + onClose, silently closing the modal as if
       // the (un-persisted) config had saved. Guard on the result before going any further.
+      // MCP-05: persist the cap when the field holds a valid non-negative integer; an empty/invalid
+      // field omits it so MAIN preserves the existing cap (never silently wipes it to the default).
+      const parsedMax = parseInt(maxCalls, 10)
       const cr = await window.api.llm.setConfig({
         provider,
         model,
-        baseUrl: provider === 'local' && baseUrl ? baseUrl : undefined
+        baseUrl: provider === 'local' && baseUrl ? baseUrl : undefined,
+        maxCallsPerDay: Number.isInteger(parsedMax) && parsedMax >= 0 ? parsedMax : undefined
       })
       if (!cr.ok) {
         setError('Could not save settings — please try again.')
@@ -255,6 +311,27 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
         </div>
       )}
 
+      {/* MCP-05: the per-day call cap was enforced in MAIN but had no UI — expose it + a usage peek. */}
+      <label style={styles.field}>
+        <span style={styles.label}>Max LLM calls / day</span>
+        <input
+          aria-label="Max LLM calls per day"
+          type="number"
+          min={0}
+          step={1}
+          inputMode="numeric"
+          value={maxCalls}
+          placeholder="200"
+          onChange={(e) => setMaxCalls(e.target.value)}
+          style={styles.input}
+        />
+        {usage && (
+          <span style={styles.hint} data-test="settings-usage-peek">
+            {usage.calls} of {usage.cap} used today
+          </span>
+        )}
+      </label>
+
       {error && (
         <div role="alert" data-test="settings-error" style={styles.error}>
           {error}
@@ -298,15 +375,68 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
         </div>
       </label>
 
+      <div style={styles.divider} />
+
+      <div style={styles.head}>Agent orchestration</div>
+
+      {/* Annotation E: both onboarding states are reachable here — the toggle re-opens the
+          informed Enable modal (or revokes), the "Sync" button re-opens Sync. */}
+      <div style={styles.orchRow} data-test="settings-orchestration-row">
+        <div style={{ flex: 1 }}>
+          <div style={styles.orchTitle}>
+            Agent orchestration
+            {projectDir === null && (
+              <span style={{ color: 'var(--text-3)', fontWeight: 400 }}> — open a project</span>
+            )}
+          </div>
+          <div style={styles.orchSub}>
+            Drive this canvas from terminal agents, along your cables.
+          </div>
+        </div>
+        <button
+          type="button"
+          style={{ ...styles.syncBtn, ...(projectDir === null ? styles.ctlDisabled : null) }}
+          disabled={projectDir === null}
+          onClick={() => openOrchestrationModal('sync')}
+          data-test="settings-orchestration-sync"
+        >
+          <Icon name="refresh" size={12} />
+          Sync
+        </button>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={orchestrationEnabled}
+          aria-label="Agent orchestration (this project)"
+          disabled={busy || projectDir === null}
+          onClick={() => void onOrchestrationToggle()}
+          data-test="settings-orchestration-toggle"
+          style={{
+            ...styles.toggle,
+            background: orchestrationEnabled ? 'var(--accent)' : 'var(--border-strong)',
+            cursor: projectDir === null ? 'not-allowed' : 'pointer',
+            opacity: projectDir === null ? 0.5 : 1
+          }}
+        >
+          <span
+            style={{
+              ...styles.toggleKnob,
+              left: orchestrationEnabled ? 17 : 2
+            }}
+          />
+        </button>
+      </div>
+
       <div style={styles.row}>
-        <button style={styles.ghost} disabled={busy} onClick={() => void clear()}>
+        {/* STYLE-01: shared modal-button grammar (filled accent primary at AA contrast). */}
+        <button className="ca-btn-ghost" disabled={busy} onClick={() => void clear()}>
           Clear key
         </button>
         <div style={{ flex: 1 }} />
-        <button style={styles.ghost} disabled={busy} onClick={onClose}>
+        <button className="ca-btn-ghost" disabled={busy} onClick={onClose}>
           Cancel
         </button>
-        <button style={styles.primary} disabled={busy} onClick={() => void save()}>
+        <button className="ca-btn-primary" disabled={busy} onClick={() => void save()}>
           Save
         </button>
       </div>
@@ -357,26 +487,53 @@ const styles: Record<string, CSSProperties> = {
   },
   divider: { height: 1, background: 'var(--border-subtle)', margin: '2px 0' },
   hint: { fontSize: 11, lineHeight: '15px', color: 'var(--text-3)' },
-  row: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 },
-  ghost: {
-    height: 30,
-    padding: '0 12px',
-    borderRadius: 6,
+  // Agent orchestration row (the mock's `.setrow`): description + Sync button + toggle.
+  orchRow: {
+    background: 'var(--surface)',
     border: '1px solid var(--border-subtle)',
-    background: 'transparent',
-    color: 'var(--text-2)',
-    fontSize: 12.5,
+    borderRadius: 'var(--r-inner)',
+    padding: '12px 13px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12
+  },
+  orchTitle: { fontSize: 12.5, color: 'var(--text)', fontWeight: 500 },
+  orchSub: { fontSize: 11, color: 'var(--text-3)', lineHeight: '15px', marginTop: 2 },
+  syncBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 11,
+    fontWeight: 500,
+    fontFamily: 'var(--ui)',
+    color: 'var(--accent-hover)',
+    border: '1px solid rgba(79,140,255,.4)',
+    background: 'var(--accent-wash)',
+    borderRadius: 'var(--r-ctl)',
+    padding: '5px 11px',
     cursor: 'pointer'
   },
-  primary: {
-    height: 30,
-    padding: '0 14px',
-    borderRadius: 6,
+  ctlDisabled: { opacity: 0.5, cursor: 'not-allowed' },
+  toggle: {
+    position: 'relative',
+    width: 36,
+    height: 21,
+    flex: 'none',
     border: 'none',
-    background: 'var(--accent)',
-    color: 'var(--text)',
-    fontSize: 12.5,
-    fontWeight: 500,
-    cursor: 'pointer'
-  }
+    padding: 0,
+    borderRadius: 999,
+    transition: 'background 0.12s ease-out'
+  },
+  toggleKnob: {
+    position: 'absolute',
+    top: 2,
+    width: 17,
+    height: 17,
+    borderRadius: 999,
+    background: '#fff',
+    transition: 'left 0.12s ease-out'
+  },
+  row: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }
+  // STYLE-01: the former `ghost`/`primary` inline button styles moved to the shared
+  // `.ca-btn-ghost` / `.ca-btn-primary` classes in index.css (hover + AA-contrast primary).
 }

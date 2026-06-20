@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { MemoryDoc } from '@expanse-ade/mcp'
 import { getCurrentDir } from './projectStore'
+import { isSafeId } from './safeId'
 
 /**
  * Read-only access to the project's persistent memory for the MCP layer (T1.7 🔒).
@@ -20,16 +21,10 @@ import { getCurrentDir } from './projectStore'
 /** Cap a single memory doc so a huge file can't be dumped in one read (defense-in-depth). */
 const MAX_MEMORY_CHARS = 100_000
 
-/** Board ids are uuid/nanoid-like; anything else (`.`, `/`, `\`, empty) is rejected. */
-const SAFE_ID = /^[A-Za-z0-9_-]+$/
-/**
- * Upper bound on a board id (BUG-019), mirroring canvasMemory.ts's safeBoardId(). Without it,
- * an agent-controlled id of e.g. 100 000 valid chars passes the charset, reaches join(root,
- * `board-${id}.md`), and hands a ~100k-char path to existsSync/readFileSync — a wasted syscall
- * that fails with ERROR_FILENAME_EXCED_RANGE (Win) / ENAMETOOLONG (Linux). Real ids are uuid/
- * nanoid-sized, so 64 is generous.
- */
-const MAX_ID_LEN = 64
+// MCP-07: the board-id charset + length cap (BUG-019) live in the shared `safeId` module so this
+// MCP reader and canvasMemory's writer enforce the SAME path-safety contract. `isSafeId` rejects a
+// non-string / empty / over-long / out-of-charset id before it can reach join() (no traversal, no
+// ~100k-char path handed to existsSync/readFileSync → ENAMETOOLONG).
 
 /** E2E-only override of the project dir the reader resolves against (mirrors the smoke seams). */
 let overrideDir: string | null = null
@@ -64,6 +59,6 @@ export function readProjectMemory(): MemoryDoc {
 /** A board's memory summary (`board-<id>.md`), or the empty shell when absent/invalid id. */
 export function readBoardSummary(id: string): MemoryDoc {
   const root = memoryRoot()
-  if (!root || id.length > MAX_ID_LEN || !SAFE_ID.test(id)) return { present: false, text: '' }
+  if (!root || !isSafeId(id)) return { present: false, text: '' }
   return readDoc(join(root, `board-${id}.md`))
 }

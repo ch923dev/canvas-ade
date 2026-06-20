@@ -132,6 +132,9 @@ describe('registerLlmHandlers', () => {
     expect(JSON.stringify(s)).not.toContain('secret-key')
     // T-F6: no encryptor wired here → a key can't be stored encrypted.
     expect(s.encryptionAvailable).toBe(false)
+    // MCP-05: status carries the budget peek + the default cap for the Settings usage line.
+    expect(typeof s.callsToday).toBe('number')
+    expect(s.defaultMaxCallsPerDay).toBe(200)
   })
 
   it('summarize rejects a foreign sender (guard chain through the handler)', async () => {

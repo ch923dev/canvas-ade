@@ -1,6 +1,7 @@
 import { it, expect, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { DigestPanel } from './DigestPanel'
+import { digestStatusTone } from '../lib/digestPanel'
 import { buildDigest } from '../lib/digest'
 import type { CanvasDoc } from '../lib/boardSchema'
 
@@ -223,4 +224,110 @@ it('T-F4: ignores repeat clicks while a refresh is already in flight', async () 
   first.click()
   expect(onRefresh).toHaveBeenCalledTimes(1)
   release()
+})
+
+// ── MCP-06: every status value gets an intentional tone ──────────────────────────────────────
+it('MCP-06: maps each board status to a tone (active / linked / progress / idle)', () => {
+  expect(digestStatusTone('ready')).toBe('active')
+  expect(digestStatusTone('linked')).toBe('linked')
+  expect(digestStatusTone('orchestrator')).toBe('linked')
+  expect(digestStatusTone('2/5 done')).toBe('progress')
+  expect(digestStatusTone('idle')).toBe('idle')
+  expect(digestStatusTone('static')).toBe('idle')
+  expect(digestStatusTone('notes')).toBe('idle')
+})
+
+it('MCP-06: renders data-tone on every status chip, not just ready/linked', () => {
+  const { container } = render(
+    <DigestPanel digest={buildDigest(DOC)} open onOpen={() => {}} onClose={() => {}} />
+  )
+  const tones = Array.from(container.querySelectorAll('.digest-status')).map((el) =>
+    el.getAttribute('data-tone')
+  )
+  // terminal(ready)→active, browser(linked)→linked, planning(1/2 done)→progress
+  expect(tones).toEqual(['active', 'linked', 'progress'])
+})
+
+// ── MCP-08: long prose clamps behind a Show more / less toggle ────────────────────────────────
+const LONG_PROSE = '# Dev server\n\n' + 'word '.repeat(80) // ~400 chars body → clampable
+const SHORT_PROSE = '# Dev server\n\nA short one-liner summary.'
+
+it('MCP-08: clamps long prose and toggles expand/collapse', async () => {
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      prose={{ t1: LONG_PROSE }}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+    />
+  )
+  const proseEl = container.querySelector('[data-test=digest-prose]') as HTMLElement
+  expect(proseEl.getAttribute('data-clamped')).toBe('true')
+  const toggle = container.querySelector('[data-test=digest-prose-toggle]') as HTMLButtonElement
+  expect(toggle).toBeTruthy()
+  expect(toggle.textContent).toBe('Show more')
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  toggle.click()
+  await waitFor(() => expect(proseEl.getAttribute('data-clamped')).toBe('false'))
+  expect(toggle.textContent).toBe('Show less')
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+})
+
+it('MCP-08: short prose renders no toggle and is never clamped', () => {
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      prose={{ t1: SHORT_PROSE }}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+    />
+  )
+  expect(container.querySelector('[data-test=digest-prose-toggle]')).toBeNull()
+  expect(
+    (container.querySelector('[data-test=digest-prose]') as HTMLElement).getAttribute(
+      'data-clamped'
+    )
+  ).toBe('false')
+})
+
+// ── MCP-04: a refresh that produced nothing surfaces the reason ───────────────────────────────
+it('MCP-04: shows the refresh feedback message when onRefresh returns one', async () => {
+  const onRefresh = vi.fn(async () => ({
+    ok: false,
+    message: 'No AI summary — connect a provider.'
+  }))
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+      onRefresh={onRefresh}
+    />
+  )
+  const first = container.querySelectorAll('[data-test=digest-refresh]')[0] as HTMLButtonElement
+  first.click()
+  await waitFor(() => expect(screen.getByText('No AI summary — connect a provider.')).toBeTruthy())
+  expect(
+    (container.querySelector('[data-test=digest-feedback]') as HTMLElement).getAttribute('role')
+  ).toBe('status')
+})
+
+it('MCP-04: shows no feedback when the refresh succeeds (ok or void return)', async () => {
+  const onRefresh = vi.fn(async () => ({ ok: true }))
+  const { container } = render(
+    <DigestPanel
+      digest={buildDigest(DOC)}
+      open
+      onOpen={() => {}}
+      onClose={() => {}}
+      onRefresh={onRefresh}
+    />
+  )
+  const first = container.querySelectorAll('[data-test=digest-refresh]')[0] as HTMLButtonElement
+  first.click()
+  await waitFor(() => expect(first.getAttribute('data-busy')).toBe('false'))
+  expect(container.querySelector('[data-test=digest-feedback]')).toBeNull()
 })

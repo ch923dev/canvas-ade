@@ -1693,8 +1693,67 @@ body {
   outline: none;
   box-shadow: 0 0 0 1.5px var(--accent);
 }
+/* PA-3 (A11Y-01): chrome control clusters — dock/camera ca-t-ctl buttons, the project
+   switcher pill, and the zoom % button — fell back to Chromium's dim default outline.
+   Bring them onto the app's 1.5px accent ring like every other focusable control. */
+.ca-t-ctl:focus-visible,
+.project-switcher-trigger:focus-visible,
+.ca-zoom-pct:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
 .pl-del:focus-visible {
   opacity: 1;
+}
+
+/* PA-4 (STYLE-01): shared modal action buttons. The old filled --accent + --text primary sat
+   at ~2.8:1 (below WCAG AA) and broke the documented "no filled slop button" grammar. Option B
+   (signed off 2026-06-20): keep a filled accent primary but flip the foreground to near --void
+   (#0a0a0b on #4f8cff ≈ 6.4:1 — passes AA); the ghost is the calm secondary. The :hover lives
+   here (inline styles can't express it). Used by ConfirmModal / RecapConsentModal / SettingsModal. */
+.ca-btn-primary,
+.ca-btn-ghost {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+.ca-btn-primary {
+  background: var(--accent);
+  color: var(--void);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  transition:
+    background 0.12s ease-out,
+    border-color 0.12s ease-out;
+}
+.ca-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.ca-btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border-subtle);
+  font-weight: 500;
+  transition:
+    background 0.12s ease-out,
+    color 0.12s ease-out;
+}
+.ca-btn-ghost:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.ca-btn-primary:disabled,
+.ca-btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ── TextToolbar — floating typography toolbar for selected free-text elements ── */
@@ -2749,11 +2808,17 @@ body {
   font-size: 11px;
   color: var(--text-2);
 }
-.digest-status[data-status='ready'] {
+/* MCP-06: every status value gets an intentional tone via data-tone (digestStatusTone), not just
+   the two literals styled before. active=live, linked/progress=accent, idle=calm resting gray. */
+.digest-status[data-tone='active'] {
   color: var(--ok);
 }
-.digest-status[data-status='linked'] {
+.digest-status[data-tone='linked'],
+.digest-status[data-tone='progress'] {
   color: var(--accent);
+}
+.digest-status[data-tone='idle'] {
+  color: var(--text-3);
 }
 /* T-F4: per-card manual "refresh summary" control. Calm/ghost; spins only while busy. */
 .digest-refresh {
@@ -2801,6 +2866,34 @@ body {
   line-height: 1.5;
   color: var(--text-2);
   white-space: pre-wrap;
+}
+/* MCP-08: clamp long prose to ~4 lines until the Show more toggle expands it. */
+.digest-prose[data-clamped='true'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+.digest-prose-toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  padding: var(--space-4) 0 0;
+  cursor: pointer;
+}
+.digest-prose-toggle:hover {
+  text-decoration: underline;
+}
+/* MCP-04: transient reason a manual refresh produced nothing (no key / budget / error). */
+.digest-feedback {
+  margin: var(--space-8) 0 0;
+  font-size: var(--fs-label);
+  line-height: 1.4;
+  color: var(--text-3);
 }
 .digest-reopen {
   position: fixed;

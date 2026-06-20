@@ -53,30 +53,51 @@ export function createAutosaver(opts: AutosaverOpts): Autosaver {
   const delay = opts.delayMs ?? 1000
   let timer: ReturnType<typeof setTimeout> | null = null
   let dirty = false
+  // PERSIST-02: single-flight latch. The pending `project:save` promise (with its
+  // trailing-coalesce chain) while a save is in flight; null when idle. A concurrent
+  // run() (the debounce timer re-firing, or a blur/quit flush) JOINS this promise instead
+  // of starting a second `project:save` — two writers racing the same canvas.json was the
+  // narrow overlapping-save window the audit flagged.
+  let inFlight: Promise<void> | null = null
 
-  const run = (): Promise<void> => {
-    timer = null
+  // Perform one save. On success, if an edit landed DURING the save (a schedule() re-armed
+  // `dirty`), do one more pass so a draining flush()/quit reaches a clean disk — the
+  // trailing-coalesce. A FAILURE only re-arms `dirty` and STOPS (no recurse), so a
+  // persistently failing disk can't hot-loop; the re-armed edit is retried by the next
+  // debounced schedule() or explicit flush() once the disk recovers (the BUG-008 contract).
+  const cycle = (): Promise<void> => {
     if (!dirty || opts.getStatus() !== 'open') return Promise.resolve()
     dirty = false
     // SAVE-1: surface a failed save (rejection OR a `false` result from main's
     // project:save) instead of floating it silently — otherwise a failing disk loses
     // every edit with zero signal to the user.
-    // BUG-008: a failure must also RE-ARM dirty, or the unsaved edits become
-    // unrecoverable — every later flush (blur, beforeunload, MAIN's project:flush quit
-    // handshake) would hit the `!dirty` gate and write nothing even after the disk
-    // recovers. Re-arming alone cannot hot-loop: retries only run via the debounced
-    // schedule() or an explicit flush().
     return Promise.resolve(opts.save())
       .then((ok) => {
         if (ok === false) {
+          // BUG-008: re-arm so a later flush retries; do NOT recurse (no hot-loop).
           dirty = true
           opts.onError?.(new Error('autosave: project:save returned false'))
+          return undefined
         }
+        // Trailing-coalesce: drain an edit that arrived while this save was in flight.
+        return dirty && opts.getStatus() === 'open' ? cycle() : undefined
       })
       .catch((e) => {
         dirty = true
         opts.onError?.(e)
       })
+  }
+
+  const run = (): Promise<void> => {
+    timer = null
+    // PERSIST-02: join the in-flight save rather than overlapping a second writer. The
+    // pending `dirty` edits ride that save's trailing-coalesce (or the next debounce).
+    if (inFlight) return inFlight
+    if (!dirty || opts.getStatus() !== 'open') return Promise.resolve()
+    inFlight = cycle().finally(() => {
+      inFlight = null
+    })
+    return inFlight
   }
   return {
     schedule: () => {
@@ -117,13 +138,16 @@ export function useAutosave(): void {
     const saver = createAutosaver({
       // BUG-009: pass the project dir this doc belongs to, so MAIN can reject the write
       // if a project switch raced the save (currentDir would point at the new project).
-      // D1-A: a successful save clears any standing failure (which dismisses the sticky
-      // save-failure toast) — the surface tracks the CURRENT disk health, not a sticky
-      // history (clear is a no-op when clean).
+      // PERSIST-03: drive the save lifecycle — mark 'saving' for the write window, then
+      // 'saved' on success (which also clears any standing failure, dismissing the sticky
+      // toast). The surface tracks the CURRENT disk health, not a sticky history; a
+      // failure routes through onError below (→ 'error').
       save: async () => {
         const s = useCanvasStore.getState()
+        const status = useSaveStatusStore.getState()
+        status.markSaving()
         const ok = await window.api.project.save(s.toObject(), s.project.dir ?? undefined)
-        if (ok) useSaveStatusStore.getState().clearSaveFailure()
+        if (ok) status.markSaved()
         return ok
       },
       // The `project` slice is added in a later task; read it defensively so the hook

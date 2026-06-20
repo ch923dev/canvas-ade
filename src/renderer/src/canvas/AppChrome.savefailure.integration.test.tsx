@@ -15,7 +15,9 @@ beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
     project: { recents: vi.fn().mockResolvedValue([]), save }
   }
-  useSaveStatusStore.getState().clearSaveFailure()
+  // Full reset (clearSaveFailure is a no-op when failure is already null, which would
+  // leak a leftover 'saving'/'saved' lifecycle state between the PERSIST-03 cases below).
+  useSaveStatusStore.setState({ state: 'idle', failure: null })
   useToastStore.getState().clearToasts()
 })
 
@@ -85,5 +87,29 @@ describe('ProjectSwitcher — save failure routes to a sticky toast (D1-A, repla
       useSaveStatusStore.getState().clearSaveFailure()
     })
     await waitFor(() => expect(failureToast()).toBeUndefined())
+  })
+})
+
+// PERSIST-03: the ambient save-status indicator (role=status) next to the board count.
+describe('ProjectSwitcher — ambient save status (PERSIST-03)', () => {
+  const statusEl = (): HTMLElement | null => document.querySelector('[role="status"]')
+
+  it('reads "Saved" at rest (idle — a freshly-opened project is already on disk)', () => {
+    render(<ProjectSwitcher />)
+    expect(statusEl()?.textContent).toContain('Saved')
+  })
+
+  it('shows "Saving…" during a write, then "Saved" on success', () => {
+    render(<ProjectSwitcher />)
+    act(() => useSaveStatusStore.getState().markSaving())
+    expect(statusEl()?.textContent).toContain('Saving')
+    act(() => useSaveStatusStore.getState().markSaved())
+    expect(statusEl()?.textContent).toContain('Saved')
+  })
+
+  it('shows "Save failed" on error (alongside the sticky Retry toast)', () => {
+    render(<ProjectSwitcher />)
+    act(() => useSaveStatusStore.getState().setSaveFailure('disk full'))
+    expect(statusEl()?.textContent).toContain('Save failed')
   })
 })

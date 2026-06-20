@@ -206,12 +206,36 @@ export interface LlmStatus {
   hasKey: boolean
   /** T-F6: false when the OS can't encrypt a key (e.g. Linux without a keyring). */
   encryptionAvailable: boolean
+  /** T-B3 budget (MCP-05): LLM calls consumed today + the configured/default per-day cap. */
+  callsToday: number
+  maxCallsPerDay?: number
+  defaultMaxCallsPerDay: number
 }
 
 export type LlmWriteResult = { ok: boolean; reason?: string }
 
 // ── Terminal-recap T12: consent state ──
 export type RecapConsentState = 'enabled' | 'declined' | 'undecided'
+
+// ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
+// MIRRORS src/main/orchestrationConsent.ts OrchestrationConsentState (process boundary → no
+// shared import). A SEPARATE consent from recap (decision 2026-06-19).
+export type OrchestrationConsentState = 'enabled' | 'declined' | 'undecided'
+
+// The Sync modal's data plane. Shapes MIRROR src/main/cliProvisioners/shared.ts
+// (CliId / ProvisionStatus / SyncResult) across the process boundary — keep in lockstep.
+// 🔒 the endpoint token is PRE-MASKED in MAIN; the raw token never crosses the bridge.
+export type OrchestrationCliId = 'claude' | 'codex' | 'gemini' | 'opencode'
+export interface OrchestrationProvisionStatus {
+  endpoint: { host: string; port: number; maskedToken: string }
+  rows: { id: OrchestrationCliId; label: string; configLabel: string; detected: boolean }[]
+}
+export interface OrchestrationSyncResult {
+  id: OrchestrationCliId
+  status: 'synced' | 'error'
+  detail: string
+  path?: string
+}
 
 // ── Recap redesign S1: the recap face's data bundle. MIRRORS src/main (recapFacts.ts +
 // summaryLoop.ts RecapNarrative + recapIpc.ts RecapBundle) — the process boundary means no
@@ -247,6 +271,31 @@ export interface RecapNarrative {
 export interface RecapBundle {
   facts: RecapFacts
   narrative?: RecapNarrative
+}
+
+// ── PREV-02: ONE shared IPC listener per OSR stream, fanned out by board id ──
+// Before: every Browser board called `ipcRenderer.on('preview:osrFrame', …)`, so N boards meant N
+// listeners that EACH ran (and id-checked) on EVERY board's frame — O(N) work per frame. Now a
+// single listener per channel dispatches to the one handler registered for that frame's board id.
+// Board ids are unique (one mounted BrowserBoard per id, even relocated into full view), so the map
+// holds at most one handler per board.
+const osrFrameHandlers = new Map<string, (f: OsrFrame) => void>()
+const osrCursorHandlers = new Map<string, (c: OsrCursor) => void>()
+let osrFrameWired = false
+let osrCursorWired = false
+function ensureOsrFrameListener(): void {
+  if (osrFrameWired) return
+  osrFrameWired = true
+  ipcRenderer.on('preview:osrFrame', (_e: IpcRendererEvent, f: OsrFrame) => {
+    osrFrameHandlers.get(f.id)?.(f)
+  })
+}
+function ensureOsrCursorListener(): void {
+  if (osrCursorWired) return
+  osrCursorWired = true
+  ipcRenderer.on('preview:osrCursor', (_e: IpcRendererEvent, c: OsrCursor) => {
+    osrCursorHandlers.get(c.id)?.(c)
+  })
 }
 
 const api = {
@@ -345,17 +394,25 @@ const api = {
   // the hidden composition-proxy <textarea>; raw key events stay on sendOsrInput.
   osrIme: (id: string, kind: OsrImeKind, text: string): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrIme', { id, kind, text }),
-  onPreviewOsrFrame: (listener: (f: OsrFrame) => void): (() => void) => {
-    const handler = (_e: IpcRendererEvent, f: OsrFrame): void => listener(f)
-    ipcRenderer.on('preview:osrFrame', handler)
-    return () => ipcRenderer.removeListener('preview:osrFrame', handler)
+  // PREV-02: register the per-board frame handler on the ONE shared listener (lazily wired). The
+  // listener never id-checks N handlers — it dispatches straight to this board's. Returns an
+  // unsubscribe that removes only this board's entry (and only if it's still the current one).
+  onPreviewOsrFrame: (id: string, listener: (f: OsrFrame) => void): (() => void) => {
+    ensureOsrFrameListener()
+    osrFrameHandlers.set(id, listener)
+    return () => {
+      if (osrFrameHandlers.get(id) === listener) osrFrameHandlers.delete(id)
+    }
   },
   // Cursor stream: the offscreen page's cursor type, applied to the board's <canvas>
   // so the preview shows an I-beam over inputs / pointer over links (a bitmap has none).
-  onPreviewOsrCursor: (listener: (c: OsrCursor) => void): (() => void) => {
-    const handler = (_e: IpcRendererEvent, c: OsrCursor): void => listener(c)
-    ipcRenderer.on('preview:osrCursor', handler)
-    return () => ipcRenderer.removeListener('preview:osrCursor', handler)
+  // PREV-02: same shared-listener fan-out by board id as the frame stream.
+  onPreviewOsrCursor: (id: string, listener: (c: OsrCursor) => void): (() => void) => {
+    ensureOsrCursorListener()
+    osrCursorHandlers.set(id, listener)
+    return () => {
+      if (osrCursorHandlers.get(id) === listener) osrCursorHandlers.delete(id)
+    }
   },
 
   // ── OS-3 Phase 4 — native widgets & dialogs ──
@@ -541,6 +598,24 @@ const api = {
       ipcRenderer.on('recap:learned', h)
       return () => ipcRenderer.removeListener('recap:learned', h)
     }
+  },
+
+  // ── Agent Orchestration Onboarding P1: per-project orchestration consent ──
+  // The one-time "Enable agent orchestration?" grant (the mock's Step 1). Separate from recap
+  // consent (separate userData store). getConsent drives the once-per-project first-init prompt
+  // + the Settings toggle; setConsent persists the grant/revoke and (in MAIN) fires the P3
+  // provisioner sync/unsync.
+  orchestration: {
+    getConsent: (): Promise<OrchestrationConsentState> =>
+      ipcRenderer.invoke('orchestration:getConsent'),
+    setConsent: (decision: 'enabled' | 'declined'): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('orchestration:setConsent', decision),
+    // The Sync modal's data plane (P3 provisioners, wired by the onboarding lane). Status is
+    // null while MAIN probes / when no server is mounted; sync resolves a per-CLI result.
+    getProvisionStatus: (): Promise<OrchestrationProvisionStatus | null> =>
+      ipcRenderer.invoke('orchestration:getProvisionStatus'),
+    sync: (ids: OrchestrationCliId[]): Promise<OrchestrationSyncResult[]> =>
+      ipcRenderer.invoke('orchestration:syncProvisioners', ids)
   },
 
   // ── MCP board mirror (control plane; metadata only — id/type/title + coarse status

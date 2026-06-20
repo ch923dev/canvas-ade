@@ -121,6 +121,59 @@ describe('createAutosaver', () => {
     await a.flush() // after a SUCCESSFUL save, dirty is clear → no third write
     expect(save).toHaveBeenCalledTimes(2)
   })
+
+  // PERSIST-02: single-flight latch. A second save must not start while one is in flight,
+  // or two writers race the same canvas.json.
+  it('PERSIST-02: does not start a second concurrent save while one is in flight', async () => {
+    vi.useRealTimers()
+    let resolveFirst: (v: boolean) => void = () => {}
+    const save = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<boolean>((r) => (resolveFirst = r)))
+      .mockResolvedValue(true)
+    const a = createAutosaver({ save, getStatus: () => 'open', delayMs: 1000 })
+    a.schedule()
+    const flush1 = a.flush() // starts save #1 (in flight)
+    expect(save).toHaveBeenCalledTimes(1)
+    // A second flush WHILE save #1 is in flight must JOIN it, not start a 2nd write.
+    const flush2 = a.flush()
+    expect(save).toHaveBeenCalledTimes(1)
+    resolveFirst(true)
+    await Promise.all([flush1, flush2])
+    expect(save).toHaveBeenCalledTimes(1) // nothing new to write → no extra save
+  })
+
+  // PERSIST-02: an edit that lands DURING an in-flight save is not lost — a single
+  // trailing save drains it (so a quit/blur flush reaches a clean disk).
+  it('PERSIST-02: an edit during an in-flight save is captured by one trailing save', async () => {
+    vi.useRealTimers()
+    let resolveFirst: (v: boolean) => void = () => {}
+    const save = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<boolean>((r) => (resolveFirst = r)))
+      .mockResolvedValue(true)
+    const a = createAutosaver({ save, getStatus: () => 'open', delayMs: 1000 })
+    a.schedule()
+    const flush1 = a.flush() // save #1 in flight
+    expect(save).toHaveBeenCalledTimes(1)
+    a.schedule() // edit arrives DURING save #1 → re-arms dirty
+    resolveFirst(true)
+    await flush1 // flush's returned promise drains the trailing edit
+    expect(save).toHaveBeenCalledTimes(2) // exactly one trailing save captured the edit
+  })
+
+  // PERSIST-02: a failure during an in-flight save must NOT spin a trailing retry loop —
+  // it re-arms dirty (BUG-008) and waits for the next schedule()/flush() (no hot-loop).
+  it('PERSIST-02: a failing save does not hot-loop via the trailing-coalesce path', async () => {
+    vi.useRealTimers()
+    const onError = vi.fn()
+    const save = vi.fn().mockResolvedValue(false) // disk down: every save fails
+    const a = createAutosaver({ save, getStatus: () => 'open', onError })
+    a.schedule()
+    await a.flush()
+    expect(save).toHaveBeenCalledTimes(1) // single attempt — no recursive retry storm
+    expect(onError).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('active-autosaver registry (PERSIST-B)', () => {

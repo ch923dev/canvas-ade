@@ -107,8 +107,10 @@ export default function AuditLogViewer(): React.ReactElement {
   }
 
   return (
+    // MCP-01: this is a persistent, non-modal side panel (opened via shortcut, no focus trap,
+    // no backdrop) — a landmark `complementary` region, NOT a `dialog`. The aria-label names it.
     <div
-      role="dialog"
+      role="complementary"
       aria-label="MCP dispatch audit log"
       style={{
         position: 'fixed',

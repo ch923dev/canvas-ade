@@ -667,6 +667,121 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await mcp.orch.call('close_board', { id: raId })
     await mcp.orch.call('close_board', { id: rbId })
   })
+
+  // ── Agent Orchestration v1 (P0 authority + P4 connector-aware routing) ──────────────────────
+  // A `connected`-tier token (the kind the spawn-time provisioner mints for a CONSENTED terminal
+  // the user is talking to) can relay along the canvas cables it OWNS — proving the authority
+  // relaxation end-to-end: a REAL terminal agent (not just the in-process 'app' orchestrator) can
+  // drive orchestration cables, scoped to its own board as source. This is the umbrella's payoff
+  // exercised through the shipped authority path (the consent/provisioner wiring is P1/P3).
+  test('SECURITY: a connected-tier terminal relays only along its OWN cables (own-board binding + cable auth); orchestrator-only tools stay hidden', async ({
+    page,
+    electronApp,
+    mcp
+  }) => {
+    test.slow()
+    // Spawn two real terminals; A will be the connected agent's own board, B the cabled target.
+    const aId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    const bId = okText(await mcp.orch.call('spawn_board', { type: 'terminal' }))
+    expect(aId).not.toBe('')
+    expect(bId).not.toBe('')
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(bId)})`)
+    await expect.poll(() => boardStatus(mcp.orch, bId), { timeout: 8000 }).toBe('running')
+
+    // Mint a connected-tier token BOUND to board A (the seam minter the P3 provisioner uses) and
+    // connect a real client over loopback — exactly what a consented terminal agent would hold.
+    const minted = await mainCall<{ token: string; port: number } | null>(
+      electronApp,
+      'mcpMintConnectedToken',
+      aId
+    )
+    expect(minted).not.toBeNull()
+    const url = `http://127.0.0.1:${mcp.info.port}/mcp`
+    const connected = await connect(url, minted!.token)
+    try {
+      // tools/list: the connected tier sees relay + canvas-write tools, but NONE of the
+      // cross-board/observational orchestrator tools (the split is structural, by registration).
+      expect(connected.tools).toContain('relay_prompt')
+      expect(connected.tools).toContain('spawn_board')
+      expect(connected.tools).toContain('configure_board')
+      expect(connected.tools).toContain('add_planning_elements') // planningWrite on under CANVAS_E2E
+      for (const hidden of [
+        'orchestrator_ping',
+        'handoff_prompt',
+        'assign_prompt',
+        'interrupt',
+        'close_board',
+        'git_diff'
+      ]) {
+        expect(connected.tools).not.toContain(hidden)
+      }
+
+      // SECURITY (cable auth): relay from its OWN board A→B is rejected while NO cable exists —
+      // the connected tier still honors canRelay (the cable is the authorization), no side effect.
+      const noCableYet = await connected.call('relay_prompt', {
+        sourceId: aId,
+        targetId: bId,
+        prompt: 'echo too-early'
+      })
+      expect(rejected(noCableYet)).toBe(true)
+
+      // Draw the orchestration cable A→B (same store path as the real gesture) and wait for the
+      // MAIN mirror to carry it (canRelay reads that mirror).
+      await evalIn(
+        page,
+        `window.__canvasE2E.addConnector(${JSON.stringify(aId)}, ${JSON.stringify(bId)}, 'orchestration')`
+      )
+      await expect
+        .poll(
+          async () => {
+            const cables = await mainCall<
+              Array<{ sourceId: string; targetId: string; kind: string }>
+            >(electronApp, 'mcpListConnectors')
+            return cables.some(
+              (c) => c.kind === 'orchestration' && c.sourceId === aId && c.targetId === bId
+            )
+          },
+          { timeout: 6000 }
+        )
+        .toBe(true)
+
+      // SECURITY (own-board binding): even WITH a cable on the canvas, the connected token may not
+      // relay from a board it does not own. sourceId=B (≠ its token board A) is rejected by the
+      // tier binding BEFORE the host gate — a connected agent can't drive someone else's cables.
+      const notMyBoard = await connected.call('relay_prompt', {
+        sourceId: bId,
+        targetId: aId,
+        prompt: 'echo not-mine'
+      })
+      expect(rejected(notMyBoard)).toBe(true)
+      expect(resultText(notMyBoard.ok ? notMyBoard.result : '')).toContain('own board')
+
+      // Happy path: the connected agent relays A→B along its own cable, drives the SAME human
+      // confirm gate, and the prompt lands in B's xterm. The authority relaxation, end-to-end.
+      const sentinel = 'CANVAS_MCP_CONNECTED_RELAY_OK'
+      const relayP = connected.call('relay_prompt', {
+        sourceId: aId,
+        targetId: bId,
+        prompt: `echo ${sentinel}`
+      })
+      expect(await pollEval(page, MODAL, 8000)).toBe(true)
+      await evalIn(page, APPROVE)
+      expect(acked(await relayP)).toBe(true)
+      await expect
+        .poll(
+          async () => {
+            const txt = await readTerminalText(page, bId)
+            return typeof txt === 'string' && txt.includes(sentinel)
+          },
+          { timeout: 10000 }
+        )
+        .toBe(true)
+    } finally {
+      await connected.close().catch(() => {})
+    }
+    await mcp.orch.call('close_board', { id: aId })
+    await mcp.orch.call('close_board', { id: bId })
+  })
 })
 
 /**

@@ -9,7 +9,15 @@
  */
 import { app, clipboard, ipcMain, Menu, nativeImage, type BrowserWindow } from 'electron'
 import { execFileSync } from 'child_process'
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
@@ -60,6 +68,12 @@ export interface E2EMain {
   putRedBitmapOnClipboard(w: number, h: number): void
   /** True if an absolute path exists on disk (assert a pasted blob landed). */
   fileExists(absPath: string): boolean
+  /**
+   * Read a UTF-8 file's contents, or null if absent. The orchestration-onboarding e2e asserts the
+   * SHAPE of a provisioner-written `.mcp.json` (loopback url + Bearer header) off this.
+   * 🔒 The caller asserts the Authorization header shape only (`/^Bearer .+/`) — never the token.
+   */
+  readTextFile(absPath: string): string | null
   /** Join a temp-project path with a relative asset path (cross-platform). */
   joinPath(...parts: string[]): string
   /** The in-process local preview server URL — a deterministic page the browser probe seeds. */
@@ -142,6 +156,14 @@ export interface E2EMain {
   mcpPingCommand(): Promise<McpCommandAck>
   /** The orchestration connector mirror (the relay-cable probe asserts A→B landed in MAIN). */
   mcpListConnectors(): Array<{ sourceId: string; targetId: string; kind: string }>
+  /**
+   * Agent Orchestration P4: mint a `connected`-tier MCP token bound to `boardId` (the same token
+   * the spawn-time provisioner mints for a consented terminal), so the e2e can connect a real
+   * connected client over loopback and prove cable-authorized relay end-to-end. Returns
+   * `{ token, port }` (the tier is always `connected`), or null when the MCP server never mounted.
+   * 🔒 The token is returned ONLY to the in-process e2e seam; it is NEVER logged.
+   */
+  mcpMintConnectedToken(boardId: string): { token: string; port: number } | null
   /**
    * Memory probe (T1.7): point the Brain/Memory engine at a fresh EMPTY temp dir and
    * return its root — `canvas://memory` must then read the graceful-empty shell. Always
@@ -301,6 +323,9 @@ export function installE2EMain(
     fileExists(absPath) {
       return existsSync(absPath)
     },
+    readTextFile(absPath) {
+      return existsSync(absPath) ? readFileSync(absPath, 'utf8') : null
+    },
     joinPath(...parts) {
       return join(...parts)
     },
@@ -328,6 +353,11 @@ export function installE2EMain(
         workerToken: mcp.mintWorkerToken(MCP_E2E_WORKER_BOARD),
         workerBoardId: MCP_E2E_WORKER_BOARD
       }
+    },
+    mcpMintConnectedToken(boardId) {
+      if (!mcp) return null
+      const { token, port } = mcp.mintConnectedToken(boardId)
+      return { token, port }
     },
     gitDiff(boardId) {
       return mcp?.gitDiff(boardId) ?? Promise.resolve('')
