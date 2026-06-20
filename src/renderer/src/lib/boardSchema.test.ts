@@ -173,20 +173,40 @@ describe('toObject', () => {
     expect(doc.boards).toHaveLength(3)
   })
 
-  it('deep-clones boards so mutating the doc does not touch the source', () => {
+  // PERSIST-01: toObject no longer deep-clones — it ALIASES boards/connectors/groups/
+  // background by reference (zero deep passes; the IPC save boundary and fromObject own
+  // the isolation). These tests pin that contract so a future "defensive clone" can't
+  // silently re-add the per-save deep pass the audit removed. The doc is read-only by
+  // contract; callers must never mutate it.
+  it('aliases boards by reference (no deep clone — the deep pass is the audit regression)', () => {
     const boards = sampleBoards()
     const doc = toObject(boards, null)
-    doc.boards[0].x = 9999
-    expect(boards[0].x).toBe(0)
+    expect(doc.boards).toBe(boards)
+    expect(doc.boards[0]).toBe(boards[0])
   })
 
-  it('toObject round-trips groups (deep-cloned)', () => {
+  it('aliases connectors / groups / background by reference (no deep clone)', () => {
+    const connectors = [{ id: 'preview-b', sourceId: 't', targetId: 'b', kind: 'preview' as const }]
     const groups = [{ id: 'g1', name: 'Auth', boardIds: ['b1'] }]
-    const doc = toObject([], null, [], groups)
-    expect(doc.groups).toEqual(groups)
-    // deep clone: mutating the input must not change the doc
-    groups[0].name = 'changed'
-    expect(doc.groups?.[0].name).toBe('Auth')
+    const background = {
+      kind: 'none' as const,
+      dim: 0.25,
+      saturation: 0.7,
+      gridDots: false
+    }
+    const doc = toObject([], null, connectors, groups, background)
+    expect(doc.connectors).toBe(connectors)
+    expect(doc.groups).toBe(groups)
+    expect(doc.background).toBe(background)
+  })
+
+  // The camera object is the one exception: it stays a shallow copy (O(1), not a deep
+  // pass) so the live viewport object never aliases into a persisted doc.
+  it('shallow-copies the viewport (does not alias the camera object)', () => {
+    const vp = { x: 1, y: 2, zoom: 0.5 }
+    const doc = toObject([], vp)
+    expect(doc.viewport).toEqual(vp)
+    expect(doc.viewport).not.toBe(vp)
   })
 })
 
@@ -1071,11 +1091,15 @@ describe('M2 connectors (schema v5)', () => {
     })
   })
 
-  it('toObject serializes the connectors it is given (deep-cloned)', () => {
+  it('toObject serializes the connectors it is given (aliased, not cloned)', () => {
     const orch: Connector = { id: 'o1', sourceId: 't1', targetId: 'b1', kind: 'orchestration' }
-    const doc = toObject([term(), browser()], null, [orch])
+    const conns = [orch]
+    const doc = toObject([term(), browser()], null, conns)
     expect(doc.connectors).toEqual([orch])
-    expect(doc.connectors[0]).not.toBe(orch) // owns its data
+    // PERSIST-01: aliases the given array by reference (no deep clone — the IPC save
+    // boundary / fromObject own the isolation; the doc is read-only by contract).
+    expect(doc.connectors).toBe(conns)
+    expect(doc.connectors[0]).toBe(orch)
   })
 
   // BUG-022: non-terminal previewSourceId must be pruned on load
@@ -1418,10 +1442,11 @@ describe('schema v9 — canvas backdrop', () => {
     expect('background' in toObject([], null, [], [], null)).toBe(false)
   })
 
-  it('toObject embeds a deep-cloned background when set', () => {
+  it('toObject embeds the background it is given (aliased, not cloned)', () => {
     const doc = toObject([], null, [], [], valid)
     expect(doc.background).toEqual(valid)
-    expect(doc.background).not.toBe(valid)
+    // PERSIST-01: aliases by reference (no deep clone); see the connectors test above.
+    expect(doc.background).toBe(valid)
   })
 
   it('round-trips a valid scene background through JSON', () => {

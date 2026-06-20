@@ -452,10 +452,20 @@ export function previewConnectorsFor(boards: Board[]): Connector[] {
 }
 
 /**
- * Boards + camera + connectors → a versioned document. Deep-clones so the doc owns its
- * data. `connectors` is the FULL set the caller wants persisted (the store passes
- * preview-derived + orchestration); it defaults to `[]` so existing 2-arg callers and
- * tests still produce a valid current-version doc.
+ * Boards + camera + connectors → a versioned document. `connectors` is the FULL set the
+ * caller wants persisted (the store passes preview-derived + orchestration); it defaults
+ * to `[]` so existing 2-arg callers and tests still produce a valid current-version doc.
+ *
+ * PERSIST-01: the returned doc ALIASES the caller's `boards`/`connectors`/`groups`/
+ * `background` by reference — it does NOT deep-clone them. A deep clone here was pure
+ * redundant work on every ~1s autosave tick (the audit's "3 deep passes per save"): the
+ * two real consumers already own the isolation. The autosave + project-switch path hands
+ * this doc to `window.api.project.save`, whose IPC boundary structured-clones it into
+ * MAIN before writing; the read path (`fromObject`) structured-clones its input on the
+ * way back in. CONTRACT: callers MUST treat the returned doc (and its nested arrays /
+ * objects) as READ-ONLY — they share refs with live store state, which is itself only
+ * ever replaced immutably, never mutated in place. (Mutating the doc would corrupt the
+ * store and break undo / React change detection.)
  *
  * SCENE/SESSION CONTRACT: this is the ONLY thing persisted — {schemaVersion,
  * viewport, boards, connectors, groups}. Ephemeral session state (selected tool, selected
@@ -474,12 +484,14 @@ export function toObject(
   return {
     schemaVersion: SCHEMA_VERSION,
     minReaderVersion: MIN_READER_VERSION,
+    // viewport is a tiny {x,y,zoom} — a shallow copy is O(1) (not a "deep pass") and
+    // keeps the live camera object from aliasing into the doc.
     viewport: viewport ? { ...viewport } : null,
-    boards: structuredClone(boards),
-    connectors: structuredClone(connectors),
-    groups: structuredClone(groups),
+    boards,
+    connectors,
+    groups,
     // Omit when unset so a backdrop-less project's canvas.json stays byte-identical to v8.
-    ...(background ? { background: structuredClone(background) } : {})
+    ...(background ? { background } : {})
   }
 }
 
