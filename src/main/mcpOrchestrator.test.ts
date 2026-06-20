@@ -54,6 +54,8 @@ function reg(
     status?: string
     agentKind?: string
     monitorActivity?: boolean
+    path?: string
+    fileRefs?: Array<{ path: string; label: string }>
   }>,
   sessions: Array<{ id: string; status: string }> = [],
   outputs: Record<string, BoardOutput> = {},
@@ -120,6 +122,37 @@ describe('buildOrchestrator', () => {
       },
       { id: 't2', type: 'terminal', title: 'Shell', status: 'idle', monitorActivity: false },
       { id: 't3', type: 'terminal', title: 'Plain', status: 'idle' }
+    ])
+  })
+
+  it('forwards file board path + planning fileRefs onto the summary that feeds canvas://boards (S5)', async () => {
+    const orch = buildOrchestrator(
+      reg([
+        { id: 'f1', type: 'file', title: 'main.ts', status: 'static', path: 'src/main.ts' },
+        { id: 'f2', type: 'file', title: 'Unbound', status: 'static' }, // no path → field absent
+        {
+          id: 'p1',
+          type: 'planning',
+          title: 'Plan',
+          status: 'static',
+          fileRefs: [{ path: 'docs/spec.md', label: 'spec.md' }]
+        },
+        { id: 'p2', type: 'planning', title: 'Empty', status: 'static' } // no fileRefs → field absent
+      ])
+    )
+    // canvas://boards is `JSON.stringify(await orchestrator.listBoards())` in the package, so these
+    // fields ride out verbatim to an MCP-connected agent. Other boards stay byte-identical.
+    expect(await orch.listBoards()).toEqual([
+      { id: 'f1', type: 'file', title: 'main.ts', status: 'static', path: 'src/main.ts' },
+      { id: 'f2', type: 'file', title: 'Unbound', status: 'static' },
+      {
+        id: 'p1',
+        type: 'planning',
+        title: 'Plan',
+        status: 'static',
+        fileRefs: [{ path: 'docs/spec.md', label: 'spec.md' }]
+      },
+      { id: 'p2', type: 'planning', title: 'Empty', status: 'static' }
     ])
   })
 
