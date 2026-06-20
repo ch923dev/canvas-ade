@@ -124,14 +124,14 @@ function createWindow(): void {
   // Packaged builds keep the product title.
   const devTitle = app.isPackaged
     ? null
-    : process.env['CANVAS_DEV_TITLE'] || `${basename(process.cwd())} — Canvas ADE [dev]`
+    : process.env['CANVAS_DEV_TITLE'] || `${basename(process.cwd())} — Expanse [dev]`
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0a0a0b',
-    title: devTitle ?? 'Canvas ADE',
+    title: devTitle ?? 'Expanse',
     webPreferences: buildMainWindowWebPreferences(join(__dirname, '../preload/index.js'))
   })
   // The renderer's <title> overwrites the window title on load — keep the dev stamp.
@@ -232,7 +232,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.canvasade.app')
+  electronApp.setAppUserModelId('com.expanse.app')
   // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
   // Linux the default menu's Alt mnemonics (Alt+V = View) eat it, and Chromium handles
   // Ctrl+C/V natively in inputs there, so dropping the menu is safe. On macOS the Edit
