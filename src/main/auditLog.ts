@@ -1,4 +1,4 @@
-import { appendFile, readFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, open, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 /**
@@ -61,6 +61,22 @@ const DEFAULT_READ_LIMIT = 200
 export const MAX_READ_LIMIT = 1000
 const AUDIT_FILE = 'mcp-audit.jsonl'
 
+/**
+ * MCP-03: the active log rotates once it passes this size, capping disk to ~2× this (one prior
+ * `.1` generation is kept; an older one is overwritten). Append stays append-only on the active
+ * file — only the (rare) rotation renames it. 8 MiB ≈ tens of thousands of typical entries.
+ */
+export const MAX_BYTES = 8 * 1024 * 1024
+/**
+ * MCP-03: `read` tail-reads at most this many bytes from the active file (and, if needed to satisfy
+ * the limit, from the rotated `.1`) instead of slurping the whole log into memory. This bounds the
+ * read cost regardless of log size — older-than-the-tail entries are simply not returned (the same
+ * recency bias the JSONL audit viewer already shows; the full forensic record is still on disk).
+ */
+export const READ_TAIL_BYTES = 1 * 1024 * 1024
+/** The single retained prior generation after a rotation. */
+const ROTATED_SUFFIX = '.1'
+
 const cap = (v: unknown, max: number): string => String(v ?? '').slice(0, max)
 
 /**
@@ -101,47 +117,87 @@ function parseEntries(raw: string): AuditEntry[] {
 }
 
 /**
- * Build an audit log bound to a directory. The monotonic sequence is seeded once from
- * the file's max existing seq (so it survives a restart / a fresh instance over the
- * same dir) then incremented in-memory. `now` is injectable for tests.
+ * MCP-03: read at most the last `maxBytes` of a file (the END holds the newest entries) without
+ * slurping the whole thing. A leading partial line (when the window cuts mid-entry) is harmless —
+ * parseEntries skips an unparseable line. Absent/unreadable file → '' (never throws). The greatest
+ * `seq` always lives in this tail, so seeding the monotonic counter from it stays correct.
+ */
+async function readTail(file: string, maxBytes: number): Promise<string> {
+  let fh: Awaited<ReturnType<typeof open>> | undefined
+  try {
+    fh = await open(file, 'r')
+    const { size } = await fh.stat()
+    if (size === 0) return ''
+    const start = size > maxBytes ? size - maxBytes : 0
+    const len = size - start
+    const buf = Buffer.alloc(len)
+    await fh.read(buf, 0, len, start)
+    return buf.toString('utf8')
+  } catch {
+    return '' // absent / unreadable
+  } finally {
+    await fh?.close()
+  }
+}
+
+/** Greatest `seq` across one or more JSONL tails (0 when none). */
+function maxSeqOf(...tails: string[]): number {
+  let max = 0
+  for (const raw of tails) for (const e of parseEntries(raw)) if (e.seq > max) max = e.seq
+  return max
+}
+
+/**
+ * Build an audit log bound to a directory. The monotonic sequence is seeded once from the max
+ * existing seq across the active log + its rotated `.1` generation (so it survives a restart / a
+ * fresh instance / a rotation) then incremented in-memory. `now` is injectable for tests; `maxBytes`
+ * overrides the rotation threshold (tests force a tiny cap). The serialized state also tracks the
+ * active file's byte size so a rotation can fire WITHOUT a per-append stat.
  */
 export function createAuditLog(opts: {
   dir: string
   now?: () => number
   fileName?: string
+  /** MCP-03: rotation threshold for the active file (default {@link MAX_BYTES}). */
+  maxBytes?: number
 }): AuditLog {
   const now = opts.now ?? Date.now
   const path = join(opts.dir, opts.fileName ?? AUDIT_FILE)
-  let nextSeq: Promise<number> | null = null
+  const rotatedPath = path + ROTATED_SUFFIX
+  const maxBytes = opts.maxBytes && opts.maxBytes > 0 ? opts.maxBytes : MAX_BYTES
+  // Combined, serialized state: the NEXT seq to assign + the active file's current byte size. One
+  // promise chain serializes the whole append (seq reservation + write + size bookkeeping + rotate).
+  let state: Promise<{ seq: number; bytes: number }> | null = null
 
-  const readRaw = async (): Promise<string> => {
-    try {
-      return await readFile(path, 'utf8')
-    } catch {
-      return '' // absent log → empty
+  const initState = (): Promise<{ seq: number; bytes: number }> => {
+    if (!state) {
+      state = (async () => {
+        const [cur, rot] = await Promise.all([
+          readTail(path, READ_TAIL_BYTES),
+          readTail(rotatedPath, READ_TAIL_BYTES)
+        ])
+        let bytes = 0
+        try {
+          bytes = (await stat(path)).size
+        } catch {
+          bytes = 0 // absent active log
+        }
+        return { seq: maxSeqOf(cur, rot) + 1, bytes }
+      })()
     }
-  }
-
-  const initSeq = (): Promise<number> => {
-    if (!nextSeq) {
-      nextSeq = readRaw().then((raw) => {
-        const entries = parseEntries(raw)
-        return entries.reduce((m, e) => Math.max(m, e.seq), 0) + 1
-      })
-    }
-    return nextSeq
+    return state
   }
 
   return {
     async append(input) {
-      // Serialize the ENTIRE append (seq reservation + the actual write) through a single
-      // tail promise (BUG-024). Each caller chains its build+write onto the prior tail and
-      // resolves the tail to the NEXT seq only AFTER its own appendFile completes:
-      //   • physical file order matches seq order — a later caller's write can't begin until
-      //     the earlier write has finished (the prior split only serialized the seq ARITHMETIC,
-      //     so two appendFile calls could be in-flight at once → out-of-order JSONL lines).
-      //   • a failed write does NOT burn its seq — the tail is reset to the SAME seq (not seq+1)
-      //     so the next append retries that number instead of leaving an invisible gap.
+      // Serialize the ENTIRE append (seq reservation + the actual write + rotation) through a single
+      // tail promise (BUG-024). Each caller chains its build+write onto the prior tail and resolves
+      // it to the NEXT {seq,bytes} only AFTER its own appendFile completes:
+      //   • physical file order matches seq order — a later caller's write can't begin until the
+      //     earlier write has finished (serializing only the seq ARITHMETIC let two appendFile calls
+      //     be in-flight at once → out-of-order JSONL lines).
+      //   • a failed write does NOT burn its seq OR phantom-grow the size — the tail is reset to the
+      //     SAME {seq,bytes} so the next append retries that number, no gap, no false rotation.
       // The caller still gets the entry it wrote (or the write error) via a captured deferred.
       let settle!: (entry: AuditEntry) => void
       let fail!: (err: unknown) => void
@@ -149,17 +205,33 @@ export function createAuditLog(opts: {
         settle = res
         fail = rej
       })
-      const tail = initSeq()
-      nextSeq = tail.then(async (seq) => {
+      const tail = initState()
+      state = tail.then(async ({ seq, bytes }) => {
         try {
           const entry = shapeAuditEntry(input, seq, now())
+          const line = JSON.stringify(entry) + '\n'
           await mkdir(opts.dir, { recursive: true })
-          await appendFile(path, JSON.stringify(entry) + '\n', 'utf8')
+          await appendFile(path, line, 'utf8')
+          let nextBytes = bytes + Buffer.byteLength(line, 'utf8')
+          // MCP-03: rotate once the active file passes the cap. rename atomically replaces any prior
+          // `.1` (Node uses MOVEFILE_REPLACE_EXISTING on Windows) and is append-safe — the active
+          // file simply starts fresh. Best-effort: a rename failure (a reader holding the handle)
+          // just defers rotation to the next append rather than aborting the (already durable) write.
+          if (nextBytes > maxBytes) {
+            try {
+              await rename(path, rotatedPath)
+              nextBytes = 0
+            } catch {
+              /* keep the current size; retry the rotation on the next append */
+            }
+          }
+          // settle AFTER any rotation so `await append()` resolves only once the entry is durable
+          // AND the rotation (if any) has completed — the log state is fully consistent on return.
           settle(entry)
-          return seq + 1 // advance ONLY after a durable write
+          return { seq: seq + 1, bytes: nextBytes } // advance ONLY after a durable write
         } catch (err) {
           fail(err)
-          return seq // write failed → keep the seq so the next append retries it (no gap)
+          return { seq, bytes } // write failed → keep seq + bytes (no gap, no phantom growth)
         }
       })
       return result
@@ -174,7 +246,14 @@ export function createAuditLog(opts: {
         typeof raw === 'number' && Number.isInteger(raw) && raw > 0
           ? Math.min(raw, MAX_READ_LIMIT)
           : DEFAULT_READ_LIMIT
-      const entries = parseEntries(await readRaw())
+      // MCP-03: tail-read the active file; only stitch in the rotated generation when the active
+      // tail can't satisfy the limit (e.g. right after a rotation). parseEntries tolerates a torn
+      // leading line in either tail. Rotated entries are strictly older → prepend, then take newest.
+      let entries = parseEntries(await readTail(path, READ_TAIL_BYTES))
+      if (entries.length < limit) {
+        const rot = await readTail(rotatedPath, READ_TAIL_BYTES)
+        if (rot) entries = parseEntries(rot).concat(entries)
+      }
       return entries.slice(-limit).reverse()
     }
   }

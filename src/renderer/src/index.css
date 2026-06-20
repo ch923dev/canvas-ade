@@ -2543,11 +2543,17 @@ body {
   font-size: 11px;
   color: var(--text-2);
 }
-.digest-status[data-status='ready'] {
+/* MCP-06: every status value gets an intentional tone via data-tone (digestStatusTone), not just
+   the two literals styled before. active=live, linked/progress=accent, idle=calm resting gray. */
+.digest-status[data-tone='active'] {
   color: var(--ok);
 }
-.digest-status[data-status='linked'] {
+.digest-status[data-tone='linked'],
+.digest-status[data-tone='progress'] {
   color: var(--accent);
+}
+.digest-status[data-tone='idle'] {
+  color: var(--text-3);
 }
 /* T-F4: per-card manual "refresh summary" control. Calm/ghost; spins only while busy. */
 .digest-refresh {
@@ -2595,6 +2601,34 @@ body {
   line-height: 1.5;
   color: var(--text-2);
   white-space: pre-wrap;
+}
+/* MCP-08: clamp long prose to ~4 lines until the Show more toggle expands it. */
+.digest-prose[data-clamped='true'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+.digest-prose-toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  padding: var(--space-4) 0 0;
+  cursor: pointer;
+}
+.digest-prose-toggle:hover {
+  text-decoration: underline;
+}
+/* MCP-04: transient reason a manual refresh produced nothing (no key / budget / error). */
+.digest-feedback {
+  margin: var(--space-8) 0 0;
+  font-size: var(--fs-label);
+  line-height: 1.4;
+  color: var(--text-3);
 }
 .digest-reopen {
   position: fixed;
