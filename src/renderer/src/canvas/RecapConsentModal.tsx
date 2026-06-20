@@ -99,19 +99,20 @@ export function RecapConsentModal({ onClose }: { onClose: () => void }): ReactEl
         </ul>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+        {/* STYLE-01: shared modal-button grammar (filled accent primary at AA contrast). */}
         <button
+          className="ca-btn-ghost"
           disabled={busy}
           onClick={() => void decide('declined')}
           data-test="recap-decline"
-          style={ghostBtn}
         >
           No thanks
         </button>
         <button
+          className="ca-btn-primary"
           disabled={busy}
           onClick={() => void decide('enabled')}
           data-test="recap-enable"
-          style={primaryBtn}
         >
           Enable recaps
         </button>
@@ -145,27 +146,4 @@ const assure = {
   padding: 12,
   fontSize: 12,
   marginTop: 10
-} as const
-
-const ghostBtn = {
-  height: 30,
-  padding: '0 12px',
-  borderRadius: 6,
-  border: '1px solid var(--border-subtle)',
-  background: 'transparent',
-  color: 'var(--text-2)',
-  fontSize: 12.5,
-  cursor: 'pointer'
-} as const
-
-const primaryBtn = {
-  height: 30,
-  padding: '0 14px',
-  borderRadius: 6,
-  border: 'none',
-  background: 'var(--accent)',
-  color: 'var(--text)',
-  fontSize: 12.5,
-  fontWeight: 600,
-  cursor: 'pointer'
 } as const

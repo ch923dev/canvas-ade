@@ -37,6 +37,10 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
   const [encryptionAvailable, setEncryptionAvailable] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // MCP-05: the per-day LLM call cap (string-backed so the input can be cleared; '' = nothing
+  // loaded yet) + a small usage peek (today's calls / the effective cap) read from llm.status().
+  const [maxCalls, setMaxCalls] = useState('')
+  const [usage, setUsage] = useState<{ calls: number; cap: number } | null>(null)
 
   const projectDir = useCanvasStore((s) => s.project.dir)
   const [recapConsent, setRecapConsent] = useState<'enabled' | 'declined' | 'undecided'>(
@@ -79,6 +83,11 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
         setHasKey(s.hasKey)
         setEncryptionAvailable(s.encryptionAvailable !== false) // tolerate an older no-field status
         if (s.baseUrl) setBaseUrl(s.baseUrl)
+        // MCP-05: prefill the cap field with the effective limit (configured override, else the
+        // default) + the usage peek. Robust to an older status missing these fields → '' / no peek.
+        const cap = s.maxCallsPerDay ?? s.defaultMaxCallsPerDay
+        setMaxCalls(cap != null ? String(cap) : '')
+        if (s.callsToday != null) setUsage({ calls: s.callsToday, cap: cap ?? 0 })
       })
       .catch(() => {
         // BUG-031: IPC rejection (channel unavailable, teardown race) must not produce an
@@ -169,10 +178,14 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       // BUG-007(2): a non-throwing `{ ok: false }` (e.g. frame-guard 'forbidden', or a rejected
       // baseUrl) would otherwise fall through to setKey + onClose, silently closing the modal as if
       // the (un-persisted) config had saved. Guard on the result before going any further.
+      // MCP-05: persist the cap when the field holds a valid non-negative integer; an empty/invalid
+      // field omits it so MAIN preserves the existing cap (never silently wipes it to the default).
+      const parsedMax = parseInt(maxCalls, 10)
       const cr = await window.api.llm.setConfig({
         provider,
         model,
-        baseUrl: provider === 'local' && baseUrl ? baseUrl : undefined
+        baseUrl: provider === 'local' && baseUrl ? baseUrl : undefined,
+        maxCallsPerDay: Number.isInteger(parsedMax) && parsedMax >= 0 ? parsedMax : undefined
       })
       if (!cr.ok) {
         setError('Could not save settings — please try again.')
@@ -298,6 +311,27 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
         </div>
       )}
 
+      {/* MCP-05: the per-day call cap was enforced in MAIN but had no UI — expose it + a usage peek. */}
+      <label style={styles.field}>
+        <span style={styles.label}>Max LLM calls / day</span>
+        <input
+          aria-label="Max LLM calls per day"
+          type="number"
+          min={0}
+          step={1}
+          inputMode="numeric"
+          value={maxCalls}
+          placeholder="200"
+          onChange={(e) => setMaxCalls(e.target.value)}
+          style={styles.input}
+        />
+        {usage && (
+          <span style={styles.hint} data-test="settings-usage-peek">
+            {usage.calls} of {usage.cap} used today
+          </span>
+        )}
+      </label>
+
       {error && (
         <div role="alert" data-test="settings-error" style={styles.error}>
           {error}
@@ -394,14 +428,15 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       </div>
 
       <div style={styles.row}>
-        <button style={styles.ghost} disabled={busy} onClick={() => void clear()}>
+        {/* STYLE-01: shared modal-button grammar (filled accent primary at AA contrast). */}
+        <button className="ca-btn-ghost" disabled={busy} onClick={() => void clear()}>
           Clear key
         </button>
         <div style={{ flex: 1 }} />
-        <button style={styles.ghost} disabled={busy} onClick={onClose}>
+        <button className="ca-btn-ghost" disabled={busy} onClick={onClose}>
           Cancel
         </button>
-        <button style={styles.primary} disabled={busy} onClick={() => void save()}>
+        <button className="ca-btn-primary" disabled={busy} onClick={() => void save()}>
           Save
         </button>
       </div>
@@ -498,26 +533,7 @@ const styles: Record<string, CSSProperties> = {
     background: '#fff',
     transition: 'left 0.12s ease-out'
   },
-  row: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 },
-  ghost: {
-    height: 30,
-    padding: '0 12px',
-    borderRadius: 6,
-    border: '1px solid var(--border-subtle)',
-    background: 'transparent',
-    color: 'var(--text-2)',
-    fontSize: 12.5,
-    cursor: 'pointer'
-  },
-  primary: {
-    height: 30,
-    padding: '0 14px',
-    borderRadius: 6,
-    border: 'none',
-    background: 'var(--accent)',
-    color: 'var(--text)',
-    fontSize: 12.5,
-    fontWeight: 500,
-    cursor: 'pointer'
-  }
+  row: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }
+  // STYLE-01: the former `ghost`/`primary` inline button styles moved to the shared
+  // `.ca-btn-ghost` / `.ca-btn-primary` classes in index.css (hover + AA-contrast primary).
 }

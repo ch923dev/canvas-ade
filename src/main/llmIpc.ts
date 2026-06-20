@@ -10,7 +10,7 @@ import { isForeignSender } from './ipcGuard'
 import type { ProviderName, LlmConfig } from './llmConfig'
 import { readLlmConfig, writeLlmConfig, DEFAULT_MODELS, isLoopbackBaseUrl } from './llmConfig'
 import { createKeyStore, type Encryptor, type KeyStore } from './llmKeyStore'
-import { createBudgetStore } from './llmBudget'
+import { createBudgetStore, DEFAULT_MAX_CALLS_PER_DAY } from './llmBudget'
 import {
   getProvider,
   runSummarize,
@@ -35,6 +35,12 @@ export interface LlmStatus {
    * False also when no encryptor was wired (mis-wire / tests). Presence only — never key material.
    */
   encryptionAvailable: boolean
+  /** T-B3 budget (MCP-05): LLM calls consumed today (read-only peek for the Settings usage line). */
+  callsToday: number
+  /** Configured per-day cap; undefined ⇒ the default applies. Round-trips into the Settings field. */
+  maxCallsPerDay?: number
+  /** The default cap, so the renderer shows the effective limit without duplicating the constant. */
+  defaultMaxCallsPerDay: number
 }
 
 /** Result of a write-only LLM IPC call (setKey/clearKey/setConfig). Never carries key material. */
@@ -159,7 +165,9 @@ export function registerLlmHandlers(
         provider: 'openrouter',
         model: DEFAULT_MODELS.openrouter,
         hasKey: false,
-        encryptionAvailable: false
+        encryptionAvailable: false,
+        callsToday: 0,
+        defaultMaxCallsPerDay: DEFAULT_MAX_CALLS_PER_DAY
       }
     const config = readLlmConfig(userDataDir)
     return {
@@ -168,7 +176,11 @@ export function registerLlmHandlers(
       model: config.model,
       baseUrl: config.baseUrl,
       hasKey: keyStore.hasKey(config.provider),
-      encryptionAvailable: encryptionAvailable()
+      encryptionAvailable: encryptionAvailable(),
+      // MCP-05: today's usage (read-only peek) + the configured/default cap for the Settings field.
+      callsToday: budget.peek().calls,
+      maxCallsPerDay: config.maxCallsPerDay,
+      defaultMaxCallsPerDay: DEFAULT_MAX_CALLS_PER_DAY
     }
   })
 

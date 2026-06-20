@@ -184,6 +184,10 @@ export interface LlmStatus {
   hasKey: boolean
   /** T-F6: false when the OS can't encrypt a key (e.g. Linux without a keyring). */
   encryptionAvailable: boolean
+  /** T-B3 budget (MCP-05): LLM calls consumed today + the configured/default per-day cap. */
+  callsToday: number
+  maxCallsPerDay?: number
+  defaultMaxCallsPerDay: number
 }
 
 export type LlmWriteResult = { ok: boolean; reason?: string }

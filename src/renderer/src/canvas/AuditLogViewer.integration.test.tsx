@@ -59,6 +59,16 @@ describe('AuditLogViewer (integration)', () => {
     expect(screen.getByText('→ board-x')).toBeTruthy()
   })
 
+  it('MCP-01: the open panel is a labeled complementary landmark, not a dialog', async () => {
+    stubReadAudit([])
+    render(<AuditLogViewer />)
+    fireEvent.click(screen.getByText('Audit'))
+    const panel = await screen.findByRole('complementary', { name: /mcp dispatch audit log/i })
+    expect(panel).toBeTruthy()
+    // It's a persistent side panel, not a modal overlay — must NOT expose a dialog role.
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('shows the empty state and no rows when the trail is empty', async () => {
     stubReadAudit([])
     const { container } = render(<AuditLogViewer />)

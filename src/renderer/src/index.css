@@ -1501,6 +1501,56 @@ body {
   opacity: 1;
 }
 
+/* PA-4 (STYLE-01): shared modal action buttons. The old filled --accent + --text primary sat
+   at ~2.8:1 (below WCAG AA) and broke the documented "no filled slop button" grammar. Option B
+   (signed off 2026-06-20): keep a filled accent primary but flip the foreground to near --void
+   (#0a0a0b on #4f8cff ≈ 6.4:1 — passes AA); the ghost is the calm secondary. The :hover lives
+   here (inline styles can't express it). Used by ConfirmModal / RecapConsentModal / SettingsModal. */
+.ca-btn-primary,
+.ca-btn-ghost {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+.ca-btn-primary {
+  background: var(--accent);
+  color: var(--void);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  transition:
+    background 0.12s ease-out,
+    border-color 0.12s ease-out;
+}
+.ca-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.ca-btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border-subtle);
+  font-weight: 500;
+  transition:
+    background 0.12s ease-out,
+    color 0.12s ease-out;
+}
+.ca-btn-ghost:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.ca-btn-primary:disabled,
+.ca-btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── TextToolbar — floating typography toolbar for selected free-text elements ── */
 .pl-text-toolbar {
   display: flex;
