@@ -218,8 +218,12 @@ const EDITOR_THEME = EditorView.theme(
     },
     '.cm-scroller': { fontFamily: 'var(--mono)', lineHeight: '1.55', overflow: 'auto' },
     '&.cm-focused': { outline: 'none' },
+    // Opaque background (== the board content surface, `contentBg` in FileBoard) so a horizontal
+    // scroll slides the content UNDER the sticky line-number gutter and it's masked, not bleeding
+    // through. A transparent gutter let the scrolled code overlap the line numbers (the gutter stays
+    // pinned via `position: sticky; left: 0`, so without an opaque fill the content shows through).
     '.cm-gutters': {
-      backgroundColor: 'transparent',
+      backgroundColor: 'var(--surface)',
       color: 'var(--text-faint)',
       border: 'none',
       fontFamily: 'var(--mono)',

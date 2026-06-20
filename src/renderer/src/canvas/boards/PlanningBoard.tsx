@@ -29,6 +29,7 @@ import type {
   ArrowElement,
   ChecklistElement,
   DiagramElement,
+  FileRefElement,
   NoteElement,
   NoteTint,
   PlanningElement,
@@ -303,6 +304,13 @@ export function PlanningBoard({
   const resizeDiagram = useCallback(
     (id: string, w: number, h: number) =>
       commit((cur) => patchElement<DiagramElement>(cur, id, (d) => ({ ...d, w, h }))),
+    [commit]
+  )
+  // File-ref chip corner-handle resize — tracked w/h commit (one undo step per drag; the card arms
+  // the checkpoint on first move). Live-read commit → stable identity (BUG-023-safe).
+  const resizeFileRef = useCallback(
+    (id: string, w: number, h: number) =>
+      commit((cur) => patchElement<FileRefElement>(cur, id, (f) => ({ ...f, w, h }))),
     [commit]
   )
 
@@ -720,6 +728,8 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onOpen={openFileBoard}
+                onEditStart={beginChange}
+                onResize={resizeFileRef}
               />
             )
           }

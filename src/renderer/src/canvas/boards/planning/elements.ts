@@ -177,6 +177,9 @@ export function makeDiagram(id: string, at: { x: number; y: number }): DiagramEl
 /** Default board-local size for a freshly-dropped file-reference chip. */
 export const FILEREF_SIZE = { w: 224, h: 46 } as const
 
+/** Minimum board-local size for a resized file-reference chip (keeps the icon + a sliver of label). */
+export const FILEREF_MIN = { w: 120, h: 40 } as const
+
 /**
  * A new file-reference chip centred on the drop point (top-left like a note/image). `path` is the
  * project-relative POSIX path (the `openFileBoard`/`file:*` contract); `label` is the display name
