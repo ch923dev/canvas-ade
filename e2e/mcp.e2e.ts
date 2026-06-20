@@ -695,12 +695,15 @@ test.describe('@core @planning @mcp S5 file context on canvas://boards (over the
       // A Planning board with a fileref dropped on it (the real S4 drop path → a `fileref` element).
       const planId = await seed(page, 'planning')
       await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
-      const wellSel = `.react-flow__node[data-id="${planId}"] .pl-well`
-      await expect(page.locator(wellSel)).toBeVisible({ timeout: 6000 })
+      await expect(page.locator(`.react-flow__node[data-id="${planId}"] .pl-well`)).toBeVisible({
+        timeout: 6000
+      })
+      // Drop a fileref on the (only) planning well. Literal selector — no value flows into the
+      // eval'd code (CodeQL js/bad-code-sanitization; the #82 structured-arg discipline).
       await evalIn(
         page,
         `(() => {
-          const well = document.querySelector(${JSON.stringify(wellSel)})
+          const well = document.querySelector('.pl-well')
           const r = well.getBoundingClientRect()
           const cx = r.left + r.width / 2, cy = r.top + r.height / 2
           const dt = new DataTransfer()
@@ -709,12 +712,23 @@ test.describe('@core @planning @mcp S5 file context on canvas://boards (over the
         })()`
       )
       // Confirm the fileref element landed on the planning board before asserting the wire view.
+      // Structured-arg eval — the id is passed as DATA, never interpolated into code (the #82 pattern).
       await expect
         .poll(() =>
-          evalIn<string[]>(
-            page,
-            `(() => { const b = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(planId)}); return ((b && b.elements) || []).filter((e) => e.kind === 'fileref').map((e) => e.path) })()`
-          )
+          page.evaluate((id) => {
+            const hook = (
+              globalThis as unknown as {
+                __canvasE2E: {
+                  getBoards(): Array<{
+                    id: string
+                    elements?: Array<{ kind: string; path: string }>
+                  }>
+                }
+              }
+            ).__canvasE2E
+            const b = hook.getBoards().find((x) => x.id === id)
+            return ((b && b.elements) || []).filter((e) => e.kind === 'fileref').map((e) => e.path)
+          }, planId)
         )
         .toEqual(['a.ts'])
 
