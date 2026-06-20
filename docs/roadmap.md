@@ -223,33 +223,47 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
 
 ## Phase 5 — Packaging & release ⛓ Phase 4
 
-> 🐛 **Bug-hunt finding (auto-noted 2026-06-10):** The codebase bug hunt independently
-> confirmed a bug that this planned work is expected to fix.
-> - **Location:** `electron-builder.yml:60`
-> - **Severity:** Medium
-> - **What:** production.yml `--publish always` is silently nullified by electron-builder.yml `publish: null` — the release workflow uploads nothing and goes green.
-> - **Verification:** Traced in the installed app-builder-lib (`PublishManager.js:63-64`): the config's `publish: null` wins over the CLI flag, so the release job completes green with zero uploaded assets.
-> - **Status:** Skipped from active fix queue; expected to be resolved by this phase.
-> - **Ref:** `docs/reviews/2026-06-10-full-app-audit.md` (raw card `bug-hunt-findings/skipped-roadmap.md`, git history).
+> **Status — 2026-06-15: release-ready, signing-staged** (branch `feat/phase5-packaging`).
+> Everything except the certs themselves is built + verified; going from unsigned → signed +
+> auto-updating is a **secrets drop**, no code/workflow edits. Runbook:
+> [`contributing/releasing.md`](contributing/releasing.md); decision record: ADR
+> [`0008-packaging-signing-and-auto-update-gate`](decisions/0008-packaging-signing-and-auto-update-gate.md).
+>
+> **Done this phase:**
+> - **App identity** — version `0.1.0`; on-brand generated icon (`build/icon.png`, outline-diamond,
+>   `scripts/gen-icon.mjs`); macOS hardened-runtime entitlements (`build/entitlements.mac*.plist`).
+> - **Update feed** — `electron-builder.yml` `publish: github` (FIXES the nullification bug below) +
+>   bakes `app-update.yml`; a `--win` build now emits `latest.yml` (verified).
+> - **electron-updater wired + gated** — `src/main/autoUpdate.ts` (DI + unit-tested) → renderer toast
+>   channel; fenced behind the `__ENABLE_AUTO_UPDATE__` build constant. Verified: unsigned builds
+>   DCE the updater path entirely; signed builds keep the full wiring + dynamic import.
+> - **CI signing staged** — `production.yml` passes all signing inputs from secrets (graceful unsigned
+>   fallback) + gates auto-update on the `AUTO_UPDATE` repo variable; staging stays unsigned.
+> - **Verified** — full Windows installer + `latest.yml` build; recap hook unpacked to a real
+>   `app.asar.unpacked` path (BUG-003, in-package); `hideAttribution` set; e2e `@core` 8/8 + the cheap
+>   gate green; the packaged process tree (main+gpu+renderer) spawns clean.
+>
+> **Remaining (external — needs the maintainer):** purchase the signing certs (Apple Developer ID +
+> notarization creds; a Windows Authenticode cert on a token/cloud-HSM), add the secrets, flip
+> `AUTO_UPDATE=1`, then do the live packaged manual check (MANUAL-CHECKS › Packaged build) and the
+> first signed in-app update upgrade.
 
-> 🔗 **Related bug-hunt finding:** BUG-003 (packaged-build recap hook) — **code fix landed in #107**
-> (`src/main/index.ts` ~208-225: `app.asar` → `app.asar.unpacked` path substitution +
-> `ELECTRON_RUN_AS_NODE=1` baked into the hook env; amendment `81365b6`). What remains is
-> **packaged-only verification**: the fix has never run in a real packaged build (no packaged smoke
-> exists pre-Phase 5). Verify the hook end-to-end when this phase produces installers. See
-> `docs/reviews/2026-06-10-full-app-audit.md` (raw card in git history).*
+> 🐛 ~~**Bug-hunt finding (electron-builder.yml `publish: null` nullified `--publish always`)**~~ —
+> **FIXED** this phase: `publish:` is now the GitHub provider, so the release job uploads assets +
+> `latest.yml` (verified). (Was: `docs/reviews/2026-06-10-full-app-audit.md`.)
 
-> 🔗 **Related bug-hunt finding:** BUG-071 touches this area but is not fully resolved by this
-> work — see `docs/reviews/2026-06-10-full-app-audit.md` (raw card in git history).
-> *(Renderer-only deps in `dependencies` (`package.json:44`) are double-shipped: Vite-bundled into
-> `out/renderer` AND packed as raw `node_modules` inside `app.asar`. Phase 5 finalizes packaging but
-> asar slimming is not in its listed scope.)*
+> 🔗 **BUG-003 (packaged recap hook)** — code fix landed in #107; **packaged presence verified** this
+> phase (`recordSession.js` extracted to `app.asar.unpacked/out/main/hooks/`). End-to-end run with a
+> real Claude session in a packaged install remains a manual desktop check.
 
-- Finalize the per-OS CI matrix. Native rebuild green on all targets.
-- Signing: macOS code-sign + notarize (Apple Developer creds), Windows Authenticode (cert).
-- Auto-update via electron-updater (release feed). App icons in `build/`.
-- Verify `hideAttribution` (no React Flow badge in packaged build).
-- ✅ signed installers per OS; in-app update upgrades a prior version.
+> 🔗 **BUG-071 (asar slimming)** — still out of scope; renderer deps double-shipped. Tracked, low.
+
+- ✅ Per-OS CI matrix finalized; native rebuild green (the matrix predates this phase; signing env added).
+- ⏳ **Signing: needs certs** — macOS code-sign + notarize (Apple Developer creds), Windows Authenticode.
+  CI steps are wired + staged behind secrets.
+- ✅ Auto-update via electron-updater (gated release feed). ✅ App icons in `build/`.
+- ✅ Verify `hideAttribution` (no React Flow badge — set on the canvas).
+- ⏳ signed installers per OS; in-app update upgrades a prior version (blocked on certs + first signed release).
 
 ---
 

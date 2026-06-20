@@ -82,6 +82,11 @@ import { createRecapWatcher, type RecapWatcher } from './agentRecapWatcher'
 import { registerRecapIpc } from './recapIpc'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
+import { initAutoUpdate, type UpdaterLike } from './autoUpdate'
+
+// Build-time auto-update gate (electron.vite.config.ts `define`). True ONLY for signed
+// production builds; fences initAutoUpdate so unsigned builds never touch the update feed.
+declare const __ENABLE_AUTO_UPDATE__: boolean
 
 let mainWindow: BrowserWindow | null = null
 let localServer: LocalServer | null = null
@@ -119,14 +124,14 @@ function createWindow(): void {
   // Packaged builds keep the product title.
   const devTitle = app.isPackaged
     ? null
-    : process.env['CANVAS_DEV_TITLE'] || `${basename(process.cwd())} — Canvas ADE [dev]`
+    : process.env['CANVAS_DEV_TITLE'] || `${basename(process.cwd())} — Expanse [dev]`
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0a0a0b',
-    title: devTitle ?? 'Canvas ADE',
+    title: devTitle ?? 'Expanse',
     webPreferences: buildMainWindowWebPreferences(join(__dirname, '../preload/index.js'))
   })
   // The renderer's <title> overwrites the window title on load — keep the dev stamp.
@@ -227,7 +232,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.canvasade.app')
+  electronApp.setAppUserModelId('com.expanse.app')
   // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
   // Linux the default menu's Alt mnemonics (Alt+V = View) eat it, and Chromium handles
   // Ctrl+C/V natively in inputs there, so dropping the menu is safe. On macOS the Edit
@@ -680,6 +685,29 @@ app.whenReady().then(async () => {
   // PR-4: pass a live getter for the result synthesizer so the CANVAS_E2E seam can drive
   // `onSettle` deterministically (it is created above in this same setup scope).
   if (mainWindow) installE2EMain(mainWindow, defaultPreviewUrl, mcp, () => resultSynth)
+
+  // Phase 5 auto-update (gated). A NO-OP in dev/unsigned builds (see autoUpdate.ts +
+  // electron.vite.config.ts); in a signed production build it checks the GitHub feed,
+  // auto-downloads, and surfaces an "update ready — Restart" toast in the renderer.
+  // electron-updater is loaded via a DYNAMIC import inside getUpdater so it (and its
+  // transitive deps, e.g. semver) are only required when the gate is open — an unsigned
+  // build never imports it, so a missing/unpacked updater dep can't crash boot.
+  initAutoUpdate({
+    enabled: __ENABLE_AUTO_UPDATE__,
+    isPackaged: app.isPackaged,
+    ipc: ipcMain,
+    getWin: () => mainWindow,
+    getUpdater: async () => {
+      // The real electron-updater autoUpdater satisfies UpdaterLike at runtime; the
+      // double-cast is the deliberate boundary between our minimal interface and its
+      // richly-overloaded per-event types (so autoUpdate.ts stays test-injectable).
+      const mod = await import('electron-updater')
+      return mod.autoUpdater as unknown as UpdaterLike
+    }
+    // A rejection here means the gate was open (signed build) but updater init/import
+    // failed — a packaging defect. Log it; never let it become an unhandled rejection
+    // that crashes main under Node 22's --unhandled-rejections=throw default.
+  }).catch((err) => console.error('[auto-update] init failed', err))
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {

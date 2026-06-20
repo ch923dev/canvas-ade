@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    macOS hardened-runtime entitlements (required for notarization, Phase 5).
+
+    Electron needs JIT + writable-executable memory for V8, and library validation
+    must be relaxed so the app can load our unpacked native modules (node-pty's
+    *.node binary lives in app.asar.unpacked, not inside the signed bundle).
+
+    allow-dyld-environment-variables is required because the terminal-recap hook
+    relaunches the app as Node via ELECTRON_RUN_AS_NODE=1 (a dyld env var) — on a
+    hardened-runtime signed binary that is rejected without this entitlement, which
+    would silently break the packaged recap path on macOS (the BUG-003 class).
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>

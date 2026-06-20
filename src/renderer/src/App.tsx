@@ -4,6 +4,7 @@ import WelcomeScreen from './canvas/WelcomeScreen'
 import AuditLogViewer from './canvas/AuditLogViewer'
 import ConfirmModal from './canvas/ConfirmModal'
 import { ToastIsland } from './canvas/Toast'
+import { useUpdateToasts } from './canvas/useUpdateToasts'
 import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
@@ -21,6 +22,7 @@ function App(): React.ReactElement {
   useAutosave()
   useMcpPublish()
   useMcpCommands()
+  useUpdateToasts()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)

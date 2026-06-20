@@ -77,6 +77,15 @@ function copyDiagramWorker(): Plugin {
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin(), copyRecapHook(), copyDiagramWorker()],
+    // Phase 5 auto-update gate. electron-updater is wired in main but the actual
+    // checkForUpdates call is fenced behind this build-time constant (see
+    // src/main/autoUpdate.ts). It is `true` ONLY when the build sets ENABLE_AUTO_UPDATE=1
+    // — which the production CI job does exclusively when code-signing secrets are present.
+    // So unsigned local/staging builds NEVER auto-update: the security invariant
+    // (no unsigned auto-update over a feed) is enforced by the compiler, not by convention.
+    define: {
+      __ENABLE_AUTO_UPDATE__: JSON.stringify(process.env.ENABLE_AUTO_UPDATE === '1')
+    },
     build: {
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/main/index.ts') }
