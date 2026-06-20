@@ -40,7 +40,12 @@ slice-scoped `pnpm test:e2e` (Windows leg) + the manual dev check. The **full** 
 | S2 Tree panel | `feat/file-tree-s2-tree-panel` | ✅ MERGED (#180, squash `7102f392`) | #180 | ✅ |
 | S3 File board | `feat/file-tree-s3-file-board` | ✅ MERGED (#179, squash `914c4e91`) | #179 | ✅ |
 | S4 Planning ref | `feat/file-tree-s4-planning-ref` | ✅ MERGED (#193, squash `9a1f8138`) | #193 | ✅ |
-| S5 MCP context | `feat/file-tree-s5-mcp-context` | **In progress (see `S5-PLAN.md`)** | — | — |
+| S5 MCP context | `feat/file-tree-s5-mcp-context` | ✅ MERGED (#198, squash `42b8907c`) | #198 | ✅ |
+
+**✅ ALL 5 SLICES MERGED.** Umbrella reconciled with `origin/main` (merge `5e05d0b9`, incl. PA-3/4/7/8/10
++ Agent-Orchestration Onboarding #192). Gate green: 2724 unit / 1 skip · full e2e (Win) 162 pass / 1
+flaky (placement, real-OS-input — passes on retry). **Next = the umbrella → `main` PR** (run the FULL
+e2e matrix incl. the Linux leg at that gate; user eyeballs the whole feature once more).
 
 ---
 
