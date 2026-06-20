@@ -19,12 +19,13 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
   type ReactElement
 } from 'react'
-import { useStore } from '@xyflow/react'
+import { useStoreApi } from '@xyflow/react'
 import type {
   ArrowElement,
   ChecklistElement,
@@ -88,8 +89,14 @@ export function PlanningBoard({
   const beginChange = useCanvasStore((s) => s.beginChange)
   // S4: a chip click opens its file as a File board (S1 contract; re-uses an open board for the path).
   const openFileBoard = useCanvasStore((s) => s.openFileBoard)
-  // Live camera zoom for the ÷zoom screen→board mapping (handoff 2.3).
-  const zoom = useStore((s) => s.transform[2])
+  // PLAN-01 (High, perf): read the live camera zoom LAZILY via the React Flow store API
+  // at gesture time instead of subscribing to `s.transform[2]`. A reactive subscription
+  // re-rendered this whole board (the filter/map body + every card) on EVERY pan/zoom
+  // frame for a value used only as the screenScale fallback (the well's measured ratio is
+  // the real scale once it's laid out). `getZoom` is a stable closure, so `toBoard` + the
+  // keyboard hook keep stable identities and the React.memo'd cards are never re-created.
+  const storeApi = useStoreApi()
+  const getZoom = useCallback(() => storeApi.getState().transform[2], [storeApi])
 
   const [tool, setTool] = useState<PlanTool>('select')
   // In-board snapping (W2.2): edge/center alignment to neighbors while dragging.
@@ -170,13 +177,13 @@ export function PlanningBoard({
     (e: { clientX: number; clientY: number }): { x: number; y: number } => {
       const wellEl = wellRef.current
       const r = wellEl?.getBoundingClientRect()
-      const scale = screenScale(r?.width ?? 0, wellEl?.offsetWidth ?? 0, zoom)
+      const scale = screenScale(r?.width ?? 0, wellEl?.offsetWidth ?? 0, getZoom())
       return screenToBoard(
         { x: e.clientX, y: e.clientY },
         { originX: r?.left ?? 0, originY: r?.top ?? 0, zoom: scale }
       )
     },
-    [zoom]
+    [getZoom]
   )
 
   // Image paste/drop pipeline (god-file split 6.3): the document-level clipboard
@@ -314,6 +321,21 @@ export function PlanningBoard({
     [commit]
   )
 
+  // PLAN-05: width-only resize for the auto-height cards (notes + checklists). Tracked w
+  // commit (the WidthResizeHandle arms ONE checkpoint per drag via onEditStart). Live-read
+  // commit → stable identity so the memo'd cards aren't re-created (BUG-023-safe). Height
+  // stays intrinsic (notes auto-grow the textarea; checklists grow via growForChecklist).
+  const resizeNote = useCallback(
+    (id: string, w: number) =>
+      commit((cur) => patchElement<NoteElement>(cur, id, (n) => ({ ...n, w }))),
+    [commit]
+  )
+  const resizeChecklist = useCallback(
+    (id: string, w: number) =>
+      commit((cur) => patchElement<ChecklistElement>(cur, id, (c) => ({ ...c, w }))),
+    [commit]
+  )
+
   // Checklist mutators commit via the live-read transform (not the render-time
   // `elements` closure) so two rapid toggles/appends/removes — key-repeat, a fast
   // double-click — chain instead of the second clobbering the first (BUG-023).
@@ -414,7 +436,7 @@ export function PlanningBoard({
     clearSel,
     commit,
     beginChange,
-    zoom,
+    getZoom,
     wellRef,
     measuredRef,
     buildMenuEntries,
@@ -487,6 +509,17 @@ export function PlanningBoard({
       setEditingTextId((cur) => (editing ? id : cur === id ? null : cur)),
     []
   )
+  // PLAN-07: stable identity for the vector-select handler WhiteboardSvg holds. An inline
+  // arrow here gets a fresh identity each render and would defeat the memo() above — every
+  // snap toggle / editing-state change would still re-reconcile the whole SVG layer. Both
+  // selectOnPress (useCallback) and wellRef (ref) are already stable, so this is a constant.
+  const onSelectVector = useCallback(
+    (id: string, additive: boolean) => {
+      selectOnPress(id, additive)
+      wellRef.current?.focus()
+    },
+    [selectOnPress]
+  )
 
   // ── Tool cluster (BoardFrame actions) — selected-only ────────────────────────
   const actions = selected ? (
@@ -502,36 +535,47 @@ export function PlanningBoard({
     />
   ) : undefined
 
-  // While a move is in flight, render the dragged element shifted by its transient
-  // delta (the store still holds the pre-drag position until pointer-up — #9).
-  // Any kind is movable now (cards + arrows + strokes), so derive the SVG vectors
-  // from viewElements too so a dragged arrow/stroke tracks the cursor live (#28, #37).
-  const movedView = dragPos ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy) : null
-  // During a normal move the originals shift; during an ALT drag the originals stay
-  // put and translated GHOST copies (temporary `__ghost__` ids, NEVER committed)
-  // preview the duplicate. The captured pointer means onSelect/onDragStart never fire
-  // on a ghost, and its id is dropped the instant the alt-drag ends.
-  const ghostCopies =
-    dragPos && dragPos.alt && movedView
-      ? movedView
-          .filter((e) => dragPos.ids.includes(e.id))
-          .map((e) => ({ ...e, id: `__ghost__${e.id}` }) as PlanningElement)
-      : []
-  const baseView =
-    dragPos && !dragPos.alt && movedView
-      ? movedView
-      : pendingErase && pendingErase.size > 0
-        ? elements.filter((el) => !pendingErase.has(el.id))
-        : elements
-  // Keep the array reference stable when idle (no alt-drag ghosts): `baseView` is the
-  // store's own `elements` array when nothing is in flight, so returning it directly
-  // (instead of always spreading into a fresh array) avoids a per-render allocation; the
-  // per-element card props stay referentially stable regardless (patchElement keeps
-  // unchanged element refs), which is what lets the memo'd cards skip.
-  const viewElements = ghostCopies.length > 0 ? [...baseView, ...ghostCopies] : baseView
+  // The render-time element list, memoized on its only real inputs (the store elements +
+  // the transient drag/erase state). Memoizing it (PLAN-07) keeps a STABLE reference across
+  // re-renders that don't touch those inputs — an editingTextId / snap / hover change — so
+  // the downstream arrows/strokes memos (and the React.memo'd WhiteboardSvg) can actually
+  // skip. When idle it returns the store's own `elements` array by reference (no per-render
+  // allocation), preserving the prior behavior the memo'd cards already relied on.
+  const viewElements = useMemo<PlanningElement[]>(() => {
+    // While a move is in flight, render the dragged element shifted by its transient delta
+    // (the store still holds the pre-drag position until pointer-up — #9). Any kind is
+    // movable (cards + arrows + strokes), so the SVG vectors derive from this too (#28, #37).
+    const movedView = dragPos ? translateMany(elements, dragPos.ids, dragPos.dx, dragPos.dy) : null
+    // During a normal move the originals shift; during an ALT drag the originals stay put and
+    // translated GHOST copies (temporary `__ghost__` ids, NEVER committed) preview the
+    // duplicate. The captured pointer means onSelect/onDragStart never fire on a ghost, and
+    // its id is dropped the instant the alt-drag ends.
+    const ghostCopies =
+      dragPos && dragPos.alt && movedView
+        ? movedView
+            .filter((e) => dragPos.ids.includes(e.id))
+            .map((e) => ({ ...e, id: `__ghost__${e.id}` }) as PlanningElement)
+        : []
+    const baseView =
+      dragPos && !dragPos.alt && movedView
+        ? movedView
+        : pendingErase && pendingErase.size > 0
+          ? elements.filter((el) => !pendingErase.has(el.id))
+          : elements
+    return ghostCopies.length > 0 ? [...baseView, ...ghostCopies] : baseView
+  }, [elements, dragPos, pendingErase])
 
-  const arrows = viewElements.filter((e): e is ArrowElement => e.kind === 'arrow')
-  const strokes = viewElements.filter((e): e is StrokeElement => e.kind === 'stroke')
+  // PLAN-07: keep the vector-layer arrays referentially stable across re-renders that
+  // don't change the well content (keyed on the memoized viewElements) so the React.memo'd
+  // WhiteboardSvg can skip a note keystroke / snap toggle / editing-state re-render.
+  const arrows = useMemo(
+    () => viewElements.filter((e): e is ArrowElement => e.kind === 'arrow'),
+    [viewElements]
+  )
+  const strokes = useMemo(
+    () => viewElements.filter((e): e is StrokeElement => e.kind === 'stroke'),
+    [viewElements]
+  )
 
   // The well captures the pen/arrow/place gestures; the draw tools also force a
   // crosshair cursor so the active mode is legible.
@@ -624,10 +668,7 @@ export function PlanningBoard({
           // pen/arrow) so a note/check placement over committed ink falls through
           // to onWellPointerDown and the element is placed where clicked (#4/BUG-022).
           drawing={tool !== 'select'}
-          onSelect={(id, additive) => {
-            selectOnPress(id, additive)
-            wellRef.current?.focus()
-          }}
+          onSelect={onSelectVector}
           onDragStart={onDragStartStable}
           endpointDrag={endpointDrag}
           onEndpointDragStart={startEndpointDrag}
@@ -649,6 +690,7 @@ export function PlanningBoard({
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
                 onSetTint={setTint}
+                onResize={resizeNote}
               />
             )
           }
@@ -686,6 +728,7 @@ export function PlanningBoard({
                 selected={selectedIds.has(el.id)}
                 onSelect={selectOnPress}
                 onMeasure={reportMeasure}
+                onResize={resizeChecklist}
               />
             )
           }
@@ -786,7 +829,9 @@ export function PlanningBoard({
               pointerEvents: 'none'
             }}
           >
-            {selected ? 'pick a tool above · note · check · arrow · pen · erase' : 'empty plan'}
+            {selected
+              ? 'pick a tool above · note · text · check · diagram · arrow · pen · erase'
+              : 'empty plan'}
           </div>
         )}
       </div>

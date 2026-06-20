@@ -1678,6 +1678,45 @@ body {
   outline: none;
 }
 
+/* PA-5 (PLAN-05): right-edge width-resize handle for the auto-height Planning cards
+   (notes + checklists). A slim vertical accent pill straddling the card's right edge
+   inside a wider hit zone; width-only (the cards size their height from content), so
+   ew-resize. Shown only when the card is selected (NoteCard/ChecklistCard gate it). */
+.pl-width-resize {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 14px;
+  height: 38px;
+  transform: translate(50%, -50%);
+  display: grid;
+  place-items: center;
+  cursor: ew-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.pl-width-resize::before {
+  content: '';
+  width: 3px;
+  height: 26px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  /* a 2px void ring so the pill reads cleanly over the card edge + the dot grid */
+  box-shadow: 0 0 0 2px var(--void);
+  transition:
+    height 0.1s ease-out,
+    background 0.1s ease-out;
+}
+.pl-width-resize:hover::before {
+  height: 30px;
+  background: var(--accent-hover);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-width-resize::before {
+    transition: none;
+  }
+}
+
 /* Phase 4 focus-ring cluster — accent ring (§6 select-ring convention) on
    interactive controls that otherwise suppress/omit a :focus-visible state. */
 .pl-well input:focus-visible,

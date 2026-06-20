@@ -120,3 +120,86 @@ it('a pointerdown on a swatch dot never starts a grip drag', () => {
   })
   expect(onDragStart).not.toHaveBeenCalled()
 })
+
+// ── PLAN-05 width-resize handle ──────────────────────────────────────────────────
+
+function renderForResize(
+  over: Partial<NoteElement> = {},
+  props: { selected?: boolean; interactive?: boolean } = {}
+): { onResize: ReturnType<typeof vi.fn>; onEditStart: ReturnType<typeof vi.fn> } {
+  const onResize = vi.fn()
+  const onEditStart = vi.fn()
+  render(
+    <NoteCard
+      note={{ ...note, w: 160, ...over } as NoteElement}
+      interactive={props.interactive ?? true}
+      selected={props.selected ?? true}
+      onDragStart={() => {}}
+      onChangeText={() => {}}
+      onDelete={() => {}}
+      onEditStart={onEditStart}
+      onResize={onResize}
+    />
+  )
+  return { onResize, onEditStart }
+}
+
+it('PLAN-05: shows the width handle on a selected, interactive, unlocked note', () => {
+  renderForResize()
+  expect(screen.getByTestId('pl-width-resize')).toBeTruthy()
+})
+
+it('PLAN-05: hides the handle when not selected / not interactive / locked', () => {
+  renderForResize({}, { selected: false })
+  expect(screen.queryByTestId('pl-width-resize')).toBeNull()
+  cleanup()
+  renderForResize({}, { interactive: false })
+  expect(screen.queryByTestId('pl-width-resize')).toBeNull()
+  cleanup()
+  renderForResize({ locked: true })
+  expect(screen.queryByTestId('pl-width-resize')).toBeNull()
+})
+
+it('PLAN-05: a past-threshold drag arms ONE checkpoint and commits the new width', () => {
+  const { onResize, onEditStart } = renderForResize()
+  const handle = screen.getByTestId('pl-width-resize')
+  fireEvent.pointerDown(handle, { button: 0, clientX: 100, clientY: 0, pointerId: 1 })
+  fireEvent.pointerMove(handle, { clientX: 150, clientY: 0, pointerId: 1 }) // dx 50 > 4
+  fireEvent.pointerMove(handle, { clientX: 130, clientY: 0, pointerId: 1 }) // dx 30
+  fireEvent.pointerUp(handle, { clientX: 130, clientY: 0, pointerId: 1 })
+  expect(onEditStart).toHaveBeenCalledTimes(1) // one undo step for the whole drag
+  expect(onResize).toHaveBeenLastCalledWith('n1', 190) // 160 + 30 (scale 1 in jsdom)
+})
+
+it('PLAN-05: a sub-threshold jiggle commits nothing (no phantom undo step)', () => {
+  const { onResize, onEditStart } = renderForResize()
+  const handle = screen.getByTestId('pl-width-resize')
+  fireEvent.pointerDown(handle, { button: 0, clientX: 100, clientY: 0, pointerId: 1 })
+  fireEvent.pointerMove(handle, { clientX: 102, clientY: 0, pointerId: 1 }) // dx 2 <= 4
+  fireEvent.pointerUp(handle, { clientX: 102, clientY: 0, pointerId: 1 })
+  expect(onEditStart).not.toHaveBeenCalled()
+  expect(onResize).not.toHaveBeenCalled()
+})
+
+it('PLAN-05: a handle press never starts a card grip drag', () => {
+  const onResize = vi.fn()
+  render(
+    <NoteCard
+      note={{ ...note, w: 160 } as NoteElement}
+      interactive
+      selected
+      onDragStart={vi.fn()}
+      onChangeText={() => {}}
+      onDelete={() => {}}
+      onResize={onResize}
+    />
+  )
+  // stopPropagation in the handle keeps the press off the card's drag/select path.
+  fireEvent.pointerDown(screen.getByTestId('pl-width-resize'), {
+    button: 0,
+    clientX: 0,
+    clientY: 0,
+    pointerId: 1
+  })
+  expect(onResize).not.toHaveBeenCalled() // a press with no move commits nothing
+})
