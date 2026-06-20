@@ -218,22 +218,42 @@ export function useConnectorDrag(opts: {
   connectFromId: string | null
   setConnectFromId: (id: string | null) => void
   setConnectPointer: (p: { x: number; y: number } | null) => void
+  /** GROUP-03: the board the pointer is currently over (the resolved drop target), or null
+   *  over empty canvas / the source board. Canvas highlights it mid-drag. */
+  setConnectTargetId: (id: string | null) => void
   addConnector: (sourceId: string, targetId: string, kind: 'orchestration') => string | null
 }): void {
-  const { rf, connectFromId, setConnectFromId, setConnectPointer, addConnector } = opts
+  const {
+    rf,
+    connectFromId,
+    setConnectFromId,
+    setConnectPointer,
+    setConnectTargetId,
+    addConnector
+  } = opts
   useEffect(() => {
     if (!connectFromId) return
-    const onMove = (e: PointerEvent): void => setConnectPointer({ x: e.clientX, y: e.clientY })
+    // GROUP-03: resolve the drop target every move (same pure store-geometry hit-test the
+    // release uses) so the canvas can light the board the cable will land on — symmetric with
+    // the group-box drag's drop-target glow. resolveConnectTarget is O(boards) pure math, no DOM.
+    const onMove = (e: PointerEvent): void => {
+      setConnectPointer({ x: e.clientX, y: e.clientY })
+      const flow = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      const target = resolveConnectTarget(useCanvasStore.getState().boards, connectFromId, flow)
+      setConnectTargetId(target)
+    }
     const onUp = (e: PointerEvent): void => {
       const flow = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
       const target = resolveConnectTarget(useCanvasStore.getState().boards, connectFromId, flow)
       if (target) addConnector(connectFromId, target, 'orchestration')
       setConnectFromId(null)
       setConnectPointer(null)
+      setConnectTargetId(null)
     }
     const abort = (): void => {
       setConnectFromId(null)
       setConnectPointer(null)
+      setConnectTargetId(null)
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') abort()
@@ -250,5 +270,5 @@ export function useConnectorDrag(opts: {
       window.removeEventListener('blur', abort)
       window.removeEventListener('keydown', onKey, true)
     }
-  }, [connectFromId, rf, addConnector, setConnectFromId, setConnectPointer])
+  }, [connectFromId, rf, addConnector, setConnectFromId, setConnectPointer, setConnectTargetId])
 }

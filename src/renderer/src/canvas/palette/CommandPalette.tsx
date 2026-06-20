@@ -79,6 +79,7 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
   const boards = useCanvasStore((s) => s.boards)
   const groups = useCanvasStore((s) => s.groups)
   const selectedIds = useCanvasStore((s) => s.selectedIds)
+  const connectors = useCanvasStore((s) => s.connectors)
   const canUndo = useCanvasStore((s) => s.past.length > 0)
   const canRedo = useCanvasStore((s) => s.future.length > 0)
 
@@ -100,12 +101,17 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
           })),
           groups: groups.map((g) => ({ id: g.id, name: g.name })),
           selectedIds,
+          connectors: connectors.map((c) => ({
+            sourceId: c.sourceId,
+            targetId: c.targetId,
+            kind: c.kind
+          })),
           canUndo,
           canRedo
         },
         fullVerbs
       ),
-    [boards, groups, selectedIds, canUndo, canRedo, fullVerbs]
+    [boards, groups, selectedIds, connectors, canUndo, canRedo, fullVerbs]
   )
 
   // Filter + rank within each section; flat order = section order (calm while typing).

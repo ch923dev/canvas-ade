@@ -63,6 +63,7 @@ export function CommandBoard({
   onDelete,
   onAddToGroup,
   onRemoveFromGroup,
+  onRemoveFromAllGroups,
   onStartConnect
 }: BoardViewProps<CommandBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
@@ -184,6 +185,7 @@ export function CommandBoard({
       onDelete={onDelete}
       onAddToGroup={onAddToGroup}
       onRemoveFromGroup={onRemoveFromGroup}
+      onRemoveFromAllGroups={onRemoveFromAllGroups}
       onStartConnect={onStartConnect}
     >
       {configuringTask && (

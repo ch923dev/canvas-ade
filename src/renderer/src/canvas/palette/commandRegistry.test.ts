@@ -26,6 +26,8 @@ function verbsMock(): PaletteVerbs {
     groupSelection: vi.fn(),
     focusGroup: vi.fn(),
     ungroup: vi.fn(),
+    connectSelectedBoards: vi.fn(),
+    disconnectSelectedBoards: vi.fn(),
     tidy: vi.fn(),
     fitAll: vi.fn(),
     resetZoom: vi.fn(),
@@ -37,7 +39,15 @@ function verbsMock(): PaletteVerbs {
 }
 
 function snap(over: Partial<PaletteSnapshot> = {}): PaletteSnapshot {
-  return { boards: [], groups: [], selectedIds: [], canUndo: false, canRedo: false, ...over }
+  return {
+    boards: [],
+    groups: [],
+    selectedIds: [],
+    connectors: [],
+    canUndo: false,
+    canRedo: false,
+    ...over
+  }
 }
 
 const T = { id: 't1', type: 'terminal', title: 'agent-1' } as const
@@ -125,6 +135,30 @@ describe('buildCommands — visibility matrix', () => {
     expect(one.some((c) => c.id === 'ungroup-g1')).toBe(true)
     const two = buildCommands(snap({ boards: [T, P], selectedIds: ['t1', 'p1'] }), verbsMock())
     expect(two.some((c) => c.id === 'group-selection')).toBe(true)
+  })
+
+  it('GROUP-01: Connect for 2 unlinked boards, Disconnect when linked, neither for 1', () => {
+    const unlinked = buildCommands(snap({ boards: [T, P], selectedIds: ['t1', 'p1'] }), verbsMock())
+    expect(unlinked.some((c) => c.id === 'connect-selected')).toBe(true)
+    expect(unlinked.some((c) => c.id === 'disconnect-selected')).toBe(false)
+
+    // A connector in EITHER direction counts as linked → offer Disconnect, hide Connect.
+    const linked = buildCommands(
+      snap({
+        boards: [T, P],
+        selectedIds: ['t1', 'p1'],
+        connectors: [{ sourceId: 'p1', targetId: 't1', kind: 'orchestration' }]
+      }),
+      verbsMock()
+    )
+    expect(linked.some((c) => c.id === 'disconnect-selected')).toBe(true)
+    expect(linked.some((c) => c.id === 'connect-selected')).toBe(false)
+
+    // Single selection → neither row.
+    const single = buildCommands(snap({ boards: [T, P], selectedIds: ['t1'] }), verbsMock())
+    expect(single.some((c) => c.id === 'connect-selected' || c.id === 'disconnect-selected')).toBe(
+      false
+    )
   })
 
   it('undo/redo rows track the rails', () => {

@@ -45,6 +45,7 @@ export function OrchestrationEdge({
             className="ca-connector-delete nodrag nopan"
             data-connector={id}
             title="Delete connector"
+            aria-label="Delete connector"
             onClick={(e) => {
               e.stopPropagation()
               onDelete()

@@ -83,6 +83,7 @@ export function PlanningBoard({
   onDelete,
   onAddToGroup,
   onRemoveFromGroup,
+  onRemoveFromAllGroups,
   onStartConnect
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
@@ -616,6 +617,7 @@ export function PlanningBoard({
       onDelete={onDelete}
       onAddToGroup={onAddToGroup}
       onRemoveFromGroup={onRemoveFromGroup}
+      onRemoveFromAllGroups={onRemoveFromAllGroups}
       onStartConnect={onStartConnect}
     >
       <div

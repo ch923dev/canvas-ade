@@ -86,6 +86,28 @@ export function computeGroupBoxes(
 }
 
 /**
+ * GROUP-07: a primitive fingerprint of everything the group boxes depend on — each group's
+ * id/name/membership plus the rect of every board that BELONGS to a group. GroupBoxLayer
+ * subscribes to this string (not the whole `boards` array), so dragging an UNGROUPED board
+ * leaves it stable and the layer doesn't re-render or recompute boxes at all. Grouped-board
+ * moves, group renames, and membership changes all change the key (→ recompute). Cheap O(groups
+ * + members); no nesting scan.
+ */
+export function groupMemberRectKey(groups: NamedGroup[], boards: BoardRect[]): string {
+  if (groups.length === 0) return ''
+  const memberIds = new Set<string>()
+  const parts: string[] = []
+  for (const g of groups) {
+    parts.push(`${g.id}~${g.name}~${g.boardIds.join(',')}`)
+    for (const id of g.boardIds) memberIds.add(id)
+  }
+  for (const b of boards) {
+    if (memberIds.has(b.id)) parts.push(`${b.id}:${b.x},${b.y},${b.w},${b.h}`)
+  }
+  return parts.join('|')
+}
+
+/**
  * The fitView maxZoom for a group: capped at 1 when ANY member is a raster board
  * (terminal/browser bitmap content blurs when upscaled past 100%), else the vector cap.
  * Generalizes the single-board focus rule in Canvas.focusBoard.

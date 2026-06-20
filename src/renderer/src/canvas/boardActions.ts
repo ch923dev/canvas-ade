@@ -21,10 +21,16 @@ export interface BoardActions {
    * in-flight "connecting" state is EPHEMERAL (never persisted — scene/session split).
    */
   startConnect: (fromBoardId: string) => void
-  /** Add a board to a group, animating the cluster re-pack (S6). */
+  /**
+   * Add a board to a group (GROUP-05): a plain membership add that does NOT re-pack the
+   * cluster, so a manually-arranged layout survives. (The animated absorb re-pack stays on
+   * the drag-onto-box gesture only — Canvas.onNodeDragStop → reflowAddToGroup.)
+   */
   addToGroup: (boardId: string, groupId: string) => void
-  /** Remove a board from every group it belongs to (S6). */
-  removeFromGroup: (boardId: string) => void
+  /** GROUP-06: remove a board from ONE named group (per-membership menu row). */
+  removeFromGroup: (boardId: string, groupId: string) => void
+  /** GROUP-06: remove a board from every group it belongs to, in one undo step. */
+  removeFromAllGroups: (boardId: string) => void
 }
 
 export const BoardActionsContext = createContext<BoardActions | null>(null)

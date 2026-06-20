@@ -392,29 +392,51 @@ function BoardGroupMenuItems({
   boardId,
   onAddToGroup,
   onRemoveFromGroup,
+  onRemoveFromAllGroups,
   renderItem
 }: {
   boardId?: string
   onAddToGroup?: (groupId: string) => void
-  onRemoveFromGroup?: () => void
+  /** GROUP-06: remove this board from ONE named group (per-membership row). */
+  onRemoveFromGroup?: (groupId: string) => void
+  /** GROUP-06: remove from every group at once — earns a row only when in 2+ groups. */
+  onRemoveFromAllGroups?: () => void
   renderItem: (label: string, danger: boolean, fn?: (e: MouseEvent) => void) => ReactElement
-}): ReactElement {
+}): ReactElement | null {
   // Read groups live so the eligible-list / membership reflect the current state.
   const groups = useCanvasStore((s) => s.groups)
+  const memberGroups = boardId ? groups.filter((g) => g.boardIds.includes(boardId)) : []
   const eligibleGroups =
     boardId && onAddToGroup ? groups.filter((g) => !g.boardIds.includes(boardId)) : []
-  const inAnyGroup = !!boardId && groups.some((g) => g.boardIds.includes(boardId))
+  const hasAddRows = !!onAddToGroup && eligibleGroups.length > 0
+  const hasRemoveRows = !!onRemoveFromGroup && memberGroups.length > 0
+  if (!hasAddRows && !hasRemoveRows) return null
   return (
     <>
-      {/* S6: one "Add to {name}" row per group this board is NOT already in. */}
-      {onAddToGroup &&
+      {/* GROUP-06: a quiet caption so the per-group Add/Remove rows read as one cluster. Not a
+          menuitem (no role) → the Menu shell's roving-tabindex/arrow nav skips it. */}
+      <div className="board-menu-cap" aria-hidden="true">
+        Groups
+      </div>
+      {/* one "Add to {name}" row per group this board is NOT already in. */}
+      {hasAddRows &&
         eligibleGroups.map((g) => (
-          <span key={g.id} style={{ display: 'contents' }}>
-            {renderItem(`Add to ${g.name}`, false, () => onAddToGroup(g.id))}
+          <span key={`add-${g.id}`} style={{ display: 'contents' }}>
+            {renderItem(`Add to ${g.name}`, false, () => onAddToGroup?.(g.id))}
           </span>
         ))}
-      {/* S6: remove from every group the board belongs to (shown only when in one). */}
-      {onRemoveFromGroup && inAnyGroup && renderItem('Remove from group', false, onRemoveFromGroup)}
+      {/* GROUP-06: one "Remove from {name}" row per group the board belongs to (was a single
+          all-or-nothing "Remove from group" — no per-group target when in several). */}
+      {hasRemoveRows &&
+        memberGroups.map((g) => (
+          <span key={`rm-${g.id}`} style={{ display: 'contents' }}>
+            {renderItem(`Remove from ${g.name}`, false, () => onRemoveFromGroup?.(g.id))}
+          </span>
+        ))}
+      {/* "Remove from all groups" only earns its place when the board is in 2+ groups. */}
+      {onRemoveFromAllGroups &&
+        memberGroups.length >= 2 &&
+        renderItem('Remove from all groups', false, onRemoveFromAllGroups)}
     </>
   )
 }
@@ -426,17 +448,20 @@ export function BoardMenu({
   onDuplicate,
   onDelete,
   onAddToGroup,
-  onRemoveFromGroup
+  onRemoveFromGroup,
+  onRemoveFromAllGroups
 }: {
   /** This board's id — used to compute eligible groups (not already a member) + membership. */
   boardId?: string
   onFull?: (e: MouseEvent) => void
   onDuplicate?: () => void
   onDelete?: () => void
-  /** S6: add this board to a group (the absorb re-pack). One item per eligible group. */
+  /** S6: add this board to a group. One item per eligible group. */
   onAddToGroup?: (groupId: string) => void
-  /** S6: remove this board from every group it belongs to. Shown only when it is in one. */
-  onRemoveFromGroup?: () => void
+  /** GROUP-06: remove this board from ONE named group (per-membership row). */
+  onRemoveFromGroup?: (groupId: string) => void
+  /** GROUP-06: remove from every group at once — shown only when the board is in 2+. */
+  onRemoveFromAllGroups?: () => void
 }): ReactElement {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLDivElement>(null)
@@ -503,6 +528,7 @@ export function BoardMenu({
               boardId={boardId}
               onAddToGroup={onAddToGroup}
               onRemoveFromGroup={onRemoveFromGroup}
+              onRemoveFromAllGroups={onRemoveFromAllGroups}
               renderItem={item}
             />
           )}
@@ -542,10 +568,12 @@ export interface BoardFrameProps {
   onDuplicate?: () => void
   /** ⋯ menu → Delete (danger). */
   onDelete?: () => void
-  /** S6 ⋯ menu → add this board to a group (the absorb re-pack). */
+  /** S6 ⋯ menu → add this board to a group. */
   onAddToGroup?: (groupId: string) => void
-  /** S6 ⋯ menu → remove this board from every group it belongs to. */
-  onRemoveFromGroup?: () => void
+  /** GROUP-06 ⋯ menu → remove this board from ONE named group (per-membership row). */
+  onRemoveFromGroup?: (groupId: string) => void
+  /** GROUP-06 ⋯ menu → remove from every group at once (shown only when in 2+). */
+  onRemoveFromAllGroups?: () => void
   /** M2: begin a connector drag from this board (renders the title-bar connector handle). */
   onStartConnect?: () => void
   children?: ReactNode
@@ -571,6 +599,7 @@ export function BoardFrame({
   onDelete,
   onAddToGroup,
   onRemoveFromGroup,
+  onRemoveFromAllGroups,
   onStartConnect,
   children
 }: BoardFrameProps): ReactElement {
@@ -813,6 +842,7 @@ export function BoardFrame({
               onDelete={onDelete}
               onAddToGroup={onAddToGroup}
               onRemoveFromGroup={onRemoveFromGroup}
+              onRemoveFromAllGroups={onRemoveFromAllGroups}
             />
           )}
         </div>

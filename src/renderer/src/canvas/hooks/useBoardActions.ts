@@ -20,7 +20,6 @@ export interface BoardActionsDeps {
   exitCameraFullView: () => void
   fullViewIdRef: MutableRefObject<string | null>
   cameraFullViewIdRef: MutableRefObject<string | null>
-  reflowAddToGroup: (groupId: string, boardIds: string[]) => void
   removeBoardFromAllGroups: (boardId: string) => void
   setFocusedId: Dispatch<SetStateAction<string | null>>
   setSelectedConnectorId: Dispatch<SetStateAction<string | null>>
@@ -43,7 +42,6 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
     exitCameraFullView,
     fullViewIdRef,
     cameraFullViewIdRef,
-    reflowAddToGroup,
     removeBoardFromAllGroups,
     setFocusedId,
     setSelectedConnectorId,
@@ -111,10 +109,16 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
         setConnectPointer(null)
         setConnectFromId(fromBoardId)
       },
-      // S6: ⋯ menu → add this board to a group, animating the cluster re-pack.
-      addToGroup: (boardId, groupId) => reflowAddToGroup(groupId, [boardId]),
-      // S6: ⋯ menu → remove this board from every group it belongs to, in one undo step.
-      removeFromGroup: (boardId) => removeBoardFromAllGroups(boardId)
+      // GROUP-05: ⋯ menu → add this single board to a group with a PLAIN membership add (no
+      // re-pack), so the board's manual position survives. The animated absorb re-pack stays on
+      // the drag-onto-box gesture only (Canvas.onNodeDragStop → reflowAddToGroup).
+      addToGroup: (boardId, groupId) =>
+        useCanvasStore.getState().addBoardsToGroup(groupId, [boardId]),
+      // GROUP-06: ⋯ menu → remove this board from ONE named group (per-membership row).
+      removeFromGroup: (boardId, groupId) =>
+        useCanvasStore.getState().removeBoardFromGroup(groupId, boardId),
+      // GROUP-06: ⋯ menu → remove this board from every group it belongs to, in one undo step.
+      removeFromAllGroups: (boardId) => removeBoardFromAllGroups(boardId)
     }
   }, [
     duplicateBoard,
@@ -126,7 +130,6 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
     exitCameraFullView,
     fullViewIdRef,
     cameraFullViewIdRef,
-    reflowAddToGroup,
     removeBoardFromAllGroups,
     setFocusedId,
     setSelectedConnectorId,

@@ -265,6 +265,7 @@ function ConnectorHarness(): ReactElement {
     connectFromId,
     setConnectFromId,
     setConnectPointer: () => {},
+    setConnectTargetId: () => {},
     addConnector
   })
   return <div data-testid="armed" data-armed={connectFromId !== null} />
