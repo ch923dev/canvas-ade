@@ -692,7 +692,7 @@ app.whenReady().then(async () => {
   // electron-updater is loaded via a DYNAMIC import inside getUpdater so it (and its
   // transitive deps, e.g. semver) are only required when the gate is open — an unsigned
   // build never imports it, so a missing/unpacked updater dep can't crash boot.
-  void initAutoUpdate({
+  initAutoUpdate({
     enabled: __ENABLE_AUTO_UPDATE__,
     isPackaged: app.isPackaged,
     ipc: ipcMain,
@@ -704,7 +704,10 @@ app.whenReady().then(async () => {
       const mod = await import('electron-updater')
       return mod.autoUpdater as unknown as UpdaterLike
     }
-  })
+    // A rejection here means the gate was open (signed build) but updater init/import
+    // failed — a packaging defect. Log it; never let it become an unhandled rejection
+    // that crashes main under Node 22's --unhandled-rejections=throw default.
+  }).catch((err) => console.error('[auto-update] init failed', err))
 
   if (SMOKE && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {
