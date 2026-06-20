@@ -47,13 +47,10 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
  *   (floor → 12): a pre-12 `assertBoard` throws on the unknown type. Identity migration; the board
  *   persists only `BoardCommon` (the orchestrator queue is ephemeral `commandStore` state).
  *   Do not silently reuse a version for a new shape.
- * - **v11 = the Planning `diagram` element kind** (S4 — Mermaid Diagram). A new element kind is
- *   BREAKING (floor → 11): a pre-11 `assertPlanningElement` throws on the unknown kind. Identity
- *   migration (the kind only appears on newly-authored diagram elements).
- * - **v12 = the file-tree foundation** (S1). Adds BOTH the `'file'` BOARD type and the `'fileref'`
- *   Planning ELEMENT kind at once. Both are BREAKING (floor → 12): a pre-12 `assertBoard` /
+ * - **v13 = the file-tree foundation** (S1). Adds BOTH the `'file'` BOARD type and the `'fileref'`
+ *   Planning ELEMENT kind at once. Both are BREAKING (floor → 13): a pre-13 `assertBoard` /
  *   `assertPlanningElement` throws on the unknown type/kind. Identity migration (the new type/kind
- *   only appear on newly-authored content). The foundation slice owns the WHOLE v12 bump.
+ *   only appear on newly-authored content). The foundation slice owns the WHOLE v13 bump.
  */
 // SCHEMA_VERSION + MIN_READER_VERSION are defined in ./boardSchemaVersion (a dependency-free module)
 // so a main-side lock-step test can import the authoritative numbers without dragging in this file's
@@ -140,7 +137,7 @@ export interface BrowserBoard extends BoardCommon {
 }
 
 /**
- * v12: an on-canvas file viewer/editor board (file-tree epic). `path` is RELATIVE to the
+ * v13: an on-canvas file viewer/editor board (file-tree epic). `path` is RELATIVE to the
  * project root (the same root every `file:*` IPC re-resolves against); absent ⇒ an UNBOUND
  * placeholder (no file opened yet — the dock creates one of these). File CONTENT is NOT
  * persisted — it is read live from disk via `window.api.file`, respecting the scene/session
@@ -249,10 +246,10 @@ export interface DiagramElement extends ElementCommon {
 }
 
 /**
- * v12: a Planning file-reference chip (file-tree epic). A clickable card that points at a
+ * v13: a Planning file-reference chip (file-tree epic). A clickable card that points at a
  * project file by RELATIVE path (same root as the `file:*` IPC); clicking it opens the file
  * as a File board (S4 wires the click + the drop-to-create gesture). `label` is the display
- * name (typically the basename). A new element kind is breaking → schema v12 / floor 12.
+ * name (typically the basename). A new element kind is breaking → schema v13 / floor 13.
  */
 export interface FileRefElement extends ElementCommon {
   kind: 'fileref'
@@ -435,7 +432,7 @@ export interface CreateBoardOpts {
   w?: number
   h?: number
   z?: number
-  /** File board only (v12): bind the new board to this RELATIVE path; omitted ⇒ unbound. */
+  /** File board only (v13): bind the new board to this RELATIVE path; omitted ⇒ unbound. */
   path?: string
 }
 

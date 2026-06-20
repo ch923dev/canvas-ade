@@ -4,6 +4,24 @@ import { test, expect } from './fixtures'
 import { evalIn, mainCall, seed } from './helpers'
 
 /**
+ * Minimal typed view of the browser DOM globals these tree/title probes drive via `page.evaluate`.
+ * The e2e is typechecked under the node tsconfig (no DOM lib), so we hand-type only what we touch.
+ * Probes pass their match value as a STRUCTURED ARG (never interpolated into the eval'd code) —
+ * CodeQL js/bad-code-sanitization; the #82 structured-arg discipline.
+ */
+type FtreeEl = {
+  getAttribute(name: string): string | null
+  textContent: string | null
+  click(): void
+  dispatchEvent(ev: unknown): void
+}
+type DomLite = {
+  document: { querySelectorAll(sel: string): ArrayLike<FtreeEl> }
+  MouseEvent: new (type: string, init: { bubbles?: boolean; ctrlKey?: boolean }) => unknown
+  getComputedStyle(el: FtreeEl): { fontStyle: string }
+}
+
+/**
  * File board (file-tree S3) - CodeMirror 6 viewer/editor.
  *
  * Tagged @core so it runs in every scoped pre-push subset (a board-render regression guard).
@@ -375,15 +393,23 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       // Drive REAL DOM events on the tree rows (title === the file's relative path). A synthetic
       // 'dblclick' fires React's onDoubleClick (pin) the same way a user's would.
       const click = (name: string): Promise<boolean> =>
-        evalIn<boolean>(
-          page,
-          `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === ${JSON.stringify(name)}); if (r) r.click(); return !!r })()`
-        )
+        page.evaluate((n) => {
+          const g = globalThis as unknown as DomLite
+          const r = Array.from(g.document.querySelectorAll('.ca-ftree-row')).find(
+            (row) => (row.getAttribute('title') || '') === n
+          )
+          if (r) r.click()
+          return !!r
+        }, name)
       const dblclick = (name: string): Promise<boolean> =>
-        evalIn<boolean>(
-          page,
-          `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === ${JSON.stringify(name)}); if (r) r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return !!r })()`
-        )
+        page.evaluate((n) => {
+          const g = globalThis as unknown as DomLite
+          const r = Array.from(g.document.querySelectorAll('.ca-ftree-row')).find(
+            (row) => (row.getAttribute('title') || '') === n
+          )
+          if (r) r.dispatchEvent(new g.MouseEvent('dblclick', { bubbles: true }))
+          return !!r
+        }, name)
       const filePaths = (): Promise<string[]> =>
         evalIn<string[]>(
           page,
@@ -426,10 +452,13 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
 
       // computed font-style of the board title showing `name` ('italic' | 'normal' | null if absent).
       const titleStyle = (name: string): Promise<string | null> =>
-        evalIn<string | null>(
-          page,
-          `(() => { const t = Array.from(document.querySelectorAll('.board-title')).find((e) => e.textContent === ${JSON.stringify(name)}); return t ? getComputedStyle(t).fontStyle : null })()`
-        )
+        page.evaluate((n) => {
+          const g = globalThis as unknown as DomLite
+          const t = Array.from(g.document.querySelectorAll('.board-title')).find(
+            (e) => e.textContent === n
+          )
+          return t ? g.getComputedStyle(t).fontStyle : null
+        }, name)
       const pinPresent = (): Promise<boolean> =>
         evalIn<boolean>(
           page,
@@ -483,10 +512,14 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
 
       // Ctrl-click builds a multi-selection (a real native click carrying ctrlKey → React onClick).
       const ctrlClick = (name: string): Promise<boolean> =>
-        evalIn<boolean>(
-          page,
-          `(() => { const r = Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => (r.getAttribute('title')||'') === ${JSON.stringify(name)}); if (r) r.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true })); return !!r })()`
-        )
+        page.evaluate((n) => {
+          const g = globalThis as unknown as DomLite
+          const r = Array.from(g.document.querySelectorAll('.ca-ftree-row')).find(
+            (row) => (row.getAttribute('title') || '') === n
+          )
+          if (r) r.dispatchEvent(new g.MouseEvent('click', { bubbles: true, ctrlKey: true }))
+          return !!r
+        }, name)
       for (const f of ['a.ts', 'b.ts', 'c.ts']) expect(await ctrlClick(f)).toBe(true)
 
       // The header "Open N" button appears once 2+ files are selected; it reads the live count.
@@ -600,10 +633,17 @@ test.describe('@core @planning S4 planning file-reference chip (DnD drop + click
 
       // A fileref element now lives on the planning board, bound to a.ts.
       const fileRefPaths = (): Promise<string[]> =>
-        evalIn<string[]>(
-          page,
-          `(() => { const b = window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(planId)}); return ((b && b.elements) || []).filter((e) => e.kind === 'fileref').map((e) => e.path) })()`
-        )
+        page.evaluate((id) => {
+          const hook = (
+            globalThis as unknown as {
+              __canvasE2E: {
+                getBoards(): Array<{ id: string; elements?: Array<{ kind: string; path: string }> }>
+              }
+            }
+          ).__canvasE2E
+          const b = hook.getBoards().find((x) => x.id === id)
+          return ((b && b.elements) || []).filter((e) => e.kind === 'fileref').map((e) => e.path)
+        }, planId)
       await expect.poll(fileRefPaths).toEqual(['a.ts'])
 
       // The chip renders inside the board.
