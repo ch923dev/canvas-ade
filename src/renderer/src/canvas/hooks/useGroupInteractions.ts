@@ -32,7 +32,7 @@ const FOCUS_OPTIONS = { padding: 0.3, maxZoom: Z_MAX } as const
 
 export interface GroupInteractionsDeps {
   rf: ReactFlowInstance
-  paneRef: RefObject<HTMLDivElement>
+  paneRef: RefObject<HTMLDivElement | null>
   setFocusedId: Dispatch<SetStateAction<string | null>>
 }
 
