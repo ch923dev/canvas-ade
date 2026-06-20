@@ -10,6 +10,7 @@
  */
 import { useCallback, useMemo, useState } from 'react'
 import type { ReactFlowInstance } from '@xyflow/react'
+import type { BoardType } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useWayfindingStore } from '../../store/wayfindingStore'
 import { cameraAnim } from '../../lib/motion'
@@ -23,7 +24,7 @@ import { sendPaletteIntent } from './paletteIntentStore'
 export interface PaletteControllerDeps {
   rf: ReactFlowInstance
   boardActions: BoardActions
-  addCentered: (type: 'terminal' | 'browser' | 'planning' | 'command') => void
+  addCentered: (type: BoardType) => void
   selectBoard: (id: string | null) => void
   setFocusedId: (id: string | null) => void
   groupSelection: () => void

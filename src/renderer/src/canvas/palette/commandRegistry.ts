@@ -71,7 +71,8 @@ const TYPE_LABEL: Record<BoardType, string> = {
   terminal: 'terminal',
   browser: 'browser',
   planning: 'planning',
-  command: 'command'
+  command: 'command',
+  file: 'file'
 }
 
 export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): PaletteCommand[] {

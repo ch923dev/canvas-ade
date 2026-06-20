@@ -127,6 +127,10 @@ export interface BoardRegistry {
     agentKind?: string
     /** v10 monitoring opt-out (Phase B) — gates the `canvas://attention` queue. */
     monitorActivity?: boolean
+    /** file-tree S5: a file board's project-relative path — forwarded to `canvas://boards`. */
+    path?: string
+    /** file-tree S5: a planning board's `fileref` paths+labels — forwarded to `canvas://boards`. */
+    fileRefs?: Array<{ path: string; label: string }>
   }>
   /**
    * The connector graph the renderer mirrors (T4.6). Only `orchestration` edges authorize

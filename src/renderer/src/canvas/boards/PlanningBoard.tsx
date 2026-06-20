@@ -22,6 +22,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type ReactElement
 } from 'react'
 import { useStoreApi } from '@xyflow/react'
@@ -29,6 +30,7 @@ import type {
   ArrowElement,
   ChecklistElement,
   DiagramElement,
+  FileRefElement,
   NoteElement,
   NoteTint,
   PlanningElement,
@@ -47,6 +49,7 @@ import { SIZE_PX, tokenFromHeight } from './planning/textStyle'
 import { ChecklistCard } from './planning/ChecklistCard'
 import { ImageCard } from './planning/ImageCard'
 import { DiagramCard } from './planning/DiagramCard'
+import { FileRefCard } from './planning/FileRefCard'
 import { WhiteboardSvg } from './planning/WhiteboardSvg'
 import { type PlanTool } from './planning/tools'
 import {
@@ -65,6 +68,7 @@ import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMen
 import { usePlanningKeyboard } from './planning/usePlanningKeyboard'
 import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
+import { usePlanningFileRefIO } from './planning/usePlanningFileRefIO'
 import { PlanningToolbar } from './planning/PlanningToolbar'
 
 const newId = (): string => crypto.randomUUID()
@@ -83,6 +87,8 @@ export function PlanningBoard({
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
+  // S4: a chip click opens its file as a File board (S1 contract; re-uses an open board for the path).
+  const openFileBoard = useCanvasStore((s) => s.openFileBoard)
   // PLAN-01 (High, perf): read the live camera zoom LAZILY via the React Flow store API
   // at gesture time instead of subscribing to `s.transform[2]`. A reactive subscription
   // re-rendered this whole board (the filter/map body + every card) on EVERY pan/zoom
@@ -183,13 +189,37 @@ export function PlanningBoard({
   // Image paste/drop pipeline (god-file split 6.3): the document-level clipboard
   // listener + file-drop handlers + the asset.write→element commit live in the hook;
   // only the two drag handlers (wired onto the well below) are surfaced.
-  const { onWellDragOver, onWellDrop } = usePlanningImageIO({
+  const { onWellDragOver: onImageDragOver, onWellDrop: onImageDrop } = usePlanningImageIO({
     wellRef,
     toBoard,
     commit,
     beginChange,
     board
   })
+  // S4: tree file-ref drop → a chip element. Composed BEFORE the image handlers on the single well
+  // onDrop/onDragOver: the file-ref handler runs first and preventDefaults when it owns the drag, so
+  // the image handler only acts on a drop it didn't claim (a real image file). Inner callbacks are
+  // useCallback-stable, so these composed wrappers stay stable too.
+  const { onWellDragOver: onFileRefDragOver, onWellDrop: onFileRefDrop } = usePlanningFileRefIO({
+    toBoard,
+    commit,
+    beginChange,
+    board
+  })
+  const onWellDragOver = useCallback(
+    (e: ReactDragEvent): void => {
+      onFileRefDragOver(e)
+      if (!e.defaultPrevented) onImageDragOver(e)
+    },
+    [onFileRefDragOver, onImageDragOver]
+  )
+  const onWellDrop = useCallback(
+    (e: ReactDragEvent): void => {
+      onFileRefDrop(e)
+      if (!e.defaultPrevented) onImageDrop(e)
+    },
+    [onFileRefDrop, onImageDrop]
+  )
 
   // ── Element-level handlers (passed to the element components) ────────────────
   const interactive = tool === 'select'
@@ -281,6 +311,13 @@ export function PlanningBoard({
   const resizeDiagram = useCallback(
     (id: string, w: number, h: number) =>
       commit((cur) => patchElement<DiagramElement>(cur, id, (d) => ({ ...d, w, h }))),
+    [commit]
+  )
+  // File-ref chip corner-handle resize — tracked w/h commit (one undo step per drag; the card arms
+  // the checkpoint on first move). Live-read commit → stable identity (BUG-023-safe).
+  const resizeFileRef = useCallback(
+    (id: string, w: number, h: number) =>
+      commit((cur) => patchElement<FileRefElement>(cur, id, (f) => ({ ...f, w, h }))),
     [commit]
   )
 
@@ -721,6 +758,21 @@ export function PlanningBoard({
                 onEditStart={beginChange}
                 onCache={onDiagramCache}
                 onResize={resizeDiagram}
+              />
+            )
+          }
+          if (el.kind === 'fileref') {
+            return (
+              <FileRefCard
+                key={el.id}
+                element={el}
+                interactive={interactive}
+                onDragStart={onDragStartStable}
+                selected={selectedIds.has(el.id)}
+                onSelect={selectOnPress}
+                onOpen={openFileBoard}
+                onEditStart={beginChange}
+                onResize={resizeFileRef}
               />
             )
           }

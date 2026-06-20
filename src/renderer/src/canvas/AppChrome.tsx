@@ -33,6 +33,7 @@ import { TypeGlyph } from './TypeGlyph'
 import { SettingsModal } from './SettingsModal'
 import { BackdropPicker } from './BackdropPicker'
 import { RecapConsentModal } from './RecapConsentModal'
+import { SidePanel } from './SidePanel'
 import { OrchestrationModals } from './OrchestrationModals'
 
 export interface AppChromeProps {
@@ -79,6 +80,7 @@ export function AppChrome({ onTidy, onFocusGroup }: AppChromeProps): ReactElemen
         onSettings={() => setShowSettings(true)}
         onFocusGroup={onFocusGroup}
       />
+      <SidePanel />
       <Dock />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {/* Guard: MAIN/renderer dir desync can leave askRecap=true with no project open. */}
@@ -640,7 +642,7 @@ export function Dock(): ReactElement {
           onClick={() => setTool('select')}
         />
         <span style={styles.divider} />
-        {(['terminal', 'browser', 'planning', 'command'] as const).map((type) => (
+        {(['terminal', 'browser', 'planning', 'command', 'file'] as const).map((type) => (
           <DockBtn key={type} type={type} active={tool === type} onClick={() => setTool(type)} />
         ))}
       </div>

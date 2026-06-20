@@ -168,6 +168,28 @@ export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }
   | { ok: false; error: string }
 
+// ── File-tree epic (S1) — root-confined fs surface (mirrors main `fileIpc.ts`) ──
+/** One directory entry from `file.listDir` (symlinks are skipped MAIN-side). */
+export interface FileEntry {
+  name: string
+  isDir: boolean
+}
+/** A file/dir stat projection from `file.stat`. */
+export interface FileStat {
+  size: number
+  mtimeMs: number
+  isDir: boolean
+}
+/**
+ * A live file-tree change pushed MAIN → renderer on `file:treeEvent`. The chokidar
+ * watcher that EMITS this lands in S2; the contract (channel + payload) is defined here in
+ * S1 so the preload has a single owner. `path` is RELATIVE to the project root.
+ */
+export interface FileTreeEvent {
+  type: 'add' | 'change' | 'unlink'
+  path: string
+}
+
 // ── M-brain T-B1/T-B2 — mirrors main `SummarizeResult` / `LlmStatus` (preload stays decoupled) ──
 export type LlmSummarizeResult =
   | { ok: true; text: string }
@@ -479,6 +501,38 @@ const api = {
     write: (bytes: Uint8Array, ext: string): Promise<{ assetId: string } | { error: string }> =>
       ipcRenderer.invoke('asset:write', { bytes, ext }),
     read: (assetId: string): Promise<Uint8Array | null> => ipcRenderer.invoke('asset:read', assetId)
+  },
+  // ── File-tree epic (S1) — root-confined fs (every channel guarded + contained in MAIN) ──
+  // The renderer only ever sends a RELATIVE path; MAIN re-resolves it against the realpath'd
+  // project root and re-validates (no fs/Node ever reaches the sandboxed renderer).
+  file: {
+    readText: (path: string): Promise<string> => ipcRenderer.invoke('file:readText', path),
+    // S3 (additive): raw bytes for the File-board image preview — `readText` is UTF-8
+    // only (lossy on binary). MAIN re-resolves + guards identically; the renderer
+    // size-gates via `stat` first and wraps the result in a Blob URL (CSP `img-src`
+    // already allows `blob:`).
+    readBytes: (path: string): Promise<Uint8Array> => ipcRenderer.invoke('file:readBytes', path),
+    // S3 (additive): the resolved absolute on-disk path ("Copy absolute path").
+    realPath: (path: string): Promise<string> => ipcRenderer.invoke('file:realPath', path),
+    // S3 (additive): a GitHub blob permalink @ HEAD ("Copy GitHub link"); MAIN runs simple-git.
+    gitPermalink: (
+      path: string
+    ): Promise<{ ok: true; url: string } | { ok: false; reason: string }> =>
+      ipcRenderer.invoke('file:gitPermalink', path),
+    writeText: (path: string, text: string): Promise<boolean> =>
+      ipcRenderer.invoke('file:writeText', { path, text }),
+    listDir: (path: string): Promise<FileEntry[]> => ipcRenderer.invoke('file:listDir', path),
+    stat: (path: string): Promise<FileStat> => ipcRenderer.invoke('file:stat', path),
+    /**
+     * Subscribe to live tree changes (S2 emits them on `file:treeEvent`). Returns an
+     * unsubscribe fn; the listener gets ONLY the event payload (never the IpcRendererEvent),
+     * matching onPreviewEvent. No emitter exists yet in S1 — the channel is the contract.
+     */
+    onTreeEvent: (cb: (ev: FileTreeEvent) => void): (() => void) => {
+      const h = (_e: IpcRendererEvent, ev: FileTreeEvent): void => cb(ev)
+      ipcRenderer.on('file:treeEvent', h)
+      return () => ipcRenderer.removeListener('file:treeEvent', h)
+    }
   },
   // ── S4 — render Mermaid source → SVG in the hidden MAIN worker (Planning Diagram element) ──
   diagram: {

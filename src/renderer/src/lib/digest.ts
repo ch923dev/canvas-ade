@@ -11,6 +11,7 @@ import type {
   CanvasDoc,
   ChecklistElement,
   CommandBoard,
+  FileBoard,
   PlanningBoard,
   TerminalBoard
 } from './boardSchema'
@@ -104,6 +105,18 @@ function digestPlanning(b: PlanningBoard): BoardDigest {
   return { boardId: b.id, type: 'planning', title: b.title, status, lines }
 }
 
+function digestFile(b: FileBoard): BoardDigest {
+  const lines: string[] = b.path ? [`File ${b.path}`] : ['No file bound']
+  if (b.readOnly) lines.push('Read-only')
+  return {
+    boardId: b.id,
+    type: 'file',
+    title: b.title,
+    status: b.path ? 'bound' : 'unbound',
+    lines
+  }
+}
+
 function digestCommand(b: CommandBoard): BoardDigest {
   // The Command board persists no content (its task queue is ephemeral commandStore state), so the
   // Tier-1 digest is just its identity — the orchestrator face for feature-zone tasks.
@@ -126,6 +139,8 @@ function digestBoard(b: Board, d: DigestDoc): BoardDigest {
       return digestPlanning(b)
     case 'command':
       return digestCommand(b)
+    case 'file':
+      return digestFile(b)
   }
 }
 

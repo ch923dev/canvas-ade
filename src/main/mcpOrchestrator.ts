@@ -40,6 +40,18 @@ export type {
 } from './mcpRegistry'
 
 /**
+ * file-tree S5: the board summary widened with the optional file-context fields the orchestrator
+ * forwards onto `canvas://boards` — a file board's `path` and a planning board's `fileRefs`. The
+ * package's `BoardSummary` is the floor; these extra fields survive the resource's `JSON.stringify`
+ * (the package serializes `listBoards()` verbatim), reaching an MCP-connected agent as read-only
+ * context. A `BoardSummaryWithFiles[]` is assignable to the package's required `BoardSummary[]`.
+ */
+type BoardSummaryWithFiles = BoardSummary & {
+  path?: string
+  fileRefs?: Array<{ path: string; label: string }>
+}
+
+/**
  * 🔒 BUG-009: belt-and-suspenders caps for a worker's self-reported write_result fields. The
  * external @expanse-ade/mcp tool schema SHOULD .max() these (a SEPARATE-REPO follow-up), but
  * write_result is an untrusted sink (a worker reports its own result), so MAIN clamps here too —
@@ -358,7 +370,7 @@ export function buildOrchestrator(
   // The read-only board projection (T1.1). Lifted out of the returned object so the
   // extracted lifecycle cluster (reapIdle) can read the SAME derived per-board statuses
   // through the injected `listBoards` dep, while mcp.ts still calls it via the spread.
-  const listBoardSummaries = async (): Promise<BoardSummary[]> => {
+  const listBoardSummaries = async (): Promise<BoardSummaryWithFiles[]> => {
     const sessionStatusFor = sessionLookup()
     return registry.listBoards().map((b) => ({
       id: b.id,
@@ -369,7 +381,13 @@ export function buildOrchestrator(
       // (or pre-v10) board's summary is unchanged. agentKind lets an orchestrator route by
       // capability; monitorActivity gates the canvas://attention queue (selectAttention).
       ...(b.agentKind !== undefined ? { agentKind: b.agentKind } : {}),
-      ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {})
+      ...(b.monitorActivity !== undefined ? { monitorActivity: b.monitorActivity } : {}),
+      // file-tree S5: forward the file-context fields only when present (a file board's path /
+      // a planning board's fileRefs), so other boards' summaries stay byte-identical. These ride
+      // out verbatim on the `canvas://boards` resource (JSON.stringify of this projection), giving
+      // an agent the path of an open File board + the files pinned to a plan — never file content.
+      ...(b.path !== undefined ? { path: b.path } : {}),
+      ...(b.fileRefs !== undefined ? { fileRefs: b.fileRefs } : {})
     }))
   }
 

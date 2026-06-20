@@ -34,6 +34,8 @@ import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
 import { registerProjectHandlers } from './projectIpc'
+import { registerFileIpc } from './fileIpc'
+import { createFileWatcher, type FileWatcher } from './fileWatch'
 import { runSummarize, defaultDeps } from './llmService'
 import { registerLlmHandlers } from './llmIpc'
 import type { Encryptor } from './llmKeyStore'
@@ -88,6 +90,8 @@ let mcp: RunningMcp | null = null
 let stopRecapWatch: (() => void) | null = null
 // Terminal recap (Task 11 — Slice B): hands-free mtime watcher; one per app lifetime.
 let recapWatcher: RecapWatcher | null = null
+// File-tree epic (S2): the chokidar tree watcher; re-pointed on project open, closed on quit.
+let fileWatcher: FileWatcher | null = null
 // PR-4 (Command-board prerequisite): synthesize a board's BoardResult from its recap transcript
 // when the worker agent settles. Driven off the SAME mtime watcher; torn down in shutdown().
 let resultSynth: ResultSynthesizer | null = null
@@ -294,6 +298,13 @@ app.whenReady().then(async () => {
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerClipboardHandlers(ipcMain, () => mainWindow)
+  // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The
+  // chokidar watcher that emits file:treeEvent lands in S2; the channel is reserved here.
+  registerFileIpc(ipcMain, () => mainWindow)
+  // File-tree epic (S2): the live tree watcher. Created here; pointed at the project root by the
+  // onProjectOpen hook below (open + project:current); closed in shutdown(). project:create is the
+  // one path it skips — a brand-new project is empty, and the watcher arms on its next open.
+  fileWatcher = createFileWatcher(() => mainWindow)
   registerBoardRegistryHandler(ipcMain, () => mainWindow)
   // 🔒 MCP dispatch audit trail (T4.1) — wired BEFORE startMcpServer (BUG-025) so the
   // getAuditLog() seam the dispatch tools append through is already non-null the instant
@@ -502,6 +513,9 @@ app.whenReady().then(async () => {
       // board in the next project must not inherit the previous project's verdict.
       // Clear-all on open; onBoardsObserved's prune handles deletions WITHIN a project.
       pruneBoardResults(new Set())
+      // File-tree epic (S2): (re)point the live tree watcher at the now-open project root.
+      // watch() closes any prior watcher first, so a project switch re-targets cleanly.
+      void fileWatcher?.watch(dir)
       if (readConsent(userData, dir) === 'enabled') {
         installRecapHook({
           projectDir: dir,
@@ -708,6 +722,9 @@ function shutdown(): Promise<void> {
   // and pending debounce timers) so nothing fires post-teardown.
   recapWatcher?.dispose()
   recapWatcher = null
+  // File-tree epic (S2): release the chokidar tree watcher's fs handles on quit.
+  void fileWatcher?.close()
+  fileWatcher = null
   // PR-4: cancel any pending result-synthesis re-check timers so nothing fires post-teardown.
   resultSynth?.dispose()
   resultSynth = null

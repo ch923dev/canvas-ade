@@ -26,8 +26,15 @@
  *   compat floor moves to 12 too. The migration is identity (the type only appears on newly-authored
  *   command boards; the orchestrator's task queue is ephemeral `commandStore` state, never serialized,
  *   so a persisted command board is just `BoardCommon` with `type:'command'` — no new fields).
+ * - v13 = the file-tree epic foundation (S1). Adds TWO new persisted kinds at once: the `'file'`
+ *   BOARD type (an on-canvas file viewer/editor; `path` relative to the project root, absent =
+ *   unbound placeholder) AND the `'fileref'` Planning ELEMENT kind (a clickable file-reference
+ *   chip). Both are BREAKING per ADR 0007 — a pre-13 `assertBoard`/`assertPlanningElement` throws
+ *   on the unknown type/kind — so the compat floor moves to 13 too (MIN_READER_VERSION below). The
+ *   migration is identity (the new type/kind only appear on newly-authored content). The
+ *   foundation slice owns the ENTIRE v13 bump; S2-S5 add zero schema (KICKOFF §6 bump coordination).
  */
-export const SCHEMA_VERSION = 12
+export const SCHEMA_VERSION = 13
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -43,10 +50,12 @@ export const SCHEMA_VERSION = 12
  * Floor was 9 (v9's root `background` key — a v8 reader would DROP the user's wallpaper on its next
  * save). Floor moved to 11 with the v11 `diagram` element kind (S4): an app older than 11 has no
  * `diagram` case in `assertPlanningElement`, so it would HARD-FAIL deep validation on a doc that
- * contains one. Floor moves to 12 with the v12 `command` board type (Phase A): an app older than 12
- * has no `command` case in `assertBoard`, so it would HARD-FAIL on a doc containing one. Stamping
- * `minReaderVersion: 12` makes pre-12 apps show the clean "update the app to open it" message
- * (assertReadableVersion) instead of a confusing `.bak`-fallback parse failure. Every app from 12 on
- * can read all future additive docs.
+ * contains one. Floor moved to 12 with the v12 `command` board type (Phase A): an app older than 12
+ * has no `command` case in `assertBoard`, so it would HARD-FAIL on a doc containing one. Floor moves
+ * to 13 with the v13 `file` board type AND `fileref` element kind (file-tree S1): an app older than
+ * 13 has no `file` case in `assertBoard` nor a `fileref` case in `assertPlanningElement`, so it would
+ * HARD-FAIL deep validation on a doc that contains either. Stamping `minReaderVersion: 13` makes
+ * pre-13 apps show the clean "update the app to open it" message (assertReadableVersion) instead of a
+ * confusing `.bak`-fallback parse failure. Every app from 13 on can read all future additive docs.
  */
-export const MIN_READER_VERSION = 12
+export const MIN_READER_VERSION = 13

@@ -368,6 +368,209 @@
   opacity: 0;
 }
 
+/* ── File-tree side panel (S2): docked left, auto-hide like the dock ──────────── */
+.ca-sidepanel-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 50;
+  /* Hidden panel lets canvas clicks through; the revealed panel opts back in (CSS). */
+  pointer-events: none;
+}
+.ca-sidepanel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  pointer-events: auto;
+  transition:
+    opacity 0.14s ease-out,
+    transform 0.14s ease-out;
+}
+.ca-sidepanel[data-revealed='false'] {
+  opacity: 0;
+  transform: translateX(-12px);
+  pointer-events: none;
+}
+.ca-sidepanel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px 7px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* Collapse-all toolbar button — VS Code shows explorer toolbar icons on hover/focus only. */
+.ca-ftree-collapse {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+.ca-sidepanel-head:hover .ca-ftree-collapse,
+.ca-ftree-collapse:focus-visible {
+  opacity: 1;
+}
+.ca-ftree-collapse:hover {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+/* "Open N boards" — appears in the header only when 2+ files are multi-selected. The one accent,
+   functional (not decorative): the explicit "spawn many" trigger alongside Enter. */
+.ca-sidepanel-open-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-right: 6px;
+  padding: 2px 8px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.ca-sidepanel-open-btn:hover {
+  border-color: var(--accent);
+}
+/* One vertical indent guide per ancestor level (VS Code tree lines). align-self: stretch makes
+   the 1px left border span the full row height, so the lines read as continuous across rows. */
+.ca-ftree-guide {
+  flex: 0 0 auto;
+  width: 12px;
+  align-self: stretch;
+  border-left: 1px solid var(--border-subtle);
+}
+/* The handle: a slim vertical grabber marking where the panel lives — NEVER interactive
+   (the reveal is the window-level zone listener). Fades out under the revealed panel. */
+.ca-sidepanel-handle {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  transition: opacity 0.14s ease-out;
+}
+.ca-sidepanel-handle::after {
+  content: '';
+  width: 5px;
+  height: 56px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.ca-sidepanel-handle[data-revealed='true'] {
+  opacity: 0;
+}
+.ca-ftree-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 4px 0;
+}
+/* react-window's scroll host (we pass this className to <Tree>). Kill horizontal scroll entirely
+   (VS Code never scrolls the explorer sideways — long names truncate) and give it a thin, subtle
+   vertical scrollbar instead of the chunky default. */
+.ca-ftree-list {
+  overflow-x: hidden !important;
+}
+.ca-ftree-list::-webkit-scrollbar {
+  width: 10px;
+  height: 0;
+}
+.ca-ftree-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.ca-ftree-list::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+.ca-ftree-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* react-arborist forces each row to min-width:max-content (so a long name's highlight spans the
+   scroll width). That is exactly what produces the horizontal scrollbar — override it so rows fill
+   the panel width and the name ellipsis-truncates instead. */
+.ca-ftree-list [role='treeitem'] {
+  min-width: 0 !important;
+  width: 100% !important;
+}
+.ca-ftree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding-right: 8px;
+  font-size: 13px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.ca-ftree-row:hover {
+  background: var(--surface-overlay);
+}
+/* Multi-selected rows (Ctrl/Shift-click) — the "Open N boards" set, washed in the one accent. */
+.ca-ftree-row[data-selected] {
+  background: var(--accent-wash);
+}
+.ca-ftree-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Open-boards awareness (Inc 3): a small accent dot marks a file that already has a board on the
+   canvas; clicking it jumps the camera there (instead of opening another). */
+.ca-ftree-open-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  cursor: pointer;
+}
+.ca-ftree-open-dot:hover {
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+.ca-ftree-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ca-progress-bar,
   .ca-blink,
@@ -391,6 +594,8 @@
   .ca-t-fill,
   .ca-dock-pill,
   .ca-dock-handle,
+  .ca-sidepanel,
+  .ca-sidepanel-handle,
   .ca-zone,
   .ca-tidy-preset,
   .bb-navbtn,
@@ -2559,7 +2764,8 @@ body {
 .digest-panel {
   position: fixed;
   top: 0;
-  left: 0;
+  /* Docked RIGHT so it doesn't collide with the file-tree side panel on the left (S2). */
+  right: 0;
   bottom: 0;
   width: 300px;
   z-index: 70;
@@ -2568,7 +2774,7 @@ body {
   gap: var(--space-8);
   padding: var(--space-12);
   background: var(--surface);
-  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   color: var(--text);
   font-family: var(--ui);
   font-size: var(--fs-body);
@@ -2577,7 +2783,7 @@ body {
   transition: transform 200ms ease;
 }
 .digest-panel[data-open='false'] {
-  transform: translateX(-100%);
+  transform: translateX(100%);
 }
 .digest-head {
   display: flex;
@@ -2731,15 +2937,16 @@ body {
 .digest-reopen {
   position: fixed;
   top: 50%;
-  left: 0;
+  /* Right-edge tab to match the right-docked panel (S2 left/right reconcile). */
+  right: 0;
   transform: translateY(-50%);
   z-index: 70;
   writing-mode: vertical-rl;
   padding: var(--space-12) var(--space-4);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-left: none;
-  border-radius: 0 var(--r-inner) var(--r-inner) 0;
+  border-right: none;
+  border-radius: var(--r-inner) 0 0 var(--r-inner);
   color: var(--text-2);
   font-family: var(--ui);
   font-size: var(--fs-label);
