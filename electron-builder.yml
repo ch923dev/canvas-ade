@@ -47,6 +47,11 @@ nsis:
 mac:
   target:
     - target: dmg
+  # macOS uses the padded variant (build/icon-mac.png) — Apple's app-icon grid
+  # expects ~100px transparent margin so the Dock icon matches native apps; the
+  # shared build/icon.png is full-bleed (correct for win .ico / linux PNG, oversized
+  # on macOS). Regenerate via `node scripts/gen-icon-mac.mjs` after a brand change.
+  icon: build/icon-mac.png
   category: public.app-category.developer-tools
   # Phase 5 signing (STAGED). Hardened runtime + entitlements are REQUIRED for
   # notarization. When signing secrets are absent (local/staging) electron-builder
