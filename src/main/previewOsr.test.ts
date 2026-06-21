@@ -1,14 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyOsrInitialLoad,
-  sanitizeOsrSize,
-  applyOsrSize,
   applyOsrPaint,
   clampOsrDirty,
   osrPaintRect,
   applyOsrEdit,
   applyOsrIme
 } from './previewOsr'
+import { sanitizeOsrSize, applyOsrSize } from './previewOsrSizing'
 
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
 // else, so a blocked (non-http(s)) scheme skipped the load AND emitted no lifecycle event ->

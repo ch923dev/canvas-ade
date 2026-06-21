@@ -80,10 +80,23 @@ flatten:true})` on the board's session makes child targets (cross-origin iframes
 surface as `Target.attachedToTarget` on the **same** `wc.debugger` client — flat mode = one connection,
 `sessionId`-routed, no nested sockets. We fire-and-forget `Network.enable` on each child session as it attaches
 and tag its records with the originating `targetId`/`frameId` (+ a `crossOrigin` flag → origin badge in the row).
-`Target.detachedFromTarget` prunes that target's in-flight records. **This is the one CDP behavior the
-2026-06-21 probe did NOT exercise** (it proved main-target attach/crash/bodies/WS) → **S1 re-probes flat-mode
-auto-attach on Electron 42 / Chromium 148 before building on it**, and watches worker/iframe chatter against the
-event-volume ceiling (risk #4).
+`Target.detachedFromTarget` prunes that target's in-flight records.
+
+**Flat-mode probe RESULT (2026-06-21, Electron 42.3.3 / Chromium 148 — VERIFIED; throwaway probe deleted):**
+- **Cross-origin iframe (OOPIF) requests already surface on the ROOT session** (the iframe document *and* its
+  sub-resource fetch both arrived on root, no `sessionId`). ⇒ root `Network.enable` already covers the **main
+  document + ALL frames incl. cross-origin iframes** — **no child attach needed for iframes** (tag by `frameId`).
+- **Web/service/worker fetches surface ONLY on the worker's child session** (the worker fetch arrived tagged with
+  the child `sessionId`, never on root). ⇒ `Target.setAutoAttach({flatten:true})` + a per-child `Network.enable`
+  is specifically what buys **worker** coverage — a tighter scope than "all sub-targets need attach".
+- Flat mode confirmed: the worker attached on the **same** `wc.debugger` with a `sessionId`; the message pump's
+  **4th arg is the `sessionId`** (absent/empty ⇒ root); `sendCommand(method, params, sessionId)` targets a child.
+- **Enables must be fire-and-forget even here:** `await`-ing `Network.enable` *pre-navigation* never settles
+  (cold-start latency) — firing it then reading the stream works (re-confirms §2 fact #6).
+
+⇒ **Design:** dispatch routes by the 4th `sessionId` arg — root events → main-target records (frame-tagged);
+child-session events → worker records (origin-badged). Watch worker/iframe chatter vs the event-volume ceiling
+(risk #4).
 
 ## 4. Capture policy (resolves the open questions)
 
@@ -288,10 +301,10 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
 
 ## 12. Open risks / decisions needed
 
-- **#3 sub-target coverage** (iframes/workers) — **IN scope** (decided 2026-06-21): flat-mode
-  `Target.setAutoAttach`. **Action: S1 re-probes flat-mode auto-attach** on Electron 42 / Chromium 148 (the one
-  CDP behavior the 2026-06-21 probe did NOT cover) before building; per-target detach/prune lifecycle + extra
-  crash surface land in S6; watch worker/iframe chatter against risk #4.
+- **#3 sub-target coverage** (iframes/workers) — **IN scope + flat-mode VERIFIED (2026-06-21 probe)**: iframes
+  ride the root session (free); workers need `Target.setAutoAttach({flatten:true})` + per-child `Network.enable`,
+  `sessionId`-routed. Remaining work: per-target detach/prune lifecycle + extra crash surface in S6; watch
+  worker/iframe chatter against risk #4.
 - **#4 event-volume ceiling** — validate ring sizes + delta-coalescing cadence against an adversarial chatty page
   **(now incl. busy workers/iframes from the #3 expansion)** so MAIN CPU stays flat (the `FIND-013` "no
   per-event O(n) in MAIN" lesson). Verify during impl.
