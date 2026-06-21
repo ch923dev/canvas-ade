@@ -78,7 +78,13 @@ const bar: CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 'var(--r-ctl)',
   padding: '6px 8px 6px 10px',
-  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.45)'
+  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.45)',
+  // Above xterm's own stacked layers (.xterm-link-layer is z-index 2): at a lower
+  // z-index the bar paints but the transparent link canvas swallows its button
+  // clicks — the exact failure .ca-term-hint hit (index.css:2283). Still under the
+  // config pop (5). The CTA only shows on exited/spawn-failed terminals, whose last
+  // lines often hold agent-printed URLs, so the link layer is reliably present.
+  zIndex: 3
 }
 
 const label: CSSProperties = {
