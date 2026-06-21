@@ -48,9 +48,13 @@ describe('formatDuration', () => {
 })
 
 describe('urlName', () => {
-  it('takes the last path segment', () => {
+  it('takes the last path segment + the query string', () => {
     expect(urlName('http://localhost:5173/api/big')).toBe('big')
-    expect(urlName('http://localhost:5173/assets/main.js?v=2')).toBe('main.js')
+    expect(urlName('http://localhost:5173/assets/main.js?v=2')).toBe('main.js?v=2')
+    expect(urlName('http://x/search?q=foo')).toBe('search?q=foo')
+  })
+  it('preserves a trailing slash', () => {
+    expect(urlName('http://x/v1/items/')).toBe('items/')
   })
   it('falls back to host for a root path', () => {
     expect(urlName('http://localhost:5173/')).toBe('localhost:5173')

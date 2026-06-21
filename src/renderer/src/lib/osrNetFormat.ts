@@ -20,13 +20,18 @@ export function formatDuration(startTs: number, endTs: number | undefined): stri
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`
 }
 
-/** The short row name: the last path segment, or the host for a root/empty path. */
+/**
+ * The short row Name (DevTools): the last path segment + the query string, preserving a trailing
+ * slash; the host for a root/empty path. `…/users?page=1` → `users?page=1`; `/v1/items/` → `items/`.
+ */
 export function urlName(url: string): string {
   if (!url) return '(empty)'
   try {
     const u = new URL(url)
     const segs = u.pathname.split('/').filter(Boolean)
-    return segs.length ? segs[segs.length - 1] : u.host
+    if (segs.length === 0) return u.host + u.search // root path → host (plus any query)
+    const last = segs[segs.length - 1] + (u.pathname.endsWith('/') ? '/' : '')
+    return last + u.search
   } catch {
     // Non-URL (data:, blob:, malformed) — take the tail after the last slash, capped.
     const tail = url.split(/[?#]/)[0].split('/').filter(Boolean).pop()
