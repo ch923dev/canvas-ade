@@ -59,6 +59,16 @@ export interface FileStat {
 }
 
 /**
+ * Result of `file:writeText`. FIND-002: when the caller passes the mtime it last read, the write is
+ * conditional — `{ ok:false, conflict:true }` (no write) if the file changed on disk since, so the
+ * renderer can warn instead of silently overwriting an external (e.g. agent) edit. `mtimeMs` is the
+ * current on-disk mtime in both cases (the new one after a write, the conflicting one otherwise).
+ */
+export type WriteTextResult =
+  | { ok: true; mtimeMs: number }
+  | { ok: false; conflict: true; mtimeMs: number }
+
+/**
  * Resolve a renderer-supplied RELATIVE path to a real, in-root absolute path. Throws when
  * no project is open or the path escapes the root. The root is realpath'd ONCE per call so
  * the symlink layer compares real paths to a real root.
@@ -148,12 +158,32 @@ export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | 
 
   ipcMain.handle(
     'file:writeText',
-    async (e, args: { path: string; text: string }): Promise<boolean> => {
+    async (
+      e,
+      args: { path: string; text: string; expectedMtimeMs?: number }
+    ): Promise<WriteTextResult> => {
       if (guard(e)) throw new Error('file: foreign sender denied')
       const abs = await resolveRel(args?.path)
       const text = typeof args?.text === 'string' ? args.text : ''
+      // FIND-002: optimistic-concurrency guard. When the caller passes the mtime it last read,
+      // refuse to BLIND-overwrite a file that an external process (e.g. an agent running in a
+      // terminal) changed since — a last-writer-wins overwrite would silently discard that edit.
+      // Report the conflict (with the current on-disk mtime) so the renderer can warn + keep the
+      // user's buffer instead of losing data. A missing file (deleted since load) is not a conflict.
+      const expected = args?.expectedMtimeMs
+      if (typeof expected === 'number' && Number.isFinite(expected)) {
+        try {
+          const cur = await stat(abs)
+          if (cur.mtimeMs !== expected) {
+            return { ok: false, conflict: true, mtimeMs: cur.mtimeMs }
+          }
+        } catch {
+          /* no file on disk → not a conflict; fall through and (re)create it */
+        }
+      }
       await writeFileAtomic(abs, text, 'utf8')
-      return true
+      const after = await stat(abs)
+      return { ok: true, mtimeMs: after.mtimeMs }
     }
   )
 

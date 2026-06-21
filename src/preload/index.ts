@@ -180,6 +180,11 @@ export interface FileStat {
   mtimeMs: number
   isDir: boolean
 }
+/** Result of `file.writeText` — `conflict` when an `expectedMtimeMs` was passed but the file changed
+ *  on disk since (FIND-002: no blind overwrite). `mtimeMs` is the current on-disk mtime either way. */
+export type WriteTextResult =
+  | { ok: true; mtimeMs: number }
+  | { ok: false; conflict: true; mtimeMs: number }
 /**
  * A live file-tree change pushed MAIN → renderer on `file:treeEvent`. The chokidar
  * watcher that EMITS this lands in S2; the contract (channel + payload) is defined here in
@@ -529,8 +534,8 @@ const api = {
       path: string
     ): Promise<{ ok: true; url: string } | { ok: false; reason: string }> =>
       ipcRenderer.invoke('file:gitPermalink', path),
-    writeText: (path: string, text: string): Promise<boolean> =>
-      ipcRenderer.invoke('file:writeText', { path, text }),
+    writeText: (path: string, text: string, expectedMtimeMs?: number): Promise<WriteTextResult> =>
+      ipcRenderer.invoke('file:writeText', { path, text, expectedMtimeMs }),
     listDir: (path: string): Promise<FileEntry[]> => ipcRenderer.invoke('file:listDir', path),
     stat: (path: string): Promise<FileStat> => ipcRenderer.invoke('file:stat', path),
     /**
