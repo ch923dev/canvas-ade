@@ -167,6 +167,7 @@ export function BrowserBoard({
   // open; the URL-bar toggle flips `open`. Ephemeral (no schema). FIND-011 cleanup lives in the hook.
   useOsrNetwork(board.id)
   const netOpen = useOsrNetworkStore((s) => s.byBoard[board.id]?.open ?? false)
+  const netDock = useOsrNetworkStore((s) => s.byBoard[board.id]?.dock ?? 'bottom')
   const toggleNet = (): void => useOsrNetworkStore.getState().setOpen(board.id, !netOpen)
   // 4A — the URL-bar mute toggle shows only while the page is playing media; `muted` is the user's
   // manual choice (MAIN also auto-mutes off-screen). Ephemeral (no schema).
@@ -496,79 +497,105 @@ export function BrowserBoard({
       <div
         className="bb-stage"
         style={
-          fullView
-            ? { top: URLBAR_H, display: 'flex', alignItems: 'center', justifyContent: 'center' }
-            : { top: URLBAR_H }
+          netOpen
+            ? {
+                top: URLBAR_H,
+                display: 'flex',
+                flexDirection: netDock === 'right' ? 'row' : 'column'
+              }
+            : fullView
+              ? { top: URLBAR_H, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+              : { top: URLBAR_H }
         }
       >
+        {/* Browser region — a STABLE wrapper (never conditionally unmounted, so the offscreen
+            <canvas> never remounts + the preview never reconnects). When the inspector is open
+            (B3 split) or in full view it flexes + centres the emulator frame; otherwise it is a
+            passthrough for the on-canvas absolute device-frame rect. */}
         <div
-          className="bb-frame"
-          data-bb-frame={board.id}
-          // In full view the frame is an EMULATOR: the board is portaled out of the
-          // camera-scaled canvas, so board-geometry sizing no longer applies. Size it to
-          // the preset's ASPECT RATIO (height-bound, centred, letterboxed) rather than
-          // stretching it edge-to-edge — a Mobile/Tablet preview then renders as a
-          // bigger phone/tablet, not a blown-up landscape. The offscreen canvas fills this
-          // element (CSS), and useOffscreenSizing reflows the page to the preset width, so
-          // the scale stays uniform (no stretch). On canvas it keeps the fitted device box.
+          className="bb-stage-main"
           style={
-            fullView
+            fullView || netOpen
               ? {
                   position: 'relative',
-                  height: '100%',
-                  width: 'auto',
-                  aspectRatio: `${preset.w} / ${preset.h}`,
-                  maxWidth: '100%',
-                  maxHeight: '100%',
-                  borderRadius: preset.radius
+                  flex: '1 1 0',
+                  minWidth: 0,
+                  minHeight: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
                 }
-              : {
-                  left: frame.x,
-                  top: frameTopInStage,
-                  width: frame.width,
-                  height: frame.height,
-                  borderRadius: preset.radius
-                }
+              : { position: 'absolute', inset: 0 }
           }
         >
-          {preset.notch && <div className="bb-notch" />}
-          <DeviceContent
-            runtime={runtime}
-            url={board.url}
-            willRetry={willRetry}
-            onReload={reloadCrashed}
-          />
-          {/* Offscreen-rendered frames paint here, OVER the connecting/failed/crashed state
+          <div
+            className="bb-frame"
+            data-bb-frame={board.id}
+            // In full view (or when the inspector splits the stage, B3) the frame is an EMULATOR:
+            // sized to the preset's ASPECT RATIO (height/width-bound, centred, letterboxed) within
+            // its region rather than the board-geometry rect. The offscreen canvas fills it and
+            // useOffscreenSizing reflows the page to the preset width, so the scale stays uniform.
+            // On canvas with the panel closed it keeps the fitted device-box rect.
+            style={
+              fullView || netOpen
+                ? {
+                    position: 'relative',
+                    height: '100%',
+                    width: 'auto',
+                    aspectRatio: `${preset.w} / ${preset.h}`,
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    borderRadius: preset.radius
+                  }
+                : {
+                    left: frame.x,
+                    top: frameTopInStage,
+                    width: frame.width,
+                    height: frame.height,
+                    borderRadius: preset.radius
+                  }
+            }
+          >
+            {preset.notch && <div className="bb-notch" />}
+            <DeviceContent
+              runtime={runtime}
+              url={board.url}
+              willRetry={willRetry}
+              onReload={reloadCrashed}
+            />
+            {/* Offscreen-rendered frames paint here, OVER the connecting/failed/crashed state
               fallback. A normal DOM <canvas> clips/rounds with .bb-frame (the occlusion fix).
               When the preview isn't connected the canvas is blank and has nothing to forward, so
               it must NOT intercept the state layer's CTAs (e.g. the crashed Reload button) — drop
               its pointer events off the connected path. */}
-          <canvas
-            ref={osrCanvasRef}
-            className="bb-live nowheel nodrag"
-            style={runtime.status === 'connected' ? undefined : { pointerEvents: 'none' }}
-          />
-          {/* The hidden proxy <textarea> is the keyboard/IME/clipboard target (Phase 3) —
+            <canvas
+              ref={osrCanvasRef}
+              className="bb-live nowheel nodrag"
+              style={runtime.status === 'connected' ? undefined : { pointerEvents: 'none' }}
+            />
+            {/* The hidden proxy <textarea> is the keyboard/IME/clipboard target (Phase 3) —
               invisible + click-through, focused programmatically on canvas pointerdown. */}
-          <textarea
-            ref={osrProxyRef}
-            className="bb-ime-proxy nowheel nodrag"
-            aria-hidden="true"
-            tabIndex={-1}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-          />
-          {/* OS-3 Phase 4: native-widget chrome (JS dialog modal · <select>/date/color overlay)
+            <textarea
+              ref={osrProxyRef}
+              className="bb-ime-proxy nowheel nodrag"
+              aria-hidden="true"
+              tabIndex={-1}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+            />
+            {/* OS-3 Phase 4: native-widget chrome (JS dialog modal · <select>/date/color overlay)
               the offscreen bitmap can't composite. A DOM layer → clips/rounds with the frame. */}
-          <OsrWidgetLayer boardId={board.id} pageW={preset.w} pageH={preset.h} />
-          {/* OS-3 Phase 2 (2B): an evicted (over-cap) board's renderer is freed — its last frame
+            <OsrWidgetLayer boardId={board.id} pageW={preset.w} pageH={preset.h} />
+            {/* OS-3 Phase 2 (2B): an evicted (over-cap) board's renderer is freed — its last frame
               stays frozen on the canvas, so flag it "paused" until a live slot frees. */}
-          {paused && <span className="bb-paused-badge">paused</span>}
+            {paused && <span className="bb-paused-badge">paused</span>}
+          </div>
         </div>
-        {/* DevTools Network inspector — a DOM panel over the stage (clips/rounds with the board, no
-            occlusion). Bottom drawer or right dock per the in-header switch. */}
+        {/* DevTools Network inspector — a flex SIBLING of the browser region (B3): it splits the
+            stage instead of overlaying, so the browser stays fully visible. Bottom drawer / right
+            dock per the in-header switch. */}
         <OsrNetworkPanel boardId={board.id} onFullView={onFull} paused={paused} />
       </div>
     </BoardFrame>
