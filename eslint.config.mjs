@@ -197,6 +197,57 @@ export default tseslint.config(
     }
   },
 
+  // Token-drift guard (STYLE-02, PA-R — the final Post-Audit-Polish slice) — surfaces raw style
+  // literals in renderer COMPONENTS that bypass the design tokens, so a token change actually
+  // propagates instead of leaving hard-coded copies behind. WARN-ONLY by design: PA-R owns only this
+  // file, so it cannot clean the literals it finds (each lives in another slice's zone). Warn surfaces
+  // them without failing the gate (`eslint .` exits 0 on warnings); the ratchet to `error` happens
+  // file-by-file as a file's literals migrate to var(--token). See docs/reviews/2026-06-19-feature-audit.md.
+  //
+  // SCOPE — high-signal token drift, the case where propagation actually breaks:
+  //  • raw COLOR literals (hex + rgb/rgba). Change --accent and a hard-coded `#4f8cff` goes stale —
+  //    this is the drift that bites, so it is flagged everywhere in renderer .tsx.
+  //  • raw px/%/em-STRING fontSize/borderRadius (e.g. `fontSize: '14px'`) — an explicit CSS unit when
+  //    a --fs-*/--r-* token exists.
+  // Deliberately NOT flagged — bare NUMERIC fontSize/borderRadius (e.g. `fontSize: 11`). The audit's
+  // raw count is ~210, it is a pervasive ACCEPTED pattern (used in fresh design-reviewed code), the
+  // fs/radius tokens change rarely (low propagation risk), and ~half the hits are in `boards/command/**`
+  // — the Command Board, which the 2026-06-19 audit EXPLICITLY EXCLUDED from scope. Flagging all of
+  // them would bury the lint's signal for near-zero benefit; the numeric ratchet is a documented
+  // follow-up (flip on a `[value>=0]` selector once the fs/radius literals are migrated).
+  //
+  // .tsx only (the component layer): xterm's numeric `fontSize` is a genuine library API in a `.ts`
+  // hook (an expression, not a literal — doubly excluded), and `.ts` theme modules (CodeMirror,
+  // Mermaid, planning text tokens) legitimately use concrete values for worker / 3rd-party contexts
+  // that cannot read CSS vars. Matching on `Literal` (never expressions) keeps false positives near zero.
+  {
+    files: ['src/renderer/**/*.tsx'],
+    ignores: ['**/*.test.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'warn',
+        {
+          // Raw px/%/em string fontSize / borderRadius (e.g. `fontSize: '14px'`). `var(--fs-meta)`
+          // is a string Literal that does NOT start with a digit, so it passes.
+          selector: 'Property[key.name=/^(fontSize|borderRadius)$/] > Literal[value=/^[0-9.]/]',
+          message:
+            'Token drift (STYLE-02): use a CSS var for fontSize/borderRadius (--fs-* / --r-*), not a raw px/%/em string, so design-token changes propagate.'
+        },
+        {
+          // Raw hex color literals (#rgb / #rgba / #rrggbb / #rrggbbaa) — use the color tokens.
+          selector: 'Literal[value=/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/]',
+          message:
+            'Token drift (STYLE-02): use a color token (var(--accent) / --text-* / --surface / …), not a raw hex literal.'
+        },
+        {
+          // Raw rgb()/rgba() color literals — use the color tokens (e.g. var(--accent-wash)).
+          selector: 'Literal[value=/^rgba?\\(/]',
+          message: 'Token drift (STYLE-02): use a color token, not a raw rgb()/rgba() literal.'
+        }
+      ]
+    }
+  },
+
   // File-size ratchet — caps new source at 700 CODE lines (blanks + comments skipped, so dense
   // documentation is never penalised) and freezes today's code-heavy files at pinned counts. Pins
   // are edited DOWNWARD only: lower a file's pin in the same PR that shrinks it; delete the entry
