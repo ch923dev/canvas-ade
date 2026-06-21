@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Status** | DRAFT — awaiting design-artifact sign-off (see §9) before implementation |
+| **Status** | Mocks done; dock + scope + body-security decisions LOCKED (2026-06-21). Dock = both/toggle/default-bottom · sub-targets IN scope · body fetch approved. Ready for **S4** on explicit pixel OK. |
 | **Branch** | `feat/board-devtools-network` |
 | **Author** | session 2026-06-21 |
 | **Predecessor** | findings report (this folder's research; recommendation = Option A, CDP `Network` on the shared debugger) |
-| **Scope (v1)** | HTTP requests/responses + WebSocket frames, **main-target only**. Console/Storage are explicitly out of v1 but the design is the foundation for them. |
+| **Scope (v1)** | HTTP requests/responses + WebSocket frames, **including sub-targets** (cross-origin iframes + service/web workers via `Target.setAutoAttach` flat-mode). Console/Storage are explicitly out of v1 but the design is the foundation for them. |
 
 > **Design-artifact gate (CLAUDE.md).** This spec adds UI, so the implementation plan is **not** finalized
 > until the design artifact is signed off. The ASCII wireframe in §9 is the structure/flow artifact; a
@@ -23,7 +23,7 @@ performance character of the OSR preview engine.
 
 **Non-goals (v1).**
 - Console, Storage, Performance, Elements panels (future; same shared-attachment + buffer + subscribe pattern).
-- Sub-target traffic (cross-origin iframes, service/web workers) — see §12 risk #3; v1 captures the main target only and **labels the gap in the UI**.
+- ~~Sub-target traffic out of scope~~ — **now IN scope** (decided 2026-06-21): v1 attaches to cross-origin iframes + service/web workers via `Target.setAutoAttach({autoAttach:true, waitForDebuggerOnStart:false, flatten:true})` and merges their `Network.*` events into the board's record set, tagged + origin-badged by target/frame. See §3 (sub-target capture) + §12 risk #3 (the one CDP behavior the 2026-06-21 probe did NOT cover → S1 re-probes flat-mode first).
 - Request blocking / mocking / throttling (the `Fetch` domain / `Network.emulateNetworkConditions`) — read-only inspector only.
 - Persisting captured data to `canvas.json` or disk (HAR export is a future add; §11).
 
@@ -75,6 +75,16 @@ These drive the design and are **confirmed against a running build**, not assume
 - **Capture is decoupled from the paint pump.** `stopPainting()` does not stop JS/network, so a paint-gated
   off-screen-but-live board keeps capturing — which is desirable (you want background traffic).
 
+**Sub-target capture (flat mode).** `Target.setAutoAttach({autoAttach:true, waitForDebuggerOnStart:false,
+flatten:true})` on the board's session makes child targets (cross-origin iframes, service/web/shared workers)
+surface as `Target.attachedToTarget` on the **same** `wc.debugger` client — flat mode = one connection,
+`sessionId`-routed, no nested sockets. We fire-and-forget `Network.enable` on each child session as it attaches
+and tag its records with the originating `targetId`/`frameId` (+ a `crossOrigin` flag → origin badge in the row).
+`Target.detachedFromTarget` prunes that target's in-flight records. **This is the one CDP behavior the
+2026-06-21 probe did NOT exercise** (it proved main-target attach/crash/bodies/WS) → **S1 re-probes flat-mode
+auto-attach on Electron 42 / Chromium 148 before building on it**, and watches worker/iframe chatter against the
+event-volume ceiling (risk #4).
+
 ## 4. Capture policy (resolves the open questions)
 
 | Board state | Window | Capture | Notes |
@@ -89,6 +99,9 @@ These drive the design and are **confirmed against a running build**, not assume
   for live boards (a DevTools pain point we can beat).
 - **Bodies are never eager.** `getResponseBody`/`getRequestPostData` only on user selection, **capped**
   (default 5 MB, truncation flagged). `Network.streamResourceContent` for SSE/streaming responses.
+- **Sub-targets**: each attached child target gets its own fire-and-forget `Network.enable`; its records merge
+  into the board's ring buffer tagged by `targetId`/`frameId` and shown with a small cross-origin badge; a
+  `detachedFromTarget` (closed iframe / stopped worker) prunes that target's still-pending records.
 - **WS frames**: inline + cheap to receive, but high-volume ⇒ per-socket ring buffer + per-frame payload cap.
 - **Clear-on-main-frame-navigation by default**, with a "Preserve log" toggle (DevTools parity).
 - **`Network.enable`** issued fire-and-forget with `maxTotalBufferSize`/`maxResourceBufferSize`/`maxPostDataSize`
@@ -102,9 +115,10 @@ These drive the design and are **confirmed against a running build**, not assume
 - **All captured strings are untrusted** (page-controlled). Cap in MAIN (URL ≤2 KB, header value ≤4 KB,
   header count ≤100, WS payload ≤16 KB stored, body ≤5 MB on fetch). Render as **escaped text** in React —
   never `innerHTML`, never `eval`, never auto-navigate/auto-open a captured URL.
-- **New exfil surface acknowledged.** Response bodies may carry tokens/PII. Mitigation: lazy + user-initiated +
-  capped + scoped to the board's own session. Bodies already conceptually leave MAIN as the page bitmap; this
-  raises the signal, so it needs explicit security sign-off (§12 risk #5).
+- **New exfil surface — APPROVED 2026-06-21 (§12 risk #5).** Response bodies may carry tokens/PII. Approved
+  mitigation: **lazy + user-initiated + 5 MB cap + truncation flag + scoped to the board's own session**. Bodies
+  already conceptually leave MAIN as the page bitmap; this raises the signal but stays bounded. A sub-target
+  body fetch uses **that child target's `sessionId`** (still the board's preview session) under the same caps.
 - No weakening of `sandbox`/`contextIsolation`/`nodeIntegration`/deny-all-permissions/nav-allowlist.
 
 ## 6. IPC contract (new `preview:osrNet*` channels)
@@ -137,6 +151,9 @@ type NetRecord = {
   statusText?: string
   mimeType?: string
   fromCache?: boolean
+  targetId?: string      // sub-target (iframe/worker) source; absent = main target
+  frameId?: string
+  crossOrigin?: boolean  // → small origin badge in the row
   reqHeaders?: Header[]   // count≤100, value≤4KB
   resHeaders?: Header[]
   startTs: number
@@ -235,9 +252,12 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
 ## 10. Touchpoints (integration sketch — file by file)
 
 - **`src/main/previewOsrNetwork.ts`** *(new; mirrors `previewOsrWidgets.ts`)* — `attachOsrNetwork(wc, {emit,
-  getEntry})`: fire-and-forget `Network.enable(...)` + `configureDurableMessages`; its **own**
-  `wc.debugger.on('message')` filtering `Network.*`/WS; pure helpers (`normalizeRequest`, `capHeaders`,
-  `ringPush`, `parseWsFrame`, `capBody`) — all unit-tested. Body fetch + `streamResourceContent` live here.
+  getEntry})`: fire-and-forget `Network.enable(...)` + `configureDurableMessages` on the main session **and**
+  `Target.setAutoAttach({autoAttach,waitForDebuggerOnStart:false,flatten:true})`; its **own**
+  `wc.debugger.on('message')` filtering `Network.*`/WS/`Target.*` and **routing by `sessionId`** (enable
+  `Network` on each `attachedToTarget`, prune on `detachedFromTarget`); pure helpers (`normalizeRequest`,
+  `capHeaders`, `ringPush`, `parseWsFrame`, `capBody`, `targetTag`) — all unit-tested. Body fetch +
+  `streamResourceContent` carry the record's `sessionId` so sub-target bodies resolve.
 - **`src/main/previewOsr.ts`** — in `ensureOsr`, after `attachOsrWidgets(...)`, call `attachOsrNetwork(...)`;
   extend `OsrEntry` with `net` (ring buffer + `subscribed` + `preserve`); re-enable defensively in
   `registerCrashReadyGate.onReady` (where `applyZoom` already re-applies); clear-on-nav via the existing
@@ -268,12 +288,16 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
 
 ## 12. Open risks / decisions needed
 
-- **#3 sub-target coverage** (iframes/workers) — v1 main-target-only; verify the gap's UX label. Decision: OK to
-  ship main-target-only v1? *(recommend yes)*
+- **#3 sub-target coverage** (iframes/workers) — **IN scope** (decided 2026-06-21): flat-mode
+  `Target.setAutoAttach`. **Action: S1 re-probes flat-mode auto-attach** on Electron 42 / Chromium 148 (the one
+  CDP behavior the 2026-06-21 probe did NOT cover) before building; per-target detach/prune lifecycle + extra
+  crash surface land in S6; watch worker/iframe chatter against risk #4.
 - **#4 event-volume ceiling** — validate ring sizes + delta-coalescing cadence against an adversarial chatty page
-  so MAIN CPU stays flat (the `FIND-013` "no per-event O(n) in MAIN" lesson). Verify during impl.
-- **#5 security sign-off** — response bodies crossing MAIN→renderer at all. Decision needed before the body-fetch
-  channel lands.
+  **(now incl. busy workers/iframes from the #3 expansion)** so MAIN CPU stays flat (the `FIND-013` "no
+  per-event O(n) in MAIN" lesson). Verify during impl.
+- **#5 security sign-off** — **RESOLVED / APPROVED (2026-06-21)**: response bodies cross MAIN→renderer lazy +
+  user-initiated + 5 MB cap + truncation flag + same-(preview)-session scope; sub-target bodies use that
+  target's `sessionId` under the same caps.
 - **Panel home** — RESOLVED (2026-06-21): ship **both** dock positions (bottom drawer + right dock) with a
   per-board, remembered toggle, default bottom (§8); full-view available for either. Mocks signed off.
 
@@ -282,15 +306,18 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
 - **Unit** (vitest): all pure helpers (`normalizeRequest`, `capHeaders`, `capBody`, `parseWsFrame`, ring
   eviction, table sort/filter/format). This is where the bulk of coverage lives (Trophy model).
 - **e2e** (`@preview` tag, `scripts/e2e-scope.mjs`): open a board against the local test server, open the
-  inspector, assert a request row appears, select it, load a body, assert WS frames; assert zero IPC when the
-  panel is closed (spy on the channel). Crash+reload capture-resume as a probe.
+  inspector, assert a request row appears, select it, load a body, assert WS frames; assert a **sub-target**
+  request (page embeds a cross-origin iframe + registers a worker that fetches) shows up origin-badged; assert
+  zero IPC when the panel is closed (spy on the channel). Crash+reload capture-resume as a probe.
 - **Manual dev check** (CLAUDE.md): `CANVAS_DEV_TITLE='PR#NN board-devtools-network' pnpm dev`, verify the title
   stamp, exercise the panel live.
 
 ## 14. Build sequence (slices, each runnable + committed)
 
-1. **S1 — MAIN capture core**: `previewOsrNetwork.ts` (enable + message listener + ring buffer + caps), wired in
-   `ensureOsr`; no UI. Unit tests for helpers. (Console-log verify via a temp probe.)
+1. **S1 — MAIN capture core + sub-target attach**: first re-probe `Target.setAutoAttach` flat-mode (the one
+   unverified CDP piece), then `previewOsrNetwork.ts` (main + per-child `Network.enable`, `sessionId`-routed
+   message listener, ring buffer + caps, target/frame tagging), wired in `ensureOsr`; no UI. Unit tests for
+   helpers. (Console-log verify via a temp probe.)
 2. **S2 — IPC + preload**: 5 `preview:osrNet*` handlers + id-dispatched preload + `onPreviewOsrNet`. Subscribe
    replay/delta. Frame-guard tests.
 3. **S3 — Design mock**: ✅ token-accurate HTML mocks (bottom + right dock) → screenshots → sign-off.
@@ -299,7 +326,9 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
    off a `dock` prop), URL-bar toggle + the `▤/▥` dock switch, persisted `devtools?` pref (§11).
    FIND-011-correct unmount cleanup.
 5. **S5 — Bodies + WS detail + clear/preserve**: lazy body fetch (capped), WS frames sub-view, clear + preserve.
-6. **S6 — Liveness/crash polish + e2e**: eviction "paused" state, crash-resume, `@preview` e2e, full matrix.
+6. **S6 — Sub-target lifecycle + liveness/crash polish + e2e**: per-target attach/detach prune, cross-origin
+   origin badges on rows, eviction "paused" state, crash-resume, `@preview` e2e (incl. an iframe + a worker
+   fixture from the local test server), full matrix.
 
 ---
 
