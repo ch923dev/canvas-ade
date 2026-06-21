@@ -1490,6 +1490,14 @@ body {
 .bb-net-dropped {
   color: var(--warn);
 }
+.bb-net-paused {
+  flex: none;
+  padding: 7px 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--warn);
+  font-size: var(--fs-meta);
+}
 .bb-net-list {
   flex: 1;
   min-height: 0;

@@ -569,7 +569,7 @@ export function BrowserBoard({
         </div>
         {/* DevTools Network inspector — a DOM panel over the stage (clips/rounds with the board, no
             occlusion). Bottom drawer or right dock per the in-header switch. */}
-        <OsrNetworkPanel boardId={board.id} onFullView={onFull} />
+        <OsrNetworkPanel boardId={board.id} onFullView={onFull} paused={paused} />
       </div>
     </BoardFrame>
   )

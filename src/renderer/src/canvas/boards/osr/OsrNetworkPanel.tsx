@@ -28,10 +28,14 @@ interface BodyState {
 
 export function OsrNetworkPanel({
   boardId,
-  onFullView
+  onFullView,
+  paused = false
 }: {
   boardId: string
   onFullView?: () => void
+  /** The board was evicted (over the MAX_LIVE cap) — its offscreen window is gone, so capture is
+   *  frozen until it comes back on-screen. Surfaced as a banner (the spec's capture-policy state). */
+  paused?: boolean
 }): ReactElement | null {
   const board = useOsrNetworkStore((s) => s.byBoard[boardId])
   const setDock = useOsrNetworkStore((s) => s.setDock)
@@ -153,6 +157,13 @@ export function OsrNetworkPanel({
         {total} {total === 1 ? 'request' : 'requests'}
         {board.dropped > 0 && <span className="bb-net-dropped"> · {board.dropped} dropped</span>}
       </div>
+
+      {/* eviction state — capture stops with the board's offscreen window (MAX_LIVE cap). */}
+      {paused && (
+        <div className="bb-net-paused" role="status">
+          Capture paused — board off-screen (evicted). Bring it on-screen to resume.
+        </div>
+      )}
 
       {/* request list */}
       <div className="bb-net-list">
