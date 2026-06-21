@@ -20,7 +20,13 @@ import {
   applyEffectiveMute,
   registerOsrWidgetIpc
 } from './previewOsrWidgets'
-import { wireOsrNetwork, createNetState, stopNetFlush, type OsrNetState } from './previewOsrNetwork'
+import {
+  wireOsrNetwork,
+  registerOsrNetworkIpc,
+  createNetState,
+  stopNetFlush,
+  type OsrNetState
+} from './previewOsrNetwork'
 import {
   OSR_WIDTH,
   OSR_HEIGHT,
@@ -986,4 +992,12 @@ export function registerPreviewOsrHandlers(
   // OS-3 Phase 4 — native-widget handlers (mute · dialog respond · popup commit/dismiss · reveal
   // download). Registered from previewOsrWidgets.ts (frame-guarded there) so this file stays focused.
   registerOsrWidgetIpc(ipcMain, getWin, (id) => osr.get(id))
+  // Per-board DevTools Network handlers (subscribe · unsubscribe · clear · setPreserve · getBody),
+  // frame-guarded in previewOsrNetwork.ts; `emit` injects the board id onto the shared widget channel.
+  registerOsrNetworkIpc(
+    ipcMain,
+    getWin,
+    (id) => osr.get(id),
+    (id, msg) => emitWidget('preview:osrNet', { id, ...msg })
+  )
 }

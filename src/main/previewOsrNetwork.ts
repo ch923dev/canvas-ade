@@ -1,4 +1,5 @@
-import type { WebContents } from 'electron'
+import type { IpcMain, BrowserWindow, WebContents } from 'electron'
+import { isForeignSender } from './ipcGuard'
 
 /**
  * Per-board DevTools NETWORK + WebSocket capture for the OSR preview engine (MAIN-only).
@@ -152,6 +153,16 @@ export function recordFromRequest(
     sessionId: sessionId || undefined,
     crossOrigin: sessionId ? true : undefined // worker target; iframe cross-origin tagging is S6 (needs main-frame id)
   }
+}
+
+/**
+ * A redirect on `Network.requestWillBeSent` reuses the requestId — refresh url + method, keep the row.
+ * A 303 (and some 301/302) rewrites POST→GET, so the final method must follow or the row would lie.
+ */
+export function applyRedirect(rec: NetRecord, params: Record<string, unknown>): void {
+  const req = (params.request ?? {}) as Record<string, unknown>
+  rec.url = capText(req.url, URL_CAP) || rec.url
+  rec.method = capText(req.method, 16) || rec.method
 }
 
 /** Merge `Network.responseReceived` onto an existing record. */
@@ -361,9 +372,7 @@ function handleNetMessage(
     case 'Network.requestWillBeSent': {
       const existing = state.byId.get(reqId)
       if (existing) {
-        // redirect chain reuses the requestId — refresh url/method, keep the row
-        const req = (params.request ?? {}) as Record<string, unknown>
-        existing.url = capText(req.url, URL_CAP) || existing.url
+        applyRedirect(existing, params) // a redirect chain reuses the requestId
       } else {
         ringPushRecord(state, recordFromRequest(params, sessionId, now))
       }
@@ -503,4 +512,96 @@ export function stopNetFlush(state: OsrNetState): void {
     clearTimeout(state.flushTimer)
     state.flushTimer = null
   }
+}
+
+/* ── IPC (renderer ⇄ MAIN) — every handler isForeignSender-guarded; args re-validated in MAIN ──── */
+
+/** A lazily-fetched body, capped at BODY_CAP (the real bound — CDP buffer caps don't limit one body). */
+export interface NetBody {
+  body: string
+  base64: boolean
+  truncated: boolean
+}
+export function capBody(body: unknown, base64: boolean, max = BODY_CAP): NetBody {
+  if (typeof body !== 'string') return { body: '', base64, truncated: false }
+  if (body.length <= max) return { body, base64, truncated: false }
+  return { body: body.slice(0, max), base64, truncated: true }
+}
+
+/** Structural OSR entry the network IPC reads (the live `OsrEntry` satisfies it). */
+export interface OsrNetEntry {
+  osrWin: { webContents: WebContents }
+  net: OsrNetState
+}
+export interface OsrNetBodyArgs {
+  id: string
+  requestId: string
+  kind?: 'response' | 'request'
+}
+
+/**
+ * Register the 5 renderer→MAIN Network handlers (subscribe · unsubscribe · clear · setPreserve ·
+ * getBody). All `isForeignSender` frame-guarded; renderer args re-validated against live MAIN state
+ * (an unknown id / requestId is a no-op). `emit` is previewOsr's id-injecting `preview:osrNet` sender.
+ */
+export function registerOsrNetworkIpc(
+  ipcMain: IpcMain,
+  getWin: () => BrowserWindow | null,
+  getEntry: (id: string) => OsrNetEntry | undefined,
+  emit: (id: string, msg: OsrNetMsg) => void
+): void {
+  ipcMain.handle('preview:osrNetSubscribe', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = getEntry(id)
+    if (!e) return false
+    e.net.subscribed = true
+    emit(id, snapshotNet(e.net)) // replay the current ring buffer once
+    return true
+  })
+  ipcMain.handle('preview:osrNetUnsubscribe', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = getEntry(id)
+    if (!e) return false
+    e.net.subscribed = false
+    stopNetFlush(e.net) // panel closed → zero further IPC
+    return true
+  })
+  ipcMain.handle('preview:osrNetClear', (ev, id: string) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = getEntry(id)
+    if (!e) return false
+    clearNet(e.net)
+    if (e.net.subscribed) emit(id, { kind: 'cleared' })
+    return true
+  })
+  ipcMain.handle('preview:osrNetSetPreserve', (ev, args: { id: string; preserve: boolean }) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = getEntry(args.id)
+    if (!e) return false
+    e.net.preserve = args.preserve === true
+    return true
+  })
+  // Lazy, capped, user-initiated body fetch (the approved exfil surface). The requestId MUST match a
+  // live record for this board (re-validation); the fetch rides the record's own sessionId so a
+  // worker sub-target body resolves on its child session.
+  ipcMain.handle('preview:osrNetGetBody', async (ev, args: OsrNetBodyArgs) => {
+    if (isForeignSender(ev, getWin)) return { error: 'forbidden' }
+    const e = getEntry(args?.id)
+    if (!e) return { error: 'no board' }
+    const rec = e.net.byId.get(String(args?.requestId))
+    if (!rec) return { error: 'unknown request' }
+    const method =
+      args.kind === 'request' ? 'Network.getRequestPostData' : 'Network.getResponseBody'
+    try {
+      const res = (await e.osrWin.webContents.debugger.sendCommand(
+        method,
+        { requestId: rec.requestId },
+        rec.sessionId
+      )) as Record<string, unknown>
+      const raw = typeof res.postData === 'string' ? res.postData : res.body
+      return capBody(raw, res.base64Encoded === true)
+    } catch (err) {
+      return { error: capText((err as Error)?.message, 200) || 'body unavailable' }
+    }
+  })
 }

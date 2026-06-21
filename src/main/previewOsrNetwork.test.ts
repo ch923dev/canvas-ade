@@ -4,6 +4,7 @@ import {
   capHeaders,
   eventTs,
   recordFromRequest,
+  applyRedirect,
   applyResponse,
   applyFinished,
   applyFailed,
@@ -15,6 +16,9 @@ import {
   snapshotNet,
   flushNet,
   createNetState,
+  capBody,
+  registerOsrNetworkIpc,
+  BODY_CAP,
   URL_CAP,
   HEADER_VALUE_CAP,
   HEADER_COUNT_CAP,
@@ -23,7 +27,8 @@ import {
   MAX_WS_FRAMES,
   MAX_SOCKETS,
   type NetRecord,
-  type OsrNetMsg
+  type OsrNetMsg,
+  type OsrNetEntry
 } from './previewOsrNetwork'
 
 describe('capText', () => {
@@ -149,6 +154,27 @@ describe('applyResponse / applyFinished / applyFailed', () => {
   })
 })
 
+describe('applyRedirect', () => {
+  it('refreshes url AND method (303 POST→GET must not keep a stale POST)', () => {
+    const rec: NetRecord = {
+      requestId: 'r',
+      url: 'http://x/post',
+      method: 'POST',
+      type: 'fetch',
+      startTs: 0
+    }
+    applyRedirect(rec, { request: { url: 'http://x/landing', method: 'GET' } })
+    expect(rec.url).toBe('http://x/landing')
+    expect(rec.method).toBe('GET')
+  })
+  it('keeps prior values when the redirect omits them', () => {
+    const rec: NetRecord = { requestId: 'r', url: 'u', method: 'POST', type: 'fetch', startTs: 0 }
+    applyRedirect(rec, { request: {} })
+    expect(rec.url).toBe('u')
+    expect(rec.method).toBe('POST')
+  })
+})
+
 describe('wsFrameFrom', () => {
   it('caps the payload + flags truncation', () => {
     const big = 'p'.repeat(WS_PAYLOAD_CAP + 10)
@@ -265,5 +291,102 @@ describe('flushNet (delta gating)', () => {
     const emit = vi.fn()
     flushNet(s, emit)
     expect(emit).not.toHaveBeenCalled()
+  })
+})
+
+describe('capBody', () => {
+  it('passes a short body through untruncated', () => {
+    expect(capBody('hello', false)).toEqual({ body: 'hello', base64: false, truncated: false })
+  })
+  it('truncates + flags an over-cap body', () => {
+    const out = capBody('x'.repeat(BODY_CAP + 10), true)
+    expect(out.body.length).toBe(BODY_CAP)
+    expect(out.truncated).toBe(true)
+    expect(out.base64).toBe(true)
+  })
+  it('collapses a non-string body to empty', () => {
+    expect(capBody(undefined, false)).toEqual({ body: '', base64: false, truncated: false })
+  })
+})
+
+describe('registerOsrNetworkIpc', () => {
+  type Handler = (ev: unknown, args: unknown) => unknown
+  const mainFrame = {}
+  // isForeignSender(e, getWin): allow when senderFrame === win.mainFrame; block otherwise.
+  const getWin = () =>
+    ({ isDestroyed: () => false, webContents: { isDestroyed: () => false, mainFrame } }) as never
+  const allow = { senderFrame: mainFrame } // same frame → allowed
+  const foreign = { senderFrame: {} } // different frame → blocked
+
+  function setup(entry: OsrNetEntry | undefined) {
+    const handlers = new Map<string, Handler>()
+    const ipcMain = { handle: (ch: string, fn: Handler) => handlers.set(ch, fn) } as never
+    const emit = vi.fn()
+    registerOsrNetworkIpc(ipcMain, getWin, () => entry, emit)
+    return { call: (ch: string, ev: unknown, args?: unknown) => handlers.get(ch)!(ev, args), emit }
+  }
+  function entryWith(body: Record<string, unknown>): OsrNetEntry {
+    const net = createNetState()
+    ringPushRecord(net, { requestId: 'r1', url: 'u', method: 'GET', type: 'fetch', startTs: 0 })
+    return {
+      net,
+      osrWin: { webContents: { debugger: { sendCommand: async () => body } } as never }
+    }
+  }
+
+  it('subscribe sets the flag + replays a snapshot', () => {
+    const e = entryWith({})
+    const { call, emit } = setup(e)
+    expect(call('preview:osrNetSubscribe', allow, 'b')).toBe(true)
+    expect(e.net.subscribed).toBe(true)
+    expect(emit).toHaveBeenCalledWith('b', expect.objectContaining({ kind: 'replay' }))
+  })
+  it('rejects a foreign sender (no state change, no emit)', () => {
+    const e = entryWith({})
+    const { call, emit } = setup(e)
+    expect(call('preview:osrNetSubscribe', foreign, 'b')).toBe(false)
+    expect(e.net.subscribed).toBe(false)
+    expect(emit).not.toHaveBeenCalled()
+  })
+  it('unsubscribe clears the flag', () => {
+    const e = entryWith({})
+    e.net.subscribed = true
+    const { call } = setup(e)
+    expect(call('preview:osrNetUnsubscribe', allow, 'b')).toBe(true)
+    expect(e.net.subscribed).toBe(false)
+  })
+  it('setPreserve flips the flag (strict boolean)', () => {
+    const e = entryWith({})
+    const { call } = setup(e)
+    call('preview:osrNetSetPreserve', allow, { id: 'b', preserve: true })
+    expect(e.net.preserve).toBe(true)
+    call('preview:osrNetSetPreserve', allow, { id: 'b', preserve: 0 })
+    expect(e.net.preserve).toBe(false)
+  })
+  it('clear empties the buffer + emits cleared only when subscribed', () => {
+    const e = entryWith({})
+    e.net.subscribed = true
+    const { call, emit } = setup(e)
+    expect(call('preview:osrNetClear', allow, 'b')).toBe(true)
+    expect(e.net.records.length).toBe(0)
+    expect(emit).toHaveBeenCalledWith('b', { kind: 'cleared' })
+  })
+  it('getBody re-validates the requestId against live MAIN state', async () => {
+    const e = entryWith({ body: 'RESP', base64Encoded: false })
+    const { call } = setup(e)
+    expect(await call('preview:osrNetGetBody', allow, { id: 'b', requestId: 'NOPE' })).toEqual({
+      error: 'unknown request'
+    })
+    expect(await call('preview:osrNetGetBody', allow, { id: 'b', requestId: 'r1' })).toEqual({
+      body: 'RESP',
+      base64: false,
+      truncated: false
+    })
+  })
+  it('getBody refuses a foreign sender', async () => {
+    const { call } = setup(entryWith({}))
+    expect(await call('preview:osrNetGetBody', foreign, { id: 'b', requestId: 'r1' })).toEqual({
+      error: 'forbidden'
+    })
   })
 })

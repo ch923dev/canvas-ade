@@ -103,6 +103,60 @@ export interface OsrFrame {
   dirty: OsrRect
   buffer: Uint8Array
 }
+/** DevTools Network/WS records mirrored to the renderer (MAIN caps every page string). Mirrors the
+ *  main `previewOsrNetwork` model — kept in lockstep across the process boundary (like OsrFrame). */
+export interface NetHeader {
+  name: string
+  value: string
+}
+export interface NetRecord {
+  requestId: string
+  url: string
+  method: string
+  type: string
+  status?: number
+  statusText?: string
+  mimeType?: string
+  fromCache?: boolean
+  reqHeaders?: NetHeader[]
+  resHeaders?: NetHeader[]
+  startTs: number
+  endTs?: number
+  encodedDataLength?: number
+  failed?: { errorText: string; blockedReason?: string; canceled?: boolean }
+  sessionId?: string
+  frameId?: string
+  crossOrigin?: boolean
+}
+export interface WsFrame {
+  dir: 'sent' | 'recv'
+  opcode: number
+  ts: number
+  payload: string
+  truncated: boolean
+}
+export interface WsRecord {
+  requestId: string
+  url: string
+  createdTs: number
+  closedTs?: number
+  frames: WsFrame[]
+}
+/** A coalesced Network batch on `preview:osrNet` (id-dispatched, like OsrFrame). */
+export interface OsrNetMessage {
+  id: string
+  kind: 'replay' | 'delta' | 'cleared'
+  records?: NetRecord[]
+  ws?: WsRecord[]
+  dropped?: number
+}
+/** A lazily-fetched, MAIN-capped body (or an error). */
+export interface OsrNetBody {
+  body?: string
+  base64?: boolean
+  truncated?: boolean
+  error?: string
+}
 /** The offscreen page's cursor, mirrored onto the host <canvas>. `image` (a data URL) +
  *  `hotspot` are present only for type:'custom'. Mirrors main `OsrCursorPayload`. */
 export interface OsrCursor {
@@ -286,8 +340,10 @@ export interface RecapBundle {
 // holds at most one handler per board.
 const osrFrameHandlers = new Map<string, (f: OsrFrame) => void>()
 const osrCursorHandlers = new Map<string, (c: OsrCursor) => void>()
+const osrNetHandlers = new Map<string, (m: OsrNetMessage) => void>()
 let osrFrameWired = false
 let osrCursorWired = false
+let osrNetWired = false
 function ensureOsrFrameListener(): void {
   if (osrFrameWired) return
   osrFrameWired = true
@@ -300,6 +356,13 @@ function ensureOsrCursorListener(): void {
   osrCursorWired = true
   ipcRenderer.on('preview:osrCursor', (_e: IpcRendererEvent, c: OsrCursor) => {
     osrCursorHandlers.get(c.id)?.(c)
+  })
+}
+function ensureOsrNetListener(): void {
+  if (osrNetWired) return
+  osrNetWired = true
+  ipcRenderer.on('preview:osrNet', (_e: IpcRendererEvent, m: OsrNetMessage) => {
+    osrNetHandlers.get(m.id)?.(m)
   })
 }
 
@@ -417,6 +480,28 @@ const api = {
     osrFrameHandlers.set(id, listener)
     return () => {
       if (osrFrameHandlers.get(id) === listener) osrFrameHandlers.delete(id)
+    }
+  },
+  // DevTools Network inspector (per board). Subscribe replays the MAIN ring buffer once + streams
+  // coalesced deltas; unsubscribe stops ALL further IPC (zero-IPC-when-closed). Body fetch is lazy +
+  // capped in MAIN (the approved exfil surface). All re-validated against live MAIN state.
+  subscribeOsrNet: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrNetSubscribe', id),
+  unsubscribeOsrNet: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrNetUnsubscribe', id),
+  clearOsrNet: (id: string): Promise<boolean> => ipcRenderer.invoke('preview:osrNetClear', id),
+  setOsrNetPreserve: (id: string, preserve: boolean): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrNetSetPreserve', { id, preserve }),
+  getOsrNetBody: (
+    id: string,
+    requestId: string,
+    kind: 'response' | 'request' = 'response'
+  ): Promise<OsrNetBody> => ipcRenderer.invoke('preview:osrNetGetBody', { id, requestId, kind }),
+  onPreviewOsrNet: (id: string, listener: (m: OsrNetMessage) => void): (() => void) => {
+    ensureOsrNetListener()
+    osrNetHandlers.set(id, listener)
+    return () => {
+      if (osrNetHandlers.get(id) === listener) osrNetHandlers.delete(id)
     }
   },
   // Cursor stream: the offscreen page's cursor type, applied to the board's <canvas>
