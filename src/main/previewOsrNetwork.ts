@@ -351,13 +351,32 @@ export function wireOsrNetwork(
 ): void {
   const emit = (msg: OsrNetMsg): void => send('preview:osrNet', { id, ...msg })
   attachOsrNetwork(wc, { state, emit })
-  // A same-document nav (fragment / pushState, isInPlace) keeps the log; only emit when subscribed
-  // (preserve the zero-IPC-when-closed invariant).
-  wc.on('did-start-navigation', (_ev, _navUrl, isInPlace, isMainFrame) => {
-    if (!isMainFrame || isInPlace || state.preserve) return
+  // Electron passes a single navigation-details OBJECT ({isMainFrame, isSameDocument, …}) — NOT the
+  // old positional args. A real main-frame navigation can swap the renderer PROCESS (e.g. localhost
+  // → youtube.com) and drop the Network domain, so we must RE-ARM on every such nav or capture
+  // silently stops after the first page; a same-document nav (fragment / pushState) is left alone.
+  wc.on('did-start-navigation', (details: NavDetails) => {
+    if (!isMainFramePageNav(details)) return
+    armOsrNetwork(wc) // re-enable across the (possibly cross-process) navigation
+    if (state.preserve) return // clear-on-nav honors "Preserve log"
     clearNet(state)
-    if (state.subscribed) emit({ kind: 'cleared' })
+    if (state.subscribed) emit({ kind: 'cleared' }) // emit only when a panel is listening
   })
+  // Belt-and-suspenders: re-arm once the new document has committed too (catches the post-load flood
+  // of XHR/fetch on SPA-heavy sites where the document request itself raced the re-enable).
+  wc.on('did-finish-load', () => armOsrNetwork(wc))
+}
+
+/** The Electron `did-start-navigation` details object (the fields we read). */
+export interface NavDetails {
+  isMainFrame?: boolean
+  isSameDocument?: boolean
+}
+/** A real top-level page navigation (drives re-arm + clear-on-nav). Excludes sub-frames and
+ *  same-document (fragment / pushState) navigations. Pure — unit-tested (the S1 signature bug was
+ *  reading positional args, so `isMainFrame` was always undefined and clear-on-nav never fired). */
+export function isMainFramePageNav(details: NavDetails | undefined): boolean {
+  return !!details?.isMainFrame && !details.isSameDocument
 }
 
 /** Route one CDP message into the ring buffer + schedule a coalesced delta. */

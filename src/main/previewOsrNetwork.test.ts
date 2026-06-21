@@ -4,6 +4,7 @@ import {
   capHeaders,
   eventTs,
   recordFromRequest,
+  isMainFramePageNav,
   applyRedirect,
   applyResponse,
   applyFinished,
@@ -151,6 +152,19 @@ describe('applyResponse / applyFinished / applyFailed', () => {
       blockedReason: 'other',
       canceled: false
     })
+  })
+})
+
+describe('isMainFramePageNav (the S1 did-start-navigation signature fix)', () => {
+  it('is true only for a top-level cross-document navigation', () => {
+    expect(isMainFramePageNav({ isMainFrame: true })).toBe(true)
+    expect(isMainFramePageNav({ isMainFrame: true, isSameDocument: false })).toBe(true)
+  })
+  it('is false for sub-frame, same-document, or missing details', () => {
+    expect(isMainFramePageNav({ isMainFrame: false })).toBe(false)
+    expect(isMainFramePageNav({ isMainFrame: true, isSameDocument: true })).toBe(false)
+    expect(isMainFramePageNav({})).toBe(false)
+    expect(isMainFramePageNav(undefined)).toBe(false)
   })
 })
 
