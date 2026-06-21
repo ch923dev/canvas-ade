@@ -270,3 +270,42 @@ rebrand of the build identity. Branch `feat/phase5-packaging`, rebased through F
 - **Still owed to ship (external/manual):** a Windows Authenticode cert + macOS Developer ID +
   notarization, then set repo variable `AUTO_UPDATE=1` **last** (after signing is verified) per
   `releasing.md`; plus the first packaged recap-hook run-through.
+
+## 2026-06-20 defect audit — all 15 findings (1 High · 7 Med · 7 Low) — #213 (`9e0d69b6`, 2026-06-22)
+
+Remediated the **2026-06-20 codebase defect audit** — the correctness / security / concurrency /
+data-integrity / resource-leak / perf-cliff dimensions the 2026-06-19 *improvement* audit deliberately
+skipped, plus the never-before-defect-audited **File Tree** + **Command Board**. 20 raw → **15 confirmed
+(1 High · 7 Med · 7 Low)**, independently re-verified against `main` on 2026-06-21 (all still reproduced;
+#204's `.canvas/` isolation did NOT incidentally fix the two `projectIpc` findings). Built as one umbrella
+branch (`fix/defect-audit-2026-06-20`) with 6 file-disjoint child PRs merged into it, each carrying a
+regression test + a green per-merge gate; findings package at `docs/reviews/2026-06-20-defect-audit/`.
+- **#206 Orchestration credential lifecycle** (FIND-001 🔴H · 008 · 015 · 009): the spawn-time provisioner
+  writes a project-scoped CLI config (inline bearer token) into the board's cwd, but consent-revoke only
+  unsynced the project root → a live token was left on disk in every divergent `<cwd>/.mcp.json`. Now tracks
+  each divergent target dir and unsyncs all of them on revoke; connected-tier tokens rotate-on-respawn +
+  revoke-all on consent disable (host-side tracker — the package `TokenStore` revokes by token-string only);
+  atomic CLI-config writes (`write-file-atomic`); `boardCwds` cleanup on park-reap.
+- **#207 MAIN-process robustness** (FIND-003 · 012): guard the lazy `import('chokidar')` so a failed
+  file-watcher import can't reject into the `unhandledRejection` sink → `app.exit(1)`; roll back recap
+  consent when the SessionStart-hook install throws (no enabled-but-uninstalled desync).
+- **#208 projectIpc authz** (FIND-004 · 014): add the BUG-006 approved-root gate to `project:reopenFromBak`;
+  make `isUnderApprovedRoot` path-shape-aware (Win/macOS case-fold, POSIX case-sensitive) to stop
+  case-variant over-approval — the existing dual-shape unit assertions stay green.
+- **#209 Command Board dispatch races** (FIND-005 · 006): a per-task run-generation guard so a stale
+  `runDispatch` can't clobber a board-gone/retried task (failed→done flip / dead verdict on the live retry);
+  re-pump the queue on any board-gone so a cap-rejected task can't hang behind completed-but-open workers.
+- **#211 File board + terminal drop** (FIND-002 · 007): an mtime optimistic-concurrency guard on
+  `file:writeText` (no silent last-writer-wins overwrite — a conflict keeps the buffer + warns, adopts the
+  new baseline so a re-save is an informed overwrite); drop dropped-paths containing CR/LF/`"` (the
+  bare-prompt shell-injection vector). Save handler extracted → `fileBoardSave.ts` (file-size doctrine).
+- **#212 Preview + portDetect** (FIND-010 · 011 · 013): clear the OSR failed-latch on an in-page SPA route
+  (emit `recovered` — the latch only cleared on a main-frame `did-start-navigation` an in-page nav never
+  fires); clear `previewStore.byId` on board unmount (monotonic leak); O(n²)→O(n log n) port-fragment dedupe
+  (~1s MAIN stall on a URL-dense 256 KB buffer). Dropped the duplicate local `OsrLifecycleEvent` for the
+  shared `PreviewEvent` (de-dup also made room under the max-lines cap and carries `recovered`).
+- **Gate:** every child green (typecheck · lint 0-err · format · unit ~3107). PR #213 CI all green
+  (check / CodeQL / analyze / **claude-review 0 inline**). Headless smoke clean (no black-screen); full e2e
+  matrix verified both legs — **Win 160/163** (3 pre-existing Windows flakes/zoom-band fragility in untouched
+  code, all green on Linux) · **Linux 162/163 + 1 skip-by-design, exit 0**. 13/15 carry dedicated unit
+  regressions; FIND-010 wiring + FIND-011 unmount are browser-preview-e2e-covered.
