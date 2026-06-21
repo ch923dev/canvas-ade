@@ -34,10 +34,34 @@ export function urlName(url: string): string {
   }
 }
 
-/** The status cell text: a number, "(failed)" / the error tag, or "—" while pending. */
+/** Map a CDP `blockedReason` to DevTools' short `blocked:*` tag (csp/coep/mixed-content/origin/…). */
+export function blockedTag(reason: string): string {
+  const r = reason.toLowerCase()
+  if (r.includes('csp')) return 'blocked:csp'
+  if (r.includes('mixed-content')) return 'blocked:mixed-content'
+  if (r.includes('coep')) return 'blocked:coep'
+  if (r.includes('coop')) return 'blocked:coop'
+  if (r.includes('corp') || r === 'origin') return 'blocked:origin'
+  return 'blocked:' + r
+}
+
+/**
+ * The status cell text. A finished request shows its numeric code; an in-flight one shows
+ * `(pending)`; a failure shows `(canceled)`, a `(blocked:*)` tag when the browser blocked it, else
+ * `(failed)`. (CORS blocks need `corsErrorStatus` — not captured yet — so they read `(failed)`.)
+ */
 export function statusLabel(rec: NetRecord): string {
-  if (rec.failed) return rec.failed.canceled ? '(canceled)' : '(failed)'
-  return rec.status !== undefined ? String(rec.status) : '—'
+  if (rec.failed) {
+    if (rec.failed.canceled) return '(canceled)'
+    if (rec.failed.blockedReason) return `(${blockedTag(rec.failed.blockedReason)})`
+    return '(failed)'
+  }
+  return rec.status !== undefined ? String(rec.status) : '(pending)'
+}
+
+/** Should the whole row render red? HTTP ≥400, or any network failure / cancel / block (DevTools). */
+export function isErrorRow(rec: NetRecord): boolean {
+  return !!rec.failed || (rec.status !== undefined && rec.status >= 400)
 }
 
 /**

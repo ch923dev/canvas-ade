@@ -1594,8 +1594,8 @@ body {
 .bb-net-row.bb-net-sel .net-name {
   box-shadow: inset 2px 0 0 var(--accent);
 }
-.bb-net-row.bb-net-fail .net-name,
-.bb-net-row.bb-net-fail .net-status {
+/* errored rows (HTTP ≥400, failed, canceled, blocked) render the WHOLE row red (DevTools parity) */
+.bb-net-row.bb-net-fail td {
   color: var(--err);
 }
 .bb-net-origin {

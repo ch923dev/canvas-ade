@@ -4,6 +4,8 @@ import {
   formatDuration,
   urlName,
   statusLabel,
+  isErrorRow,
+  blockedTag,
   filterRecords,
   parseFilterTokens,
   matchesType,
@@ -67,8 +69,38 @@ describe('statusLabel', () => {
     expect(statusLabel(rec({ failed: { errorText: 'x' } }))).toBe('(failed)')
     expect(statusLabel(rec({ failed: { errorText: 'x', canceled: true } }))).toBe('(canceled)')
   })
-  it('shows — while pending', () => {
-    expect(statusLabel(rec({}))).toBe('—')
+  it('maps blockedReason to a (blocked:*) tag', () => {
+    expect(statusLabel(rec({ failed: { errorText: 'x', blockedReason: 'csp' } }))).toBe(
+      '(blocked:csp)'
+    )
+    expect(
+      statusLabel(rec({ failed: { errorText: 'x', blockedReason: 'coep-frame-resource' } }))
+    ).toBe('(blocked:coep)')
+  })
+  it('shows (pending) for an in-flight request', () => {
+    expect(statusLabel(rec({}))).toBe('(pending)')
+  })
+})
+
+describe('blockedTag', () => {
+  it('normalizes the common reasons', () => {
+    expect(blockedTag('csp')).toBe('blocked:csp')
+    expect(blockedTag('mixed-content')).toBe('blocked:mixed-content')
+    expect(blockedTag('corp-not-same-origin')).toBe('blocked:origin')
+    expect(blockedTag('weird-thing')).toBe('blocked:weird-thing')
+  })
+})
+
+describe('isErrorRow', () => {
+  it('is true for HTTP ≥400 and any failure', () => {
+    expect(isErrorRow(rec({ status: 404 }))).toBe(true)
+    expect(isErrorRow(rec({ status: 500 }))).toBe(true)
+    expect(isErrorRow(rec({ failed: { errorText: 'x' } }))).toBe(true)
+  })
+  it('is false for 2xx/3xx and pending', () => {
+    expect(isErrorRow(rec({ status: 200 }))).toBe(false)
+    expect(isErrorRow(rec({ status: 304 }))).toBe(false)
+    expect(isErrorRow(rec({}))).toBe(false)
   })
 })
 

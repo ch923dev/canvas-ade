@@ -14,6 +14,7 @@ import {
   formatDuration,
   urlName,
   statusLabel,
+  isErrorRow,
   applyNetFilter,
   initiatorLabel,
   NET_TYPE_PILLS,
@@ -331,7 +332,7 @@ function Row({
   return (
     <tr
       className={
-        'bb-net-row' + (selected ? ' bb-net-sel' : '') + (rec.failed ? ' bb-net-fail' : '')
+        'bb-net-row' + (selected ? ' bb-net-sel' : '') + (isErrorRow(rec) ? ' bb-net-fail' : '')
       }
       onMouseDown={(e) => e.stopPropagation()}
       onClick={() => onClick(rec)}
