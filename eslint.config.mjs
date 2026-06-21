@@ -202,7 +202,7 @@ export default tseslint.config(
   // propagates instead of leaving hard-coded copies behind. WARN-ONLY by design: PA-R owns only this
   // file, so it cannot clean the literals it finds (each lives in another slice's zone). Warn surfaces
   // them without failing the gate (`eslint .` exits 0 on warnings); the ratchet to `error` happens
-  // file-by-file as a file's literals migrate to var(--token). See docs/reviews/2026-06-19-feature-audit/.
+  // file-by-file as a file's literals migrate to var(--token). See docs/reviews/2026-06-19-feature-audit.md.
   //
   // SCOPE — high-signal token drift, the case where propagation actually breaks:
   //  • raw COLOR literals (hex + rgb/rgba). Change --accent and a hard-coded `#4f8cff` goes stale —
