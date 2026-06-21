@@ -8,6 +8,7 @@ import {
   parseFilterTokens,
   matchesType,
   filterByType,
+  applyNetFilter,
   initiatorLabel
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
@@ -201,6 +202,42 @@ describe('filterRecords — property filters (key:value)', () => {
   it('AND-composes property + plain tokens', () => {
     expect(ids('domain:example.com method:get larger-than:1k')).toEqual(['a'])
     expect(ids('example.com -method:get')).toEqual([]) // both example.com rows are GET
+  })
+})
+
+describe('applyNetFilter (type pill + text/regex + invert)', () => {
+  const list = [
+    rec({ requestId: 'a', url: 'http://x/app.js', type: 'script' }),
+    rec({ requestId: 'b', url: 'http://x/vendor.js', type: 'script' }),
+    rec({ requestId: 'c', url: 'http://x/style.css', type: 'stylesheet' }),
+    rec({ requestId: 'd', url: 'http://x/data.json', type: 'fetch' })
+  ]
+  const ids = (rows: NetRecord[]): string[] => rows.map((x) => x.requestId)
+
+  it('ANDs the type pill with the text filter', () => {
+    expect(ids(applyNetFilter(list, { type: 'js', query: 'vendor' }).rows)).toEqual(['b'])
+  })
+  it('regex mode matches the URL', () => {
+    expect(ids(applyNetFilter(list, { type: 'all', query: '\\.js$', regex: true }).rows)).toEqual([
+      'a',
+      'b'
+    ])
+  })
+  it('flags an invalid regex + falls back to the type set', () => {
+    const res = applyNetFilter(list, { type: 'js', query: '(', regex: true })
+    expect(res.regexError).toBe(true)
+    expect(ids(res.rows)).toEqual(['a', 'b'])
+  })
+  it('invert flips the text match but keeps the type pill', () => {
+    expect(ids(applyNetFilter(list, { type: 'js', query: 'app', invert: true }).rows)).toEqual([
+      'b'
+    ])
+  })
+  it('invert + empty query hides everything', () => {
+    expect(applyNetFilter(list, { type: 'all', query: '', invert: true }).rows).toEqual([])
+  })
+  it('empty query passes the type set', () => {
+    expect(ids(applyNetFilter(list, { type: 'js', query: '' }).rows)).toEqual(['a', 'b'])
   })
 })
 

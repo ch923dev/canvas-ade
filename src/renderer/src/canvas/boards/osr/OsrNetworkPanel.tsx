@@ -14,7 +14,7 @@ import {
   formatDuration,
   urlName,
   statusLabel,
-  filterByType,
+  applyNetFilter,
   initiatorLabel,
   NET_TYPE_PILLS,
   type NetTypeKey
@@ -47,6 +47,8 @@ export function OsrNetworkPanel({
   const select = useOsrNetworkStore((s) => s.select)
 
   const [filter, setFilter] = useState('')
+  const [regex, setRegex] = useState(false)
+  const [invert, setInvert] = useState(false)
   const [typeKey, setTypeKey] = useState<NetTypeKey>('all')
   const [detailTab, setDetailTab] = useState<DetailTab>('headers')
   // Lazily-fetched bodies cache. CDP reuses requestIds (sequential per session) across reloads, so it
@@ -63,7 +65,13 @@ export function OsrNetworkPanel({
   if (!board?.open) return null
   const preserve = board.preserve
   const dock: NetDock = board.dock
-  const rows = filterByType(board.records, typeKey, filter)
+  const { rows, regexError } = applyNetFilter(board.records, {
+    type: typeKey,
+    query: filter,
+    regex,
+    invert
+  })
+  const filtered = typeKey !== 'all' || filter.trim().length > 0 || invert
   const selected = board.selected
     ? board.records.find((r) => r.requestId === board.selected)
     : undefined
@@ -150,17 +158,36 @@ export function OsrNetworkPanel({
           <span className="bb-net-check">{preserve && <Icon name="check" size={9} />}</span>
           Preserve
         </button>
-        <span className="bb-net-filter">
+        <span className={'bb-net-filter' + (regexError ? ' bb-net-filter-err' : '')}>
           <Icon name="search" size={12} />
           <input
             value={filter}
             placeholder="Filter…"
             aria-label="Filter requests"
+            aria-invalid={regexError}
             spellCheck={false}
             onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) => setFilter(e.target.value)}
           />
         </span>
+        <button
+          className={'bb-net-flag' + (regex ? ' bb-net-on' : '')}
+          title="Use regular expression"
+          aria-label="Use regular expression"
+          aria-pressed={regex}
+          onClick={() => setRegex((v) => !v)}
+        >
+          .*
+        </button>
+        <button
+          className={'bb-net-flag' + (invert ? ' bb-net-on' : '')}
+          title="Invert filter (show requests that do NOT match)"
+          aria-label="Invert filter"
+          aria-pressed={invert}
+          onClick={() => setInvert((v) => !v)}
+        >
+          Invert
+        </button>
         {onFullView && (
           <button
             className="bb-net-tool"
@@ -187,9 +214,17 @@ export function OsrNetworkPanel({
         ))}
       </div>
 
-      {/* meta line: counts + dropped */}
+      {/* meta line: counts (X / Y when filtered) + dropped */}
       <div className="bb-net-meta">
-        {total} {total === 1 ? 'request' : 'requests'}
+        {filtered ? (
+          <>
+            {rows.length} / {total} requests
+          </>
+        ) : (
+          <>
+            {total} {total === 1 ? 'request' : 'requests'}
+          </>
+        )}
         {board.dropped > 0 && <span className="bb-net-dropped"> · {board.dropped} dropped</span>}
       </div>
 

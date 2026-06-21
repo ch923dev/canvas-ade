@@ -1475,6 +1475,34 @@ body {
   font-family: var(--ui);
   font-size: var(--fs-meta);
 }
+/* invalid-regex state — the filter box borders red (DevTools parity) */
+.bb-net-filter-err {
+  border-color: var(--err);
+}
+/* regex (.*) + Invert toggles — same calm one-accent treatment as the dock buttons */
+.bb-net-flag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.bb-net-flag:hover {
+  color: var(--text-2);
+  background: var(--inset);
+}
+.bb-net-flag.bb-net-on {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .bb-net-meta {
   flex: none;
   height: 22px;

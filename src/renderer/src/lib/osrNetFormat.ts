@@ -216,6 +216,47 @@ export function filterByType(records: NetRecord[], key: NetTypeKey, query: strin
   return filterRecords(byType, query)
 }
 
+/** Compile a case-insensitive regex; null on an invalid pattern (drives the red error state). */
+export function compileFilterRegex(pattern: string): RegExp | null {
+  try {
+    return new RegExp(pattern, 'i')
+  } catch {
+    return null
+  }
+}
+
+/** Options for the full row filter (type pill + text/regex/property tokens, optionally inverted). */
+export interface NetFilterOpts {
+  type: NetTypeKey
+  query: string
+  regex?: boolean // interpret the box as one regex over the URL (not key:value tokens)
+  invert?: boolean // flip the text/regex match (the type pill still applies as an AND)
+}
+export interface NetFilterResult {
+  rows: NetRecord[]
+  regexError?: boolean // an invalid regex pattern → show the type set + flag the input
+}
+
+/**
+ * The complete DevTools row filter: resource-type pill (AND) combined with the text filter. Invert
+ * flips the text/regex/property match only — the type pill always narrows normally (Chrome). Regex
+ * mode treats the whole box as one case-insensitive `RegExp` over the URL.
+ */
+export function applyNetFilter(records: NetRecord[], opts: NetFilterOpts): NetFilterResult {
+  const { type, query, regex, invert } = opts
+  const byType = type === 'all' ? records : records.filter((r) => matchesType(r, type))
+  if (!query.trim()) return { rows: invert ? [] : byType } // empty filter matches all → invert hides all
+  if (regex) {
+    const re = compileFilterRegex(query)
+    if (!re) return { rows: byType, regexError: true }
+    return { rows: byType.filter((r) => (invert ? !re.test(r.url) : re.test(r.url))) }
+  }
+  const tokens = parseFilterTokens(query)
+  const matches = (r: NetRecord): boolean =>
+    tokens.every((t) => (t.neg ? !matchToken(r, t) : matchToken(r, t)))
+  return { rows: byType.filter((r) => (invert ? !matches(r) : matches(r))) }
+}
+
 /** The Initiator cell: a script's file name if it's a url, else the bare CDP type word. */
 export function initiatorLabel(initiator: string | undefined): string {
   if (!initiator) return 'other'
