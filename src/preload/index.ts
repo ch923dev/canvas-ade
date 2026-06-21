@@ -130,6 +130,8 @@ export interface NetRecord {
   statusText?: string
   mimeType?: string
   fromCache?: boolean
+  decodedLength?: number
+  cacheSource?: 'disk' | 'memory' | 'sw' | 'prefetch'
   remoteAddress?: string
   referrerPolicy?: string
   reqHeaders?: NetHeader[]

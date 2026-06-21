@@ -39,6 +39,22 @@ export function urlName(url: string): string {
   }
 }
 
+/** The Size cell: a cache/SW label when served from one, else the transferred (wire) bytes. */
+export function sizeLabel(rec: NetRecord): string {
+  switch (rec.cacheSource) {
+    case 'disk':
+      return '(disk cache)'
+    case 'memory':
+      return '(memory cache)'
+    case 'sw':
+      return '(ServiceWorker)'
+    case 'prefetch':
+      return '(prefetch cache)'
+    default:
+      return formatSize(rec.encodedDataLength)
+  }
+}
+
 /** Map a CDP `blockedReason` to DevTools' short `blocked:*` tag (csp/coep/mixed-content/origin/…). */
 export function blockedTag(reason: string): string {
   const r = reason.toLowerCase()

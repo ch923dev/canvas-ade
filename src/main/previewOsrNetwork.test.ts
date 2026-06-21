@@ -9,6 +9,7 @@ import {
   applyResponse,
   applyFinished,
   applyFailed,
+  applyDataReceived,
   extractTiming,
   wsFrameFrom,
   wsFrameByteLength,
@@ -150,6 +151,23 @@ describe('applyResponse / applyFinished / applyFailed', () => {
     expect(rec.endTs).toBe(2000)
     expect(rec.encodedDataLength).toBe(4096)
     expect(rec.finishMono).toBe(1234.5)
+  })
+  it('flags the disk-cache vs service-worker source', () => {
+    const a = base()
+    applyResponse(a, { response: { fromDiskCache: true } })
+    expect(a.cacheSource).toBe('disk')
+    expect(a.fromCache).toBe(true)
+    const b = base()
+    applyResponse(b, { response: { fromServiceWorker: true } })
+    expect(b.cacheSource).toBe('sw')
+    expect(b.fromCache).toBeUndefined() // SW is not "from cache"
+  })
+  it('accumulates decoded length across dataReceived chunks', () => {
+    const r = base()
+    applyDataReceived(r, { dataLength: 100 })
+    applyDataReceived(r, { dataLength: 50 })
+    applyDataReceived(r, { dataLength: 0 }) // ignored
+    expect(r.decodedLength).toBe(150)
   })
   it('captures ResourceTiming on the response', () => {
     const rec = base()

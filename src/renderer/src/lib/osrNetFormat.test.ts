@@ -4,6 +4,7 @@ import {
   formatDuration,
   urlName,
   statusLabel,
+  sizeLabel,
   isErrorRow,
   blockedTag,
   filterRecords,
@@ -89,6 +90,18 @@ describe('statusLabel', () => {
   })
   it('shows (pending) for an in-flight request', () => {
     expect(statusLabel(rec({}))).toBe('(pending)')
+  })
+})
+
+describe('sizeLabel', () => {
+  it('shows cache / ServiceWorker labels', () => {
+    expect(sizeLabel(rec({ cacheSource: 'disk' }))).toBe('(disk cache)')
+    expect(sizeLabel(rec({ cacheSource: 'memory' }))).toBe('(memory cache)')
+    expect(sizeLabel(rec({ cacheSource: 'sw' }))).toBe('(ServiceWorker)')
+  })
+  it('falls back to transferred bytes', () => {
+    expect(sizeLabel(rec({ encodedDataLength: 2048 }))).toBe('2 kB')
+    expect(sizeLabel(rec({}))).toBe('—')
   })
 })
 

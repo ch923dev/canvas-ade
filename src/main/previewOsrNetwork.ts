@@ -37,6 +37,8 @@ export interface NetFailed {
   blockedReason?: string
   canceled?: boolean
 }
+/** Where a response came from, for the DevTools Size cell. */
+export type NetCacheSource = 'disk' | 'memory' | 'sw' | 'prefetch'
 /** CDP ResourceTiming subset: `requestTime` is monotonic seconds; the rest are ms RELATIVE to it
  *  (-1 = not applicable). Drives the Timing tab + Waterfall phase bars. */
 export interface NetTiming {
@@ -60,6 +62,8 @@ export interface NetRecord {
   statusText?: string
   mimeType?: string
   fromCache?: boolean
+  decodedLength?: number // resource (decoded) size, summed from Network.dataReceived
+  cacheSource?: NetCacheSource // drives the Size cell's "(disk cache)"/"(ServiceWorker)"/… label
   remoteAddress?: string // "ip:port" of the server (DevTools General › Remote Address)
   referrerPolicy?: string // request's referrer policy (DevTools General › Referrer Policy)
   reqHeaders?: NetHeader[]
@@ -229,8 +233,13 @@ export function applyResponse(rec: NetRecord, params: Record<string, unknown>): 
   if (tm) rec.timing = tm
   rec.statusText = capText(res.statusText, 256) || rec.statusText
   rec.mimeType = capText(res.mimeType, 128) || rec.mimeType
-  if (typeof res.fromDiskCache === 'boolean' || typeof res.fromServiceWorker === 'boolean') {
-    rec.fromCache = res.fromDiskCache === true || res.fromServiceWorker === true
+  // Cache / SW source (the Size cell label). Service-worker is its own kind (not "from cache");
+  // memory-cache arrives separately on requestServedFromCache. Don't clobber an existing source.
+  if (res.fromServiceWorker === true) {
+    rec.cacheSource = 'sw'
+  } else if (res.fromDiskCache === true) {
+    rec.cacheSource = 'disk'
+    rec.fromCache = true
   }
   if (typeof res.remoteIPAddress === 'string' && res.remoteIPAddress) {
     const port = typeof res.remotePort === 'number' ? `:${res.remotePort}` : ''
@@ -238,6 +247,13 @@ export function applyResponse(rec: NetRecord, params: Record<string, unknown>): 
   }
   const h = capHeaders(res.headers)
   if (h) rec.resHeaders = h
+}
+
+/** Accumulate the decoded (resource) size from a `Network.dataReceived` chunk. */
+export function applyDataReceived(rec: NetRecord, params: Record<string, unknown>): void {
+  if (typeof params.dataLength === 'number' && params.dataLength > 0) {
+    rec.decodedLength = (rec.decodedLength ?? 0) + params.dataLength
+  }
 }
 
 /** Merge `Network.loadingFinished`. */
@@ -477,6 +493,23 @@ function handleNetMessage(
       const rec = state.byId.get(reqId)
       if (rec) {
         applyResponse(rec, params)
+        markRecord(state, emit, reqId)
+      }
+      break
+    }
+    case 'Network.dataReceived': {
+      const rec = state.byId.get(reqId)
+      if (rec) {
+        applyDataReceived(rec, params)
+        markRecord(state, emit, reqId)
+      }
+      break
+    }
+    case 'Network.requestServedFromCache': {
+      const rec = state.byId.get(reqId)
+      if (rec && !rec.cacheSource) {
+        rec.cacheSource = 'memory'
+        rec.fromCache = true
         markRecord(state, emit, reqId)
       }
       break
