@@ -1539,11 +1539,13 @@ body {
   color: var(--text-3);
   width: 84px;
 }
-.bb-net-rows .net-col-method {
-  width: 70px;
-}
 .bb-net-rows .net-col-type {
   width: 92px;
+  color: var(--text-2);
+}
+.bb-net-rows .net-col-initiator {
+  width: 130px;
+  color: var(--text-3);
 }
 .bb-net-rows .net-mono {
   font-family: var(--mono);
@@ -1590,9 +1592,48 @@ body {
   font-style: italic;
 }
 /* right dock: drop the wider columns so the narrow list reads cleanly */
-.bb-net-right .net-col-method,
-.bb-net-right .net-col-type {
+.bb-net-right .net-col-type,
+.bb-net-right .net-col-initiator {
   display: none;
+}
+
+/* Resource-type filter pills (DevTools parity, calm/one-accent styling). */
+.bb-net-pills {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-pill {
+  height: 20px;
+  padding: 0 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--ui);
+  font-size: var(--fs-meta);
+  font-weight: 450;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.bb-net-pill:hover {
+  color: var(--text-2);
+  border-color: var(--border);
+}
+.bb-net-pill-on {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+/* Right dock is narrow — let the pills scroll horizontally instead of wrapping tall. */
+.bb-net-right .bb-net-pills {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .bb-net-details {

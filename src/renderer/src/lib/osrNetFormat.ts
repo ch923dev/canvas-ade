@@ -49,3 +49,63 @@ export function filterRecords(records: NetRecord[], query: string): NetRecord[] 
     return hay.includes(q)
   })
 }
+
+/** The DevTools-style resource-type filter pills (key + label + the CDP resourceTypes each matches). */
+export type NetTypeKey =
+  | 'all'
+  | 'xhr'
+  | 'doc'
+  | 'css'
+  | 'js'
+  | 'font'
+  | 'img'
+  | 'media'
+  | 'ws'
+  | 'wasm'
+  | 'other'
+export const NET_TYPE_PILLS: { key: NetTypeKey; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'xhr', label: 'Fetch/XHR' },
+  { key: 'doc', label: 'Doc' },
+  { key: 'css', label: 'CSS' },
+  { key: 'js', label: 'JS' },
+  { key: 'font', label: 'Font' },
+  { key: 'img', label: 'Img' },
+  { key: 'media', label: 'Media' },
+  { key: 'ws', label: 'Socket' },
+  { key: 'wasm', label: 'Wasm' },
+  { key: 'other', label: 'Other' }
+]
+// Which CDP resourceTypes each pill owns. `other` is the catch-all (anything not claimed above).
+const TYPE_MATCH: Record<Exclude<NetTypeKey, 'all' | 'other'>, string[]> = {
+  xhr: ['xhr', 'fetch'],
+  doc: ['document'],
+  css: ['stylesheet'],
+  js: ['script'],
+  font: ['font'],
+  img: ['image'],
+  media: ['media'],
+  ws: ['websocket'],
+  wasm: ['wasm']
+}
+const CLAIMED = new Set(Object.values(TYPE_MATCH).flat())
+
+/** Does a record belong to the active type pill? `all` passes everything; `other` = anything no pill claims. */
+export function matchesType(rec: NetRecord, key: NetTypeKey): boolean {
+  if (key === 'all') return true
+  const t = (rec.type || '').toLowerCase()
+  if (key === 'other') return !CLAIMED.has(t)
+  return TYPE_MATCH[key].includes(t)
+}
+
+/** Apply the type pill then the text filter (DevTools order). */
+export function filterByType(records: NetRecord[], key: NetTypeKey, query: string): NetRecord[] {
+  const byType = key === 'all' ? records : records.filter((r) => matchesType(r, key))
+  return filterRecords(byType, query)
+}
+
+/** The Initiator cell: a script's file name if it's a url, else the bare CDP type word. */
+export function initiatorLabel(initiator: string | undefined): string {
+  if (!initiator) return 'other'
+  return initiator.includes('://') ? urlName(initiator) : initiator
+}

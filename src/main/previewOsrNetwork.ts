@@ -52,6 +52,7 @@ export interface NetRecord {
   endTs?: number
   encodedDataLength?: number
   failed?: NetFailed
+  initiator?: string // what triggered the request (DevTools "Initiator" column): a script url or a type word
   // sub-target provenance (the flat-mode `sessionId`; absent ⇒ main target / root session)
   sessionId?: string
   frameId?: string
@@ -151,10 +152,20 @@ export function recordFromRequest(
     type: capText(params.type, 32) || 'other',
     reqHeaders: capHeaders(req.headers),
     startTs: eventTs(params, now),
+    initiator: initiatorOf(params.initiator),
     frameId: typeof params.frameId === 'string' ? params.frameId : undefined,
     sessionId: sessionId || undefined,
     crossOrigin: sessionId ? true : undefined // worker target; iframe cross-origin tagging is S6 (needs main-frame id)
   }
+}
+
+/** The DevTools "Initiator" display: the initiating script url if known, else the CDP type word
+ *  (parser / script / preload / other). Capped + page-controlled. */
+export function initiatorOf(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const i = raw as Record<string, unknown>
+  if (typeof i.url === 'string' && i.url) return capText(i.url, URL_CAP)
+  return typeof i.type === 'string' ? capText(i.type, 32) : undefined
 }
 
 /**

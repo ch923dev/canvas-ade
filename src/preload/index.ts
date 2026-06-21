@@ -124,6 +124,7 @@ export interface NetRecord {
   endTs?: number
   encodedDataLength?: number
   failed?: { errorText: string; blockedReason?: string; canceled?: boolean }
+  initiator?: string
   sessionId?: string
   frameId?: string
   crossOrigin?: boolean

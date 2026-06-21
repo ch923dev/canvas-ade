@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { formatSize, formatDuration, urlName, statusLabel, filterRecords } from './osrNetFormat'
+import {
+  formatSize,
+  formatDuration,
+  urlName,
+  statusLabel,
+  filterRecords,
+  matchesType,
+  filterByType,
+  initiatorLabel
+} from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
 const rec = (p: Partial<NetRecord>): NetRecord => ({
@@ -81,5 +90,51 @@ describe('filterRecords', () => {
     expect(filterRecords(list, 'post').map((r) => r.requestId)).toEqual(['c'])
     expect(filterRecords(list, 'script').map((r) => r.requestId)).toEqual(['b'])
     expect(filterRecords(list, 'failed').map((r) => r.requestId)).toEqual(['c'])
+  })
+})
+
+describe('matchesType / filterByType (DevTools resource-type pills)', () => {
+  const list = [
+    rec({ requestId: 'doc', type: 'document' }),
+    rec({ requestId: 'xhr', type: 'xhr' }),
+    rec({ requestId: 'fetch', type: 'fetch' }),
+    rec({ requestId: 'js', type: 'script' }),
+    rec({ requestId: 'css', type: 'stylesheet' }),
+    rec({ requestId: 'ws', type: 'websocket' }),
+    rec({ requestId: 'png', type: 'image' }),
+    rec({ requestId: 'misc', type: 'eventsource' })
+  ]
+  it('all passes everything', () => {
+    expect(list.every((r) => matchesType(r, 'all'))).toBe(true)
+  })
+  it('xhr pill claims both xhr + fetch', () => {
+    expect(filterByType(list, 'xhr', '').map((r) => r.requestId)).toEqual(['xhr', 'fetch'])
+  })
+  it('doc/css/js/ws/img map to their resourceType', () => {
+    expect(filterByType(list, 'doc', '').map((r) => r.requestId)).toEqual(['doc'])
+    expect(filterByType(list, 'css', '').map((r) => r.requestId)).toEqual(['css'])
+    expect(filterByType(list, 'js', '').map((r) => r.requestId)).toEqual(['js'])
+    expect(filterByType(list, 'ws', '').map((r) => r.requestId)).toEqual(['ws'])
+    expect(filterByType(list, 'img', '').map((r) => r.requestId)).toEqual(['png'])
+  })
+  it('other is the catch-all for unclaimed types', () => {
+    expect(filterByType(list, 'other', '').map((r) => r.requestId)).toEqual(['misc'])
+  })
+  it('type pill composes with the text filter', () => {
+    const l2 = [
+      rec({ requestId: 'a', type: 'script', url: 'http://x/app.js' }),
+      rec({ requestId: 'b', type: 'script', url: 'http://x/vendor.js' })
+    ]
+    expect(filterByType(l2, 'js', 'vendor').map((r) => r.requestId)).toEqual(['b'])
+  })
+})
+
+describe('initiatorLabel', () => {
+  it('shows the script file name for a url initiator', () => {
+    expect(initiatorLabel('http://x/assets/app.js')).toBe('app.js')
+  })
+  it('shows the bare type word otherwise', () => {
+    expect(initiatorLabel('parser')).toBe('parser')
+    expect(initiatorLabel(undefined)).toBe('other')
   })
 })

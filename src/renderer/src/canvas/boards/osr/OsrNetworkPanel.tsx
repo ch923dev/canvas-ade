@@ -14,7 +14,10 @@ import {
   formatDuration,
   urlName,
   statusLabel,
-  filterRecords
+  filterByType,
+  initiatorLabel,
+  NET_TYPE_PILLS,
+  type NetTypeKey
 } from '../../../lib/osrNetFormat'
 
 type DetailTab = 'headers' | 'payload' | 'response' | 'timing' | 'frames'
@@ -44,6 +47,7 @@ export function OsrNetworkPanel({
   const select = useOsrNetworkStore((s) => s.select)
 
   const [filter, setFilter] = useState('')
+  const [typeKey, setTypeKey] = useState<NetTypeKey>('all')
   const [detailTab, setDetailTab] = useState<DetailTab>('headers')
   // Lazily-fetched bodies cache. CDP reuses requestIds (sequential per session) across reloads, so it
   // MUST be dropped whenever the log is cleared (button OR clear-on-nav) — else a reused id shows a
@@ -59,7 +63,7 @@ export function OsrNetworkPanel({
   if (!board?.open) return null
   const preserve = board.preserve
   const dock: NetDock = board.dock
-  const rows = filterRecords(board.records, filter)
+  const rows = filterByType(board.records, typeKey, filter)
   const selected = board.selected
     ? board.records.find((r) => r.requestId === board.selected)
     : undefined
@@ -90,7 +94,11 @@ export function OsrNetworkPanel({
   }
 
   return (
-    <div className={`bb-net bb-net-${dock}`} role="region" aria-label="Network inspector">
+    <div
+      className={`bb-net bb-net-${dock} nowheel nodrag`}
+      role="region"
+      aria-label="Network inspector"
+    >
       {/* header: tabs + dock switch + close */}
       <div className="bb-net-head">
         <span className="bb-net-tab bb-net-tab-on">Network</span>
@@ -165,6 +173,20 @@ export function OsrNetworkPanel({
         )}
       </div>
 
+      {/* resource-type filter pills (DevTools parity) */}
+      <div className="bb-net-pills" role="group" aria-label="Filter by type">
+        {NET_TYPE_PILLS.map((p) => (
+          <button
+            key={p.key}
+            className={'bb-net-pill' + (typeKey === p.key ? ' bb-net-pill-on' : '')}
+            aria-pressed={typeKey === p.key}
+            onClick={() => setTypeKey(p.key)}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
       {/* meta line: counts + dropped */}
       <div className="bb-net-meta">
         {total} {total === 1 ? 'request' : 'requests'}
@@ -184,9 +206,9 @@ export function OsrNetworkPanel({
           <thead>
             <tr>
               <th>Name</th>
-              <th className="net-col-method">Method</th>
               <th>Status</th>
               <th className="net-col-type">Type</th>
+              <th className="net-col-initiator">Initiator</th>
               <th className="net-num">Size</th>
               <th className="net-num">Time</th>
             </tr>
@@ -287,9 +309,11 @@ function Row({
         )}
         {urlName(rec.url)}
       </td>
-      <td className="net-col-method net-mono">{rec.method}</td>
       <td className="net-mono net-status">{statusLabel(rec)}</td>
       <td className="net-col-type">{ws ? <span className="bb-net-ws">ws</span> : rec.type}</td>
+      <td className="net-col-initiator" title={rec.initiator}>
+        {initiatorLabel(rec.initiator)}
+      </td>
       <td className="net-num">
         {ws ? <span className="bb-net-live">live</span> : formatSize(rec.encodedDataLength)}
       </td>
