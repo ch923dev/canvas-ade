@@ -19,7 +19,12 @@ import {
   waterfallWindow,
   waterfallBar,
   sortRecords,
-  summaryStats
+  summaryStats,
+  queryParams,
+  requestCookies,
+  responseCookies,
+  hasPayload,
+  hasCookies
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
@@ -480,6 +485,43 @@ describe('sortRecords', () => {
   })
   it('is stable for equal keys', () => {
     expect(ids({ col: 'status', dir: 'asc' })).toEqual(['a', 'c', 'b']) // 200(a),200(c),404(b)
+  })
+})
+
+describe('payload / cookies parsing (P2.8 detail tabs)', () => {
+  it('queryParams decodes the query string', () => {
+    expect(queryParams('http://x/s?q=hi%20there&page=2')).toEqual([
+      { name: 'q', value: 'hi there' },
+      { name: 'page', value: '2' }
+    ])
+    expect(queryParams('http://x/no-query')).toEqual([])
+  })
+  it('requestCookies parses the Cookie header', () => {
+    expect(requestCookies([{ name: 'Cookie', value: 'a=1; b=two=2' }])).toEqual([
+      { name: 'a', value: '1' },
+      { name: 'b', value: 'two=2' }
+    ])
+    expect(requestCookies([])).toEqual([])
+  })
+  it('responseCookies parses Set-Cookie (newline-joined), first pair only', () => {
+    expect(
+      responseCookies([
+        { name: 'set-cookie', value: 'sid=abc; Path=/; HttpOnly\ntheme=dark; Path=/' }
+      ])
+    ).toEqual([
+      { name: 'sid', value: 'abc' },
+      { name: 'theme', value: 'dark' }
+    ])
+  })
+  it('hasPayload: query string or a body method', () => {
+    expect(hasPayload(rec({ url: 'http://x/a?b=1', method: 'GET' }))).toBe(true)
+    expect(hasPayload(rec({ url: 'http://x/a', method: 'POST' }))).toBe(true)
+    expect(hasPayload(rec({ url: 'http://x/a', method: 'GET' }))).toBe(false)
+  })
+  it('hasCookies: request or response cookies present', () => {
+    expect(hasCookies(rec({ reqHeaders: [{ name: 'cookie', value: 'a=1' }] }))).toBe(true)
+    expect(hasCookies(rec({ resHeaders: [{ name: 'set-cookie', value: 'a=1' }] }))).toBe(true)
+    expect(hasCookies(rec({}))).toBe(false)
   })
 })
 

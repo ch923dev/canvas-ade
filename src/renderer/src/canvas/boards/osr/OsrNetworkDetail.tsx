@@ -12,13 +12,35 @@ import {
   formatDuration,
   statusLabel,
   isErrorRow,
-  timingPhases
+  timingPhases,
+  queryParams,
+  requestCookies,
+  responseCookies,
+  hasPayload,
+  hasCookies,
+  initiatorLabel,
+  type NetKV
 } from '../../../lib/osrNetFormat'
 
-export type DetailTab = 'headers' | 'payload' | 'response' | 'timing' | 'frames'
-/** The detail tabs available for a record (WebSocket has its own set). */
-export const tabsFor = (rec: NetRecord): DetailTab[] =>
-  rec.type === 'websocket' ? ['frames', 'headers'] : ['headers', 'payload', 'response', 'timing']
+export type DetailTab =
+  | 'headers'
+  | 'payload'
+  | 'preview'
+  | 'response'
+  | 'initiator'
+  | 'timing'
+  | 'cookies'
+  | 'frames'
+/** The detail tabs available for a record. WebSocket has its own set; Payload + Cookies are
+ *  conditional (Chrome only shows them when there's a query/body or cookies). */
+export const tabsFor = (rec: NetRecord): DetailTab[] => {
+  if (rec.type === 'websocket') return ['frames', 'headers']
+  const tabs: DetailTab[] = ['headers']
+  if (hasPayload(rec)) tabs.push('payload')
+  tabs.push('preview', 'response', 'initiator', 'timing')
+  if (hasCookies(rec)) tabs.push('cookies')
+  return tabs
+}
 
 export interface BodyState {
   loading?: boolean
@@ -155,6 +177,118 @@ function TimingTab({ rec }: { rec: NetRecord }): ReactElement {
   )
 }
 
+/** A small name/value table (Query String Parameters · Request/Response Cookies). */
+function KVTable({ title, rows }: { title: string; rows: NetKV[] }): ReactElement | null {
+  if (rows.length === 0) return null
+  return (
+    <details className="bb-net-headers" open>
+      <summary>
+        {title} <span className="bb-net-dim">({rows.length})</span>
+      </summary>
+      <dl>
+        {rows.map((r, i) => (
+          <div key={i}>
+            <dt>{r.name}</dt>
+            <dd>{r.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  )
+}
+
+function PayloadTab({
+  rec,
+  bodies,
+  onLoad
+}: {
+  rec: NetRecord
+  bodies: Record<string, BodyState>
+  onLoad: (r: NetRecord, k: 'response' | 'request') => void
+}): ReactElement {
+  const qs = queryParams(rec.url)
+  return (
+    <div className="bb-net-kv">
+      <KVTable title="Query String Parameters" rows={qs} />
+      <BodyBar
+        rec={rec}
+        kind="request"
+        state={bodies[`${rec.requestId}:request`]}
+        onLoad={onLoad}
+      />
+    </div>
+  )
+}
+
+/** Preview the response body: raster image → <img>; JSON → pretty-printed; else raw text. Reuses
+ *  the lazy response-body fetch (same cache key as the Response tab). */
+function PreviewTab({
+  rec,
+  state,
+  onLoad
+}: {
+  rec: NetRecord
+  state: BodyState | undefined
+  onLoad: (r: NetRecord, k: 'response' | 'request') => void
+}): ReactElement {
+  if (state?.body === undefined)
+    return <BodyBar rec={rec} kind="response" state={state} onLoad={onLoad} />
+  const mime = (rec.mimeType ?? '').toLowerCase()
+  if (state.base64 && mime.startsWith('image/') && !mime.includes('svg')) {
+    // raster only — data: <img> never executes script; SVG excluded out of caution
+    return (
+      <img
+        className="bb-net-preview-img"
+        alt="response preview"
+        src={`data:${mime};base64,${state.body}`}
+      />
+    )
+  }
+  let text = state.body
+  if (mime.includes('json')) {
+    try {
+      text = JSON.stringify(JSON.parse(state.body), null, 2)
+    } catch {
+      /* not valid JSON — show raw */
+    }
+  }
+  return (
+    <pre className="bb-net-bodytext">
+      {text}
+      {state.truncated && '\n…(truncated)'}
+    </pre>
+  )
+}
+
+function InitiatorTab({ rec }: { rec: NetRecord }): ReactElement {
+  return (
+    <div className="bb-net-kv">
+      <div className="bb-net-genrow">
+        <span className="bb-net-k">Request initiator</span>
+        <span className="bb-net-v">{rec.initiator ? initiatorLabel(rec.initiator) : 'other'}</span>
+      </div>
+      {rec.initiator?.includes('://') && (
+        <div className="bb-net-genrow">
+          <span className="bb-net-k">Source</span>
+          <span className="bb-net-v">{rec.initiator}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CookiesTab({ rec }: { rec: NetRecord }): ReactElement {
+  const req = requestCookies(rec.reqHeaders)
+  const res = responseCookies(rec.resHeaders)
+  return (
+    <div className="bb-net-kv">
+      <KVTable title="Request Cookies" rows={req} />
+      <KVTable title="Response Cookies" rows={res} />
+      {req.length === 0 && res.length === 0 && <span className="bb-net-dim">No cookies</span>}
+    </div>
+  )
+}
+
 export function HttpDetail({
   rec,
   tab,
@@ -175,16 +309,12 @@ export function HttpDetail({
         onLoad={onLoad}
       />
     )
-  if (tab === 'payload')
-    return (
-      <BodyBar
-        rec={rec}
-        kind="request"
-        state={bodies[`${rec.requestId}:request`]}
-        onLoad={onLoad}
-      />
-    )
+  if (tab === 'payload') return <PayloadTab rec={rec} bodies={bodies} onLoad={onLoad} />
+  if (tab === 'preview')
+    return <PreviewTab rec={rec} state={bodies[`${rec.requestId}:response`]} onLoad={onLoad} />
+  if (tab === 'initiator') return <InitiatorTab rec={rec} />
   if (tab === 'timing') return <TimingTab rec={rec} />
+  if (tab === 'cookies') return <CookiesTab rec={rec} />
 
   // headers
   return (

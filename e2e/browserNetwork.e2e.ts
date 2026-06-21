@@ -103,6 +103,10 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const details = page.locator('.bb-net-details')
     await expect(details).toBeVisible()
 
+    // The Chrome tab set is present (Preview / Initiator / Timing always; Payload/Cookies conditional).
+    await expect(details.getByRole('button', { name: 'Preview' })).toBeVisible()
+    await expect(details.getByRole('button', { name: 'Initiator' })).toBeVisible()
+
     // Switch to the Timing tab → it becomes the active subtab.
     await details.getByRole('button', { name: 'Timing' }).click()
     await expect(details.locator('.bb-net-subtab-on')).toHaveText('Timing')

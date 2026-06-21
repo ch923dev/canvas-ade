@@ -3,7 +3,7 @@
  * table math is unit-tested (file-size doctrine: pure logic → lib/*.ts). All inputs are
  * already-capped record fields from the renderer mirror.
  */
-import type { NetRecord } from '../../../preload'
+import type { NetRecord, NetHeader } from '../../../preload'
 
 /** Human byte size: "35 B" · "88 kB" · "4.0 MB" (DevTools-style, base-1000). */
 export function formatSize(bytes: number | undefined): string {
@@ -388,6 +388,60 @@ export function sortRecords(rows: NetRecord[], sort: SortState | null): NetRecor
 export function initiatorLabel(initiator: string | undefined): string {
   if (!initiator) return 'other'
   return initiator.includes('://') ? urlName(initiator) : initiator
+}
+
+/** A name/value pair (Payload query params · Cookies tables). */
+export interface NetKV {
+  name: string
+  value: string
+}
+
+/** Decoded query-string parameters of a URL (DevTools Payload › Query String Parameters). */
+export function queryParams(url: string): NetKV[] {
+  try {
+    return [...new URL(url).searchParams].map(([name, value]) => ({ name, value }))
+  } catch {
+    return []
+  }
+}
+
+const headerValue = (headers: NetHeader[] | undefined, name: string): string | undefined =>
+  headers?.find((h) => h.name.toLowerCase() === name)?.value
+
+/** Split a `name=value` cookie pair (value may itself contain `=`). */
+function splitPair(s: string): NetKV | null {
+  const eq = s.indexOf('=')
+  const name = (eq < 0 ? s : s.slice(0, eq)).trim()
+  if (!name) return null
+  return { name, value: eq < 0 ? '' : s.slice(eq + 1).trim() }
+}
+
+/** Request cookies parsed from the `Cookie` header (`a=1; b=2`). */
+export function requestCookies(headers?: NetHeader[]): NetKV[] {
+  const raw = headerValue(headers, 'cookie')
+  if (!raw) return []
+  return raw
+    .split(';')
+    .map(splitPair)
+    .filter((c): c is NetKV => c !== null)
+}
+
+/** Response cookies parsed from `Set-Cookie` (CDP joins multiple with `\n`); first pair per cookie. */
+export function responseCookies(headers?: NetHeader[]): NetKV[] {
+  const lines = (headers ?? [])
+    .filter((h) => h.name.toLowerCase() === 'set-cookie')
+    .flatMap((h) => h.value.split('\n'))
+  return lines.map((line) => splitPair(line.split(';')[0])).filter((c): c is NetKV => c !== null)
+}
+
+const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+/** Whether to show the Payload tab (a query string or a body-bearing method). */
+export function hasPayload(rec: NetRecord): boolean {
+  return rec.url.includes('?') || BODY_METHODS.has(rec.method.toUpperCase())
+}
+/** Whether to show the Cookies tab (request or response cookies present). */
+export function hasCookies(rec: NetRecord): boolean {
+  return requestCookies(rec.reqHeaders).length > 0 || responseCookies(rec.resHeaders).length > 0
 }
 
 /** One Timing-tab phase bar, in ms relative to the request start. */
