@@ -1,0 +1,31 @@
+# FIND-007 — Dropped file path with embedded newline/quote injects shell commands via term.paste at a bare (non-bracketed-paste) prompt
+
+| | |
+|---|---|
+| **Severity** | Medium |
+| **Category** | security · injection |
+| **Status** | CONFIRMED (independently re-verified) |
+| **Primary location** | `src/renderer/src/canvas/boards/terminal/terminalDrop.ts:8-14` |
+| **Discovery slice** | R-TERMINAL-UI (run 2) |
+
+## Summary
+quotePathsForPaste wraps each dropped file path in double-quotes but only `.trim()`s it (which strips leading/trailing whitespace, NOT interior control characters) and does NOT escape an embedded double-quote OR an embedded newline. The TerminalBoard onDrop handler (TerminalBoard.tsx:648-659) passes the result straight to `term.paste(payload)`. xterm's paste pipeline (verified in node_modules/@xterm/xterm/lib/xterm.js: `prepareTextForTerminal` does `replace(/\r?\n/g,"\r")`, then `bracketTextForPaste` adds the \x1b[200~ … \x1b[201~ guards ONLY when DECSET-2004 bracketed-paste mode is ON). At a plain shell prompt (bracketed-paste OFF by default), every \n in the path becomes a \r and is SUBMITTED — so a file literally named e.g. `a\nrm -rf ~\n` (newlines are legal in POSIX filenames) yields the payload `"a` <submit> `rm -rf ~` <submit>, executing an attacker-chosen line. The interior `"` case (also unescaped) lets a path break out of the quoted token. The source comment explicitly considers and dismisses ONLY the embedded-quote case ('rare; the user still dragged the file themselves') and never addresses the embedded-newline-submit case, which is the more dangerous one because it executes a command rather than merely mis-tokenizing one arg.
+
+## Trigger
+On Linux/macOS, drag a file whose name contains a newline (or a double-quote) onto a terminal board whose live shell/agent does NOT have bracketed-paste mode enabled (a bare shell prompt). The path is quoted by quotePathsForPaste and term.paste converts each \n to \r, submitting the post-newline text as a shell command. Windows is unaffected (newline/quote illegal in NTFS names).
+
+## Evidence / concrete faulty path (code-grounded)
+terminalDrop.ts:9-13 `.map((p)=>p.trim()).filter((p)=>p.length>0).map((p)=>\`"${p}" \`).join('')` — no \" escape, no control-char strip. TerminalBoard.tsx:656-658 `const paths=Array.from(files).map((f)=>window.api.pathForFile(f)); const payload=quotePathsForPaste(paths); if(payload) termRef.current?.paste(payload)`. preload/index.ts:337 `pathForFile:(file)=>webUtils.getPathForFile(file)` (real OS path). useTerminalSpawn.ts:378 `const term=new Terminal({...})` (no ignoreBracketedPasteMode). xterm.js (verbatim, minified): `function i(e){return e.replace(/\r?\n/g,"\r")}function s(e,t){return t?"[200~"+e+"[201~":e}function r(e,t,r,n){e=s(e=i(e),r.decPrivateModes.bracketedPasteMode&&!0!==n.rawOptions.ignoreBracketedPasteMode),r.triggerDataEvent(e,!0)...}`. Repro: on Linux, `touch $'a\nid'` then drag that file onto a terminal board whose well shows a plain `sh`/`dash` prompt (bracketed-paste off) → payload `"a<NL>id" ` → xterm sends `"a\rid" \r` → shell submits `"a` (unterminated) then runs `id`. Contrast guarded paths: composeCommand.ts:24-26 escapes `[\\"]`; resumeCommand.ts:13 strips to `[a-zA-Z0-9_-]`. terminalDrop.test.ts covers only benign paths + empty filtering — no newline/quote case.
+
+## Verifier reasoning (why CONFIRMED; scope & severity)
+The full faulty path is verified end-to-end against the actual code (candidate's file path was off — it's src/renderer/src/canvas/boards/TerminalBoard.tsx, not .../boards/terminal/TerminalBoard.tsx — but every cited line is accurate). quotePathsForPaste (terminalDrop.ts:8-14) only .trim()s, filters empties, and wraps each path as `"..." `; it does NOT escape an embedded double-quote and does NOT strip/escape interior newlines or control chars. The onDrop handler (TerminalBoard.tsx:648-659) takes the REAL OS path via window.api.pathForFile (= webUtils.getPathForFile, preload/index.ts:337), runs it through quotePathsForPaste, and passes the payload straight to termRef.current.paste(). termRef.current is a genuine @xterm/xterm `new Terminal()` (useTerminalSpawn.ts:378) created with default options (no ignoreBracketedPasteMode override). I confirmed xterm's minified paste pipeline verbatim: prepareTextForTerminal `i(e)=e.replace(/\r?\n/g,"\r")`, bracketTextForPaste `s(e,t)=t?"\x1b[200~"+e+"\x1b[201~":e`, and the paste handler `r(e,t,r,n){e=s(i(e), bracketedPasteMode && !ignoreBracketedPasteMode); triggerDataEvent(e,!0)}`. So at a bare shell prompt (bracketed-paste OFF) every \n in the dropped path becomes a \r and is SUBMITTED unbracketed, executing the post-newline text as a shell line; an embedded \" breaks out of the quoted token. Newlines/quotes are legal in POSIX (Linux/macOS) filenames. No guard exists anywhere on this path — and the codebase sanitizes exactly this class elsewhere (composeCommand.quoteArg escapes [\\\"], resumeCommand strips to [a-zA-Z0-9_-]), so the drop path is a genuine missing-sanitization gap, not intended behavior. The source comment (terminalDrop.ts:6) and pasteIntoTerminal.ts:5-6 only acknowledge the quote/multiline-bracketing design, never the newline-submit-at-bare-prompt case. Not a duplicate: the 2026-06-19 feature audit's TERM-01..08 are all UX/perf/styling/god-file items, and the 2026-06-15 bug-hunt BUG-001..016 contain no terminal-drop-injection finding. Re-rated Low→Medium: unsanitized path-to-shell with command-execution impact, but narrowed by real preconditions (Linux/macOS only, bracketed-paste must be OFF, attacker must control the dragged file's name — e.g. via a downloaded/shared archive), so not High.
+
+## Fix direction (audit only — NOT applied)
+Reject or escape newline (and double-quote) characters in dropped paths before term.paste; or always route the drop through bracketed-paste so embedded control bytes are inert at a bare shell prompt. A path is attacker-influenced when the file came from an untrusted repo/download.
+
+## Files this card touches
+- `src/renderer/src/canvas/boards/terminal/terminalDrop.ts (quotePathsForPaste 8-14)`
+- `src/renderer/src/canvas/boards/TerminalBoard.tsx (drop handler)`
+
+## Collision flags (sequence with)
+- None — independently fixable in parallel.
