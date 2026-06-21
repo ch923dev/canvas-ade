@@ -18,7 +18,8 @@ import {
   ttfbMs,
   waterfallWindow,
   waterfallBar,
-  sortRecords
+  sortRecords,
+  summaryStats
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
@@ -439,6 +440,21 @@ describe('waterfallWindow / waterfallBar', () => {
       }
     })
     expect(waterfallBar(r, win).waitPct).toBeCloseTo(60) // 60ms of a 100ms bar
+  })
+})
+
+describe('summaryStats', () => {
+  it('sums transfer + decoded bytes and the finish span', () => {
+    const s = summaryStats([
+      rec({ startTs: 100, endTs: 160, encodedDataLength: 50, decodedLength: 200 }),
+      rec({ startTs: 120, endTs: 300, encodedDataLength: 30, decodedLength: 90 })
+    ])
+    expect(s.transferred).toBe(80)
+    expect(s.resources).toBe(290)
+    expect(s.finishMs).toBe(200) // 300 - 100
+  })
+  it('is zeroed for an empty set', () => {
+    expect(summaryStats([])).toEqual({ transferred: 0, resources: 0, finishMs: 0 })
   })
 })
 

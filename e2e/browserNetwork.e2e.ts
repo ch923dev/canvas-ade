@@ -33,6 +33,9 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     const firstRow = page.locator('.bb-net-row').first()
     await expect(firstRow, 'a captured request row appears').toBeVisible({ timeout: 8000 })
 
+    // The summary footer reports transfer/resource totals.
+    await expect(page.locator('.bb-net-summary'), 'summary footer').toContainText('transferred')
+
     // Selecting a row opens the details pane.
     await firstRow.click()
     await expect(page.locator('.bb-net-details'), 'details pane on row select').toBeVisible()

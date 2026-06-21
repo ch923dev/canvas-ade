@@ -1518,6 +1518,23 @@ body {
 .bb-net-dropped {
   color: var(--warn);
 }
+/* summary footer — pinned to the bottom of the inspector */
+.bb-net-summary {
+  flex: none;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  height: 22px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--border-subtle);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+.bb-net-sumdim {
+  color: var(--text-3);
+}
 .bb-net-paused {
   flex: none;
   padding: 7px 12px;

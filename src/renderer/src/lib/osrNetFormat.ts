@@ -316,6 +316,31 @@ export function applyNetFilter(records: NetRecord[], opts: NetFilterOpts): NetFi
   return { rows: byType.filter((r) => (invert ? !matches(r) : matches(r))) }
 }
 
+/** The footer summary over a (filtered) row set: transfer + resource bytes + the finish span. */
+export interface NetSummary {
+  transferred: number
+  resources: number
+  finishMs: number
+}
+export function summaryStats(rows: NetRecord[]): NetSummary {
+  let transferred = 0
+  let resources = 0
+  let min = Infinity
+  let max = -Infinity
+  for (const r of rows) {
+    transferred += r.encodedDataLength ?? 0
+    resources += r.decodedLength ?? 0
+    if (r.startTs < min) min = r.startTs
+    const end = r.endTs ?? r.startTs
+    if (end > max) max = end
+  }
+  return {
+    transferred,
+    resources,
+    finishMs: Number.isFinite(min) && max > min ? max - min : 0
+  }
+}
+
 /** A sortable table column + direction (the Waterfall sort-mode dropdown is separate). */
 export type SortCol = 'name' | 'status' | 'type' | 'initiator' | 'size' | 'time'
 export interface SortState {

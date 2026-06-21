@@ -22,6 +22,7 @@ import {
   waterfallWindow,
   waterfallBar,
   sortRecords,
+  summaryStats,
   NET_TYPE_PILLS,
   type NetTypeKey,
   type WfWindow,
@@ -93,6 +94,7 @@ export function OsrNetworkPanel({
   const typeNarrowed = !(typeKeys.length === 1 && typeKeys[0] === 'all')
   const filtered = typeNarrowed || filter.trim().length > 0 || invert
   const wfWin = waterfallWindow(rows)
+  const summary = summaryStats(rows)
   const sortedRows = sortRecords(rows, sort)
   const onSort = (col: SortCol): void =>
     setSort((cur) =>
@@ -353,6 +355,15 @@ export function OsrNetworkPanel({
           </div>
         </div>
       )}
+
+      {/* summary footer — transferred / resources / finish over the filtered set (DCL/Load deferred) */}
+      <div className="bb-net-summary">
+        <span>{formatSize(summary.transferred)} transferred</span>
+        <span className="bb-net-sumdim">{formatSize(summary.resources)} resources</span>
+        {summary.finishMs > 0 && (
+          <span className="bb-net-sumdim">Finish {formatDuration(0, summary.finishMs)}</span>
+        )}
+      </div>
     </div>
   )
 }
