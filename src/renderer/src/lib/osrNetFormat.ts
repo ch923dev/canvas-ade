@@ -343,3 +343,43 @@ export function ttfbMs(rec: NetRecord): number | undefined {
   if (!t || t.receiveHeadersEnd < 0) return undefined
   return Math.round(t.receiveHeadersEnd)
 }
+
+/** The shared waterfall window (earliest start → latest end) across the displayed rows. Clock-free
+ *  (no `Date.now()` — render must stay pure): a still-pending row contributes only its start, and its
+ *  bar extends to the window max in `waterfallBar`. */
+export interface WfWindow {
+  min: number
+  max: number
+}
+export function waterfallWindow(rows: NetRecord[]): WfWindow {
+  let min = Infinity
+  let max = -Infinity
+  for (const r of rows) {
+    if (r.startTs < min) min = r.startTs
+    const end = r.endTs ?? r.startTs
+    if (end > max) max = end
+  }
+  if (!Number.isFinite(min)) return { min: 0, max: 1 }
+  return { min, max: max > min ? max : min + 1 }
+}
+
+/** A single row's waterfall bar (percent of the shared window) + the leading wait (TTFB) fraction. */
+export interface WfBar {
+  leftPct: number
+  widthPct: number
+  waitPct: number
+}
+export function waterfallBar(rec: NetRecord, win: WfWindow): WfBar {
+  const span = win.max - win.min || 1
+  const start = rec.startTs
+  const end = rec.endTs ?? win.max // pending → extend to the window edge
+  const leftPct = Math.min(Math.max(((start - win.min) / span) * 100, 0), 100)
+  const widthPct = Math.max(((end - start) / span) * 100, 0.5)
+  let waitPct = 0
+  const totalMs = end - start
+  const t = rec.timing
+  if (t && t.receiveHeadersEnd >= 0 && totalMs > 0) {
+    waitPct = Math.min(Math.max((t.receiveHeadersEnd / totalMs) * 100, 0), 100)
+  }
+  return { leftPct, widthPct, waitPct }
+}

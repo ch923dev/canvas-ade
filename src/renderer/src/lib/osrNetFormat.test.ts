@@ -14,7 +14,9 @@ import {
   applyNetFilter,
   initiatorLabel,
   timingPhases,
-  ttfbMs
+  ttfbMs,
+  waterfallWindow,
+  waterfallBar
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
@@ -376,6 +378,49 @@ describe('timingPhases / ttfbMs', () => {
   it('ttfbMs is receiveHeadersEnd', () => {
     expect(ttfbMs(withTiming())).toBe(30)
     expect(ttfbMs(rec({}))).toBeUndefined()
+  })
+})
+
+describe('waterfallWindow / waterfallBar', () => {
+  it('spans the earliest start to the latest end (pending contributes only its start)', () => {
+    const rows = [rec({ startTs: 100, endTs: 200 }), rec({ startTs: 150 })] // 2nd pending
+    expect(waterfallWindow(rows)).toEqual({ min: 100, max: 200 })
+  })
+  it('handles an empty set + a zero span', () => {
+    expect(waterfallWindow([])).toEqual({ min: 0, max: 1 })
+    expect(waterfallWindow([rec({ startTs: 5, endTs: 5 })])).toEqual({ min: 5, max: 6 })
+  })
+  it('positions a bar as a percent of the window', () => {
+    const win = { min: 100, max: 300 } // span 200
+    const bar = waterfallBar(rec({ startTs: 150, endTs: 250 }), win)
+    expect(bar.leftPct).toBeCloseTo(25) // (150-100)/200
+    expect(bar.widthPct).toBeCloseTo(50) // (250-150)/200
+  })
+  it('extends a pending bar to the window max', () => {
+    const win = { min: 100, max: 300 }
+    const bar = waterfallBar(rec({ startTs: 200 }), win) // no endTs
+    expect(bar.leftPct).toBeCloseTo(50)
+    expect(bar.widthPct).toBeCloseTo(50) // (300-200)/200
+  })
+  it('derives the wait (TTFB) fraction from timing', () => {
+    const win = { min: 0, max: 100 }
+    const r = rec({
+      startTs: 0,
+      endTs: 100,
+      timing: {
+        requestTime: 0,
+        dnsStart: -1,
+        dnsEnd: -1,
+        connectStart: -1,
+        connectEnd: -1,
+        sslStart: -1,
+        sslEnd: -1,
+        sendStart: 0,
+        sendEnd: 5,
+        receiveHeadersEnd: 60
+      }
+    })
+    expect(waterfallBar(r, win).waitPct).toBeCloseTo(60) // 60ms of a 100ms bar
   })
 })
 

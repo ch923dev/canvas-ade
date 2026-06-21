@@ -19,8 +19,11 @@ import {
   initiatorLabel,
   timingPhases,
   ttfbMs,
+  waterfallWindow,
+  waterfallBar,
   NET_TYPE_PILLS,
-  type NetTypeKey
+  type NetTypeKey,
+  type WfWindow
 } from '../../../lib/osrNetFormat'
 
 type DetailTab = 'headers' | 'payload' | 'response' | 'timing' | 'frames'
@@ -96,6 +99,7 @@ export function OsrNetworkPanel({
   })
   const typeNarrowed = !(typeKeys.length === 1 && typeKeys[0] === 'all')
   const filtered = typeNarrowed || filter.trim().length > 0 || invert
+  const wfWin = waterfallWindow(rows)
   // Plain click selects one pill; Ctrl/Cmd-click toggles it in the OR'd set (empty ⇒ back to All).
   const onPill = (key: NetTypeKey, additive: boolean): void => {
     setTypeKeys((cur) => {
@@ -285,12 +289,13 @@ export function OsrNetworkPanel({
               <th className="net-col-initiator">Initiator</th>
               <th className="net-num">Size</th>
               <th className="net-num">Time</th>
+              <th className="net-col-wf">Waterfall</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr className="bb-net-empty">
-                <td colSpan={6}>{total === 0 ? 'Recording network activity…' : 'No matches'}</td>
+                <td colSpan={7}>{total === 0 ? 'Recording network activity…' : 'No matches'}</td>
               </tr>
             )}
             {rows.map((r) => (
@@ -299,6 +304,7 @@ export function OsrNetworkPanel({
                 rec={r}
                 selected={r.requestId === board.selected}
                 onClick={onSelect}
+                wfWin={wfWin}
               />
             ))}
           </tbody>
@@ -366,13 +372,16 @@ function DockBtn({
 function Row({
   rec,
   selected,
-  onClick
+  onClick,
+  wfWin
 }: {
   rec: NetRecord
   selected: boolean
   onClick: (r: NetRecord) => void
+  wfWin: WfWindow
 }): ReactElement {
   const ws = rec.type === 'websocket'
+  const bar = waterfallBar(rec, wfWin)
   return (
     <tr
       className={
@@ -400,6 +409,18 @@ function Row({
         title={ttfbMs(rec) !== undefined ? `TTFB ${ttfbMs(rec)} ms` : undefined}
       >
         {formatDuration(rec.startTs, rec.endTs)}
+      </td>
+      <td className="net-col-wf">
+        <span className="net-wf-track">
+          <span
+            className="net-wf-bar"
+            style={{ left: `${bar.leftPct}%`, width: `${bar.widthPct}%` }}
+          >
+            {bar.waitPct > 0 && bar.waitPct < 100 && (
+              <span className="net-wf-wait" style={{ width: `${bar.waitPct}%` }} />
+            )}
+          </span>
+        </span>
       </td>
     </tr>
   )
