@@ -37,6 +37,20 @@ export interface NetFailed {
   blockedReason?: string
   canceled?: boolean
 }
+/** CDP ResourceTiming subset: `requestTime` is monotonic seconds; the rest are ms RELATIVE to it
+ *  (-1 = not applicable). Drives the Timing tab + Waterfall phase bars. */
+export interface NetTiming {
+  requestTime: number
+  dnsStart: number
+  dnsEnd: number
+  connectStart: number
+  connectEnd: number
+  sslStart: number
+  sslEnd: number
+  sendStart: number
+  sendEnd: number
+  receiveHeadersEnd: number
+}
 export interface NetRecord {
   requestId: string
   url: string
@@ -53,6 +67,8 @@ export interface NetRecord {
   startTs: number
   endTs?: number
   encodedDataLength?: number
+  timing?: NetTiming // CDP ResourceTiming (Timing tab + waterfall)
+  finishMono?: number // loadingFinished monotonic timestamp (seconds) — the Content Download end
   failed?: NetFailed
   initiator?: string // what triggered the request (DevTools "Initiator" column): a script url or a type word
   // sub-target provenance (the flat-mode `sessionId`; absent ⇒ main target / root session)
@@ -185,10 +201,32 @@ export function applyRedirect(rec: NetRecord, params: Record<string, unknown>): 
   rec.method = capText(req.method, 16) || rec.method
 }
 
+/** Pull the CDP ResourceTiming subset off a response (undefined if absent — cached/failed). */
+export function extractTiming(raw: unknown): NetTiming | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const t = raw as Record<string, unknown>
+  if (typeof t.requestTime !== 'number') return undefined
+  const n = (k: string): number => (typeof t[k] === 'number' ? (t[k] as number) : -1)
+  return {
+    requestTime: t.requestTime,
+    dnsStart: n('dnsStart'),
+    dnsEnd: n('dnsEnd'),
+    connectStart: n('connectStart'),
+    connectEnd: n('connectEnd'),
+    sslStart: n('sslStart'),
+    sslEnd: n('sslEnd'),
+    sendStart: n('sendStart'),
+    sendEnd: n('sendEnd'),
+    receiveHeadersEnd: n('receiveHeadersEnd')
+  }
+}
+
 /** Merge `Network.responseReceived` onto an existing record. */
 export function applyResponse(rec: NetRecord, params: Record<string, unknown>): void {
   const res = (params.response ?? {}) as Record<string, unknown>
   if (typeof res.status === 'number') rec.status = res.status
+  const tm = extractTiming(res.timing)
+  if (tm) rec.timing = tm
   rec.statusText = capText(res.statusText, 256) || rec.statusText
   rec.mimeType = capText(res.mimeType, 128) || rec.mimeType
   if (typeof res.fromDiskCache === 'boolean' || typeof res.fromServiceWorker === 'boolean') {
@@ -206,6 +244,7 @@ export function applyResponse(rec: NetRecord, params: Record<string, unknown>): 
 export function applyFinished(rec: NetRecord, params: Record<string, unknown>, now: number): void {
   rec.endTs = eventTs(params, now)
   if (typeof params.encodedDataLength === 'number') rec.encodedDataLength = params.encodedDataLength
+  if (typeof params.timestamp === 'number') rec.finishMono = params.timestamp // monotonic — Content Download end
 }
 
 /** Merge `Network.loadingFailed`. */

@@ -17,6 +17,8 @@ import {
   isErrorRow,
   applyNetFilter,
   initiatorLabel,
+  timingPhases,
+  ttfbMs,
   NET_TYPE_PILLS,
   type NetTypeKey
 } from '../../../lib/osrNetFormat'
@@ -393,7 +395,12 @@ function Row({
         {initiatorLabel(rec.initiator)}
       </td>
       <td className="net-num">{ws ? '—' : formatSize(rec.encodedDataLength)}</td>
-      <td className="net-num">{formatDuration(rec.startTs, rec.endTs)}</td>
+      <td
+        className="net-num"
+        title={ttfbMs(rec) !== undefined ? `TTFB ${ttfbMs(rec)} ms` : undefined}
+      >
+        {formatDuration(rec.startTs, rec.endTs)}
+      </td>
     </tr>
   )
 }
@@ -508,20 +515,8 @@ function HttpDetail({
         onLoad={onLoad}
       />
     )
-  if (tab === 'timing')
-    return (
-      <div className="bb-net-kv">
-        <div>
-          <span className="bb-net-k">Duration</span> {formatDuration(rec.startTs, rec.endTs)}
-        </div>
-        <div>
-          <span className="bb-net-k">Transferred</span> {formatSize(rec.encodedDataLength)}
-        </div>
-        <div>
-          <span className="bb-net-k">From cache</span> {rec.fromCache ? 'yes' : 'no'}
-        </div>
-      </div>
-    )
+  if (tab === 'timing') return <TimingTab rec={rec} />
+
   // headers
   return (
     <div className="bb-net-kv">
@@ -554,6 +549,43 @@ function GenRow({ k, v }: { k: string; v: string }): ReactElement {
     <div className="bb-net-genrow">
       <span className="bb-net-k">{k}</span>
       <span className="bb-net-v">{v}</span>
+    </div>
+  )
+}
+
+function TimingTab({ rec }: { rec: NetRecord }): ReactElement {
+  const phases = timingPhases(rec)
+  if (phases.length === 0)
+    return (
+      <div className="bb-net-kv">
+        <div className="bb-net-dim">No timing breakdown (served from cache or still pending).</div>
+        <GenRow k="Duration" v={formatDuration(rec.startTs, rec.endTs)} />
+        <GenRow k="Transferred" v={formatSize(rec.encodedDataLength)} />
+      </div>
+    )
+  const total = phases[phases.length - 1].end || 1
+  return (
+    <div className="bb-net-timing">
+      {phases.map((p, i) => (
+        <div key={i} className="bb-net-tphase">
+          <span className="bb-net-tlabel">{p.label}</span>
+          <span className="bb-net-tbar">
+            <span
+              className="bb-net-tfill"
+              style={{
+                left: `${(p.start / total) * 100}%`,
+                width: `${Math.max(((p.end - p.start) / total) * 100, 0.5)}%`
+              }}
+            />
+          </span>
+          <span className="bb-net-tdur">{Math.round(p.end - p.start)} ms</span>
+        </div>
+      ))}
+      <div className="bb-net-tphase bb-net-ttotal">
+        <span className="bb-net-tlabel">Total</span>
+        <span className="bb-net-tbar" />
+        <span className="bb-net-tdur">{Math.round(total)} ms</span>
+      </div>
     </div>
   )
 }

@@ -302,3 +302,44 @@ export function initiatorLabel(initiator: string | undefined): string {
   if (!initiator) return 'other'
   return initiator.includes('://') ? urlName(initiator) : initiator
 }
+
+/** One Timing-tab phase bar, in ms relative to the request start. */
+export interface TimingPhase {
+  label: string
+  start: number
+  end: number
+}
+
+/**
+ * The DevTools Timing phase breakdown from the captured ResourceTiming. All offsets are ms relative
+ * to the request start; Content Download needs the loadingFinished monotonic timestamp. Empty when
+ * timing wasn't captured (cached / failed). Pure → unit-tested.
+ */
+export function timingPhases(rec: NetRecord): TimingPhase[] {
+  const t = rec.timing
+  if (!t) return []
+  const out: TimingPhase[] = []
+  const add = (label: string, start: number, end: number): void => {
+    if (start >= 0 && end > start) out.push({ label, start, end })
+  }
+  const firstStart = [t.dnsStart, t.connectStart, t.sendStart].find((x) => x >= 0)
+  if (firstStart !== undefined && firstStart > 0) add('Stalled', 0, firstStart)
+  add('DNS Lookup', t.dnsStart, t.dnsEnd)
+  add('Initial connection', t.connectStart, t.connectEnd)
+  add('SSL', t.sslStart, t.sslEnd)
+  add('Request sent', t.sendStart, t.sendEnd)
+  add('Waiting (TTFB)', t.sendEnd, t.receiveHeadersEnd)
+  const endMs =
+    rec.finishMono !== undefined && rec.finishMono > t.requestTime
+      ? (rec.finishMono - t.requestTime) * 1000
+      : -1
+  if (endMs >= 0) add('Content Download', t.receiveHeadersEnd, endMs)
+  return out
+}
+
+/** Time-to-first-byte in ms (receiveHeadersEnd), for the Time-cell secondary; undefined if unknown. */
+export function ttfbMs(rec: NetRecord): number | undefined {
+  const t = rec.timing
+  if (!t || t.receiveHeadersEnd < 0) return undefined
+  return Math.round(t.receiveHeadersEnd)
+}

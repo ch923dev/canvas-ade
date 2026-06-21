@@ -9,6 +9,7 @@ import {
   applyResponse,
   applyFinished,
   applyFailed,
+  extractTiming,
   wsFrameFrom,
   wsFrameByteLength,
   ringPushRecord,
@@ -143,11 +144,31 @@ describe('applyResponse / applyFinished / applyFailed', () => {
     expect(rec.remoteAddress).toBe('93.184.216.34:443')
     expect(rec.resHeaders).toEqual([{ name: 'etag', value: 'z' }])
   })
-  it('merges loadingFinished', () => {
+  it('merges loadingFinished + captures the monotonic finish time', () => {
     const rec = base()
-    applyFinished(rec, { encodedDataLength: 4096, wallTime: 2 }, 50)
+    applyFinished(rec, { encodedDataLength: 4096, wallTime: 2, timestamp: 1234.5 }, 50)
     expect(rec.endTs).toBe(2000)
     expect(rec.encodedDataLength).toBe(4096)
+    expect(rec.finishMono).toBe(1234.5)
+  })
+  it('captures ResourceTiming on the response', () => {
+    const rec = base()
+    applyResponse(rec, {
+      response: {
+        status: 200,
+        timing: {
+          requestTime: 100,
+          dnsStart: 1,
+          dnsEnd: 5,
+          sendStart: 10,
+          sendEnd: 12,
+          receiveHeadersEnd: 40
+        }
+      }
+    })
+    expect(rec.timing?.requestTime).toBe(100)
+    expect(rec.timing?.dnsEnd).toBe(5)
+    expect(rec.timing?.connectStart).toBe(-1) // absent → -1 sentinel
   })
   it('merges loadingFailed', () => {
     const rec = base()
@@ -196,6 +217,19 @@ describe('applyRedirect', () => {
     applyRedirect(rec, { request: {} })
     expect(rec.url).toBe('u')
     expect(rec.method).toBe('POST')
+  })
+})
+
+describe('extractTiming', () => {
+  it('returns undefined without a requestTime', () => {
+    expect(extractTiming(undefined)).toBeUndefined()
+    expect(extractTiming({ dnsStart: 1 })).toBeUndefined()
+  })
+  it('keeps present fields + defaults missing ones to -1', () => {
+    const t = extractTiming({ requestTime: 9, sendStart: 2, sendEnd: 4, receiveHeadersEnd: 30 })
+    expect(t?.requestTime).toBe(9)
+    expect(t?.sendEnd).toBe(4)
+    expect(t?.sslStart).toBe(-1)
   })
 })
 

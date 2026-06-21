@@ -1839,6 +1839,52 @@ body {
   color: var(--text-2);
   max-height: 100%;
 }
+/* Timing tab — phase bars on a shared timeline */
+.bb-net-timing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-meta);
+}
+.bb-net-tphase {
+  display: grid;
+  grid-template-columns: 124px 1fr 64px;
+  align-items: center;
+  gap: 8px;
+}
+.bb-net-tlabel {
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-net-tbar {
+  position: relative;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--inset);
+}
+.bb-net-tfill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.bb-net-tdur {
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--text-3);
+}
+.bb-net-ttotal {
+  margin-top: 2px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 4px;
+}
+.bb-net-ttotal .bb-net-tlabel {
+  color: var(--text);
+  font-weight: 500;
+}
 .bb-net-frames {
   width: 100%;
   border-collapse: collapse;

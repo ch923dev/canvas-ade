@@ -12,7 +12,9 @@ import {
   matchesAnyType,
   filterByType,
   applyNetFilter,
-  initiatorLabel
+  initiatorLabel,
+  timingPhases,
+  ttfbMs
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
@@ -330,6 +332,50 @@ describe('matchesType / filterByType (DevTools resource-type pills)', () => {
       rec({ requestId: 'b', type: 'script', url: 'http://x/vendor.js' })
     ]
     expect(filterByType(l2, 'js', 'vendor').map((r) => r.requestId)).toEqual(['b'])
+  })
+})
+
+describe('timingPhases / ttfbMs', () => {
+  const withTiming = (over: Partial<NetRecord['timing'] & object> = {}): NetRecord =>
+    rec({
+      finishMono: 100.05, // 50ms after requestTime
+      timing: {
+        requestTime: 100,
+        dnsStart: 2,
+        dnsEnd: 6,
+        connectStart: 6,
+        connectEnd: 10,
+        sslStart: 7,
+        sslEnd: 10,
+        sendStart: 10,
+        sendEnd: 12,
+        receiveHeadersEnd: 30,
+        ...over
+      }
+    })
+  it('returns [] without timing', () => {
+    expect(timingPhases(rec({}))).toEqual([])
+  })
+  it('builds the phase set incl. Stalled + Content Download', () => {
+    const labels = timingPhases(withTiming()).map((p) => p.label)
+    expect(labels).toEqual([
+      'Stalled',
+      'DNS Lookup',
+      'Initial connection',
+      'SSL',
+      'Request sent',
+      'Waiting (TTFB)',
+      'Content Download'
+    ])
+  })
+  it('Content Download runs from receiveHeadersEnd to the finish offset (ms)', () => {
+    const cd = timingPhases(withTiming()).find((p) => p.label === 'Content Download')
+    expect(cd?.start).toBe(30)
+    expect(cd?.end).toBeCloseTo(50, 3) // (finishMono - requestTime) * 1000, modulo float error
+  })
+  it('ttfbMs is receiveHeadersEnd', () => {
+    expect(ttfbMs(withTiming())).toBe(30)
+    expect(ttfbMs(rec({}))).toBeUndefined()
   })
 })
 

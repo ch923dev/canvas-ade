@@ -109,6 +109,18 @@ export interface NetHeader {
   name: string
   value: string
 }
+export interface NetTiming {
+  requestTime: number
+  dnsStart: number
+  dnsEnd: number
+  connectStart: number
+  connectEnd: number
+  sslStart: number
+  sslEnd: number
+  sendStart: number
+  sendEnd: number
+  receiveHeadersEnd: number
+}
 export interface NetRecord {
   requestId: string
   url: string
@@ -125,6 +137,8 @@ export interface NetRecord {
   startTs: number
   endTs?: number
   encodedDataLength?: number
+  timing?: NetTiming
+  finishMono?: number
   failed?: { errorText: string; blockedReason?: string; canceled?: boolean }
   initiator?: string
   sessionId?: string
