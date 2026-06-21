@@ -115,6 +115,40 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect(details).toHaveCount(0)
   })
 
+  test('resource-type pills: plain-click selects one, Ctrl-click multi-selects', async ({
+    page,
+    electronApp
+  }) => {
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const id = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
+
+    const all = page.getByRole('button', { name: 'All', exact: true })
+    const docPill = page.getByRole('button', { name: 'Doc', exact: true })
+    const jsPill = page.getByRole('button', { name: 'JS', exact: true })
+
+    // Plain click selects exactly one (All clears).
+    await docPill.click()
+    await expect(docPill).toHaveAttribute('aria-pressed', 'true')
+    await expect(all).toHaveAttribute('aria-pressed', 'false')
+
+    // Ctrl-click adds a second pill to the OR'd set.
+    await jsPill.click({ modifiers: ['Control'] })
+    await expect(docPill).toHaveAttribute('aria-pressed', 'true')
+    await expect(jsPill).toHaveAttribute('aria-pressed', 'true')
+
+    // Plain-clicking All resets to the single default.
+    await all.click()
+    await expect(all).toHaveAttribute('aria-pressed', 'true')
+    await expect(docPill).toHaveAttribute('aria-pressed', 'false')
+    await expect(jsPill).toHaveAttribute('aria-pressed', 'false')
+  })
+
   test('the dock switch flips the panel between bottom and right', async ({
     page,
     electronApp

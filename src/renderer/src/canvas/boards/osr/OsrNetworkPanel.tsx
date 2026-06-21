@@ -70,7 +70,14 @@ export function OsrNetworkPanel({
   useEffect(() => {
     if (!selectedId) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') select(boardId, undefined)
+      if (e.key !== 'Escape') return
+      // Chrome: Escape in the filter box blurs/clears the input first — only deselect when not typing.
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement) {
+        el.blur()
+        return
+      }
+      select(boardId, undefined)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
