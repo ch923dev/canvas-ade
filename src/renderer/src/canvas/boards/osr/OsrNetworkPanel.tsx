@@ -21,9 +21,12 @@ import {
   ttfbMs,
   waterfallWindow,
   waterfallBar,
+  sortRecords,
   NET_TYPE_PILLS,
   type NetTypeKey,
-  type WfWindow
+  type WfWindow,
+  type SortCol,
+  type SortState
 } from '../../../lib/osrNetFormat'
 
 type DetailTab = 'headers' | 'payload' | 'response' | 'timing' | 'frames'
@@ -59,6 +62,7 @@ export function OsrNetworkPanel({
   const [regex, setRegex] = useState(false)
   const [invert, setInvert] = useState(false)
   const [typeKeys, setTypeKeys] = useState<NetTypeKey[]>(['all'])
+  const [sort, setSort] = useState<SortState | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('headers')
   // Lazily-fetched bodies cache. CDP reuses requestIds (sequential per session) across reloads, so it
   // MUST be dropped whenever the log is cleared (button OR clear-on-nav) — else a reused id shows a
@@ -100,6 +104,11 @@ export function OsrNetworkPanel({
   const typeNarrowed = !(typeKeys.length === 1 && typeKeys[0] === 'all')
   const filtered = typeNarrowed || filter.trim().length > 0 || invert
   const wfWin = waterfallWindow(rows)
+  const sortedRows = sortRecords(rows, sort)
+  const onSort = (col: SortCol): void =>
+    setSort((cur) =>
+      cur?.col === col ? { col, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }
+    )
   // Plain click selects one pill; Ctrl/Cmd-click toggles it in the OR'd set (empty ⇒ back to All).
   const onPill = (key: NetTypeKey, additive: boolean): void => {
     setTypeKeys((cur) => {
@@ -283,12 +292,24 @@ export function OsrNetworkPanel({
         <table className="bb-net-rows">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Status</th>
-              <th className="net-col-type">Type</th>
-              <th className="net-col-initiator">Initiator</th>
-              <th className="net-num">Size</th>
-              <th className="net-num">Time</th>
+              <SortTh col="name" label="Name" sort={sort} onSort={onSort} />
+              <SortTh col="status" label="Status" sort={sort} onSort={onSort} />
+              <SortTh
+                col="type"
+                label="Type"
+                sort={sort}
+                onSort={onSort}
+                className="net-col-type"
+              />
+              <SortTh
+                col="initiator"
+                label="Initiator"
+                sort={sort}
+                onSort={onSort}
+                className="net-col-initiator"
+              />
+              <SortTh col="size" label="Size" sort={sort} onSort={onSort} className="net-num" />
+              <SortTh col="time" label="Time" sort={sort} onSort={onSort} className="net-num" />
               <th className="net-col-wf">Waterfall</th>
             </tr>
           </thead>
@@ -298,7 +319,7 @@ export function OsrNetworkPanel({
                 <td colSpan={7}>{total === 0 ? 'Recording network activity…' : 'No matches'}</td>
               </tr>
             )}
-            {rows.map((r) => (
+            {sortedRows.map((r) => (
               <Row
                 key={r.requestId}
                 rec={r}
@@ -366,6 +387,34 @@ function DockBtn({
     >
       <Icon name={dock === 'bottom' ? 'dock-bottom' : 'dock-right'} size={14} />
     </button>
+  )
+}
+
+function SortTh({
+  col,
+  label,
+  sort,
+  onSort,
+  className
+}: {
+  col: SortCol
+  label: string
+  sort: SortState | null
+  onSort: (c: SortCol) => void
+  className?: string
+}): ReactElement {
+  const active = sort?.col === col
+  return (
+    <th className={className}>
+      <button
+        className={'bb-net-sortth' + (active ? ' bb-net-sortth-on' : '')}
+        aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+        onClick={() => onSort(col)}
+      >
+        {label}
+        {active && <span className="bb-net-sortarrow">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
+      </button>
+    </th>
   )
 }
 

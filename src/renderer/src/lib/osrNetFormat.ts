@@ -297,6 +297,49 @@ export function applyNetFilter(records: NetRecord[], opts: NetFilterOpts): NetFi
   return { rows: byType.filter((r) => (invert ? !matches(r) : matches(r))) }
 }
 
+/** A sortable table column + direction (the Waterfall sort-mode dropdown is separate). */
+export type SortCol = 'name' | 'status' | 'type' | 'initiator' | 'size' | 'time'
+export interface SortState {
+  col: SortCol
+  dir: 'asc' | 'desc'
+}
+
+function sortKey(rec: NetRecord, col: SortCol): string | number {
+  switch (col) {
+    case 'name':
+      return urlName(rec.url).toLowerCase()
+    case 'status':
+      return rec.status ?? -1
+    case 'type':
+      return (rec.type || '').toLowerCase()
+    case 'initiator':
+      return initiatorLabel(rec.initiator).toLowerCase()
+    case 'size':
+      return rec.encodedDataLength ?? -1
+    case 'time':
+      return rec.endTs !== undefined ? rec.endTs - rec.startTs : -1
+  }
+}
+
+/**
+ * Sort a DISPLAYED copy (store insertion order is preserved). Size sorts on transfer bytes, Time on
+ * duration; ties keep their original order (stable). `null` → insertion order. Pure → unit-tested.
+ */
+export function sortRecords(rows: NetRecord[], sort: SortState | null): NetRecord[] {
+  if (!sort) return rows
+  const dir = sort.dir === 'asc' ? 1 : -1
+  return rows
+    .map((r, i) => [r, i] as const)
+    .sort((a, b) => {
+      const ka = sortKey(a[0], sort.col)
+      const kb = sortKey(b[0], sort.col)
+      if (ka < kb) return -dir
+      if (ka > kb) return dir
+      return a[1] - b[1] // stable tiebreak
+    })
+    .map(([r]) => r)
+}
+
 /** The Initiator cell: a script's file name if it's a url, else the bare CDP type word. */
 export function initiatorLabel(initiator: string | undefined): string {
   if (!initiator) return 'other'

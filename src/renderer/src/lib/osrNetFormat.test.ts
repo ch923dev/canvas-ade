@@ -16,7 +16,8 @@ import {
   timingPhases,
   ttfbMs,
   waterfallWindow,
-  waterfallBar
+  waterfallBar,
+  sortRecords
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
@@ -421,6 +422,31 @@ describe('waterfallWindow / waterfallBar', () => {
       }
     })
     expect(waterfallBar(r, win).waitPct).toBeCloseTo(60) // 60ms of a 100ms bar
+  })
+})
+
+describe('sortRecords', () => {
+  const list = [
+    rec({ requestId: 'a', url: 'http://x/b.js', status: 200, encodedDataLength: 50, endTs: 30 }),
+    rec({ requestId: 'b', url: 'http://x/a.js', status: 404, encodedDataLength: 200, endTs: 10 }),
+    rec({ requestId: 'c', url: 'http://x/c.js', status: 200, encodedDataLength: 100, endTs: 20 })
+  ]
+  const ids = (s: Parameters<typeof sortRecords>[1]): string[] =>
+    sortRecords(list, s).map((r) => r.requestId)
+
+  it('null sort keeps insertion order', () => {
+    expect(ids(null)).toEqual(['a', 'b', 'c'])
+  })
+  it('sorts by name asc + desc', () => {
+    expect(ids({ col: 'name', dir: 'asc' })).toEqual(['b', 'a', 'c']) // a.js, b.js, c.js
+    expect(ids({ col: 'name', dir: 'desc' })).toEqual(['c', 'a', 'b'])
+  })
+  it('sorts Size + Time numerically', () => {
+    expect(ids({ col: 'size', dir: 'asc' })).toEqual(['a', 'c', 'b']) // 50,100,200
+    expect(ids({ col: 'time', dir: 'desc' })).toEqual(['a', 'c', 'b']) // 30,20,10
+  })
+  it('is stable for equal keys', () => {
+    expect(ids({ col: 'status', dir: 'asc' })).toEqual(['a', 'c', 'b']) // 200(a),200(c),404(b)
   })
 })
 

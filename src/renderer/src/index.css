@@ -1551,6 +1551,35 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--border-subtle);
 }
+/* sortable header — the <th> keeps the layout; the inner button carries the click + sort arrow */
+.bb-net-sortth {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.net-num .bb-net-sortth {
+  justify-content: flex-end;
+}
+.bb-net-sortth:hover {
+  color: var(--text-2);
+}
+.bb-net-sortth-on {
+  color: var(--text);
+}
+.bb-net-sortarrow {
+  font-size: 7px;
+  color: var(--accent);
+}
 .bb-net-rows td {
   padding: 0 12px;
   height: 26px;
