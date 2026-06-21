@@ -143,6 +143,9 @@ export interface NetRecord {
   finishMono?: number
   failed?: { errorText: string; blockedReason?: string; canceled?: boolean }
   initiator?: string
+  loaderId?: string
+  preserved?: boolean
+  navBoundary?: boolean
   sessionId?: string
   frameId?: string
   crossOrigin?: boolean

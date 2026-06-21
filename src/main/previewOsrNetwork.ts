@@ -75,6 +75,9 @@ export interface NetRecord {
   finishMono?: number // loadingFinished monotonic timestamp (seconds) — the Content Download end
   failed?: NetFailed
   initiator?: string // what triggered the request (DevTools "Initiator" column): a script url or a type word
+  loaderId?: string // the navigation/document loader (requestId===loaderId ⇒ the main document)
+  preserved?: boolean // carried across a navigation under "Preserve log" (Chrome's request.preserved)
+  navBoundary?: boolean // the document request that began a new navigation (the light-blue divider row)
   // sub-target provenance (the flat-mode `sessionId`; absent ⇒ main target / root session)
   sessionId?: string
   frameId?: string
@@ -117,6 +120,7 @@ export interface OsrNetState {
   dropped: number // ring-eviction counter (shown as "N dropped")
   subscribed: boolean // a renderer panel is listening → emit deltas
   preserve: boolean // keep log across main-frame navigation
+  pendingNav: boolean // a main-frame nav started; the clear/boundary is deferred to its document request
   dirtyRecords: Set<string> // requestIds changed since last flush
   dirtyWs: Set<string>
   flushTimer: ReturnType<typeof setTimeout> | null
@@ -132,6 +136,7 @@ export function createNetState(): OsrNetState {
     dropped: 0,
     subscribed: false,
     preserve: false,
+    pendingNav: false,
     dirtyRecords: new Set(),
     dirtyWs: new Set(),
     flushTimer: null,
@@ -180,6 +185,7 @@ export function recordFromRequest(
       typeof req.referrerPolicy === 'string' ? capText(req.referrerPolicy, 48) : undefined,
     startTs: eventTs(params, now),
     initiator: initiatorOf(params.initiator),
+    loaderId: typeof params.loaderId === 'string' ? params.loaderId : undefined,
     frameId: typeof params.frameId === 'string' ? params.frameId : undefined,
     sessionId: sessionId || undefined,
     crossOrigin: sessionId ? true : undefined // worker target; iframe cross-origin tagging is S6 (needs main-frame id)
@@ -385,6 +391,27 @@ export function clearNet(state: OsrNetState): void {
   state.dirtyWs.clear()
 }
 
+/**
+ * Resolve a deferred main-frame navigation at its document request. Preserve OFF → wipe the log
+ * (the new doc, added next, survives). Preserve ON → keep everything, stamp the survivors
+ * `preserved` (in-flight ones render `(unknown)`), and return true so the new doc becomes the
+ * light-blue nav-boundary row. Clears `pendingNav`. Returns whether the new doc is a boundary.
+ */
+export function applyNavBoundary(state: OsrNetState, emit: (msg: OsrNetMsg) => void): boolean {
+  state.pendingNav = false
+  if (!state.preserve) {
+    clearNet(state)
+    if (state.subscribed) emit({ kind: 'cleared' })
+    return false
+  }
+  for (const r of state.records) {
+    r.preserved = true
+    state.dirtyRecords.add(r.requestId)
+  }
+  scheduleFlush(state, emit)
+  return true
+}
+
 /** A full snapshot for the subscribe-replay (S2) — includes preserve so the panel can seed its UI. */
 export function snapshotNet(state: OsrNetState): OsrNetMsg {
   return {
@@ -477,9 +504,10 @@ export function wireOsrNetwork(
   wc.on('did-start-navigation', (details: NavDetails) => {
     if (!isMainFramePageNav(details)) return
     armOsrNetwork(wc) // re-enable across the (possibly cross-process) navigation
-    if (state.preserve) return // clear-on-nav honors "Preserve log"
-    clearNet(state)
-    if (state.subscribed) emit({ kind: 'cleared' }) // emit only when a panel is listening
+    // Defer the clear/boundary to the new main-document request (loaderId-aware): the new doc + its
+    // redirect chain survive, in-flight old requests drop (or are kept + marked under Preserve log),
+    // and an activation (no document request) never wipes the log.
+    state.pendingNav = true
   })
   // Belt-and-suspenders: re-arm once the new document has committed too (catches the post-load flood
   // of XHR/fetch on SPA-heavy sites where the document request itself raced the re-enable).
@@ -496,6 +524,21 @@ export interface NavDetails {
  *  reading positional args, so `isMainFrame` was always undefined and clear-on-nav never fired). */
 export function isMainFramePageNav(details: NavDetails | undefined): boolean {
   return !!details?.isMainFrame && !details.isSameDocument
+}
+
+/** The main-document request of a navigation: a root-session Document whose requestId === loaderId.
+ *  This is the deferred-clear / nav-boundary trigger (an activation issues no such request, so the
+ *  log is never wiped on a BFCache/prerender activation). */
+export function isMainDocumentRequest(
+  params: Record<string, unknown>,
+  sessionId: string | undefined
+): boolean {
+  return (
+    !sessionId &&
+    params.type === 'Document' &&
+    typeof params.loaderId === 'string' &&
+    params.loaderId === params.requestId
+  )
 }
 
 /** Route one CDP message into the ring buffer + schedule a coalesced delta. */
@@ -521,11 +564,21 @@ function handleNetMessage(
         const next = recordFromRequest(params, sessionId, now)
         next.initiator = 'Redirect'
         ringPushRecord(state, next)
-      } else if (existing) {
-        applyRedirect(existing, params) // fallback: same-id re-send without a redirectResponse
-      } else {
-        ringPushRecord(state, recordFromRequest(params, sessionId, now))
+        markRecord(state, emit, reqId)
+        break
       }
+      if (existing) {
+        applyRedirect(existing, params) // fallback: same-id re-send without a redirectResponse
+        markRecord(state, emit, reqId)
+        break
+      }
+      // A new request. If a main-frame nav is pending and THIS is its document request, resolve the
+      // deferred clear/boundary now (so the new doc survives; old in-flight requests drop or persist).
+      const isNavDoc = state.pendingNav && isMainDocumentRequest(params, sessionId)
+      const markBoundary = isNavDoc ? applyNavBoundary(state, emit) : false
+      const rec = recordFromRequest(params, sessionId, now)
+      if (markBoundary) rec.navBoundary = true
+      ringPushRecord(state, rec)
       markRecord(state, emit, reqId)
       break
     }

@@ -423,7 +423,10 @@ function Row({
   return (
     <tr
       className={
-        'bb-net-row' + (selected ? ' bb-net-sel' : '') + (isErrorRow(rec) ? ' bb-net-fail' : '')
+        'bb-net-row' +
+        (selected ? ' bb-net-sel' : '') +
+        (isErrorRow(rec) ? ' bb-net-fail' : '') +
+        (rec.navBoundary ? ' bb-net-nav' : '')
       }
       onMouseDown={(e) => e.stopPropagation()}
       onClick={() => onClick(rec)}
@@ -453,7 +456,9 @@ function Row({
         className="net-num"
         title={ttfbMs(rec) !== undefined ? `TTFB ${ttfbMs(rec)} ms` : undefined}
       >
-        {formatDuration(rec.startTs, rec.endTs)}
+        {rec.preserved && rec.endTs === undefined
+          ? '(unknown)'
+          : formatDuration(rec.startTs, rec.endTs)}
       </td>
       <td className="net-col-wf">
         <span className="net-wf-track">

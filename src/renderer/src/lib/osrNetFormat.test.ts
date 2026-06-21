@@ -91,6 +91,10 @@ describe('statusLabel', () => {
   it('shows (pending) for an in-flight request', () => {
     expect(statusLabel(rec({}))).toBe('(pending)')
   })
+  it('shows (unknown) for a preserved in-flight request, but keeps a completed code', () => {
+    expect(statusLabel(rec({ preserved: true }))).toBe('(unknown)')
+    expect(statusLabel(rec({ preserved: true, status: 200 }))).toBe('200')
+  })
 })
 
 describe('sizeLabel', () => {

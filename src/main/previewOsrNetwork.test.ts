@@ -5,6 +5,8 @@ import {
   eventTs,
   recordFromRequest,
   isMainFramePageNav,
+  isMainDocumentRequest,
+  applyNavBoundary,
   applyRedirect,
   applyRedirectResponse,
   reKeyRedirectHop,
@@ -34,6 +36,7 @@ import {
   MAX_SOCKETS,
   type NetRecord,
   type OsrNetMsg,
+  type OsrNetState,
   type OsrNetEntry
 } from './previewOsrNetwork'
 
@@ -84,6 +87,7 @@ describe('recordFromRequest', () => {
         requestId: 'r1',
         type: 'XHR',
         frameId: 'F1',
+        loaderId: 'L1',
         request: {
           url: 'http://x/' + 'q'.repeat(URL_CAP),
           method: 'POST',
@@ -98,6 +102,7 @@ describe('recordFromRequest', () => {
     expect(rec.method).toBe('POST')
     expect(rec.type).toBe('XHR')
     expect(rec.frameId).toBe('F1')
+    expect(rec.loaderId).toBe('L1')
     expect(rec.referrerPolicy).toBe('strict-origin-when-cross-origin')
     expect(rec.url.length).toBe(URL_CAP)
     expect(rec.reqHeaders).toEqual([{ name: 'a', value: 'b' }])
@@ -216,6 +221,54 @@ describe('isMainFramePageNav (the S1 did-start-navigation signature fix)', () =>
     expect(isMainFramePageNav({ isMainFrame: true, isSameDocument: true })).toBe(false)
     expect(isMainFramePageNav({})).toBe(false)
     expect(isMainFramePageNav(undefined)).toBe(false)
+  })
+})
+
+describe('isMainDocumentRequest', () => {
+  it('is true for a root-session Document with requestId === loaderId', () => {
+    expect(
+      isMainDocumentRequest({ type: 'Document', requestId: 'X', loaderId: 'X' }, undefined)
+    ).toBe(true)
+  })
+  it('is false for subresources, sub-targets, or a mismatched loaderId', () => {
+    expect(isMainDocumentRequest({ type: 'XHR', requestId: 'X', loaderId: 'X' }, undefined)).toBe(
+      false
+    )
+    expect(
+      isMainDocumentRequest({ type: 'Document', requestId: 'X', loaderId: 'Y' }, undefined)
+    ).toBe(false)
+    expect(isMainDocumentRequest({ type: 'Document', requestId: 'X', loaderId: 'X' }, 'SID')).toBe(
+      false
+    )
+  })
+})
+
+describe('applyNavBoundary (deferred clear / Preserve log)', () => {
+  const seed = (): OsrNetState => {
+    const s = createNetState()
+    s.pendingNav = true
+    ringPushRecord(
+      s,
+      recordFromRequest({ requestId: 'a', request: { url: 'http://x/' } }, undefined, 0)
+    )
+    return s
+  }
+  it('Preserve OFF wipes the log + emits cleared + returns false', () => {
+    const s = seed()
+    s.subscribed = true
+    const msgs: OsrNetMsg[] = []
+    expect(applyNavBoundary(s, (m) => msgs.push(m))).toBe(false)
+    expect(s.records.length).toBe(0)
+    expect(s.pendingNav).toBe(false)
+    expect(msgs.some((m) => m.kind === 'cleared')).toBe(true)
+  })
+  it('Preserve ON keeps the log, stamps survivors preserved, returns true (boundary)', () => {
+    const s = seed()
+    s.preserve = true
+    expect(applyNavBoundary(s, () => {})).toBe(true)
+    expect(s.records.length).toBe(1)
+    expect(s.records[0].preserved).toBe(true)
+    expect(s.pendingNav).toBe(false)
   })
 })
 

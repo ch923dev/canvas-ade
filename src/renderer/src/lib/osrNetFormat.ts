@@ -77,7 +77,10 @@ export function statusLabel(rec: NetRecord): string {
     if (rec.failed.blockedReason) return `(${blockedTag(rec.failed.blockedReason)})`
     return '(failed)'
   }
-  return rec.status !== undefined ? String(rec.status) : '(pending)'
+  if (rec.status !== undefined) return String(rec.status)
+  // Preserved across a navigation while still in flight → the page that issued it unloaded (Chrome).
+  if (rec.preserved) return '(unknown)'
+  return '(pending)'
 }
 
 /** Should the whole row render red? HTTP ≥400, or any network failure / cancel / block (DevTools). */
