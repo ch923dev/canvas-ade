@@ -59,13 +59,27 @@ export function isUnsafeProjectDir(dir: string): boolean {
  * OS (see the M-6 note above), so we must not lean on the host's `path.sep` / drive casing.
  * Callers MUST gate on `isUnsafeProjectDir` first — this assumes no `..` segment.
  */
+/**
+ * Windows (drive-letter / UNC) paths are case-INsensitive; POSIX paths are case-SENSITIVE. Detect
+ * from the path SHAPE rather than the host OS, since the unit suite drives BOTH `C:\…` and `/…`
+ * shapes on a single OS (see the M-6 note above). Callers gate on `isUnsafeProjectDir` first, so a
+ * path here is already absolute (`C:\…` / `\\unc` / `/…`).
+ */
+function isWindowsStylePath(p: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\')
+}
+
 function pathSegments(p: string): string[] {
-  return path
+  const segs = path
     .normalize(p)
     .replace(/[/\\]+$/, '') // strip trailing separator(s) so `<root>/` === `<root>`
     .split(/[/\\]/)
-    .map((s) => s.toLowerCase()) // Windows paths are case-insensitive; harmless on POSIX
     .filter((s) => s.length > 0)
+  // FIND-014: case-fold ONLY Windows-style paths. On a case-sensitive POSIX filesystem `/a/B` and
+  // `/a/b` are DIFFERENT directories, so case-folding there would over-approve a case-variant of an
+  // approved root (a defense-in-depth loosening). Windows + macOS-default volumes case-fold, so a
+  // Windows-shaped path stays case-insensitive exactly as before.
+  return isWindowsStylePath(p) ? segs.map((s) => s.toLowerCase()) : segs
 }
 
 /**
@@ -280,9 +294,14 @@ export function registerProjectHandlers(
   // primary that MAIN passed (envelope-valid but deep-corrupt), the renderer asks for the
   // .bak so it can retry the parse against the last good snapshot. Pure read — NO gcAssets,
   // NO setCurrentDir/touchRecent (the open project is unchanged; this is a recovery probe).
-  ipcMain.handle('project:reopenFromBak', (e, dir: string): ProjectResult => {
+  ipcMain.handle('project:reopenFromBak', async (e, dir: string): Promise<ProjectResult> => {
     if (guard(e)) return { ok: false, error: 'forbidden' }
     if (isUnsafeProjectDir(dir)) return { ok: false, error: 'invalid path' }
+    // FIND-004: gate on the approved-root set like project:open / project:create. reopenFromBak is a
+    // recovery probe for the CURRENTLY-OPEN project, so the live dir passes the gate; this blocks a
+    // compromised renderer from reading an arbitrary `<dir>/.canvas/canvas.json.bak` it never
+    // approved (the BUG-006 containment invariant that this handler alone was missing).
+    if (!(await isApprovedTarget(dir))) return { ok: false, error: 'invalid path' }
     return readBak(dir)
   })
 
