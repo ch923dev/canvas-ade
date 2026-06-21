@@ -40,6 +40,66 @@ export function stripAnsi(raw: string): string {
   return raw.replace(ANSI, '')
 }
 
+/**
+ * PERF-06: a chunk-deque output ring for the live PTY buffer. The `onData` listener
+ * fires once per output chunk; the old ring did `prev + chunk` then `.slice()` on every
+ * call once saturated — an O(cap) (256 KB) string copy PER chunk for a heavy-output
+ * agent. This holds the chunks in a deque with a running `total`, dropping/trimming only
+ * the OLDEST data on overflow (one bounded slice of the head chunk), so a steady stream
+ * is amortised O(chunk) per push rather than O(cap). The join is deferred to `readRing`
+ * (adopt-replay / scrollback page reads), which also collapses the deque to a single
+ * chunk so repeated reads stay O(1). Pure — unit-tested directly.
+ */
+export interface OutputRing {
+  /** Output chunks in arrival order; their concatenation is the buffered tail. */
+  chunks: string[]
+  /** Sum of chunk lengths (UTF-16 code units), kept in sync so push never scans. */
+  total: number
+  /** Max retained chars; older data is dropped beyond this. */
+  cap: number
+}
+
+/** A fresh empty ring bounded at `cap` chars. */
+export function createRing(cap: number): OutputRing {
+  return { chunks: [], total: 0, cap }
+}
+
+/**
+ * Append `chunk`, evicting the oldest data so `total` never exceeds `cap`. Drops whole
+ * head chunks that are fully redundant (keeps the deque length bounded too), then trims
+ * any residual overflow off the new head with a single bounded slice. No-op on `''`.
+ */
+export function pushRing(ring: OutputRing, chunk: string): void {
+  if (!chunk) return
+  ring.chunks.push(chunk)
+  ring.total += chunk.length
+  // Drop whole oldest chunks while the buffer would STILL hold ≥ cap without them.
+  while (ring.chunks.length > 1 && ring.total - ring.chunks[0].length >= ring.cap) {
+    ring.total -= ring.chunks[0].length
+    ring.chunks.shift()
+  }
+  // Trim the (now oldest) chunk for any residual overflow — one bounded slice.
+  if (ring.total > ring.cap) {
+    const over = ring.total - ring.cap
+    ring.chunks[0] = ring.chunks[0].slice(over)
+    ring.total -= over
+  }
+}
+
+/**
+ * The buffered tail as one string. Collapses the deque to a single chunk so a later
+ * read (or the next push's head math) stays cheap — readers expect a plain string.
+ */
+export function readRing(ring: OutputRing): string {
+  if (ring.chunks.length === 0) return ''
+  if (ring.chunks.length > 1) {
+    const joined = ring.chunks.join('')
+    ring.chunks = [joined]
+    ring.total = joined.length
+  }
+  return ring.chunks[0]
+}
+
 /** One capped, tail-anchored page of cleaned scrollback. */
 export interface OutputPage {
   /** Plain-text slice for this page, in chronological order. */

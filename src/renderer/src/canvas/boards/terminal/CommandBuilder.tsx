@@ -340,7 +340,9 @@ const optName: CSSProperties = {
 const flagHint: CSSProperties = {
   fontFamily: 'var(--mono)',
   fontSize: 10.5,
-  color: 'var(--text-faint)',
+  // TERM-03: a readable helper, not a disabled field — use --text-3, not the disabled-only
+  // --text-faint (D0-2: faint is ~2.8:1, below AA for live text).
+  color: 'var(--text-3)',
   // Sits tight against its control (no longer floated to the row's far edge). Cap + ellipsis so
   // a long flag like `--dangerously-skip-permissions` can't blow the row out; full flag in title.
   whiteSpace: 'nowrap',

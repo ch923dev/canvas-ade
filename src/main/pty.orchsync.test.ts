@@ -38,8 +38,10 @@ const { spawnSpy } = vi.hoisted(() => ({
 vi.mock('node-pty', () => ({ spawn: spawnSpy }))
 vi.mock('./ipcGuard', () => ({ isForeignSender: vi.fn(() => false) }))
 vi.mock('./portDetect', () => ({ parsePortsFromOutput: vi.fn(() => []) }))
-vi.mock('./ptyOutput', () => ({
-  MAX_OUTPUT_PAGE: 500,
+// Pass the real ptyOutput through (incl. the PERF-06 output ring the spawn path uses);
+// stub only the paging helpers.
+vi.mock('./ptyOutput', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./ptyOutput')>()),
   pageOutput: vi.fn(() => ({ lines: [], cursor: 0, droppedOlder: false })),
   stripAnsi: vi.fn((s: string) => s)
 }))
