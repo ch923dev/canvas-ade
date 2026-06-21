@@ -33,12 +33,18 @@ function setupApi(
   awaitSettled: ReturnType<typeof vi.fn>
   interrupt: ReturnType<typeof vi.fn>
   summarize: ReturnType<typeof vi.fn>
+  /** Drive a board-status push (the MAIN → renderer onTaskStatus channel) into the live hook. */
+  fireStatus: (change: { id: string; status: string }) => void
 } {
   const spawnGroup = vi.fn(opts.spawnGroup ?? (async () => ({ groupId: 'g1', terminalId: 't1' })))
   const dispatchPrompt = vi.fn(opts.dispatchPrompt ?? (async () => {}))
   const awaitSettled = vi.fn(opts.awaitSettled ?? (async () => ({ present: false })))
   const interrupt = vi.fn(async () => {})
-  const onTaskStatus = vi.fn(() => () => {})
+  let statusListener: ((change: { id: string; status: string }) => void) | null = null
+  const onTaskStatus = vi.fn((l: (change: { id: string; status: string }) => void) => {
+    statusListener = l
+    return () => {}
+  })
   const summarize = vi.fn(
     opts.summarize ??
       (async () => ({ ok: true, text: 'TITLE: Build Feature\n\nBuild the feature end to end.' }))
@@ -47,7 +53,14 @@ function setupApi(
     mcp: { spawnGroup, dispatchPrompt, awaitSettled, interrupt, onTaskStatus },
     llm: { summarize }
   }
-  return { spawnGroup, dispatchPrompt, awaitSettled, interrupt, summarize }
+  return {
+    spawnGroup,
+    dispatchPrompt,
+    awaitSettled,
+    interrupt,
+    summarize,
+    fireStatus: (change) => statusListener?.(change)
+  }
 }
 
 const TERMINAL_ONLY = { planning: false, browser: false }
@@ -181,6 +194,59 @@ describe('useCommandDispatch', () => {
     result.current.confirmConfig(id, { launchCommand: 'claude', prompt: 'go', config: CFG })
     await waitFor(() => expect(api.spawnGroup).toHaveBeenCalled())
     await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('queued'))
+  })
+
+  // FIND-005: a board-gone failure (set by onTaskStatus) must not be clobbered back to 'done' when
+  // the in-flight runDispatch's awaitSettled finally resolves with a now-dead verdict.
+  it('does not let a stale run flip a board-gone failure back to done (FIND-005)', async () => {
+    let resolveSettled: (r: Result) => void = () => {}
+    const api = setupApi({
+      awaitSettled: () => new Promise<Result>((r) => (resolveSettled = r))
+    })
+    const { result } = renderHook(() => useCommandDispatch(4))
+    result.current.dispatch('x', TERMINAL_ONLY)
+    await waitFor(() => expect(useCommandStore.getState().configuringTaskId).not.toBeNull())
+    const id = useCommandStore.getState().configuringTaskId as string
+    result.current.confirmConfig(id, { launchCommand: 'claude', prompt: 'go', config: CFG })
+    // Run reaches 'executing' and parks in awaitSettled (still in-flight).
+    await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('executing'))
+
+    // The worker board closes mid-flight → task fails.
+    api.fireStatus({ id: 't1', status: 'gone' })
+    await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('failed'))
+
+    // The stale run's awaitSettled now resolves with a (dead) success verdict — it must be ignored.
+    resolveSettled({ present: false })
+    await new Promise((r) => setTimeout(r, 0)) // flush the run's post-await continuation
+    expect(useCommandStore.getState().tasks[0]?.status).toBe('failed')
+  })
+
+  // FIND-006: a cap-rejected task re-queues with no pump; a worker board going 'gone' frees a MAIN
+  // slot and must re-pump the queue so the stuck task finally spawns (previously it hung forever).
+  it('re-pumps a cap-rejected queued task when a board frees a slot (FIND-006)', async () => {
+    let calls = 0
+    const api = setupApi({
+      spawnGroup: async () => {
+        if (++calls === 1) {
+          throw new Error('MCP spawn concurrency cap reached (4 live spawned boards)')
+        }
+        return { groupId: 'g2', terminalId: 't2' }
+      }
+    })
+    const { result } = renderHook(() => useCommandDispatch(4))
+    result.current.dispatch('x', TERMINAL_ONLY)
+    await waitFor(() => expect(useCommandStore.getState().configuringTaskId).not.toBeNull())
+    const id = useCommandStore.getState().configuringTaskId as string
+    result.current.confirmConfig(id, { launchCommand: 'claude', prompt: 'go', config: CFG })
+
+    // First spawn is cap-rejected → the task re-queues and (by design) does NOT self-pump.
+    await waitFor(() => expect(api.spawnGroup).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('queued'))
+
+    // Some other worker board closes → a MAIN slot freed → the queue must re-pump and spawn it.
+    api.fireStatus({ id: 'some-other-board', status: 'gone' })
+    await waitFor(() => expect(api.spawnGroup).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('done'))
   })
 
   it('serializes at the cap — 5 configured terminal-only tasks, only 4 spawn', async () => {

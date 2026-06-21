@@ -120,6 +120,17 @@ export function useCommandDispatch(cap: number): CommandDispatch {
   const capRef = useRef(cap)
   const pumpRef = useRef<() => void>(() => {})
   const runDispatchRef = useRef<(id: string) => Promise<void>>(async () => {})
+  // FIND-005: per-task dispatch GENERATION. runDispatch captures its generation at start and checks
+  // it after every await before writing task state; retry and the board-gone handler BUMP it to
+  // invalidate an in-flight run. This stops a stale runDispatch — one still awaiting when the board
+  // went gone (→ task 'failed') or the user hit Retry (→ a fresh run) — from clobbering the live
+  // state with a dead run's result (failed→done flip, or a dead verdict on the live retry).
+  const runGenRef = useRef(new Map<string, number>())
+  const bumpRunGen = (id: string): number => {
+    const next = (runGenRef.current.get(id) ?? 0) + 1
+    runGenRef.current.set(id, next)
+    return next
+  }
 
   // Keep the cap fresh for the stable callbacks below WITHOUT writing a ref during render.
   useEffect(() => {
@@ -148,6 +159,10 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       store.setTaskStatus(id, 'failed')
       return
     }
+    // FIND-005: claim this run's generation. `stale()` is true once retry / board-gone has bumped it
+    // — every post-await write below bails when stale, so a superseded run never clobbers the task.
+    const gen = bumpRunGen(id)
+    const stale = (): boolean => runGenRef.current.get(id) !== gen
     const comp = compositionOf(task)
     try {
       // Spawn the agent zone under the smart name with the user's BARE chosen command (NO prompt in
@@ -158,6 +173,7 @@ export function useCommandDispatch(cap: number): CommandDispatch {
         browser: comp.browser,
         ...(typeof task.launchCommand === 'string' ? { launchCommand: task.launchCommand } : {})
       })
+      if (stale()) return // superseded while spawning — don't overwrite the live state
       const { terminalId } = group
       useCommandStore.getState().setTaskGroup(id, group)
       useCommandStore.getState().setTaskStatus(id, 'executing')
@@ -165,6 +181,7 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       // deliver it into the agent's INPUT BOX via the GATED dispatchPrompt write (shell-safe: REPL
       // text, never shell-parsed). Retry only the pre-gate board-not-found window.
       await sleep(WORKER_BOOT_SETTLE_MS)
+      if (stale()) return
       const dispatchPrompt = api.dispatchPrompt
       const prompt = singleLinePrompt(task.prompt ?? task.title)
       await retryUntilReady(() => dispatchPrompt(terminalId, prompt))
@@ -172,6 +189,7 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       // finishes (read-only; the board is already addressable here, but guard the window anyway).
       const awaitSettled = api.awaitSettled
       const result = await retryUntilReady(() => awaitSettled(terminalId))
+      if (stale()) return // board went gone / retry fired during the settle — the verdict is dead
       // Phase D (collect/merge): settle → Reporting while the diff loads → snapshot the result + the
       // captured raw diff onto the task (the result zone + recap timeline read them) → done/failed.
       // gitDiff is read-only + best-effort: a missing api / non-repo cwd / error → no diff (chip hidden).
@@ -182,10 +200,12 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       } catch {
         diff = ''
       }
+      if (stale()) return
       useCommandStore.getState().setTaskResult(id, result, diff)
       useCommandStore.getState().setTaskStatus(id, isFailureResult(result) ? 'failed' : 'done')
       pumpRef.current?.() // a slot freed → dispatch the next queued task
     } catch (err) {
+      if (stale()) return // a superseding run/board-gone owns the task now — don't touch it
       // A MAIN cap rejection (renderer/MAIN drift) re-queues + WAITS for a real settle to pump it
       // — never self-pumps, so a persistent drift can't spin. Any other error fails the card.
       if (isCapError(err)) {
@@ -240,6 +260,9 @@ export function useCommandDispatch(cap: number): CommandDispatch {
   }, [])
 
   const retry = useCallback((task: CommandTask): void => {
+    // FIND-005: invalidate any still-in-flight run for this task FIRST, so the prior run (which may
+    // still be awaiting when the card went 'failed') can't write its dead verdict onto the fresh run.
+    bumpRunGen(task.id)
     useCommandStore.getState().retryTask(task.id) // failed → queued, clears the group, KEEPS config
     pumpRef.current?.()
   }, [])
@@ -256,11 +279,21 @@ export function useCommandDispatch(cap: number): CommandDispatch {
     if (!onTaskStatus) return
     return onTaskStatus((change) => {
       const task = useCommandStore.getState().tasks.find((t) => t.group?.terminalId === change.id)
-      if (!task) return
-      const next = nextStatusForBoardChange(task.status, change.status)
-      if (!next) return
-      useCommandStore.getState().setTaskStatus(task.id, next)
-      if (next === 'failed') pumpRef.current?.()
+      if (task) {
+        const next = nextStatusForBoardChange(task.status, change.status)
+        if (next) {
+          // FIND-005: a board going gone fails an in-flight task — invalidate its run so the dying
+          // runDispatch can't flip 'failed' back to 'done' when its awaitSettled finally resolves.
+          bumpRunGen(task.id)
+          useCommandStore.getState().setTaskStatus(task.id, next)
+        }
+      }
+      // FIND-006: a worker board going 'gone' frees a MAIN cap slot, so re-pump the queue — even when
+      // NO task transitions here (e.g. the user closed a DONE worker's board). Previously the pump
+      // fired only on a 'failed' transition, so a cap-rejected task could stay 'queued' forever once
+      // every slot was held by completed-but-still-open workers. A board-gone is a discrete event
+      // (not a cap-drift retry), so pumping here cannot busy-loop.
+      if (change.status === 'gone') pumpRef.current?.()
     })
   }, [])
 
