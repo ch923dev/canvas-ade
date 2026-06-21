@@ -201,9 +201,11 @@ export type NetTypeKey =
   | 'font'
   | 'img'
   | 'media'
+  | 'manifest'
   | 'ws'
   | 'wasm'
   | 'other'
+// The fixed Chrome order: All · Fetch/XHR · Doc · CSS · JS · Font · Img · Media · Manifest · WS · Wasm · Other.
 export const NET_TYPE_PILLS: { key: NetTypeKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'xhr', label: 'Fetch/XHR' },
@@ -213,7 +215,8 @@ export const NET_TYPE_PILLS: { key: NetTypeKey; label: string }[] = [
   { key: 'font', label: 'Font' },
   { key: 'img', label: 'Img' },
   { key: 'media', label: 'Media' },
-  { key: 'ws', label: 'Socket' },
+  { key: 'manifest', label: 'Manifest' },
+  { key: 'ws', label: 'WS' },
   { key: 'wasm', label: 'Wasm' },
   { key: 'other', label: 'Other' }
 ]
@@ -226,6 +229,7 @@ const TYPE_MATCH: Record<Exclude<NetTypeKey, 'all' | 'other'>, string[]> = {
   font: ['font'],
   img: ['image'],
   media: ['media'],
+  manifest: ['manifest'],
   ws: ['websocket'],
   wasm: ['wasm']
 }
@@ -237,6 +241,12 @@ export function matchesType(rec: NetRecord, key: NetTypeKey): boolean {
   const t = (rec.type || '').toLowerCase()
   if (key === 'other') return !CLAIMED.has(t)
   return TYPE_MATCH[key].includes(t)
+}
+
+/** Multi-select pills: a row matches if ANY active pill claims it. Empty or `all` ⇒ pass everything. */
+export function matchesAnyType(rec: NetRecord, keys: NetTypeKey[]): boolean {
+  if (keys.length === 0 || keys.includes('all')) return true
+  return keys.some((k) => matchesType(rec, k))
 }
 
 /** Apply the type pill then the text filter (DevTools order). */
@@ -254,12 +264,12 @@ export function compileFilterRegex(pattern: string): RegExp | null {
   }
 }
 
-/** Options for the full row filter (type pill + text/regex/property tokens, optionally inverted). */
+/** Options for the full row filter (type pills + text/regex/property tokens, optionally inverted). */
 export interface NetFilterOpts {
-  type: NetTypeKey
+  types: NetTypeKey[] // active pills, OR'd; ['all'] or [] = no type narrowing
   query: string
   regex?: boolean // interpret the box as one regex over the URL (not key:value tokens)
-  invert?: boolean // flip the text/regex match (the type pill still applies as an AND)
+  invert?: boolean // flip the text/regex match (the type pills still apply as an AND)
 }
 export interface NetFilterResult {
   rows: NetRecord[]
@@ -267,13 +277,14 @@ export interface NetFilterResult {
 }
 
 /**
- * The complete DevTools row filter: resource-type pill (AND) combined with the text filter. Invert
- * flips the text/regex/property match only — the type pill always narrows normally (Chrome). Regex
+ * The complete DevTools row filter: resource-type pills (OR'd, then AND'd with the text filter).
+ * Invert flips the text/regex/property match only — the pills always narrow normally (Chrome). Regex
  * mode treats the whole box as one case-insensitive `RegExp` over the URL.
  */
 export function applyNetFilter(records: NetRecord[], opts: NetFilterOpts): NetFilterResult {
-  const { type, query, regex, invert } = opts
-  const byType = type === 'all' ? records : records.filter((r) => matchesType(r, type))
+  const { types, query, regex, invert } = opts
+  const noTypeNarrow = types.length === 0 || types.includes('all')
+  const byType = noTypeNarrow ? records : records.filter((r) => matchesAnyType(r, types))
   if (!query.trim()) return { rows: invert ? [] : byType } // empty filter matches all → invert hides all
   if (regex) {
     const re = compileFilterRegex(query)

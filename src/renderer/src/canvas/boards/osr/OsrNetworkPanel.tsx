@@ -50,7 +50,7 @@ export function OsrNetworkPanel({
   const [filter, setFilter] = useState('')
   const [regex, setRegex] = useState(false)
   const [invert, setInvert] = useState(false)
-  const [typeKey, setTypeKey] = useState<NetTypeKey>('all')
+  const [typeKeys, setTypeKeys] = useState<NetTypeKey[]>(['all'])
   const [detailTab, setDetailTab] = useState<DetailTab>('headers')
   // Lazily-fetched bodies cache. CDP reuses requestIds (sequential per session) across reloads, so it
   // MUST be dropped whenever the log is cleared (button OR clear-on-nav) — else a reused id shows a
@@ -67,12 +67,23 @@ export function OsrNetworkPanel({
   const preserve = board.preserve
   const dock: NetDock = board.dock
   const { rows, regexError } = applyNetFilter(board.records, {
-    type: typeKey,
+    types: typeKeys,
     query: filter,
     regex,
     invert
   })
-  const filtered = typeKey !== 'all' || filter.trim().length > 0 || invert
+  const typeNarrowed = !(typeKeys.length === 1 && typeKeys[0] === 'all')
+  const filtered = typeNarrowed || filter.trim().length > 0 || invert
+  // Plain click selects one pill; Ctrl/Cmd-click toggles it in the OR'd set (empty ⇒ back to All).
+  const onPill = (key: NetTypeKey, additive: boolean): void => {
+    setTypeKeys((cur) => {
+      if (key === 'all' || !additive) return [key]
+      const set = new Set(cur.filter((k) => k !== 'all'))
+      if (set.has(key)) set.delete(key)
+      else set.add(key)
+      return set.size === 0 ? ['all'] : [...set]
+    })
+  }
   const selected = board.selected
     ? board.records.find((r) => r.requestId === board.selected)
     : undefined
@@ -203,16 +214,20 @@ export function OsrNetworkPanel({
 
       {/* resource-type filter pills (DevTools parity) */}
       <div className="bb-net-pills" role="group" aria-label="Filter by type">
-        {NET_TYPE_PILLS.map((p) => (
-          <button
-            key={p.key}
-            className={'bb-net-pill' + (typeKey === p.key ? ' bb-net-pill-on' : '')}
-            aria-pressed={typeKey === p.key}
-            onClick={() => setTypeKey(p.key)}
-          >
-            {p.label}
-          </button>
-        ))}
+        {NET_TYPE_PILLS.map((p) => {
+          const on = typeKeys.includes(p.key)
+          return (
+            <button
+              key={p.key}
+              className={'bb-net-pill' + (on ? ' bb-net-pill-on' : '')}
+              aria-pressed={on}
+              title="Ctrl/⌘-click to select multiple types"
+              onClick={(e) => onPill(p.key, e.ctrlKey || e.metaKey)}
+            >
+              {p.label}
+            </button>
+          )
+        })}
       </div>
 
       {/* meta line: counts (X / Y when filtered) + dropped */}

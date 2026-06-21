@@ -9,6 +9,7 @@ import {
   filterRecords,
   parseFilterTokens,
   matchesType,
+  matchesAnyType,
   filterByType,
   applyNetFilter,
   initiatorLabel
@@ -241,7 +242,7 @@ describe('filterRecords — property filters (key:value)', () => {
   })
 })
 
-describe('applyNetFilter (type pill + text/regex + invert)', () => {
+describe('applyNetFilter (type pills + text/regex + invert)', () => {
   const list = [
     rec({ requestId: 'a', url: 'http://x/app.js', type: 'script' }),
     rec({ requestId: 'b', url: 'http://x/vendor.js', type: 'script' }),
@@ -251,29 +252,44 @@ describe('applyNetFilter (type pill + text/regex + invert)', () => {
   const ids = (rows: NetRecord[]): string[] => rows.map((x) => x.requestId)
 
   it('ANDs the type pill with the text filter', () => {
-    expect(ids(applyNetFilter(list, { type: 'js', query: 'vendor' }).rows)).toEqual(['b'])
+    expect(ids(applyNetFilter(list, { types: ['js'], query: 'vendor' }).rows)).toEqual(['b'])
+  })
+  it('ORs multiple active pills', () => {
+    expect(ids(applyNetFilter(list, { types: ['css', 'xhr'], query: '' }).rows)).toEqual(['c', 'd'])
   })
   it('regex mode matches the URL', () => {
-    expect(ids(applyNetFilter(list, { type: 'all', query: '\\.js$', regex: true }).rows)).toEqual([
-      'a',
-      'b'
-    ])
+    expect(
+      ids(applyNetFilter(list, { types: ['all'], query: '\\.js$', regex: true }).rows)
+    ).toEqual(['a', 'b'])
   })
   it('flags an invalid regex + falls back to the type set', () => {
-    const res = applyNetFilter(list, { type: 'js', query: '(', regex: true })
+    const res = applyNetFilter(list, { types: ['js'], query: '(', regex: true })
     expect(res.regexError).toBe(true)
     expect(ids(res.rows)).toEqual(['a', 'b'])
   })
   it('invert flips the text match but keeps the type pill', () => {
-    expect(ids(applyNetFilter(list, { type: 'js', query: 'app', invert: true }).rows)).toEqual([
+    expect(ids(applyNetFilter(list, { types: ['js'], query: 'app', invert: true }).rows)).toEqual([
       'b'
     ])
   })
   it('invert + empty query hides everything', () => {
-    expect(applyNetFilter(list, { type: 'all', query: '', invert: true }).rows).toEqual([])
+    expect(applyNetFilter(list, { types: ['all'], query: '', invert: true }).rows).toEqual([])
   })
   it('empty query passes the type set', () => {
-    expect(ids(applyNetFilter(list, { type: 'js', query: '' }).rows)).toEqual(['a', 'b'])
+    expect(ids(applyNetFilter(list, { types: ['js'], query: '' }).rows)).toEqual(['a', 'b'])
+  })
+})
+
+describe('matchesAnyType (multi-select pills)', () => {
+  const js = rec({ type: 'script' })
+  const css = rec({ type: 'stylesheet' })
+  it('empty or all passes everything', () => {
+    expect(matchesAnyType(js, [])).toBe(true)
+    expect(matchesAnyType(js, ['all'])).toBe(true)
+  })
+  it('ORs the active pills', () => {
+    expect(matchesAnyType(js, ['css', 'js'])).toBe(true)
+    expect(matchesAnyType(css, ['js'])).toBe(false)
   })
 })
 
@@ -286,10 +302,14 @@ describe('matchesType / filterByType (DevTools resource-type pills)', () => {
     rec({ requestId: 'css', type: 'stylesheet' }),
     rec({ requestId: 'ws', type: 'websocket' }),
     rec({ requestId: 'png', type: 'image' }),
+    rec({ requestId: 'mani', type: 'manifest' }),
     rec({ requestId: 'misc', type: 'eventsource' })
   ]
   it('all passes everything', () => {
     expect(list.every((r) => matchesType(r, 'all'))).toBe(true)
+  })
+  it('the Manifest pill claims the manifest type (not Other)', () => {
+    expect(filterByType(list, 'manifest', '').map((r) => r.requestId)).toEqual(['mani'])
   })
   it('xhr pill claims both xhr + fetch', () => {
     expect(filterByType(list, 'xhr', '').map((r) => r.requestId)).toEqual(['xhr', 'fetch'])
