@@ -46,6 +46,8 @@ export interface NetRecord {
   statusText?: string
   mimeType?: string
   fromCache?: boolean
+  remoteAddress?: string // "ip:port" of the server (DevTools General › Remote Address)
+  referrerPolicy?: string // request's referrer policy (DevTools General › Referrer Policy)
   reqHeaders?: NetHeader[]
   resHeaders?: NetHeader[]
   startTs: number
@@ -151,6 +153,8 @@ export function recordFromRequest(
     method: capText(req.method, 16) || 'GET',
     type: capText(params.type, 32) || 'other',
     reqHeaders: capHeaders(req.headers),
+    referrerPolicy:
+      typeof req.referrerPolicy === 'string' ? capText(req.referrerPolicy, 48) : undefined,
     startTs: eventTs(params, now),
     initiator: initiatorOf(params.initiator),
     frameId: typeof params.frameId === 'string' ? params.frameId : undefined,
@@ -186,6 +190,10 @@ export function applyResponse(rec: NetRecord, params: Record<string, unknown>): 
   rec.mimeType = capText(res.mimeType, 128) || rec.mimeType
   if (typeof res.fromDiskCache === 'boolean' || typeof res.fromServiceWorker === 'boolean') {
     rec.fromCache = res.fromDiskCache === true || res.fromServiceWorker === true
+  }
+  if (typeof res.remoteIPAddress === 'string' && res.remoteIPAddress) {
+    const port = typeof res.remotePort === 'number' ? `:${res.remotePort}` : ''
+    rec.remoteAddress = capText(res.remoteIPAddress, 64) + port
   }
   const h = capHeaders(res.headers)
   if (h) rec.resHeaders = h

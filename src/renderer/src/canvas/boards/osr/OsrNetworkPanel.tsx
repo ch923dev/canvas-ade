@@ -400,14 +400,27 @@ function HeaderList({
   title: string
   headers?: NetHeader[]
 }): ReactElement | null {
+  // "view parsed" (default) sorts alphabetically; "view source" shows the captured wire order.
+  const [source, setSource] = useState(false)
   if (!headers || headers.length === 0) return null
+  const shown = source ? headers : [...headers].sort((a, b) => a.name.localeCompare(b.name))
   return (
-    <details className="bb-net-headers">
+    <details className="bb-net-headers" open>
       <summary>
         {title} <span className="bb-net-dim">({headers.length})</span>
+        <button
+          className="bb-net-srctoggle"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setSource((v) => !v)
+          }}
+        >
+          {source ? 'view parsed' : 'view source'}
+        </button>
       </summary>
       <dl>
-        {headers.map((h, i) => (
+        {shown.map((h, i) => (
           <div key={i}>
             <dt>{h.name}</dt>
             <dd>{h.value}</dd>
@@ -507,18 +520,35 @@ function HttpDetail({
   // headers
   return (
     <div className="bb-net-kv">
-      <div className="bb-net-url">
-        <span className="bb-net-k">Request URL</span>
-        <span className="bb-net-v">{rec.url}</span>
-      </div>
-      <div>
-        <span className="bb-net-k">Status</span> <b>{statusLabel(rec)}</b>
-        {rec.statusText ? ` ${rec.statusText}` : ''}
-        {rec.mimeType ? ` · ${rec.mimeType}` : ''}
-        {rec.failed && <span className="bb-net-err"> · {rec.failed.errorText}</span>}
+      <div className="bb-net-general">
+        <div className="bb-net-url">
+          <span className="bb-net-k">Request URL</span>
+          <span className="bb-net-v">{rec.url}</span>
+        </div>
+        <GenRow k="Request Method" v={rec.method} />
+        <div className="bb-net-genrow">
+          <span className="bb-net-k">Status Code</span>
+          <span className="bb-net-v">
+            <span className={'bb-net-statusdot ' + (isErrorRow(rec) ? 'bad' : 'ok')} />
+            {statusLabel(rec)}
+            {rec.statusText ? ` ${rec.statusText}` : ''}
+            {rec.failed?.errorText && <span className="bb-net-err"> · {rec.failed.errorText}</span>}
+          </span>
+        </div>
+        {rec.remoteAddress && <GenRow k="Remote Address" v={rec.remoteAddress} />}
+        {rec.referrerPolicy && <GenRow k="Referrer Policy" v={rec.referrerPolicy} />}
       </div>
       <HeaderList title="Response Headers" headers={rec.resHeaders} />
       <HeaderList title="Request Headers" headers={rec.reqHeaders} />
+    </div>
+  )
+}
+
+function GenRow({ k, v }: { k: string; v: string }): ReactElement {
+  return (
+    <div className="bb-net-genrow">
+      <span className="bb-net-k">{k}</span>
+      <span className="bb-net-v">{v}</span>
     </div>
   )
 }

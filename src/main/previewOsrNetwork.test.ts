@@ -79,7 +79,12 @@ describe('recordFromRequest', () => {
         requestId: 'r1',
         type: 'XHR',
         frameId: 'F1',
-        request: { url: 'http://x/' + 'q'.repeat(URL_CAP), method: 'POST', headers: { a: 'b' } }
+        request: {
+          url: 'http://x/' + 'q'.repeat(URL_CAP),
+          method: 'POST',
+          headers: { a: 'b' },
+          referrerPolicy: 'strict-origin-when-cross-origin'
+        }
       },
       undefined,
       1000
@@ -88,6 +93,7 @@ describe('recordFromRequest', () => {
     expect(rec.method).toBe('POST')
     expect(rec.type).toBe('XHR')
     expect(rec.frameId).toBe('F1')
+    expect(rec.referrerPolicy).toBe('strict-origin-when-cross-origin')
     expect(rec.url.length).toBe(URL_CAP)
     expect(rec.reqHeaders).toEqual([{ name: 'a', value: 'b' }])
     expect(rec.sessionId).toBeUndefined()
@@ -125,12 +131,15 @@ describe('applyResponse / applyFinished / applyFailed', () => {
         statusText: 'OK',
         mimeType: 'application/json',
         fromDiskCache: true,
+        remoteIPAddress: '93.184.216.34',
+        remotePort: 443,
         headers: { etag: 'z' }
       }
     })
     expect(rec.status).toBe(200)
     expect(rec.mimeType).toBe('application/json')
     expect(rec.fromCache).toBe(true)
+    expect(rec.remoteAddress).toBe('93.184.216.34:443')
     expect(rec.resHeaders).toEqual([{ name: 'etag', value: 'z' }])
   })
   it('merges loadingFinished', () => {

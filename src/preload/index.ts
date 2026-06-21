@@ -118,6 +118,8 @@ export interface NetRecord {
   statusText?: string
   mimeType?: string
   fromCache?: boolean
+  remoteAddress?: string
+  referrerPolicy?: string
   reqHeaders?: NetHeader[]
   resHeaders?: NetHeader[]
   startTs: number

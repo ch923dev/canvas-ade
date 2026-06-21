@@ -1722,6 +1722,41 @@ body {
   flex-direction: column;
   gap: 2px;
 }
+/* Headers › General — the 5 DevTools fields */
+.bb-net-general {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 2px;
+}
+.bb-net-genrow {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.bb-net-statusdot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 5px;
+  background: var(--ok);
+}
+.bb-net-statusdot.bad {
+  background: var(--err);
+}
+/* per-section view source/parsed toggle in a header summary */
+.bb-net-srctoggle {
+  margin-left: 8px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 10px;
+  cursor: pointer;
+}
+.bb-net-srctoggle:hover {
+  text-decoration: underline;
+}
 .bb-net-v {
   font-family: var(--mono);
   color: var(--text);
