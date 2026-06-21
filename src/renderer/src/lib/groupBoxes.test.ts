@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeGroupBoxes, groupFitMaxZoom } from './groupBoxes'
+import { computeGroupBoxes, groupMemberRectKey, groupFitMaxZoom } from './groupBoxes'
 import type { Board, NamedGroup } from './boardSchema'
 import type { BoardRect } from './boardGeometry'
 
@@ -56,6 +56,44 @@ describe('computeGroupBoxes', () => {
     expect(alpha.depth).toBe(0) // 'alpha' < 'zeta' → outer
     expect(zeta.depth).toBe(1) // nests inside
     expect(zeta.x).toBeGreaterThan(alpha.x)
+  })
+})
+
+describe('groupMemberRectKey (GROUP-07)', () => {
+  const groups: NamedGroup[] = [
+    { id: 'g1', name: 'Auth', boardIds: ['a', 'b'] },
+    { id: 'g2', name: 'Infra', boardIds: ['c'] }
+  ]
+  const withMoved = (id: string, dx: number): BoardRect[] =>
+    boards.map((b) => (b.id === id ? { ...b, x: b.x + dx } : b))
+
+  it('is empty when there are no groups (layer renders nothing, never recomputes)', () => {
+    expect(groupMemberRectKey([], boards)).toBe('')
+  })
+
+  it('is STABLE when an ungrouped board moves (no member rect changed)', () => {
+    // boards a/b/c are all members above; add an ungrouped board 'u' and move it.
+    const withU = [...boards, { id: 'u', x: 999, y: 999, w: 50, h: 50 }]
+    const base = groupMemberRectKey(groups, withU)
+    const movedU = withU.map((b) => (b.id === 'u' ? { ...b, x: 0 } : b))
+    expect(groupMemberRectKey(groups, movedU)).toBe(base)
+  })
+
+  it('CHANGES when a grouped board moves', () => {
+    const base = groupMemberRectKey(groups, boards)
+    expect(groupMemberRectKey(groups, withMoved('a', 10))).not.toBe(base)
+  })
+
+  it('CHANGES on a group rename (so the tab label can never go stale)', () => {
+    const base = groupMemberRectKey(groups, boards)
+    const renamed = groups.map((g) => (g.id === 'g1' ? { ...g, name: 'Renamed' } : g))
+    expect(groupMemberRectKey(renamed, boards)).not.toBe(base)
+  })
+
+  it('CHANGES on a membership change', () => {
+    const base = groupMemberRectKey(groups, boards)
+    const added = groups.map((g) => (g.id === 'g2' ? { ...g, boardIds: ['c', 'a'] } : g))
+    expect(groupMemberRectKey(added, boards)).not.toBe(base)
   })
 })
 

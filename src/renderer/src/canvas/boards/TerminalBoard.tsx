@@ -62,6 +62,7 @@ export function TerminalBoard({
   onDelete,
   onAddToGroup,
   onRemoveFromGroup,
+  onRemoveFromAllGroups,
   onPushPreviewTo,
   onStartConnect
 }: BoardViewProps<TerminalBoardData>): ReactElement {
@@ -540,6 +541,7 @@ export function TerminalBoard({
         onDelete={onDelete}
         onAddToGroup={onAddToGroup}
         onRemoveFromGroup={onRemoveFromGroup}
+        onRemoveFromAllGroups={onRemoveFromAllGroups}
         onStartConnect={onStartConnect}
       >
         <div style={{ ...(lod ? shellHidden : shell), ...flip.perspectiveStyle }}>

@@ -72,6 +72,7 @@ import { FullViewContext } from './fullViewContext'
 import { BrowserPreviewLayer } from './boards/BrowserPreviewLayer'
 import { BackdropLayer } from './backdrop/BackdropLayer'
 import { GroupBoxLayer } from './GroupBoxLayer'
+import { ConnectorDragOverlay } from './ConnectorDragOverlay'
 import { GroupNamePopover } from './GroupNamePopover'
 import { GroupFocusPicker } from './GroupFocusPicker'
 import { GroupContextMenu } from './GroupContextMenu'
@@ -80,6 +81,8 @@ import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
 import { useDigestProse } from './hooks/useDigestProse'
 import { buildDigest } from '../lib/digest'
+import { classifyConnectorReject, CONNECTOR_REJECT_MESSAGE } from '../lib/connectorReject'
+import { showToast } from '../store/toastStore'
 import DiagOverlay from '../spike/DiagOverlay'
 import { isE2E } from '../smoke/e2eRegistry'
 import { installE2EHooks } from '../smoke/e2eHooks'
@@ -203,6 +206,9 @@ function CanvasInner(): ReactElement {
   // currently-selected orchestration connector (for the ✕ / Delete-key affordances).
   const [connectFromId, setConnectFromId] = useState<string | null>(null)
   const [connectPointer, setConnectPointer] = useState<{ x: number; y: number } | null>(null)
+  // GROUP-03: the board the in-flight connector drag is currently over (its resolved drop
+  // target), or null over empty canvas / the source. Lights an accent ring + "Connect here" pill.
+  const [connectTargetId, setConnectTargetId] = useState<string | null>(null)
   const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(null)
   // Live "tiled mode": the tile template currently owning the layout, or null = free placement.
   // While set, the canvas re-tiles to the window aspect on every pane resize (responsive
@@ -581,7 +587,6 @@ function CanvasInner(): ReactElement {
     exitCameraFullView,
     fullViewIdRef,
     cameraFullViewIdRef,
-    reflowAddToGroup,
     removeBoardFromAllGroups,
     setFocusedId,
     setSelectedConnectorId,
@@ -634,11 +639,46 @@ function CanvasInner(): ReactElement {
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [boards, setFullViewId, setCameraFullViewId, setDropTargetGroupId])
 
+  // GROUP-04: add a connector and, when the store rejects it, tell the user WHY instead of the
+  // cable silently vanishing. Pre-classifies against the live store so the toast copy is specific
+  // (self-link vs already-connected); a vanished endpoint stays silent (nothing useful to say).
+  // Shared by the drag-release path (useConnectorDrag) and the keyboard/palette path (GROUP-01).
+  const addConnectorWithFeedback = useCallback(
+    (sourceId: string, targetId: string): string | null => {
+      const st = useCanvasStore.getState()
+      const reason = classifyConnectorReject(
+        st.connectors,
+        new Set(st.boards.map((b) => b.id)),
+        sourceId,
+        targetId,
+        'orchestration'
+      )
+      if (reason === 'self' || reason === 'duplicate') {
+        showToast({
+          id: 'connector-reject',
+          kind: 'info',
+          message: CONNECTOR_REJECT_MESSAGE[reason]
+        })
+        return null
+      }
+      if (reason === 'missing') return null
+      return addConnector(sourceId, targetId, 'orchestration')
+    },
+    [addConnector]
+  )
+
   // M2 connector drag: while a source board is armed (title-bar connector handle pressed),
-  // track the pointer for the rubber-band and, on release, resolve the drop target from
-  // store geometry → add an orchestration connector. Lives in useConnectorDrag (the
-  // placement gesture's sibling hook) with the #BUG-048 Esc/blur/pointercancel abort.
-  useConnectorDrag({ rf, connectFromId, setConnectFromId, setConnectPointer, addConnector })
+  // track the pointer for the rubber-band + the live drop target (GROUP-03) and, on release,
+  // resolve the target from store geometry → add an orchestration connector (with GROUP-04
+  // feedback). Lives in useConnectorDrag with the #BUG-048 Esc/blur/pointercancel abort.
+  useConnectorDrag({
+    rf,
+    connectFromId,
+    setConnectFromId,
+    setConnectPointer,
+    setConnectTargetId,
+    addConnector: addConnectorWithFeedback
+  })
 
   // D4-A command palette: open/close state + the verb adapters, owned by the
   // controller hook so Canvas stays thin (779-pin). Ctrl+K / `?` route here via
@@ -653,6 +693,8 @@ function CanvasInner(): ReactElement {
     fitGroup,
     selectGroupMembers,
     removeGroup,
+    addConnector: addConnectorWithFeedback,
+    removeConnector,
     tidyAndFit,
     doUndo,
     doRedo
@@ -853,40 +895,15 @@ function CanvasInner(): ReactElement {
               see PlacementCaptureOverlay / useBoardPlacement. */}
           <PlacementCaptureOverlay {...placement} />
 
-          {/* M2 connector rubber-band: a calm dashed line from the source board's center to
-              the live pointer while a connector drag is in flight (ephemeral — drawn only,
-              the actual link is resolved on release). Positioned `fixed` so it shares the
-              client-coordinate space of both the pointer and flowToScreenPosition (no pane
-              rect / ref read in render); pointer-events off. */}
-          {connectFromId &&
-            connectPointer &&
-            (() => {
-              const src = boards.find((b) => b.id === connectFromId)
-              if (!src) return null
-              const c = rf.flowToScreenPosition({ x: src.x + src.w / 2, y: src.y + src.h / 2 })
-              return (
-                <svg
-                  style={{
-                    position: 'fixed',
-                    inset: 0,
-                    width: '100vw',
-                    height: '100vh',
-                    pointerEvents: 'none',
-                    zIndex: 50
-                  }}
-                >
-                  <line
-                    x1={c.x}
-                    y1={c.y}
-                    x2={connectPointer.x}
-                    y2={connectPointer.y}
-                    stroke="var(--border-strong)"
-                    strokeWidth={2}
-                    strokeDasharray="5 5"
-                  />
-                </svg>
-              )
-            })()}
+          {/* M2 connector rubber-band + GROUP-03 drop-target highlight (extracted —
+              file-size doctrine). Both draw only while a connector drag is in flight. */}
+          <ConnectorDragOverlay
+            rf={rf}
+            boards={boards}
+            connectFromId={connectFromId}
+            connectPointer={connectPointer}
+            connectTargetId={connectTargetId}
+          />
 
           {boards.length === 0 && <EmptyState onAdd={addCentered} />}
           {selectedIds.length >= 2 && (

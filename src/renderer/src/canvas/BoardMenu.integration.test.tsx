@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { BoardFrame, BoardMenu } from './BoardFrame'
 import { BoardFullViewContext } from './fullViewContext'
+import { useCanvasStore } from '../store/canvasStore'
+import type { NamedGroup } from '../lib/boardSchema'
 
 // `globals: false` in vitest.config means RTL's auto-cleanup hook isn't registered,
 // so each render would leak its DOM (and portaled body content) into the next test.
@@ -142,5 +144,72 @@ describe('BoardMenu — migrated chrome/menu contracts (from e2e menu probes)', 
     render(<BoardMenu onDuplicate={() => {}} onDelete={() => {}} onFull={() => {}} />)
     const svg = screen.getByTitle('More').querySelector('svg') as SVGElement
     expect(parseFloat(svg.getAttribute('stroke-width') ?? '0')).toBeGreaterThanOrEqual(2)
+  })
+})
+
+// GROUP-06: the per-group remove rows. BoardGroupMenuItems reads `groups` live from the store,
+// so seed it and assert the rendered rows + the "all" gating + the per-group callback id.
+describe('BoardMenu — GROUP-06 per-group remove rows', () => {
+  const seedGroups = (groups: NamedGroup[]): void => useCanvasStore.setState({ groups })
+  afterEach(() => useCanvasStore.setState({ groups: [] }))
+
+  it('lists one "Remove from {name}" per membership + "Remove from all groups" when in 2+', () => {
+    seedGroups([
+      { id: 'g1', name: 'Frontend', boardIds: ['b1'] },
+      { id: 'g2', name: 'API', boardIds: ['b1'] },
+      { id: 'g3', name: 'Infra', boardIds: ['other'] }
+    ])
+    render(
+      <BoardMenu
+        boardId="b1"
+        onFull={() => {}}
+        onDelete={() => {}}
+        onAddToGroup={() => {}}
+        onRemoveFromGroup={() => {}}
+        onRemoveFromAllGroups={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTitle('More'))
+    const labels = [...document.querySelectorAll('.board-menu-item')].map((b) =>
+      b.textContent?.trim()
+    )
+    expect(labels).toContain('Add to Infra') // eligible (not a member)
+    expect(labels).not.toContain('Add to Frontend') // already a member
+    expect(labels).toContain('Remove from Frontend')
+    expect(labels).toContain('Remove from API')
+    expect(labels).toContain('Remove from all groups') // in 2+ groups
+    // The quiet GROUPS caption renders and is NOT a menuitem (no roving stop).
+    expect(document.querySelector('.board-menu-cap')?.textContent?.trim()).toBe('Groups')
+  })
+
+  it('omits "Remove from all groups" when the board is in a single group', () => {
+    seedGroups([{ id: 'g1', name: 'Frontend', boardIds: ['b1'] }])
+    render(<BoardMenu boardId="b1" onRemoveFromGroup={() => {}} onRemoveFromAllGroups={() => {}} />)
+    fireEvent.click(screen.getByTitle('More'))
+    const labels = [...document.querySelectorAll('.board-menu-item')].map((b) =>
+      b.textContent?.trim()
+    )
+    expect(labels).toContain('Remove from Frontend')
+    expect(labels).not.toContain('Remove from all groups')
+  })
+
+  it('fires onRemoveFromGroup with the chosen group id', () => {
+    const onRemoveFromGroup = vi.fn()
+    seedGroups([
+      { id: 'g1', name: 'Frontend', boardIds: ['b1'] },
+      { id: 'g2', name: 'API', boardIds: ['b1'] }
+    ])
+    render(
+      <BoardMenu
+        boardId="b1"
+        onRemoveFromGroup={onRemoveFromGroup}
+        onRemoveFromAllGroups={() => {}}
+      />
+    )
+    fireEvent.click(screen.getByTitle('More'))
+    const row = screen.getByText('Remove from API')
+    fireEvent.pointerDown(row)
+    fireEvent.click(row)
+    expect(onRemoveFromGroup).toHaveBeenCalledWith('g2')
   })
 })

@@ -49,6 +49,10 @@ export interface PaletteVerbs {
   groupSelection: () => void
   focusGroup: (id: string) => void
   ungroup: (id: string) => void
+  /** GROUP-01: draw an orchestration connector between the two selected boards (keyboard path). */
+  connectSelectedBoards: () => void
+  /** GROUP-01: remove the orchestration connector between the two selected boards (keyboard path). */
+  disconnectSelectedBoards: () => void
   tidy: () => void
   fitAll: () => void
   resetZoom: () => void
@@ -63,6 +67,9 @@ export interface PaletteSnapshot {
   boards: { id: string; type: BoardType; title: string; agentSessionId?: string }[]
   groups: { id: string; name: string }[]
   selectedIds: string[]
+  /** GROUP-01: orchestration connectors, so the connect/disconnect rows know if the two
+   *  selected boards are already linked (either direction). */
+  connectors: { sourceId: string; targetId: string; kind: string }[]
   canUndo: boolean
   canRedo: boolean
 }
@@ -202,6 +209,36 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
       chips: ['Ctrl', 'G'],
       run: () => verbs.groupSelection()
     })
+  }
+  // GROUP-01: a fully-keyboard connector path keyed off a 2-board selection (no fragile edge
+  // focus needed). Offer Connect when they aren't linked, Disconnect when they are — either
+  // direction counts as connected.
+  if (snap.selectedIds.length === 2) {
+    const [a, b] = snap.selectedIds
+    const linked = snap.connectors.some(
+      (c) =>
+        c.kind === 'orchestration' &&
+        ((c.sourceId === a && c.targetId === b) || (c.sourceId === b && c.targetId === a))
+    )
+    out.push(
+      linked
+        ? {
+            id: 'disconnect-selected',
+            section: 'Groups',
+            title: 'Disconnect the 2 selected boards',
+            keywords: 'connector cable unlink remove orchestration',
+            glyph: '⊘',
+            run: () => verbs.disconnectSelectedBoards()
+          }
+        : {
+            id: 'connect-selected',
+            section: 'Groups',
+            title: 'Connect the 2 selected boards',
+            keywords: 'connector cable link orchestration',
+            glyph: '⊸',
+            run: () => verbs.connectSelectedBoards()
+          }
+    )
   }
   for (const g of snap.groups) {
     out.push({
@@ -364,7 +401,13 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
     chips: ['Ctrl', 'G', '·', 'Ctrl', 'Shift', 'G']
   },
   { section: 'Planning', label: 'Element context menu', chips: ['Shift', 'F10'] },
-  { section: 'Planning', label: 'Delete elements', chips: ['Del'] }
+  { section: 'Planning', label: 'Delete elements', chips: ['Del'] },
+  // GROUP-01/02: connectors + group tabs are keyboard-operable.
+  { section: 'Groups', label: 'Connect / disconnect the 2 selected boards', chips: ['Ctrl', 'K'] },
+  { section: 'Groups', label: 'Delete the selected connector', chips: ['Del'] },
+  { section: 'Groups', label: 'Group tab: focus the group', chips: ['Enter'] },
+  { section: 'Groups', label: 'Group tab: select members', chips: ['click'] },
+  { section: 'Groups', label: 'Group tab: manage menu', chips: ['Shift', 'F10'] }
 ]
 
 /** Per-platform chip display: Ctrl→⌘ on mac; Shift always compacts to ⇧. */

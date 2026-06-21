@@ -38,8 +38,8 @@ function makeDeps(): BoardActionsDeps {
     exitCameraFullView: vi.fn(),
     fullViewIdRef: { current: null },
     cameraFullViewIdRef: { current: null },
-    reflowAddToGroup: vi.fn(),
-    removeBoardFromAllGroups: vi.fn(),
+    // Real store action so the GROUP-06 "remove from all" path is exercised end-to-end.
+    removeBoardFromAllGroups: useCanvasStore.getState().removeBoardFromAllGroups,
     setFocusedId: vi.fn(),
     setSelectedConnectorId: vi.fn(),
     setConnectPointer: vi.fn(),
@@ -79,5 +79,51 @@ describe('#BUG-015 — useBoardActions.remove guards the parkTerminal rejection'
     const { result } = renderHook(() => useBoardActions(makeDeps()))
     result.current.remove(id)
     expect(park).not.toHaveBeenCalled()
+  })
+})
+
+describe('GROUP-05/06 — group membership actions', () => {
+  it('GROUP-05: addToGroup adds membership WITHOUT re-packing (the board keeps its position)', () => {
+    const st = useCanvasStore.getState()
+    const a = st.addBoard('planning', { x: 0, y: 0 })
+    const b = st.addBoard('planning', { x: 500, y: 0 })
+    const g = useCanvasStore.getState().addGroup('G', [a])
+    const before = useCanvasStore.getState().boards.find((x) => x.id === b)!
+    const { result } = renderHook(() => useBoardActions(makeDeps()))
+
+    result.current.addToGroup(b, g)
+
+    const after = useCanvasStore.getState()
+    expect(after.groups.find((x) => x.id === g)!.boardIds).toContain(b)
+    const moved = after.boards.find((x) => x.id === b)!
+    expect({ x: moved.x, y: moved.y }).toEqual({ x: before.x, y: before.y })
+  })
+
+  it('GROUP-06: removeFromGroup removes the board from ONE group only', () => {
+    const st = useCanvasStore.getState()
+    const a = st.addBoard('planning', { x: 0, y: 0 })
+    const g1 = useCanvasStore.getState().addGroup('G1', [a])
+    const g2 = useCanvasStore.getState().addGroup('G2', [a])
+    const { result } = renderHook(() => useBoardActions(makeDeps()))
+
+    result.current.removeFromGroup(a, g1)
+
+    const after = useCanvasStore.getState()
+    expect(after.groups.find((x) => x.id === g1)!.boardIds).not.toContain(a)
+    expect(after.groups.find((x) => x.id === g2)!.boardIds).toContain(a)
+  })
+
+  it('GROUP-06: removeFromAllGroups removes the board from every group', () => {
+    const st = useCanvasStore.getState()
+    const a = st.addBoard('planning', { x: 0, y: 0 })
+    const g1 = useCanvasStore.getState().addGroup('G1', [a])
+    const g2 = useCanvasStore.getState().addGroup('G2', [a])
+    const { result } = renderHook(() => useBoardActions(makeDeps()))
+
+    result.current.removeFromAllGroups(a)
+
+    const after = useCanvasStore.getState()
+    expect(after.groups.find((x) => x.id === g1)!.boardIds).not.toContain(a)
+    expect(after.groups.find((x) => x.id === g2)!.boardIds).not.toContain(a)
   })
 })

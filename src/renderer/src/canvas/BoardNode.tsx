@@ -110,10 +110,12 @@ export interface BoardViewProps<T extends Board = Board> {
   onDuplicate?: () => void
   /** ⋯ menu → delete this board (terminal park-on-delete handled by the store/Canvas). */
   onDelete?: () => void
-  /** S6 ⋯ menu → add this board to a group (the absorb re-pack). */
+  /** S6/GROUP-05 ⋯ menu → add this board to a group (single-board add, no re-pack). */
   onAddToGroup?: (groupId: string) => void
-  /** S6 ⋯ menu → remove this board from every group it belongs to. */
-  onRemoveFromGroup?: () => void
+  /** GROUP-06 ⋯ menu → remove this board from ONE named group (per-membership row). */
+  onRemoveFromGroup?: (groupId: string) => void
+  /** GROUP-06 ⋯ menu → remove this board from every group at once (shown only when in 2+). */
+  onRemoveFromAllGroups?: () => void
   /** Terminal "Preview" action → push `url` to a chosen Browser target (refresh linked,
    *  connect, re-target, or spawn). Target chosen by gesture + the multi-select picker. */
   onPushPreviewTo?: (url: string, target: ResolvedPushTarget) => void
@@ -202,7 +204,10 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
   const onAddToGroup = acts
     ? (groupId: string): void => acts.addToGroup(board.id, groupId)
     : undefined
-  const onRemoveFromGroup = acts ? (): void => acts.removeFromGroup(board.id) : undefined
+  const onRemoveFromGroup = acts
+    ? (groupId: string): void => acts.removeFromGroup(board.id, groupId)
+    : undefined
+  const onRemoveFromAllGroups = acts ? (): void => acts.removeFromAllGroups(board.id) : undefined
   const onPushPreviewTo = acts
     ? (url: string, target: ResolvedPushTarget): void => acts.pushPreviewTo(board.id, url, target)
     : undefined
@@ -213,6 +218,7 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     onDelete,
     onAddToGroup,
     onRemoveFromGroup,
+    onRemoveFromAllGroups,
     onPushPreviewTo,
     onStartConnect
   }

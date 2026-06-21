@@ -31,6 +31,9 @@ export interface PaletteControllerDeps {
   fitGroup: (groupId: string) => void
   selectGroupMembers: (groupId: string) => void
   removeGroup: (groupId: string) => void
+  /** GROUP-01: add an orchestration connector (with the GROUP-04 reject toast). */
+  addConnector: (sourceId: string, targetId: string) => string | null
+  removeConnector: (id: string) => void
   tidyAndFit: () => void
   doUndo: () => void
   doRedo: () => void
@@ -54,6 +57,8 @@ export function usePaletteController(deps: PaletteControllerDeps): PaletteContro
     fitGroup,
     selectGroupMembers,
     removeGroup,
+    addConnector,
+    removeConnector,
     tidyAndFit,
     doUndo,
     doRedo
@@ -106,6 +111,24 @@ export function usePaletteController(deps: PaletteControllerDeps): PaletteContro
         fitGroup(id)
       },
       ungroup: removeGroup,
+      // GROUP-01: connect/disconnect the two selected boards by keyboard. Read the selection at
+      // call time (it's set when the row is shown; the palette closes before run fires).
+      connectSelectedBoards: () => {
+        const ids = useCanvasStore.getState().selectedIds
+        if (ids.length === 2) addConnector(ids[0], ids[1])
+      },
+      disconnectSelectedBoards: () => {
+        const st = useCanvasStore.getState()
+        const ids = st.selectedIds
+        if (ids.length !== 2) return
+        const [a, b] = ids
+        const c = st.connectors.find(
+          (x) =>
+            x.kind === 'orchestration' &&
+            ((x.sourceId === a && x.targetId === b) || (x.sourceId === b && x.targetId === a))
+        )
+        if (c) removeConnector(c.id)
+      },
       tidy: tidyAndFit,
       fitAll: () => void rf.fitView(cameraAnim(FIT_FRAME)),
       // Recenter content at 100% rather than zoomTo(1)-in-place (#41) — same frame the
@@ -125,6 +148,8 @@ export function usePaletteController(deps: PaletteControllerDeps): PaletteContro
       selectGroupMembers,
       fitGroup,
       removeGroup,
+      addConnector,
+      removeConnector,
       tidyAndFit,
       rf,
       doUndo,

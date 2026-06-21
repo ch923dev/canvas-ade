@@ -44,6 +44,8 @@ function verbsMock(): CommandPaletteProps['verbs'] {
     groupSelection: vi.fn(),
     focusGroup: vi.fn(),
     ungroup: vi.fn(),
+    connectSelectedBoards: vi.fn(),
+    disconnectSelectedBoards: vi.fn(),
     tidy: vi.fn(),
     fitAll: vi.fn(),
     resetZoom: vi.fn(),
