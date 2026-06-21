@@ -6,6 +6,8 @@ import {
   recordFromRequest,
   isMainFramePageNav,
   applyRedirect,
+  applyRedirectResponse,
+  reKeyRedirectHop,
   applyResponse,
   applyFinished,
   applyFailed,
@@ -235,6 +237,48 @@ describe('applyRedirect', () => {
     applyRedirect(rec, { request: {} })
     expect(rec.url).toBe('u')
     expect(rec.method).toBe('POST')
+  })
+})
+
+describe('redirect hops (applyRedirectResponse + reKeyRedirectHop)', () => {
+  it('finalizes a hop from its redirectResponse', () => {
+    const rec: NetRecord = {
+      requestId: 'R',
+      url: 'http://x/a',
+      method: 'GET',
+      type: 'document',
+      startTs: 0
+    }
+    applyRedirectResponse(
+      rec,
+      { status: 301, headers: { location: '/b' }, encodedDataLength: 120 },
+      50
+    )
+    expect(rec.status).toBe(301)
+    expect(rec.endTs).toBe(50)
+    expect(rec.encodedDataLength).toBe(120)
+    expect(rec.resHeaders).toEqual([{ name: 'location', value: '/b' }])
+  })
+  it('re-keys a hop to a unique synthetic id, keeping its ring slot', () => {
+    const s = createNetState()
+    const rec = recordFromRequest({ requestId: 'R', request: { url: 'http://x/a' } }, undefined, 1)
+    ringPushRecord(s, rec)
+    reKeyRedirectHop(s, rec)
+    expect(rec.requestId).toBe('R#1')
+    expect(s.byId.has('R')).toBe(false)
+    expect(s.byId.get('R#1')).toBe(rec)
+    expect(s.records).toContain(rec)
+  })
+  it('chains synthetic ids when a requestId redirects twice', () => {
+    const s = createNetState()
+    const a = recordFromRequest({ requestId: 'R', request: { url: 'http://x/a' } }, undefined, 1)
+    ringPushRecord(s, a)
+    reKeyRedirectHop(s, a) // R#1
+    const b = recordFromRequest({ requestId: 'R', request: { url: 'http://x/b' } }, undefined, 2)
+    ringPushRecord(s, b)
+    reKeyRedirectHop(s, b) // R#2 (R#1 taken)
+    expect(a.requestId).toBe('R#1')
+    expect(b.requestId).toBe('R#2')
   })
 })
 

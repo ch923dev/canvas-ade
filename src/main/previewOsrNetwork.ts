@@ -198,11 +198,42 @@ export function initiatorOf(raw: unknown): string | undefined {
 /**
  * A redirect on `Network.requestWillBeSent` reuses the requestId — refresh url + method, keep the row.
  * A 303 (and some 301/302) rewrites POST→GET, so the final method must follow or the row would lie.
+ * (Only the fallback path now; the redirect-chain split uses applyRedirectResponse + reKeyRedirectHop.)
  */
 export function applyRedirect(rec: NetRecord, params: Record<string, unknown>): void {
   const req = (params.request ?? {}) as Record<string, unknown>
   rec.url = capText(req.url, URL_CAP) || rec.url
   rec.method = capText(req.method, 16) || rec.method
+}
+
+/** Finalize a redirect hop from the `redirectResponse` of the NEXT requestWillBeSent (the prior
+ *  hop's actual response — status/headers/size/timing — closing the row at `now`). */
+export function applyRedirectResponse(
+  rec: NetRecord,
+  res: Record<string, unknown>,
+  now: number
+): void {
+  if (typeof res.status === 'number') rec.status = res.status
+  rec.statusText = capText(res.statusText, 256) || rec.statusText
+  const h = capHeaders(res.headers)
+  if (h) rec.resHeaders = h
+  if (typeof res.encodedDataLength === 'number') rec.encodedDataLength = res.encodedDataLength
+  const tm = extractTiming(res.timing)
+  if (tm) rec.timing = tm
+  rec.endTs = now
+}
+
+/** Re-key a finalized redirect hop to a unique synthetic id (`<reqId>#<n>`) so it survives as its
+ *  own stacked row while the live requestId is reused for the next hop. Keeps the ring slot in place. */
+export function reKeyRedirectHop(state: OsrNetState, rec: NetRecord): void {
+  const base = rec.requestId
+  let k = 1
+  while (state.byId.has(`${base}#${k}`)) k++
+  const id = `${base}#${k}`
+  state.byId.delete(base)
+  state.dirtyRecords.delete(base)
+  rec.requestId = id
+  state.byId.set(id, rec)
 }
 
 /** Pull the CDP ResourceTiming subset off a response (undefined if absent — cached/failed). */
@@ -481,8 +512,17 @@ function handleNetMessage(
   switch (method) {
     case 'Network.requestWillBeSent': {
       const existing = state.byId.get(reqId)
-      if (existing) {
-        applyRedirect(existing, params) // a redirect chain reuses the requestId
+      if (existing && params.redirectResponse) {
+        // The prior hop got a redirect response — finalize it as its own stacked row, then start a
+        // fresh row for the new URL (DevTools shows every hop; the destination's Initiator = Redirect).
+        applyRedirectResponse(existing, params.redirectResponse as Record<string, unknown>, now)
+        reKeyRedirectHop(state, existing)
+        markRecord(state, emit, existing.requestId) // the finalized hop (synthetic id)
+        const next = recordFromRequest(params, sessionId, now)
+        next.initiator = 'Redirect'
+        ringPushRecord(state, next)
+      } else if (existing) {
+        applyRedirect(existing, params) // fallback: same-id re-send without a redirectResponse
       } else {
         ringPushRecord(state, recordFromRequest(params, sessionId, now))
       }
