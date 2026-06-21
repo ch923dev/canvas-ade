@@ -438,8 +438,21 @@ describe('reapParkedCore (T1)', () => {
 
   it('is a no-op for an unknown id', async () => {
     const killTree = vi.fn(() => Promise.resolve())
-    await reapParkedCore('nope', new Map(), { killTree } as any)
+    const onReap = vi.fn()
+    await reapParkedCore('nope', new Map(), { killTree } as any, onReap)
     expect(killTree).not.toHaveBeenCalled()
+    expect(onReap).not.toHaveBeenCalled() // FIND-009: no cleanup when nothing was reaped
+  })
+
+  it('FIND-009: fires onReap(id) when a parked session IS reaped (boardCwds cleanup hook)', async () => {
+    const { proc } = makeProc(444)
+    const killTree = vi.fn(() => Promise.resolve())
+    const onReap = vi.fn()
+    const parked = new Map<string, any>([
+      ['p', { proc, buf: createRing(256 * 1024), timer: setTimeout(() => {}, 100000) }]
+    ])
+    await reapParkedCore('p', parked, { killTree } as any, onReap)
+    expect(onReap).toHaveBeenCalledWith('p')
   })
 })
 

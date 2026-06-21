@@ -30,6 +30,7 @@ vi.mock('../orchestration/seam', async (importOriginal) => {
 })
 
 import {
+  __resetProvisionedDirs,
   cliIdForLaunchCommand,
   detectInstalled,
   getProvisionStatus,
@@ -50,6 +51,7 @@ function freshProject(): string {
 
 beforeEach(() => {
   orchEnabled.value = true
+  __resetProvisionedDirs() // FIND-001: drop the divergent-dir registry (module-level) between cases
   for (const d of ['.claude', '.gemini', '.codex', '.config']) {
     rmSync(join(TEST_HOME, d), { recursive: true, force: true })
   }
@@ -137,6 +139,29 @@ describe('unsyncProvisioners', () => {
     await unsyncProvisioners({ projectDir: dir })
     const cfg = JSON.parse(readFileSync(join(TEST_HOME, '.gemini', 'settings.json'), 'utf8'))
     expect((cfg.mcpServers ?? {})['canvas-ade']).toBeUndefined()
+  })
+
+  // FIND-001 (High): the spawn hook writes project-scoped configs to the board's cwd, which the user
+  // can point at a subfolder. Consent-revoke must clean those divergent configs too — the bug was
+  // that unsync removed only the project root, leaving a live bearer token on disk in <cwd>/.mcp.json.
+  it('cleans a divergent board cwd the spawn hook wrote into, not just the project root', async () => {
+    const dir = freshProject()
+    const sub = join(dir, 'packages', 'api')
+    mkdirSync(sub, { recursive: true })
+    const provider = makeOrchestrationSyncProvider({ getProjectDir: () => dir, mintToken })
+    provider({ id: 'b-root', launchCommand: 'claude', cwd: dir }) // project-root write
+    provider({ id: 'b-sub', launchCommand: 'claude', cwd: sub }) // divergent board-cwd write
+    expect(existsSync(join(dir, '.mcp.json'))).toBe(true)
+    expect(existsSync(join(sub, '.mcp.json'))).toBe(true)
+    // The plaintext bearer really landed in the divergent config (the leak vector).
+    const subCfg = JSON.parse(readFileSync(join(sub, '.mcp.json'), 'utf8'))
+    expect(subCfg.mcpServers['canvas-ade'].headers.Authorization).toContain('SECRET')
+
+    await unsyncProvisioners({ projectDir: dir })
+
+    // No bearer token left anywhere — both the root AND the divergent cwd config are gone.
+    expect(existsSync(join(dir, '.mcp.json'))).toBe(false)
+    expect(existsSync(join(sub, '.mcp.json'))).toBe(false)
   })
 })
 

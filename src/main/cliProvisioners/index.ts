@@ -157,18 +157,57 @@ export async function runProvisionerSync(opts: {
   return results
 }
 
-/** Remove our `canvas-ade` entry from every (or the given) CLI's config — on consent revoke. */
+/**
+ * FIND-001: directories a PROJECT-SCOPED provisioner config (claude `.mcp.json`, opencode
+ * `opencode.json`) was written into that DIVERGE from the project root. The spawn-time hook writes
+ * to the board's cwd, which a user can point at any subfolder, so on consent revoke those configs
+ * (each carrying a plaintext bearer token) must be cleaned up too — not only the project root.
+ * Keyed by project root → set of divergent target dirs. Home-scoped CLIs (gemini/codex) ignore the
+ * dir, so the root pass already covers them; only the extra project-scoped locations need tracking.
+ */
+const provisionedDirs = new Map<string, Set<string>>()
+
+/** Record a divergent target dir we wrote a config into for `projectDir` (FIND-001). */
+function recordProvisionedDir(projectDir: string, targetDir: string): void {
+  if (targetDir === projectDir) return // the root is always cleaned; only track divergent dirs
+  let dirs = provisionedDirs.get(projectDir)
+  if (!dirs) {
+    dirs = new Set<string>()
+    provisionedDirs.set(projectDir, dirs)
+  }
+  dirs.add(targetDir)
+}
+
+/** Test seam: clear the divergent-dir registry between cases (module-level state). */
+export function __resetProvisionedDirs(): void {
+  provisionedDirs.clear()
+}
+
+/**
+ * Remove our `canvas-ade` entry from every (or the given) CLI's config — on consent revoke.
+ *
+ * FIND-001: cleans the project root AND every divergent board-cwd a project-scoped config was
+ * written into, so a revoked grant leaves NO bearer token on disk. `removeSync` is idempotent (a
+ * no-op when our entry isn't present), so running each provisioner across every dir is safe; a
+ * home-scoped CLI ignores the dir and is cleaned by the first (root) pass.
+ */
 export async function unsyncProvisioners(opts: {
   projectDir: string
   ids?: readonly CliId[]
 }): Promise<void> {
+  const dirs = new Set<string>([opts.projectDir, ...(provisionedDirs.get(opts.projectDir) ?? [])])
   for (const id of opts.ids ?? CLI_IDS) {
-    try {
-      PROVISIONERS[id].removeSync(opts.projectDir)
-    } catch {
-      /* best-effort cleanup — a missing/locked file must never block disable */
+    for (const dir of dirs) {
+      try {
+        PROVISIONERS[id].removeSync(dir)
+      } catch {
+        /* best-effort cleanup — a missing/locked file must never block disable */
+      }
     }
   }
+  // A full unsync cleaned everything tracked for this project → forget it. A scoped (ids-subset)
+  // unsync leaves the registry intact so a later full unsync still covers the untouched CLIs/dirs.
+  if (!opts.ids) provisionedDirs.delete(opts.projectDir)
 }
 
 /** The synchronous provider wired into `pty.ts` (see module header). */
@@ -200,5 +239,8 @@ export function makeOrchestrationSyncProvider(deps: {
     // cwd); home-scoped CLIs (gemini / codex) ignore the dir argument.
     const targetDir = cwd && cwd.trim() !== '' ? cwd : projectDir
     PROVISIONERS[cliId].writeSync(targetDir, deps.mintToken(id))
+    // FIND-001: remember a divergent target dir so consent-revoke cleans its config too — the
+    // root-only unsync would otherwise leave the bearer token on disk in <cwd>/.mcp.json.
+    recordProvisionedDir(projectDir, targetDir)
   }
 }
