@@ -39,7 +39,6 @@ import { openSearchPanel } from '@codemirror/search'
 import type { FileBoard as FileBoardData } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useFileTreeUiStore } from '../../store/fileTreeUiStore'
-import { showToast } from '../../store/toastStore'
 import { BoardFrame } from '../BoardFrame'
 import type { BoardViewProps } from '../BoardNode'
 import {
@@ -59,6 +58,7 @@ import {
   writeStickyFileFont
 } from './fileBoardSyntax'
 import { renderMarkdownToHtml } from './fileBoardMarkdown'
+import { useFileSave } from './fileBoardSave'
 import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
 import { FILEREF_MIME } from '../fileTreeData'
 
@@ -131,6 +131,9 @@ export function FileBoard({
   const dirtyRef = useRef(dirty)
   const pathRef = useRef(path)
   const savingRef = useRef(saving)
+  // FIND-002: the on-disk mtime we last loaded/saved. Passed to writeText so MAIN refuses to
+  // blind-overwrite a file an external process (e.g. an agent) changed since — no silent lost update.
+  const savedMtimeRef = useRef<number | null>(null)
   useEffect(() => {
     textRef.current = text
     dirtyRef.current = dirty
@@ -191,6 +194,7 @@ export function FileBoard({
         const st = await window.api.file.stat(path)
         if (cancelled) return
         setSize(st.size)
+        savedMtimeRef.current = st.mtimeMs // FIND-002: baseline for the optimistic-concurrency save
         if (st.isDir) {
           setErrMsg('This is a folder, not a file.')
           setKind('error')
@@ -261,25 +265,17 @@ export function FileBoard({
   )
 
   // -- Save (atomic write via the S1 contract) ----------------------------------
-  const doSave = useCallback(async (): Promise<void> => {
-    const p = pathRef.current
-    if (!p || savingRef.current || !dirtyRef.current) return
-    setSaving(true)
-    const snapshot = textRef.current
-    try {
-      const ok = await window.api.file.writeText(p, snapshot)
-      if (!ok) throw new Error('write returned false')
-      setSavedText(snapshot)
-    } catch (e) {
-      showToast({
-        id: `file-save-${board.id}`,
-        kind: 'error',
-        message: `Couldn't save ${baseName(p)} - ${e instanceof Error ? e.message : String(e)}`
-      })
-    } finally {
-      setSaving(false)
-    }
-  }, [board.id])
+  // Extracted to keep this host under the file-size doctrine; owns the FIND-002 overwrite guard.
+  const doSave = useFileSave({
+    boardId: board.id,
+    pathRef,
+    textRef,
+    dirtyRef,
+    savingRef,
+    savedMtimeRef,
+    setSaving,
+    setSavedText
+  })
 
   const onCreateEditor = useCallback((view: EditorView): void => {
     viewRef.current = view
