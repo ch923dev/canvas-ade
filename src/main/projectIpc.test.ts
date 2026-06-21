@@ -73,6 +73,17 @@ describe('isUnderApprovedRoot (BUG-006)', () => {
     expect(isUnderApprovedRoot('/home/x/proj', '/home/x/proj/')).toBe(true)
   })
 
+  // FIND-014: case-folding is now path-shape-aware. Windows (drive-letter / UNC) stays
+  // case-insensitive (above); POSIX paths are case-SENSITIVE, since `/home/x/PROJ` and
+  // `/home/x/proj` are different directories on a case-sensitive filesystem — case-folding there
+  // over-approved a case-variant of an approved root (defense-in-depth loosening).
+  it('is case-SENSITIVE for POSIX paths (FIND-014)', () => {
+    expect(isUnderApprovedRoot('/home/x/PROJ', '/home/x/proj')).toBe(false)
+    expect(isUnderApprovedRoot('/home/X/proj', '/home/x/proj')).toBe(false)
+    // Windows-shaped paths remain case-insensitive (unchanged):
+    expect(isUnderApprovedRoot('C:\\Users\\x\\PROJ\\sub', 'c:\\users\\X\\proj')).toBe(true)
+  })
+
   it('rejects a non-string / empty input', () => {
     expect(isUnderApprovedRoot('/home/x/proj', '')).toBe(false)
     expect(isUnderApprovedRoot(undefined as unknown as string, '/home/x/proj')).toBe(false)
@@ -182,6 +193,33 @@ describe('project:create / project:open approved-root guard (BUG-006)', () => {
     }
 
     expect(result.ok).toBe(true)
+  })
+
+  // FIND-004: project:reopenFromBak was the one handler missing the BUG-006 approved-root gate, so
+  // a compromised renderer could read an arbitrary `<dir>/.canvas/canvas.json.bak` it never approved.
+  it('rejects project:reopenFromBak at an unapproved dir (FIND-004)', async () => {
+    const userDataDir = mkTmp('canvas-ud-')
+    const evilDir = mkTmp('canvas-evil-') // traversal-free → the OLD handler would readBak() it
+    expect(isUnsafeProjectDir(evilDir)).toBe(false)
+
+    const result = await register(userDataDir).get('project:reopenFromBak')!(synthetic, evilDir)
+
+    expect(result).toEqual({ ok: false, error: 'invalid path' })
+  })
+
+  it('allows project:reopenFromBak past the gate for an approved (recents) dir (FIND-004)', async () => {
+    const userDataDir = mkTmp('canvas-ud-')
+    const recentDir = mkTmp('canvas-recent-')
+    await touchRecent(userDataDir, recentDir, 'recent', 1)
+
+    const result = (await register(userDataDir).get('project:reopenFromBak')!(
+      synthetic,
+      recentDir
+    )) as { ok: boolean; error?: string }
+
+    // Whatever readBak returns (no backup on disk here), the request is NOT blocked by the gate —
+    // the legit recovery flow for an already-open/approved project still works.
+    expect(result.error).not.toBe('invalid path')
   })
 })
 
