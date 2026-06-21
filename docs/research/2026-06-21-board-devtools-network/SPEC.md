@@ -158,11 +158,22 @@ Ring sizes (initial; tune under §12 risk #4): **≤1000** `NetRecord` per board
 
 The page renders into `.bb-live` (a `<canvas>` inside `.bb-frame`); `.bb-frame` is the **device viewport**
 (390/834/1280, letterboxed within `.bb-stage` by `deviceFitScale`). Overlaying a panel *inside* `.bb-frame`
-would break the responsive-viewport metaphor and cover the page. So the inspector is a **DOM drawer anchored to
-the bottom of `.bb-stage`** (same overlay class family as `OsrWidgetLayer` — clips/rounds with the board, no
-occlusion), toggled from a new **URL-bar icon button** beside mute/screenshot. It slides up over the lower part
-of the stage (Chrome's "dock to bottom" metaphor). For serious inspection the board's existing **full-view**
-(camera-fit) gives the drawer real room — recommend (don't force) full-view when opening the inspector.
+would break the responsive-viewport metaphor and cover the page. So the inspector is a **DOM panel inside
+`.bb-stage`** (same overlay class family as `OsrWidgetLayer` — clips/rounds with the board, no occlusion),
+toggled from a new **URL-bar icon button** beside mute/screenshot.
+
+**Two dock positions, user-selectable (decided 2026-06-21).** A `▤ bottom ⇆ ▥ right` switch in the panel
+header flips the layout; the choice is **remembered per board** (default = **bottom**):
+- **Bottom drawer** — slides up over the lower stage (Chrome's "dock to bottom"); full-width request table,
+  page above. Best for wide/short boards.
+- **Right dock** — sits beside the page (page keeps painting, unobstructed); narrow single-line rows + stacked
+  details. Best for tall boards & full-view.
+
+Both share **one** `OsrNetworkPanel` with identical internals — only the flex axis + row density differ off a
+`dock: 'bottom' | 'right'` prop (no duplicated logic). For serious inspection the board's existing **full-view**
+(camera-fit) gives either dock real room — recommend (don't force) full-view when opening the inspector.
+Signed-off artifacts: `mock/inspector-mock.png` (bottom + states) · `mock/inspector-mock-sidebyside.png` (right
+dock + dock switch).
 
 ## 9. Design artifact — wireframe (sign-off gate)
 
@@ -216,8 +227,10 @@ crashed :  "— renderer crashed —"  divider in the log; capture resumes after
 dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
 ```
 
-> Next: a token-accurate static HTML mock of (b)/(c), screenshotted via the Playwright `_electron` harness, for
-> pixel sign-off **before** building the panel.
+> **DONE (2026-06-21):** token-accurate HTML mocks built + screenshotted → `mock/inspector-mock.html`/`.png`
+> (bottom drawer, states b–d) and `mock/inspector-mock-sidebyside.html`/`.png` (right dock + the `▤/▥` dock
+> switch + a when-to-use legend). Dock model signed off = **both, toggle, default bottom** (§8). Final pixel
+> sign-off pending explicit user OK before S4.
 
 ## 10. Touchpoints (integration sketch — file by file)
 
@@ -244,10 +257,14 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
 
 ## 11. Persistence / schema
 
-- Captured data + panel-open state are **ephemeral** (like `previewStore`) — **no `canvas.json` write, no schema
-  bump** for v1.
-- *Optional later:* persist a per-board `devtoolsEnabled?: boolean` (remember the panel was open) — that would
-  be an **additive** field → writer-only schema bump under ADR 0007 (no `minReaderVersion` move). Deferred.
+- **Captured data is ephemeral** (like `previewStore`) — never written to `canvas.json`.
+- **Small per-board UI prefs ARE persisted** so the panel is "remembered per board" (the §8 dock decision): an
+  **additive optional** `devtools?: { open?: boolean; dock?: 'bottom' | 'right' }` on the board → **writer-only**
+  schema bump under ADR 0007 (no `minReaderVersion` move; older apps ignore the field). Defaults (closed, bottom)
+  make an absent field read identically to today — zero migration.
+- *Fallback if we want v1 strictly zero-schema:* hold `{open, dock}` in the ephemeral per-board store
+  (remembered for the session only). **Recommend the additive persist** — cheap, ADR-0007-sanctioned, and the
+  honest reading of "remembered per board."
 
 ## 12. Open risks / decisions needed
 
@@ -257,8 +274,8 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
   so MAIN CPU stays flat (the `FIND-013` "no per-event O(n) in MAIN" lesson). Verify during impl.
 - **#5 security sign-off** — response bodies crossing MAIN→renderer at all. Decision needed before the body-fetch
   channel lands.
-- **Panel home** — bottom drawer over `.bb-stage` vs full-view-only. Spec assumes drawer + optional full-view;
-  confirm at mock sign-off.
+- **Panel home** — RESOLVED (2026-06-21): ship **both** dock positions (bottom drawer + right dock) with a
+  per-board, remembered toggle, default bottom (§8); full-view available for either. Mocks signed off.
 
 ## 13. Testing
 
@@ -276,8 +293,10 @@ dropped :  "24 reqs · 3 dropped (buffer full)"  in the toolbar
    `ensureOsr`; no UI. Unit tests for helpers. (Console-log verify via a temp probe.)
 2. **S2 — IPC + preload**: 5 `preview:osrNet*` handlers + id-dispatched preload + `onPreviewOsrNet`. Subscribe
    replay/delta. Frame-guard tests.
-3. **S3 — Design mock**: token-accurate HTML mock of the drawer → screenshot → **sign-off** (gate before S4).
-4. **S4 — Renderer store + panel**: `osrNetworkStore`, `useOsrNetwork`, `OsrNetworkPanel`, URL-bar toggle.
+3. **S3 — Design mock**: ✅ token-accurate HTML mocks (bottom + right dock) → screenshots → sign-off.
+   `mock/inspector-mock*.html`. Dock model = both / toggle / default-bottom.
+4. **S4 — Renderer store + panel**: `osrNetworkStore`, `useOsrNetwork`, `OsrNetworkPanel` (renders BOTH docks
+   off a `dock` prop), URL-bar toggle + the `▤/▥` dock switch, persisted `devtools?` pref (§11).
    FIND-011-correct unmount cleanup.
 5. **S5 — Bodies + WS detail + clear/preserve**: lazy body fetch (capped), WS frames sub-view, clear + preserve.
 6. **S6 — Liveness/crash polish + e2e**: eviction "paused" state, crash-resume, `@preview` e2e, full matrix.
