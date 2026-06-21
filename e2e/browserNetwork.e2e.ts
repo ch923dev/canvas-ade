@@ -43,6 +43,45 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect(page.locator('.bb-net'), 'panel closes').toHaveCount(0)
   })
 
+  test('filter narrows rows + shows X / Y count; regex + invert toggles work', async ({
+    page,
+    electronApp
+  }) => {
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const id = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
+
+    const filterInput = page.getByRole('textbox', { name: 'Filter requests' })
+
+    // A guaranteed-miss query → "No matches" + the filtered "0 / Y requests" count.
+    await filterInput.fill('zzzz-no-such-request-zzzz')
+    await expect(page.locator('.bb-net-empty')).toContainText('No matches')
+    await expect(page.locator('.bb-net-meta')).toContainText('0 /')
+
+    // Clearing restores the rows.
+    await filterInput.fill('')
+    await expect(page.locator('.bb-net-row').first()).toBeVisible()
+
+    // Invert with an empty filter hides everything (NOT match-all).
+    const invertBtn = page.getByRole('button', { name: 'Invert filter' })
+    await invertBtn.click()
+    await expect(invertBtn).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.bb-net-empty')).toContainText('No matches')
+    await invertBtn.click()
+
+    // Regex mode: an invalid pattern flags the filter box red.
+    const regexBtn = page.getByRole('button', { name: 'Use regular expression' })
+    await regexBtn.click()
+    await expect(regexBtn).toHaveAttribute('aria-pressed', 'true')
+    await filterInput.fill('(')
+    await expect(page.locator('.bb-net-filter-err')).toBeVisible()
+  })
+
   test('the dock switch flips the panel between bottom and right', async ({
     page,
     electronApp
