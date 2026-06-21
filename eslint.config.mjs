@@ -212,7 +212,9 @@ export default tseslint.config(
   },
   {
     files: ['src/renderer/src/canvas/boards/TerminalBoard.tsx'],
-    rules: { 'max-lines': ['error', { max: 631, skipBlankLines: true, skipComments: true }] }
+    // PA-9/TERM-07 ratcheted 631→627 (extracted the context-menu builder, run-timer and
+    // interrupt-feedback into boards/terminal/*). Pins move DOWNWARD only.
+    rules: { 'max-lines': ['error', { max: 627, skipBlankLines: true, skipComments: true }] }
   },
   {
     files: ['src/renderer/src/canvas/Canvas.tsx'],

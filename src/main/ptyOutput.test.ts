@@ -1,5 +1,57 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi } from './ptyOutput'
+import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi, createRing, pushRing, readRing } from './ptyOutput'
+
+describe('OutputRing (PERF-06 chunk deque)', () => {
+  it('concatenates chunks under the cap (read joins them)', () => {
+    const r = createRing(10)
+    pushRing(r, 'ab')
+    pushRing(r, 'cd')
+    expect(readRing(r)).toBe('abcd')
+  })
+  it('keeps exactly the input at the cap boundary', () => {
+    const r = createRing(6)
+    pushRing(r, 'abcd')
+    pushRing(r, 'ef')
+    expect(readRing(r)).toBe('abcdef')
+    expect(r.total).toBe(6)
+  })
+  it('drops the oldest chars when over the cap (keeps the last `cap`)', () => {
+    const r = createRing(6)
+    pushRing(r, 'abcd')
+    pushRing(r, 'efgh')
+    expect(readRing(r)).toBe('cdefgh')
+  })
+  it('keeps only the last `cap` chars when a single chunk exceeds the cap', () => {
+    const r = createRing(4)
+    pushRing(r, 'abcdefgh')
+    expect(readRing(r)).toBe('efgh')
+    expect(r.total).toBe(4)
+  })
+  it('is a no-op for an empty chunk', () => {
+    const r = createRing(10)
+    pushRing(r, 'abc')
+    pushRing(r, '')
+    expect(readRing(r)).toBe('abc')
+  })
+  it('bounds the deque under a steady stream of many small chunks (drops whole head chunks)', () => {
+    const r = createRing(4)
+    for (const c of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) pushRing(r, c)
+    expect(readRing(r)).toBe('defg')
+    expect(r.total).toBe(4)
+  })
+  it('readRing collapses the deque to one chunk (repeated reads are stable)', () => {
+    const r = createRing(10)
+    pushRing(r, 'ab')
+    pushRing(r, 'cd')
+    expect(readRing(r)).toBe('abcd')
+    expect(r.chunks.length).toBe(1) // collapsed
+    pushRing(r, 'ef')
+    expect(readRing(r)).toBe('abcdef')
+  })
+  it('an empty ring reads as the empty string', () => {
+    expect(readRing(createRing(8))).toBe('')
+  })
+})
 
 describe('stripAnsi', () => {
   it('removes SGR color codes, keeping the text', () => {

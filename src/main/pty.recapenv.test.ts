@@ -86,9 +86,10 @@ vi.mock('node-pty', () => ({
 vi.mock('./ipcGuard', () => ({ isForeignSender: vi.fn(() => false) }))
 // portDetect is a pure module, no side effects — real import is fine; stub to keep tests hermetic.
 vi.mock('./portDetect', () => ({ parsePortsFromOutput: vi.fn(() => []) }))
-// ptyOutput is pure; stub to avoid any complexity.
-vi.mock('./ptyOutput', () => ({
-  MAX_OUTPUT_PAGE: 500,
+// ptyOutput is pure; pass the real module through (incl. the PERF-06 output ring
+// createRing/pushRing/readRing the spawn path uses) and stub only the paging helpers.
+vi.mock('./ptyOutput', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./ptyOutput')>()),
   pageOutput: vi.fn(() => ({ lines: [], cursor: 0, droppedOlder: false })),
   stripAnsi: vi.fn((s: string) => s)
 }))

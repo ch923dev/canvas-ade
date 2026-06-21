@@ -4,7 +4,16 @@ import { isForeignSender } from './ipcGuard'
 import { execFile } from 'node:child_process'
 import * as pty from 'node-pty'
 import { parsePortsFromOutput } from './portDetect'
-import { MAX_OUTPUT_PAGE, pageOutput, stripAnsi, type OutputPage } from './ptyOutput'
+import {
+  MAX_OUTPUT_PAGE,
+  pageOutput,
+  stripAnsi,
+  createRing,
+  pushRing,
+  readRing,
+  type OutputPage,
+  type OutputRing
+} from './ptyOutput'
 import { enumerateShells, resolveShell, safeCwd } from './ptyShells'
 
 // T-F1: the Context Tier-2 summary loop reads a terminal's runtime via getTerminalRuntime (below).
@@ -86,16 +95,6 @@ export function attachPortInput(port: MessagePortMain, proc: pty.IPty): void {
   port.start()
 }
 
-/**
- * Append `chunk` to a capped output ring buffer, keeping only the last `cap`
- * characters (drop-oldest). Pure, so it is unit-tested. Used to record each
- * session's recent output for replay when a deleted terminal is adopted on undo.
- */
-export function appendRing(prev: string, chunk: string, cap: number): string {
-  const next = prev + chunk
-  return next.length <= cap ? next : next.slice(next.length - cap)
-}
-
 export interface SpawnOpts {
   id: string
   shell?: string
@@ -125,11 +124,12 @@ interface SessionLike {
   proc: pty.IPty
   port: MessagePortMain
   /**
-   * Recent output, boxed so the SAME reference travels into `parked` on park and
-   * back into a session on adopt — the single `proc.onData` listener keeps appending
-   * to it across the move (closures capture the box, not the map entry).
+   * Recent output, boxed (the OutputRing object) so the SAME reference travels into
+   * `parked` on park and back into a session on adopt — the single `proc.onData`
+   * listener keeps appending to it across the move (closures capture the box, not the
+   * map entry). PERF-06: a chunk deque, joined only on read (readRing).
    */
-  buf: { data: string }
+  buf: OutputRing
   /**
    * Last lifecycle state, read by the MCP board registry. A live session is
    * 'running'; it is marked 'exited' in onExit immediately before cleanup() removes
@@ -148,7 +148,7 @@ interface SessionLike {
 }
 interface ParkedLike {
   proc: pty.IPty
-  buf: { data: string }
+  buf: OutputRing
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -298,8 +298,10 @@ export function adoptCore(
   })
   transferPort(port2)
 
-  // Replay recorded scrollback, then re-announce running.
-  if (p.buf.data) port1.postMessage({ t: 'data', d: p.buf.data })
+  // Replay recorded scrollback, then re-announce running. PERF-06: the deque is joined
+  // here (readRing), not on every onData chunk.
+  const replay = readRing(p.buf)
+  if (replay) port1.postMessage({ t: 'data', d: replay })
   port1.postMessage({ t: 'state', state: 'running' satisfies PtyState })
 
   return { adopted: true, pid: p.proc.pid }
@@ -352,8 +354,8 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
   ipcMain.handle('terminal:detectPorts', (e, id: string) => {
     if (isForeignSender(e, getWin)) return []
     // Read whichever buffer holds this board's output — live session or parked.
-    const raw = sessions.get(id)?.buf.data ?? parked.get(id)?.buf.data ?? ''
-    return parsePortsFromOutput(raw)
+    const box = sessions.get(id)?.buf ?? parked.get(id)?.buf
+    return parsePortsFromOutput(box ? readRing(box) : '')
   })
 
   ipcMain.handle('pty:spawn', (e, opts: SpawnOpts) => {
@@ -417,9 +419,9 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
 
     const { port1, port2 } = new MessageChannelMain()
 
-    const buf = { data: '' }
+    const buf = createRing(RING_CAP_BYTES)
     proc.onData((d) => {
-      buf.data = appendRing(buf.data, d, RING_CAP_BYTES)
+      pushRing(buf, d) // PERF-06: amortised O(chunk), no per-chunk O(cap) copy
       // Forward to the current live port (looked up at fire time, so it follows an
       // adopt onto the new port); none while parked → guard the post. Identity
       // guard `live.proc === proc`: a dying OLD proc keeps draining bytes for up to
@@ -825,14 +827,15 @@ export async function drainPtyCore(
 /**
  * Read one capped, ANSI-stripped, tail-anchored page of a board's PTY scrollback
  * for the MCP layer (T1.4 🔒). READ-ONLY, control-plane only — it reads the SAME
- * 256 KB ring (`buf.data`) that adopt-replay uses (live OR parked, so exited boards
+ * 256 KB ring (`buf`) that adopt-replay uses (live OR parked, so exited boards
  * stay readable for post-mortem), strips escape codes, and slices ONE page; it never
  * returns the raw unbounded buffer and never writes to the PTY. `truncatedHead` is
  * derived from ring saturation (`raw.length >= RING_CAP_BYTES`) so the page can
  * honestly report `droppedOlder` when the cap has discarded older output.
  */
 export function readPtyOutput(id: string, opts?: { cursor?: number; limit?: number }): OutputPage {
-  const raw = sessions.get(id)?.buf.data ?? parked.get(id)?.buf.data ?? ''
+  const box = sessions.get(id)?.buf ?? parked.get(id)?.buf
+  const raw = box ? readRing(box) : ''
   const truncatedHead = raw.length >= RING_CAP_BYTES
   return pageOutput(stripAnsi(raw), {
     cursor: opts?.cursor,
@@ -843,7 +846,7 @@ export function readPtyOutput(id: string, opts?: { cursor?: number; limit?: numb
 
 /**
  * E2E ONLY — append `text` straight into the live session's output ring (through the
- * real `appendRing` cap), simulating PTY output so the harness can deterministically
+ * real ring cap), simulating PTY output so the harness can deterministically
  * fill the buffer past the cap with known/ANSI content and assert the paged read.
  * Shell-agnostic (no dependence on what a command happens to print). Read path only;
  * exposes nothing to the renderer. Returns false if no live session holds `id`.
@@ -851,7 +854,7 @@ export function readPtyOutput(id: string, opts?: { cursor?: number; limit?: numb
 export function debugSeedOutput(id: string, text: string): boolean {
   const s = sessions.get(id)
   if (!s) return false
-  s.buf.data = appendRing(s.buf.data, text, RING_CAP_BYTES)
+  pushRing(s.buf, text)
   return true
 }
 

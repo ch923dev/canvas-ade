@@ -50,6 +50,10 @@ import {
   MAX_TERMINAL_FONT
 } from './terminal/terminalFont'
 import { useTerminalReraster } from './terminal/useTerminalReraster'
+import { useRunTimer } from './terminal/useRunTimer'
+import { useInterruptFeedback } from './terminal/useInterruptFeedback'
+import { TerminalEndCTA } from './terminal/TerminalEndCTA'
+import { buildTerminalMenuEntries } from './terminal/terminalMenu'
 
 export function TerminalBoard({
   board,
@@ -128,7 +132,7 @@ export function TerminalBoard({
   // explicit Cancel/Apply — no non-modal outside-close guard needed (it replaced the popover).
   const [configOpen, setConfigOpen] = useState(false)
   const closeConfig = useCallback(() => setConfigOpen(false), [])
-  const [menu, setMenu] = useState<{ x: number; y: number; hasSel: boolean } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; entries: MenuEntry[] } | null>(null)
   // T15: flip to the recap back-face. The xterm well (front) stays MOUNTED across the
   // flip so the live PTY session never tears down — see the flip wrapper in render.
   // The fold animation + double-click trigger live in useTerminalFlip (flat-at-rest 3D,
@@ -284,16 +288,17 @@ export function TerminalBoard({
     return () => clearInterval(id)
   }, [running])
 
-  const status = statusFor(state, identity)
+  // TERM-01: an elapsed run timer (mm:ss) appended to the running pill — statusFor
+  // already renders the optional `timer` arg as a ` · ${timer}` suffix.
+  const runTimer = useRunTimer(running)
+  const status = statusFor(state, identity, runTimer)
   // Prefix the running label with the spinner glyph (the §7.1 "working" indicator).
   const displayStatus = running
     ? { ...status, label: `${brailleFrame(spinnerFrame)} ${status.label}` }
     : status
 
-  /** Interrupt: send Ctrl-C (SIGINT) over the data plane to the running agent. */
-  const interrupt = useCallback(() => {
-    portRef.current?.postMessage({ t: 'input', d: '\x03' })
-  }, [portRef]) // stable hook ref; listed for exhaustive-deps (#98)
+  // TERM-06: send Ctrl-C + a brief confirmation (⏹ button pulse + "interrupt sent" chip).
+  const { interruptSent, interrupt } = useInterruptFeedback(portRef)
 
   // Slice C′: detected dev-server URLs (picker when >1) + a transient "not found" note
   // (D1-A: the note is a board-keyed toast now, not a board overlay).
@@ -376,6 +381,12 @@ export function TerminalBoard({
   const effectiveFont = clampTerminalFont(board.fontSize ?? bornFont)
   const actions = (
     <>
+      {/* TERM-06: transient "interrupt sent" chip (sits by the pill, before the buttons). */}
+      {interruptSent && (
+        <span className="nodrag" style={interruptChip} data-test="interrupt-sent">
+          ⏹ interrupt sent
+        </span>
+      )}
       {(selected || hovered) && (
         <>
           <IconBtn
@@ -392,7 +403,14 @@ export function TerminalBoard({
           />
         </>
       )}
-      {running && <IconBtn name="stop" title="Interrupt (Ctrl-C)" onClick={interrupt} />}
+      {running && (
+        <IconBtn
+          name="stop"
+          title="Interrupt (Ctrl-C)"
+          active={interruptSent}
+          onClick={interrupt}
+        />
+      )}
       <IconBtn
         name="globe"
         title="Click: preview in linked browser · Hold / right-click: choose browser(s)"
@@ -435,9 +453,10 @@ export function TerminalBoard({
 
   // Right-click context menu over the well. Reuses the planning menu component. When the
   // running TUI has mouse reporting on (term.modes.mouseTrackingMode !== 'none'), plain
-  // right-click passes through to the app; Shift+right-click forces our menu.
-  // hasSel is captured at open-time so the Copy entry's disabled state is stable for the
-  // menu's lifetime (avoids reading the ref during render).
+  // right-click passes through to the app; Shift+right-click forces our menu. The entries
+  // are built HERE (an event handler — ref access is allowed) and frozen in `menu` state,
+  // so the selection/font-bound disabled flags are stable for the menu's lifetime and no
+  // ref is read during render (TERM-07 moved the builder to terminalMenu.ts).
   const openMenu = useCallback(
     (e: React.MouseEvent) => {
       const term = termRef.current
@@ -446,75 +465,22 @@ export function TerminalBoard({
       if (mouseMode && !e.shiftKey) return // let the TUI have the right-click
       e.preventDefault()
       e.stopPropagation()
-      setMenu({ x: e.clientX, y: e.clientY, hasSel: term.hasSelection() })
+      setMenu({
+        x: e.clientX,
+        y: e.clientY,
+        entries: buildTerminalMenuEntries({
+          hasSel: term.hasSelection(),
+          boardId: board.id,
+          effectiveFont,
+          minFont: MIN_TERMINAL_FONT,
+          maxFont: MAX_TERMINAL_FONT,
+          termRef,
+          nudgeFont,
+          resetFont
+        })
+      })
     },
-    [termRef]
-  ) // stable hook ref; listed for exhaustive-deps (#98)
-
-  const menuEntries: MenuEntry[] = useMemo(
-    () =>
-      menu
-        ? [
-            {
-              kind: 'action',
-              id: 'copy',
-              label: 'Copy',
-              disabled: !menu.hasSel,
-              onSelect: () => {
-                const t = termRef.current
-                const sel = t?.getSelection()
-                if (t && sel) {
-                  void window.api.clipboard.writeText(sel)
-                  t.clearSelection()
-                }
-              }
-            },
-            {
-              kind: 'action',
-              id: 'paste',
-              label: 'Paste',
-              onSelect: () => {
-                const t = termRef.current
-                if (t) void pasteIntoTerminal(t, board.id, () => termRef.current === t)
-              }
-            },
-            {
-              kind: 'action',
-              id: 'selectall',
-              label: 'Select all',
-              onSelect: () => termRef.current?.selectAll()
-            },
-            {
-              kind: 'action',
-              id: 'clear',
-              label: 'Clear',
-              onSelect: () => termRef.current?.clear()
-            },
-            {
-              kind: 'action',
-              id: 'font-bigger',
-              label: 'Bigger font',
-              disabled: effectiveFont >= MAX_TERMINAL_FONT,
-              onSelect: () => nudgeFont(1)
-            },
-            {
-              kind: 'action',
-              id: 'font-smaller',
-              label: 'Smaller font',
-              disabled: effectiveFont <= MIN_TERMINAL_FONT,
-              onSelect: () => nudgeFont(-1)
-            },
-            {
-              kind: 'action',
-              id: 'font-reset',
-              label: 'Reset font',
-              onSelect: () => resetFont()
-            }
-          ]
-        : [],
-    // termRef is a stable hook ref (the menu actions read termRef.current); listed for
-    // exhaustive-deps now that it arrives via useTerminalSpawn rather than a local useRef (#98).
-    [menu, board.id, effectiveFont, nudgeFont, resetFont, termRef]
+    [termRef, board.id, effectiveFont, nudgeFont, resetFont]
   )
 
   // Keep the full chrome (and the xterm host) ALWAYS mounted so the live PTY/agent
@@ -661,21 +627,44 @@ export function TerminalBoard({
                 }}
               >
                 <div ref={screenRef} style={screenStyle} />
+                {/* TERM-04: an exited / spawn-failed terminal now offers an in-well re-run
+                    CTA (bottom bar — never covers the scrollback). Restart re-runs (fresh),
+                    Resume re-attaches a known session, Retry/Configure for a failed spawn.
+                    Owns the end states; the launch-command hint below steps aside for them. */}
+                {(state === 'exited' || state === 'spawn-failed') && (
+                  <TerminalEndCTA
+                    failed={state === 'spawn-failed'}
+                    identity={identity}
+                    canResume={canResume}
+                    onRestart={() => {
+                      launchOverrideRef.current = undefined
+                      restart()
+                    }}
+                    onResume={() => {
+                      launchOverrideRef.current = resumeCommand(board.agentSessionId)
+                      restart()
+                    }}
+                    onConfigure={() => setConfigOpen(true)}
+                  />
+                )}
                 {/* D2-B 🎨 first-run hint (signed off 2026-06-11): a bare-shell terminal
                     (no launchCommand) shows one dismissible pill pointing at ⚙. Hidden at
-                    idle (the Start overlay covers that state); deliberately SHOWN for
-                    exited/spawn-failed too — those are natural moments to set a launch
-                    command and retry. Gone forever once dismissed anywhere
-                    (hintDismissal.ts) or a launch command is set. */}
-                {!board.launchCommand && state !== 'idle' && (
-                  <TerminalHint onConfigure={() => setConfigOpen(true)} />
-                )}
+                    idle (the Start overlay covers that state) and at the end states (the
+                    TERM-04 CTA above owns exited/spawn-failed — its Configure/Retry covers
+                    the same intent without stacking two bars). Gone forever once dismissed
+                    anywhere (hintDismissal.ts) or a launch command is set. */}
+                {!board.launchCommand &&
+                  state !== 'idle' &&
+                  state !== 'exited' &&
+                  state !== 'spawn-failed' && (
+                    <TerminalHint onConfigure={() => setConfigOpen(true)} />
+                  )}
               </div>
               {menu && (
                 <ElementContextMenu
                   x={menu.x}
                   y={menu.y}
-                  entries={menuEntries}
+                  entries={menu.entries}
                   onClose={() => setMenu(null)}
                 />
               )}
@@ -817,4 +806,16 @@ const startBtn: React.CSSProperties = {
   borderRadius: 'var(--r-ctl)',
   padding: '6px 14px',
   cursor: 'pointer'
+}
+
+/** TERM-06: the transient "interrupt sent" chip beside the pill (warn-toned, calm). */
+const interruptChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontFamily: 'var(--mono)',
+  fontSize: 10.5,
+  color: 'var(--warn)',
+  whiteSpace: 'nowrap',
+  paddingRight: 4
 }

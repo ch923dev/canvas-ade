@@ -3,7 +3,6 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import {
   isStaleExit,
-  appendRing,
   parkCore,
   adoptCore,
   reapParkedCore,
@@ -25,6 +24,7 @@ import {
   resolveShell,
   safeCwd
 } from './ptyShells'
+import { createRing, pushRing } from './ptyOutput'
 import type { ShellInfo } from './ptyShells'
 
 describe('safeCwd (SEC-1)', () => {
@@ -43,23 +43,8 @@ describe('safeCwd (SEC-1)', () => {
   })
 })
 
-describe('appendRing', () => {
-  it('concatenates when the result is under the cap', () => {
-    expect(appendRing('ab', 'cd', 10)).toBe('abcd')
-  })
-  it('returns exactly the input at the cap boundary', () => {
-    expect(appendRing('abcd', 'ef', 6)).toBe('abcdef')
-  })
-  it('drops the oldest bytes when over the cap (keeps the last `cap`)', () => {
-    expect(appendRing('abcd', 'efgh', 6)).toBe('cdefgh')
-  })
-  it('keeps only the last `cap` bytes when a single chunk exceeds the cap', () => {
-    expect(appendRing('', 'abcdefgh', 4)).toBe('efgh')
-  })
-  it('is a no-op for an empty chunk', () => {
-    expect(appendRing('abc', '', 10)).toBe('abc')
-  })
-})
+// PERF-06: the output ring's chunk-deque (createRing/pushRing/readRing) now lives in
+// ptyOutput.ts and is unit-tested there (ptyOutput.test.ts › OutputRing).
 
 // Pure identity-guard behind the restart/config-respawn race fix: a late
 // onExit from an OLD pty process must not tear down the NEW session that has
@@ -264,7 +249,8 @@ describe('parkCore (T1)', () => {
     const reap = vi.fn()
     const port = makePort()
     const { proc } = makeProc(111)
-    const buf = { data: 'hello' }
+    const buf = createRing(256 * 1024)
+    pushRing(buf, 'hello')
     const sessions = new Map<string, any>([['a', { proc, port, buf }]])
     const parked = new Map<string, any>()
 
@@ -296,7 +282,8 @@ describe('adoptCore (T1)', () => {
     const port1 = makePort()
     const port2 = makePort()
     const { proc } = makeProc(222)
-    const buf = { data: 'scrollback-text' }
+    const buf = createRing(256 * 1024)
+    pushRing(buf, 'scrollback-text')
     const timer = setTimeout(() => {}, 100000)
     const sessions = new Map<string, any>()
     const parked = new Map<string, any>([['t', { proc, buf, timer }]])
@@ -327,7 +314,7 @@ describe('adoptCore (T1)', () => {
     const { proc } = makeProc(333)
     const sessions = new Map<string, any>()
     const parked = new Map<string, any>([
-      ['t', { proc, buf: { data: '' }, timer: setTimeout(() => {}, 100000) }]
+      ['t', { proc, buf: createRing(256 * 1024), timer: setTimeout(() => {}, 100000) }]
     ])
     adoptCore(
       't',
@@ -437,7 +424,7 @@ describe('reapParkedCore (T1)', () => {
     const { proc } = makeProc(444)
     const timer = setTimeout(fired, 1000)
     const killTree = vi.fn(() => Promise.resolve())
-    const parked = new Map<string, any>([['p', { proc, buf: { data: '' }, timer }]])
+    const parked = new Map<string, any>([['p', { proc, buf: createRing(256 * 1024), timer }]])
 
     await reapParkedCore('p', parked, { killTree } as any)
 
@@ -461,7 +448,7 @@ describe('cleanupCore (T1)', () => {
     const port = makePort()
     const { proc } = makeProc(555)
     const killTree = vi.fn(() => Promise.resolve())
-    const sessions = new Map<string, any>([['k', { proc, port, buf: { data: '' } }]])
+    const sessions = new Map<string, any>([['k', { proc, port, buf: createRing(256 * 1024) }]])
 
     await cleanupCore('k', sessions, { killTree } as any)
 
@@ -475,7 +462,9 @@ describe('cleanupCore (T1)', () => {
     const { proc: newProc } = makeProc(1)
     const { proc: oldProc } = makeProc(2)
     const killTree = vi.fn(() => Promise.resolve())
-    const sessions = new Map<string, any>([['k', { proc: newProc, port, buf: { data: '' } }]])
+    const sessions = new Map<string, any>([
+      ['k', { proc: newProc, port, buf: createRing(256 * 1024) }]
+    ])
 
     await cleanupCore('k', sessions, { killTree } as any, oldProc as any)
 
@@ -496,7 +485,7 @@ describe('cleanupCore (T1)', () => {
     const sessionProc = { ...proc, kill: vi.fn() }
     const killTree = vi.fn(() => Promise.resolve())
     const sessions = new Map<string, any>([
-      ['k', { proc: sessionProc, port, buf: { data: '' }, state: 'exited' as const }]
+      ['k', { proc: sessionProc, port, buf: createRing(256 * 1024), state: 'exited' as const }]
     ])
 
     // Pass the SAME proc (identity match = natural exit, not stale) so the
@@ -514,7 +503,7 @@ describe('cleanupCore (T1)', () => {
     const { proc } = makeProc(557)
     const killTree = vi.fn(() => Promise.resolve())
     const sessions = new Map<string, any>([
-      ['k', { proc, port, buf: { data: '' }, state: 'exited' as const }]
+      ['k', { proc, port, buf: createRing(256 * 1024), state: 'exited' as const }]
     ])
 
     // No proc argument = explicit kill path; always tears down regardless of state.
@@ -536,10 +525,11 @@ describe('adoptCore BUG-024 (symmetric Bug #13 guard)', () => {
     const { proc: liveProc } = makeProc(500)
     const { proc: parkedProc } = makeProc(501)
     const livePort = makePort()
-    const buf = { data: 'scrollback' }
+    const buf = createRing(256 * 1024)
+    pushRing(buf, 'scrollback')
     const timer = setTimeout(() => {}, 100000)
     const sessions = new Map<string, any>([
-      ['t', { proc: liveProc, port: livePort, buf: { data: '' }, state: 'running' }]
+      ['t', { proc: liveProc, port: livePort, buf: createRing(256 * 1024), state: 'running' }]
     ])
     const parked = new Map<string, any>([['t', { proc: parkedProc, buf, timer }]])
     const killTree = vi.fn(() => Promise.resolve())
@@ -561,7 +551,7 @@ describe('adoptCore BUG-024 (symmetric Bug #13 guard)', () => {
     const port1 = makePort()
     const port2 = makePort()
     const { proc: parkedProc } = makeProc(502)
-    const buf = { data: '' }
+    const buf = createRing(256 * 1024)
     const timer = setTimeout(() => {}, 100000)
     const sessions = new Map<string, any>()
     const parked = new Map<string, any>([['t', { proc: parkedProc, buf, timer }]])
@@ -591,7 +581,7 @@ describe('drainPtyCore (BUG-001 — pin proc across the grace window)', () => {
     const { proc: oldProc } = makeProc(100)
     const { proc: newProc } = makeProc(200)
     const sessions = new Map<string, any>([
-      ['t', { proc: oldProc, port: oldPort, buf: { data: '' }, state: 'running' }]
+      ['t', { proc: oldProc, port: oldPort, buf: createRing(256 * 1024), state: 'running' }]
     ])
 
     // First grace-poll `sleep`: simulate a `pty:spawn` replacing the session
@@ -601,7 +591,12 @@ describe('drainPtyCore (BUG-001 — pin proc across the grace window)', () => {
     const sleep = vi.fn(async () => {
       if (!replaced) {
         replaced = true
-        sessions.set('t', { proc: newProc, port: newPort, buf: { data: '' }, state: 'running' })
+        sessions.set('t', {
+          proc: newProc,
+          port: newPort,
+          buf: createRing(256 * 1024),
+          state: 'running'
+        })
       }
     })
 
@@ -623,7 +618,7 @@ describe('drainPtyCore (BUG-001 — pin proc across the grace window)', () => {
     const port = makePort()
     const { proc } = makeProc(300)
     const sessions = new Map<string, any>([
-      ['t', { proc, port, buf: { data: '' }, state: 'running' }]
+      ['t', { proc, port, buf: createRing(256 * 1024), state: 'running' }]
     ])
     // graceMs=0 → no grace poll; goes straight to the hard kill of OUR proc.
     await drainPtyCore(
@@ -643,7 +638,7 @@ describe('drainPtyCore (BUG-001 — pin proc across the grace window)', () => {
     const port = makePort()
     const { proc } = makeProc(400)
     const sessions = new Map<string, any>([
-      ['t', { proc, port, buf: { data: '' }, state: 'running' }]
+      ['t', { proc, port, buf: createRing(256 * 1024), state: 'running' }]
     ])
     // First poll: the proc exits cleanly → drops out of the map (onExit/cleanup).
     const sleep = vi.fn(async () => {
@@ -676,10 +671,10 @@ describe('disposeAllPtysCore (T1)', () => {
     const parkProc = makeProc(20).proc
     const livePort = makePort()
     const sessions = new Map<string, any>([
-      ['live', { proc: liveProc, port: livePort, buf: { data: '' } }]
+      ['live', { proc: liveProc, port: livePort, buf: createRing(256 * 1024) }]
     ])
     const parked = new Map<string, any>([
-      ['park', { proc: parkProc, buf: { data: '' }, timer: setTimeout(() => {}, 100000) }]
+      ['park', { proc: parkProc, buf: createRing(256 * 1024), timer: setTimeout(() => {}, 100000) }]
     ])
 
     await disposeAllPtysCore(sessions, parked, { killTree } as any)
@@ -699,7 +694,7 @@ describe('disposeAllPtysCore (T1)', () => {
 describe('writeToPtyCore (T4.3 — dispatch write primitive)', () => {
   it('writes the text to the live session proc and returns true', () => {
     const { proc } = makeProc(900)
-    const sessions = new Map<string, any>([['t', { proc, buf: { data: '' } }]])
+    const sessions = new Map<string, any>([['t', { proc, buf: createRing(256 * 1024) }]])
     expect(writeToPtyCore('t', 'echo hi\r', sessions)).toBe(true)
     expect(proc.write).toHaveBeenCalledWith('echo hi\r')
   })
@@ -714,7 +709,7 @@ describe('writeToPtyCore (T4.3 — dispatch write primitive)', () => {
     proc.write.mockImplementationOnce(() => {
       throw new Error('exited')
     })
-    const sessions = new Map<string, any>([['t', { proc, buf: { data: '' } }]])
+    const sessions = new Map<string, any>([['t', { proc, buf: createRing(256 * 1024) }]])
     expect(writeToPtyCore('t', 'x', sessions)).toBe(false)
   })
 })
