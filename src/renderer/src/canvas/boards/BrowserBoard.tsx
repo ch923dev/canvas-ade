@@ -39,6 +39,9 @@ import { useOffscreenSizing } from './useOffscreenSizing'
 import { useOsrWidgetEvents } from './osr/useOsrWidgetEvents'
 import { OsrWidgetLayer } from './osr/OsrWidgetLayer'
 import { useOsrWidgetStore } from '../../store/osrWidgetStore'
+import { useOsrNetwork } from './osr/useOsrNetwork'
+import { OsrNetworkPanel } from './osr/OsrNetworkPanel'
+import { useOsrNetworkStore } from '../../store/osrNetworkStore'
 
 const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
@@ -160,6 +163,11 @@ export function BrowserBoard({
   // OS-3 Phase 4: subscribe the board's native-widget event streams (JS dialog · native popup ·
   // audible flip · download) → osrWidgetStore + toasts. Drives the mute toggle + the overlay layer.
   useOsrWidgetEvents(board.id)
+  // DevTools Network inspector (per board). The hook subscribes MAIN capture ONLY while the panel is
+  // open; the URL-bar toggle flips `open`. Ephemeral (no schema). FIND-011 cleanup lives in the hook.
+  useOsrNetwork(board.id)
+  const netOpen = useOsrNetworkStore((s) => s.byBoard[board.id]?.open ?? false)
+  const toggleNet = (): void => useOsrNetworkStore.getState().setOpen(board.id, !netOpen)
   // 4A — the URL-bar mute toggle shows only while the page is playing media; `muted` is the user's
   // manual choice (MAIN also auto-mutes off-screen). Ephemeral (no schema).
   const osrAudibleNow = useOsrWidgetStore((s) => s.audible[board.id] ?? false)
@@ -397,6 +405,18 @@ export function BrowserBoard({
             onClick={takeScreenshot}
           />
           <NavBtn name="external" title="Open in browser" onClick={openExternal} />
+          {/* DevTools Network inspector toggle — accent when the panel is open. */}
+          <button
+            title="Network inspector"
+            aria-label="Network inspector"
+            aria-pressed={netOpen}
+            onClick={toggleNet}
+            onMouseDown={(e) => e.stopPropagation()}
+            className={'bb-navbtn' + (netOpen ? ' bb-navbtn-on' : '')}
+            style={{ cursor: 'pointer' }}
+          >
+            <Icon name="activity" size={14} />
+          </button>
         </div>
         <div
           className={
@@ -547,6 +567,9 @@ export function BrowserBoard({
               stays frozen on the canvas, so flag it "paused" until a live slot frees. */}
           {paused && <span className="bb-paused-badge">paused</span>}
         </div>
+        {/* DevTools Network inspector — a DOM panel over the stage (clips/rounds with the board, no
+            occlusion). Bottom drawer or right dock per the in-header switch. */}
+        <OsrNetworkPanel boardId={board.id} onFullView={onFull} />
       </div>
     </BoardFrame>
   )

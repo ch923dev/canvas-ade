@@ -1314,6 +1314,456 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ── DevTools Network inspector (per board) ────────────────────────────────────────────────────
+   A DOM panel over .bb-stage (clips/rounds with the board — the occlusion fix). Two docks (bottom
+   drawer ⇄ right) switched in-header; same internals. Matches the signed-off mock. */
+.bb-navbtn-on {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.bb-net {
+  position: absolute;
+  z-index: 4; /* over the canvas + paused badge */
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--ui);
+  overflow: hidden;
+}
+.bb-net-bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 62%;
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 24px -12px rgba(0, 0, 0, 0.55);
+}
+.bb-net-right {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 62%;
+  max-width: 460px;
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px -12px rgba(0, 0, 0, 0.5);
+}
+.bb-net-head,
+.bb-net-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 6px 0 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-tools {
+  gap: 6px;
+  padding: 0 8px;
+}
+.bb-net-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 9px;
+  font-size: var(--fs-label);
+  font-weight: 500;
+  color: var(--text-3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.bb-net-tab-on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.bb-net-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.bb-net-spacer {
+  flex: 1;
+}
+.bb-net-dockswitch {
+  display: inline-flex;
+  gap: 1px;
+  padding: 2px;
+  margin-right: 4px;
+  border-radius: var(--r-ctl);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+}
+.bb-net-dock,
+.bb-net-tool {
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.bb-net-dock {
+  width: 24px;
+  height: 18px;
+}
+.bb-net-tool {
+  width: 24px;
+  height: 22px;
+  border-radius: 4px;
+}
+.bb-net-dock:hover,
+.bb-net-tool:hover {
+  color: var(--text-2);
+}
+.bb-net-dock.bb-net-on {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.bb-net-preserve {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.bb-net-check {
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  color: var(--void);
+}
+.bb-net-preserve.bb-net-on .bb-net-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.bb-net-filter {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: var(--r-ctl);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-3);
+}
+.bb-net-filter input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-meta);
+}
+.bb-net-meta {
+  flex: none;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.bb-net-dropped {
+  color: var(--warn);
+}
+.bb-net-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.bb-net-rows {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.bb-net-rows th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 5px 12px;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-rows td {
+  padding: 0 12px;
+  height: 26px;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-net-rows .net-num {
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--text-3);
+  width: 84px;
+}
+.bb-net-rows .net-col-method {
+  width: 70px;
+}
+.bb-net-rows .net-col-type {
+  width: 92px;
+}
+.bb-net-rows .net-mono {
+  font-family: var(--mono);
+}
+.bb-net-rows .net-name {
+  color: var(--text);
+}
+.bb-net-row {
+  cursor: pointer;
+}
+.bb-net-row:hover td {
+  background: var(--surface-raised);
+}
+.bb-net-row.bb-net-sel td {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bb-net-row.bb-net-sel .net-name {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.bb-net-row.bb-net-fail .net-name,
+.bb-net-row.bb-net-fail .net-status {
+  color: var(--err);
+}
+.bb-net-origin {
+  color: var(--accent);
+  margin-right: 4px;
+}
+.bb-net-ws {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.bb-net-live {
+  color: var(--ok);
+}
+.bb-net-empty td {
+  height: 60px;
+  text-align: center;
+  color: var(--text-3);
+  font-style: italic;
+}
+/* right dock: drop the wider columns so the narrow list reads cleanly */
+.bb-net-right .net-col-method,
+.bb-net-right .net-col-type {
+  display: none;
+}
+
+.bb-net-details {
+  flex: none;
+  height: 40%;
+  min-height: 120px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.bb-net-subtabs {
+  flex: none;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-subtab {
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.bb-net-subtab-on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.bb-net-dbody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 13px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.bb-net-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  line-height: 16px;
+}
+.bb-net-k {
+  color: var(--text-3);
+  margin-right: 6px;
+}
+.bb-net-url {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bb-net-v {
+  font-family: var(--mono);
+  color: var(--text);
+  word-break: break-all;
+}
+.bb-net-err {
+  color: var(--err);
+}
+.bb-net-dim {
+  color: var(--text-3);
+}
+.bb-net-headers {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 6px;
+}
+.bb-net-headers summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+.bb-net-headers dl {
+  margin: 6px 0 0;
+  display: grid;
+  grid-template-columns: minmax(90px, 30%) 1fr;
+  gap: 2px 10px;
+}
+.bb-net-headers dl > div {
+  display: contents;
+}
+.bb-net-headers dt {
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+.bb-net-headers dd {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+.bb-net-bodybar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bb-net-lbl {
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.bb-net-loadbtn {
+  height: 24px;
+  padding: 0 11px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-overlay);
+  color: var(--text);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+.bb-net-loadbtn:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+.bb-net-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+.bb-net-bodytext {
+  margin: 0;
+  width: 100%;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  max-height: 100%;
+}
+.bb-net-frames {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.bb-net-frames td {
+  padding: 0 10px;
+  height: 24px;
+  font-size: var(--fs-meta);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-net-frames .ws-dir {
+  width: 72px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.bb-net-frames .ws-type {
+  width: 56px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.bb-net-frames .ws-data {
+  font-family: var(--mono);
+  color: var(--text);
+}
+.bb-net-frames .ws-sent .ws-arrow {
+  color: var(--text-2);
+}
+.bb-net-frames .ws-recv .ws-arrow {
+  color: var(--accent);
+}
+
 /* ── OS-3 Phase 4 — native-widget & dialog overlays ────────────────────────────────────────────
    The offscreen bitmap can't composite native popups, so we draw them as DOM chrome over the
    host <canvas> inside .bb-frame (clips/rounds with it — the occlusion fix). The full-frame layer
