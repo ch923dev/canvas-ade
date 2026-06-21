@@ -183,6 +183,27 @@ Earlier Phase-4 anchors: Phases 0-4 + layout presets (`14f77d7`, PR #13); Phase 
 Round-3 in-depth review (2026-06-01): healthy, no Critical/High; all 12 residual Low/Nit/Info cleared
 (`fix/round3-backlog` + `fix/round3-lows-remainder`); see `docs/reviews/2026-06-01-round3.md`.
 
+## 2026-06-21 — Project files isolated under `.canvas/` (ADR 0009, #204)
+
+`feat(persistence)` (PR #204, squash `35838bf8`): move `canvas.json`, `canvas.json.bak`, and `assets/`
+out of the project root into `<project>/.canvas/`, so a project root holds one isolated Canvas data dir
+next to the user's own files. **No schema bump** — `assetId` stays the logical `assets/<sha1>.<ext>`
+string; only MAIN's blob-store *resolution base* moves (the renderer is path-agnostic over IPC), so this
+is a location migration orthogonal to ADR 0007. **Migrate-on-open** (`migrateProjectLayout` in
+`projectStore.ts`, run before every read in `projectIpc`): idempotent, best-effort, **rename-aside /
+never delete**, canonical `.canvas/` wins if both exist; plus a **permanent legacy-root read-fallback**
+(`readProject`/`readBak`/`readAsset` try `.canvas/` then the old root) so a half-migrated or read-only
+project still opens. One-way — downgrading to a pre-0009 build is unsupported (accepted, pre-release).
+**Gitignore:** `canvas.json` stays trackable, **assets ignored by default** with opt-in commit-mode
+(`canvasMemory.upgradeProjectGitignore` remaps recognized legacy bodies, leaves custom/absent untouched).
+**File Tree hides `.canvas/`** (`fileIpc` skips it at the project root). `fileWatch` unchanged (`.bak`
+ignored by basename). Implements ADR 0009; the ephemeral per-slice spec was deleted in-PR (doc-lifecycle
+— the ADR is the durable residue). New `ADR 0009 project-layout migration` test suite + repointed
+projectStore/canvasMemory/projectIpc/e2e fixtures. Bot review 0 inline (both rounds). Rebased onto
+current main (post #205, file-disjoint). Gate green (typecheck·lint·format·3070 unit/1 skip). Full matrix
+green (Win 163 incl. placement known-flake [3/3 isolated] / Linux 162+1skip). Manual dev check passed
+(title-stamped dev build — clean root + `.canvas/` layout user-confirmed live).
+
 ## 2026-06-19/21 — Post-Audit Polish umbrella COMPLETE (PA-1…PA-10 + PA-R) + full-view stretch animation
 
 - **2026-06-19 feature-improvement audit** (summary `docs/reviews/2026-06-19-feature-audit.md`; raw package `docs/reviews/2026-06-19-feature-audit/` collapsed to git history by PA-R): forward-looking perf/UX/a11y/code-quality audit of all shipped-on-`main` features (excl. File Tree + Command Board), adversarial multi-agent verify → 43 confirmed (3 High · 17 Med · 23 Low). Decomposed into the file-disjoint **"PA" remediation umbrella**: 10 slices + PA-R. **✅ COMPLETE 2026-06-21** — PA-1…PA-10 + PA-R all merged; every finding fixed or consciously deferred (deferrals listed in the summary). No open review backlog remains.
