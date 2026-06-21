@@ -50,6 +50,38 @@ export function planningWriteEnabled(
   return projectDir ? isOrchestrationEnabled(projectDir) : false
 }
 
+/**
+ * FIND-015: per-board lifecycle for `connected`-tier MCP tokens. The package's TokenStore revokes
+ * only by token STRING, so the host remembers which live token belongs to which board:
+ *   - `track` keeps ONE entry per board — a re-spawn ROTATES it (revoking the board's prior token
+ *     before recording the new one), so the store holds one live connected token per board instead
+ *     of one per spawn (bounds accretion).
+ *   - `revokeAll` kills every live connected token at once (consent revoke), so a bearer still
+ *     sitting in a CLI config on disk is dead immediately — not only after the next app restart.
+ * Pure of the ESM-only package (takes a `revoke` thunk) so it stays unit-testable.
+ */
+export function makeConnectedTokenTracker(revoke: (token: string) => void): {
+  track(boardId: string, token: string): void
+  revokeAll(): void
+  clear(): void
+} {
+  const byBoard = new Map<string, string>()
+  return {
+    track(boardId, token) {
+      const prior = byBoard.get(boardId)
+      if (prior) revoke(prior)
+      byBoard.set(boardId, token)
+    },
+    revokeAll() {
+      for (const token of byBoard.values()) revoke(token)
+      byBoard.clear()
+    },
+    clear() {
+      byBoard.clear()
+    }
+  }
+}
+
 export interface RunningMcp {
   port: number
   tokens: TokenStore
@@ -107,6 +139,13 @@ export interface RunningMcp {
   awaitSettled(boardId: string): Promise<BoardResult>
   /** Phase C / C1: gated Ctrl-C into a board's PTY (same gate, terminator `\x03`, no sanitize). */
   interrupt(boardId: string): Promise<void>
+  /**
+   * FIND-015: revoke every live `connected`-tier token (across all boards). Called on orchestration
+   * consent REVOKE so a bearer left on disk in a CLI config is dead immediately — not only after
+   * the next app restart. Per-board accretion is separately bounded by rotate-on-respawn in
+   * `mintConnectedToken` (a re-spawn revokes the board's prior token).
+   */
+  revokeAllConnected(): void
   close(): Promise<void>
 }
 
@@ -141,11 +180,15 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
     // 🔒 Agent Orchestration v1: mint a `connected`-tier token bound to a Terminal board. NEVER
     // logged (PLAN §6). Registered as the seam's `mintTerminalToken` delegate so the P3 spawn-time
     // provisioner can mint a per-board token without importing the ESM-only package or the store.
-    const mintConnectedToken = (boardId: string): TerminalToken => ({
-      token: mintBoardToken(tokens, { boardId, tier: 'connected' }).token,
-      tier: 'connected',
-      port: server.port
-    })
+    //
+    // FIND-015: bound connected-token accretion + enable consent-revoke invalidation (see
+    // makeConnectedTokenTracker). Tracking ROTATES per board (re-spawn revokes the prior token).
+    const connected = makeConnectedTokenTracker((token) => tokens.revoke(token))
+    const mintConnectedToken = (boardId: string): TerminalToken => {
+      const token = mintBoardToken(tokens, { boardId, tier: 'connected' }).token
+      connected.track(boardId, token)
+      return { token, tier: 'connected', port: server.port }
+    }
     __setTerminalTokenMinter(mintConnectedToken)
     // 🔒 Idle-reap sweep (T3.4): periodically close MCP-spawned boards that have gone
     // idle past the TTL, so the swarm can't accrete dormant boards. unref() so the
@@ -168,10 +211,12 @@ export async function startMcpServer(registry: BoardRegistry): Promise<RunningMc
       handoffPrompt: (boardId, text) => orchestrator.handoffPrompt(boardId, text),
       awaitSettled: (boardId) => orchestrator.awaitSettled(boardId),
       interrupt: (boardId) => orchestrator.interrupt(boardId),
+      revokeAllConnected: () => connected.revokeAll(),
       close: () => {
         // Clear the seam minter so a post-close `mintTerminalToken` fails loud (no bogus token).
         __setTerminalTokenMinter(null)
         clearInterval(reapTimer)
+        connected.clear()
         return server.close()
       }
     }

@@ -628,7 +628,13 @@ app.whenReady().then(async () => {
     userData,
     getCurrentDir,
     (projectPath, on) => {
-      if (!on) void unsyncProvisioners({ projectDir: projectPath }).catch(() => {})
+      if (!on) {
+        // FIND-001: clean every on-disk config we wrote (incl. divergent board cwds, not just the
+        // project root). FIND-015: invalidate the live connected tokens too, so a bearer still
+        // sitting in a CLI config on disk is dead immediately — not only after the next restart.
+        void unsyncProvisioners({ projectDir: projectPath }).catch(() => {})
+        mcp?.revokeAllConnected()
+      }
     }
   )
 

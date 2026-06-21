@@ -22,9 +22,10 @@
  * `os.homedir()`, so this whole subtree stays unit-testable without an electron mock and adds no
  * electron coupling to `pty.ts`'s import graph.
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import writeFileAtomic from 'write-file-atomic'
 import type { McpJson } from '@expanse-ade/mcp'
 import type { TerminalToken } from '../orchestration/seam'
 
@@ -184,19 +185,31 @@ function enforceOwnerOnly(file: string): void {
   }
 }
 
-/** Write a JSON config owner-only (0o600), creating the parent dir if needed. */
+/**
+ * Write a JSON config owner-only (0o600), creating the parent dir if needed.
+ *
+ * FIND-008: written ATOMICALLY (write-file-atomic = temp-file + fsync + rename), so a crash or
+ * power-loss mid-write can never leave a truncated/corrupt config behind. These files hold a
+ * bearer token AND the user's own MCP servers, and `readJsonConfig` THROWS on a present-but-corrupt
+ * file (to avoid clobbering it) — so a torn write would otherwise make every subsequent sync fail
+ * permanently (sticky corruption). Mirrors the atomic discipline used for every other token-bearing
+ * write (orchestrationConsent.ts, the recap map, the canvas save path).
+ */
 export function writeJsonConfig(file: string, data: unknown): void {
   const dir = dirname(file)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
-  writeFileSync(file, JSON.stringify(data, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
+  writeFileAtomic.sync(file, JSON.stringify(data, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: 0o600
+  })
   enforceOwnerOnly(file)
 }
 
-/** Write a raw text config owner-only (0o600), creating the parent dir if needed. */
+/** Write a raw text config owner-only (0o600), creating the parent dir if needed. Atomic (FIND-008). */
 export function writeTextConfig(file: string, text: string): void {
   const dir = dirname(file)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
-  writeFileSync(file, text, { encoding: 'utf8', mode: 0o600 })
+  writeFileAtomic.sync(file, text, { encoding: 'utf8', mode: 0o600 })
   enforceOwnerOnly(file)
 }
 
