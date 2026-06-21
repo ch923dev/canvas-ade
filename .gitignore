@@ -35,6 +35,8 @@ Thumbs.db
 .claude/skills/
 # harness scratch (screenshots, audit parses, PR drafts) — never tracked
 .claude/tmp/
+# throwaway design-artifact mocks (the "design artifact before code" policy — HTML/PNG, never tracked)
+.claude/mocks/
 # machine-specific local settings (bridgespace hooks w/ absolute user paths) — never tracked
 .claude/settings.local.json
 # parallel-session coordination: track the tooling (hook + ps1), ignore the live shared state
