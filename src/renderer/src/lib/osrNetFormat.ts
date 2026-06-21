@@ -72,9 +72,84 @@ export function parseFilterTokens(query: string): FilterToken[] {
     .filter((t) => t.text.length > 0 || (t.key !== undefined && t.key.length > 0))
 }
 
-/** Does a record match a single positive token? Plain tokens match the full URL only. */
+/** Lowercased hostname of a URL (empty for a non-URL like data:/blob:). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+/** Lowercased scheme of a URL ("https", "ws", …) — robust to non-parseable inputs. */
+function schemeOf(url: string): string {
+  try {
+    return new URL(url).protocol.replace(/:$/, '').toLowerCase()
+  } catch {
+    const m = /^([a-z][a-z0-9+.-]*):/i.exec(url)
+    return m ? m[1].toLowerCase() : ''
+  }
+}
+
+/** Chrome `domain:` semantics — exact host or subdomain; a leading `*.` requires a strict subdomain. */
+function matchDomain(host: string, pattern: string): boolean {
+  if (!host || !pattern) return false
+  if (pattern.startsWith('*.')) {
+    const base = pattern.slice(2)
+    return base.length > 0 && host.endsWith('.' + base)
+  }
+  return host === pattern || host.endsWith('.' + pattern)
+}
+
+/** Parse a `larger-than:` threshold ("500", "1k", "2m") to bytes; null when unparseable. */
+export function parseSizeThreshold(v: string): number | null {
+  const m = /^(\d+(?:\.\d+)?)([km]?)$/.exec(v.trim())
+  if (!m) return null
+  const mult = m[2] === 'k' ? 1000 : m[2] === 'm' ? 1_000_000 : 1
+  return parseFloat(m[1]) * mult
+}
+
+/** True while a request is still in flight (Chrome `is:running`): no terminal event yet. */
+function isRunning(rec: NetRecord): boolean {
+  return rec.endTs === undefined && !rec.failed
+}
+
+/**
+ * Does a record match a single positive token? Plain tokens match the full URL only. A `key:value`
+ * token dispatches to the matching captured field; an UNKNOWN key falls back to a plain URL substring
+ * of the literal `key:value` (Chrome's behavior). All comparisons are case-insensitive (lowercased).
+ */
 export function matchToken(rec: NetRecord, token: FilterToken): boolean {
-  return rec.url.toLowerCase().includes(token.text)
+  const { key, text } = token
+  if (!key) return rec.url.toLowerCase().includes(text)
+  switch (key) {
+    case 'url':
+      return rec.url.toLowerCase().includes(text)
+    case 'method':
+      return rec.method.toLowerCase() === text
+    case 'scheme':
+      return schemeOf(rec.url) === text
+    case 'status-code': // substring; pending (no status) never matches
+      return rec.status !== undefined && String(rec.status).includes(text)
+    case 'mime-type':
+      return (rec.mimeType ?? '').split(';')[0].trim().toLowerCase().includes(text)
+    case 'resource-type': // the only way to split fetch vs xhr
+      return (rec.type ?? '').toLowerCase().includes(text)
+    case 'domain':
+      return matchDomain(hostOf(rec.url), text)
+    case 'larger-than': {
+      const th = parseSizeThreshold(text)
+      return th !== null && (rec.encodedDataLength ?? 0) > th
+    }
+    case 'has-response-header':
+      return !!rec.resHeaders?.some((h) => h.name.toLowerCase() === text)
+    case 'is':
+      if (text === 'running') return isRunning(rec)
+      if (text === 'from-cache') return rec.fromCache === true
+      return rec.url.toLowerCase().includes(`is:${text}`) // unknown is: → URL fallback
+    default:
+      return rec.url.toLowerCase().includes(`${key}:${text}`) // unknown key → literal URL token
+  }
 }
 
 /**

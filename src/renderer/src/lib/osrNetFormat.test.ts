@@ -122,6 +122,88 @@ describe('parseFilterTokens', () => {
   })
 })
 
+describe('filterRecords — property filters (key:value)', () => {
+  const list = [
+    rec({
+      requestId: 'a',
+      url: 'https://api.example.com/v1/users',
+      method: 'GET',
+      type: 'xhr',
+      status: 200,
+      mimeType: 'application/json',
+      encodedDataLength: 2000,
+      endTs: 3,
+      resHeaders: [{ name: 'Cache-Control', value: 'no-cache' }]
+    }),
+    rec({
+      requestId: 'b',
+      url: 'http://cdn.example.com/app.js',
+      method: 'GET',
+      type: 'script',
+      status: 404,
+      mimeType: 'text/javascript; charset=utf-8',
+      encodedDataLength: 50,
+      endTs: 1,
+      fromCache: true
+    }),
+    rec({ requestId: 'c', url: 'wss://live.other.com/socket', method: 'GET', type: 'websocket' }), // pending
+    rec({
+      requestId: 'd',
+      url: 'http://x/upload',
+      method: 'POST',
+      type: 'fetch',
+      status: 200,
+      endTs: 5
+    })
+  ]
+  const ids = (q: string): string[] => filterRecords(list, q).map((r) => r.requestId)
+
+  it('method: is exact + case-insensitive', () => {
+    expect(ids('method:post')).toEqual(['d'])
+    expect(ids('method:GET').sort()).toEqual(['a', 'b', 'c'])
+  })
+  it('scheme:', () => {
+    expect(ids('scheme:wss')).toEqual(['c'])
+    expect(ids('scheme:https')).toEqual(['a'])
+  })
+  it('status-code: is a substring that excludes pending', () => {
+    expect(ids('status-code:404')).toEqual(['b'])
+    expect(ids('status-code:200').sort()).toEqual(['a', 'd'])
+  })
+  it('mime-type: matches the type before the semicolon', () => {
+    expect(ids('mime-type:text/javascript')).toEqual(['b'])
+    expect(ids('mime-type:json')).toEqual(['a'])
+  })
+  it('resource-type: splits fetch vs xhr', () => {
+    expect(ids('resource-type:xhr')).toEqual(['a'])
+    expect(ids('resource-type:fetch')).toEqual(['d'])
+  })
+  it('domain: exact + subdomain + *. wildcard', () => {
+    expect(ids('domain:example.com').sort()).toEqual(['a', 'b'])
+    expect(ids('domain:*.example.com').sort()).toEqual(['a', 'b'])
+    expect(ids('domain:other.com')).toEqual(['c'])
+  })
+  it('larger-than: bytes + k suffix (transfer size)', () => {
+    expect(ids('larger-than:1k')).toEqual(['a'])
+    expect(ids('larger-than:100')).toEqual(['a'])
+  })
+  it('has-response-header:', () => {
+    expect(ids('has-response-header:cache-control')).toEqual(['a'])
+  })
+  it('is:running / is:from-cache', () => {
+    expect(ids('is:running')).toEqual(['c'])
+    expect(ids('is:from-cache')).toEqual(['b'])
+  })
+  it('unknown key falls back to a URL substring; plain token stays URL-only', () => {
+    expect(ids('foo:users')).toEqual([]) // literal "foo:users" is in no URL
+    expect(ids('socket')).toEqual(['c'])
+  })
+  it('AND-composes property + plain tokens', () => {
+    expect(ids('domain:example.com method:get larger-than:1k')).toEqual(['a'])
+    expect(ids('example.com -method:get')).toEqual([]) // both example.com rows are GET
+  })
+})
+
 describe('matchesType / filterByType (DevTools resource-type pills)', () => {
   const list = [
     rec({ requestId: 'doc', type: 'document' }),
