@@ -40,14 +40,51 @@ export function statusLabel(rec: NetRecord): string {
   return rec.status !== undefined ? String(rec.status) : '—'
 }
 
-/** Case-insensitive substring filter over name/url/method/type/status. Empty query passes all. */
+/**
+ * One parsed filter token. A plain token matches the request URL only (DevTools semantics — `get`
+ * does NOT match a GET *method*). A leading `-` negates (the row must NOT match). `key`/`value` are
+ * populated for `key:value` property filters in P0.2; for now every token is plain text.
+ */
+export interface FilterToken {
+  neg: boolean
+  text: string // lowercased match text (the value, for a property token)
+  key?: string // property-filter key (lowercased), e.g. 'method' — undefined ⇒ plain URL token
+}
+
+/** Split a filter box into tokens: whitespace-separated, leading `-` = negate. Lone `-` is dropped. */
+export function parseFilterTokens(query: string): FilterToken[] {
+  return query
+    .trim()
+    .split(/\s+/)
+    .map((raw) => {
+      const neg = raw.startsWith('-')
+      const body = neg ? raw.slice(1) : raw
+      const colon = body.indexOf(':')
+      if (colon > 0) {
+        return {
+          neg,
+          key: body.slice(0, colon).toLowerCase(),
+          text: body.slice(colon + 1).toLowerCase()
+        }
+      }
+      return { neg, text: body.toLowerCase() }
+    })
+    .filter((t) => t.text.length > 0 || (t.key !== undefined && t.key.length > 0))
+}
+
+/** Does a record match a single positive token? Plain tokens match the full URL only. */
+export function matchToken(rec: NetRecord, token: FilterToken): boolean {
+  return rec.url.toLowerCase().includes(token.text)
+}
+
+/**
+ * DevTools text filter: tokenize on whitespace, AND every token, honor leading-`-` negation, match
+ * the URL only. Empty query passes all. (Property `key:value` tokens are handled in P0.2.)
+ */
 export function filterRecords(records: NetRecord[], query: string): NetRecord[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return records
-  return records.filter((r) => {
-    const hay = `${r.url} ${r.method} ${r.type} ${statusLabel(r)}`.toLowerCase()
-    return hay.includes(q)
-  })
+  const tokens = parseFilterTokens(query)
+  if (tokens.length === 0) return records
+  return records.filter((r) => tokens.every((t) => (t.neg ? !matchToken(r, t) : matchToken(r, t))))
 }
 
 /** The DevTools-style resource-type filter pills (key + label + the CDP resourceTypes each matches). */

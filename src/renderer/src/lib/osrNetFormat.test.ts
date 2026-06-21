@@ -5,6 +5,7 @@ import {
   urlName,
   statusLabel,
   filterRecords,
+  parseFilterTokens,
   matchesType,
   filterByType,
   initiatorLabel
@@ -70,7 +71,7 @@ describe('statusLabel', () => {
   })
 })
 
-describe('filterRecords', () => {
+describe('filterRecords (tokenized · URL-only · AND + negation)', () => {
   const list = [
     rec({ requestId: 'a', url: 'http://x/api/users', method: 'GET', type: 'xhr', status: 200 }),
     rec({ requestId: 'b', url: 'http://x/main.js', method: 'GET', type: 'script', status: 200 }),
@@ -85,11 +86,39 @@ describe('filterRecords', () => {
   it('passes all on empty query', () => {
     expect(filterRecords(list, '   ').length).toBe(3)
   })
-  it('matches url/method/type/status case-insensitively', () => {
+  it('matches the URL case-insensitively', () => {
     expect(filterRecords(list, 'API').map((r) => r.requestId)).toEqual(['a'])
-    expect(filterRecords(list, 'post').map((r) => r.requestId)).toEqual(['c'])
-    expect(filterRecords(list, 'script').map((r) => r.requestId)).toEqual(['b'])
-    expect(filterRecords(list, 'failed').map((r) => r.requestId)).toEqual(['c'])
+    expect(filterRecords(list, 'main.js').map((r) => r.requestId)).toEqual(['b'])
+  })
+  it('plain tokens match the URL only — not method/type/status', () => {
+    expect(filterRecords(list, 'post')).toEqual([]) // POST is a method, not in any URL
+    expect(filterRecords(list, 'script')).toEqual([]) // script is a type, not in any URL
+    expect(filterRecords(list, 'failed')).toEqual([]) // (failed) is a status, not in any URL
+  })
+  it('AND-composes space-separated tokens', () => {
+    expect(filterRecords(list, 'http login').map((r) => r.requestId)).toEqual(['c'])
+    expect(filterRecords(list, 'api login')).toEqual([])
+  })
+  it('negates a token with a leading dash', () => {
+    expect(filterRecords(list, '-login').map((r) => r.requestId)).toEqual(['a', 'b'])
+    expect(filterRecords(list, 'http -api -login').map((r) => r.requestId)).toEqual(['b'])
+  })
+  it('drops a lone dash', () => {
+    expect(filterRecords(list, '-').length).toBe(3)
+  })
+})
+
+describe('parseFilterTokens', () => {
+  it('splits key:value into key + value', () => {
+    const [t] = parseFilterTokens('method:POST')
+    expect(t).toEqual({ neg: false, key: 'method', text: 'post' })
+  })
+  it('negates a property token', () => {
+    const [t] = parseFilterTokens('-status-code:404')
+    expect(t).toEqual({ neg: true, key: 'status-code', text: '404' })
+  })
+  it('treats a leading-colon token as plain text', () => {
+    expect(parseFilterTokens(':foo')).toEqual([{ neg: false, text: ':foo' }])
   })
 })
 
