@@ -16,10 +16,18 @@ export interface BoardNet {
   dropped: number
   open: boolean
   dock: NetDock
+  preserve: boolean // mirrors MAIN's flag (seeded from the replay snapshot)
   selected?: string // selected requestId (drives the details pane)
 }
 
-const EMPTY: BoardNet = { records: [], ws: [], dropped: 0, open: false, dock: 'bottom' }
+const EMPTY: BoardNet = {
+  records: [],
+  ws: [],
+  dropped: 0,
+  open: false,
+  dock: 'bottom',
+  preserve: false
+}
 
 interface OsrNetworkState {
   byBoard: Record<string, BoardNet>
@@ -27,6 +35,7 @@ interface OsrNetworkState {
   apply: (id: string, msg: OsrNetMessage) => void
   setOpen: (id: string, open: boolean) => void
   setDock: (id: string, dock: NetDock) => void
+  setPreserve: (id: string, preserve: boolean) => void
   select: (id: string, requestId?: string) => void
   /** Drop a board's state (unmount). */
   clearBoard: (id: string) => void
@@ -61,7 +70,8 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
           ...cur,
           records: msg.records ?? [],
           ws: msg.ws ?? [],
-          dropped: msg.dropped ?? 0
+          dropped: msg.dropped ?? 0,
+          preserve: msg.preserve ?? cur.preserve // seed the checkbox from MAIN's real flag
         }
       } else if (msg.kind === 'cleared') {
         next = { ...cur, records: [], ws: [], dropped: 0, selected: undefined }
@@ -81,6 +91,9 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
 
   setDock: (id, dock) =>
     set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), dock } } })),
+
+  setPreserve: (id, preserve) =>
+    set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), preserve } } })),
 
   select: (id, requestId) =>
     set((s) => ({

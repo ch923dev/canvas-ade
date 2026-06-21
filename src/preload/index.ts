@@ -149,6 +149,7 @@ export interface OsrNetMessage {
   records?: NetRecord[]
   ws?: WsRecord[]
   dropped?: number
+  preserve?: boolean
 }
 /** A lazily-fetched, MAIN-capped body (or an error). */
 export interface OsrNetBody {

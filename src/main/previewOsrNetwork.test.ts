@@ -252,11 +252,13 @@ describe('snapshotNet', () => {
     ringPushRecord(s, { requestId: 'r', url: 'u', method: 'GET', type: 'fetch', startTs: 0 })
     ensureWs(s, 'w', 'ws://x', 0)
     s.dropped = 2
+    s.preserve = true
     const snap = snapshotNet(s)
     expect(snap.kind).toBe('replay')
     expect(snap.records?.length).toBe(1)
     expect(snap.ws?.length).toBe(1)
     expect(snap.dropped).toBe(2)
+    expect(snap.preserve).toBe(true) // seeds the reopened panel's checkbox
     expect(snap.records).not.toBe(s.records) // copied array
   })
 })

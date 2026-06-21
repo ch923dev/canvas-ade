@@ -5,7 +5,7 @@
  * same internals, switched by the `▤/▥` header control. Reads the ephemeral `osrNetworkStore`;
  * never renders captured strings as HTML (React text-escaping only) — they are page-controlled.
  */
-import { useState, type ReactElement } from 'react'
+import { useState, useEffect, useRef, type ReactElement } from 'react'
 import { Icon } from '../../Icon'
 import { useOsrNetworkStore, type NetDock } from '../../../store/osrNetworkStore'
 import type { NetRecord, WsRecord, NetHeader } from '../../../../../preload'
@@ -40,14 +40,24 @@ export function OsrNetworkPanel({
   const board = useOsrNetworkStore((s) => s.byBoard[boardId])
   const setDock = useOsrNetworkStore((s) => s.setDock)
   const setOpen = useOsrNetworkStore((s) => s.setOpen)
+  const setPreserveFlag = useOsrNetworkStore((s) => s.setPreserve)
   const select = useOsrNetworkStore((s) => s.select)
 
   const [filter, setFilter] = useState('')
-  const [preserve, setPreserve] = useState(false)
   const [detailTab, setDetailTab] = useState<DetailTab>('headers')
+  // Lazily-fetched bodies cache. CDP reuses requestIds (sequential per session) across reloads, so it
+  // MUST be dropped whenever the log is cleared (button OR clear-on-nav) — else a reused id shows a
+  // stale body. The effect below clears it on the records→empty transition that a clear produces.
   const [bodies, setBodies] = useState<Record<string, BodyState>>({})
+  const recordCount = board?.records.length ?? 0
+  const prevCount = useRef(0)
+  useEffect(() => {
+    if (prevCount.current > 0 && recordCount === 0) setBodies({})
+    prevCount.current = recordCount
+  }, [recordCount])
 
   if (!board?.open) return null
+  const preserve = board.preserve
   const dock: NetDock = board.dock
   const rows = filterRecords(board.records, filter)
   const selected = board.selected
@@ -61,10 +71,13 @@ export function OsrNetworkPanel({
   const total = board.records.length
   const togglePreserve = (): void => {
     const next = !preserve
-    setPreserve(next)
+    setPreserveFlag(boardId, next) // store mirror (survives panel unmount; seeded from replay)
     void window.api.setOsrNetPreserve(boardId, next)
   }
-  const clear = (): void => void window.api.clearOsrNet(boardId)
+  const clear = (): void => {
+    setBodies({}) // drop cached bodies up-front (the records→empty effect also covers clear-on-nav)
+    void window.api.clearOsrNet(boardId)
+  }
   const onSelect = (rec: NetRecord): void => {
     select(boardId, rec.requestId)
     setDetailTab(rec.type === 'websocket' ? 'frames' : 'headers')

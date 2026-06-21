@@ -78,6 +78,8 @@ export interface OsrNetMsg {
   records?: NetRecord[]
   ws?: WsRecord[]
   dropped?: number
+  /** MAIN's preserve flag, sent on `replay` so the reopened panel's checkbox reflects the real state. */
+  preserve?: boolean
 }
 
 /** Per-board MAIN state. Lives on the `OsrEntry` (`e.net`); cheap, bounded, ephemeral. */
@@ -264,13 +266,14 @@ export function clearNet(state: OsrNetState): void {
   state.dirtyWs.clear()
 }
 
-/** A full snapshot for the subscribe-replay (S2). */
+/** A full snapshot for the subscribe-replay (S2) — includes preserve so the panel can seed its UI. */
 export function snapshotNet(state: OsrNetState): OsrNetMsg {
   return {
     kind: 'replay',
     records: [...state.records],
     ws: [...state.ws.values()],
-    dropped: state.dropped
+    dropped: state.dropped,
+    preserve: state.preserve
   }
 }
 
