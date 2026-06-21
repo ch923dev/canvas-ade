@@ -22,6 +22,9 @@ import {
 } from '../../../lib/osrNetFormat'
 
 type DetailTab = 'headers' | 'payload' | 'response' | 'timing' | 'frames'
+/** The detail tabs available for a record (WebSocket has its own set). */
+const tabsFor = (rec: NetRecord): DetailTab[] =>
+  rec.type === 'websocket' ? ['frames', 'headers'] : ['headers', 'payload', 'response', 'timing']
 interface BodyState {
   loading?: boolean
   body?: string
@@ -62,6 +65,16 @@ export function OsrNetworkPanel({
     if (prevCount.current > 0 && recordCount === 0) setBodies({})
     prevCount.current = recordCount
   }, [recordCount])
+  // Escape closes the details pane (deselects), matching Chrome. Active only while a row is selected.
+  const selectedId = board?.selected
+  useEffect(() => {
+    if (!selectedId) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') select(boardId, undefined)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedId, boardId, select])
 
   if (!board?.open) return null
   const preserve = board.preserve
@@ -104,7 +117,8 @@ export function OsrNetworkPanel({
   }
   const onSelect = (rec: NetRecord): void => {
     select(boardId, rec.requestId)
-    setDetailTab(rec.type === 'websocket' ? 'frames' : 'headers')
+    // Keep the last-used tab (Chrome) — only fall back when it isn't available for this request type.
+    setDetailTab((cur) => (tabsFor(rec).includes(cur) ? cur : tabsFor(rec)[0]))
   }
   const loadBody = async (rec: NetRecord, kind: 'response' | 'request'): Promise<void> => {
     const key = `${rec.requestId}:${kind}`
@@ -286,10 +300,7 @@ export function OsrNetworkPanel({
       {selected && (
         <div className="bb-net-details">
           <div className="bb-net-subtabs">
-            {(selected.type === 'websocket'
-              ? (['frames', 'headers'] as DetailTab[])
-              : (['headers', 'payload', 'response', 'timing'] as DetailTab[])
-            ).map((t) => (
+            {tabsFor(selected).map((t) => (
               <button
                 key={t}
                 className={'bb-net-subtab' + (detailTab === t ? ' bb-net-subtab-on' : '')}
@@ -298,6 +309,15 @@ export function OsrNetworkPanel({
                 {t[0].toUpperCase() + t.slice(1)}
               </button>
             ))}
+            <span className="bb-net-spacer" />
+            <button
+              className="bb-net-tool"
+              title="Close details (Esc)"
+              aria-label="Close details"
+              onClick={() => select(boardId, undefined)}
+            >
+              <Icon name="x" size={12} />
+            </button>
           </div>
           <div className="bb-net-dbody">
             {selectedWs ? (

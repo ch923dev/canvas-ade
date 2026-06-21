@@ -82,6 +82,39 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect(page.locator('.bb-net-filter-err')).toBeVisible()
   })
 
+  test('details pane: switch tab, then Escape and the X both close it', async ({
+    page,
+    electronApp
+  }) => {
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const id = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    const firstRow = page.locator('.bb-net-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 8000 })
+
+    await firstRow.click()
+    const details = page.locator('.bb-net-details')
+    await expect(details).toBeVisible()
+
+    // Switch to the Timing tab → it becomes the active subtab.
+    await details.getByRole('button', { name: 'Timing' }).click()
+    await expect(details.locator('.bb-net-subtab-on')).toHaveText('Timing')
+
+    // Escape closes the pane.
+    await page.keyboard.press('Escape')
+    await expect(details).toHaveCount(0)
+
+    // Re-select, then close via the X.
+    await firstRow.click()
+    await expect(details).toBeVisible()
+    await details.getByRole('button', { name: 'Close details' }).click()
+    await expect(details).toHaveCount(0)
+  })
+
   test('the dock switch flips the panel between bottom and right', async ({
     page,
     electronApp
