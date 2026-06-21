@@ -81,9 +81,17 @@ export function parsePortsFromOutput(raw: string): DetectedUrl[] {
   // `http://localhost:3000`). The fragment's matched text is always a strict prefix
   // of the fuller match; a genuinely distinct URL never is. (Edge case: two real
   // ports in a prefix relation like :80 vs :8000 — vanishingly rare, accepted.)
-  const real = found.filter(
-    (a) => !found.some((b) => b.text.length > a.text.length && b.text.startsWith(a.text))
-  )
+  //
+  // FIND-013: do this in O(n log n), not the prior O(n²) `found.some(...)` nested scan, which
+  // stalled MAIN ~0.7–1s on a 256 KB buffer densely packed with localhost URLs (adversarial/
+  // agent-induced). Sorting the DISTINCT matched texts puts every extension of a prefix contiguously
+  // right after it, so a text is a fragment iff the next distinct text starts with it.
+  const distinctTexts = [...new Set(found.map((f) => f.text))].sort()
+  const fragmentTexts = new Set<string>()
+  for (let i = 0; i < distinctTexts.length - 1; i++) {
+    if (distinctTexts[i + 1].startsWith(distinctTexts[i])) fragmentTexts.add(distinctTexts[i])
+  }
+  const real = found.filter((a) => !fragmentTexts.has(a.text))
   // Dedupe by host:port, keeping the LAST (most-recent) occurrence.
   const byKey = new Map<string, Hit>()
   for (const f of real) {

@@ -8,9 +8,11 @@ import {
   createOpenExternalLimiter,
   openExternalSafe,
   registerLoadLatch,
+  clearLatchOnInPageRecovery,
   registerCrashReadyGate,
   isHttpErrorCode,
-  isErrorResponseCode
+  isErrorResponseCode,
+  type PreviewEvent
 } from './previewShared'
 import {
   attachOsrWidgets,
@@ -75,15 +77,9 @@ interface OsrEntry {
   teardownDownloads?: () => void
 }
 
-/** Browser-preview lifecycle event, emitted on the SAME `preview:event` channel the native
- *  path uses so the renderer's previewStore resolves connecting/connected/load-failed/crashed.
- *  Mirrors the renderer `PreviewEvent` union (minus the native-only `escape`). */
-type OsrLifecycleEvent =
-  | { id: string; type: 'did-finish-load'; url: string }
-  | { id: string; type: 'did-navigate'; url: string; canGoBack: boolean; canGoForward: boolean }
-  | { id: string; type: 'did-fail-load'; url: string; errorCode: number; errorDescription: string }
-  | { id: string; type: 'did-start-navigation' }
-  | { id: string; type: 'render-process-gone'; reason: string }
+// Browser-preview lifecycle events are the SHARED `PreviewEvent` union (previewShared) — emitted on
+// the same `preview:event` channel the native path used. (Previously duplicated here as a local
+// `OsrLifecycleEvent`; reusing the source of truth also carries `did-navigate.recovered` for FIND-010.)
 
 const osr = new Map<string, OsrEntry>()
 // A resize requested before its OSR window exists (the renderer's sizing hook fires on mount,
@@ -398,7 +394,7 @@ function emitCursor(payload: OsrCursorPayload): void {
   }
 }
 
-function emitEvent(payload: OsrLifecycleEvent): void {
+function emitEvent(payload: PreviewEvent): void {
   try {
     owner?.webContents.send('preview:event', payload)
   } catch {
@@ -449,7 +445,7 @@ export function applyOsrInitialLoad(
   url: string,
   e: { failed: boolean },
   load: (url: string) => void,
-  emit: (ev: OsrLifecycleEvent) => void
+  emit: (ev: PreviewEvent) => void
 ): void {
   if (isAllowedPreviewUrl(url)) {
     load(url)
@@ -641,12 +637,19 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   })
   wc.on('did-navigate-in-page', (_ev, navUrl, isMainFrame) => {
     if (!isMainFrame) return
+    // FIND-010: an in-page (client-side) route commits real, non-error in-app content. If a prior
+    // load-failure latched `e.failed` (a 4xx/5xx did-navigate), nothing else clears it for an SPA
+    // route — registerLoadLatch only clears on a main-frame did-start-navigation, which an in-page
+    // nav never fires — so the board stays stuck on 'load-failed'. Clear the latch and tell the
+    // renderer to lift its stale load-failed state (the recovery helper was previously unwired).
+    const recovered = clearLatchOnInPageRecovery(e)
     emitEvent({
       id,
       type: 'did-navigate',
       url: navUrl,
       canGoBack: wc.navigationHistory.canGoBack(),
-      canGoForward: wc.navigationHistory.canGoForward()
+      canGoForward: wc.navigationHistory.canGoForward(),
+      ...(recovered ? { recovered: true } : {})
     })
   })
   // If a resize raced ahead of this open (the sizing hook fires on mount too), apply the

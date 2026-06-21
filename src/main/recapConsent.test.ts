@@ -142,4 +142,34 @@ describe('registerRecapHandlers', () => {
     // Internal read returns the real value
     expect(await cap.invokeAs(internalEvent, 'recap:getConsent')).toBe('enabled')
   })
+
+  // FIND-012: a throw from onDecision (e.g. installRecapHook fails writing settings.local.json)
+  // must NOT leave consent persisted out of sync with the hook. The write is rolled back to its
+  // prior state and the handler reports {ok:false}, so the stored decision matches reality.
+  it('rolls consent back to its prior state when onDecision throws (returns {ok:false})', async () => {
+    const cap = createIpcCapture()
+    let shouldThrow = false
+    registerRecapHandlers(
+      cap.ipcMain,
+      mainWin,
+      dir,
+      () => '/proj/test',
+      () => {
+        if (shouldThrow) throw new Error('installRecapHook failed')
+      }
+    )
+
+    // undecided → enable whose hook install THROWS → rolled back to undecided (not 'enabled').
+    shouldThrow = true
+    expect(await cap.invoke('recap:setConsent', 'enabled')).toEqual({ ok: false })
+    expect(await cap.invoke('recap:getConsent')).toBe('undecided')
+
+    // Establish a real 'enabled' state, then a failing 'declined' rolls back to 'enabled'
+    // (the prior value) — never silently to undecided.
+    shouldThrow = false
+    expect(await cap.invoke('recap:setConsent', 'enabled')).toEqual({ ok: true })
+    shouldThrow = true
+    expect(await cap.invoke('recap:setConsent', 'declined')).toEqual({ ok: false })
+    expect(await cap.invoke('recap:getConsent')).toBe('enabled')
+  })
 })

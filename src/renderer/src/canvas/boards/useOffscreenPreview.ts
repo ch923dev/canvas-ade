@@ -180,4 +180,11 @@ export function useOffscreenPreview(
       void window.api.closeOsrPreview(boardId)
     }
   }, [boardId, url, alive, canvasRef])
+
+  // FIND-011: drop this board's previewStore entry when the board UNMOUNTS (a deletion or project
+  // switch unmounts the BoardNode). The lifecycle effect above re-runs on every url/alive change, so
+  // it can't own this clear without wrongly wiping the entry on each navigation/evict. Without it the
+  // `byId` map grows monotonically per browser-board mount. Mirrors the terminal/widget store
+  // unmount-clear pattern (useTerminalSpawn / useOsrWidgetEvents).
+  useEffect(() => () => usePreviewStore.getState().clear(boardId), [boardId])
 }

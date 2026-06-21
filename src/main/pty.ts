@@ -220,16 +220,23 @@ interface SessionDeps {
 /**
  * Core of `reapParked`: stop the TTL timer and kill the process tree. Pure of
  * module state — operates on the passed `parked` map + injected `killTree`.
+ *
+ * FIND-009: `onReap` lets the caller forget id-keyed side-state (the module's `boardCwds`) when —
+ * and ONLY when — a parked session is actually reaped, so a parked-then-reaped board's cwd entry
+ * doesn't leak until the next project switch. Fired before the (async) tree-kill; absent for the
+ * `disposeAllPtys` path, which clears that side-state wholesale.
  */
 export function reapParkedCore(
   id: string,
   parkedMap: Map<string, ParkedLike>,
-  deps: Pick<SessionDeps, 'killTree'>
+  deps: Pick<SessionDeps, 'killTree'>,
+  onReap?: (id: string) => void
 ): Promise<void> {
   const p = parkedMap.get(id)
   if (!p) return Promise.resolve()
   parkedMap.delete(id)
   clearTimeout(p.timer)
+  onReap?.(id)
   return deps.killTree(p.proc)
 }
 
@@ -315,7 +322,9 @@ const sessionDeps: SessionDeps = {
 
 /** Reap a parked session: stop its TTL timer and kill its process tree. */
 function reapParked(id: string): Promise<void> {
-  return reapParkedCore(id, parked, sessionDeps)
+  // FIND-009: a parked session never routed through cleanupCore, so its boardCwds entry would
+  // otherwise leak until the next project switch. Forget it as part of the reap.
+  return reapParkedCore(id, parked, sessionDeps, (rid) => boardCwds.delete(rid))
 }
 
 /**
@@ -466,6 +475,8 @@ export function registerPtyHandlers(ipcMain: IpcMain, getWin: () => BrowserWindo
       if (p && p.proc === proc) {
         clearTimeout(p.timer)
         parked.delete(opts.id)
+        // FIND-009: this parked exit bypasses cleanupCore too, so drop the gitDiff cwd here as well.
+        boardCwds.delete(opts.id)
       }
     })
 

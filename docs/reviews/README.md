@@ -9,7 +9,12 @@ path at the commit shown.
 **No open review backlog.** The **2026-06-19 feature-improvement audit** (the last open round) is
 **COMPLETE** — all 43 confirmed findings dispositioned across the file-disjoint **"PA" remediation
 umbrella** (10 slices PA-1…PA-10 + the PA-R lint ratchet), every slice merged, full gate + e2e matrix
-green at each merge. Summary: [`2026-06-19-feature-audit.md`](2026-06-19-feature-audit.md).
+green at each merge. Summary: [`2026-06-19-feature-audit.md`](2026-06-19-feature-audit.md). The
+**2026-06-20 codebase DEFECT audit** (15 confirmed: 1 High · 7 Med · 7 Low — the correctness /
+security / concurrency dimensions the 06-19 improvement audit deliberately skipped, incl. the
+never-before-defect-audited File Tree + Command Board) is likewise **COMPLETE** — all 15 fixed across
+the file-disjoint **defect-audit umbrella** (PR1–6: #206/#207/#208/#209/#211/#212), each with a
+regression test. Package: [`2026-06-20-defect-audit/`](2026-06-20-defect-audit/).
 
 Every prior **CODE review/bug-hunt round is fully remediated**, including the **2026-06-15 codebase bug
 hunt** (16 findings — 1 High · 2 Med · 13 Low — all fixed), the 2026-06-13 DX audit (process track,
@@ -20,6 +25,7 @@ dated file here and update this line.
 
 | # | File / status |
 |---|---|
+| Defect audit (2026-06-20) | [`2026-06-20-defect-audit/`](2026-06-20-defect-audit/) — codebase-wide **DEFECT** sweep (correctness · security · concurrency · data-integrity · resource-leak · perf-cliff · supply-chain) that deliberately targeted the dimensions the 2026-06-19 improvement audit skipped, and the never-before-defect-audited **File Tree (#201)** + **Command Board (#182)**. 17 file-disjoint discovery slices → adversarial verify per candidate → 20 raw → **15 confirmed (1 High · 7 Med · 7 Low)**, independently re-verified against `main` on 2026-06-21. **✅ COMPLETE** — all 15 fixed across the file-disjoint **defect-audit umbrella** (PR1 #206 · PR2 #207 · PR3 #208 · PR4 #209 · PR5 #211 · PR6 #212), each with a regression test, full gate green per merge. High = orchestration bearer token left on disk after consent revoke. |
 | Feature-improvement audit (2026-06-19) | [`2026-06-19-feature-audit.md`](2026-06-19-feature-audit.md) — forward-looking perf/UX/a11y/code-quality audit of all shipped-on-`main` features (excludes File Tree + Command Board per user). Adversarial multi-agent verify: 52 raw → **43 confirmed** (3 High · 17 Med · 23 Low) + 7 verify-first terminal notes. Decomposed into the file-disjoint **"PA" remediation umbrella** (10 slices PA-1…PA-10 + the PA-R lint ratchet). **✅ COMPLETE** — all slices merged (#186/#190/#195/#196/#197/#199/#200/#202/#203 + PA-R), every finding fixed or consciously deferred. Raw package (`2026-06-19-feature-audit/`) collapsed to git history. |
 | Bug hunt (2026-06-15) | [`2026-06-15-bug-hunt/`](2026-06-15-bug-hunt/) — 16 confirmed (1 High · 2 Med · 13 Low · 0 Crit), **all fixed**. 18 file-disjoint discovery slices → an independent adversarial verifier per candidate (44 agents; 25 candidates → 16). High = recap-watcher app-crash guard; the MCP-cluster fix closes the live-agent handoff-barrier gap (per-task settle). Verified: gate 2550/2550 + full e2e matrix (Win 127 · Linux 126+1skip). Raw cards + [`FIX-REPORT.md`](2026-06-15-bug-hunt/FIX-REPORT.md) in the package. |
 | Electron-to-Flutter assessment + OSR spike (2026-06-14) | [`2026-06-14-electron-to-flutter-assessment/`](2026-06-14-electron-to-flutter-assessment/) - 20-agent NO-GO-on-Flutter feasibility study; recommended the offscreen-to-canvas preview spike, SHIPPED flag-gated #151 (proving native-view occlusion is fixable IN Electron). Open productionization tracked as OS-3 in [`../feature-proposals.md`](../feature-proposals.md). |
