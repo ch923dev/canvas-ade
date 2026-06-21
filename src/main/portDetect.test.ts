@@ -86,4 +86,20 @@ describe('parsePortsFromOutput', () => {
     expect(out).toHaveLength(1)
     expect(out[0]).toEqual({ url: 'http://localhost:9000', host: 'localhost', port: 9000 })
   })
+
+  // FIND-013: the soft-wrap dedupe is O(n log n), not the old O(n^2) nested scan that stalled MAIN
+  // ~1s on a buffer dense with localhost URLs. Exercise that path with many prefix-fragments of one
+  // real URL plus a distinct port; the result must still drop every fragment and keep the real ports.
+  it('dedupes a dense buffer of prefix-fragments correctly (FIND-013 O(n log n) path)', () => {
+    const lines: string[] = []
+    for (let i = 0; i < 400; i++) {
+      // Progressive soft-wrap fragments of http://localhost:3000 (each a strict prefix of the next).
+      lines.push('http://localhost:3', 'http://localhost:30', 'http://localhost:300')
+    }
+    const raw = lines.join('\n') + '\nhttp://localhost:3000/\nhttp://localhost:8080/\n'
+    const ports = parsePortsFromOutput(raw)
+      .map((u) => u.port)
+      .sort((a, b) => a - b)
+    expect(ports).toEqual([3000, 8080])
+  })
 })
