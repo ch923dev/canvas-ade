@@ -103,41 +103,53 @@ export function createFileWatcher(getWin: () => BrowserWindow | null): FileWatch
       root = path.resolve(dir)
     }
     if (myToken !== token) return
-    const { watch: chokidarWatch } = await import('chokidar')
-    if (myToken !== token) return
-    const w = chokidarWatch(root, {
-      ignoreInitial: true,
-      persistent: true,
-      followSymlinks: false,
-      ignorePermissionErrors: true,
-      // Hold an event until the file size settles — don't fire mid-save (chunked/large writes).
-      awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
-      // Collapse the tmp-rename delete/recreate of our own write-file-atomic into one `change`.
-      atomic: true,
-      ignored: (p: string) => shouldIgnore(root, p)
-    })
-    const forward =
-      (raw: RawWatchEvent) =>
-      (abs: string): void => {
-        const ev = toTreeEvent(root, raw, abs)
-        if (ev) send(ev)
+    // FIND-003: chokidar is ESM-only and lazily imported, so a failed dynamic `import('chokidar')`
+    // (a corrupt / asar-unresolvable module) or a throw from chokidarWatch() would REJECT this
+    // promise. The sole caller is fire-and-forget (`void fileWatcher?.watch(dir)` in index.ts), so
+    // that rejection has no `.catch` — it escapes to the global unhandledRejection sink and crashes
+    // MAIN (crashShutdown → app.exit(1)). The live file tree is a convenience layer, so own the
+    // error here and degrade gracefully (no watcher), exactly like startMcpServer / startLocalServer.
+    try {
+      const { watch: chokidarWatch } = await import('chokidar')
+      if (myToken !== token) return
+      const w = chokidarWatch(root, {
+        ignoreInitial: true,
+        persistent: true,
+        followSymlinks: false,
+        ignorePermissionErrors: true,
+        // Hold an event until the file size settles — don't fire mid-save (chunked/large writes).
+        awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+        // Collapse the tmp-rename delete/recreate of our own write-file-atomic into one `change`.
+        atomic: true,
+        ignored: (p: string) => shouldIgnore(root, p)
+      })
+      const forward =
+        (raw: RawWatchEvent) =>
+        (abs: string): void => {
+          const ev = toTreeEvent(root, raw, abs)
+          if (ev) send(ev)
+        }
+      w.on('add', forward('add'))
+        .on('change', forward('change'))
+        .on('unlink', forward('unlink'))
+        .on('addDir', forward('addDir'))
+        .on('unlinkDir', forward('unlinkDir'))
+        .on('error', (err) => console.warn('[fileWatch] watcher error (non-fatal)', err))
+      // A newer watch() may have landed during realpath/import — if so, drop this one.
+      if (myToken !== token) {
+        try {
+          await w.close()
+        } catch {
+          // ignore
+        }
+        return
       }
-    w.on('add', forward('add'))
-      .on('change', forward('change'))
-      .on('unlink', forward('unlink'))
-      .on('addDir', forward('addDir'))
-      .on('unlinkDir', forward('unlinkDir'))
-      .on('error', (err) => console.warn('[fileWatch] watcher error (non-fatal)', err))
-    // A newer watch() may have landed during realpath/import — if so, drop this one.
-    if (myToken !== token) {
-      try {
-        await w.close()
-      } catch {
-        // ignore
-      }
-      return
+      watcher = w
+    } catch (err) {
+      // A dynamic-import / construction failure must NOT crash MAIN — log and run without the
+      // live tree (it re-arms on the next project open). `watcher` stays null (close()d above).
+      console.warn('[fileWatch] could not start the file watcher (non-fatal)', err)
     }
-    watcher = w
   }
 
   return { watch, close }
