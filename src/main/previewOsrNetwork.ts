@@ -389,6 +389,7 @@ export function clearNet(state: OsrNetState): void {
   state.dropped = 0
   state.dirtyRecords.clear()
   state.dirtyWs.clear()
+  state.pendingNav = false // a manual Clear cancels any deferred nav boundary (no stale double-fire)
 }
 
 /**

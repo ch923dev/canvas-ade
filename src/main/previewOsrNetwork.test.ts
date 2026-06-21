@@ -421,6 +421,7 @@ describe('clearNet', () => {
     ringPushRecord(s, { requestId: 'r', url: 'u', method: 'GET', type: 'fetch', startTs: 0 })
     ensureWs(s, 'w', 'ws://x', 0)
     s.dropped = 7
+    s.pendingNav = true
     clearNet(s)
     expect(s.records).toEqual([])
     expect(s.byId.size).toBe(0)
@@ -428,6 +429,7 @@ describe('clearNet', () => {
     expect(s.dropped).toBe(0)
     expect(s.subscribed).toBe(true)
     expect(s.preserve).toBe(true)
+    expect(s.pendingNav).toBe(false) // a manual clear cancels a deferred nav boundary
   })
 })
 
