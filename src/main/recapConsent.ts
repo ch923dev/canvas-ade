@@ -50,6 +50,16 @@ export function writeConsent(
   writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify(all, null, 2), 'utf8')
 }
 
+/** Remove a project's persisted consent decision (→ undecided). Atomic. Used to roll back a write
+ * whose follow-on hook install/remove failed (FIND-012). No-op when the key is absent. */
+export function clearConsent(userDataDir: string, projectPath: string): void {
+  const all = readAll(userDataDir)
+  if (!(projectPath in all)) return
+  delete all[projectPath]
+  mkdirSync(userDataDir, { recursive: true })
+  writeFileAtomic.sync(fileFor(userDataDir), JSON.stringify(all, null, 2), 'utf8')
+}
+
 /**
  * Register the recap:getConsent / recap:setConsent IPC handlers.
  *
@@ -79,8 +89,29 @@ export function registerRecapHandlers(
     if (guard(e)) return { ok: false }
     const dir = getCurrentDir()
     if (!dir || (decision !== 'enabled' && decision !== 'declined')) return { ok: false }
+    // FIND-012: persist FIRST, then install/remove the hook — but if onDecision throws (e.g.
+    // installRecapHook fails writing .claude/settings.local.json), the consent would be left
+    // 'enabled' while the recording hook is uninstalled: a durable desync (recap silently records
+    // nothing) until the next project open re-ensures it. Roll the consent write back to its prior
+    // state so the stored decision always matches what onDecision actually achieved, and report
+    // failure so the renderer doesn't show the toggle as flipped.
+    const prior = readConsent(userDataDir, dir)
     writeConsent(userDataDir, dir, decision)
-    onDecision(dir, decision) // install or remove the session hook
+    try {
+      onDecision(dir, decision) // install or remove the session hook
+    } catch (err) {
+      console.error(
+        '[recap] consent hook install/remove failed; rolling back persisted consent',
+        err
+      )
+      try {
+        if (prior === undefined) clearConsent(userDataDir, dir)
+        else writeConsent(userDataDir, dir, prior)
+      } catch {
+        /* best-effort rollback — never throw out of the IPC handler */
+      }
+      return { ok: false }
+    }
     return { ok: true }
   })
 }
