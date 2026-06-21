@@ -32,9 +32,9 @@ test.describe('@core corrupt canvas.json recovery (Wave-0 data-loss seam)', () =
       // it would have been saved, then write it as the project's canvas.json.bak.
       await seed(page, 'planning')
       const goodDoc = await evalIn<string>(page, 'window.__canvasE2E.serializeDoc()')
-      await mainCall(electronApp, 'writeProjectFile', tmp, 'canvas.json.bak', goodDoc)
-      // Corrupt the primary so the renderer must fall back to the .bak.
-      await mainCall(electronApp, 'writeProjectFile', tmp, 'canvas.json', TOO_NEW)
+      await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json.bak', goodDoc)
+      // Corrupt the primary so the renderer must fall back to the .bak (ADR 0009: under .canvas/).
+      await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json', TOO_NEW)
       // Empty the live store so a recovered board can ONLY have come from the .bak on disk.
       await evalIn(page, 'window.__canvasE2E.reset()')
 
@@ -67,8 +67,8 @@ test.describe('@core corrupt canvas.json recovery (Wave-0 data-loss seam)', () =
       'recovery-err'
     )
     try {
-      await mainCall(electronApp, 'writeProjectFile', tmp, 'canvas.json', TOO_NEW)
-      await mainCall(electronApp, 'writeProjectFile', tmp, 'canvas.json.bak', TOO_NEW)
+      await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json', TOO_NEW)
+      await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json.bak', TOO_NEW)
       await evalIn(page, 'window.__canvasE2E.reset()')
 
       const res = await evalIn<{ status: string; error: string | null; boardCount: number }>(

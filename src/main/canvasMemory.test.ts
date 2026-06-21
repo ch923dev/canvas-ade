@@ -2,7 +2,17 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createCanvasMemory, safeBoardId, scaffoldProjectMemory } from './canvasMemory'
+import {
+  createCanvasMemory,
+  safeBoardId,
+  scaffoldProjectMemory,
+  upgradeProjectGitignore
+} from './canvasMemory'
+
+// ADR 0009 ignore templates: default-private tracks ONLY canvas.json; committed also versions
+// assets/ + memory/ and ignores only the volatile files.
+const IGNORE_PRIVATE = '*\n!canvas.json\n'
+const IGNORE_COMMITTED = 'audit/\ntmp/\ncanvas.json.bak\n'
 
 describe('canvasMemory', () => {
   let dir: string
@@ -33,7 +43,7 @@ describe('canvasMemory', () => {
       expect(statSync(m.paths.memoryDir).isDirectory()).toBe(true)
       expect(statSync(m.paths.auditDir).isDirectory()).toBe(true)
       expect(existsSync(m.paths.gitignore)).toBe(true)
-      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe('*\n')
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_PRIVATE)
     })
 
     it('is idempotent and does NOT clobber an existing .gitignore', () => {
@@ -121,15 +131,15 @@ describe('canvasMemory', () => {
       const m = createCanvasMemory(dir)
       m.ensureScaffold()
       expect(m.isCommitted()).toBe(false)
-      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe('*\n')
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_PRIVATE)
     })
 
-    it('opt-in commit rewrites the ignore to ignore only audit/', () => {
+    it('opt-in commit rewrites the ignore to track canvas.json + assets/ + memory/ (ADR 0009)', () => {
       const m = createCanvasMemory(dir)
       m.ensureScaffold()
       m.setCommitOptIn(true)
       expect(m.isCommitted()).toBe(true)
-      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe('audit/\n')
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_COMMITTED)
     })
 
     it('opt-out restores private', () => {
@@ -137,7 +147,7 @@ describe('canvasMemory', () => {
       m.setCommitOptIn(true)
       m.setCommitOptIn(false)
       expect(m.isCommitted()).toBe(false)
-      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe('*\n')
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_PRIVATE)
     })
 
     it('BUG-017: setCommitOptIn on a fresh project creates the FULL scaffold (memory/ + audit/)', () => {
@@ -179,6 +189,48 @@ describe('canvasMemory', () => {
       writeFileSync(f, 'x', 'utf8')
       expect(() => scaffoldProjectMemory(f)).not.toThrow()
       expect(existsSync(join(f, '.canvas'))).toBe(false)
+    })
+  })
+
+  describe('upgradeProjectGitignore (ADR 0009)', () => {
+    it('remaps the legacy `*` private ignore to the new private template', () => {
+      const m = createCanvasMemory(dir)
+      m.ensureScaffold()
+      writeFileSync(m.paths.gitignore, '*\n', 'utf8') // pre-0009 private
+      upgradeProjectGitignore(dir)
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_PRIVATE)
+    })
+
+    it('remaps the legacy `audit/` committed ignore to the new committed template', () => {
+      const m = createCanvasMemory(dir)
+      m.ensureScaffold()
+      writeFileSync(m.paths.gitignore, 'audit/\n', 'utf8') // pre-0009 committed
+      upgradeProjectGitignore(dir)
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_COMMITTED)
+    })
+
+    it('leaves a user-customised ignore untouched, and is a no-op when absent', () => {
+      const m = createCanvasMemory(dir)
+      m.ensureScaffold()
+      writeFileSync(m.paths.gitignore, '# mine\n*.log\n', 'utf8')
+      upgradeProjectGitignore(dir)
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe('# mine\n*.log\n')
+
+      // Absent ignore: no throw, no file created (ensureScaffold writes the new private later).
+      const bare = mkdtempSync(join(tmpdir(), 'cm-bare-'))
+      try {
+        expect(() => upgradeProjectGitignore(bare)).not.toThrow()
+        expect(existsSync(join(bare, '.canvas', '.gitignore'))).toBe(false)
+      } finally {
+        rmSync(bare, { recursive: true, force: true })
+      }
+    })
+
+    it('is symmetric: an already-new ignore is left as-is', () => {
+      const m = createCanvasMemory(dir)
+      m.ensureScaffold() // writes the new private template
+      upgradeProjectGitignore(dir)
+      expect(readFileSync(m.paths.gitignore, 'utf8')).toBe(IGNORE_PRIVATE)
     })
   })
 })

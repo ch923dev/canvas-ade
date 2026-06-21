@@ -161,8 +161,10 @@ describe('project:create / project:open approved-root guard (BUG-006)', () => {
     })) as { ok: boolean }
 
     expect(result.ok).toBe(true)
-    // The fresh canvas.json landed in the dialog-approved dir.
-    expect(readFileSync(join(pickedDir, 'canvas.json'), 'utf8')).toContain('schemaVersion')
+    // ADR 0009: the fresh canvas.json landed under `.canvas/` in the dialog-approved dir.
+    expect(readFileSync(join(pickedDir, '.canvas', 'canvas.json'), 'utf8')).toContain(
+      'schemaVersion'
+    )
   })
 
   it('allows open-recent: a path already in the recents list is approved', async () => {
@@ -298,6 +300,7 @@ describe('project:save expectedDir guard (BUG-009)', () => {
     const projB = mkTmp('canvas-proj-b-')
     const projC = mkTmp('canvas-proj-c-')
     const seeded = JSON.stringify({ schemaVersion: 8, viewport: null, boards: [{ id: 'c1' }] })
+    // Seed projC in the LEGACY root layout; project:open migrates it into `.canvas/` (ADR 0009).
     writeFileSync(join(projC, 'canvas.json'), seeded)
     // BUG-006: project:open now requires the target to be a user-approved location; seed C into
     // recents (a durable approval record) so this BUG-009 open is allowed, as it is in real use.
@@ -308,7 +311,7 @@ describe('project:save expectedDir guard (BUG-009)', () => {
     const doc = { schemaVersion: 8, viewport: null, boards: [], connectors: [] }
     // The B-flavored save that lost the switch race must be rejected, leaving C intact.
     expect(await handlers.get('project:save')!(synthetic, doc, projB)).toBe(false)
-    expect(readFileSync(join(projC, 'canvas.json'), 'utf8')).toBe(seeded)
+    expect(readFileSync(join(projC, '.canvas', 'canvas.json'), 'utf8')).toBe(seeded)
     // A matching expectedDir saves; an omitted one keeps back-compat.
     expect(await handlers.get('project:save')!(synthetic, doc, projC)).toBe(true)
     expect(await handlers.get('project:save')!(synthetic, doc)).toBe(true)

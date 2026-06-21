@@ -13,6 +13,7 @@ import {
   readBak,
   writeProject,
   createProject,
+  migrateProjectLayout,
   getCurrentDir,
   setCurrentDir,
   projectName,
@@ -233,6 +234,9 @@ export function registerProjectHandlers(
     // Once opened from an approved location, remember the dir so an in-session re-open of the
     // same project (e.g. after a project:current cycle) stays approved without a fresh dialog.
     approvedRoots.add(dir)
+    // ADR 0009: relocate a legacy-root project (canvas.json/.bak/assets/) into .canvas/ before
+    // reading. Best-effort + idempotent; the readers fall back to the legacy root if it no-ops.
+    migrateProjectLayout(dir)
     const r = readProject(dir)
     await remember(r)
     if (r.ok) {
@@ -382,6 +386,7 @@ export function registerProjectHandlers(
       console.warn('[project:current] skipping reopen of an unsafe most-recent path:', dir)
       return null
     }
+    migrateProjectLayout(dir) // ADR 0009: relocate a legacy-root project into .canvas/ before reading
     const r = readProject(dir)
     if (r.ok) {
       setCurrentDir(r.dir)

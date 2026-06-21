@@ -15,6 +15,7 @@ const { store026, canvasMemory026, electronDialog026, recents026 } = vi.hoisted(
     readBak: vi.fn(),
     writeProject: vi.fn(),
     createProject: vi.fn(),
+    migrateProjectLayout: vi.fn(), // ADR 0009: called by project:open / project:current
     getCurrentDir: vi.fn(),
     setCurrentDir: vi.fn(),
     projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir),

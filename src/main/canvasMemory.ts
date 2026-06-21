@@ -17,10 +17,22 @@ const MEMORY_DIR = 'memory'
 const AUDIT_DIR = 'audit'
 const GITIGNORE = '.gitignore'
 
-/** Default-private: ignore the whole `.canvas/` from git. */
-const IGNORE_PRIVATE = '*\n'
-/** Opt-in commit: keep the prose, ignore only the volatile audit log. */
-const IGNORE_COMMITTED = 'audit/\n'
+/**
+ * Default-private (ADR 0009): track ONLY the canvas document. The binary asset blobs, the
+ * parse-fail backup, generated memory, the audit log, and the terminal staging dir stay ignored —
+ * `canvas.json` is text + diffable, the rest is volatile or binary noise in the user's repo.
+ */
+const IGNORE_PRIVATE = '*\n!canvas.json\n'
+/**
+ * Opt-in commit (ADR 0009): version the durable project content — `canvas.json` + `assets/` +
+ * generated `memory/` — so a shared/checked-in canvas is complete with its images. Ignore only
+ * volatile state (the audit log, the terminal staging dir, and the parse-fail backup).
+ */
+const IGNORE_COMMITTED = 'audit/\ntmp/\ncanvas.json.bak\n'
+
+/** Old (pre-0009) ignore bodies, recognized + remapped to the new ones on migrate-on-open. */
+const LEGACY_IGNORE_PRIVATE = '*'
+const LEGACY_IGNORE_COMMITTED = 'audit/'
 
 /** Board ids are nanoid-style; reject anything else (and over-long) to keep writes inside memory/.
  *  MCP-07: the regex + length cap now live in the shared `safeId` module so this and boardMemory.ts
@@ -171,6 +183,27 @@ export function createCanvasMemory(projectDir: string): CanvasMemory {
       if (raw === undefined) return false
       return raw.trim() === IGNORE_COMMITTED.trim()
     }
+  }
+}
+
+/**
+ * ADR 0009: a project migrated from the legacy root layout still carries the OLD
+ * `.canvas/.gitignore` (`*` = ignore everything), which would silently un-track the now-relocated
+ * `canvas.json`. Map a RECOGNIZED old body to its new equivalent; leave an absent or
+ * user-customised ignore file untouched (the safe default). Best-effort — never throws, so the
+ * migration that calls it can't abort a project open.
+ */
+export function upgradeProjectGitignore(projectDir: string): void {
+  try {
+    const file = join(projectDir, CANVAS_DIR, GITIGNORE)
+    const raw = readMd(file)
+    if (raw === undefined) return // absent → ensureScaffold writes the new private when scaffolding
+    const body = raw.trim()
+    if (body === LEGACY_IGNORE_PRIVATE) writeFileAtomic.sync(file, IGNORE_PRIVATE, 'utf8')
+    else if (body === LEGACY_IGNORE_COMMITTED) writeFileAtomic.sync(file, IGNORE_COMMITTED, 'utf8')
+    // else: already the new format, or user-customised → leave as-is.
+  } catch (err) {
+    console.warn('[canvasMemory] gitignore upgrade failed (non-fatal)', err)
   }
 }
 

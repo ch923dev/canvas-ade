@@ -71,7 +71,7 @@ ADR 0002 + `docs/archive/build-history.md` › OS-3). What remains:
   is emitted on the shared `preview:event` channel.
 
 ### Persistence
-- Project = a user-chosen folder. Whole canvas = single `canvas.json` at root + `canvas.json.bak` (parse-fail fallback). Heavy blobs in `assets/` by path, not inlined.
+- Project = a user-chosen folder. **All Canvas-ADE data is isolated under `<project>/.canvas/`** (ADR 0009): the whole canvas = `.canvas/canvas.json` + `.canvas/canvas.json.bak` (parse-fail fallback); heavy blobs in `.canvas/assets/` by path, not inlined; context memory in `.canvas/memory|audit|tmp/`. The stored `assetId` stays the logical `assets/<sha1>.<ext>` (only the resolution base moved → **no schema bump**). Reads prefer `.canvas/` and **fall back to the legacy project root**; `migrateProjectLayout` relocates a legacy-root project on open (one-way; older builds won't find a migrated project — accepted pre-release). `canvas.json` is git-trackable by default; `assets/`/backup/memory are ignored unless the commit opt-in is set (`canvasMemory.setCommitOptIn`). The File Tree hides `.canvas/`.
 - Atomic write (`write-file-atomic`), debounced autosave ~1s + sync flush on blur/`before-quit`. Root integer `schemaVersion` + migration pipeline + `minReaderVersion` compat floor (two-tier versioning, ADR 0007: additive bumps stay openable by older apps; only breaking changes move the floor).
 - App config + recent-projects list live in `app.getPath('userData')`, NEVER in the project folder.
 - **Scene/session split (whiteboard + boards):** only `{schemaVersion, viewport, boards}` is
@@ -109,6 +109,7 @@ Still-valid locked safety rules **for when it is built** (do not re-decide):
 | Browser board scale | Scales WITH the camera (the `<canvas>` moves with the DOM transform), not 1:1. |
 | Preview zoom isolation | One in-memory session per board (`partition: preview-<id>`) — Chromium zoom is per-host per-session, so a shared session would sync all presets. ADR 0002. |
 | Schema versioning | Two-tier (ADR 0007): `schemaVersion` (writer) + `minReaderVersion` (compat floor). Additive optional fields bump the writer only; breaking changes (new kinds/types, new DOC-LEVEL keys) bump both. Older apps open any doc whose floor ≤ their version. |
+| Project file layout | All Canvas data **isolated under `<project>/.canvas/`** (canvas.json + .bak + assets/); legacy-root read-fallback + migrate-on-open (one-way); `assetId` unchanged (location migration, **no schema bump**); assets git-ignored by default (commit opt-in); `.canvas/` hidden from the File Tree. ADR 0009. |
 | Checklist | A Planning **element** (card inside a Planning board), not a 4th board type / dock button. Decided 2026-05-29. |
 | Canvas backdrop | Per-project **screen-fixed** wallpaper layer behind RF (none / user file / bundled scene), dim+saturation, schema **v9** `background`, settings-class (never undoable). Scene ids registry-resolved at render (unknown ⇒ void+toast, preserved). ADR 0006. |
 | Phase 2 shape | Foundation 2.0 (sequential, 4 steps A–D) → then board types **in parallel** (Terminal · Browser · Planning+Checklist). `docs/archive/build-history.md`. |

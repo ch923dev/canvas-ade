@@ -299,11 +299,17 @@ export function installE2EMain(
       }
     },
     writeProjectFile(tmp, name, contents) {
-      // Bare filename only — never let a probe escape the temp dir via a separator or `..`.
-      if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+      // ADR 0009: the canvas doc lives under `.canvas/`, so allow a SINGLE known `.canvas/` prefix
+      // (recovery probes seed `.canvas/canvas.json[.bak]`) while still rejecting any `..` traversal
+      // or arbitrary nesting/separators that could escape the temp project dir.
+      const rel = name.replace(/\\/g, '/')
+      const inCanvas = rel.startsWith('.canvas/')
+      const leaf = inCanvas ? rel.slice('.canvas/'.length) : rel
+      if (rel.includes('..') || leaf.includes('/')) {
         throw new Error(`writeProjectFile: unsafe name ${name}`)
       }
-      writeFileSync(join(tmp, name), contents, 'utf8')
+      if (inCanvas) mkdirSync(join(tmp, '.canvas'), { recursive: true })
+      writeFileSync(join(tmp, inCanvas ? '.canvas' : '.', leaf), contents, 'utf8')
     },
     putRedBitmapOnClipboard(w, h) {
       const buf = Buffer.alloc(w * h * 4)
