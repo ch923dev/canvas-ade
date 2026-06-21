@@ -1,8 +1,14 @@
 /**
- * Project file I/O: read/write `canvas.json` (+ `.bak` fallback) in a project folder.
- * MAIN is a dumb atomic writer — it validates only the document envelope; deep
- * validation + migration happen in the renderer (`boardSchema.fromObject`). Holds the
- * single "current open dir" so `project:save` knows where to write.
+ * Project file I/O: read/write the canvas document (+ `.bak` fallback) in a project folder.
+ * MAIN is a dumb atomic writer — it validates only the document envelope; deep validation +
+ * migration happen in the renderer (`boardSchema.fromObject`). Holds the single "current open
+ * dir" so `project:save` knows where to write.
+ *
+ * ADR 0009: the project document, its backup, and the `assets/` blob store all live under
+ * `<project>/.canvas/` (isolated from the user's repo at the root). Reads PREFER `.canvas/` and
+ * fall back to the legacy root location; writes always target `.canvas/`; `migrateProjectLayout`
+ * relocates a legacy-root project on open. The stored `assetId` is unchanged (`assets/<sha1>.<ext>`)
+ * — only the physical resolution base moves — so this is a LOCATION migration with NO schema bump.
  */
 import {
   copyFileSync,
@@ -11,15 +17,30 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
+  rmdirSync,
   unlinkSync
 } from 'fs'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import writeFileAtomic from 'write-file-atomic'
-import { scaffoldProjectMemory } from './canvasMemory'
+import { scaffoldProjectMemory, upgradeProjectGitignore } from './canvasMemory'
 
+const CANVAS_DIR = '.canvas'
 const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
+const ASSETS = 'assets'
+
+// ── On-disk path resolution (ADR 0009) ───────────────────────────────────────────
+// Canonical locations live under `<project>/.canvas/`; the `legacy*` helpers point at the
+// pre-0009 project root (the read-fallback + migration source).
+const canvasRoot = (dir: string): string => join(dir, CANVAS_DIR)
+const primaryPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS)
+const bakPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS_BAK)
+const assetsDirOf = (dir: string): string => join(dir, CANVAS_DIR, ASSETS)
+const legacyPrimary = (dir: string): string => join(dir, CANVAS)
+const legacyBak = (dir: string): string => join(dir, CANVAS_BAK)
+const legacyAssets = (dir: string): string => join(dir, ASSETS)
 
 /**
  * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (13). MAIN cannot import the
@@ -78,23 +99,28 @@ function tryParse(file: string): unknown | undefined {
   }
 }
 
-/** Read canvas.json; on parse/envelope failure try canvas.json.bak; else error. */
+/**
+ * Read the canvas document; on parse/envelope failure try the `.bak`, then the legacy-root
+ * copies (ADR 0009). The `.canvas/` location is preferred at each tier so a migrated project
+ * always wins, while an un-migrated (or partially-migrated) project still reads from the root.
+ */
 export function readProject(dir: string): ProjectResult {
-  const primary = tryParse(join(dir, CANVAS))
+  const primary = tryParse(primaryPath(dir)) ?? tryParse(legacyPrimary(dir))
   if (primary !== undefined) return { ok: true, dir, name: projectName(dir), doc: primary }
-  const backup = tryParse(join(dir, CANVAS_BAK))
+  const backup = tryParse(bakPath(dir)) ?? tryParse(legacyBak(dir))
   if (backup !== undefined) return { ok: true, dir, name: projectName(dir), doc: backup }
   return { ok: false, error: `No readable canvas.json in ${dir}` }
 }
 
 /**
- * Read ONLY canvas.json.bak (skip the primary) — the renderer-reported deep-validation
- * recovery path (T5). `readProject` would return the primary whenever it is merely
- * envelope-valid, so a deep-corrupt-but-envelope-valid primary masks the backup; this
- * forces the .bak so the renderer can retry `fromObject` against the last good snapshot.
+ * Read ONLY the backup (skip the primary) — the renderer-reported deep-validation recovery
+ * path (T5). `readProject` would return the primary whenever it is merely envelope-valid, so a
+ * deep-corrupt-but-envelope-valid primary masks the backup; this forces the `.bak` so the
+ * renderer can retry `fromObject` against the last good snapshot. Prefers `.canvas/`, falls back
+ * to the legacy-root backup (ADR 0009).
  */
 export function readBak(dir: string): ProjectResult {
-  const backup = tryParse(join(dir, CANVAS_BAK))
+  const backup = tryParse(bakPath(dir)) ?? tryParse(legacyBak(dir))
   if (backup !== undefined) return { ok: true, dir, name: projectName(dir), doc: backup }
   return { ok: false, error: `No readable canvas.json.bak in ${dir}` }
 }
@@ -120,8 +146,9 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   if (!isEnvelope(doc)) {
     throw new Error('writeProject: refusing to write an envelope-invalid document')
   }
-  mkdirSync(dir, { recursive: true })
-  const primary = join(dir, CANVAS)
+  // ADR 0009: the document lives under `.canvas/`, so ensure that dir (not just the project root).
+  mkdirSync(canvasRoot(dir), { recursive: true })
+  const primary = primaryPath(dir)
   // BUG-007: capture the prior primary's bytes but rotate them into .bak only AFTER the
   // new primary is durable. Rotating first destroyed the last-good .bak in the T5
   // recovery flow (the prior primary is envelope-valid but deep-corrupt there): a crash
@@ -137,10 +164,98 @@ export async function writeProject(dir: string, doc: unknown): Promise<void> {
   await writeFileAtomic(primary, JSON.stringify(doc, null, 2), 'utf8')
   if (prior !== undefined) {
     try {
-      writeFileAtomic.sync(join(dir, CANVAS_BAK), prior)
+      writeFileAtomic.sync(bakPath(dir), prior)
     } catch {
       /* a locked .bak must not fail the (already durable) save */
     }
+  }
+}
+
+// ── Legacy-root → `.canvas/` migration (ADR 0009) ────────────────────────────────
+
+/** Move a single file `src → dst` (rename, copy-fallback cross-volume). No-op if `src` is
+ *  absent or `dst` already exists (never clobber a canonical file). Best-effort. */
+function moveAside(src: string, dst: string): void {
+  if (!existsSync(src) || existsSync(dst)) return
+  try {
+    renameSync(src, dst)
+  } catch {
+    try {
+      copyFileSync(src, dst)
+      unlinkSync(src)
+    } catch {
+      /* best-effort — a locked file must not abort the migration */
+    }
+  }
+}
+
+/** Move a whole directory `src → dst`. Fast path: rename when `dst` is absent (carries any
+ *  `.trash` along). Otherwise content-addressed merge — move missing entries, drop duplicates
+ *  (identical sha ⇒ identical bytes) — then remove the legacy dir only if it ends up empty
+ *  (never recursively, so a failed move can't be turned into data loss). Best-effort. */
+function moveDir(src: string, dst: string): void {
+  if (!existsSync(src)) return
+  if (!existsSync(dst)) {
+    try {
+      renameSync(src, dst)
+      return
+    } catch {
+      /* cross-volume or locked — fall through to the copy-merge below */
+    }
+  }
+  let files: string[]
+  try {
+    files = readdirSync(src)
+  } catch {
+    return
+  }
+  mkdirSync(dst, { recursive: true })
+  for (const f of files) {
+    const s = join(src, f)
+    const d = join(dst, f)
+    try {
+      if (existsSync(d)) {
+        rmSync(s, { recursive: true, force: true }) // already canonical (identical content) — drop
+      } else {
+        renameSync(s, d)
+      }
+    } catch {
+      try {
+        copyFileSync(s, d)
+        unlinkSync(s)
+      } catch {
+        /* best-effort per entry */
+      }
+    }
+  }
+  try {
+    rmdirSync(src) // succeeds only when empty — a leftover/locked entry leaves the dir in place
+  } catch {
+    /* non-empty / locked — leave it; readAsset still falls back to the legacy location */
+  }
+}
+
+/**
+ * ADR 0009: relocate a legacy-root project (`<dir>/canvas.json` + `.bak` + `assets/`) into
+ * `<dir>/.canvas/` on open. Idempotent (no-op once the canonical primary exists), best-effort
+ * (a locked/failed move never aborts the open — the readers fall back to the legacy root). Also
+ * upgrades a recognized old `.canvas/.gitignore` so the relocated `canvas.json` is not silently
+ * un-tracked. The doc content (every `assetId`) is byte-identical before and after — no schema
+ * bump (orthogonal to ADR 0007).
+ */
+export function migrateProjectLayout(dir: string): void {
+  try {
+    if (!existsSync(primaryPath(dir)) && existsSync(legacyPrimary(dir))) {
+      mkdirSync(canvasRoot(dir), { recursive: true })
+      moveAside(legacyPrimary(dir), primaryPath(dir))
+      moveAside(legacyBak(dir), bakPath(dir))
+      moveDir(legacyAssets(dir), assetsDirOf(dir))
+    }
+    // Always reconcile the ignore file (covers a project whose files were already relocated but
+    // whose `.gitignore` is still the old `*`). A user-customised file is left untouched.
+    upgradeProjectGitignore(dir)
+  } catch (err) {
+    console.warn('[projectStore] migrateProjectLayout failed (non-fatal)', err)
   }
 }
 
@@ -152,6 +267,9 @@ export async function createProject(
 ): Promise<ProjectResult> {
   // `gitInit` is accepted for forward-compat with Slice C (worktrees) but is inert here.
   mkdirSync(dir, { recursive: true })
+  // ADR 0009: relocate a legacy-root project into `.canvas/` first, so reuse-if-exists and the
+  // corrupt-rename-aside below operate on the canonical location.
+  migrateProjectLayout(dir)
   const existing = readProject(dir)
   if (existing.ok) {
     scaffoldProjectMemory(dir) // open-if-absent on a reused project (best-effort)
@@ -164,10 +282,10 @@ export async function createProject(
   // Best-effort: a locked file must not block project creation.
   const ts = Date.now()
   for (const f of [CANVAS, CANVAS_BAK]) {
-    const p = join(dir, f)
+    const p = join(canvasRoot(dir), f)
     if (existsSync(p)) {
       try {
-        renameSync(p, join(dir, `${f}.corrupt-${ts}`))
+        renameSync(p, join(canvasRoot(dir), `${f}.corrupt-${ts}`))
       } catch {
         /* fall through — the fresh write below proceeds either way */
       }
@@ -193,7 +311,7 @@ export async function createProject(
 }
 
 // ── W4 assets pipeline ──────────────────────────────────────────────────────────
-const ASSETS = 'assets'
+// (`ASSETS = 'assets'` is declared with the path helpers at the top of the module.)
 /** A safe stored assetId: exactly `assets/<40-hex sha1>.<ext>`; blocks any traversal. */
 const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
 /**
@@ -207,9 +325,10 @@ const ASSET_RE = /^assets[/\\][a-f0-9]{40}\.[a-z0-9]+$/
 export const ASSET_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'webm', 'mp4'])
 
 /**
- * Content-address `bytes` (sha1) into `<dir>/assets/<sha1>.<ext>` and return the
- * RELATIVE POSIX path (the stored `assetId`). Dedups: identical bytes → identical
- * path; the write is skipped when the file already exists.
+ * Content-address `bytes` (sha1) into `<dir>/.canvas/assets/<sha1>.<ext>` and return the stored
+ * `assetId` — `assets/<sha1>.<ext>`, UNCHANGED by ADR 0009 (a logical id, not a physical path;
+ * only the resolution base moved into `.canvas/`). Dedups: identical bytes → identical id; the
+ * write is skipped when the file already exists.
  */
 export async function writeAsset(
   dir: string,
@@ -220,18 +339,21 @@ export async function writeAsset(
   if (!ASSET_EXTS.has(e)) throw new Error(`writeAsset: unsupported ext ${ext}`)
   const sha1 = createHash('sha1').update(bytes).digest('hex')
   const assetId = `${ASSETS}/${sha1}.${e}`
-  const abs = join(dir, ASSETS, `${sha1}.${e}`)
+  const abs = join(assetsDirOf(dir), `${sha1}.${e}`)
   if (!existsSync(abs)) {
-    mkdirSync(join(dir, ASSETS), { recursive: true })
+    mkdirSync(assetsDirOf(dir), { recursive: true })
     await writeFileAtomic(abs, Buffer.from(bytes))
   }
   return { assetId }
 }
 
-/** Read a stored asset's bytes; null on a malformed assetId, missing file, or read error. */
+/** Read a stored asset's bytes; null on a malformed assetId, missing file, or read error.
+ *  ADR 0009: prefer `.canvas/assets/`; fall back to the legacy root `assets/` so an un-migrated
+ *  (or partially-migrated) project's blobs still resolve. ASSET_RE blocks traversal either way. */
 export function readAsset(dir: string, assetId: string): Uint8Array | null {
   if (typeof assetId !== 'string' || !ASSET_RE.test(assetId)) return null
-  const abs = join(dir, assetId)
+  const canonical = join(canvasRoot(dir), assetId)
+  const abs = existsSync(canonical) ? canonical : join(dir, assetId)
   if (!existsSync(abs)) return null
   try {
     return new Uint8Array(readFileSync(abs))
@@ -280,8 +402,8 @@ export function collectAssetIds(doc: unknown): Set<string> {
 const TRASH = '.trash'
 
 /**
- * Mark-and-sweep: quarantine-move every file in `<dir>/assets/` whose `assets/<file>`
- * path is NOT in `referenced` into `<dir>/assets/.trash/` (recoverable). Hard-deletion
+ * Mark-and-sweep: quarantine-move every file in `<dir>/.canvas/assets/` whose `assets/<file>`
+ * path is NOT in `referenced` into `<dir>/.canvas/assets/.trash/` (recoverable). Hard-deletion
  * is intentionally avoided — a mis-read/corrupt load must not permanently destroy blobs.
  * No-op when `assets/` is absent. Called ONLY at project open — the undo stack is empty
  * across sessions, so a swept blob is truly unreferenced.
@@ -291,7 +413,7 @@ const TRASH = '.trash'
  * and is never returned as a referenced or readable asset.
  */
 export function gcAssets(dir: string, referenced: Set<string>): void {
-  const assetsDir = join(dir, ASSETS)
+  const assetsDir = assetsDirOf(dir) // ADR 0009: the canonical blob store under `.canvas/`
   if (!existsSync(assetsDir)) return
   let files: string[]
   try {

@@ -11,6 +11,8 @@ const { store, recents, electronDialog, canvasMemory } = vi.hoisted(() => ({
     readBak: vi.fn(),
     writeProject: vi.fn(),
     createProject: vi.fn(),
+    // ADR 0009: project:open / project:current relocate a legacy-root project before reading.
+    migrateProjectLayout: vi.fn(),
     getCurrentDir: vi.fn(),
     setCurrentDir: vi.fn(),
     projectName: vi.fn((dir: string) => dir.split(/[/\\]/).pop() ?? dir),
@@ -106,6 +108,23 @@ describe('registerProjectHandlers (T4)', () => {
     expect((result as { ok: boolean }).ok).toBe(true)
     expect(store.setCurrentDir).toHaveBeenCalledWith('/proj')
     expect(recents.touchRecent).toHaveBeenCalled()
+    // ADR 0009: a legacy-root project is relocated into .canvas/ before the read.
+    expect(store.migrateProjectLayout).toHaveBeenCalledWith('/proj')
+  })
+
+  it('project:open migrates the layout before reading (ADR 0009 wiring)', async () => {
+    // Seed the dir into recents so the BUG-006 approved-root guard allows the open.
+    recents.listRecents.mockReturnValue([{ path: '/proj', name: 'proj', lastOpenedAt: 1 }])
+    store.readProject.mockReturnValue({ ok: true, dir: '/proj', name: 'proj', doc: {} })
+    const cap = createIpcCapture()
+    registerProjectHandlers(cap.ipcMain, getWin, '/userData')
+
+    await cap.invoke('project:open', '/proj')
+    expect(store.migrateProjectLayout).toHaveBeenCalledWith('/proj')
+    // Migration runs BEFORE the read (the relocate-then-read order).
+    expect(store.migrateProjectLayout.mock.invocationCallOrder[0]).toBeLessThan(
+      store.readProject.mock.invocationCallOrder[0]
+    )
   })
 
   it('project:current leaves currentDir unchanged when the recent folder is gone', async () => {

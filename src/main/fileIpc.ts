@@ -33,6 +33,9 @@ import { realResolveWithinRoot } from './pathSafe'
  */
 const MAX_READ_BYTES = 64 * 1024 * 1024
 
+/** ADR 0009: Canvas ADE's own project-root data dir, hidden from the File Tree (root level only). */
+const CANVAS_DATA_DIR = '.canvas'
+
 /** One directory entry surfaced to the tree (no symlink following — report-only kind). */
 export interface FileEntry {
   name: string
@@ -157,6 +160,9 @@ export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | 
   ipcMain.handle('file:listDir', async (e, relPath: string): Promise<FileEntry[]> => {
     if (guard(e)) throw new Error('file: foreign sender denied')
     const abs = await resolveRel(relPath)
+    // ADR 0009: `.canvas/` is Canvas ADE's own project-root data dir (the canvas doc + sha1-named
+    // asset blobs + volatile logs) — noise to browse, so it is hidden from the tree at the root.
+    const atRoot = relPath === '' || relPath === '.'
     const ents = await readdir(abs, { withFileTypes: true })
     const out: FileEntry[] = []
     for (const ent of ents) {
@@ -164,6 +170,7 @@ export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | 
       // skip it entirely (the tree never surfaces a link, and the symlink layer would reject
       // a later read/list through it anyway). `isSymbolicLink()` reflects the dirent itself.
       if (ent.isSymbolicLink()) continue
+      if (atRoot && ent.isDirectory() && ent.name === CANVAS_DATA_DIR) continue
       out.push({ name: ent.name, isDir: ent.isDirectory() })
     }
     return out

@@ -16,6 +16,7 @@ import {
   writeProject,
   rotateBakAtomic,
   createProject,
+  migrateProjectLayout,
   writeAsset,
   readAsset,
   collectAssetIds,
@@ -43,14 +44,20 @@ afterEach(() => {
 
 const doc = { schemaVersion: 2, viewport: null, boards: [] }
 
+// ADR 0009: the canvas document + backup + assets all live under `<project>/.canvas/`. Helper to
+// build a path rooted at that data dir (the canonical write location the readers prefer).
+const cv = (d: string, ...p: string[]): string => join(d, '.canvas', ...p)
+
 describe('projectStore', () => {
-  it('createProject writes a fresh empty doc', async () => {
+  it('createProject writes a fresh empty doc (under .canvas/)', async () => {
     const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
-    expect(existsSync(join(dir, 'canvas.json'))).toBe(true)
+    expect(existsSync(cv(dir, 'canvas.json'))).toBe(true)
+    // ADR 0009: the project root holds ONLY the isolated `.canvas/` dir — no loose canvas.json.
+    expect(existsSync(join(dir, 'canvas.json'))).toBe(false)
   })
 
-  it('createProject reuses an existing canvas.json (no overwrite)', async () => {
+  it('createProject reuses an existing (legacy-root) canvas.json (no overwrite)', async () => {
     writeFileSync(
       join(dir, 'canvas.json'),
       JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ keep: true }] })
@@ -58,6 +65,9 @@ describe('projectStore', () => {
     const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
     if (r.ok) expect((r.doc as { boards: unknown[] }).boards).toHaveLength(1)
+    // The legacy file was migrated into `.canvas/`, not duplicated nor lost.
+    expect(existsSync(cv(dir, 'canvas.json'))).toBe(true)
+    expect(existsSync(join(dir, 'canvas.json'))).toBe(false)
   })
 
   it('createProject writes the fresh doc through the envelope-guarded path (PERSIST-C)', async () => {
@@ -87,11 +97,10 @@ describe('projectStore', () => {
   it('BUG-014: createProject writes schemaVersion/minReaderVersion equal to boardSchema (no drift)', async () => {
     const r = await createProject(dir, 'My Proj', {})
     expect(r.ok).toBe(true)
-    const onDisk = JSON.parse(readFileSync(join(dir, 'canvas.json'), 'utf8'))
+    const onDisk = JSON.parse(readFileSync(cv(dir, 'canvas.json'), 'utf8'))
     // On-disk writer version must equal the renderer's authoritative SCHEMA_VERSION.
     expect(onDisk.schemaVersion).toBe(RENDERER_SCHEMA_VERSION)
-    // ADR 0007: fresh docs also carry the compat floor, lock-stepped with
-    // boardSchema.MIN_READER_VERSION (now 11 — the v11 diagram kind is breaking).
+    // ADR 0007: fresh docs also carry the compat floor, lock-stepped with boardSchema.MIN_READER_VERSION.
     expect(onDisk.minReaderVersion).toBe(RENDERER_MIN_READER_VERSION)
     // The fresh doc must also carry the connectors field added at v4->v5 migration.
     expect(onDisk).toHaveProperty('connectors')
@@ -109,32 +118,34 @@ describe('projectStore', () => {
   // BUG-042: createProject on a folder where BOTH canvas.json and .bak are unparseable
   // (the natural retry-after-"Could not open project" flow) must rename the corrupt
   // files aside — their bytes are often hand-recoverable — instead of silently
-  // overwriting the primary with a fresh empty doc.
+  // overwriting the primary with a fresh empty doc. ADR 0009: a legacy-root corrupt project is
+  // first migrated into `.canvas/`, so the rename-aside siblings land there too.
   it('BUG-042: createProject renames unparseable canvas.json/.bak aside instead of destroying their bytes', async () => {
     writeFileSync(join(dir, 'canvas.json'), '{ truncated-by-sync-tool')
     writeFileSync(join(dir, 'canvas.json.bak'), 'garbled')
     const r = await createProject(dir, 'p', {})
     expect(r.ok).toBe(true)
-    // A fresh doc was written through the guarded path.
-    const onDisk = JSON.parse(readFileSync(join(dir, 'canvas.json'), 'utf8'))
+    // A fresh doc was written through the guarded path, under `.canvas/`.
+    const onDisk = JSON.parse(readFileSync(cv(dir, 'canvas.json'), 'utf8'))
     expect(onDisk.boards).toEqual([])
-    // The corrupt bytes survive in rename-aside siblings, byte-identical.
-    const files = readdirSync(dir)
+    // The corrupt bytes survive in rename-aside siblings inside `.canvas/`, byte-identical.
+    const files = readdirSync(cv(dir))
     const primaryAside = files.find((f) => /^canvas\.json\.corrupt-\d+$/.test(f))
     const bakAside = files.find((f) => /^canvas\.json\.bak\.corrupt-\d+$/.test(f))
     expect(primaryAside).toBeDefined()
     expect(bakAside).toBeDefined()
-    expect(readFileSync(join(dir, primaryAside!), 'utf8')).toBe('{ truncated-by-sync-tool')
-    expect(readFileSync(join(dir, bakAside!), 'utf8')).toBe('garbled')
+    expect(readFileSync(cv(dir, primaryAside!), 'utf8')).toBe('{ truncated-by-sync-tool')
+    expect(readFileSync(cv(dir, bakAside!), 'utf8')).toBe('garbled')
   })
 
-  it('createProject scaffolds the .canvas memory tree', async () => {
+  it('createProject scaffolds the .canvas memory tree (with the ADR-0009 default ignore)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'projmem-'))
     try {
       await createProject(dir, 'p', {})
       expect(existsSync(join(dir, '.canvas', 'memory'))).toBe(true)
       expect(existsSync(join(dir, '.canvas', 'audit'))).toBe(true)
-      expect(readFileSync(join(dir, '.canvas', '.gitignore'), 'utf8')).toBe('*\n')
+      // ADR 0009: default-private tracks ONLY canvas.json; everything else under .canvas/ ignored.
+      expect(readFileSync(join(dir, '.canvas', '.gitignore'), 'utf8')).toBe('*\n!canvas.json\n')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -147,16 +158,17 @@ describe('projectStore', () => {
     if (r.ok) expect(r.doc).toEqual(doc)
   })
 
-  it('rotates the prior good file to canvas.json.bak on write', async () => {
+  it('rotates the prior good file to .canvas/canvas.json.bak on write', async () => {
     await writeProject(dir, { schemaVersion: 2, viewport: null, boards: [{ v: 1 }] })
     await writeProject(dir, { schemaVersion: 2, viewport: null, boards: [{ v: 2 }] })
-    const bak = JSON.parse(readFileSync(join(dir, 'canvas.json.bak'), 'utf8'))
+    const bak = JSON.parse(readFileSync(cv(dir, 'canvas.json.bak'), 'utf8'))
     expect(bak.boards[0].v).toBe(1)
   })
 
   it('rotateBakAtomic copies the primary to the .bak byte-identically, leaving no temp file', () => {
     // bak-rotation-non-atomic-copy: the rotation must go through the atomic write/rename
-    // primitive (no torn .bak on a mid-copy crash), not a raw copyFileSync.
+    // primitive (no torn .bak on a mid-copy crash), not a raw copyFileSync. rotateBakAtomic takes
+    // explicit paths, so this stays a location-agnostic unit test (uses a flat scratch dir).
     const primary = join(dir, 'canvas.json')
     const bak = join(dir, 'canvas.json.bak')
     const content = JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ v: 1 }] })
@@ -174,35 +186,39 @@ describe('projectStore', () => {
   // primary into .bak. The pre-fix order (rotate first) destroyed the last-good .bak in
   // the T5 recovery flow — the prior primary is envelope-valid but deep-corrupt there,
   // so a crash/write-failure between the rotation and the primary write left BOTH files
-  // corrupt: total on-disk project loss.
+  // corrupt: total on-disk project loss. (ADR 0009: seed at the canonical `.canvas/` location so
+  // the rotation path is actually exercised — writeProject only reads/rotates there.)
   it('BUG-007: a failed primary write never clobbers the last-good .bak (first save after T5 recovery)', async () => {
     const corrupt = JSON.stringify({ schemaVersion: 8, viewport: null, boards: [{ id: 123 }] })
     const good = JSON.stringify({ schemaVersion: 8, viewport: null, boards: [{ ok: true }] })
-    writeFileSync(join(dir, 'canvas.json'), corrupt) // envelope-valid, deep-corrupt
-    writeFileSync(join(dir, 'canvas.json.bak'), good) // the only good snapshot
+    mkdirSync(cv(dir), { recursive: true })
+    writeFileSync(cv(dir, 'canvas.json'), corrupt) // envelope-valid, deep-corrupt
+    writeFileSync(cv(dir, 'canvas.json.bak'), good) // the only good snapshot
     // Envelope-valid doc whose serialization throws (circular ref) — the primary write
     // fails at exactly the point that sat AFTER the pre-fix rotation.
     const evil: Record<string, unknown> = { schemaVersion: 8, viewport: null, boards: [] }
     evil.self = evil
     await expect(writeProject(dir, evil)).rejects.toThrow()
     // Pre-fix the .bak now held the deep-corrupt primary; it must stay the good snapshot.
-    expect(readFileSync(join(dir, 'canvas.json.bak'), 'utf8')).toBe(good)
-    expect(readFileSync(join(dir, 'canvas.json'), 'utf8')).toBe(corrupt)
+    expect(readFileSync(cv(dir, 'canvas.json.bak'), 'utf8')).toBe(good)
+    expect(readFileSync(cv(dir, 'canvas.json'), 'utf8')).toBe(corrupt)
   })
 
   it('falls back to .bak when canvas.json is corrupt', async () => {
-    await writeProject(dir, doc) // valid
+    mkdirSync(cv(dir), { recursive: true })
     writeFileSync(
-      join(dir, 'canvas.json.bak'),
+      cv(dir, 'canvas.json.bak'),
       JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ ok: true }] })
     )
-    writeFileSync(join(dir, 'canvas.json'), '{ this is not json')
+    writeFileSync(cv(dir, 'canvas.json'), '{ this is not json')
     const r = readProject(dir)
     expect(r.ok).toBe(true)
     if (r.ok) expect((r.doc as { boards: { ok: boolean }[] }).boards[0].ok).toBe(true)
   })
 
-  it('returns an error (never writes) when both files are corrupt', () => {
+  it('returns an error (never writes) when both legacy-root files are corrupt', () => {
+    // Exercises the legacy-root read fallback (ADR 0009): with no `.canvas/` copy, both root files
+    // are read and, being unparseable, yield an error rather than a fresh blank.
     writeFileSync(join(dir, 'canvas.json'), 'nope')
     writeFileSync(join(dir, 'canvas.json.bak'), 'also nope')
     const r = readProject(dir)
@@ -229,12 +245,13 @@ describe('projectStore', () => {
     // Primary: envelope-valid (numeric schemaVersion + boards[]) but a board has a
     // non-string id — readProject would return THIS (envelope check passes), so the
     // renderer needs readBak to reach the backup instead.
+    mkdirSync(cv(dir), { recursive: true })
     writeFileSync(
-      join(dir, 'canvas.json'),
+      cv(dir, 'canvas.json'),
       JSON.stringify({ schemaVersion: 5, viewport: null, boards: [{ id: 123 }] })
     )
     writeFileSync(
-      join(dir, 'canvas.json.bak'),
+      cv(dir, 'canvas.json.bak'),
       JSON.stringify({ schemaVersion: 2, viewport: null, boards: [{ ok: true }] })
     )
     const r = readBak(dir)
@@ -243,25 +260,115 @@ describe('projectStore', () => {
   })
 
   it('readBak returns { ok: false } when no .bak exists', () => {
-    writeFileSync(join(dir, 'canvas.json'), JSON.stringify(doc))
+    mkdirSync(cv(dir), { recursive: true })
+    writeFileSync(cv(dir, 'canvas.json'), JSON.stringify(doc))
     const r = readBak(dir)
     expect(r.ok).toBe(false)
   })
 })
 
+// ── ADR 0009: legacy-root → `.canvas/` migration + fallback ──────────────────────
+describe('ADR 0009 project-layout migration', () => {
+  const sha = 'a'.repeat(40)
+
+  it('migrateProjectLayout relocates a legacy-root canvas.json + .bak + assets/ into .canvas/', () => {
+    writeFileSync(join(dir, 'canvas.json'), JSON.stringify({ schemaVersion: 13, boards: [] }))
+    writeFileSync(join(dir, 'canvas.json.bak'), JSON.stringify({ schemaVersion: 13, boards: [] }))
+    mkdirSync(join(dir, 'assets'), { recursive: true })
+    writeFileSync(join(dir, 'assets', `${sha}.png`), Buffer.from('blob'))
+
+    migrateProjectLayout(dir)
+
+    // Everything moved under `.canvas/`; the root is clean.
+    expect(existsSync(cv(dir, 'canvas.json'))).toBe(true)
+    expect(existsSync(cv(dir, 'canvas.json.bak'))).toBe(true)
+    expect(existsSync(cv(dir, 'assets', `${sha}.png`))).toBe(true)
+    expect(existsSync(join(dir, 'canvas.json'))).toBe(false)
+    expect(existsSync(join(dir, 'canvas.json.bak'))).toBe(false)
+    expect(existsSync(join(dir, 'assets'))).toBe(false)
+    // The relocated blob resolves through the (unchanged) assetId.
+    expect(readAsset(dir, `assets/${sha}.png`)).toEqual(new Uint8Array(Buffer.from('blob')))
+  })
+
+  it('migrateProjectLayout is idempotent and never clobbers a canonical .canvas/canvas.json', () => {
+    mkdirSync(cv(dir), { recursive: true })
+    writeFileSync(
+      cv(dir, 'canvas.json'),
+      JSON.stringify({ schemaVersion: 13, boards: [{ id: 'A' }] })
+    )
+    // A stale legacy-root file ALSO exists — the canonical copy must win, legacy left untouched.
+    writeFileSync(
+      join(dir, 'canvas.json'),
+      JSON.stringify({ schemaVersion: 13, boards: [{ id: 'B' }] })
+    )
+
+    migrateProjectLayout(dir)
+    migrateProjectLayout(dir) // second call: no-op
+
+    const r = readProject(dir)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect((r.doc as { boards: { id: string }[] }).boards[0].id).toBe('A')
+    // The canonical file is unchanged; the migration did not overwrite it with the legacy copy.
+    expect(JSON.parse(readFileSync(cv(dir, 'canvas.json'), 'utf8')).boards[0].id).toBe('A')
+  })
+
+  it('readProject falls back to a legacy-root canvas.json when no .canvas/ copy exists', () => {
+    // A pure read with NO migration run (e.g. a recovery probe): the root copy still resolves.
+    writeFileSync(
+      join(dir, 'canvas.json'),
+      JSON.stringify({ schemaVersion: 13, boards: [{ id: 'legacy' }] })
+    )
+    const r = readProject(dir)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect((r.doc as { boards: { id: string }[] }).boards[0].id).toBe('legacy')
+  })
+
+  it('readAsset falls back to a legacy-root assets/ blob', () => {
+    mkdirSync(join(dir, 'assets'), { recursive: true })
+    writeFileSync(join(dir, 'assets', `${sha}.png`), Buffer.from('legacy-blob'))
+    expect(readAsset(dir, `assets/${sha}.png`)).toEqual(new Uint8Array(Buffer.from('legacy-blob')))
+  })
+
+  it('migrateProjectLayout upgrades the legacy `*` ignore but leaves a customised one untouched', () => {
+    // Legacy private ignore (`*`) → new private (un-ignores canvas.json).
+    mkdirSync(cv(dir), { recursive: true })
+    writeFileSync(cv(dir, '.gitignore'), '*\n')
+    writeFileSync(join(dir, 'canvas.json'), JSON.stringify({ schemaVersion: 13, boards: [] }))
+    migrateProjectLayout(dir)
+    expect(readFileSync(cv(dir, '.gitignore'), 'utf8')).toBe('*\n!canvas.json\n')
+
+    // A user-customised ignore is preserved verbatim.
+    const dir2 = mkdtempSync(join(tmpdir(), 'canvas-proj-ign-'))
+    try {
+      mkdirSync(cv(dir2), { recursive: true })
+      writeFileSync(cv(dir2, '.gitignore'), '# mine\n*.log\n')
+      writeFileSync(join(dir2, 'canvas.json'), JSON.stringify({ schemaVersion: 13, boards: [] }))
+      migrateProjectLayout(dir2)
+      expect(readFileSync(cv(dir2, '.gitignore'), 'utf8')).toBe('# mine\n*.log\n')
+    } finally {
+      rmSync(dir2, { recursive: true, force: true })
+    }
+  })
+})
+
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'w4-store-'))
 const bytes = (s: string): Uint8Array => new Uint8Array(Buffer.from(s))
+// ADR 0009: assets resolve under `<dir>/.canvas/` — same helper as the doc tests above.
+const cvAsset = (d: string, ...p: string[]): string => join(d, '.canvas', ...p)
 
 describe('W4 assets pipeline', () => {
-  it('writeAsset content-addresses + dedups identical bytes', async () => {
+  it('writeAsset content-addresses + dedups identical bytes (under .canvas/assets/)', async () => {
     const dir = tmp()
     try {
       const a = await writeAsset(dir, bytes('hello'), 'png')
       const b = await writeAsset(dir, bytes('hello'), 'png')
       expect(a.assetId).toBe(b.assetId)
+      // The stored id is UNCHANGED by ADR 0009 — a logical `assets/<sha>.<ext>`, not a physical path.
       expect(a.assetId).toMatch(/^assets\/[a-f0-9]{40}\.png$/)
-      expect(readdirSync(join(dir, 'assets'))).toHaveLength(1)
-      expect(existsSync(join(dir, a.assetId))).toBe(true)
+      expect(readdirSync(cvAsset(dir, 'assets'))).toHaveLength(1)
+      expect(existsSync(cvAsset(dir, a.assetId))).toBe(true)
+      // No loose `assets/` at the project root.
+      expect(existsSync(join(dir, 'assets'))).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -367,12 +474,12 @@ describe('W4 assets pipeline', () => {
       const keep = await writeAsset(dir, bytes('keep'), 'png')
       const drop = await writeAsset(dir, bytes('drop'), 'png')
       gcAssets(dir, new Set([keep.assetId]))
-      expect(existsSync(join(dir, keep.assetId))).toBe(true)
+      expect(existsSync(cvAsset(dir, keep.assetId))).toBe(true)
       // orphan is removed from the live assets dir
-      expect(existsSync(join(dir, drop.assetId))).toBe(false)
+      expect(existsSync(cvAsset(dir, drop.assetId))).toBe(false)
       // orphan is recoverable in the quarantine
       const dropFile = drop.assetId.split('/')[1] // 'assets/<sha1>.png' → '<sha1>.png'
-      expect(existsSync(join(dir, 'assets', '.trash', dropFile))).toBe(true)
+      expect(existsSync(cvAsset(dir, 'assets', '.trash', dropFile))).toBe(true)
       // no-ops on absent assets/
       const empty = tmp()
       try {
@@ -391,10 +498,10 @@ describe('W4 assets pipeline', () => {
       const keep = await writeAsset(dir, bytes('keep2'), 'png')
       const orphan = await writeAsset(dir, bytes('orphan'), 'png')
       gcAssets(dir, new Set([keep.assetId]))
-      expect(existsSync(join(dir, keep.assetId))).toBe(true) // referenced kept in place
-      expect(existsSync(join(dir, orphan.assetId))).toBe(false) // removed from the live assets dir
+      expect(existsSync(cvAsset(dir, keep.assetId))).toBe(true) // referenced kept in place
+      expect(existsSync(cvAsset(dir, orphan.assetId))).toBe(false) // removed from the live assets dir
       const orphanFile = orphan.assetId.split('/')[1] // 'assets/<sha1>.png' → '<sha1>.png'
-      expect(existsSync(join(dir, 'assets', '.trash', orphanFile))).toBe(true) // recoverable in quarantine
+      expect(existsSync(cvAsset(dir, 'assets', '.trash', orphanFile))).toBe(true) // recoverable in quarantine
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -423,9 +530,9 @@ describe('W4 assets pipeline', () => {
       gcAssets(dir, primaryIds)
       // Pre-fix: the backup-only asset is quarantined — readAsset can no longer reach it.
       // After the fix this asset must survive (the fix unions backup ids before sweeping).
-      expect(existsSync(join(dir, backupOnly.assetId))).toBe(false) // quarantined pre-fix
+      expect(existsSync(cvAsset(dir, backupOnly.assetId))).toBe(false) // quarantined pre-fix
       const assetFile = backupOnly.assetId.split('/')[1]
-      expect(existsSync(join(dir, 'assets', '.trash', assetFile))).toBe(true) // in trash
+      expect(existsSync(cvAsset(dir, 'assets', '.trash', assetFile))).toBe(true) // in trash
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -442,8 +549,8 @@ describe('W4 assets pipeline', () => {
       const unionIds = new Set<string>([backupOnly.assetId, primaryOnly.assetId])
       gcAssets(dir, unionIds)
       // Both assets must survive when the union is used.
-      expect(existsSync(join(dir, backupOnly.assetId))).toBe(true)
-      expect(existsSync(join(dir, primaryOnly.assetId))).toBe(true)
+      expect(existsSync(cvAsset(dir, backupOnly.assetId))).toBe(true)
+      expect(existsSync(cvAsset(dir, primaryOnly.assetId))).toBe(true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -452,9 +559,9 @@ describe('W4 assets pipeline', () => {
   it('gcAssets does not sweep or delete its own .trash dir', () => {
     const dir = tmp()
     try {
-      mkdirSync(join(dir, 'assets', '.trash'), { recursive: true })
+      mkdirSync(cvAsset(dir, 'assets', '.trash'), { recursive: true })
       expect(() => gcAssets(dir, new Set())).not.toThrow()
-      expect(existsSync(join(dir, 'assets', '.trash'))).toBe(true)
+      expect(existsSync(cvAsset(dir, 'assets', '.trash'))).toBe(true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

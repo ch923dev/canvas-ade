@@ -33,9 +33,11 @@ test.describe('@preview browser board — screenshot (OSR offscreen window)', ()
       expect(res.ok, 'screenshot ok').toBe(true)
       expect(res.assetId, 'assetId returned (project open)').toBeTruthy()
 
-      const abs = await mainCall<string>(electronApp, 'joinPath', projDir, res.assetId!)
+      // ADR 0009: the assetId is still the logical `assets/<sha>.png`, but the blob lives under
+      // `<project>/.canvas/assets/`. Resolve the physical path through `.canvas/`.
+      const abs = await mainCall<string>(electronApp, 'joinPath', projDir, '.canvas', res.assetId!)
       const exists = await mainCall<boolean>(electronApp, 'fileExists', abs)
-      expect(exists, 'asset PNG written to disk').toBe(true)
+      expect(exists, 'asset PNG written to disk under .canvas/').toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', projDir)
     }

@@ -24,8 +24,8 @@ test.describe('@core reset() clean-slate contract (test isolation)', () => {
     try {
       // Drive the app into the unrecoverable error state (WelcomeScreen, canvas unmounted),
       // exactly as recovery.e2e.ts does — this is the state that leaks across specs.
-      await mainCall(electronApp, 'writeProjectFile', tmp, 'canvas.json', TOO_NEW)
-      await mainCall(electronApp, 'writeProjectFile', tmp, 'canvas.json.bak', TOO_NEW)
+      await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json', TOO_NEW)
+      await mainCall(electronApp, 'writeProjectFile', tmp, '.canvas/canvas.json.bak', TOO_NEW)
       const res = await evalIn<{ status: string }>(
         page,
         `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`

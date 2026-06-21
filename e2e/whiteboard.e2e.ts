@@ -294,12 +294,14 @@ test.describe('@planning whiteboard slivers (real OS input / native pipeline)', 
       )
       const relOk =
         !!assetId && /^assets[/\\][0-9a-f]{40}\.png$/.test(assetId) && !assetId.startsWith('data:')
+      // ADR 0009: the stored assetId stays `assets/<sha>.png`, but the blob is written under
+      // `<project>/.canvas/assets/` — resolve the on-disk path through `.canvas/`.
       const fileOk =
         !!assetId &&
         (await mainCall<boolean>(
           electronApp,
           'fileExists',
-          await mainCall<string>(electronApp, 'joinPath', tmp, assetId)
+          await mainCall<string>(electronApp, 'joinPath', tmp, '.canvas', assetId)
         ))
       expect(pasted, 'one image element added').toBe(true)
       expect(relOk, 'relative assets/<sha1>.png path').toBe(true)
