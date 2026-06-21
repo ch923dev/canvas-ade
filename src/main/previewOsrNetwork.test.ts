@@ -389,4 +389,11 @@ describe('registerOsrNetworkIpc', () => {
       error: 'forbidden'
     })
   })
+  it('does not throw on null/undefined args (defensive against a buggy renderer)', async () => {
+    // No board for an unknown id → both handlers no-op safely instead of dereferencing null args.
+    const { call } = setup(undefined)
+    expect(() => call('preview:osrNetSetPreserve', allow, undefined)).not.toThrow()
+    expect(call('preview:osrNetSetPreserve', allow, undefined)).toBe(false)
+    expect(await call('preview:osrNetGetBody', allow, undefined)).toEqual({ error: 'no board' })
+  })
 })

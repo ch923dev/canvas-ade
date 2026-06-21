@@ -576,9 +576,9 @@ export function registerOsrNetworkIpc(
   })
   ipcMain.handle('preview:osrNetSetPreserve', (ev, args: { id: string; preserve: boolean }) => {
     if (isForeignSender(ev, getWin)) return false
-    const e = getEntry(args.id)
+    const e = getEntry(args?.id) // defensive: a buggy renderer could pass null/undefined
     if (!e) return false
-    e.net.preserve = args.preserve === true
+    e.net.preserve = args?.preserve === true
     return true
   })
   // Lazy, capped, user-initiated body fetch (the approved exfil surface). The requestId MUST match a
