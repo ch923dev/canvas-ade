@@ -8,7 +8,7 @@
 import { useState, useEffect, useRef, type ReactElement } from 'react'
 import { Icon } from '../../Icon'
 import { useOsrNetworkStore, type NetDock } from '../../../store/osrNetworkStore'
-import type { NetRecord, WsRecord, NetHeader } from '../../../../../preload'
+import type { NetRecord, WsRecord, WsFrame, NetHeader } from '../../../../../preload'
 import {
   formatSize,
   formatDuration,
@@ -385,9 +385,7 @@ function Row({
       <td className="net-col-initiator" title={rec.initiator}>
         {initiatorLabel(rec.initiator)}
       </td>
-      <td className="net-num">
-        {ws ? <span className="bb-net-live">live</span> : formatSize(rec.encodedDataLength)}
-      </td>
+      <td className="net-num">{ws ? '—' : formatSize(rec.encodedDataLength)}</td>
       <td className="net-num">{formatDuration(rec.startTs, rec.endTs)}</td>
     </tr>
   )
@@ -553,45 +551,87 @@ function GenRow({ k, v }: { k: string; v: string }): ReactElement {
   )
 }
 
+/** WebSocket opcode → the literal Chrome label (text opcode 1 shows its payload, so it has no entry). */
+const WS_OPCODE: Record<number, string> = {
+  0: 'Continuation Frame',
+  2: 'Binary Message',
+  8: 'Connection Close Frame',
+  9: 'Ping Frame',
+  10: 'Pong Frame'
+}
+/** Row class: control/continuation frames de-emphasized; otherwise sent vs received. */
+function wsFrameClass(f: WsFrame): string {
+  if (f.opcode >= 8 || f.opcode === 0) return 'ws-ctrl'
+  return f.dir === 'sent' ? 'ws-sent' : 'ws-recv'
+}
+/** HH:MM:SS.mmm local clock for a frame's timestamp (Chrome's Messages Time column). */
+function frameClock(ts: number): string {
+  const d = new Date(ts)
+  const p = (n: number, len = 2): string => String(n).padStart(len, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+}
+
 function WsDetail({ ws, tab }: { ws: WsRecord; tab: DetailTab }): ReactElement {
   if (tab === 'headers')
     return (
       <div className="bb-net-kv">
-        <div className="bb-net-url">
-          <span className="bb-net-k">URL</span>
-          <span className="bb-net-v">{ws.url}</span>
+        <div className="bb-net-general">
+          <div className="bb-net-url">
+            <span className="bb-net-k">URL</span>
+            <span className="bb-net-v">{ws.url}</span>
+          </div>
+          <div className="bb-net-genrow">
+            <span className="bb-net-k">Status</span>
+            <span className="bb-net-v">
+              101 Switching Protocols{ws.closedTs ? ' · closed' : ' · open'}
+            </span>
+          </div>
         </div>
-        <div>
-          <span className="bb-net-k">Frames</span> {ws.frames.length}
-          {ws.closedTs ? ' · closed' : ' · live'}
-        </div>
+        <HeaderList title="Response Headers" headers={ws.resHeaders} />
+        <HeaderList title="Request Headers" headers={ws.reqHeaders} />
       </div>
     )
-  // frames
+  // frames (Messages)
   return (
     <table className="bb-net-frames">
+      <thead>
+        <tr>
+          <th className="ws-dir" />
+          <th>Data</th>
+          <th className="net-num">Length</th>
+          <th className="net-num">Time</th>
+        </tr>
+      </thead>
       <tbody>
         {ws.frames.length === 0 && (
           <tr>
-            <td className="bb-net-dim">No frames yet</td>
+            <td className="bb-net-dim" colSpan={4}>
+              No frames yet
+            </td>
           </tr>
         )}
-        {ws.frames.map((f, i) => (
-          <tr key={i} className={f.dir === 'sent' ? 'ws-sent' : 'ws-recv'}>
-            <td className="ws-dir">
-              <span className="ws-arrow">{f.dir === 'sent' ? '▲' : '▼'}</span> {f.dir}
-            </td>
-            <td className="ws-type">{f.opcode === 2 ? 'binary' : 'text'}</td>
-            <td className="ws-data">
-              {f.opcode === 2 ? (
-                <span className="bb-net-dim">‹binary {f.payload.length}B›</span>
-              ) : (
-                f.payload
-              )}
-              {f.truncated && <span className="bb-net-dim"> ·truncated</span>}
-            </td>
-          </tr>
-        ))}
+        {ws.frames.map((f, i) => {
+          const ctrl = WS_OPCODE[f.opcode]
+          return (
+            <tr key={i} className={wsFrameClass(f)}>
+              <td className="ws-dir">
+                <span className="ws-arrow">{f.dir === 'sent' ? '↑' : '↓'}</span>
+              </td>
+              <td className="ws-data">
+                {f.opcode === 1 ? (
+                  <>
+                    {f.payload}
+                    {f.truncated && <span className="bb-net-dim"> ·truncated</span>}
+                  </>
+                ) : (
+                  <span className="bb-net-dim">{ctrl ?? 'Frame'}</span>
+                )}
+              </td>
+              <td className="net-num">{f.length}</td>
+              <td className="net-num">{frameClock(f.ts)}</td>
+            </tr>
+          )
+        })}
       </tbody>
     </table>
   )

@@ -64,6 +64,7 @@ export interface WsFrame {
   dir: 'sent' | 'recv'
   opcode: number
   ts: number
+  length: number // frame data length in bytes (pre-cap)
   payload: string // capped WS_PAYLOAD_CAP
   truncated: boolean
 }
@@ -72,6 +73,8 @@ export interface WsRecord {
   url: string
   createdTs: number
   closedTs?: number
+  reqHeaders?: NetHeader[] // upgrade request headers (Sec-WebSocket-Key, …)
+  resHeaders?: NetHeader[] // handshake response headers (Sec-WebSocket-Accept, …)
   frames: WsFrame[] // per-socket ring (MAX_WS_FRAMES)
 }
 
@@ -215,6 +218,15 @@ export function applyFailed(rec: NetRecord, params: Record<string, unknown>, now
   }
 }
 
+/** The frame's data length in bytes (pre-cap): base64-decoded for binary, UTF-8 byte length for text. */
+export function wsFrameByteLength(raw: string, opcode: number): number {
+  if (opcode === 2) {
+    const clean = raw.replace(/=+$/, '')
+    return Math.floor((clean.length * 3) / 4)
+  }
+  return Buffer.byteLength(raw, 'utf8')
+}
+
 /** Build a capped WsFrame from a `Network.webSocketFrame{Sent,Received}` response. */
 export function wsFrameFrom(
   params: Record<string, unknown>,
@@ -223,10 +235,12 @@ export function wsFrameFrom(
 ): WsFrame {
   const resp = (params.response ?? {}) as Record<string, unknown>
   const raw = typeof resp.payloadData === 'string' ? resp.payloadData : ''
+  const opcode = typeof resp.opcode === 'number' ? resp.opcode : 0
   return {
     dir,
-    opcode: typeof resp.opcode === 'number' ? resp.opcode : 0,
+    opcode,
     ts: now,
+    length: wsFrameByteLength(raw, opcode),
     payload: raw.slice(0, WS_PAYLOAD_CAP),
     truncated: raw.length > WS_PAYLOAD_CAP
   }
@@ -463,11 +477,20 @@ function handleNetMessage(
       break
     }
     case 'Network.webSocketHandshakeResponseReceived': {
+      const res = (params.response ?? {}) as Record<string, unknown>
       const rec = state.byId.get(reqId)
       if (rec) {
-        const res = (params.response ?? {}) as Record<string, unknown>
         if (typeof res.status === 'number') rec.status = res.status
+        rec.statusText = capText(res.statusText, 256) || rec.statusText || 'Switching Protocols'
         markRecord(state, emit, reqId)
+      }
+      const wsRec = state.ws.get(reqId)
+      if (wsRec) {
+        const rh = capHeaders(res.headers)
+        if (rh) wsRec.resHeaders = rh
+        const qh = capHeaders(res.requestHeaders)
+        if (qh) wsRec.reqHeaders = qh
+        markWs(state, emit, reqId)
       }
       break
     }
@@ -486,6 +509,12 @@ function handleNetMessage(
       if (rec) {
         rec.closedTs = now
         markWs(state, emit, reqId)
+      }
+      // Finalize the request row's Time (the socket's total connection duration).
+      const row = state.byId.get(reqId)
+      if (row && row.endTs === undefined) {
+        row.endTs = now
+        markRecord(state, emit, reqId)
       }
       break
     }

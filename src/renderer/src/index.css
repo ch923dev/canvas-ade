@@ -1853,16 +1853,27 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.bb-net-frames th {
+  padding: 0 10px;
+  height: 22px;
+  text-align: left;
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
 .bb-net-frames .ws-dir {
-  width: 72px;
+  width: 32px;
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--text-3);
 }
-.bb-net-frames .ws-type {
-  width: 56px;
+.bb-net-frames .net-num {
+  width: 84px;
+  text-align: right;
   font-family: var(--mono);
-  font-size: 10.5px;
   color: var(--text-3);
 }
 .bb-net-frames .ws-data {
@@ -1870,10 +1881,16 @@ body {
   color: var(--text);
 }
 .bb-net-frames .ws-sent .ws-arrow {
-  color: var(--text-2);
+  color: var(--ok); /* outgoing — green (DevTools emphasis) */
 }
 .bb-net-frames .ws-recv .ws-arrow {
-  color: var(--accent);
+  color: var(--text-3); /* incoming — muted */
+}
+/* control frames (ping/pong/close/continuation) — de-emphasized (Chrome tints them light-yellow;
+   we have no yellow token, so dim+italic conveys "control" within the calm one-accent palette) */
+.bb-net-frames .ws-ctrl td {
+  color: var(--text-3);
+  font-style: italic;
 }
 
 /* ── OS-3 Phase 4 — native-widget & dialog overlays ────────────────────────────────────────────

@@ -135,6 +135,7 @@ export interface WsFrame {
   dir: 'sent' | 'recv'
   opcode: number
   ts: number
+  length: number
   payload: string
   truncated: boolean
 }
@@ -143,6 +144,8 @@ export interface WsRecord {
   url: string
   createdTs: number
   closedTs?: number
+  reqHeaders?: NetHeader[]
+  resHeaders?: NetHeader[]
   frames: WsFrame[]
 }
 /** A coalesced Network batch on `preview:osrNet` (id-dispatched, like OsrFrame). */

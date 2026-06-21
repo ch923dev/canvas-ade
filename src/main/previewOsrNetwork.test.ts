@@ -10,6 +10,7 @@ import {
   applyFinished,
   applyFailed,
   wsFrameFrom,
+  wsFrameByteLength,
   ringPushRecord,
   ensureWs,
   pushWsFrame,
@@ -199,7 +200,7 @@ describe('applyRedirect', () => {
 })
 
 describe('wsFrameFrom', () => {
-  it('caps the payload + flags truncation', () => {
+  it('caps the payload + flags truncation + records the pre-cap byte length', () => {
     const big = 'p'.repeat(WS_PAYLOAD_CAP + 10)
     const f = wsFrameFrom({ response: { opcode: 1, payloadData: big } }, 'recv', 123)
     expect(f.dir).toBe('recv')
@@ -207,11 +208,23 @@ describe('wsFrameFrom', () => {
     expect(f.ts).toBe(123)
     expect(f.payload.length).toBe(WS_PAYLOAD_CAP)
     expect(f.truncated).toBe(true)
+    expect(f.length).toBe(WS_PAYLOAD_CAP + 10) // length is the full pre-cap byte count
   })
   it('does not flag short payloads', () => {
     const f = wsFrameFrom({ response: { opcode: 2, payloadData: 'hi' } }, 'sent', 1)
     expect(f.truncated).toBe(false)
     expect(f.payload).toBe('hi')
+  })
+})
+
+describe('wsFrameByteLength', () => {
+  it('utf-8 byte length for text frames', () => {
+    expect(wsFrameByteLength('abc', 1)).toBe(3)
+    expect(wsFrameByteLength('é', 1)).toBe(2)
+  })
+  it('decoded byte count for binary base64 frames', () => {
+    expect(wsFrameByteLength('AAAA', 2)).toBe(3)
+    expect(wsFrameByteLength('AA==', 2)).toBe(1)
   })
 })
 
@@ -243,7 +256,7 @@ describe('ensureWs / pushWsFrame', () => {
   it('caps the per-socket frame ring', () => {
     const rec = ensureWs(createNetState(), 'w', 'ws://x', 0)
     for (let i = 0; i < MAX_WS_FRAMES + 10; i++) {
-      pushWsFrame(rec, { dir: 'recv', opcode: 1, ts: i, payload: 'x', truncated: false })
+      pushWsFrame(rec, { dir: 'recv', opcode: 1, ts: i, length: 1, payload: 'x', truncated: false })
     }
     expect(rec.frames.length).toBe(MAX_WS_FRAMES)
     // oldest dropped: the surviving first frame is the 11th pushed (ts 10)
