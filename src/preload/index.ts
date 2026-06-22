@@ -238,6 +238,22 @@ export interface OsrDownloadEvent {
   total?: number
 }
 
+// ── Project Library — files saved under <project>/.canvas/{downloads,assets} (mirrors main/projectLibrary) ──
+export type LibraryKind = 'download' | 'asset'
+export interface LibraryItem {
+  name: string
+  /** Path relative to `.canvas/` (the reveal/open key) — e.g. `downloads/report.pdf`. */
+  relPath: string
+  size: number
+  mtime: number
+  kind: LibraryKind
+}
+export interface LibraryListing {
+  downloadsDir: string
+  downloads: LibraryItem[]
+  assets: LibraryItem[]
+}
+
 // ── Phase 3 persistence — project I/O (doc crosses as `unknown`; renderer validates) ──
 export interface RecentProject {
   path: string
@@ -672,6 +688,14 @@ const api = {
       id: string
     }): Promise<{ ok: true; svg: string } | { ok: false; error: string }> =>
       ipcRenderer.invoke('diagram:render', req)
+  },
+  // ── Project Library — browse files saved under <project>/.canvas/{downloads,assets} (MAIN-confined) ──
+  library: {
+    list: (): Promise<LibraryListing | null> => ipcRenderer.invoke('project:listLibrary'),
+    reveal: (relPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('project:revealLibraryItem', relPath),
+    open: (relPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('project:openLibraryItem', relPath)
   },
   dialog: {
     openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')

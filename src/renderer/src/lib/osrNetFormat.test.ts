@@ -28,8 +28,6 @@ import {
   netPanelResizeFraction,
   NET_PANEL_MIN_FRAC,
   NET_PANEL_MAX_FRAC,
-  assetRecords,
-  downloadPct,
   prettyBody
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
@@ -581,38 +579,6 @@ describe('netPanelResizeFraction', () => {
   })
 })
 
-describe('assetRecords', () => {
-  it('keeps only static asset types, preserving order', () => {
-    const recs = [
-      rec({ requestId: '1', type: 'document' }),
-      rec({ requestId: '2', type: 'image' }),
-      rec({ requestId: '3', type: 'xhr' }),
-      rec({ requestId: '4', type: 'stylesheet' }),
-      rec({ requestId: '5', type: 'script' }),
-      rec({ requestId: '6', type: 'font' }),
-      rec({ requestId: '7', type: 'fetch' }),
-      rec({ requestId: '8', type: 'media' }),
-      rec({ requestId: '9', type: 'websocket' }),
-      rec({ requestId: '10', type: 'manifest' })
-    ]
-    expect(assetRecords(recs).map((r) => r.requestId)).toEqual(['2', '4', '5', '6', '8', '10'])
-  })
-  it('matches the capitalized CDP resourceType MAIN actually stores', () => {
-    // Regression: MAIN stores raw CDP types ("Image"/"Script"/…), not lowercase — the lowercase
-    // set must compare case-insensitively or the Assets tab shows 0.
-    const recs = [
-      rec({ requestId: 'a', type: 'Image' }),
-      rec({ requestId: 'b', type: 'Script' }),
-      rec({ requestId: 'c', type: 'Stylesheet' }),
-      rec({ requestId: 'd', type: 'Document' })
-    ]
-    expect(assetRecords(recs).map((r) => r.requestId)).toEqual(['a', 'b', 'c'])
-  })
-  it('returns [] when there are no assets', () => {
-    expect(assetRecords([rec({ type: 'document' }), rec({ type: 'xhr' })])).toEqual([])
-  })
-})
-
 describe('prettyBody', () => {
   it('indents JSON when the mime is json', () => {
     expect(prettyBody('{"a":1,"b":[2,3]}', 'application/json')).toBe(
@@ -628,19 +594,5 @@ describe('prettyBody', () => {
   })
   it('never reparses binary (base64) bodies', () => {
     expect(prettyBody('eyJhIjoxfQ==', 'application/json', true)).toBe('eyJhIjoxfQ==')
-  })
-})
-
-describe('downloadPct', () => {
-  it('computes a clamped integer percent', () => {
-    expect(downloadPct(50, 100)).toBe(50)
-    expect(downloadPct(0, 100)).toBe(0)
-    expect(downloadPct(150, 100)).toBe(100) // clamped
-    expect(downloadPct(1, 3)).toBe(33) // rounded
-  })
-  it('is undefined when the total is unknown or zero', () => {
-    expect(downloadPct(50, undefined)).toBeUndefined()
-    expect(downloadPct(50, 0)).toBeUndefined()
-    expect(downloadPct(undefined, 100)).toBeUndefined()
   })
 })

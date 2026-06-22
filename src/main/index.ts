@@ -34,6 +34,7 @@ import { startLocalServer, type LocalServer } from './localServer'
 import { runSelfTest } from './selfTest'
 import { installE2EMain } from './e2eMain'
 import { registerProjectHandlers } from './projectIpc'
+import { registerProjectLibraryIpc } from './projectLibrary'
 import { registerFileIpc } from './fileIpc'
 import { createFileWatcher, type FileWatcher } from './fileWatch'
 import { runSummarize, defaultDeps } from './llmService'
@@ -553,6 +554,8 @@ app.whenReady().then(async () => {
     }
   )
   registerLlmHandlers(ipcMain, () => mainWindow, llmDataDir, undefined, llmEncryptor)
+  // Project Library (list/reveal/open files saved under <project>/.canvas/{downloads,assets}).
+  registerProjectLibraryIpc(ipcMain, () => mainWindow)
 
   // ── Recap consent IPC + hook-install policy (Task 10 Step 5) ────────────────────────
   // recap:getConsent / recap:setConsent (frame-guarded inside recapConsent.ts). The decision

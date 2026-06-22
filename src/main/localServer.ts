@@ -82,6 +82,16 @@ const STATIC_PAGE = `<!doctype html>
 export function startLocalServer(): Promise<LocalServer> {
   return new Promise((resolve, reject) => {
     const server: Server = createServer((req, res) => {
+      // `/download` → a small attachment so the OSR download path (→ project .canvas/downloads/) is
+      // e2e-testable. Checked first (early return); everything else serves the preview / idle pages.
+      if (req.url && req.url.startsWith('/download')) {
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': 'attachment; filename="canvas-e2e-download.txt"'
+        })
+        res.end('canvas-ade e2e download payload')
+        return
+      }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       // `/static` (and `/static2`) serve the IDLE page (paints once, never repaints) — the page
       // that surfaces the OSR "blank until resize" paint-reliability bug. Everything else keeps the

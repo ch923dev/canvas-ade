@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useOsrWidgetStore } from '../../../store/osrWidgetStore'
+import { useLibraryStore } from '../../../store/libraryStore'
 import { showToast, dismissToast } from '../../../store/toastStore'
 import type { OsrDownloadEvent } from '../../../../../preload'
 
@@ -23,8 +24,10 @@ export function useOsrWidgetEvents(boardId: string): void {
     })
     const offDownload = window.api.onPreviewOsrDownload((d) => {
       if (d.id !== boardId) return
-      store.applyDownload(boardId, d) // persistent list for the Downloads tab
-      toastForDownload(boardId, d) // transient at-a-glance feedback
+      toastForDownload(boardId, d) // transient at-a-glance feedback (+ Show → reveal)
+      // A completed download lands under .canvas/downloads (when a project is open) — re-list the
+      // open Project Library so it shows up immediately, same as a screenshot saved to assets/.
+      if (d.state === 'done') useLibraryStore.getState().requestRefresh()
     })
     return () => {
       offDialog()
@@ -55,7 +58,9 @@ function toastForDownload(boardId: string, d: OsrDownloadEvent): void {
       showToast({
         id,
         kind: 'ok',
-        message: `${d.name} — saved to Downloads`,
+        // Location-agnostic: downloads go to the project's .canvas/downloads when a project is open
+        // (browsable in the Project Library), else the OS Downloads folder. "Show" reveals the spot.
+        message: `${d.name} — saved`,
         action: d.savePath
           ? { label: 'Show', run: () => void window.api.revealOsrDownload(d.savePath as string) }
           : undefined

@@ -1,7 +1,9 @@
-import { app, dialog, shell } from 'electron'
+import { dialog, shell } from 'electron'
 import type { BrowserWindow, WebContents, Session, DownloadItem, IpcMain } from 'electron'
-import { basename, join, resolve, sep } from 'node:path'
+import { mkdirSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
 import { isForeignSender } from './ipcGuard'
+import { getDownloadsDir } from './projectLibrary'
 
 /**
  * OS-3 Phase 4 — MAIN-side native-widget & dialog support for the OSR Browser preview.
@@ -403,19 +405,34 @@ export function setOsrWidgetValue(wc: OsrCdp, value: string): void {
 /* ── Downloads (4D) ──────────────────────────────────────────────────────────────────────────── */
 
 export interface OsrDownloadDeps {
-  downloadsDir: string
   exists: (p: string) => boolean
   /** Token-bucket gate (the `createOpenExternalLimiter` pattern) — false ⇒ over budget, cancel. */
   allow: () => boolean
   emit: (info: OsrDownloadInfo) => void
+  /** Resolve the save dir per download — default: the open project's `.canvas/downloads/`, else OS
+   *  Downloads (ADR 0009). Resolved at save time so a project switch retargets without re-registering. */
+  getDownloadsDir?: () => string
+  /** mkdir -p the resolved dir before saving — default `node:fs` mkdirSync; injected for tests. */
+  ensureDir?: (dir: string) => void
 }
 
+/** Exact savePaths MAIN has written for a COMPLETED OSR download this session. The toast's "Show"
+ *  reveal action only opens a path in this allowlist. This is tighter than a directory-prefix check
+ *  AND — unlike one — stays valid after a project switch: the save-time `.canvas/downloads/` need not
+ *  equal the current one, so a prefix check against the live `getDownloadsDir()` would silently fail
+ *  to reveal a file downloaded under a previously-open project. Bounded by the per-board download
+ *  throttle (`deps.allow`); session-scoped, never persisted. */
+const osrDownloadPaths = new Set<string>()
+
 /**
- * Policy for a board's downloads: save to the OS Downloads folder (no parented save-dialog freeze),
- * emit start/progress/done/fail toasts, throttle abusive bursts. Returns a teardown that removes the
- * session listener. The session is the per-board `preview-osr-${id}` partition.
+ * Policy for a board's downloads: save into the open project's `.canvas/downloads/` (ADR 0009; OS
+ * Downloads when no project is open — no parented save-dialog freeze), emit start/progress/done/fail
+ * toasts, throttle abusive bursts. Returns a teardown that removes the session listener. The session
+ * is the per-board `preview-osr-${id}` partition.
  */
 export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): () => void {
+  const resolveDir = deps.getDownloadsDir ?? getDownloadsDir
+  const ensureDir = deps.ensureDir ?? ((dir: string) => mkdirSync(dir, { recursive: true }))
   const onWillDownload = (event: Electron.Event, item: DownloadItem): void => {
     if (!deps.allow()) {
       event.preventDefault()
@@ -423,7 +440,9 @@ export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): (
       return
     }
     const name = sanitizeDownloadName(item.getFilename())
-    const savePath = uniqueSavePath(deps.downloadsDir, name, deps.exists)
+    const dir = resolveDir()
+    ensureDir(dir) // the project's `.canvas/downloads/` may not exist yet on the first save
+    const savePath = uniqueSavePath(dir, name, deps.exists)
     item.setSavePath(savePath)
     deps.emit({ state: 'start', name, savePath, total: item.getTotalBytes() })
     item.on('updated', (_e, state) => {
@@ -437,24 +456,31 @@ export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): (
         })
     })
     item.once('done', (_e, state) => {
-      if (state === 'completed') deps.emit({ state: 'done', name, savePath })
-      else deps.emit({ state: 'fail', name, savePath })
+      if (state === 'completed') {
+        osrDownloadPaths.add(resolve(savePath)) // allowlist the exact path for the toast's reveal
+        deps.emit({ state: 'done', name, savePath })
+      } else deps.emit({ state: 'fail', name, savePath })
     })
   }
   session.on('will-download', onWillDownload)
   return () => session.removeListener('will-download', onWillDownload)
 }
 
-/** Reveal a completed download in the OS file manager (the toast's Show action). Defense-in-depth:
- *  only ever reveal a path INSIDE the OS Downloads dir — the sole place OSR downloads are written
- *  (`uniqueSavePath(downloadsDir, …)` above). A path that escapes the Downloads dir is dropped, so a
- *  compromised renderer can't use this to open an arbitrary location in the OS file manager. */
+/** Is `savePath` a completed OSR download MAIN wrote this session (and thus safe to reveal)? The
+ *  renderer echoes back the savePath it got in the toast, so this exact-match allowlist is the
+ *  defense-in-depth boundary against a compromised renderer revealing an arbitrary OS location. */
+export function isRevealableOsrDownload(savePath: string): boolean {
+  return osrDownloadPaths.has(resolve(savePath))
+}
+
+/** Reveal a completed download in the OS file manager (the toast's Show action). Only reveals a path
+ *  in {@link osrDownloadPaths} — an exact allowlist of MAIN-written downloads, so a compromised
+ *  renderer can't open an arbitrary location, and (unlike a live-dir prefix check) it stays valid
+ *  after a project switch. */
 export function revealDownload(savePath: string): void {
   try {
-    const downloads = app.getPath('downloads')
-    const full = resolve(savePath)
-    if (full !== downloads && !full.startsWith(downloads + sep)) return
-    shell.showItemInFolder(full)
+    if (!isRevealableOsrDownload(savePath)) return
+    shell.showItemInFolder(resolve(savePath))
   } catch {
     /* path gone / app not ready */
   }

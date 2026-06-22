@@ -11,6 +11,7 @@ import {
   respondOsrDialog,
   setOsrWidgetValue,
   registerOsrDownloads,
+  isRevealableOsrDownload,
   type CdpMessageActions
 } from './previewOsrWidgets'
 
@@ -271,7 +272,8 @@ describe('registerOsrDownloads', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const session = mkSession() as any
     registerOsrDownloads(session, {
-      downloadsDir: '/dl',
+      getDownloadsDir: () => '/dl',
+      ensureDir: () => {},
       exists: () => false,
       allow: () => true,
       emit
@@ -293,7 +295,8 @@ describe('registerOsrDownloads', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const session = mkSession() as any
     registerOsrDownloads(session, {
-      downloadsDir: '/dl',
+      getDownloadsDir: () => '/dl',
+      ensureDir: () => {},
       exists: () => false,
       allow: () => false,
       emit
@@ -309,7 +312,8 @@ describe('registerOsrDownloads', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const session = mkSession() as any
     registerOsrDownloads(session, {
-      downloadsDir: '/dl',
+      getDownloadsDir: () => '/dl',
+      ensureDir: () => {},
       exists: () => false,
       allow: () => true,
       emit
@@ -318,5 +322,45 @@ describe('registerOsrDownloads', () => {
     session.fire(item)
     item.emitDone('cancelled')
     expect(emit).toHaveBeenCalledWith(expect.objectContaining({ state: 'fail' }))
+  })
+
+  it('allowlists a completed download for reveal — exact path, not a live-dir prefix', () => {
+    const emit = vi.fn()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const session = mkSession() as any
+    registerOsrDownloads(session, {
+      getDownloadsDir: () => '/projectA/.canvas/downloads',
+      ensureDir: () => {},
+      exists: () => false,
+      allow: () => true,
+      emit
+    })
+    session.fire(mkItem('report.csv'))
+    const started = emit.mock.calls.map((c) => c[0]).find((i) => i.state === 'start')
+    const savePath = started.savePath as string
+    // Not revealable until the download actually completes...
+    expect(isRevealableOsrDownload(savePath)).toBe(false)
+    // ...and only the EXACT saved path is — never an arbitrary location the renderer might echo back.
+    expect(isRevealableOsrDownload('/etc/passwd')).toBe(false)
+  })
+
+  it('reveals the exact saved path after completion (survives a later project switch)', () => {
+    const emit = vi.fn()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const session = mkSession() as any
+    registerOsrDownloads(session, {
+      getDownloadsDir: () => '/projectA/.canvas/downloads',
+      ensureDir: () => {},
+      exists: () => false,
+      allow: () => true,
+      emit
+    })
+    const item = mkItem('saved.bin')
+    session.fire(item)
+    item.emitDone('completed')
+    const started = emit.mock.calls.map((c) => c[0]).find((i) => i.state === 'start')
+    // The allowlist holds the save-time path, so reveal works even though the "current" download dir
+    // is now a different project — the exact bug a live `getDownloadsDir()` prefix check would miss.
+    expect(isRevealableOsrDownload(started.savePath)).toBe(true)
   })
 })

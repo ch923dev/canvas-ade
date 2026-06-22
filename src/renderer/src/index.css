@@ -3885,6 +3885,171 @@ body {
   }
 }
 
+/* Project Library — a right-docked slide-in (mirrors .digest-panel). Its reopen tab sits BELOW the
+   Context tab so the two right-edge tabs never overlap. Tokens only. */
+.lib-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: var(--fs-body);
+  overflow-y: auto;
+  transform: translateX(0);
+  transition: transform 200ms ease;
+}
+.lib-panel[data-open='false'] {
+  transform: translateX(100%);
+}
+.lib-reopen {
+  position: fixed;
+  top: calc(50% + 96px); /* stacked below the Context tab (which is centred at 50%) */
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 70;
+  writing-mode: vertical-rl;
+  padding: var(--space-12) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: var(--r-inner) 0 0 var(--r-inner);
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.lib-reopen:hover {
+  color: var(--text);
+}
+.lib-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.lib-head-title {
+  flex: 1;
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  color: var(--text);
+}
+.lib-icon-btn {
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: var(--space-4);
+}
+.lib-icon-btn:hover {
+  color: var(--text);
+}
+.lib-tabs {
+  display: flex;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.lib-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  padding: var(--space-4) var(--space-8);
+}
+.lib-tab:hover {
+  color: var(--text-2);
+}
+.lib-tab-on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.lib-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1;
+}
+.lib-empty {
+  margin: var(--space-8) 0;
+  color: var(--text-3);
+  font-size: var(--fs-label);
+}
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--r-inner);
+  color: var(--text-3);
+  cursor: grab; /* draggable onto the canvas → opens a File board */
+}
+.lib-row:active {
+  cursor: grabbing;
+}
+.lib-row:hover {
+  background: var(--surface-raised);
+  color: var(--text-2);
+}
+.lib-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-size {
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lib-act {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.lib-act:hover {
+  color: var(--accent);
+}
+.lib-foot {
+  margin: 0;
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  font-size: var(--fs-label);
+  word-break: break-all;
+}
+/* Library controls onto the app's 1.5px accent focus ring (the .bb-navbtn:focus-visible convention). */
+.lib-reopen:focus-visible,
+.lib-icon-btn:focus-visible,
+.lib-tab:focus-visible,
+.lib-act:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-panel {
+    transition: none;
+  }
+}
+
 /* Drag-to-create capture overlay (redesign 2026-06-06). Sits above the React Flow pane
    (boards) but below the floating app chrome (z-50), so the dock stays clickable while armed. */
 .placement-capture {

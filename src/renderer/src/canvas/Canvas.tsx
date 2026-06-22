@@ -79,6 +79,7 @@ import { GroupContextMenu } from './GroupContextMenu'
 import { AppChrome } from './AppChrome'
 import { EmptyState } from './EmptyState'
 import { DigestPanel } from './DigestPanel'
+import { ProjectLibraryPanel } from './ProjectLibraryPanel'
 import { useDigestProse } from './hooks/useDigestProse'
 import { buildDigest } from '../lib/digest'
 import { classifyConnectorReject, CONNECTOR_REJECT_MESSAGE } from '../lib/connectorReject'
@@ -988,6 +989,7 @@ function CanvasInner(): ReactElement {
             onOpen={() => setDigestOpen(true)}
             onClose={() => setDigestOpen(false)}
           />
+          <ProjectLibraryPanel />
           {diag && <DiagOverlay />}
         </div>
         {fullViewBoard && (

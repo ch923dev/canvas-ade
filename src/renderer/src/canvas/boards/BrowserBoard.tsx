@@ -40,6 +40,7 @@ import { useOsrWidgetEvents } from './osr/useOsrWidgetEvents'
 import { OsrWidgetLayer } from './osr/OsrWidgetLayer'
 import { OsrVolumeControl } from './osr/OsrVolumeControl'
 import { useOsrWidgetStore } from '../../store/osrWidgetStore'
+import { useLibraryStore } from '../../store/libraryStore'
 import { useOsrNetwork } from './osr/useOsrNetwork'
 import { OsrNetworkPanel } from './osr/OsrNetworkPanel'
 import { useOsrNetworkStore } from '../../store/osrNetworkStore'
@@ -296,14 +297,17 @@ export function BrowserBoard({
         // BUG-028: main reports whether the clipboard write actually landed.
         const clipOk = res.ok && res.clipboardOk
         if (!res.ok) shotToast({ message: 'Open the preview to screenshot it' })
-        else if (res.assetId)
+        else if (res.assetId) {
+          // A new asset landed in <project>/.canvas/assets/ — re-list the Project Library so the
+          // screenshot shows up immediately (no manual refresh).
+          useLibraryStore.getState().requestRefresh()
           shotToast({
             kind: 'ok',
             message: clipOk
               ? 'Screenshot copied + saved to assets/'
               : 'Screenshot saved to assets/ (clipboard unavailable)'
           })
-        else if (clipOk) shotToast({ kind: 'ok', message: 'Screenshot copied to clipboard' })
+        } else if (clipOk) shotToast({ kind: 'ok', message: 'Screenshot copied to clipboard' })
         else
           shotToast({
             kind: 'error',
