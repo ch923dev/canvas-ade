@@ -504,7 +504,13 @@ export function BrowserBoard({
                 flexDirection: netDock === 'right' ? 'row' : 'column'
               }
             : fullView
-              ? { top: URLBAR_H, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+              ? // COLUMN, not a centred row: `.bb-stage-main`'s `flex:1 1 0` then grows the MAIN
+                // axis (height) to a DEFINITE size, so the emulator `.bb-frame { height:100% }`
+                // resolves instead of collapsing against an indefinite (align-items:center) height —
+                // the full-screen blank that only "appeared" once the Network panel was opened (the
+                // panel makes `.bb-stage` a column, which is what fixed it). `.bb-stage-main` keeps
+                // its own center alignment, so the emulator is still centred + letterboxed.
+                { top: URLBAR_H, display: 'flex', flexDirection: 'column' }
               : { top: URLBAR_H }
         }
       >
