@@ -107,6 +107,28 @@ const pendingSize = new Map<string, OsrSizeRequest>()
 // ensureOsr — so a board that should open ALREADY-FROZEN (off-screen at mount) never paints a
 // frame before the manager's decision lands. Default-true means an un-buffered board paints.
 const pendingPaint = new Map<string, boolean>()
+// A debounced follow-up `invalidate()` per board, scheduled after a REAL resize (applyOsrSize
+// returned true). A large size jump (full-view enter) makes an idle page re-render asynchronously;
+// the single synchronous invalidate inside applyOsrSize can fire before that re-render lands, so a
+// static page would stay blank until the next resize. This re-invalidates once the layout settles
+// (debounced so a drag-resize's burst collapses to a single trailing repaint).
+const resizeSettle = new Map<string, ReturnType<typeof setTimeout>>()
+const RESIZE_SETTLE_MS = 250
+function scheduleResizeSettle(id: string): void {
+  const existing = resizeSettle.get(id)
+  if (existing) clearTimeout(existing)
+  resizeSettle.set(
+    id,
+    setTimeout(() => {
+      resizeSettle.delete(id)
+      try {
+        osr.get(id)?.osrWin.webContents.invalidate() // entry gone (closed) ⇒ no-op
+      } catch {
+        /* window torn down mid-timer */
+      }
+    }, RESIZE_SETTLE_MS)
+  )
+}
 let owner: BrowserWindow | null = null
 
 /** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). */
@@ -625,6 +647,11 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
 function disposeOsr(id: string): void {
   pendingSize.delete(id) // drop a buffered-but-never-applied resize
   pendingPaint.delete(id) // …and a buffered-but-never-applied paint-state
+  const settle = resizeSettle.get(id) // cancel a pending settle-invalidate before the window dies
+  if (settle) {
+    clearTimeout(settle)
+    resizeSettle.delete(id)
+  }
   const e = osr.get(id)
   if (!e) return
   stopNetFlush(e.net) // cancel a pending Network delta flush before the window dies
@@ -959,7 +986,7 @@ export function registerPreviewOsrHandlers(
       pendingSize.set(args.id, size)
       return true
     }
-    applyOsrSize(e.osrWin, e, size)
+    if (applyOsrSize(e.osrWin, e, size)) scheduleResizeSettle(args.id)
     return true
   })
   // M2 / 2A — set a board's desired paint state. Sent by the renderer's settle-gated liveness

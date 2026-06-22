@@ -59,17 +59,22 @@ export function sanitizeOsrSize(args: OsrSizeRequest): OsrSizeRequest {
  *   - `invalidate()` repaints at the new surface (also clears a stale frame on resume).
  * No-op-guarded via `sizeKey` so a redundant resize never forces a relayout. `superSample` is
  * always updated (applyZoom re-applies it on the next did-finish-load).
+ *
+ * Returns `true` when the surface ACTUALLY changed (so the caller can schedule a settle-catching
+ * follow-up invalidate — an idle page re-renders asynchronously after a large size jump like a
+ * full-view enter, and the single synchronous invalidate above can capture the surface before that
+ * re-render lands, leaving the canvas blank until the next resize); `false` on a no-op.
  */
 export function applyOsrSize(
   win: OsrResizeTarget,
   state: OsrSizeState,
   size: OsrSizeRequest
-): void {
+): boolean {
   const key = `${size.logicalW}x${size.logicalH}@${size.supersample}`
   state.superSample = size.supersample
   state.logicalW = size.logicalW
   state.logicalH = size.logicalH
-  if (state.sizeKey === key) return // identical surface → skip the relayout
+  if (state.sizeKey === key) return false // identical surface → skip the relayout
   state.sizeKey = key
   try {
     win.setContentSize(
@@ -81,4 +86,5 @@ export function applyOsrSize(
   } catch {
     /* window gone / not OSR-capable */
   }
+  return true
 }
