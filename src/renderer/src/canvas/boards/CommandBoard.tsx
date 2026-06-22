@@ -67,7 +67,19 @@ export function CommandBoard({
   onStartConnect
 }: BoardViewProps<CommandBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
-  const boards = useCanvasStore((s) => s.boards)
+  // GROUP-07 pattern: subscribe to a PRIMITIVE fingerprint of only the worker-pool-relevant board
+  // fields (id · type · terminal `monitorActivity` opt-out) instead of the whole `boards` array.
+  // `updateBoard` mints a NEW boards reference every drag-position frame, so a raw `s.boards`
+  // subscription would re-render this whole subtree ~60×/s while ANY board is dragged. Position never
+  // feeds `deriveWorkerPool`, so the key is unchanged by a move → no re-render. The key changes
+  // exactly on add/remove/type-change/monitorActivity-flip — the only board-list inputs the pool
+  // reads. (The `running` map is subscribed separately below, so a running-state change still
+  // re-renders via that path; the pool memo reads the live snapshot via getState() keyed by both.)
+  const poolKey = useCanvasStore((s) =>
+    s.boards
+      .map((b) => `${b.id}~${b.type}~${b.type === 'terminal' ? (b.monitorActivity ?? '') : ''}`)
+      .join('|')
+  )
   const running = useTerminalRuntimeStore((s) => s.running)
   const view = useCommandStore((s) => s.view)
   const setView = useCommandStore((s) => s.setView)
@@ -78,7 +90,16 @@ export function CommandBoard({
   const configuringTaskId = useCommandStore((s) => s.configuringTaskId)
   const lastWorkerConfig = useCommandStore((s) => s.lastWorkerConfig)
 
-  const pool = useMemo(() => deriveWorkerPool(boards, running), [boards, running])
+  // `poolKey` IS the cache key: it changes exactly when the board-list inputs deriveWorkerPool reads
+  // change (membership/type/monitorActivity), and `running` covers busy↔idle transitions. The live
+  // boards snapshot is read via getState() (this render was triggered by the key change), so the
+  // pool never re-derives on a position-only board update. The linter can't see the getState() read
+  // is gated by poolKey, so it reads as "unnecessary"; it is load-bearing.
+  const pool = useMemo(
+    () => deriveWorkerPool(useCanvasStore.getState().boards, running),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [poolKey, running]
+  )
   // The Phase C dispatch choreography: submit → engineer → worker-config dialog → spawn group →
   // handoff → advance the kanban, serialized at the worker-pool cap. The board is a singleton, so
   // this mounts once.
