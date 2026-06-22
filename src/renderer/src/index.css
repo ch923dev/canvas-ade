@@ -1321,6 +1321,41 @@ body {
   background: var(--accent-wash);
   color: var(--accent);
 }
+/* 4A audio control — speaker button + click-open popover (mute toggle + 0–100% volume slider).
+   The popover anchors under the button and drops over the canvas (the .bb-urlbar stacking context
+   sits above .bb-frame; tokens only). */
+.bb-vol {
+  position: relative;
+  display: inline-flex;
+}
+.bb-vol-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-pop);
+}
+.bb-vol-slider {
+  width: 92px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.bb-vol-pct {
+  min-width: 30px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
 /* B3: the panel is a flex SIBLING of the browser region inside .bb-stage — it SPLITS the stage
    (browser resizes to fit) instead of overlaying. .bb-stage becomes flex (row for right dock,
    column for bottom) only while the panel is mounted. */

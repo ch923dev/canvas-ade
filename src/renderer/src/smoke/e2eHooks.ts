@@ -13,6 +13,7 @@ import type { ReactFlowInstance } from '@xyflow/react'
 import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
+import { useOsrWidgetStore } from '../store/osrWidgetStore'
 import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
 import {
   fromObject,
@@ -283,6 +284,11 @@ export interface CanvasE2E {
   openProjectFromDisk: (
     dir: string
   ) => Promise<{ status: string; error: string | null; boardCount: number }>
+  /** 4A — force a Browser board's audible flag so the URL-bar audio control renders without real
+   *  media (OSR headless rarely fires media-started-playing); the test then drives the popover. */
+  setOsrAudible: (id: string, audible: boolean) => void
+  /** 4A — read a Browser board's ephemeral audio state (mute + volume) to assert control behavior. */
+  getOsrAudio: (id: string) => { muted: boolean; volume: number }
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -352,6 +358,13 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     getBackground() {
       return useCanvasStore.getState().background
+    },
+    setOsrAudible(id, audible) {
+      useOsrWidgetStore.getState().setAudible(id, audible)
+    },
+    getOsrAudio(id) {
+      const s = useOsrWidgetStore.getState()
+      return { muted: s.muted[id] ?? false, volume: s.volume[id] ?? 1 }
     },
     listSceneIds() {
       return listScenes().map((s) => s.id)

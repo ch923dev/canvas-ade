@@ -18,6 +18,7 @@ import {
   attachOsrWidgets,
   registerOsrDownloads,
   applyEffectiveMute,
+  applyOsrVolume,
   registerOsrWidgetIpc
 } from './previewOsrWidgets'
 import {
@@ -83,6 +84,11 @@ interface OsrEntry {
   // EFFECTIVE mute applied to `wc.setAudioMuted` is `manualMuted || !painting`, so a frozen
   // off-screen board is silent without losing the user's choice (restored on resume).
   manualMuted: boolean
+  // OS-3 Phase 4 (4A volume) — the user's emulated audio volume (0–1). Absent ⇒ full (the default,
+  // so the common untouched-volume board carries no injection). Electron OSR has no native
+  // per-window volume, so applyOsrVolume injects `el.volume` onto the page's HTML5 media; re-applied
+  // on every did-finish-load (a fresh document resets it). See previewOsrWidgets.
+  volume?: number
   // Last audible state emitted (diff-skip dedupe for the media-started/paused pump).
   lastAudible?: boolean
   // Removes the session `will-download` listener (4D). MUST run on dispose: the per-board session
@@ -559,6 +565,10 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       } catch {
         /* not OSR-capable / window gone */
       }
+      // 4A (volume) — a fresh document resets element volumes to 1 and drops the observer, so
+      // re-establish a non-default level. Absent/default ⇒ skipped, keeping the common path
+      // injection-free; applyOsrVolume itself no-ops/disconnects when the level is 1.
+      if (e.volume !== undefined && e.volume !== 1) applyOsrVolume(wc, e.volume)
     },
     onNavStart: () => emitEvent({ id, type: 'did-start-navigation' }),
     onSuccess: (loadedUrl) => emitEvent({ id, type: 'did-finish-load', url: loadedUrl }),

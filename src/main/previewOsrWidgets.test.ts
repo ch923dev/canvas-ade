@@ -6,6 +6,8 @@ import {
   isAutoDialog,
   dispatchCdpMessage,
   applyOsrMuted,
+  clampVolume,
+  applyOsrVolume,
   respondOsrDialog,
   setOsrWidgetValue,
   registerOsrDownloads,
@@ -182,6 +184,44 @@ describe('per-call CDP actions', () => {
     expect((params as { expression: string }).expression).toBe(
       'window.__osrSetWidgetValue("a\\"b\\nc")'
     )
+  })
+})
+
+describe('clampVolume', () => {
+  it('passes through an in-range level', () => {
+    expect(clampVolume(0)).toBe(0)
+    expect(clampVolume(0.5)).toBe(0.5)
+    expect(clampVolume(1)).toBe(1)
+  })
+  it('clamps out-of-range to [0,1]', () => {
+    expect(clampVolume(-0.3)).toBe(0)
+    expect(clampVolume(2)).toBe(1)
+  })
+  it('defaults non-finite / non-number to 1 (full)', () => {
+    expect(clampVolume(NaN)).toBe(1)
+    expect(clampVolume(Infinity)).toBe(1)
+    expect(clampVolume(undefined)).toBe(1)
+    expect(clampVolume('0.4' as unknown)).toBe(1)
+  })
+})
+
+describe('applyOsrVolume', () => {
+  it('injects the clamped level + media apply when below full, and installs the observer', () => {
+    const wc = { executeJavaScript: vi.fn(async (_code: string) => undefined) }
+    applyOsrVolume(wc, 0.4)
+    const code = wc.executeJavaScript.mock.calls[0][0] as string
+    expect(code).toContain('window.__osrVol = 0.4')
+    expect(code).toContain("querySelectorAll('audio,video')")
+    expect(code).toContain('MutationObserver')
+  })
+  it('clamps an out-of-range level before injecting', () => {
+    const wc = { executeJavaScript: vi.fn(async (_code: string) => undefined) }
+    applyOsrVolume(wc, 5)
+    expect(wc.executeJavaScript.mock.calls[0][0] as string).toContain('window.__osrVol = 1')
+  })
+  it('swallows an executeJavaScript rejection (navigated away / window gone)', () => {
+    const wc = { executeJavaScript: vi.fn(async () => Promise.reject(new Error('gone'))) }
+    expect(() => applyOsrVolume(wc, 0.5)).not.toThrow()
   })
 })
 

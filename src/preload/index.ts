@@ -545,6 +545,10 @@ const api = {
   // 4A — manual mute toggle (effective mute = manual || off-screen, applied in MAIN).
   setOsrMuted: (id: string, muted: boolean): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrSetMuted', { id, muted }),
+  // 4A (volume) — set the emulated audio volume (0–1). MAIN clamps + injects el.volume onto the
+  // page's HTML5 media (no native OSR volume API; Web Audio honors only mute).
+  setOsrVolume: (id: string, volume: number): Promise<boolean> =>
+    ipcRenderer.invoke('preview:osrSetVolume', { id, volume }),
   // 4B — answer the surfaced JS dialog (accept + optional prompt text) → handleJavaScriptDialog.
   respondOsrDialog: (id: string, accept: boolean, promptText?: string): Promise<boolean> =>
     ipcRenderer.invoke('preview:osrDialogRespond', { id, accept, promptText }),

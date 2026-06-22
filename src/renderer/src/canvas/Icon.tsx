@@ -42,6 +42,7 @@ export type IconName =
   | 'camera'
   | 'download'
   | 'volume'
+  | 'volume-low'
   | 'volume-x'
   | 'magnet'
   | 'align-left'
@@ -109,8 +110,10 @@ const PATHS: Record<IconName, string> = {
   external: 'M14 5h5v5M19 5l-7 7M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
   camera: 'M4 8h3l1.5-2h7L17 8h3v11H4zM12 16.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   download: 'M12 4v10M8 11l4 4 4-4M5 19h14',
-  // Speaker + sound waves (audible / mute toggle, OS-3 Phase 4). `volume-x` swaps the waves for an X.
+  // Speaker + sound waves (audible / mute toggle, OS-3 Phase 4). `volume-low` keeps only the inner
+  // wave (reduced level); `volume-x` swaps the waves for an X (muted / silent).
   volume: 'M4 9v6h4l5 4V5L8 9H4M16 9.5a3.5 3.5 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10',
+  'volume-low': 'M4 9v6h4l5 4V5L8 9H4M16 9.5a3.5 3.5 0 0 1 0 5',
   'volume-x': 'M4 9v6h4l5 4V5L8 9H4M17 9.5l5 5M22 9.5l-5 5',
   magnet: 'M7 4v7a5 5 0 0 0 10 0V4M7 4h3.5M13.5 4H17M7 9h3.5M13.5 9H17',
   // Align: a reference edge line + two bars snapped to that edge.
