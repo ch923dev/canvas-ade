@@ -1,0 +1,105 @@
+/* ── Project switcher (top-left chrome dropdown) ── */
+.project-switcher {
+  position: relative;
+}
+/* D0-7: generic spin for busy glyphs (project switch). Reuses digest-spin's tempo. */
+.ca-spin {
+  animation: digest-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ca-spin {
+    animation: none;
+  }
+}
+
+/* D0-6: visually-hidden live-region text (standard clip pattern) — status words for
+   screen readers next to color-only dots. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Positioned by the shared <Menu> shell (body portal, fixed, viewport-clamped) — D1-C. */
+.project-switcher-menu {
+  min-width: 220px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-pop);
+}
+.project-switcher-menu button {
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.project-switcher-menu button:hover {
+  background: var(--surface-overlay);
+}
+.project-switcher-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 0;
+}
+.board-menu {
+  min-width: 132px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 250; /* above the fullview-scrim (200) so the menu works in full view too */
+}
+.board-menu-item {
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: calc(var(--r-ctl) - 2px);
+  cursor: pointer;
+  font-size: 12px;
+}
+.board-menu-item:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.board-menu-item[data-danger]:hover {
+  color: var(--err);
+}
+
+/* D2-A: inline board title edit — the input that swaps in for the title span on
+   double-click / F2. Sized to the §3 12px label slot so the 34px bar never reflows. */
+.board-title-edit {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--ui);
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  outline: none;
+}
+.board-title-edit:focus {
+  border-color: var(--accent);
+}

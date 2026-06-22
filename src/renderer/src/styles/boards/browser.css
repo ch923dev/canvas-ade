@@ -1,0 +1,266 @@
+/* ── Browser board (Phase 2.2, DESIGN.md §7.2) ────────────────────────────────
+   All chrome is HTML drawn AROUND an unrounded native WebContentsView rect (a
+   native view can't be clipped/rounded — ADR 0002). The .bb-stage / .bb-frame
+   geometry mirrors lib/browserLayout so the HTML frame lines up with the native
+   rect at every camera zoom. The native view paints OVER .bb-frame's inner area;
+   the snapshot + states render UNDER it as the fallback layer. */
+.bb-urlbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-navbtn {
+  width: 22px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3); /* D0-2: interactive at rest — faint is disabled-only */
+  transition: color 0.1s;
+}
+.bb-navbtn:not(:disabled):hover {
+  color: var(--text-2);
+}
+.bb-url-field {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border-radius: var(--r-ctl);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+}
+.bb-url-field:focus-within {
+  border-color: var(--accent);
+}
+.bb-conn-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+}
+/* D2-C: always-visible status word beside the dot (Linear pattern — colorblind-safe,
+   zero layout cost; audit §3.4 / §5). */
+.bb-conn-word {
+  flex: none;
+  font-family: var(--ui);
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+/* D2-C: the committed URL failed the sanity check — red field + inline message. After
+   :focus-within so the error border wins while the field is still focused. */
+.bb-url-field.bb-url-invalid {
+  border-color: var(--err);
+}
+.bb-url-error {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--err);
+  white-space: nowrap;
+}
+/* D2-C: an external writer (port detect / push-to-preview / MCP) rewrote the URL —
+   a 600ms accent wash makes the silent background mutation noticeable. Color-only
+   (no movement), so it stays outside the reduced-motion gate.
+   MUTUALLY EXCLUSIVE with .bb-url-invalid by construction: the render-time external
+   url sync clears urlError before arming the flash, and a flash is never armed while
+   the user edits. If the flash path is ever extended, keep that exclusion — this
+   later rule's border-color keyframes would override the invalid red at equal
+   specificity. */
+.bb-url-flash {
+  animation: bb-url-flash 0.6s ease-out;
+}
+@keyframes bb-url-flash {
+  0% {
+    background: var(--accent-wash);
+    border-color: var(--accent);
+  }
+  100% {
+    background: var(--inset);
+    border-color: var(--border-subtle);
+  }
+}
+.bb-url-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 0;
+}
+.bb-url-input::placeholder {
+  color: var(--text-3); /* D0-2: a readable hint — faint is disabled-only */
+}
+.bb-dims {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.bb-stage {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  /* A faint hatched backing reads as the "device sits on a stage" surface. */
+  background: repeating-linear-gradient(
+    45deg,
+    var(--inset),
+    var(--inset) 9px,
+    color-mix(in srgb, var(--inset) 60%, var(--void)) 9px,
+    color-mix(in srgb, var(--inset) 60%, var(--void)) 18px
+  );
+}
+.bb-frame {
+  position: absolute;
+  overflow: hidden;
+  /* Dark device bezel (--inset). The native WebContentsView is an unrounded square that
+     can't be clipped, so the rounded-corner arcs + the 1px native inset always reveal a
+     sliver of this background. A WHITE surface (#fbfbfa) glared against any DARK preview
+     page (a white arc at the rounded corners/edges); a neutral dark bezel reads correctly
+     for both light and dark apps (a phone's bezel is dark) and the sliver disappears.
+     §7.2: device frame is 1px --border-strong + --r-inner + a SUBTLE inset. The board
+     already carries --shadow-board; a second heavy drop here was slop (§4 two-shadow
+     rule), so keep only the 1px inset highlight. */
+  background: var(--inset);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+}
+.bb-notch {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34%;
+  max-width: 150px;
+  height: 7px;
+  background: var(--notch);
+  border-radius: 0 0 8px 8px;
+  z-index: 1;
+}
+.bb-snapshot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* SPIKE (feat/preview-offscreen-spike): offscreen-rendered preview frames paint here.
+   A DOM <canvas> inside .bb-frame — clips/rounds/z-orders like any element (the
+   occlusion fix under test, ADR 0002), sitting OVER the snapshot/state fallback. */
+.bb-live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* OS-3 Phase 3: a hidden composition-proxy <textarea> — NOT the canvas — is the keyboard/IME/
+   clipboard target (a <canvas> has no editing host, so it can't fire composition/IME events).
+   Invisible + click-through (pointer-events:none → clicks fall to the canvas); focused
+   programmatically on canvas pointerdown. Fills the board so the OS IME candidate window appears
+   over it. NEVER display:none / visibility:hidden — those would block focus + composition. */
+.bb-ime-proxy {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  resize: none;
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  white-space: pre;
+  overflow: hidden;
+}
+.bb-ime-proxy:focus,
+.bb-ime-proxy:focus-visible {
+  outline: none;
+}
+.bb-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px;
+  text-align: center;
+  background: var(--surface);
+  transition: opacity 0.12s;
+}
+.bb-state-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.bb-state-sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3); /* D0-2: error/state detail must read — faint is disabled-only */
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* D2-C: crashed-state Reload CTA (the only recovery path — crashes never auto-loop). */
+.bb-reload-btn {
+  margin-top: 6px;
+  padding: 3px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.bb-reload-btn:hover {
+  border-color: var(--accent);
+}
+/* D2-C: evicted (renderer freed) badge — distinguishes a dead-but-snapshot board from
+   a transient motion/LOD detach. Overlays the snapshot; no live native view exists
+   while it shows, so it can never be occluded (ADR 0002). */
+.bb-paused-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}

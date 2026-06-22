@@ -1,0 +1,60 @@
+.react-flow__node-smoke {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-board);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 12px;
+  padding: 12px 14px;
+  width: 200px;
+  box-shadow: var(--shadow-board);
+}
+.react-flow__node-smoke .t {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.react-flow__node-smoke .s {
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* ── Board node + NodeResizer (Phase 2.0-C; CANVAS-05) ─────────────────────────
+   BoardFrame paints the box, border, selection ring and shadow itself, so the RF
+   node wrapper stays chrome-less. The resizer handles are restyled to DESIGN.md
+   §6: 8×8 corner squares (--surface-overlay + --border-strong, r2), the SE corner
+   carrying an extra --accent ring. The four edge controls keep RF's full-edge hit
+   line (a deliberate divergence from §6's discrete "edge midpoints" — a full-edge
+   target is the RF-native affordance) but now paint a faint --border-subtle line so
+   the edge resize affordance is visible on hover/select, not invisible. */
+.react-flow__node-board {
+  background: transparent;
+  border: none;
+}
+.react-flow__node-board.selected {
+  box-shadow: none;
+}
+
+.react-flow__resize-control.handle {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  /* §9: handles fade in 100ms when they mount on hover/select (isVisible toggles). */
+  animation: ca-handle-in 0.1s ease-out;
+}
+@keyframes ca-handle-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.react-flow__resize-control.handle.bottom-right {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.react-flow__resize-control.line {
+  border-color: var(--border-subtle);
+}

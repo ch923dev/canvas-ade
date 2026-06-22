@@ -1,0 +1,117 @@
+/* ── Planning board whiteboard (Phase 2.3) ────────────────────────────────────
+   The Planning board paints its own elements (notes / text / checklists / SVG
+   arrows + freehand strokes) inside the BoardFrame content slot. Most visuals
+   live inline in the element components (driven by tokens); these rules cover the
+   things CSS does best: caret/placeholder colour, the text-element drag gutter
+   affordance, and disabling native textarea/scrollbar chrome. Elements live in
+   board-local coordinates; the well itself is the pointer-gesture surface. */
+.pl-well ::placeholder {
+  color: var(--text-3); /* D0-2: a readable hint — faint is disabled-only */
+}
+.pl-well textarea,
+.pl-well input {
+  caret-color: var(--accent);
+}
+/* The free-text drag gutter only hints on hover so the text reads cleanly. */
+.pl-text:hover .pl-text-grip {
+  background: var(--border-subtle);
+}
+.pl-text-grip:hover {
+  background: var(--border) !important;
+}
+/* A grabbed note/checklist follows the cursor; show the grabbing hand. */
+.pl-note:active,
+.pl-check-head:active {
+  cursor: grabbing;
+}
+/* Reveal the hover-delete button when the card is hovered. */
+.pl-note:hover .pl-del,
+.pl-text:hover .pl-del,
+.pl-check:hover .pl-del {
+  opacity: 1;
+}
+/* D3-A note tint picker: hover mini-swatch pill, top-right of the note. Hidden
+   (and unclickable) until the card is hovered or a dot holds keyboard focus;
+   120ms fade-in, gated under prefers-reduced-motion below. */
+.pl-tint-pill {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px 4px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.pl-note:hover .pl-tint-pill,
+.pl-tint-pill:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.pl-tint-dot {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.pl-tint-dot[data-current] {
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.pl-tint-dot:hover,
+.pl-tint-dot:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-tint-pill {
+    transition: none;
+  }
+}
+.pl-well:focus-visible {
+  outline: none;
+}
+
+/* PA-5 (PLAN-05): right-edge width-resize handle for the auto-height Planning cards
+   (notes + checklists). A slim vertical accent pill straddling the card's right edge
+   inside a wider hit zone; width-only (the cards size their height from content), so
+   ew-resize. Shown only when the card is selected (NoteCard/ChecklistCard gate it). */
+.pl-width-resize {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 14px;
+  height: 38px;
+  transform: translate(50%, -50%);
+  display: grid;
+  place-items: center;
+  cursor: ew-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.pl-width-resize::before {
+  content: '';
+  width: 3px;
+  height: 26px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  /* a 2px void ring so the pill reads cleanly over the card edge + the dot grid */
+  box-shadow: 0 0 0 2px var(--void);
+  transition:
+    height 0.1s ease-out,
+    background 0.1s ease-out;
+}
+.pl-width-resize:hover::before {
+  height: 30px;
+  background: var(--accent-hover);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-width-resize::before {
+    transition: none;
+  }
+}

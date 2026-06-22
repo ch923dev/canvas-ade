@@ -1,0 +1,133 @@
+/* §9 Motion — the ca-* keyframes referenced by board chrome (2.1+).
+   ca-pulse: --ok status dot halo · ca-progress(-bar): 1.2s indeterminate run
+   sliver · ca-blink: 1s step caret · ca-caret-run: 0.9s running glyph caret.
+   Camera fit/focus easing lives in lib/motion.ts (JS, reduced-motion gated).
+   prefers-reduced-motion drops all loops (§9). */
+.ca-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 32%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: ca-progress 1.2s linear infinite;
+}
+@keyframes ca-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+/* D2-B: `spawning` variant — same sliver, slower + dimmer ("warming up", not yet
+   running). Reduced motion nulls the animation via the .ca-progress-bar rule below,
+   leaving a static dim sliver (the audit's static variant). */
+.ca-progress-spawn {
+  animation-duration: 2.4s;
+  opacity: 0.55;
+}
+
+.ca-blink {
+  animation: ca-blink 1s steps(1) infinite;
+}
+.ca-caret-run {
+  animation: ca-blink 0.9s steps(1) infinite;
+}
+@keyframes ca-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.ca-pulse {
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  animation: ca-pulse 1.8s ease-out infinite;
+}
+@keyframes ca-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+/* D2-D: LOD-boundary crossfade (audit fix 3). The entering LOD card fades in over
+   the still-mounted detail render; on the way back the leaving card lingers ~100ms
+   (BoardNode useLingeringPresence) fading out over the remounted detail. Visual-only:
+   preview detach/reattach stays keyed on the raw LOD flag (ADR 0002). The opacity
+   transition is the 120ms focus-dim ease (§9's ring duration/curve — audit fix 3). */
+.ca-lod-card {
+  animation: ca-lod-fade-in 100ms ease-out;
+  transition: opacity 0.12s ease-out;
+}
+.ca-lod-out {
+  animation: ca-lod-fade-out 100ms ease-out forwards;
+}
+@keyframes ca-lod-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ca-lod-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* C3: ephemeral routing-overlay edge (Command board to an in-flight worker board). A brief
+   fade-in on mount + a slow dash-flow toward the worker reads as "routing in progress". The
+   edge set is DERIVED (lib/routingEdges) so it vanishes instantly on settle — no fade-out. The
+   dashoffset target (-20) is two full 6+4 dash periods, so the flow loops seamlessly. */
+.ca-routing-edge {
+  animation:
+    ca-routing-fade 160ms ease-out,
+    ca-routing-flow 0.7s linear infinite;
+}
+@keyframes ca-routing-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ca-routing-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+/* Board chrome shell: focus-dim opacity + select ring at §9's 120ms ease-out, hover
+   border at 100ms. A class (not an inline style) so the reduced-motion block below
+   can suppress it — inline transitions win over the @media rule (A12). */
+.ca-board-shell {
+  transition:
+    opacity 0.12s ease-out,
+    border-color 0.1s,
+    box-shadow 0.12s ease-out;
+}
+
+/* A12: transition utilities for inline-styled chrome. ca-t-ctl: icon/dock button
+   hover · ca-t-glyph: board status-glyph tint · ca-t-check: checklist checkbox
+   fill · ca-t-fill: checklist progress-bar width. */
+.ca-t-ctl {
+  transition:
+    color 0.1s,
+    background 0.1s;
+}
+.ca-t-glyph {
+  transition: color 0.12s;
+}
+.ca-t-check {
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+.ca-t-fill {
+  transition: width 0.18s;
+}

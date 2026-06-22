@@ -1,0 +1,77 @@
+/* Phase 4 focus-ring cluster — accent ring (§6 select-ring convention) on
+   interactive controls that otherwise suppress/omit a :focus-visible state. */
+.pl-well input:focus-visible,
+.pl-well textarea:focus-visible,
+.welcome-actions button:focus-visible,
+.welcome-recents button:focus-visible,
+.welcome-clear-recents:focus-visible,
+.bb-navbtn:not(:disabled):focus-visible,
+.project-switcher-menu button:focus-visible,
+.group-ctx-row:not(:disabled):focus-visible,
+.ca-tidy-preset:focus-visible,
+.board-menu-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+/* PA-3 (A11Y-01): chrome control clusters — dock/camera ca-t-ctl buttons, the project
+   switcher pill, and the zoom % button — fell back to Chromium's dim default outline.
+   Bring them onto the app's 1.5px accent ring like every other focusable control. */
+.ca-t-ctl:focus-visible,
+.project-switcher-trigger:focus-visible,
+.ca-zoom-pct:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.pl-del:focus-visible {
+  opacity: 1;
+}
+
+/* PA-4 (STYLE-01): shared modal action buttons. The old filled --accent + --text primary sat
+   at ~2.8:1 (below WCAG AA) and broke the documented "no filled slop button" grammar. Option B
+   (signed off 2026-06-20): keep a filled accent primary but flip the foreground to near --void
+   (#0a0a0b on #4f8cff ≈ 6.4:1 — passes AA); the ghost is the calm secondary. The :hover lives
+   here (inline styles can't express it). Used by ConfirmModal / RecapConsentModal / SettingsModal. */
+.ca-btn-primary,
+.ca-btn-ghost {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+.ca-btn-primary {
+  background: var(--accent);
+  color: var(--void);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  transition:
+    background 0.12s ease-out,
+    border-color 0.12s ease-out;
+}
+.ca-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.ca-btn-ghost {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border-subtle);
+  font-weight: 500;
+  transition:
+    background 0.12s ease-out,
+    color 0.12s ease-out;
+}
+.ca-btn-ghost:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.ca-btn-primary:disabled,
+.ca-btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

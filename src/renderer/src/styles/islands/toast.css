@@ -1,0 +1,93 @@
+/* D1-A toast island — the single transient feedback channel (DESIGN.md §8 floating
+   island, bottom-right; status-dot variant signed off 2026-06-10). */
+.toast-island {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  /* Above every modal scrim (Settings 300 · RecapConsent 1000 · Confirm 10000) — a
+     save-failure toast must surface even while a modal is up. */
+  z-index: 10100;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: 360px;
+}
+.toast-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-inner);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+  color: var(--text-2);
+  animation: toast-in 140ms ease-out;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-item {
+    animation: none;
+  }
+}
+.toast-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  background: var(--text-3);
+}
+.toast-item[data-kind='error'] .toast-dot {
+  background: var(--err);
+}
+.toast-item[data-kind='ok'] .toast-dot {
+  background: var(--ok);
+}
+.toast-msg {
+  flex: 1;
+  line-height: 1.45;
+}
+.toast-action {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.toast-action:hover,
+.toast-action:focus-visible {
+  color: var(--accent-hover);
+}
+.toast-dismiss {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.toast-dismiss:hover,
+.toast-dismiss:focus-visible {
+  color: var(--text);
+}
+/* D4-C: both islands live bottom-right — while the minimap is visible the toast
+   stack lifts above it (15px panel margin + 152px island + 8px gap) so a toast
+   never covers the map and the map never hides a toast. */
+.toast-island.toast-island--lifted {
+  bottom: 175px;
+}

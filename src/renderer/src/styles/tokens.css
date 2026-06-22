@@ -1,0 +1,191 @@
+/* §3 Fonts — self-hosted Geist (Vercel, OFL). Variable woff2: one file per family
+   spans weight 100–900, covering every type-scale role (body 400, meta 450,
+   label/micro 500, h 600). Bundled into the renderer (CSP font-src 'self' — no
+   network fetch). The token stacks (--ui/--mono) keep system-ui as the fallback
+   while the font loads (font-display: swap). */
+@font-face {
+  font-family: 'Geist';
+  src: url('../assets/fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../assets/fonts/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Canvas ADE design tokens — faithful mirror of DESIGN.md §2-4 (authoritative
+   visual contract). Seeded in Phase 0, completed in Phase 2.0-A. Board chrome
+   consumes these from 2.0-C onward. DESIGN.md wins on visual; on any drift,
+   align here to it. */
+:root {
+  /* §3 Typography — families */
+  --ui: 'Geist', system-ui, -apple-system, sans-serif;
+  --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Terminal GRID font only (the live xterm canvas). xterm rasterizes glyphs into a
+     grayscale-AA atlas with no ClearType subpixel AA, so a thin webfont (Geist Mono)
+     reads soft. A hinted, OS terminal font renders native-crisp on that atlas: Cascadia
+     Mono / Consolas (Windows), SF Mono / Menlo (mac), ui-monospace (Linux). All system
+     fonts → no webfont fetch, no load-timing softness. UI chrome keeps --mono (Geist). */
+  --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+  --serif: Georgia, 'Times New Roman', serif;
+
+  /* §2 Surfaces (furthest → closest) */
+  --void: #0a0a0b;
+  --grid-dot: #202022;
+  --surface: #141416;
+  --surface-raised: #1a1a1d;
+  --surface-overlay: #1e1e22;
+  --inset: #0e0e10;
+
+  /* §2 Borders */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* §2 Text. --text-3 lightened #6a6a70 → #7b7b81 (design-audit D0-2, approved
+     2026-06-10): the old value sat ~4.0:1 on --surface-raised, failing AA at the 10px
+     micro tags. --text-faint (~2.8:1) is DISABLED-ONLY — readable hints/meta/done
+     states use --text-3 or brighter. */
+  --text: #ededee;
+  --text-2: #9b9ba1;
+  --text-3: #7b7b81;
+  --text-faint: #46464b;
+
+  /* §2 Accent + status (one functional accent; status = 8px dots / 1px rings) */
+  --accent: #4f8cff;
+  --accent-hover: #6ea0ff;
+  --accent-wash: rgba(79, 140, 255, 0.14);
+  --ok: #3ecf8e;
+  --warn: #e8b339;
+  --err: #f2545b;
+
+  /* §2 Overlay + one-off chrome colors (design-audit D0-3) */
+  /* Modal scrim (Confirm/RecapConsent/Settings migrate onto this in D1-B). The
+     full-view scrim stays its own darker 0.66 — a full-bleed workspace overlay,
+     intentionally heavier than a modal (approved 2026-06-10). */
+  --scrim: rgba(0, 0, 0, 0.5);
+  /* Orchestration-connector arrowheads (Canvas.tsx markers; the cable stroke itself
+     is --border-strong / --text in OrchestrationEdge). The Planning whiteboard's own
+     arrow/connector ink stays on --border-strong (default) / --accent (selected) —
+     see DESIGN.md §7.3; no separate hex to promote there. */
+  --connector: #5a6573;
+  --connector-selected: #e6e6e6;
+  /* Planning whiteboard sticky-note tints (DESIGN.md §7.3: 4 muted, low-chroma — one
+     accent stays the only saturated colour). `plain` falls back to --surface-raised /
+     --border. planning/tints.ts mirrors these via var(); the SVG-export path keeps its
+     own concrete copy in planning/exportColors.ts (a standalone SVG can't read custom
+     properties). Keep all three in step if a tint changes. */
+  --note-yellow-fill: #2a2818;
+  --note-yellow-edge: #3d3a22;
+  --note-blue-fill: #16202b;
+  --note-blue-edge: #22354a;
+  --note-green-fill: #16241d;
+  --note-green-edge: #21392c;
+  /* Browser device-frame notch (§7.2 device chrome, darker than any surface). */
+  --notch: #15161a;
+
+  /* §3 Type scale — size / line-height / weight / tracking per role.
+     micro=section labels & board-type tag · meta=mono meta/status/breadcrumb ·
+     label=board title/button/toolbar · body=notes/menu items · term=terminal
+     output (mono) · h=empty-state heading/dialog title. */
+  --fs-micro: 10px;
+  --lh-micro: 14px;
+  --fw-micro: 500;
+  --tr-micro: 0.06em;
+
+  --fs-meta: 11px;
+  --lh-meta: 16px;
+  --fw-meta: 450;
+  --tr-meta: 0;
+
+  --fs-label: 12px;
+  --lh-label: 16px;
+  --fw-label: 500;
+  --tr-label: 0;
+
+  --fs-body: 13px;
+  --lh-body: 20px;
+  --fw-body: 400;
+  --tr-body: 0;
+
+  --fs-term: 12.5px;
+  --lh-term: 19px;
+  --fw-term: 400;
+  --tr-term: 0;
+
+  --fs-h: 15px;
+  --lh-h: 22px;
+  --fw-h: 600;
+  --tr-h: -0.01em;
+
+  /* §4 Spacing — base 4px; steps 2,4,6,8,12,16,20,24,32 (named by px value) */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+
+  /* §4 Radius */
+  --r-board: 8px;
+  --r-inner: 6px;
+  --r-ctl: 5px;
+  --r-pill: 999px;
+
+  /* §4 Elevation — the only shadows in the system */
+  --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+
+  /* §4 Density — compact default (roomy dropped; tweaks panel cut) */
+  --titlebar-h: 34px;
+}
+
+/* §3 Type-scale helper classes — apply a named role in one class.
+   (Components may consume the per-role --fs / --lh / --fw tokens directly.) */
+.t-micro {
+  font-size: var(--fs-micro);
+  line-height: var(--lh-micro);
+  font-weight: var(--fw-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+}
+.t-meta {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: var(--fw-meta);
+  letter-spacing: var(--tr-meta);
+}
+.t-label {
+  font-size: var(--fs-label);
+  line-height: var(--lh-label);
+  font-weight: var(--fw-label);
+  letter-spacing: var(--tr-label);
+}
+.t-body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: var(--fw-body);
+  letter-spacing: var(--tr-body);
+}
+.t-term {
+  font-family: var(--mono);
+  font-size: var(--fs-term);
+  line-height: var(--lh-term);
+  font-weight: var(--fw-term);
+  letter-spacing: var(--tr-term);
+}
+.t-h {
+  font-size: var(--fs-h);
+  line-height: var(--lh-h);
+  font-weight: var(--fw-h);
+  letter-spacing: var(--tr-h);
+}

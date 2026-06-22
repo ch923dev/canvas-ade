@@ -1,0 +1,200 @@
+/* ── Digest panel (Tier-1 reopen context) ───────────────────────────────────── */
+.digest-panel {
+  position: fixed;
+  top: 0;
+  /* Docked RIGHT so it doesn't collide with the file-tree side panel on the left (S2). */
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: var(--fs-body);
+  overflow-y: auto;
+  transform: translateX(0);
+  transition: transform 200ms ease;
+}
+.digest-panel[data-open='false'] {
+  transform: translateX(100%);
+}
+.digest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.digest-head-title {
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  color: var(--text);
+}
+.digest-close {
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: var(--space-4);
+}
+.digest-close:hover {
+  color: var(--text);
+}
+.digest-sub {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+}
+.digest-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.digest-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+  padding: var(--space-12);
+}
+.digest-card-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+}
+.digest-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.digest-card-title {
+  flex: 1;
+  font-weight: var(--fw-label);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.digest-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+/* MCP-06: every status value gets an intentional tone via data-tone (digestStatusTone), not just
+   the two literals styled before. active=live, linked/progress=accent, idle=calm resting gray. */
+.digest-status[data-tone='active'] {
+  color: var(--ok);
+}
+.digest-status[data-tone='linked'],
+.digest-status[data-tone='progress'] {
+  color: var(--accent);
+}
+.digest-status[data-tone='idle'] {
+  color: var(--text-3);
+}
+/* T-F4: per-card manual "refresh summary" control. Calm/ghost; spins only while busy. */
+.digest-refresh {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: var(--r-ctl);
+}
+.digest-refresh:hover:not([disabled]) {
+  color: var(--text);
+}
+.digest-refresh[data-busy='true'] {
+  color: var(--accent);
+  cursor: default;
+  animation: digest-spin 0.8s linear infinite;
+}
+@keyframes digest-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+/* Respect reduced-motion: drop the spin, keep the accent so "updating…" is still legible. */
+@media (prefers-reduced-motion: reduce) {
+  .digest-refresh[data-busy='true'] {
+    animation: none;
+  }
+}
+.digest-lines {
+  margin: var(--space-8) 0 0;
+  padding-left: var(--space-16);
+  color: var(--text-2);
+  font-size: var(--fs-label);
+}
+.digest-lines li {
+  margin-bottom: var(--space-4);
+}
+.digest-prose {
+  margin: var(--space-8) 0 0;
+  font-size: var(--fs-label);
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+/* MCP-08: clamp long prose to ~4 lines until the Show more toggle expands it. */
+.digest-prose[data-clamped='true'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+.digest-prose-toggle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  padding: var(--space-4) 0 0;
+  cursor: pointer;
+}
+.digest-prose-toggle:hover {
+  text-decoration: underline;
+}
+/* MCP-04: transient reason a manual refresh produced nothing (no key / budget / error). */
+.digest-feedback {
+  margin: var(--space-8) 0 0;
+  font-size: var(--fs-label);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+.digest-reopen {
+  position: fixed;
+  top: 50%;
+  /* Right-edge tab to match the right-docked panel (S2 left/right reconcile). */
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 70;
+  writing-mode: vertical-rl;
+  padding: var(--space-12) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: var(--r-inner) 0 0 var(--r-inner);
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.digest-reopen:hover {
+  color: var(--text);
+}
+@media (prefers-reduced-motion: reduce) {
+  .digest-panel {
+    transition: none;
+  }
+}

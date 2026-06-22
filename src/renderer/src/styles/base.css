@@ -1,0 +1,188 @@
+@media (prefers-reduced-motion: reduce) {
+  .ca-progress-bar,
+  .ca-blink,
+  .ca-caret-run,
+  .ca-pulse,
+  .ca-lod-card,
+  .ca-lod-out,
+  .ca-routing-edge,
+  .react-flow__resize-control.handle {
+    animation: none !important;
+  }
+  /* Slice 5: full-view enter/exit collapses to instant (mirrors lib/motion.ts). */
+  /* D2-D/A12: board-shell + chrome/checklist/hover transitions collapse to instant. */
+  .fullview-scrim,
+  .fullview-frame,
+  .ca-board-shell,
+  .ca-lod-card,
+  .ca-t-ctl,
+  .ca-t-glyph,
+  .ca-t-check,
+  .ca-t-fill,
+  .ca-dock-pill,
+  .ca-dock-handle,
+  .ca-sidepanel,
+  .ca-sidepanel-handle,
+  .ca-zone,
+  .ca-tidy-preset,
+  .bb-navbtn,
+  .bb-state,
+  .welcome-actions button,
+  .welcome-recents button,
+  .welcome-recents li,
+  .welcome-clear-recents {
+    transition: none !important;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.topbar {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.brand .mark {
+  color: var(--accent);
+}
+.tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.status {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.status .ok {
+  color: var(--ok);
+}
+.status .bad {
+  color: var(--err);
+}
+.status .pending {
+  color: var(--warn);
+}
+
+.tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+.tab {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-3);
+}
+.tab:hover {
+  color: var(--text-2);
+  background: var(--surface-overlay);
+}
+.tab[data-active='true'] {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--void);
+}
+
+.hint {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  padding: 6px 9px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.btn {
+  appearance: none;
+  cursor: pointer;
+  font-family: var(--ui);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 12px;
+}
+.btn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.btn.accent {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+}
+
+/* React Flow restyle to dark tokens (Phase 4 finalizes board chrome). */
+.react-flow {
+  background: var(--void);
+}
