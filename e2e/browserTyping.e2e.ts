@@ -110,4 +110,41 @@ test.describe('@preview browser typing (OSR keyboard → offscreen page)', () =>
     const afterType = JSON.parse((await readOsrField(electronApp, url)) ?? '{}')
     expect(afterType.val, 'typed text reached the offscreen page input').toBe('hello world')
   })
+
+  test('FULL VIEW: the canvas suppresses the focus-fixup that broke typing', async ({ page }) => {
+    // Full-view regression: the live subtree is portaled into the modal host, which has NO focusable
+    // ancestor between the canvas and <body>. The browser's native mousedown "focus fixup" therefore
+    // moved focus to <body> (instead of the .react-flow__node wrapper that exists on-canvas), blurring
+    // the hidden IME proxy → keystrokes stopped reaching the page. The fix preventDefault()s the
+    // canvas mousedown so that fixup never runs and the proxy keeps focus. We assert that mechanism
+    // directly: a cancelable mousedown on the relocated canvas is prevented. (The full click→focus→type
+    // path is covered by the normal-view test above on a painted canvas; the OSR bitmap is not reliably
+    // painted under headless full view, so a real click there is environment-fragile.)
+    const id = await seed(page, 'browser', { url, viewport: 'desktop' })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await waitForStatus(page, id, 'connected', 12_000)
+
+    await evalIn(page, `window.__canvasE2E.openFullViewAnimated(${JSON.stringify(id)})`)
+    await expect(page.locator('.fullview-scrim .fullview-frame')).toBeVisible()
+    await expect(page.locator('.fullview-host .bb-live')).toHaveCount(1)
+    await expect(page.locator('.fullview-host .bb-ime-proxy')).toHaveCount(1)
+    await page.waitForTimeout(300) // let the open tween settle so listeners are attached
+
+    // A cancelable mousedown on the relocated canvas must be prevented (defaultPrevented) — that is
+    // the suppression of the focus-fixup that keeps the proxy focused. `dispatchEvent` returns false
+    // when a listener called preventDefault().
+    const verdict = await evalIn<string>(
+      page,
+      `(() => {
+        const c = document.querySelector('.fullview-host .bb-live')
+        if (!c) return 'no-canvas'
+        const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+        return c.dispatchEvent(ev) ? 'fixup-not-suppressed' : 'fixup-suppressed'
+      })()`
+    )
+    expect(verdict, 'canvas mousedown is preventDefault-ed in full view').toBe('fixup-suppressed')
+
+    await evalIn(page, `window.__canvasE2E.closeFullViewAnimated()`)
+  })
 })
