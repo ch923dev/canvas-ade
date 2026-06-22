@@ -14,8 +14,11 @@ import { mapOsrWheel } from '../../lib/osrWheel'
  *
  *   - **`<canvas>`** = pointer / wheel / cursor-mirror. Coordinates map screen → page-logical px via
  *     the canvas's live `getBoundingClientRect` (already reflects the RF camera + device-frame
- *     letterbox, so no camera math here); logical space is the active preset's CSS box (M4) — DPR-
- *     and supersample-independent, so it stays correct as Phase 1 bumps the render buffer.
+ *     letterbox, so no camera math here); logical space is the active preset's CSS box (M4). MAIN
+ *     then scales these by the board's supersample (the page zoom factor) into the offscreen widget's
+ *     coordinate space (`scaleOsrInputEvent` in `previewOsr.ts`) — without that scale a supersampled
+ *     board hit-tests up-left of the cursor (the hover-misalignment bug). So the renderer stays
+ *     supersample-agnostic (sends pure logical px) and MAIN owns the S transform, since MAIN owns S.
  *   - **hidden `<textarea class="bb-ime-proxy">`** = keyboard / IME / clipboard target (Phase 3).
  *     A bare focused `<canvas>` has no *editing host*, so it can't fire `composition*` (no IME) and
  *     mis-handles AltGr (Windows reports it as Ctrl+Alt). The proxy is the industry-standard remote-

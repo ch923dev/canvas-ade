@@ -35,6 +35,7 @@ import {
   applyOsrSize,
   type OsrSizeRequest
 } from './previewOsrSizing'
+import { scaleOsrInputEvent, type OsrInputEvent } from './previewOsrInput'
 
 /**
  * Offscreen Browser-preview producer (OSR) — the SOLE preview engine since OS-3 Phase 5C deleted
@@ -228,9 +229,6 @@ export function osrPaintRect(
   if (superSample === 1) return clampOsrDirty(dirty, full)
   return { x: 0, y: 0, width: full.width, height: full.height }
 }
-
-/** A renderer-built input event forwarded to the offscreen view (M3 scaffold). */
-type OsrInputEvent = Parameters<Electron.WebContents['sendInputEvent']>[0]
 
 /* ── OS-3 Phase 3 (input fidelity) ──────────────────────────────────────────────────────────── */
 
@@ -883,9 +881,11 @@ export function registerPreviewOsrHandlers(
     if (isForeignSender(ev, getWin)) return false
     return openExternalSafe(String(url))
   })
-  // M3 scaffold: forward a real OS input event to the offscreen view's webContents. The
-  // renderer coordinate-transform (canvas-local → page px under camera/preset scale) is
-  // a later increment; this proves the channel + the sendInputEvent path exist.
+  // Forward a real OS input event to the offscreen view's webContents. The renderer sends pointer
+  // coords in page-logical CSS px (the preset box); `scaleOsrInputEvent` scales them by this board's
+  // live supersample (the page zoom factor) into the widget's coordinate space so the hover/click
+  // lands under the real cursor — without it a supersampled (S>1) board hit-tests up-left of the
+  // pointer (the hover-misalignment bug). Keyboard events pass through unscaled.
   ipcMain.handle('preview:osrInput', (ev, args: OsrInputArgs) => {
     if (isForeignSender(ev, getWin)) return false
     const e = osr.get(args.id)
@@ -905,7 +905,7 @@ export function registerPreviewOsrHandlers(
           /* focus unavailable */
         }
       }
-      wc.sendInputEvent(args.event)
+      wc.sendInputEvent(scaleOsrInputEvent(args.event, e.superSample))
       return true
     } catch {
       return false
