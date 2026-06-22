@@ -64,9 +64,12 @@ const WRITE_RESULT_MAX_REFS = 256
 const WRITE_RESULT_MAX_REF_LEN = 256
 
 /**
- * 🔒 BUG-009-style belt-and-suspenders cap on the read-only gitDiff output (PR-2). A repo diff
- * is untrusted, potentially-huge text (a large/hostile working tree); clamp in MAIN — the sink —
- * mirroring WRITE_RESULT_MAX_SUMMARY. The caller gets a bounded, possibly-truncated diff.
+ * 🔒 BUG-009-style belt-and-suspenders cap on the read-only gitDiff output (PR-2). This is a
+ * DOWNSTREAM-PAYLOAD bound — it caps what the chip / view-diff / agent actually RECEIVES, mirroring
+ * WRITE_RESULT_MAX_SUMMARY. The caller gets a bounded, possibly-truncated diff. It is NOT a MAIN
+ * memory guard: by the time this runs the full diff string has already been materialized. The
+ * source-side READ bound (so MAIN never holds more than ~the cap of a large/hostile working tree)
+ * lives in `gitDiff.ts`, where the read happens.
  */
 const GITDIFF_MAX_BYTES = 100_000
 
@@ -939,10 +942,13 @@ export function buildOrchestrator(
       }
       if (!registry.gitDiff) throw new Error('gitDiff not available')
       const raw = await registry.gitDiff(boardId)
-      // 🔒 clamp the untrusted diff to a true BYTE bound (BUG-009 pattern). Measure UTF-8
-      // bytes — NOT UTF-16 code units (`.length`) — so a multibyte-heavy diff can't slip past
-      // the stated cap, and cut on a char boundary (back off any split trailing multibyte
-      // sequence) so the result is STRICTLY <= GITDIFF_MAX_BYTES with no U+FFFD expansion.
+      // 🔒 clamp the untrusted diff to a true BYTE bound (BUG-009 pattern). This is a
+      // DOWNSTREAM-PAYLOAD cap — it bounds what the chip / view-diff / agent receives, NOT MAIN's
+      // resident memory (the full string is already materialized here; the source-side read bound
+      // lives in gitDiff.ts). Measure UTF-8 bytes — NOT UTF-16 code units (`.length`) — so a
+      // multibyte-heavy diff can't slip past the stated cap, and cut on a char boundary (back off
+      // any split trailing multibyte sequence) so the result is STRICTLY <= GITDIFF_MAX_BYTES with
+      // no U+FFFD expansion.
       const buf = Buffer.from(raw, 'utf8')
       if (buf.length <= GITDIFF_MAX_BYTES) return raw
       let end = GITDIFF_MAX_BYTES

@@ -99,10 +99,14 @@ export interface RunningMcp {
   /** Run an idle-reap sweep now; returns the reaped board ids (T3.4 — drives the live smoke). */
   reapIdle(): Promise<string[]>
   /**
-   * PR-2: the read-only working-tree diff for a board, through the SAME orchestrator path a
-   * future `git_diff` MCP tool will use (terminal-type check + 100 KB clamp). Exposed here only
-   * so the CANVAS_E2E `__canvasE2EMain.gitDiff` seam can invoke it live in-process — the
-   * `@expanse-ade/mcp` package registers no `git_diff` tool yet, so it is not wire-reachable.
+   * PR-2: the read-only working-tree diff for a board, through the SAME orchestrator path the
+   * agent-facing `git_diff` MCP tool uses (terminal-type check + 100 KB clamp). The pinned
+   * `@expanse-ade/mcp` (^0.13.0, shipped ≥ 0.11.0) DOES register a `git_diff` tool that routes to
+   * `orchestrator.gitDiff(boardId)` — so the wire path exists; this in-process surface remains for
+   * the CANVAS_E2E `__canvasE2EMain.gitDiff` seam to invoke it live without the HTTP transport.
+   * Reachability gating (per [[mcp-not-wired-to-terminals]]): the tool is registered ONLY at the
+   * `orchestrator` tier (not `connected`/`worker`), and terminal agents aren't auto-connected, so
+   * an agent reaching it depends on a minted orchestrator-tier token + scope.
    */
   gitDiff(boardId: string): Promise<string>
   /**
@@ -115,7 +119,8 @@ export interface RunningMcp {
    * PR-5b: spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group +
    * preview wiring) via the orchestrator. Exposed here for the CANVAS_E2E
    * `__canvasE2EMain.spawnGroupNow` seam; the agent-facing `spawn_group` MCP tool is a deferred
-   * follow-up (PR-5c), so it is not yet wire-reachable — same split as gitDiff/PR-2b.
+   * follow-up (PR-5c) — the package registers no `spawn_group` tool, so it is not yet wire-reachable
+   * (unlike `git_diff`/PR-2b, whose tool the pinned package now DOES register — see `gitDiff` above).
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   /**

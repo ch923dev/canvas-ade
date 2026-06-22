@@ -246,6 +246,7 @@ export function TaskCard({
                 <span style={diffLblStyle}>git diff HEAD</span>
                 <span style={diffClampStyle}>{(task.diff ?? '').length} B</span>
               </div>
+              <div style={diffScopeStyle}>working-tree changes vs HEAD · whole repo</div>
               <pre style={diffTextStyle}>{task.diff}</pre>
             </div>
           )}
@@ -460,6 +461,14 @@ const diffClampStyle: CSSProperties = {
   fontFamily: 'var(--mono)',
   fontSize: 8.5,
   color: 'var(--text-faint)'
+}
+// GAP-006: clarify the diff scope (working-tree vs HEAD, repo-wide) so it isn't read as
+// agent-attributed. A quiet caption, not a redesign — no color/glow.
+const diffScopeStyle: CSSProperties = {
+  fontFamily: 'var(--mono)',
+  fontSize: 8.5,
+  color: 'var(--text-faint)',
+  padding: '3px 7px 0'
 }
 const diffTextStyle: CSSProperties = {
   margin: 0,

@@ -74,6 +74,19 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // isn't paced by a real-time delay (the sequence is unchanged).
 const WORKER_BOOT_SETTLE_MS = import.meta.env.MODE === 'test' ? 0 : 1500
 
+// GAP-007: bound the reporting-phase diff fetch so a stalled MAIN gitDiff (network FS, an
+// .git/index.lock contention, a credential prompt on a hook) can't pin the task in 'reporting'
+// forever — the IPC invoke would never settle and neither the MAIN re-throw nor the renderer
+// catch→'' fires on a hang. Race the call against a timeout that resolves to '' (best-effort,
+// matching the existing catch→'' contract) so the task always advances to done/failed. Short under
+// vitest so the deterministic hook test isn't paced by a real-time delay.
+const GITDIFF_TIMEOUT_MS = import.meta.env.MODE === 'test' ? 50 : 8000
+
+/** Resolve to '' after `ms` — the best-effort fallback when a MAIN gitDiff stalls (GAP-007). */
+function diffTimeout(ms: number): Promise<string> {
+  return new Promise((resolve) => setTimeout(() => resolve(''), ms))
+}
+
 /**
  * Run a worker operation once the worker is addressable: retry ONLY the pre-side-effect readiness
  * failure (board-not-found / not-a-terminal — thrown before the gate / before any write, so no
@@ -193,10 +206,15 @@ export function useCommandDispatch(cap: number): CommandDispatch {
       // Phase D (collect/merge): settle → Reporting while the diff loads → snapshot the result + the
       // captured raw diff onto the task (the result zone + recap timeline read them) → done/failed.
       // gitDiff is read-only + best-effort: a missing api / non-repo cwd / error → no diff (chip hidden).
+      // GAP-007: race the fetch against a timeout that resolves to '' so a hung MAIN gitDiff can't pin
+      // the task in 'reporting' forever — it always advances to done/failed.
       useCommandStore.getState().setTaskStatus(id, 'reporting')
       let diff = ''
       try {
-        diff = (await api.gitDiff?.(terminalId)) ?? ''
+        const gitDiff = api.gitDiff
+        diff = gitDiff
+          ? ((await Promise.race([gitDiff(terminalId), diffTimeout(GITDIFF_TIMEOUT_MS)])) ?? '')
+          : ''
       } catch {
         diff = ''
       }

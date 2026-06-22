@@ -183,7 +183,14 @@ function TimelineRow({
             )}
           </span>
         </div>
-        {diffOpen && showDiff && <pre style={diffTextStyle}>{task.diff}</pre>}
+        {diffOpen && showDiff && (
+          <div style={diffWrapStyle}>
+            <div style={diffScopeStyle}>
+              git diff HEAD · working-tree changes vs HEAD · whole repo
+            </div>
+            <pre style={diffTextStyle}>{task.diff}</pre>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -322,6 +329,14 @@ const btnOnStyle: CSSProperties = {
   color: 'var(--accent-hover)',
   borderColor: 'rgba(79,140,255,.4)',
   background: 'var(--accent-wash)'
+}
+const diffWrapStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 3 }
+// GAP-006: clarify the diff scope (working-tree vs HEAD, repo-wide) so it isn't read as
+// agent-attributed. A quiet caption, not a redesign — no color/glow.
+const diffScopeStyle: CSSProperties = {
+  fontFamily: 'var(--mono)',
+  fontSize: 8.5,
+  color: 'var(--text-faint)'
 }
 const diffTextStyle: CSSProperties = {
   margin: 0,
