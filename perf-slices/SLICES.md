@@ -46,7 +46,8 @@ manual dev check + e2e + bot review). One commit per slice; full `typecheck`+`li
 | 011 | 🔶 needs-review | tc+lint green; O(N²)→O(N) draft + visual accept need live draw |
 | 012 | 🔶 needs-review | tc+lint green; **UX call** (2000 vs 5000) + memory probe pending |
 | 013 | ✅ fixed | cold-start index 305→**255 KB gzip** (−50); FileTree → 51 KB on-demand chunk |
-| 002, 005, 006, 008, 009, 010 | ⏳ deferred | next pass (002 high-risk; rest Wave 2) |
+| 009 | 🔶 needs-review | **Wave 2** (branch `perf/fixes-wave2`); `useDeferredValue` defers markdown/snapshot reparse; tc+lint; live typing-latency check pending |
+| 002, 005, 006, 008, 010 | ⏳ needs live app | OSR frame transport/render (002/005/006) can break the preview; 008 = new Web Worker infra; 010 = table virtualization (the `wfWin` prop defeats a plain memo). All need a `pnpm dev` session to implement+verify responsibly — NOT done blind. |
 
 ## ROI-ranked queue
 
