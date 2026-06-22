@@ -2,9 +2,9 @@
    The former 4,315-line monolith was sliced into feature partials under ./styles/**
    (feat/css-slice, 2026-06-23). ORDER IS LOAD-BEARING: these @imports reproduce the
    original cascade top-to-bottom — Vite inlines them into one bundle at build time, so
-   the emitted CSS is byte-identical to pre-slice. Do not reorder, and add a new partial's
-   @import at its correct cascade slot. Map of selector-prefix -> partial:
-   docs/research/2026-06-23-css-slice/PLAN.md. */
+   the emitted CSS is byte-identical to pre-slice. Do not reorder; add a new partial's
+   @import at its correct cascade slot (one partial = one feature zone, grouped under
+   ./styles/{chrome,boards,islands,panels,canvas,screens}/). */
 @import './styles/tokens.css';
 @import './styles/motion.css';
 @import './styles/chrome/dock.css';
