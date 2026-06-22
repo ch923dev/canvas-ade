@@ -8,6 +8,7 @@
 import {
   useState,
   useEffect,
+  useMemo,
   useRef,
   type ReactElement,
   type PointerEvent as ReactPointerEvent
@@ -91,6 +92,30 @@ export function OsrNetworkPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedId, boardId, select])
 
+  // Memoize the filter → waterfall → summary → sort pipeline so the panel's 10x/s re-render
+  // (FLUSH_MS=100) does NOT recompute it unless an input actually changed. `sortRecords` is the
+  // hot path — its comparator parses a `new URL()` per row (decorated once internally now). Keyed
+  // on (records, type pills, query, regex, invert, sort); a `records` reference change (the store
+  // mirrors a new array on each capture batch) recomputes, unrelated state never does. Runs before
+  // the early `return null` so the hook order is unconditional (board may be undefined here).
+  const records = board?.records
+  const pipeline = useMemo(() => {
+    const recs = records ?? []
+    const { rows, regexError } = applyNetFilter(recs, {
+      types: typeKeys,
+      query: filter,
+      regex,
+      invert
+    })
+    return {
+      rows,
+      regexError,
+      wfWin: waterfallWindow(rows),
+      summary: summaryStats(rows),
+      sortedRows: sortRecords(rows, sort)
+    }
+  }, [records, typeKeys, filter, regex, invert, sort])
+
   if (!board?.open) return null
   const preserve = board.preserve
   const dock: NetDock = board.dock
@@ -105,17 +130,9 @@ export function OsrNetworkPanel({
       : dock === 'right'
         ? { width: `${sizeFrac * 100}%`, maxWidth: 'none', flexShrink: 0 }
         : { height: `${sizeFrac * 100}%`, flexShrink: 0 }
-  const { rows, regexError } = applyNetFilter(board.records, {
-    types: typeKeys,
-    query: filter,
-    regex,
-    invert
-  })
+  const { rows, regexError, wfWin, summary, sortedRows } = pipeline
   const typeNarrowed = !(typeKeys.length === 1 && typeKeys[0] === 'all')
   const filtered = typeNarrowed || filter.trim().length > 0 || invert
-  const wfWin = waterfallWindow(rows)
-  const summary = summaryStats(rows)
-  const sortedRows = sortRecords(rows, sort)
   const onSort = (col: SortCol): void =>
     setSort((cur) =>
       cur?.col === col ? { col, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }

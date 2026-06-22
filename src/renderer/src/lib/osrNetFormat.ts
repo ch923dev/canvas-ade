@@ -372,20 +372,24 @@ function sortKey(rec: NetRecord, col: SortCol): string | number {
 /**
  * Sort a DISPLAYED copy (store insertion order is preserved). Size sorts on transfer bytes, Time on
  * duration; ties keep their original order (stable). `null` → insertion order. Pure → unit-tested.
+ *
+ * Decorate-sort-undecorate: each row's sort key is computed ONCE up front, not per comparison. The
+ * `name`/`initiator` keys parse a `new URL()` (via `urlName`), so calling `sortKey` inside the
+ * O(N log N) comparator cost ~2 `new URL()` per compare; hoisting it to one per row drops that to N.
+ * Ordering is identical — same keys, same `< / >` compare, same original-index stable tiebreak.
  */
 export function sortRecords(rows: NetRecord[], sort: SortState | null): NetRecord[] {
   if (!sort) return rows
   const dir = sort.dir === 'asc' ? 1 : -1
+  const col = sort.col
   return rows
-    .map((r, i) => [r, i] as const)
+    .map((r, i) => ({ r, i, k: sortKey(r, col) }))
     .sort((a, b) => {
-      const ka = sortKey(a[0], sort.col)
-      const kb = sortKey(b[0], sort.col)
-      if (ka < kb) return -dir
-      if (ka > kb) return dir
-      return a[1] - b[1] // stable tiebreak
+      if (a.k < b.k) return -dir
+      if (a.k > b.k) return dir
+      return a.i - b.i // stable tiebreak
     })
-    .map(([r]) => r)
+    .map((d) => d.r)
 }
 
 /** The Initiator cell: a script's file name if it's a url, else the bare CDP type word. */
