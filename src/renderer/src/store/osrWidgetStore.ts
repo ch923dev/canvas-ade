@@ -29,6 +29,9 @@ interface OsrWidgetState {
   audible: Record<string, boolean>
   /** The user's manual mute choice per board (effective mute also factors off-screen, in MAIN). */
   muted: Record<string, boolean>
+  /** The user's per-board audio volume (0–1, default 1). Ephemeral, like `muted`; MAIN emulates it
+   *  by setting `el.volume` on the page's HTML5 media (Electron OSR has no native volume API). */
+  volume: Record<string, number>
   /** Per-board download list (insertion-ordered, one row per filename) for the Downloads tab. */
   downloads: Record<string, OsrDownloadRecord[]>
 
@@ -36,6 +39,7 @@ interface OsrWidgetState {
   setPopup: (id: string, popup: OsrPopupEvent | null) => void
   setAudible: (id: string, audible: boolean) => void
   setMuted: (id: string, muted: boolean) => void
+  setVolume: (id: string, volume: number) => void
   /** Upsert a download lifecycle event into the board's list (keyed by filename). */
   applyDownload: (id: string, event: OsrDownloadEvent) => void
   /** Empty a board's download list (the Downloads tab's clear button). */
@@ -49,6 +53,7 @@ export const useOsrWidgetStore = create<OsrWidgetState>((set) => ({
   popup: {},
   audible: {},
   muted: {},
+  volume: {},
   downloads: {},
 
   setDialog: (id, dialog) => set((s) => ({ dialog: { ...s.dialog, [id]: dialog } })),
@@ -57,6 +62,8 @@ export const useOsrWidgetStore = create<OsrWidgetState>((set) => ({
     set((s) => (s.audible[id] === audible ? s : { audible: { ...s.audible, [id]: audible } })),
   setMuted: (id, muted) =>
     set((s) => (s.muted[id] === muted ? s : { muted: { ...s.muted, [id]: muted } })),
+  setVolume: (id, volume) =>
+    set((s) => (s.volume[id] === volume ? s : { volume: { ...s.volume, [id]: volume } })),
 
   applyDownload: (id, event) =>
     set((s) => {
@@ -87,12 +94,14 @@ export const useOsrWidgetStore = create<OsrWidgetState>((set) => ({
       const popup = { ...s.popup }
       const audible = { ...s.audible }
       const muted = { ...s.muted }
+      const volume = { ...s.volume }
       const downloads = { ...s.downloads }
       delete dialog[id]
       delete popup[id]
       delete audible[id]
       delete muted[id]
+      delete volume[id]
       delete downloads[id]
-      return { dialog, popup, audible, muted, downloads }
+      return { dialog, popup, audible, muted, volume, downloads }
     })
 }))

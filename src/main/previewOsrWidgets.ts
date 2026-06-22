@@ -332,6 +332,59 @@ export function applyOsrMuted(wc: { setAudioMuted(m: boolean): void }, muted: bo
   }
 }
 
+/** Coerce an untrusted volume to a finite 0–1 level (default 1 = full). Pure (unit-tested). */
+export function clampVolume(v: unknown): number {
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : 1
+  return n < 0 ? 0 : n > 1 ? 1 : n
+}
+
+/**
+ * Apply a 0–1 audio volume to an offscreen board's HTML5 media (4A volume).
+ *
+ * Electron OSR has NO native per-window volume — `webContents` exposes only `setAudioMuted`. So
+ * "volume" is emulated: set `el.volume` on every `<audio>`/`<video>` via an injected snippet, plus a
+ * one-time `MutationObserver` (installed only while the level is below full) that re-applies it to
+ * media added later (SPA routes, lazy embeds). MAIN re-runs this on every did-finish-load — a fresh
+ * document drops the observer and resets element volumes to 1. When the level returns to 1 the
+ * observer is disconnected so the common (untouched-volume) page carries no observer overhead.
+ *
+ * LIMITATION: covers HTML5 media ELEMENTS only. A pure Web Audio API graph (no media element) exposes
+ * no element here and honors only the mute (`setAudioMuted`).
+ */
+export function applyOsrVolume(
+  wc: { executeJavaScript(code: string): Promise<unknown> },
+  volume: number
+): void {
+  const v = clampVolume(volume)
+  // The level is a number literal we control (clamped above) — no untrusted string is interpolated.
+  const code = `(function(){
+    window.__osrVol = ${v};
+    var apply = function(){
+      var m = document.querySelectorAll('audio,video');
+      for (var i = 0; i < m.length; i++) { try { m[i].volume = window.__osrVol; } catch(e){} }
+    };
+    try { apply(); } catch(e){}
+    if (window.__osrVol < 1) {
+      if (!window.__osrVolObserver && document.documentElement) {
+        try {
+          window.__osrVolObserver = new MutationObserver(function(){ try { apply(); } catch(e){} });
+          window.__osrVolObserver.observe(document.documentElement, { childList: true, subtree: true });
+        } catch(e){}
+      }
+    } else if (window.__osrVolObserver) {
+      try { window.__osrVolObserver.disconnect(); } catch(e){}
+      window.__osrVolObserver = null;
+    }
+  })();`
+  try {
+    void Promise.resolve(wc.executeJavaScript(code)).catch(() => {
+      /* navigated away / window gone */
+    })
+  } catch {
+    /* window gone */
+  }
+}
+
 /** Answer an open JS dialog (4B). `promptText` is sent only for a prompt OK. */
 export function respondOsrDialog(wc: OsrCdp, accept: boolean, promptText?: string): void {
   const params: Record<string, unknown> = { accept }
@@ -414,6 +467,8 @@ export interface OsrWidgetEntry {
   osrWin: { webContents: WebContents }
   manualMuted: boolean
   painting: boolean
+  /** The user's emulated audio volume (0–1; absent ⇒ full). See {@link applyOsrVolume}. */
+  volume?: number
 }
 
 /** Apply the EFFECTIVE mute (manual choice OR not-painting) to an offscreen board (4A). Called on a
@@ -436,6 +491,17 @@ export function registerOsrWidgetIpc(
     if (!e) return false
     e.manualMuted = args.muted === true
     applyEffectiveMute(e)
+    return true
+  })
+  // 4A (volume) — set the emulated audio volume (0–1). Stored on the entry so did-finish-load can
+  // re-apply it to a fresh document, and applied to the live page now. No native OSR volume API
+  // exists; applyOsrVolume injects el.volume onto the page's HTML5 media (Web Audio honors only mute).
+  ipcMain.handle('preview:osrSetVolume', (ev, args: { id: string; volume: number }) => {
+    if (isForeignSender(ev, getWin)) return false
+    const e = getEntry(args.id)
+    if (!e) return false
+    e.volume = clampVolume(args.volume)
+    applyOsrVolume(e.osrWin.webContents, e.volume)
     return true
   })
   // 4B — answer the open JS dialog (accept + prompt text) → CDP handleJavaScriptDialog. A stray

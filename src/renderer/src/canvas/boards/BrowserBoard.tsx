@@ -38,6 +38,7 @@ import { useOffscreenInput } from './useOffscreenInput'
 import { useOffscreenSizing } from './useOffscreenSizing'
 import { useOsrWidgetEvents } from './osr/useOsrWidgetEvents'
 import { OsrWidgetLayer } from './osr/OsrWidgetLayer'
+import { OsrVolumeControl } from './osr/OsrVolumeControl'
 import { useOsrWidgetStore } from '../../store/osrWidgetStore'
 import { useOsrNetwork } from './osr/useOsrNetwork'
 import { OsrNetworkPanel } from './osr/OsrNetworkPanel'
@@ -169,15 +170,10 @@ export function BrowserBoard({
   const netOpen = useOsrNetworkStore((s) => s.byBoard[board.id]?.open ?? false)
   const netDock = useOsrNetworkStore((s) => s.byBoard[board.id]?.dock ?? 'bottom')
   const toggleNet = (): void => useOsrNetworkStore.getState().setOpen(board.id, !netOpen)
-  // 4A — the URL-bar mute toggle shows only while the page is playing media; `muted` is the user's
-  // manual choice (MAIN also auto-mutes off-screen). Ephemeral (no schema).
+  // 4A — the URL-bar audio control shows only while the page is playing media. Mute + volume are
+  // the user's manual choices (MAIN also auto-mutes off-screen); both ephemeral (no schema). The
+  // control itself (speaker icon + click-open mute/slider popover) lives in OsrVolumeControl.
   const osrAudibleNow = useOsrWidgetStore((s) => s.audible[board.id] ?? false)
-  const osrMuted = useOsrWidgetStore((s) => s.muted[board.id] ?? false)
-  const toggleOsrMute = (): void => {
-    const next = !osrMuted
-    useOsrWidgetStore.getState().setMuted(board.id, next)
-    void window.api.setOsrMuted(board.id, next)
-  }
 
   // Editable URL: a local draft committed on Enter / blur. When the durable
   // board.url changes underneath (e.g. set elsewhere), re-sync the draft DURING
@@ -389,14 +385,8 @@ export function BrowserBoard({
             title="Reload"
             onClick={() => void window.api.reloadOsrPreview(board.id)}
           />
-          {/* 4A — mute toggle, shown only while the preview is playing media. */}
-          {osrAudibleNow && (
-            <NavBtn
-              name={osrMuted ? 'volume-x' : 'volume'}
-              title={osrMuted ? 'Unmute' : 'Mute audio'}
-              onClick={toggleOsrMute}
-            />
-          )}
+          {/* 4A — audio control (mute + volume), shown only while the preview is playing media. */}
+          {osrAudibleNow && <OsrVolumeControl boardId={board.id} />}
           <NavBtn
             name="camera"
             title="Screenshot"
@@ -608,14 +598,15 @@ export function BrowserBoard({
   )
 }
 
-/** A 24x24 URL-bar nav button (back/forward/reload/camera/external + the Phase-4 mute toggle). */
+/** A 24x24 URL-bar nav button (back/forward/reload/camera/external). The Phase-4 audio control is
+ *  its own component (OsrVolumeControl). */
 function NavBtn({
   name,
   title,
   disabled = false,
   onClick
 }: {
-  name: 'back' | 'forward' | 'refresh' | 'camera' | 'external' | 'volume' | 'volume-x'
+  name: 'back' | 'forward' | 'refresh' | 'camera' | 'external'
   title: string
   disabled?: boolean
   onClick: () => void
