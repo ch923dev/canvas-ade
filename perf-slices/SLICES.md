@@ -32,6 +32,22 @@ No CONFIRMED finding is *fully* covered by planned work → **0 full SKIPs**. Tw
 payload/alloc untouched) and Planning snap (the R3 spatial index is *deferred* in the
 planning-board-optimization research). See `skipped-roadmap.md`.
 
+## Execution status (Wave 1 run — 2026-06-23) — see `FIX-REPORT.md`
+
+Branch `perf/fixes-wave1` (off `perf/slices-2026-06-23`). **Not merged** (per CLAUDE.md: each needs a
+manual dev check + e2e + bot review). One commit per slice; full `typecheck`+`lint`+`build` green.
+
+| Slice | Status | Automated verification |
+|---|---|---|
+| 001 | ✅ fixed | FileBoard chunk 708→**486 KB gzip** (−31%); 0 legacy grammars; build+tc+lint |
+| 003 | 🔶 needs-review | tc+lint green; render-count delta needs live profiler |
+| 004 | ✅ fixed | `snapping`/`elements` 69/69 (invariant); tc+lint; per-frame perf pending bench |
+| 007 | ✅ fixed | `osrNetFormat` 83/83 (sort/filter invariant); tc+lint; render perf pending profiler |
+| 011 | 🔶 needs-review | tc+lint green; O(N²)→O(N) draft + visual accept need live draw |
+| 012 | 🔶 needs-review | tc+lint green; **UX call** (2000 vs 5000) + memory probe pending |
+| 013 | ✅ fixed | cold-start index 305→**255 KB gzip** (−50); FileTree → 51 KB on-demand chunk |
+| 002, 005, 006, 008, 009, 010 | ⏳ deferred | next pass (002 high-risk; rest Wave 2) |
+
 ## ROI-ranked queue
 
 | # | Slice | Dim | Baseline → Target | Effort | Sev | Files | Collides-with |
