@@ -48,7 +48,6 @@ import {
   MAX_IMAGE_BYTES,
   baseName,
   buildEditorExtensions,
-  buildSnapshotHtml,
   clampFileFont,
   extOf,
   fileCaps,
@@ -58,6 +57,7 @@ import {
   resolveLanguage,
   writeStickyFileFont
 } from './fileBoardSyntax'
+import { useFileSnapshotHtml } from './useFileSnapshotHtml'
 import { renderMarkdownToHtml } from './fileBoardMarkdown'
 import { useFileSave } from './fileBoardSave'
 import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
@@ -263,10 +263,9 @@ export function FileBoard({
   const deferredText = useDeferredValue(text)
   const { support, parser } = useMemo(() => resolveLanguage(ext), [ext])
   const extensions = useMemo(() => buildEditorExtensions(support), [support])
-  const snapshotHtml = useMemo(
-    () => buildSnapshotHtml(deferredText, parser),
-    [deferredText, parser]
-  )
+  // SLICE-008: the snapshot highlight runs off the open-time critical path (small files sync, large
+  // files time-sliced async). The deferred text (SLICE-009) coalesces fast typing into the parse.
+  const snapshotHtml = useFileSnapshotHtml(deferredText, parser)
   // Render Markdown only when a markdown board is showing the preview or the split (cheap to skip).
   const showMarkdown = isMarkdown && (mode === 'preview' || mode === 'split')
   const markdownHtml = useMemo(

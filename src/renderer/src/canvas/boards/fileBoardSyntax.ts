@@ -341,8 +341,15 @@ const EDITOR_THEME = EditorView.theme(
 
 // `highlightCode`'s tree/parser types, borrowed structurally so we don't import @lezer/common.
 type LezerTree = Parameters<typeof highlightCode>[1]
+/** One bounded batch of Lezer's incremental parse: `advance()` does a small amount of work and
+ *  returns the finished `Tree`, or `null` while more work remains. (The real `LRParser.startParse`
+ *  returns a `PartialParse`; we borrow only the surface SLICE-008's time-slicer drives.) */
+interface LezerPartialParse {
+  advance(): LezerTree | null
+}
 interface LezerParser {
   parse(input: string): LezerTree
+  startParse(input: string): LezerPartialParse
 }
 
 // -- Pure helpers ------------------------------------------------------------------
@@ -404,17 +411,12 @@ export function buildEditorExtensions(support: Extension | null): Extension[] {
   return exts
 }
 
-/**
- * Build the static snapshot's inner HTML: highlighted `<span>`s with newlines preserved for
- * `<pre>`. XSS-safe by construction: every run of FILE text is escaped via `escapeHtml`, and
- * the only attribute is `style="color:<hex>"` where the hex is a FIXED value from our own
- * palette (never file data). Falls back to escaped plain text when there is no parser or the
- * file is over the highlight cap.
- */
-export function buildSnapshotHtml(code: string, parser: LezerParser | null): string {
-  if (!parser || code.length > HIGHLIGHT_MAX_CHARS) return escapeHtml(code)
+/** Walk a parsed `tree` into highlighted `<span>` HTML — the shared emit used by BOTH the synchronous
+ *  `buildSnapshotHtml` and the async time-sliced path, so the two can't drift. XSS-safe by
+ *  construction: every run of FILE text is escaped via `escapeHtml`, and the only attribute is
+ *  `style="color:<hex>"` where the hex is a FIXED value from our own palette (never file data). */
+function treeToHtml(code: string, tree: LezerTree): string {
   let html = ''
-  const tree = parser.parse(code)
   highlightCode(
     code,
     tree,
@@ -428,4 +430,86 @@ export function buildSnapshotHtml(code: string, parser: LezerParser | null): str
     }
   )
   return html
+}
+
+/**
+ * Build the static snapshot's inner HTML: highlighted `<span>`s with newlines preserved for
+ * `<pre>`. Falls back to escaped plain text when there is no parser or the file is over the
+ * highlight cap. SYNCHRONOUS — the one-shot path for small files (and the unit-test oracle the async
+ * path is checked against). For large files, `highlightSnapshotAsync` produces byte-identical HTML
+ * off the critical path.
+ */
+export function buildSnapshotHtml(code: string, parser: LezerParser | null): string {
+  if (!parser || code.length > HIGHLIGHT_MAX_CHARS) return escapeHtml(code)
+  return treeToHtml(code, parser.parse(code))
+}
+
+// -- SLICE-008: highlight off the open-time critical path -----------------------------------------
+// The full `parser.parse(code)` is a single unbroken main-thread block — ~64 ms for a 200 KB real
+// TS file, up to ~197 ms token-dense — that froze the frame on file open. The parser is a Lezer
+// `LRParser` that lives only on this thread and isn't structured-cloneable, and a worker that
+// re-imported the grammars would duplicate every CodeMirror grammar into a second chunk (undoing
+// SLICE-001's bundle cut). So instead of a worker we drive Lezer's INCREMENTAL parser cooperatively:
+// short synchronous batches that yield to the event loop between them, so paint/input interleave and
+// no single task exceeds a frame (the card's sanctioned alternative).
+
+/** Below this char count the snapshot highlights SYNCHRONOUSLY in render (well under one frame — a
+ *  ~30 KB file parses in ~7 ms), so the common case stays flash-free and identical to the old path.
+ *  At/above it (and within the 200 KB highlight cap) the parse is time-sliced off the critical path. */
+export const SYNC_HIGHLIGHT_MAX_CHARS = 30_000
+
+/** Per-batch time budget (ms) for the sliced parse — kept under a frame so paint/input run between
+ *  batches. The total CPU is unchanged; it is spread across tasks instead of one blocking task. */
+const PARSE_SLICE_MS = 8
+
+/** True when the snapshot for `code` must be highlighted ASYNCHRONOUSLY: there is a parser, the file
+ *  is over the synchronous ceiling, and it is within the highlight cap (over the cap ⇒ plain text). */
+export function needsAsyncHighlight(code: string, parser: LezerParser | null): boolean {
+  return !!parser && code.length > SYNC_HIGHLIGHT_MAX_CHARS && code.length <= HIGHLIGHT_MAX_CHARS
+}
+
+/** The IMMEDIATE (synchronous) snapshot HTML: a full highlight for small files, or the escaped
+ *  plain-text placeholder for large files (which `highlightSnapshotAsync` then upgrades). For the
+ *  no-parser / over-cap cases this IS the permanent result (plain text). */
+export function snapshotImmediateHtml(code: string, parser: LezerParser | null): string {
+  return needsAsyncHighlight(code, parser) ? escapeHtml(code) : buildSnapshotHtml(code, parser)
+}
+
+/** Yield to the event loop as a MACROtask (so paint/input get a turn) without `setTimeout`'s ~4 ms
+ *  clamp: a one-shot `MessageChannel` ping. CSP-safe — no eval / blob / worker. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    const ch = new MessageChannel()
+    ch.port1.onmessage = (): void => {
+      ch.port1.close()
+      resolve()
+    }
+    ch.port2.postMessage(0)
+  })
+}
+
+/**
+ * Highlight a snapshot OFF the open-time critical path. Drives Lezer's incremental parser in
+ * `PARSE_SLICE_MS` batches that yield between them, then emits the SAME HTML as `buildSnapshotHtml`.
+ * Resolves to the highlighted HTML, or `null` if `isStale()` reports the request was superseded by a
+ * newer edit/parser before it finished (the caller then drops it). For the no-parser / over-cap cases
+ * it resolves to the plain-text fallback (matching `buildSnapshotHtml`).
+ */
+export async function highlightSnapshotAsync(
+  code: string,
+  parser: LezerParser | null,
+  isStale: () => boolean
+): Promise<string | null> {
+  if (!parser || code.length > HIGHLIGHT_MAX_CHARS) return escapeHtml(code)
+  const parse = parser.startParse(code)
+  for (;;) {
+    if (isStale()) return null
+    const deadline = performance.now() + PARSE_SLICE_MS
+    let tree: LezerTree | null = null
+    do {
+      tree = parse.advance()
+    } while (tree === null && performance.now() < deadline)
+    if (tree !== null) return treeToHtml(code, tree)
+    await yieldToEventLoop()
+  }
 }
