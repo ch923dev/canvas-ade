@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { Icon } from './Icon'
 import { FILEREF_MIME } from './fileTreeData'
+import { useLibraryStore } from '../store/libraryStore'
+import { useCanvasStore } from '../store/canvasStore'
 import type { LibraryItem, LibraryListing } from '../../../preload'
 
 type Tab = 'downloads' | 'assets'
@@ -29,6 +31,12 @@ export function ProjectLibraryPanel(): ReactElement {
   const [tab, setTab] = useState<Tab>('downloads')
   const [listing, setListing] = useState<LibraryListing | null>(null)
   const asideRef = useRef<HTMLElement>(null)
+  // Bumped when a file lands under .canvas/ (a screenshot saved to assets/, a completed download);
+  // re-lists the open panel so the new file shows up immediately (no manual refresh).
+  const refreshNonce = useLibraryStore((s) => s.refreshNonce)
+  // Re-list when the open project changes too — otherwise the panel would keep showing the prior
+  // project's files after a switch (MAIN's current dir has already moved by the time this updates).
+  const projectDir = useCanvasStore((s) => s.project.dir)
 
   // a11y: stays mounted + slid off-screen when closed, so reflect `inert` imperatively (presence =
   // inert) — open removes it, closed sets it. Mirrors DigestPanel's T-F3 fix.
@@ -43,9 +51,9 @@ export function ProjectLibraryPanel(): ReactElement {
     setListing(await window.api.library.list())
   }, [])
 
-  // Load (and re-load) the listing whenever the panel is opened — picks up files saved while closed.
-  // setListing runs in the promise callback (not synchronously in the effect), guarded against a
-  // close/unmount race so a late response can't write into a stale panel.
+  // Load (and re-load) the listing whenever the panel opens OR a .canvas/ file is added
+  // (refreshNonce). setListing runs in the promise callback (not synchronously in the effect),
+  // guarded against a close/unmount/stale-response race.
   useEffect(() => {
     if (!open) return
     let active = true
@@ -55,7 +63,7 @@ export function ProjectLibraryPanel(): ReactElement {
     return () => {
       active = false
     }
-  }, [open])
+  }, [open, refreshNonce, projectDir])
 
   const items: LibraryItem[] =
     tab === 'downloads' ? (listing?.downloads ?? []) : (listing?.assets ?? [])

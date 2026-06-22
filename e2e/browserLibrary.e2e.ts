@@ -2,6 +2,9 @@ import { test, expect } from './fixtures'
 import { evalIn, mainCall, pollEval, seed } from './helpers'
 
 const DL_NAME = 'canvas-e2e-download.txt'
+const runtimeStatus = (id: string, status: string) =>
+  `(() => { const r = window.__canvasE2E.getRuntime(${JSON.stringify(id)}); return !!r && r.status === ${JSON.stringify(status)}; })()`
+const osrNonBlank = (id: string) => `window.__canvasE2E.osrCanvasNonBlank(${JSON.stringify(id)})`
 
 /**
  * @preview — Project Library + the download relocation, end-to-end through the real stack:
@@ -104,6 +107,56 @@ test.describe('@preview Project Library (downloads → .canvas/downloads)', () =
       expect(fileBoardOpened, 'dragging a Library row to the canvas opens it as a File board').toBe(
         true
       )
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+
+  test('a screenshot auto-refreshes the open Library (Assets tab)', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(
+      electronApp,
+      'createTempProject',
+      'library-shot-',
+      'lib-shot'
+    )
+    try {
+      await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      const url = await mainCall<string>(electronApp, 'localUrl')
+      const id = await seed(page, 'browser', { url, viewport: 'desktop' })
+      await page.waitForTimeout(150)
+      await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+      expect(await pollEval(page, runtimeStatus(id, 'connected'), 12_000), 'connected').toBe(true)
+      expect(await pollEval(page, osrNonBlank(id), 8000), 'OSR painted').toBe(true)
+
+      // Open the Library on the Assets tab — empty before any screenshot. The open-state is the
+      // panel's own (survives the prior test's reset), so open only if its reopen tab is present.
+      await evalIn(
+        page,
+        `(() => { const b = document.querySelector('[data-test="library-open"]'); if (b) b.click(); })()`
+      )
+      await evalIn(page, `document.querySelector('[data-test="library-tab-assets"]').click()`)
+      const before = await evalIn<number>(
+        page,
+        `document.querySelectorAll('[data-test="library-row"]').length`
+      )
+      expect(before, 'no assets before the screenshot').toBe(0)
+
+      // Take a screenshot via the URL-bar camera (saves a PNG into .canvas/assets/). It must
+      // auto-refresh the OPEN panel via requestRefresh — no manual ⟳. Programmatic click fires the
+      // React onClick through the recap-consent scrim (which only blocks REAL pointer events).
+      await evalIn(page, `document.querySelector('[title="Screenshot"]').click()`)
+      const shown = await pollEval(
+        page,
+        `document.querySelectorAll('[data-test="library-row"]').length > 0`,
+        6000
+      )
+      expect(
+        shown,
+        'the screenshot asset appears in the open Library without a manual refresh'
+      ).toBe(true)
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }

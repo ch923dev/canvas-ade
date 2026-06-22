@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useOsrWidgetStore } from '../../../store/osrWidgetStore'
+import { useLibraryStore } from '../../../store/libraryStore'
 import { showToast, dismissToast } from '../../../store/toastStore'
 import type { OsrDownloadEvent } from '../../../../../preload'
 
@@ -24,6 +25,9 @@ export function useOsrWidgetEvents(boardId: string): void {
     const offDownload = window.api.onPreviewOsrDownload((d) => {
       if (d.id !== boardId) return
       toastForDownload(boardId, d) // transient at-a-glance feedback (+ Show → reveal)
+      // A completed download lands under .canvas/downloads (when a project is open) — re-list the
+      // open Project Library so it shows up immediately, same as a screenshot saved to assets/.
+      if (d.state === 'done') useLibraryStore.getState().requestRefresh()
     })
     return () => {
       offDialog()
