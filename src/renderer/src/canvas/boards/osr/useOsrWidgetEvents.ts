@@ -55,7 +55,9 @@ function toastForDownload(boardId: string, d: OsrDownloadEvent): void {
       showToast({
         id,
         kind: 'ok',
-        message: `${d.name} — saved to Downloads`,
+        // Location-agnostic: downloads go to the project's .canvas/downloads when a project is open
+        // (browsable in the Project Library), else the OS Downloads folder. "Show" reveals the spot.
+        message: `${d.name} — saved`,
         action: d.savePath
           ? { label: 'Show', run: () => void window.api.revealOsrDownload(d.savePath as string) }
           : undefined

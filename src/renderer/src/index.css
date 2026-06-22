@@ -4032,6 +4032,14 @@ body {
   font-size: var(--fs-label);
   word-break: break-all;
 }
+/* Library controls onto the app's 1.5px accent focus ring (the .bb-navbtn:focus-visible convention). */
+.lib-reopen:focus-visible,
+.lib-icon-btn:focus-visible,
+.lib-tab:focus-visible,
+.lib-act:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
 @media (prefers-reduced-motion: reduce) {
   .lib-panel {
     transition: none;
