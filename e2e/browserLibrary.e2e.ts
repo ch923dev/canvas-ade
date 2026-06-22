@@ -64,6 +64,46 @@ test.describe('@preview Project Library (downloads → .canvas/downloads)', () =
         `(document.querySelector('.lib-foot') || {}).textContent || ''`
       )
       expect(foot).toContain('.canvas')
+
+      // The row is draggable and its dragstart carries the fileref payload (root-relative .canvas path).
+      const draggable = await evalIn<boolean>(
+        page,
+        `document.querySelector('[data-test="library-row"]').draggable === true`
+      )
+      expect(draggable, 'library rows are draggable').toBe(true)
+
+      // Drag onto the canvas → opens the file as a File board (synthetic DnD: capture the row's
+      // dragstart payload, then dispatch a matching drop on the RF pane — bypasses the recap scrim).
+      await evalIn(
+        page,
+        `(() => {
+          const FILEREF = 'application/x-canvas-ade-fileref';
+          const row = document.querySelector('[data-test="library-row"]');
+          const dt = new DataTransfer();
+          row.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+          const payload = dt.getData(FILEREF);
+          if (!payload || !payload.includes('.canvas/downloads/')) throw new Error('bad payload: ' + payload);
+          const dt2 = new DataTransfer();
+          dt2.setData(FILEREF, payload);
+          // The onDrop handler lives on the pane wrapper (parent of .react-flow); dispatch there so
+          // RF's inner .react-flow__pane can't swallow the drag event before it reaches the handler.
+          const flow = document.querySelector('.react-flow');
+          const pane = (flow && flow.parentElement) || flow;
+          const r = pane.getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          const opts = { bubbles: true, cancelable: true, dataTransfer: dt2, clientX: x, clientY: y };
+          pane.dispatchEvent(new DragEvent('dragover', opts));
+          pane.dispatchEvent(new DragEvent('drop', opts));
+        })()`
+      )
+      const fileBoardOpened = await pollEval(
+        page,
+        `window.__canvasE2E.getBoards().some((b) => b.type === 'file' && b.path === ${JSON.stringify('.canvas/downloads/' + DL_NAME)})`,
+        5000
+      )
+      expect(fileBoardOpened, 'dragging a Library row to the canvas opens it as a File board').toBe(
+        true
+      )
     } finally {
       await mainCall(electronApp, 'teardownProject', tmp)
     }

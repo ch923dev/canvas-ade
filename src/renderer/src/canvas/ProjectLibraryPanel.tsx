@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { Icon } from './Icon'
+import { FILEREF_MIME } from './fileTreeData'
 import type { LibraryItem, LibraryListing } from '../../../preload'
 
 type Tab = 'downloads' | 'assets'
@@ -122,7 +123,23 @@ export function ProjectLibraryPanel(): ReactElement {
             <p className="lib-empty">No {tab} saved yet.</p>
           ) : (
             items.map((it) => (
-              <div key={it.relPath} className="lib-row" data-test="library-row" title={it.name}>
+              <div
+                key={it.relPath}
+                className="lib-row"
+                data-test="library-row"
+                title={it.name}
+                // Drag onto the canvas to open the file as a File board (same FILEREF payload + drop
+                // handler the file tree uses). The path is project-root-relative; .canvas/ files are
+                // readable (only the tree LISTING hides .canvas/). Binary/large files degrade to the
+                // File board's placeholder; images preview as <img>.
+                draggable
+                onDragStart={(e) => {
+                  const path = `.canvas/${it.relPath}`
+                  e.dataTransfer.setData(FILEREF_MIME, JSON.stringify({ path, label: it.name }))
+                  e.dataTransfer.setData('text/plain', path)
+                  e.dataTransfer.effectAllowed = 'copy'
+                }}
+              >
                 <Icon name="file" size={14} />
                 <span className="lib-name">{it.name}</span>
                 <span className="lib-size">{formatBytes(it.size)}</span>

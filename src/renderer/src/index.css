@@ -3993,6 +3993,10 @@ body {
   padding: var(--space-4) var(--space-8);
   border-radius: var(--r-inner);
   color: var(--text-3);
+  cursor: grab; /* draggable onto the canvas → opens a File board */
+}
+.lib-row:active {
+  cursor: grabbing;
 }
 .lib-row:hover {
   background: var(--surface-raised);
