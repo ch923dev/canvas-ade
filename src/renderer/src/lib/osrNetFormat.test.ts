@@ -29,7 +29,8 @@ import {
   NET_PANEL_MIN_FRAC,
   NET_PANEL_MAX_FRAC,
   assetRecords,
-  downloadPct
+  downloadPct,
+  prettyBody
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
@@ -586,8 +587,37 @@ describe('assetRecords', () => {
     ]
     expect(assetRecords(recs).map((r) => r.requestId)).toEqual(['2', '4', '5', '6', '8', '10'])
   })
+  it('matches the capitalized CDP resourceType MAIN actually stores', () => {
+    // Regression: MAIN stores raw CDP types ("Image"/"Script"/…), not lowercase — the lowercase
+    // set must compare case-insensitively or the Assets tab shows 0.
+    const recs = [
+      rec({ requestId: 'a', type: 'Image' }),
+      rec({ requestId: 'b', type: 'Script' }),
+      rec({ requestId: 'c', type: 'Stylesheet' }),
+      rec({ requestId: 'd', type: 'Document' })
+    ]
+    expect(assetRecords(recs).map((r) => r.requestId)).toEqual(['a', 'b', 'c'])
+  })
   it('returns [] when there are no assets', () => {
     expect(assetRecords([rec({ type: 'document' }), rec({ type: 'xhr' })])).toEqual([])
+  })
+})
+
+describe('prettyBody', () => {
+  it('indents JSON when the mime is json', () => {
+    expect(prettyBody('{"a":1,"b":[2,3]}', 'application/json')).toBe(
+      '{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}'
+    )
+  })
+  it('indents JSON that merely looks like JSON (missing mime — e.g. request payloads)', () => {
+    expect(prettyBody('  [1,2]', undefined)).toBe('[\n  1,\n  2\n]')
+  })
+  it('leaves non-JSON and invalid JSON untouched', () => {
+    expect(prettyBody('hello world', 'text/plain')).toBe('hello world')
+    expect(prettyBody('{not json', 'application/json')).toBe('{not json')
+  })
+  it('never reparses binary (base64) bodies', () => {
+    expect(prettyBody('eyJhIjoxfQ==', 'application/json', true)).toBe('eyJhIjoxfQ==')
   })
 })
 

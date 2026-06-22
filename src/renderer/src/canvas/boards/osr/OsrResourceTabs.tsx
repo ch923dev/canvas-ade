@@ -45,7 +45,8 @@ export function AssetsTab({
   const [typeKey, setTypeKey] = useState('all')
   const q = filter.trim().toLowerCase()
   const rows = assetRecords(records).filter((r) => {
-    if (typeKey !== 'all' && r.type !== typeKey) return false
+    // MAIN stores the capitalized CDP resourceType; the pill keys are lowercase → compare lowered.
+    if (typeKey !== 'all' && (r.type || '').toLowerCase() !== typeKey) return false
     if (q && !r.url.toLowerCase().includes(q)) return false
     return true
   })

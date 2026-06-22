@@ -19,6 +19,7 @@ import {
   hasPayload,
   hasCookies,
   initiatorLabel,
+  prettyBody,
   type NetKV
 } from '../../../lib/osrNetFormat'
 
@@ -104,7 +105,7 @@ function BodyBar({
       {state?.body !== undefined ? (
         <pre className="bb-net-bodytext">
           {state.base64 ? '[binary · base64]\n' : ''}
-          {state.body}
+          {prettyBody(state.body, rec.mimeType, state.base64)}
           {state.truncated && '\n…(truncated)'}
         </pre>
       ) : state?.error ? (
@@ -244,17 +245,9 @@ function PreviewTab({
       />
     )
   }
-  let text = state.body
-  if (mime.includes('json')) {
-    try {
-      text = JSON.stringify(JSON.parse(state.body), null, 2)
-    } catch {
-      /* not valid JSON — show raw */
-    }
-  }
   return (
     <pre className="bb-net-bodytext">
-      {text}
+      {prettyBody(state.body, rec.mimeType, state.base64)}
       {state.truncated && '\n…(truncated)'}
     </pre>
   )

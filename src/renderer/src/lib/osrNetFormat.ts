@@ -578,9 +578,10 @@ export const ASSET_TYPES: ReadonlySet<string> = new Set([
   'manifest'
 ])
 
-/** Filter a record list down to static assets (insertion order preserved). */
+/** Filter a record list down to static assets (insertion order preserved). MAIN stores the raw CDP
+ *  resourceType (capitalized: "Image"/"Script"/…), so compare case-insensitively like matchesType. */
 export function assetRecords(records: NetRecord[]): NetRecord[] {
-  return records.filter((r) => ASSET_TYPES.has(r.type))
+  return records.filter((r) => ASSET_TYPES.has((r.type || '').toLowerCase()))
 }
 
 /** Download progress percent (0..100), or undefined when the total size is unknown. */
@@ -590,4 +591,23 @@ export function downloadPct(
 ): number | undefined {
   if (!total || total <= 0 || received === undefined) return undefined
   return Math.min(100, Math.max(0, Math.round((received / total) * 100)))
+}
+
+/**
+ * Pretty-print a body for display: indent JSON 2-space when the mime says JSON OR the text looks
+ * like JSON (begins with `{`/`[`), so both responses (mime-typed) and request payloads (whose
+ * content-type we don't carry) format. Returns the input unchanged when it isn't valid JSON, or for
+ * binary (base64) bodies. Pure — used by the Response, Payload, and Preview tabs alike.
+ */
+export function prettyBody(body: string, mime: string | undefined, base64?: boolean): string {
+  if (base64) return body // binary — never reparse
+  const looksJson = (mime ?? '').toLowerCase().includes('json') || /^\s*[{[]/.test(body)
+  if (looksJson) {
+    try {
+      return JSON.stringify(JSON.parse(body), null, 2)
+    } catch {
+      /* not valid JSON — show raw */
+    }
+  }
+  return body
 }
