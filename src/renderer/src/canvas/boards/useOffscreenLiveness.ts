@@ -37,11 +37,19 @@ const OSR_MAX_LIVE = 4
  *     geometry per frame (new `boards` array each frame), so this fires per drag-frame too —
  *     but `setOsrPaint` is diff-skipped and a board rarely flips visibility mid-drag, so the
  *     IPC stays ~zero (the compute is a few boards of cheap rect math).
+ *   - a PORTAL full-view enter/exit (`fullViewId`). Maximizing a board moves neither the camera
+ *     nor the `boards` array, so neither trigger above fires — yet a full-viewed board must paint
+ *     regardless of where its canvas node sits in the camera (it's shown full-screen in the modal).
  */
-export function useOffscreenLiveness(paneRef: RefObject<HTMLDivElement | null>): void {
+export function useOffscreenLiveness(
+  paneRef: RefObject<HTMLDivElement | null>,
+  fullViewId: string | null
+): void {
   const { getViewport } = useReactFlow()
   // Last paint-state pushed per board, for diff-skip (only a CHANGED board fires IPC).
   const sentRef = useRef<Map<string, boolean>>(new Map())
+  // The PORTAL full-viewed board, read inside the (stable) reconcile so it isn't a dep.
+  const fullViewIdRef = useRef<string | null>(fullViewId)
 
   const reconcile = useCallback((): void => {
     const pane = paneRef.current?.getBoundingClientRect()
@@ -55,6 +63,7 @@ export function useOffscreenLiveness(paneRef: RefObject<HTMLDivElement | null>):
       .boards.filter((b): b is BrowserBoard => b.type === 'browser')
 
     // First pass: each board's screen rect + visibility (2A).
+    const fvId = fullViewIdRef.current
     const candidates: OsrAliveCandidate[] = boards.map((b) => {
       const screen = stageScreenRect(
         { x: b.x, y: b.y, w: b.w, h: b.h, viewport: b.viewport },
@@ -64,13 +73,21 @@ export function useOffscreenLiveness(paneRef: RefObject<HTMLDivElement | null>):
       return {
         id: b.id,
         screen,
-        visible: isOsrVisible({ screen, pane: paneBox, zoom: vp.zoom, lod: LOD_ZOOM })
+        // A PORTAL-full-viewed board is shown full-screen in the modal no matter where (or whether)
+        // its canvas node sits in the camera — force it visible so liveness keeps it PAINTING. Else
+        // full-viewing a board that was off-screen / below LOD (window paused or evicted) shows a
+        // blank/frozen modal: a paused window drops every invalidate(), so no resize can repaint it.
+        visible:
+          b.id === fvId || isOsrVisible({ screen, pane: paneBox, zoom: vp.zoom, lod: LOD_ZOOM })
       }
     })
 
     // 2B — rank for the MAX_LIVE existence cap (visible-first, then nearest the pane centre) and
     // publish each board's alive flag. useOffscreenPreview gates its window open/close on it.
     const aliveSet = rankOsrAlive({ candidates, cap: OSR_MAX_LIVE, center })
+    // Never evict the full-viewed board, even past the cap: forcing it visible already ranks it
+    // first, but an off-screen rect can sort it far by centre-distance if >cap boards are visible.
+    if (fvId && candidates.some((c) => c.id === fvId)) aliveSet.add(fvId)
     const aliveRecord: Record<string, boolean> = {}
     for (const c of candidates) aliveRecord[c.id] = aliveSet.has(c.id)
     useOsrLivenessStore.getState().setAlive(aliveRecord)
@@ -113,4 +130,12 @@ export function useOffscreenLiveness(paneRef: RefObject<HTMLDivElement | null>):
     })
     return unsub
   }, [reconcile])
+
+  // Full-view enter/exit: neither the camera nor the boards array changes, so the two triggers
+  // above miss it — re-gate explicitly. Entering forces the full-viewed board alive + painting;
+  // exiting (→ null) re-derives its real on-screen visibility (it may re-freeze if off-screen).
+  useEffect(() => {
+    fullViewIdRef.current = fullViewId
+    reconcile()
+  }, [fullViewId, reconcile])
 }
