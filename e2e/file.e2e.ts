@@ -300,6 +300,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'alpha.ts', 'export const A = 1\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -345,6 +348,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       writeFileSync(join(tmp, 'pkg', 'sub', 'leaf.ts'), 'export const L = 1\n')
       writeFileSync(join(tmp, 'zzz.txt'), 'root sibling\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -384,6 +390,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A = 1\n')
       await mainCall(electronApp, 'writeProjectFile', tmp, 'b.ts', 'export const B = 2\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -444,6 +453,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'note.ts', 'export const N = 1\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -504,6 +516,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
         await mainCall(electronApp, 'writeProjectFile', tmp, f, `export const X = '${f}'\n`)
       }
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -556,6 +571,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'x.ts', 'export const X = 1\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000

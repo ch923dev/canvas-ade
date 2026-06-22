@@ -13,6 +13,9 @@ import { create } from 'zustand'
 interface FileTreeUiState {
   revealNonce: number
   pendingBindId: string | null
+  /** Reveal the docked tree (bump the nonce the auto-hide SidePanel listens for), without arming
+   *  a board. Mirrors the user moving onto the left-edge zone — the only way to surface the tree. */
+  reveal: () => void
   /** Reveal the docked tree AND arm `boardId` to receive the next tree-file click. */
   requestBrowse: (boardId: string) => void
   /** Disarm (the board was bound, the user canceled, or a different board armed). */
@@ -22,6 +25,7 @@ interface FileTreeUiState {
 export const useFileTreeUiStore = create<FileTreeUiState>((set) => ({
   revealNonce: 0,
   pendingBindId: null,
+  reveal: () => set((s) => ({ revealNonce: s.revealNonce + 1 })),
   requestBrowse: (boardId) =>
     set((s) => ({ revealNonce: s.revealNonce + 1, pendingBindId: boardId })),
   clearPendingBind: () => set((s) => (s.pendingBindId === null ? s : { pendingBindId: null }))

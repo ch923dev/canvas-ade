@@ -14,6 +14,7 @@ import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { useOsrWidgetStore } from '../store/osrWidgetStore'
+import { useFileTreeUiStore } from '../store/fileTreeUiStore'
 import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
 import {
   fromObject,
@@ -284,6 +285,10 @@ export interface CanvasE2E {
   openProjectFromDisk: (
     dir: string
   ) => Promise<{ status: string; error: string | null; boardCount: number }>
+  /** Reveal the auto-hide docked file-tree panel (mirrors the user moving onto the left-edge zone).
+   *  Since SLICE-013 the FileTree is lazy and only MOUNTS once the panel has been revealed, so a tree
+   *  probe must reveal first — a real user never interacts with the still-hidden (unmounted) tree. */
+  revealSidePanel: () => void
   /** 4A — force a Browser board's audible flag so the URL-bar audio control renders without real
    *  media (OSR headless rarely fires media-started-playing); the test then drives the popover. */
   setOsrAudible: (id: string, audible: boolean) => void
@@ -746,6 +751,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         error: p.error ?? null,
         boardCount: useCanvasStore.getState().boards.length
       }
+    },
+    revealSidePanel() {
+      useFileTreeUiStore.getState().reveal()
     }
   }
   window.__canvasE2E = api
