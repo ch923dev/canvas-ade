@@ -213,34 +213,4 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
       .poll(async () => (await panel.boundingBox())?.height ?? 0, { timeout: 3000 })
       .toBeGreaterThan(before.height + 10)
   })
-
-  test('Assets and Downloads tabs switch and render their views', async ({ page, electronApp }) => {
-    const url = await mainCall<string>(electronApp, 'localUrl')
-    const id = await seed(page, 'browser', { url })
-    await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
-    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
-
-    await page.getByRole('button', { name: 'Network inspector' }).click()
-    await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
-
-    // Network is the default tab (the request table shows).
-    await expect(page.locator('.bb-net-rows')).toBeVisible()
-
-    // Assets tab: the asset list + its own meta count ("N assets") render; the request table is gone.
-    await page.getByRole('button', { name: 'Assets', exact: true }).click()
-    await expect(page.locator('.bb-asset-list')).toBeVisible()
-    await expect(page.locator('.bb-net-meta')).toContainText('asset')
-    await expect(page.locator('.bb-net-rows')).toHaveCount(0)
-
-    // Downloads tab: empty state (no downloads happened) + a disabled clear button.
-    await page.getByRole('button', { name: 'Downloads', exact: true }).click()
-    await expect(page.locator('.bb-dl-list')).toBeVisible()
-    await expect(page.locator('.bb-net-empty')).toContainText('No downloads yet')
-    await expect(page.getByRole('button', { name: 'Clear downloads' })).toBeDisabled()
-
-    // Back to Network restores the request table.
-    await page.getByRole('button', { name: 'Network', exact: true }).click()
-    await expect(page.locator('.bb-net-rows')).toBeVisible()
-  })
 })

@@ -14,7 +14,6 @@ import {
 } from 'react'
 import { Icon } from '../../Icon'
 import { useOsrNetworkStore, type NetDock, type NetTab } from '../../../store/osrNetworkStore'
-import { useOsrWidgetStore, type OsrDownloadRecord } from '../../../store/osrWidgetStore'
 import type { NetRecord } from '../../../../../preload'
 import {
   formatSize,
@@ -38,11 +37,6 @@ import {
   type SortState
 } from '../../../lib/osrNetFormat'
 import { HttpDetail, WsDetail, tabsFor, type DetailTab, type BodyState } from './OsrNetworkDetail'
-import { AssetsTab, DownloadsTab } from './OsrResourceTabs'
-
-// Stable empty list so the widget-store selector keeps reference identity when a board has no
-// downloads (a fresh `[]` each render would defeat zustand's Object.is bail-out).
-const NO_DOWNLOADS: OsrDownloadRecord[] = []
 
 export function OsrNetworkPanel({
   boardId,
@@ -62,8 +56,6 @@ export function OsrNetworkPanel({
   const setSize = useOsrNetworkStore((s) => s.setSize)
   const setPreserveFlag = useOsrNetworkStore((s) => s.setPreserve)
   const select = useOsrNetworkStore((s) => s.select)
-  const downloads = useOsrWidgetStore((s) => s.downloads[boardId] ?? NO_DOWNLOADS)
-  const clearDownloads = useOsrWidgetStore((s) => s.clearDownloads)
 
   const [filter, setFilter] = useState('')
   const [regex, setRegex] = useState(false)
@@ -184,17 +176,6 @@ export function OsrNetworkPanel({
           label="Network"
           active={tab === 'network'}
           onClick={() => setTab(boardId, 'network')}
-        />
-        <TabBtn
-          label="Assets"
-          active={tab === 'assets'}
-          onClick={() => setTab(boardId, 'assets')}
-        />
-        <TabBtn
-          label="Downloads"
-          active={tab === 'downloads'}
-          count={downloads.length || undefined}
-          onClick={() => setTab(boardId, 'downloads')}
         />
         <span className="bb-net-spacer" />
         <div className="bb-net-dockswitch" role="group" aria-label="Dock position">
@@ -372,22 +353,8 @@ export function OsrNetworkPanel({
         </>
       )}
 
-      {/* ── Assets tab ── static resources derived from the same capture; click drives the detail pane */}
-      {tab === 'assets' && (
-        <AssetsTab records={board.records} selectedId={board.selected} onSelect={onSelect} />
-      )}
-
-      {/* ── Downloads tab ── files the page saved (from the widget store's download stream) */}
-      {tab === 'downloads' && (
-        <DownloadsTab
-          downloads={downloads}
-          onReveal={(p) => void window.api.revealOsrDownload(p)}
-          onClear={() => clearDownloads(boardId)}
-        />
-      )}
-
-      {/* details pane (Network + Assets — Downloads has no per-row detail) */}
-      {tab !== 'downloads' && selected && (
+      {/* details pane (a selected request/WS row) */}
+      {selected && (
         <div className="bb-net-details">
           <div className="bb-net-subtabs">
             {tabsFor(selected).map((t) => (

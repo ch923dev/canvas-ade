@@ -568,34 +568,6 @@ export function netPanelResizeFraction(
   return Math.min(NET_PANEL_MAX_FRAC, Math.max(NET_PANEL_MIN_FRAC, raw))
 }
 
-// ── Assets & Downloads tabs ──────────────────────────────────────────────────────────────────
-
-/** Resource types treated as "assets" (the static resources a page loads) for the Assets tab.
- *  Excludes document / xhr / fetch / websocket / eventsource / other — those are "traffic". */
-export const ASSET_TYPES: ReadonlySet<string> = new Set([
-  'image',
-  'font',
-  'stylesheet',
-  'media',
-  'script',
-  'manifest'
-])
-
-/** Filter a record list down to static assets (insertion order preserved). MAIN stores the raw CDP
- *  resourceType (capitalized: "Image"/"Script"/…), so compare case-insensitively like matchesType. */
-export function assetRecords(records: NetRecord[]): NetRecord[] {
-  return records.filter((r) => ASSET_TYPES.has((r.type || '').toLowerCase()))
-}
-
-/** Download progress percent (0..100), or undefined when the total size is unknown. */
-export function downloadPct(
-  received: number | undefined,
-  total: number | undefined
-): number | undefined {
-  if (!total || total <= 0 || received === undefined) return undefined
-  return Math.min(100, Math.max(0, Math.round((received / total) * 100)))
-}
-
 /**
  * Pretty-print a body for display: indent JSON 2-space when the mime says JSON OR the text looks
  * like JSON (begins with `{`/`[`), so both responses (mime-typed) and request payloads (whose

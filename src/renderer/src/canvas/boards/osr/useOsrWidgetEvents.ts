@@ -23,8 +23,7 @@ export function useOsrWidgetEvents(boardId: string): void {
     })
     const offDownload = window.api.onPreviewOsrDownload((d) => {
       if (d.id !== boardId) return
-      store.applyDownload(boardId, d) // persistent list for the Downloads tab
-      toastForDownload(boardId, d) // transient at-a-glance feedback
+      toastForDownload(boardId, d) // transient at-a-glance feedback (+ Show → reveal)
     })
     return () => {
       offDialog()

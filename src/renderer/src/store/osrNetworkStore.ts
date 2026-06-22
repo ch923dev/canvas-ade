@@ -9,9 +9,10 @@ import { create } from 'zustand'
 import type { NetRecord, WsRecord, OsrNetMessage } from '../../../preload'
 
 export type NetDock = 'bottom' | 'right'
-/** Which inspector tab is showing. Network = requests; Assets = static resources (derived from the
- *  same capture); Downloads = files the page saved (from the widget store's download stream). */
-export type NetTab = 'network' | 'assets' | 'downloads'
+/** The inspector view. Only the Network view remains (the Assets/Downloads tabs were removed once the
+ *  project-level Project Library became the home for project files); kept as a one-member union so the
+ *  store shape + the header tab affordance stay intact. */
+export type NetTab = 'network'
 
 export interface BoardNet {
   records: NetRecord[] // insertion-ordered (deltas upsert by requestId)
