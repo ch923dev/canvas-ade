@@ -1,5 +1,5 @@
 import type { IpcMain } from 'electron'
-import { WebContentsView, BrowserWindow, app } from 'electron'
+import { WebContentsView, BrowserWindow } from 'electron'
 import { existsSync } from 'node:fs'
 import { isForeignSender } from './ipcGuard'
 import {
@@ -500,11 +500,11 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   // covers the main doc + all frames (incl. cross-origin iframes); flat-mode auto-attach adds workers
   // (verified 2026-06-21). Always-on into a bounded ring; deltas emit only while a panel is subscribed.
   wireOsrNetwork(wc, e.net, emitWidget, id)
-  // Downloads (4D): save to the OS Downloads folder (no parented save-dialog freeze) + toast,
-  // token-bucket throttled. Per-board session (`preview-osr-${id}`), so the listener is board-scoped.
+  // Downloads (4D): saved into the project's `.canvas/downloads/` (ADR 0009; OS Downloads when no
+  // project is open — no parented save-dialog freeze), resolved per-download + toast, token-bucket
+  // throttled. Per-board session (`preview-osr-${id}`), so the listener is board-scoped.
   const allowDownload = createOpenExternalLimiter()
   e.teardownDownloads = registerOsrDownloads(sess, {
-    downloadsDir: app.getPath('downloads'),
     exists: existsSync,
     allow: allowDownload,
     emit: (info) => emitWidget('preview:osrDownload', { id, ...info })

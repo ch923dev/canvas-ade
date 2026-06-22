@@ -30,6 +30,7 @@ const CANVAS_DIR = '.canvas'
 const CANVAS = 'canvas.json'
 const CANVAS_BAK = 'canvas.json.bak'
 const ASSETS = 'assets'
+const DOWNLOADS = 'downloads'
 
 // ── On-disk path resolution (ADR 0009) ───────────────────────────────────────────
 // Canonical locations live under `<project>/.canvas/`; the `legacy*` helpers point at the
@@ -37,7 +38,10 @@ const ASSETS = 'assets'
 const canvasRoot = (dir: string): string => join(dir, CANVAS_DIR)
 const primaryPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS)
 const bakPath = (dir: string): string => join(dir, CANVAS_DIR, CANVAS_BAK)
-const assetsDirOf = (dir: string): string => join(dir, CANVAS_DIR, ASSETS)
+// Exported (Project Library + OSR downloads relocation): the `.canvas/assets` blob store and the
+// `.canvas/downloads` folder that OSR Browser-board downloads now save into (ADR 0009).
+export const assetsDirOf = (dir: string): string => join(dir, CANVAS_DIR, ASSETS)
+export const downloadsDirOf = (dir: string): string => join(dir, CANVAS_DIR, DOWNLOADS)
 const legacyPrimary = (dir: string): string => join(dir, CANVAS)
 const legacyBak = (dir: string): string => join(dir, CANVAS_BAK)
 const legacyAssets = (dir: string): string => join(dir, ASSETS)

@@ -271,7 +271,8 @@ describe('registerOsrDownloads', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const session = mkSession() as any
     registerOsrDownloads(session, {
-      downloadsDir: '/dl',
+      getDownloadsDir: () => '/dl',
+      ensureDir: () => {},
       exists: () => false,
       allow: () => true,
       emit
@@ -293,7 +294,8 @@ describe('registerOsrDownloads', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const session = mkSession() as any
     registerOsrDownloads(session, {
-      downloadsDir: '/dl',
+      getDownloadsDir: () => '/dl',
+      ensureDir: () => {},
       exists: () => false,
       allow: () => false,
       emit
@@ -309,7 +311,8 @@ describe('registerOsrDownloads', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const session = mkSession() as any
     registerOsrDownloads(session, {
-      downloadsDir: '/dl',
+      getDownloadsDir: () => '/dl',
+      ensureDir: () => {},
       exists: () => false,
       allow: () => true,
       emit

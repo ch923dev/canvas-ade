@@ -1,7 +1,9 @@
-import { app, dialog, shell } from 'electron'
+import { dialog, shell } from 'electron'
 import type { BrowserWindow, WebContents, Session, DownloadItem, IpcMain } from 'electron'
+import { mkdirSync } from 'node:fs'
 import { basename, join, resolve, sep } from 'node:path'
 import { isForeignSender } from './ipcGuard'
+import { getDownloadsDir } from './projectLibrary'
 
 /**
  * OS-3 Phase 4 — MAIN-side native-widget & dialog support for the OSR Browser preview.
@@ -403,19 +405,26 @@ export function setOsrWidgetValue(wc: OsrCdp, value: string): void {
 /* ── Downloads (4D) ──────────────────────────────────────────────────────────────────────────── */
 
 export interface OsrDownloadDeps {
-  downloadsDir: string
   exists: (p: string) => boolean
   /** Token-bucket gate (the `createOpenExternalLimiter` pattern) — false ⇒ over budget, cancel. */
   allow: () => boolean
   emit: (info: OsrDownloadInfo) => void
+  /** Resolve the save dir per download — default: the open project's `.canvas/downloads/`, else OS
+   *  Downloads (ADR 0009). Resolved at save time so a project switch retargets without re-registering. */
+  getDownloadsDir?: () => string
+  /** mkdir -p the resolved dir before saving — default `node:fs` mkdirSync; injected for tests. */
+  ensureDir?: (dir: string) => void
 }
 
 /**
- * Policy for a board's downloads: save to the OS Downloads folder (no parented save-dialog freeze),
- * emit start/progress/done/fail toasts, throttle abusive bursts. Returns a teardown that removes the
- * session listener. The session is the per-board `preview-osr-${id}` partition.
+ * Policy for a board's downloads: save into the open project's `.canvas/downloads/` (ADR 0009; OS
+ * Downloads when no project is open — no parented save-dialog freeze), emit start/progress/done/fail
+ * toasts, throttle abusive bursts. Returns a teardown that removes the session listener. The session
+ * is the per-board `preview-osr-${id}` partition.
  */
 export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): () => void {
+  const resolveDir = deps.getDownloadsDir ?? getDownloadsDir
+  const ensureDir = deps.ensureDir ?? ((dir: string) => mkdirSync(dir, { recursive: true }))
   const onWillDownload = (event: Electron.Event, item: DownloadItem): void => {
     if (!deps.allow()) {
       event.preventDefault()
@@ -423,7 +432,9 @@ export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): (
       return
     }
     const name = sanitizeDownloadName(item.getFilename())
-    const savePath = uniqueSavePath(deps.downloadsDir, name, deps.exists)
+    const dir = resolveDir()
+    ensureDir(dir) // the project's `.canvas/downloads/` may not exist yet on the first save
+    const savePath = uniqueSavePath(dir, name, deps.exists)
     item.setSavePath(savePath)
     deps.emit({ state: 'start', name, savePath, total: item.getTotalBytes() })
     item.on('updated', (_e, state) => {
@@ -446,14 +457,15 @@ export function registerOsrDownloads(session: Session, deps: OsrDownloadDeps): (
 }
 
 /** Reveal a completed download in the OS file manager (the toast's Show action). Defense-in-depth:
- *  only ever reveal a path INSIDE the OS Downloads dir — the sole place OSR downloads are written
- *  (`uniqueSavePath(downloadsDir, …)` above). A path that escapes the Downloads dir is dropped, so a
- *  compromised renderer can't use this to open an arbitrary location in the OS file manager. */
-export function revealDownload(savePath: string): void {
+ *  only ever reveal a path INSIDE `allowedDir` — the current OSR download dir (the project's
+ *  `.canvas/downloads/`, else OS Downloads), the sole place OSR downloads are written
+ *  (`uniqueSavePath(dir, …)` above). A path that escapes it is dropped, so a compromised renderer
+ *  can't use this to open an arbitrary location in the OS file manager. */
+export function revealDownload(savePath: string, allowedDir: string): void {
   try {
-    const downloads = app.getPath('downloads')
+    const base = resolve(allowedDir)
     const full = resolve(savePath)
-    if (full !== downloads && !full.startsWith(downloads + sep)) return
+    if (full !== base && !full.startsWith(base + sep)) return
     shell.showItemInFolder(full)
   } catch {
     /* path gone / app not ready */
@@ -541,7 +553,7 @@ export function registerOsrWidgetIpc(
   ipcMain.handle('preview:osrRevealDownload', (ev, savePath: string) => {
     if (isForeignSender(ev, getWin)) return false
     if (typeof savePath !== 'string' || !savePath) return false
-    revealDownload(savePath)
+    revealDownload(savePath, getDownloadsDir())
     return true
   })
 }
