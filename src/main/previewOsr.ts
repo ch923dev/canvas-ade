@@ -673,10 +673,8 @@ function disposeOsr(id: string): void {
   pendingSize.delete(id) // drop a buffered-but-never-applied resize
   pendingPaint.delete(id) // …and a buffered-but-never-applied paint-state
   const settle = resizeSettle.get(id) // cancel a pending settle-invalidate before the window dies
-  if (settle) {
-    clearTimeout(settle)
-    resizeSettle.delete(id)
-  }
+  if (settle) clearTimeout(settle)
+  resizeSettle.delete(id) // Map.delete is idempotent when the id was never scheduled
   const e = osr.get(id)
   if (!e) return
   stopNetFlush(e.net) // cancel a pending Network delta flush before the window dies
