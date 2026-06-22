@@ -78,7 +78,7 @@ describe('boardGitDiff (PR-2)', () => {
       // diff --no-index /dev/null <file> — exit 1 in real git, but the mock resolves with
       // the synthesized addition; boardGitDiff returns the captured output either way.
       if (args[0] === 'diff' && args[1] === '--no-index') {
-        const file = args[3]
+        const file = args[args.length - 1] // path is the last arg, after the `--` separator
         return `diff --git a/${file} b/${file}\nnew file mode 100644\n`
       }
       return ''
@@ -91,6 +91,9 @@ describe('boardGitDiff (PR-2)', () => {
     expect(out).toContain('new file mode')
     expect(out.indexOf('TRACKED')).toBeLessThan(out.indexOf('new-a.txt'))
     expect(raw).toHaveBeenCalledWith(['ls-files', '--others', '--exclude-standard', '-z'])
+    // `--` end-of-options separator: an untracked file named like a flag (e.g. `-p`) must be
+    // treated as a path, not parsed as a git option (review warning on the no-index synthesis).
+    expect(raw).toHaveBeenCalledWith(['diff', '--no-index', '--', '/dev/null', 'new-a.txt'])
   })
 
   it('returns the tracked diff alone when there are no untracked files', async () => {

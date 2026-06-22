@@ -188,7 +188,7 @@ export async function boardGitDiff(
       // `--no-index` against the null device renders the file as a brand-new addition
       // (`new file mode`), and a binary file as `Binary files /dev/null and b/<file> differ`.
       // It exits non-zero whenever the files differ (always here) → tolerateExit.
-      const part = await run((g) => g.raw(['diff', '--no-index', '/dev/null', file]), {
+      const part = await run((g) => g.raw(['diff', '--no-index', '--', '/dev/null', file]), {
         tolerateExit: true
       })
       if (part) parts.push(part)
