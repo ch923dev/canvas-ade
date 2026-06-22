@@ -23,6 +23,7 @@
  */
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -254,14 +255,23 @@ export function FileBoard({
   }, [path, ext])
 
   // -- Language resolution + highlighting (sync; no worker, no eval) -------------
+  // SLICE-009: the highlight (Lezer parse) + markdown render are the per-keystroke hot paths. Key
+  // them on a DEFERRED copy of `text` (React 19) so an edit commits the urgent editor update first
+  // and the expensive parse runs at low priority — fast typing skips intermediate values (coalesced
+  // like a debounce) and never blocks input. VIEW-mode snapshot / split preview converge once typing
+  // settles. (Does NOT move the parse off-thread — that first-open block is SLICE-008's worker.)
+  const deferredText = useDeferredValue(text)
   const { support, parser } = useMemo(() => resolveLanguage(ext), [ext])
   const extensions = useMemo(() => buildEditorExtensions(support), [support])
-  const snapshotHtml = useMemo(() => buildSnapshotHtml(text, parser), [text, parser])
+  const snapshotHtml = useMemo(
+    () => buildSnapshotHtml(deferredText, parser),
+    [deferredText, parser]
+  )
   // Render Markdown only when a markdown board is showing the preview or the split (cheap to skip).
   const showMarkdown = isMarkdown && (mode === 'preview' || mode === 'split')
   const markdownHtml = useMemo(
-    () => (showMarkdown ? renderMarkdownToHtml(text) : ''),
-    [showMarkdown, text]
+    () => (showMarkdown ? renderMarkdownToHtml(deferredText) : ''),
+    [showMarkdown, deferredText]
   )
 
   // -- Save (atomic write via the S1 contract) ----------------------------------
