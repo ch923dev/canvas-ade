@@ -309,3 +309,37 @@ regression test + a green per-merge gate; findings package at `docs/reviews/2026
   matrix verified both legs — **Win 160/163** (3 pre-existing Windows flakes/zoom-band fragility in untouched
   code, all green on Linux) · **Linux 162/163 + 1 skip-by-design, exit 0**. 13/15 carry dedicated unit
   regressions; FIND-010 wiring + FIND-011 unmount are browser-preview-e2e-covered.
+
+## 2026-06-22 — DevTools Network inspector for Browser boards + full-view/paint fixes — #210 (`b76f840f`, 2026-06-22)
+
+Per-board **Chrome-DevTools-style Network inspector** for Browser (OSR) boards, plus a cluster of OSR
+preview/full-view **paint-reliability fixes** surfaced during the manual check (one PR; slice
+research/spec docs dropped on merge → this entry is the residue).
+
+- **Inspector:** CDP Network + WebSocket capture on the shared `wc.debugger` (always-on; bounded MAIN
+  ring `MAX_RECORDS` 1000 / `MAX_SOCKETS` 32 — renderer mirror now bounded too via `capTail`); ZERO IPC
+  when the panel is closed. Tokenized URL + `key:value` filters, regex, invert (a no-op on an empty
+  query — Chrome parity); click-to-sort columns; Waterfall (shared-timeline bars); summary footer;
+  detail tabs (Headers · Payload · Preview · Initiator · Timing · Cookies · WS Messages); **Assets** +
+  **Downloads** tabs; dock bottom/right with a drag-resize handle. The panel SPLITS the stage (flex
+  sibling), not an overlay, so the browser stays fully visible. Every page-controlled string is capped
+  in MAIN before buffering; bodies are fetched lazily + capped.
+- **Full-view / paint fixes (regressions only visible once the panel + idle real sites were exercised):**
+  - full-view a paint-gated (off-screen / below-LOD) board resumes painting — `useOffscreenLiveness`
+    forces the full-viewed board alive + painting (entering full view moves neither camera nor boards).
+  - idle pages no longer stay blank — `registerCrashReadyGate.onReady` now pairs `startPainting()` with
+    `invalidate()` (mirrors the resume path); the always-on Network capture's `did-finish-load`
+    `Network.enable`+`Target.setAutoAttach` could consume Chromium's single implicit begin-frame.
+  - full-view emulator no longer collapses to a blank stage — the closed full-view `.bb-stage` uses a
+    flex COLUMN (definite height) so the emulator `.bb-frame { height:100% }` resolves (same layout the
+    panel-open path used). Environment-specific (headless Chromium resolved the % height fine).
+  - typing stays alive in full view (canvas focus-fixup suppressed); JSON bodies pretty-print; Assets
+    matches capitalized CDP resource types.
+- **Tests/infra:** `/static` (+`/static2`) idle-page route in `localServer.ts` — the default clock page
+  repaints every 1s and structurally masks "blank-until-resize" bugs; `idleBlank.e2e.ts` regression (a
+  contract spy on the onReady invalidate, since the live begin-frame race doesn't surface headless);
+  `fullview.e2e.ts` paint-gated regression via a new `osrPainting` (isPainting) seam.
+- **Gate:** CI green (check · CodeQL · claude-review 0 inline; 2 reviewer warnings + the CodeQL
+  test-probe alert dispositioned inline). Pre-merge full e2e matrix — **Linux 173 passed + 1
+  skip-by-design, exit 0**; **Windows 173 passed + 1 pre-existing flake** (`placement`, real-OS-input
+  teardown race in untouched code; green on Linux + on re-run).
