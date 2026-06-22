@@ -47,7 +47,9 @@ manual dev check + e2e + bot review). One commit per slice; full `typecheck`+`li
 | 012 | 🔶 needs-review | tc+lint green; **UX call** (2000 vs 5000) + memory probe pending |
 | 013 | ✅ fixed | cold-start index 305→**255 KB gzip** (−50); FileTree → 51 KB on-demand chunk |
 | 009 | 🔶 needs-review | **Wave 2** (branch `perf/fixes-wave2`); `useDeferredValue` defers markdown/snapshot reparse; tc+lint; live typing-latency check pending |
-| 002, 005, 006, 008, 010 | ⏳ needs live app | OSR frame transport/render (002/005/006) can break the preview; 008 = new Web Worker infra; 010 = table virtualization (the `wfWin` prop defeats a plain memo). All need a `pnpm dev` session to implement+verify responsibly — NOT done blind. |
+| 005 | ✅ fixed | **Wave 2 live OSR session** — empirical probe proved the paint dirtyRect is device-px (== image) at S=2 → crop now applies at S>1. previewOsr 38/38 unit + **live e2e 7/7** (new `osrCropSupersample` guard + paint/screenshot/hover-S2/idle regression). Partial paints at S>1 now ship the damage rect (e.g. 478×35) instead of the full 16.4 MB frame. |
+| 002, 006 | ⏳ ROI-reduced (live app) | **SLICE-005 shrank their surface:** partial paints (caret/small updates) now ship tiny cropped regions, so the IPC copy (002) and main-thread swizzle (006) costs there are negligible. They now matter **only for full-repaint-heavy previews** (video/animation/continuous scroll). Lower priority; still need `pnpm dev` to implement (002 = MessagePort transport rewrite; 006 = GPU/worker swizzle) + verify. |
+| 008, 010 | ⏳ needs live app | 008 = new Web Worker infra (off-thread Lezer); 010 = table virtualization (the `wfWin` prop defeats a plain memo). Both need a `pnpm dev` session to implement+verify responsibly. |
 
 ## ROI-ranked queue
 
