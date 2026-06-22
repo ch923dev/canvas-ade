@@ -20,7 +20,7 @@ import {
 } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
-import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
+import { captureOsrPng, debugCrashOsr, debugReplayOsrReadyInvalidations } from './previewOsrCapture'
 import { getOsrWindow } from './previewOsr'
 import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
@@ -59,6 +59,15 @@ export interface E2EMain {
    * is the mechanism the modal-blank fix restores.
    */
   osrPainting(id: string): boolean | null
+  /**
+   * Verify the first-ready repaint CONTRACT (PR #210 idle-blank guard): re-fire `did-finish-load`
+   * over an idle, already-loaded board so the PRODUCTION onReady (registerCrashReadyGate) re-runs,
+   * spying on `wc.invalidate`. Returns how many times onReady called invalidate() — ≥1 with the fix
+   * (startPainting + invalidate), 0 without (the regression), -1 if no OSR window. A contract spy
+   * rather than a pixel assertion because the live CDP race does not surface under headless OSR (so a
+   * "stays blank" pixel check cannot be made RED here), but the code path always can.
+   */
+  osrReplayReadyInvalidations(id: string): number
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
@@ -297,6 +306,9 @@ export function installE2EMain(
       } catch {
         return null
       }
+    },
+    osrReplayReadyInvalidations(id) {
+      return debugReplayOsrReadyInvalidations(id)
     },
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)

@@ -574,6 +574,16 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       if (!e.painting) return
       try {
         wc.startPainting()
+        // PAIR startPainting WITH invalidate — exactly like the applyOsrPaint resume path
+        // (startPainting + invalidate). For an IDLE page (paints once on load then never again)
+        // startPainting alone is NOT a reliable first-frame trigger: other work on the
+        // did-finish-load tick (e.g. wireOsrNetwork's armOsrNetwork → Network.enable +
+        // Target.setAutoAttach CDP, registered before this gate) can consume/defer Chromium's
+        // single implicit begin-frame, so the host <canvas> stays blank until the next resize
+        // invalidate (the Network-panel-toggle "workaround"). invalidate() forces one fresh
+        // whole-frame paint deterministically; it is a no-op while painting is stopped and never
+        // double-paints (the same call applyOsrPaint already makes on resume).
+        wc.invalidate()
       } catch {
         /* not an OSR-capable webContents */
       }
@@ -624,7 +634,12 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   const pend = pendingSize.get(id)
   if (pend) {
     pendingSize.delete(id)
-    applyOsrSize(osrWin, e, pend)
+    // Mirror the preview:osrResize IPC handler: a REAL size change schedules a settle-catching
+    // follow-up invalidate (the page re-renders asynchronously after a large size jump; the sync
+    // invalidate inside applyOsrSize can fire before that lands). On the initial open this is the
+    // belt-and-suspenders behind onReady's startPainting+invalidate — an idle page that still
+    // missed its first frame self-recovers ~250ms later without depending on a user resize.
+    if (applyOsrSize(osrWin, e, pend)) scheduleResizeSettle(id)
   }
   // 2A — if a paint-state raced ahead of this open (the liveness manager reconciles on mount),
   // drain it onto the desired flag BEFORE load so onReady honors it (a board that should open
