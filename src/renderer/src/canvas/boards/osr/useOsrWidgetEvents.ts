@@ -22,7 +22,9 @@ export function useOsrWidgetEvents(boardId: string): void {
       if (a.id === boardId) store.setAudible(boardId, a.audible)
     })
     const offDownload = window.api.onPreviewOsrDownload((d) => {
-      if (d.id === boardId) toastForDownload(boardId, d)
+      if (d.id !== boardId) return
+      store.applyDownload(boardId, d) // persistent list for the Downloads tab
+      toastForDownload(boardId, d) // transient at-a-glance feedback
     })
     return () => {
       offDialog()

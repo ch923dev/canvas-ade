@@ -9,6 +9,9 @@ import { create } from 'zustand'
 import type { NetRecord, WsRecord, OsrNetMessage } from '../../../preload'
 
 export type NetDock = 'bottom' | 'right'
+/** Which inspector tab is showing. Network = requests; Assets = static resources (derived from the
+ *  same capture); Downloads = files the page saved (from the widget store's download stream). */
+export type NetTab = 'network' | 'assets' | 'downloads'
 
 export interface BoardNet {
   records: NetRecord[] // insertion-ordered (deltas upsert by requestId)
@@ -16,8 +19,12 @@ export interface BoardNet {
   dropped: number
   open: boolean
   dock: NetDock
+  tab: NetTab
   preserve: boolean // mirrors MAIN's flag (seeded from the replay snapshot)
   selected?: string // selected requestId (drives the details pane)
+  // Drag-resized panel size as a FRACTION (0..1) of the stage cross-axis, kept per dock since
+  // bottom resizes height and right resizes width independently. Undefined ⇒ the CSS default.
+  size?: { bottom?: number; right?: number }
 }
 
 const EMPTY: BoardNet = {
@@ -26,6 +33,7 @@ const EMPTY: BoardNet = {
   dropped: 0,
   open: false,
   dock: 'bottom',
+  tab: 'network',
   preserve: false
 }
 
@@ -35,6 +43,9 @@ interface OsrNetworkState {
   apply: (id: string, msg: OsrNetMessage) => void
   setOpen: (id: string, open: boolean) => void
   setDock: (id: string, dock: NetDock) => void
+  setTab: (id: string, tab: NetTab) => void
+  /** Persist (for the session) the drag-resized panel fraction for the active dock. */
+  setSize: (id: string, dock: NetDock, frac: number) => void
   setPreserve: (id: string, preserve: boolean) => void
   select: (id: string, requestId?: string) => void
   /** Drop a board's state (unmount). */
@@ -91,6 +102,17 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
 
   setDock: (id, dock) =>
     set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), dock } } })),
+
+  setTab: (id, tab) =>
+    set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), tab } } })),
+
+  setSize: (id, dock, frac) =>
+    set((s) => {
+      const cur = s.byBoard[id] ?? EMPTY
+      return {
+        byBoard: { ...s.byBoard, [id]: { ...cur, size: { ...cur.size, [dock]: frac } } }
+      }
+    }),
 
   setPreserve: (id, preserve) =>
     set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), preserve } } })),

@@ -24,7 +24,12 @@ import {
   requestCookies,
   responseCookies,
   hasPayload,
-  hasCookies
+  hasCookies,
+  netPanelResizeFraction,
+  NET_PANEL_MIN_FRAC,
+  NET_PANEL_MAX_FRAC,
+  assetRecords,
+  downloadPct
 } from './osrNetFormat'
 import type { NetRecord } from '../../../preload'
 
@@ -532,5 +537,70 @@ describe('initiatorLabel', () => {
   it('shows the bare type word otherwise', () => {
     expect(initiatorLabel('parser')).toBe('parser')
     expect(initiatorLabel(undefined)).toBe('other')
+  })
+})
+
+describe('netPanelResizeFraction', () => {
+  const stage = { left: 100, top: 50, width: 1000, height: 800 }
+  it('bottom dock: fraction is distance from the pointer up to the stage bottom', () => {
+    // pointer at y=450 → (50+800-450)/800 = 400/800 = 0.5
+    expect(netPanelResizeFraction('bottom', stage, 600, 450)).toBeCloseTo(0.5, 5)
+    // pointer near the top → large panel, clamped to MAX
+    expect(netPanelResizeFraction('bottom', stage, 600, 60)).toBe(NET_PANEL_MAX_FRAC)
+    // pointer near the bottom → tiny panel, clamped to MIN
+    expect(netPanelResizeFraction('bottom', stage, 600, 845)).toBe(NET_PANEL_MIN_FRAC)
+  })
+  it('right dock: fraction is distance from the pointer to the stage right edge', () => {
+    // pointer at x=600 → (100+1000-600)/1000 = 500/1000 = 0.5
+    expect(netPanelResizeFraction('right', stage, 600, 400)).toBeCloseTo(0.5, 5)
+    expect(netPanelResizeFraction('right', stage, 150, 400)).toBe(NET_PANEL_MAX_FRAC)
+    expect(netPanelResizeFraction('right', stage, 1090, 400)).toBe(NET_PANEL_MIN_FRAC)
+  })
+  it('uses the correct axis per dock (right ignores Y, bottom ignores X)', () => {
+    expect(netPanelResizeFraction('right', stage, 600, 9999)).toBeCloseTo(0.5, 5)
+    expect(netPanelResizeFraction('bottom', stage, 9999, 450)).toBeCloseTo(0.5, 5)
+  })
+  it('returns MIN for a zero-size stage (no divide-by-zero)', () => {
+    expect(netPanelResizeFraction('right', { left: 0, top: 0, width: 0, height: 0 }, 0, 0)).toBe(
+      NET_PANEL_MIN_FRAC
+    )
+    expect(netPanelResizeFraction('bottom', { left: 0, top: 0, width: 0, height: 0 }, 0, 0)).toBe(
+      NET_PANEL_MIN_FRAC
+    )
+  })
+})
+
+describe('assetRecords', () => {
+  it('keeps only static asset types, preserving order', () => {
+    const recs = [
+      rec({ requestId: '1', type: 'document' }),
+      rec({ requestId: '2', type: 'image' }),
+      rec({ requestId: '3', type: 'xhr' }),
+      rec({ requestId: '4', type: 'stylesheet' }),
+      rec({ requestId: '5', type: 'script' }),
+      rec({ requestId: '6', type: 'font' }),
+      rec({ requestId: '7', type: 'fetch' }),
+      rec({ requestId: '8', type: 'media' }),
+      rec({ requestId: '9', type: 'websocket' }),
+      rec({ requestId: '10', type: 'manifest' })
+    ]
+    expect(assetRecords(recs).map((r) => r.requestId)).toEqual(['2', '4', '5', '6', '8', '10'])
+  })
+  it('returns [] when there are no assets', () => {
+    expect(assetRecords([rec({ type: 'document' }), rec({ type: 'xhr' })])).toEqual([])
+  })
+})
+
+describe('downloadPct', () => {
+  it('computes a clamped integer percent', () => {
+    expect(downloadPct(50, 100)).toBe(50)
+    expect(downloadPct(0, 100)).toBe(0)
+    expect(downloadPct(150, 100)).toBe(100) // clamped
+    expect(downloadPct(1, 3)).toBe(33) // rounded
+  })
+  it('is undefined when the total is unknown or zero', () => {
+    expect(downloadPct(50, undefined)).toBeUndefined()
+    expect(downloadPct(50, 0)).toBeUndefined()
+    expect(downloadPct(undefined, 100)).toBeUndefined()
   })
 })

@@ -524,3 +524,70 @@ export function waterfallBar(rec: NetRecord, win: WfWindow): WfBar {
   }
   return { leftPct, widthPct, waitPct }
 }
+
+// ── Panel resize ───────────────────────────────────────────────────────────────────────────────
+
+/** Bounds for the drag-resized panel as a fraction of the stage cross-axis (keep the preview and
+ *  the panel both usable — never collapse either to nothing). */
+export const NET_PANEL_MIN_FRAC = 0.15
+export const NET_PANEL_MAX_FRAC = 0.85
+
+/** A DOMRect-like (the `.bb-stage` bounds, client px). */
+export interface StageRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * The panel size FRACTION (of the stage cross-axis) implied by a drag pointer over the stage.
+ * The panel hugs the trailing edge, so its size = distance from the pointer to that edge:
+ *   · bottom dock → height fraction = (stage.bottom − clientY) / stage.height
+ *   · right dock  → width  fraction = (stage.right  − clientX) / stage.width
+ * Both numerator and denominator are screen px, so the ratio is camera-zoom-independent — no scale
+ * math needed. Clamped to [MIN, MAX]. A zero-size stage returns MIN (avoids divide-by-zero).
+ */
+export function netPanelResizeFraction(
+  dock: 'bottom' | 'right',
+  stage: StageRect,
+  clientX: number,
+  clientY: number
+): number {
+  const raw =
+    dock === 'right'
+      ? stage.width > 0
+        ? (stage.left + stage.width - clientX) / stage.width
+        : NET_PANEL_MIN_FRAC
+      : stage.height > 0
+        ? (stage.top + stage.height - clientY) / stage.height
+        : NET_PANEL_MIN_FRAC
+  return Math.min(NET_PANEL_MAX_FRAC, Math.max(NET_PANEL_MIN_FRAC, raw))
+}
+
+// ── Assets & Downloads tabs ──────────────────────────────────────────────────────────────────
+
+/** Resource types treated as "assets" (the static resources a page loads) for the Assets tab.
+ *  Excludes document / xhr / fetch / websocket / eventsource / other — those are "traffic". */
+export const ASSET_TYPES: ReadonlySet<string> = new Set([
+  'image',
+  'font',
+  'stylesheet',
+  'media',
+  'script',
+  'manifest'
+])
+
+/** Filter a record list down to static assets (insertion order preserved). */
+export function assetRecords(records: NetRecord[]): NetRecord[] {
+  return records.filter((r) => ASSET_TYPES.has(r.type))
+}
+
+/** Download progress percent (0..100), or undefined when the total size is unknown. */
+export function downloadPct(
+  received: number | undefined,
+  total: number | undefined
+): number | undefined {
+  if (!total || total <= 0 || received === undefined) return undefined
+  return Math.min(100, Math.max(0, Math.round((received / total) * 100)))
+}

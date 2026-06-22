@@ -1348,6 +1348,49 @@ body {
   min-width: 240px;
   border-left: 1px solid var(--border);
 }
+/* Drag-to-resize divider on the panel's leading edge — a thin invisible hit-strip straddling the
+   split border; a 2px accent line fades in on hover/drag (the same affordance language as the
+   planning width handle). */
+.bb-net-resize {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+.bb-net-resize::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.bb-net-resize:hover::before,
+.bb-net-resize:active::before {
+  opacity: 0.7;
+}
+.bb-net-resize-bottom {
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+}
+.bb-net-resize-bottom::before {
+  height: 2px;
+  width: 100%;
+}
+.bb-net-resize-right {
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+}
+.bb-net-resize-right::before {
+  width: 2px;
+  height: 100%;
+}
 .bb-net-head,
 .bb-net-tools {
   flex: none;
@@ -1370,11 +1413,19 @@ body {
   padding: 0 9px;
   font-size: var(--fs-label);
   font-weight: 500;
+  font-family: var(--ui);
   color: var(--text-3);
+  background: none;
+  border: 0;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
+  cursor: pointer;
 }
-.bb-net-tab-on {
+.bb-net-tab:hover {
+  color: var(--text-2);
+}
+.bb-net-tab-on,
+.bb-net-tab-on:hover {
   color: var(--text);
   border-bottom-color: var(--accent);
 }
@@ -1542,6 +1593,126 @@ body {
   border-bottom: 1px solid var(--border-subtle);
   color: var(--warn);
   font-size: var(--fs-meta);
+}
+/* inline count beside the downloads clear button */
+.bb-net-meta-inline {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+/* empty-state line for the Assets / Downloads tabs (the table variant is `.bb-net-empty td`) */
+.bb-net-empty {
+  padding: 22px 12px;
+  text-align: center;
+  color: var(--text-3);
+  font-style: italic;
+  font-size: var(--fs-meta);
+}
+/* ── Assets tab rows ── */
+.bb-asset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 24px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-meta);
+  text-align: left;
+  cursor: pointer;
+}
+.bb-asset-row:hover {
+  background: var(--surface-raised);
+}
+.bb-asset-row.bb-net-sel {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bb-asset-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bb-asset-type {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.bb-asset-size {
+  flex: none;
+  width: 56px;
+  text-align: right;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+/* ── Downloads tab rows ── */
+.bb-dl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 12px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-dl-row > svg {
+  flex: none;
+  color: var(--text-3);
+}
+.bb-dl-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bb-dl-meta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.bb-dl-done .bb-dl-meta {
+  color: var(--ok);
+}
+.bb-dl-fail .bb-dl-meta {
+  color: var(--err);
+}
+.bb-dl-bar {
+  flex: none;
+  width: 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--inset);
+  overflow: hidden;
+}
+.bb-dl-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.bb-dl-show {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+.bb-dl-show:hover {
+  background: var(--surface-raised);
+  color: var(--text);
 }
 .bb-net-list {
   flex: 1;
