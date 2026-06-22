@@ -383,3 +383,22 @@ research/spec docs dropped on merge → this entry is the residue).
   (200 for a sent 400), post-fix the exact coord (reverting the handler line made the e2e fail at 200,
   confirming root cause + direction). Gate green; pre-push full e2e matrix both legs (1 unrelated
   `menuShell` chrome flake auto-passed on retry); claude-review **0 findings**.
+
+- **`index.css` sliced into feature partials** (PR #217, `9c5c172f`) — the 4,315-line monolith split
+  into 27 feature-scoped partials under `src/renderer/src/styles/**` (`tokens`/`motion`/`base` +
+  `chrome/ boards/ islands/ panels/ canvas/ screens/`), re-aggregated by an `@import` **barrel** in
+  `index.css` (4,315 → 34 lines); `main.tsx` unchanged. **Phase 1 = pure reorg, proven byte-for-byte
+  safe:** Vite inlines `@import` at build time, so the emitted `out/renderer/assets/index-*.css` is
+  rule-level identical to pre-slice (**4,656 rule-lines, zero diff** after stripping comments + blank
+  lines — the only output deltas are a barrel header comment + inter-rule blank-line normalization, both
+  inert). The emitted-CSS diff oracle caught one real bug: the `@font-face url()` moved one dir deeper
+  into `styles/tokens.css`, so `./assets/fonts/` → `../assets/fonts/` was needed to keep Vite hashing
+  the woff2 (else it shipped an unresolved raw path). Gate green (typecheck/lint 0 err/format); headless
+  smoke + seeded-board screenshot dev check ok; e2e **Win 174/174** (lone `gitDiff` failure = known
+  worktree cwd-escape false-fail a CSS change can't touch) + **Linux Docker 175 green** (compensating
+  gate); CI check/analyze/CodeQL/claude-review all pass; bot 1 `[warning]` (doc-lifecycle: delete the
+  transient `PLAN.md` spec) fixed `91fddf3e` + inline-replied. **Phase 2 (dead-rule audit + dedupe + a
+  CSS line-budget regrowth guard; `boards/browser-devtools.css` @923 lines = first split candidate) is a
+  SEPARATE later PR**, output-changing, gated on e2e. Spec lived at
+  `docs/research/2026-06-23-css-slice/PLAN.md` (deleted on merge per the doc-lifecycle; recover via
+  `git show 4306aa12:docs/research/2026-06-23-css-slice/PLAN.md`).
