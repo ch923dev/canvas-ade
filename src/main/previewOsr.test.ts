@@ -221,7 +221,7 @@ describe('clampOsrDirty', () => {
   })
 })
 
-describe('osrPaintRect (2C hardening — crop only at supersample 1)', () => {
+describe('osrPaintRect (2C — crop the device-px dirty rect at any supersample, SLICE-005)', () => {
   const full = { width: 800, height: 600 }
   const dirty = { x: 100, y: 50, width: 200, height: 150 }
 
@@ -229,12 +229,12 @@ describe('osrPaintRect (2C hardening — crop only at supersample 1)', () => {
     expect(osrPaintRect(dirty, full, 1)).toEqual(dirty)
   })
 
-  it('returns the WHOLE frame at supersample 2 (no crop → no DIP/device misalignment)', () => {
-    expect(osrPaintRect(dirty, full, 2)).toEqual({ x: 0, y: 0, width: 800, height: 600 })
+  it('crops the dirty rect at supersample 2 (dirtyRect is device-px == image space — probe-verified)', () => {
+    expect(osrPaintRect(dirty, full, 2)).toEqual(dirty)
   })
 
-  it('returns the whole frame for any S != 1 (e.g. fractional 1.5)', () => {
-    expect(osrPaintRect(dirty, full, 1.5)).toEqual({ x: 0, y: 0, width: 800, height: 600 })
+  it('crops at fractional supersample too (e.g. 1.5)', () => {
+    expect(osrPaintRect(dirty, full, 1.5)).toEqual(dirty)
   })
 
   it('still clamps an out-of-bounds dirty rect at S=1', () => {
