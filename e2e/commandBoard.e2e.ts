@@ -167,7 +167,7 @@ test.describe('@core command board shell (Phase A/B/C)', () => {
             summary: 'Updated 12 deps; lockfile clean.',
             refs: ['package.json', 'pnpm-lock.yaml']
           },
-          diff: 'diff --git a/package.json b/package.json\n+  "left-pad": "1.3.0"\n-  "left-pad": "1.2.0"'
+          diff: 'diff --git a/package.json b/package.json\nindex 1234567..89abcde 100644\n--- a/package.json\n+++ b/package.json\n@@ -1,3 +1,3 @@\n   "dependencies": {\n+  "left-pad": "1.3.0"\n-  "left-pad": "1.2.0"\n   }'
         }
       ])
     )
