@@ -882,7 +882,7 @@ function CanvasInner(): ReactElement {
             {/* Browser preview manager. Mounted INSIDE <ReactFlow> so it can read the live
             camera (useReactFlow / useOnViewportChange) and drive each board's offscreen-preview
             liveness (paint-gating + the MAX_LIVE cap). Renders nothing (returns null). */}
-            <BrowserPreviewLayer paneRef={paneRef} />
+            <BrowserPreviewLayer paneRef={paneRef} fullViewId={fullViewId} />
             {/* D4-C wayfinding minimap (§8 bottom-right island, toggled via `m`/palette).
             Inside <ReactFlow> — RF's <MiniMap> reads nodes + viewport from the RF store.
             Board click = the SAME focus path as Enter/double-click (focusBoardById). */}

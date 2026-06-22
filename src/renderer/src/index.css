@@ -1314,6 +1314,889 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ── DevTools Network inspector (per board) ────────────────────────────────────────────────────
+   A DOM panel over .bb-stage (clips/rounds with the board — the occlusion fix). Two docks (bottom
+   drawer ⇄ right) switched in-header; same internals. Matches the signed-off mock. */
+.bb-navbtn-on {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+/* B3: the panel is a flex SIBLING of the browser region inside .bb-stage — it SPLITS the stage
+   (browser resizes to fit) instead of overlaying. .bb-stage becomes flex (row for right dock,
+   column for bottom) only while the panel is mounted. */
+.bb-net {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--ui);
+  overflow: hidden;
+}
+.bb-net-bottom {
+  width: 100%;
+  height: 50%;
+  border-top: 1px solid var(--border);
+}
+.bb-net-right {
+  height: 100%;
+  width: 44%;
+  max-width: 560px;
+  min-width: 240px;
+  border-left: 1px solid var(--border);
+}
+/* Drag-to-resize divider on the panel's leading edge — a thin invisible hit-strip straddling the
+   split border; a 2px accent line fades in on hover/drag (the same affordance language as the
+   planning width handle). */
+.bb-net-resize {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+.bb-net-resize::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.bb-net-resize:hover::before,
+.bb-net-resize:active::before {
+  opacity: 0.7;
+}
+.bb-net-resize-bottom {
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+}
+.bb-net-resize-bottom::before {
+  height: 2px;
+  width: 100%;
+}
+.bb-net-resize-right {
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+}
+.bb-net-resize-right::before {
+  width: 2px;
+  height: 100%;
+}
+.bb-net-head,
+.bb-net-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 6px 0 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-tools {
+  gap: 6px;
+  padding: 0 8px;
+}
+.bb-net-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 9px;
+  font-size: var(--fs-label);
+  font-weight: 500;
+  font-family: var(--ui);
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.bb-net-tab:hover {
+  color: var(--text-2);
+}
+.bb-net-tab-on,
+.bb-net-tab-on:hover {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.bb-net-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.bb-net-spacer {
+  flex: 1;
+}
+.bb-net-dockswitch {
+  display: inline-flex;
+  gap: 1px;
+  padding: 2px;
+  margin-right: 4px;
+  border-radius: var(--r-ctl);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+}
+.bb-net-dock,
+.bb-net-tool {
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.bb-net-dock {
+  width: 24px;
+  height: 18px;
+}
+.bb-net-tool {
+  width: 24px;
+  height: 22px;
+  border-radius: 4px;
+}
+.bb-net-dock:hover,
+.bb-net-tool:hover {
+  color: var(--text-2);
+}
+.bb-net-dock.bb-net-on {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.bb-net-preserve {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-label);
+  cursor: pointer;
+}
+.bb-net-check {
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  color: var(--void);
+}
+.bb-net-preserve.bb-net-on .bb-net-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.bb-net-filter {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: var(--r-ctl);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-3);
+}
+.bb-net-filter input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-meta);
+}
+/* invalid-regex state — the filter box borders red (DevTools parity) */
+.bb-net-filter-err {
+  border-color: var(--err);
+}
+/* regex (.*) + Invert toggles — same calm one-accent treatment as the dock buttons */
+.bb-net-flag {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.bb-net-flag:hover {
+  color: var(--text-2);
+  background: var(--inset);
+}
+.bb-net-flag.bb-net-on {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.bb-net-meta {
+  flex: none;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.bb-net-dropped {
+  color: var(--warn);
+}
+/* summary footer — pinned to the bottom of the inspector */
+.bb-net-summary {
+  flex: none;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  height: 22px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--border-subtle);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+.bb-net-sumdim {
+  color: var(--text-3);
+}
+.bb-net-paused {
+  flex: none;
+  padding: 7px 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--warn);
+  font-size: var(--fs-meta);
+}
+/* inline count beside the downloads clear button */
+.bb-net-meta-inline {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+/* empty-state line for the Assets / Downloads tabs (the table variant is `.bb-net-empty td`) */
+.bb-net-empty {
+  padding: 22px 12px;
+  text-align: center;
+  color: var(--text-3);
+  font-style: italic;
+  font-size: var(--fs-meta);
+}
+/* ── Assets tab rows ── */
+.bb-asset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 24px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: var(--fs-meta);
+  text-align: left;
+  cursor: pointer;
+}
+.bb-asset-row:hover {
+  background: var(--surface-raised);
+}
+.bb-asset-row.bb-net-sel {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bb-asset-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bb-asset-type {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.bb-asset-size {
+  flex: none;
+  width: 56px;
+  text-align: right;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+/* ── Downloads tab rows ── */
+.bb-dl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 12px;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-dl-row > svg {
+  flex: none;
+  color: var(--text-3);
+}
+.bb-dl-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bb-dl-meta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.bb-dl-done .bb-dl-meta {
+  color: var(--ok);
+}
+.bb-dl-fail .bb-dl-meta {
+  color: var(--err);
+}
+.bb-dl-bar {
+  flex: none;
+  width: 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--inset);
+  overflow: hidden;
+}
+.bb-dl-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.bb-dl-show {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-2);
+  font-family: var(--ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+.bb-dl-show:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.bb-net-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.bb-net-rows {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.bb-net-rows th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  padding: 5px 12px;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* sortable header — the <th> keeps the layout; the inner button carries the click + sort arrow */
+.bb-net-sortth {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.net-num .bb-net-sortth {
+  justify-content: flex-end;
+}
+.bb-net-sortth:hover {
+  color: var(--text-2);
+}
+.bb-net-sortth-on {
+  color: var(--text);
+}
+.bb-net-sortarrow {
+  font-size: 7px;
+  color: var(--accent);
+}
+.bb-net-rows td {
+  padding: 0 12px;
+  height: 26px;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-net-rows .net-num {
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--text-3);
+  width: 84px;
+}
+.bb-net-rows .net-col-type {
+  width: 92px;
+  color: var(--text-2);
+}
+.bb-net-rows .net-col-initiator {
+  width: 130px;
+  color: var(--text-3);
+}
+/* Waterfall column — a shared-timeline bar per request */
+.bb-net-rows .net-col-wf {
+  width: 28%;
+  min-width: 120px;
+}
+.net-wf-track {
+  position: relative;
+  display: block;
+  height: 9px;
+  width: 100%;
+}
+.net-wf-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 1px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.net-wf-wait {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 2px 0 0 2px;
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.bb-net-rows .net-mono {
+  font-family: var(--mono);
+}
+.bb-net-rows .net-name {
+  color: var(--text);
+}
+.bb-net-row {
+  cursor: pointer;
+}
+.bb-net-row:hover td {
+  background: var(--surface-raised);
+}
+.bb-net-row.bb-net-sel td {
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bb-net-row.bb-net-sel .net-name {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* errored rows (HTTP ≥400, failed, canceled, blocked) render the WHOLE row red (DevTools parity) */
+.bb-net-row.bb-net-fail td {
+  color: var(--err);
+}
+/* the navigation-boundary row under Preserve log — a light-blue divider where a new nav began */
+.bb-net-row.bb-net-nav td {
+  background: var(--accent-wash);
+  box-shadow: inset 0 1px 0 var(--accent);
+}
+.bb-net-origin {
+  color: var(--accent);
+  margin-right: 4px;
+}
+.bb-net-ws {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.bb-net-live {
+  color: var(--ok);
+}
+.bb-net-empty td {
+  height: 60px;
+  text-align: center;
+  color: var(--text-3);
+  font-style: italic;
+}
+/* right dock: drop the wider columns so the narrow list reads cleanly */
+.bb-net-right .net-col-type,
+.bb-net-right .net-col-initiator,
+.bb-net-right .net-col-wf {
+  display: none;
+}
+
+/* Resource-type filter pills (DevTools parity, calm/one-accent styling). */
+.bb-net-pills {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-pill {
+  height: 20px;
+  padding: 0 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--ui);
+  font-size: var(--fs-meta);
+  font-weight: 450;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.bb-net-pill:hover {
+  color: var(--text-2);
+  border-color: var(--border);
+}
+.bb-net-pill-on {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+/* Right dock is narrow — let the pills scroll horizontally instead of wrapping tall. */
+.bb-net-right .bb-net-pills {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.bb-net-details {
+  flex: none;
+  height: 40%;
+  min-height: 120px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.bb-net-subtabs {
+  flex: none;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-subtab {
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.bb-net-subtab-on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.bb-net-dbody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 13px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.bb-net-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+  line-height: 16px;
+}
+.bb-net-k {
+  color: var(--text-3);
+  margin-right: 6px;
+}
+.bb-net-url {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Headers › General — the 5 DevTools fields */
+.bb-net-general {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 2px;
+}
+.bb-net-genrow {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.bb-net-statusdot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-right: 5px;
+  background: var(--ok);
+}
+.bb-net-statusdot.bad {
+  background: var(--err);
+}
+/* per-section view source/parsed toggle in a header summary */
+.bb-net-srctoggle {
+  margin-left: 8px;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 10px;
+  cursor: pointer;
+}
+.bb-net-srctoggle:hover {
+  text-decoration: underline;
+}
+.bb-net-v {
+  font-family: var(--mono);
+  color: var(--text);
+  word-break: break-all;
+}
+.bb-net-err {
+  color: var(--err);
+}
+.bb-net-dim {
+  color: var(--text-3);
+}
+.bb-net-headers {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 6px;
+}
+.bb-net-headers summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+}
+.bb-net-headers dl {
+  margin: 6px 0 0;
+  display: grid;
+  grid-template-columns: minmax(90px, 30%) 1fr;
+  gap: 2px 10px;
+}
+.bb-net-headers dl > div {
+  display: contents;
+}
+.bb-net-headers dt {
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+.bb-net-headers dd {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+.bb-net-bodybar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bb-net-lbl {
+  font-size: var(--fs-meta);
+  color: var(--text-2);
+}
+.bb-net-loadbtn {
+  height: 24px;
+  padding: 0 11px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-overlay);
+  color: var(--text);
+  font-size: var(--fs-meta);
+  font-weight: 500;
+  cursor: pointer;
+}
+.bb-net-loadbtn:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+.bb-net-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+.bb-net-bodytext {
+  margin: 0;
+  width: 100%;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-2);
+  max-height: 100%;
+}
+/* Preview tab — rendered image response (raster only; data: <img> runs no script) */
+.bb-net-preview-img {
+  max-width: 100%;
+  max-height: 240px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--inset);
+}
+/* Timing tab — phase bars on a shared timeline */
+.bb-net-timing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-meta);
+}
+.bb-net-tphase {
+  display: grid;
+  grid-template-columns: 124px 1fr 64px;
+  align-items: center;
+  gap: 8px;
+}
+.bb-net-tlabel {
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-net-tbar {
+  position: relative;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--inset);
+}
+.bb-net-tfill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.bb-net-tdur {
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--text-3);
+}
+.bb-net-ttotal {
+  margin-top: 2px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 4px;
+}
+.bb-net-ttotal .bb-net-tlabel {
+  color: var(--text);
+  font-weight: 500;
+}
+.bb-net-frames {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.bb-net-frames td {
+  padding: 0 10px;
+  height: 24px;
+  font-size: var(--fs-meta);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bb-net-frames th {
+  padding: 0 10px;
+  height: 22px;
+  text-align: left;
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.bb-net-frames .ws-dir {
+  width: 32px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.bb-net-frames .net-num {
+  width: 84px;
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--text-3);
+}
+.bb-net-frames .ws-data {
+  font-family: var(--mono);
+  color: var(--text);
+}
+.bb-net-frames .ws-sent .ws-arrow {
+  color: var(--ok); /* outgoing — green (DevTools emphasis) */
+}
+.bb-net-frames .ws-recv .ws-arrow {
+  color: var(--text-3); /* incoming — muted */
+}
+/* control frames (ping/pong/close/continuation) — de-emphasized (Chrome tints them light-yellow;
+   we have no yellow token, so dim+italic conveys "control" within the calm one-accent palette) */
+.bb-net-frames .ws-ctrl td {
+  color: var(--text-3);
+  font-style: italic;
+}
+
 /* ── OS-3 Phase 4 — native-widget & dialog overlays ────────────────────────────────────────────
    The offscreen bitmap can't composite native popups, so we draw them as DOM chrome over the
    host <canvas> inside .bb-frame (clips/rounds with it — the occlusion fix). The full-frame layer

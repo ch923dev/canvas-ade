@@ -241,6 +241,15 @@ function attachInput(
     }
     void window.api.setOsrFocus(boardId, false)
   }
+  // FULL-VIEW FIX (+ belt-and-suspenders normally): suppress the browser's native "focus fixup" on
+  // the canvas. A pointerdown focuses the proxy (above); the browser would then, on the *mousedown*,
+  // move focus to the nearest focusable ancestor — the `.react-flow__node` wrapper on the canvas, but
+  // in FULL VIEW the subtree is portaled into the modal host where there is NO focusable ancestor, so
+  // focus falls through to <body> and typing dies. preventDefault here cancels that fixup so the proxy
+  // keeps focus in both modes. It is LOCAL only — the click is still forwarded to the page via the
+  // pointerdown handler's `mouseDown` send. (The onBlur ancestor re-claim stays as a safety net for any
+  // path that focuses the node explicitly rather than via the fixup.)
+  const onMouseDown = (e: MouseEvent): void => e.preventDefault()
 
   const clearProxy = (): void => {
     proxy.value = ''
@@ -323,6 +332,7 @@ function attachInput(
   })
 
   canvas.addEventListener('pointerdown', onPointerDown)
+  canvas.addEventListener('mousedown', onMouseDown)
   canvas.addEventListener('pointermove', onPointerMove)
   canvas.addEventListener('pointerup', onPointerUp)
   canvas.addEventListener('pointerleave', onPointerLeave)
@@ -342,6 +352,7 @@ function attachInput(
     canvas.style.cursor = ''
     void window.api.setOsrFocus(boardId, false) // drop emulation if torn down while focused
     canvas.removeEventListener('pointerdown', onPointerDown)
+    canvas.removeEventListener('mousedown', onMouseDown)
     canvas.removeEventListener('pointermove', onPointerMove)
     canvas.removeEventListener('pointerup', onPointerUp)
     canvas.removeEventListener('pointerleave', onPointerLeave)

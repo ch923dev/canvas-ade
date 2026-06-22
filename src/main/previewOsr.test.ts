@@ -1,14 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyOsrInitialLoad,
-  sanitizeOsrSize,
-  applyOsrSize,
   applyOsrPaint,
   clampOsrDirty,
   osrPaintRect,
   applyOsrEdit,
   applyOsrIme
 } from './previewOsr'
+import { sanitizeOsrSize, applyOsrSize } from './previewOsrSizing'
 
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
 // else, so a blocked (non-http(s)) scheme skipped the load AND emitted no lifecycle event ->
@@ -121,12 +120,12 @@ describe('applyOsrSize', () => {
     expect(state).toMatchObject({ logicalW: 390, logicalH: 844, superSample: 2 })
   })
 
-  it('no-op-guards an identical size (no second relayout)', () => {
+  it('no-op-guards an identical size (no second relayout) and reports resized=false', () => {
     const { win, setContentSize } = mkWin()
     const state = { logicalW: 1280, logicalH: 800, superSample: 1 }
     const size = { logicalW: 390, logicalH: 844, supersample: 2 }
-    applyOsrSize(win, state, size)
-    applyOsrSize(win, state, size)
+    expect(applyOsrSize(win, state, size)).toBe(true) // first apply changed the surface
+    expect(applyOsrSize(win, state, size)).toBe(false) // identical → no-op
     expect(setContentSize).toHaveBeenCalledTimes(1)
   })
 

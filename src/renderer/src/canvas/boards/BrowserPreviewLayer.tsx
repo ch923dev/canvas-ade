@@ -12,15 +12,18 @@ import { useOffscreenLiveness } from './useOffscreenLiveness'
 export interface LayerProps {
   /** The canvas pane element — useOffscreenLiveness resolves on-screen device rects against it. */
   paneRef: RefObject<HTMLDivElement | null>
+  /** The PORTAL full-viewed board id (or null) — forced alive+painting regardless of its
+   *  canvas-node visibility so the modal never shows a blank/frozen frame. */
+  fullViewId: string | null
 }
 
-export function BrowserPreviewLayer({ paneRef }: LayerProps): null {
+export function BrowserPreviewLayer({ paneRef, fullViewId }: LayerProps): null {
   // Auto-connect (reconnect-on-refused + auto-push-detected-port) only steers board.url; it
   // never touches a preview surface, so it runs unconditionally.
   useBrowserAutoConnect()
   // OS-3 Phase 2 (2A/2B): freeze off-screen / below-LOD offscreen paint pumps (the CPU win)
   // and enforce the MAX_LIVE existence cap. `useOnViewportChange` lives here only (the native
   // camera-sync manager that used to share that single-slot field was deleted in 5C).
-  useOffscreenLiveness(paneRef)
+  useOffscreenLiveness(paneRef, fullViewId)
   return null
 }

@@ -20,7 +20,8 @@ import {
 } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
-import { captureOsrPng, debugCrashOsr } from './previewOsrCapture'
+import { captureOsrPng, debugCrashOsr, debugReplayOsrReadyInvalidations } from './previewOsrCapture'
+import { getOsrWindow } from './previewOsr'
 import { debugSeedOutput, debugTerminalPid, debugWriteTerminal, disposeAllPtys } from './pty'
 import { createProject, getCurrentDir, setCurrentDir } from './projectStore'
 import { createCanvasMemory } from './canvasMemory'
@@ -51,6 +52,22 @@ export interface E2EMain {
   captureOsrToFile(id: string, absPath: string): Promise<boolean>
   /** SIGKILL a board's offscreen preview renderer (D2-C crashed-state probe). */
   crashOsr(id: string): boolean
+  /**
+   * The LIVE offscreen paint state for a board (`webContents.isPainting()`), or null when no OSR
+   * window is open. The full-view-liveness probe asserts this is `true` after maximizing a board
+   * that was paint-gated off-screen/below-LOD — a paused window drops invalidates, so painting:true
+   * is the mechanism the modal-blank fix restores.
+   */
+  osrPainting(id: string): boolean | null
+  /**
+   * Verify the first-ready repaint CONTRACT (PR #210 idle-blank guard): re-fire `did-finish-load`
+   * over an idle, already-loaded board so the PRODUCTION onReady (registerCrashReadyGate) re-runs,
+   * spying on `wc.invalidate`. Returns how many times onReady called invalidate() — ≥1 with the fix
+   * (startPainting + invalidate), 0 without (the regression), -1 if no OSR window. A contract spy
+   * rather than a pixel assertion because the live CDP race does not surface under headless OSR (so a
+   * "stays blank" pixel check cannot be made RED here), but the code path always can.
+   */
+  osrReplayReadyInvalidations(id: string): number
   /** Real OS input through the live window (mouse/keyboard) — preserves transform hit-testing. */
   sendInput(evt: Parameters<BrowserWindow['webContents']['sendInputEvent']>[0]): void
   /** Mint a temp project dir + set it current (e2e has no project dir). Returns the path. */
@@ -281,6 +298,18 @@ export function installE2EMain(
       return true
     },
     crashOsr: debugCrashOsr,
+    osrPainting(id) {
+      const wc = getOsrWindow(id)?.webContents
+      if (!wc || wc.isDestroyed()) return null
+      try {
+        return wc.isPainting()
+      } catch {
+        return null
+      }
+    },
+    osrReplayReadyInvalidations(id) {
+      return debugReplayOsrReadyInvalidations(id)
+    },
     sendInput(evt) {
       win.webContents.sendInputEvent(evt)
     },

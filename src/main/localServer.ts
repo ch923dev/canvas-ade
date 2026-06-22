@@ -52,12 +52,46 @@ const PAGE = `<!doctype html>
   console.log('LOCAL_PAGE_OK');
 </script></body></html>`
 
+// IDLE (static) page — paints ONCE on load, then NEVER repaints (no setInterval, no animation,
+// no JS-driven mutation). This is the page that exposes the "blank until a resize" OSR paint-
+// reliability bug: the default clock PAGE above repaints every second, so a board that came up
+// blank would self-heal on the next tick and the defect is structurally invisible to every e2e
+// that uses it. A genuinely idle page is the only deterministic way to observe "did the first
+// frame stick?". Two visually distinct blocks so osrCanvasNonBlank's non-uniform test passes once
+// a real frame lands.
+const STATIC_PAGE = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>static idle preview</title>
+<style>
+  html,body{margin:0;min-height:100%;font-family:system-ui,sans-serif}
+  body{background:#101418;color:#e9f0fd;padding:24px}
+  h1{margin:0 0 16px;font-size:28px;color:#4f8cff}
+  .panel{background:#1b2330;border:1px solid #2a3545;border-radius:12px;padding:20px;font-size:15px}
+  .bar{height:48px;margin-top:16px;border-radius:8px;background:#4f8cff}
+</style></head>
+<body>
+  <h1>Static idle page</h1>
+  <div class="panel">This page paints once and never repaints — no timers, no animation.</div>
+  <div class="bar"></div>
+<script>document.title = 'static idle preview OK'; console.log('STATIC_PAGE_OK');</script>
+</body></html>`
+
 /** Tiny loopback HTTP server so the WebContentsView smoke works in dev AND in
  *  the packaged build (no Vite dev server to depend on). */
 export function startLocalServer(): Promise<LocalServer> {
   return new Promise((resolve, reject) => {
-    const server: Server = createServer((_req, res) => {
+    const server: Server = createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      // `/static` (and `/static2`) serve the IDLE page (paints once, never repaints) — the page
+      // that surfaces the OSR "blank until resize" paint-reliability bug. Everything else keeps the
+      // existing clock page so the rest of the suite is unchanged. `/static2` is byte-identical;
+      // it exists so a test can navigate board → 2nd idle URL and re-test the post-nav first paint.
+      const path = (req.url ?? '/').split('?')[0]
+      if (path === '/static' || path === '/static2') {
+        res.end(STATIC_PAGE)
+        return
+      }
       res.end(PAGE)
     })
     // Without this, a listen() failure (EACCES from an AV/firewall loopback-bind

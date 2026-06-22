@@ -20,6 +20,20 @@ import {
   applyEffectiveMute,
   registerOsrWidgetIpc
 } from './previewOsrWidgets'
+import {
+  wireOsrNetwork,
+  registerOsrNetworkIpc,
+  createNetState,
+  stopNetFlush,
+  type OsrNetState
+} from './previewOsrNetwork'
+import {
+  OSR_WIDTH,
+  OSR_HEIGHT,
+  sanitizeOsrSize,
+  applyOsrSize,
+  type OsrSizeRequest
+} from './previewOsrSizing'
 
 /**
  * Offscreen Browser-preview producer (OSR) — the SOLE preview engine since OS-3 Phase 5C deleted
@@ -75,6 +89,8 @@ interface OsrEntry {
   // (`preview-osr-${id}`) OUTLIVES the destroyed window, so a discarded listener would leak + double-
   // fire if the board id is ever reused (project restore / migration).
   teardownDownloads?: () => void
+  // Per-board DevTools Network/WS capture (MAIN ring buffer + subscription state). See previewOsrNetwork.
+  net: OsrNetState
 }
 
 // Browser-preview lifecycle events are the SHARED `PreviewEvent` union (previewShared) — emitted on
@@ -91,91 +107,36 @@ const pendingSize = new Map<string, OsrSizeRequest>()
 // ensureOsr — so a board that should open ALREADY-FROZEN (off-screen at mount) never paints a
 // frame before the manager's decision lands. Default-true means an un-buffered board paints.
 const pendingPaint = new Map<string, boolean>()
+// A debounced follow-up `invalidate()` per board, scheduled after a REAL resize (applyOsrSize
+// returned true). A large size jump (full-view enter) makes an idle page re-render asynchronously;
+// the single synchronous invalidate inside applyOsrSize can fire before that re-render lands, so a
+// static page would stay blank until the next resize. This re-invalidates once the layout settles
+// (debounced so a drag-resize's burst collapses to a single trailing repaint).
+const resizeSettle = new Map<string, ReturnType<typeof setTimeout>>()
+const RESIZE_SETTLE_MS = 250
+function scheduleResizeSettle(id: string): void {
+  const existing = resizeSettle.get(id)
+  if (existing) clearTimeout(existing)
+  resizeSettle.set(
+    id,
+    setTimeout(() => {
+      resizeSettle.delete(id)
+      try {
+        osr.get(id)?.osrWin.webContents.invalidate() // entry gone (closed) ⇒ no-op
+      } catch {
+        /* window torn down mid-timer */
+      }
+    }, RESIZE_SETTLE_MS)
+  )
+}
 let owner: BrowserWindow | null = null
 
 /** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). */
 const OSR_FRAME_RATE = 30
-/** INITIAL render size — desktop-preset aspect. The live size is driven per-board by
- *  `preview:osrResize` (M1 supersample + M4 responsive logical width); this is just the
- *  size the window is born at before the first resize arrives. */
-const OSR_WIDTH = 1280
-const OSR_HEIGHT = 800
-
-/** A renderer-requested offscreen render size (`computeOsrSize` → `preview:osrResize`). */
-interface OsrSizeRequest {
-  /** Page CSS width (the preset width → real breakpoint reflow, M4). */
-  logicalW: number
-  /** Page CSS height. */
-  logicalH: number
-  /** Supersample factor S — render at S×, downscale into the stage canvas (M1). */
-  supersample: number
-}
 
 /** The frame-guarded IPC args for `preview:osrResize` (an `OsrSizeRequest` + the board id). */
 export interface OsrResizeArgs extends OsrSizeRequest {
   id: string
-}
-
-/** Minimal hidden-window surface `applyOsrSize` drives — so the resize logic is unit-testable
- *  without a real Electron `BrowserWindow`. A `BrowserWindow` satisfies it structurally. */
-interface OsrResizeTarget {
-  setContentSize(width: number, height: number): void
-  webContents: { setZoomFactor(factor: number): void; invalidate(): void }
-}
-/** The mutable size state `applyOsrSize` reads/writes (the live `OsrEntry` satisfies it). */
-interface OsrSizeState {
-  logicalW: number
-  logicalH: number
-  superSample: number
-  sizeKey?: string
-}
-
-/**
- * Clamp/round a renderer-supplied size to a safe, finite render surface. Defense-in-depth:
- * the renderer computes these (clamped to S≤2), but MAIN must never `setContentSize` to a
- * garbage / non-finite / absurd value if the channel is driven directly. Hard-caps S at 4
- * and each logical dimension at 4096px (a sane max render surface — keeps physical = logical·S
- * within GPU texture limits even at S=4).
- */
-export function sanitizeOsrSize(args: OsrSizeRequest): OsrSizeRequest {
-  const pos = (n: number, fallback: number): number => (Number.isFinite(n) && n > 0 ? n : fallback)
-  return {
-    logicalW: Math.min(4096, Math.round(pos(args.logicalW, OSR_WIDTH))),
-    logicalH: Math.min(4096, Math.round(pos(args.logicalH, OSR_HEIGHT))),
-    supersample: Math.max(1, Math.min(4, pos(args.supersample, 1)))
-  }
-}
-
-/**
- * Apply an offscreen render size (M1 supersample + M4 logical reflow):
- *   - `setContentSize(logical·S)` sets the PHYSICAL surface — a sharper buffer for the stage;
- *   - `setZoomFactor(S)` lays the page out at the LOGICAL width (contentSize/zoom = logical),
- *     so a responsive site reflows at the true breakpoint instead of always at 1280;
- *   - `invalidate()` repaints at the new surface (also clears a stale frame on resume).
- * No-op-guarded via `sizeKey` so a redundant resize never forces a relayout. `superSample` is
- * always updated (applyZoom re-applies it on the next did-finish-load).
- */
-export function applyOsrSize(
-  win: OsrResizeTarget,
-  state: OsrSizeState,
-  size: OsrSizeRequest
-): void {
-  const key = `${size.logicalW}x${size.logicalH}@${size.supersample}`
-  state.superSample = size.supersample
-  state.logicalW = size.logicalW
-  state.logicalH = size.logicalH
-  if (state.sizeKey === key) return // identical surface → skip the relayout
-  state.sizeKey = key
-  try {
-    win.setContentSize(
-      Math.round(size.logicalW * size.supersample),
-      Math.round(size.logicalH * size.supersample)
-    )
-    win.webContents.setZoomFactor(size.supersample)
-    win.webContents.invalidate()
-  } catch {
-    /* window gone / not OSR-capable */
-  }
 }
 
 /** A pixel rect (OS-3 Phase 2 / 2C — the dirty region of a frame). */
@@ -488,7 +449,8 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     logicalH: OSR_HEIGHT,
     superSample: 1,
     painting: true,
-    manualMuted: false
+    manualMuted: false,
+    net: createNetState()
   }
   osr.set(id, e)
   const wc = osrWin.webContents
@@ -528,6 +490,10 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
     onPopup: (info) => emitWidget('preview:osrPopup', { id, ...info }),
     getWin: () => owner
   })
+  // Per-board DevTools Network/WS capture over the SAME debugger (MAIN-only, ADR 0002). Root Network
+  // covers the main doc + all frames (incl. cross-origin iframes); flat-mode auto-attach adds workers
+  // (verified 2026-06-21). Always-on into a bounded ring; deltas emit only while a panel is subscribed.
+  wireOsrNetwork(wc, e.net, emitWidget, id)
   // Downloads (4D): save to the OS Downloads folder (no parented save-dialog freeze) + toast,
   // token-bucket throttled. Per-board session (`preview-osr-${id}`), so the listener is board-scoped.
   const allowDownload = createOpenExternalLimiter()
@@ -608,6 +574,16 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
       if (!e.painting) return
       try {
         wc.startPainting()
+        // PAIR startPainting WITH invalidate — exactly like the applyOsrPaint resume path
+        // (startPainting + invalidate). For an IDLE page (paints once on load then never again)
+        // startPainting alone is NOT a reliable first-frame trigger: other work on the
+        // did-finish-load tick (e.g. wireOsrNetwork's armOsrNetwork → Network.enable +
+        // Target.setAutoAttach CDP, registered before this gate) can consume/defer Chromium's
+        // single implicit begin-frame, so the host <canvas> stays blank until the next resize
+        // invalidate (the Network-panel-toggle "workaround"). invalidate() forces one fresh
+        // whole-frame paint deterministically; it is a no-op while painting is stopped and never
+        // double-paints (the same call applyOsrPaint already makes on resume).
+        wc.invalidate()
       } catch {
         /* not an OSR-capable webContents */
       }
@@ -658,7 +634,12 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   const pend = pendingSize.get(id)
   if (pend) {
     pendingSize.delete(id)
-    applyOsrSize(osrWin, e, pend)
+    // Mirror the preview:osrResize IPC handler: a REAL size change schedules a settle-catching
+    // follow-up invalidate (the page re-renders asynchronously after a large size jump; the sync
+    // invalidate inside applyOsrSize can fire before that lands). On the initial open this is the
+    // belt-and-suspenders behind onReady's startPainting+invalidate — an idle page that still
+    // missed its first frame self-recovers ~250ms later without depending on a user resize.
+    if (applyOsrSize(osrWin, e, pend)) scheduleResizeSettle(id)
   }
   // 2A — if a paint-state raced ahead of this open (the liveness manager reconciles on mount),
   // drain it onto the desired flag BEFORE load so onReady honors it (a board that should open
@@ -681,8 +662,14 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
 function disposeOsr(id: string): void {
   pendingSize.delete(id) // drop a buffered-but-never-applied resize
   pendingPaint.delete(id) // …and a buffered-but-never-applied paint-state
+  const settle = resizeSettle.get(id) // cancel a pending settle-invalidate before the window dies
+  if (settle) {
+    clearTimeout(settle)
+    resizeSettle.delete(id)
+  }
   const e = osr.get(id)
   if (!e) return
+  stopNetFlush(e.net) // cancel a pending Network delta flush before the window dies
   e.teardownDownloads?.() // 4D — remove the session will-download listener (the session outlives the window)
   try {
     e.osrWin.destroy() // hidden offscreen window — destroy to free the renderer
@@ -1014,7 +1001,7 @@ export function registerPreviewOsrHandlers(
       pendingSize.set(args.id, size)
       return true
     }
-    applyOsrSize(e.osrWin, e, size)
+    if (applyOsrSize(e.osrWin, e, size)) scheduleResizeSettle(args.id)
     return true
   })
   // M2 / 2A — set a board's desired paint state. Sent by the renderer's settle-gated liveness
@@ -1047,4 +1034,12 @@ export function registerPreviewOsrHandlers(
   // OS-3 Phase 4 — native-widget handlers (mute · dialog respond · popup commit/dismiss · reveal
   // download). Registered from previewOsrWidgets.ts (frame-guarded there) so this file stays focused.
   registerOsrWidgetIpc(ipcMain, getWin, (id) => osr.get(id))
+  // Per-board DevTools Network handlers (subscribe · unsubscribe · clear · setPreserve · getBody),
+  // frame-guarded in previewOsrNetwork.ts; `emit` injects the board id onto the shared widget channel.
+  registerOsrNetworkIpc(
+    ipcMain,
+    getWin,
+    (id) => osr.get(id),
+    (id, msg) => emitWidget('preview:osrNet', { id, ...msg })
+  )
 }

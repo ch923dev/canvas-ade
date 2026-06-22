@@ -37,6 +37,55 @@ test.describe('@preview full view (OSR portal relocation — real instance)', ()
     ).toBe(true)
   })
 
+  // Regression: full-viewing a board the liveness manager had PAINT-GATED (off-screen / below LOD)
+  // showed a blank/frozen modal — the manager has no full-view awareness and entering full view moves
+  // neither the camera nor the boards array, so it never resumed the paused offscreen window (and a
+  // paused window drops every invalidate(), so no resize could repaint it). The fix forces the
+  // full-viewed board alive+painting and re-gates on the fullViewId change. Asserted at the mechanism
+  // level via the MAIN `osrPainting` (isPainting) seam — the painted frame itself is not reliably
+  // observable headless, but the paint pump's on/off state is.
+  test('full-viewing a paint-gated (off-screen) board resumes painting — no blank modal', async ({
+    page,
+    electronApp
+  }) => {
+    const paint = (): Promise<boolean | null> =>
+      mainCall<boolean | null>(electronApp, 'osrPainting', browserId)
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const browserId = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(browserId)})`)
+    expect(await pollEval(page, status(browserId, 'connected'), 10_000)).toBe(true)
+    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'painting while visible').toBe(true)
+    expect(await paint(), 'paints while on-screen').toBe(true)
+
+    // Move it far off-screen → the M2 CPU gate pauses the offscreen window (setOsrPaint(false) →
+    // MAIN stopPainting), reliably via the boards-ref reconcile trigger.
+    await evalIn(
+      page,
+      `window.__canvasE2E.patchBoard(${JSON.stringify(browserId)}, { x: 100000, y: 100000 })`
+    )
+    await expect
+      .poll(paint, { timeout: 6000, message: 'off-screen board is paint-gated paused' })
+      .toBe(false)
+
+    // Maximize it: shown full-screen in the modal regardless of its canvas-node position, so liveness
+    // must force it back to painting. Pre-fix this stayed false → the blank modal.
+    await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(browserId)})`)
+    await expect
+      .poll(paint, { timeout: 6000, message: 'full view resumes the paint-gated board' })
+      .toBe(true)
+    await page.waitForTimeout(500)
+    expect(await pollEval(page, osrNonBlank(browserId), 8000), 'modal shows a live frame').toBe(
+      true
+    )
+
+    // Exit: off-screen again → liveness re-pauses it (the gate is RELEASED on exit, not stuck on).
+    await evalIn(page, 'window.__canvasE2E.setFullView(null)')
+    await expect
+      .poll(paint, { timeout: 6000, message: 'exiting full view re-pauses the off-screen board' })
+      .toBe(false)
+  })
+
   test('Mobile full view is an aspect-correct letterboxed emulator (not stretched)', async ({
     page
   }) => {

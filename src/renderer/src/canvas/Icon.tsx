@@ -53,6 +53,10 @@ export type IconName =
   | 'distribute-h'
   | 'distribute-v'
   | 'connector'
+  // DevTools Network inspector: the toggle (a network-activity pulse) + the dock-position switch.
+  | 'activity'
+  | 'dock-bottom'
+  | 'dock-right'
   // Agentic-CLI preset glyphs (New Terminal dialog). Monochrome `currentColor` marks that
   // approximate each brand's recognizable silhouette in the system's stroked style (kept
   // de-colored / non-illustrative per DESIGN.md §6). codex + shell are multi-primitive and
@@ -121,6 +125,10 @@ const PATHS: Record<IconName, string> = {
   'distribute-v': 'M4 5h16M4 19h16M7 11v2h10v-2z',
   // Connector: two node rings joined by a diagonal link (the draw-a-cable affordance).
   connector: 'M9 17a2 2 0 1 1-4 0 2 2 0 1 1 4 0M19 7a2 2 0 1 1-4 0 2 2 0 1 1 4 0M8.5 15.5l7-7',
+  // DevTools Network: an activity pulse (toggle) + panel-with-docked-region glyphs (dock switch).
+  activity: 'M22 12h-4l-3 8L9 4l-3 8H2',
+  'dock-bottom': 'M4 4h16v16H4zM4 15h16',
+  'dock-right': 'M4 4h16v16H4zM15 4v16',
   // Agentic-CLI preset brand marks (monochrome approximations):
   // claude — Anthropic radial burst (8 rays from centre).
   'agent-claude':
