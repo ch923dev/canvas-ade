@@ -367,3 +367,19 @@ research/spec docs dropped on merge → this entry is the residue).
   review `[warning]`: a reveal-time `getDownloadsDir()` check silently failed after a project switch).
   Gate green; full e2e matrix **Win 174 / Linux 174**; 4 CodeQL test-only alerts (JSON.stringify into
   e2e `pollEval` code strings) dismissed as used-in-tests.
+
+- **OSR Browser hover/click alignment under supersample** (PR #216, `30e61b27`) — the offscreen
+  preview renders at supersample `S` (applied as the page zoom `setZoomFactor(S)`), but
+  `webContents.sendInputEvent` coords are **widget-space (`logical·S`), not the page-logical CSS px**
+  the renderer forwards — so at `S>1` the page hit-tested at `(x/S, y/S)`: hover/click landed
+  up-and-left of the cursor, worsening with distance from the top-left and with zoom-in. Latent since
+  M1 (#155) made `S>1`; input (M3, #163) had assumed logical px were "supersample-independent". Fix:
+  new pure `scaleOsrInputEvent` in `previewOsrInput.ts` (extracted to hold `previewOsr.ts` under the
+  700-line `max-lines` cap) scales pointer x/y by the board's live `e.superSample` before dispatch at
+  the `preview:osrInput` handler; keyboard + `S===1` pass through, wheel scroll deltas stay unscaled
+  (only the anchor x/y scale; Blink zoom-applies scrolling). 7 unit tests + `browserHover.e2e.ts`
+  (`@preview`) which forces `S=2` via the real resize IPC, sends a known logical coord via the real
+  input IPC, and reads back the offscreen page's `clientX/Y` — pre-fix recorded the half-coordinate
+  (200 for a sent 400), post-fix the exact coord (reverting the handler line made the e2e fail at 200,
+  confirming root cause + direction). Gate green; pre-push full e2e matrix both legs (1 unrelated
+  `menuShell` chrome flake auto-passed on retry); claude-review **0 findings**.
