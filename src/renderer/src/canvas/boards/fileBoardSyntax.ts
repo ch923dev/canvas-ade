@@ -10,11 +10,32 @@
  */
 import { EditorView, keymap } from '@uiw/react-codemirror'
 import type { Extension } from '@uiw/react-codemirror'
-import { loadLanguage, type LanguageName } from '@uiw/codemirror-extensions-langs'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { HighlightStyle, syntaxHighlighting, type LanguageSupport } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
 import { highlightCode, tags as t } from '@lezer/highlight'
 import type { Highlighter, Tag } from '@lezer/highlight'
+// Explicit per-language imports (NOT the `@uiw/codemirror-extensions-langs` barrel): the barrel
+// statically bundles ~103 grammars (the whole `@codemirror/legacy-modes` pack) and its runtime
+// `loadLanguage(name)` name-indexing defeats tree-shaking, so the FileBoard chunk dragged in every
+// grammar. We import ONLY the modern `@codemirror/lang-*` packs reachable from `LANG_BY_EXT` and
+// resolve them through a static map below, so the bundler can drop everything else.
+import { javascript } from '@codemirror/lang-javascript'
+import { json } from '@codemirror/lang-json'
+import { python } from '@codemirror/lang-python'
+import { rust } from '@codemirror/lang-rust'
+import { go } from '@codemirror/lang-go'
+import { java } from '@codemirror/lang-java'
+import { cpp } from '@codemirror/lang-cpp'
+import { css } from '@codemirror/lang-css'
+import { sass } from '@codemirror/lang-sass'
+import { less } from '@codemirror/lang-less'
+import { html } from '@codemirror/lang-html'
+import { xml } from '@codemirror/lang-xml'
+import { vue } from '@codemirror/lang-vue'
+import { php } from '@codemirror/lang-php'
+import { markdown } from '@codemirror/lang-markdown'
+import { yaml } from '@codemirror/lang-yaml'
+import { sql, StandardSQL } from '@codemirror/lang-sql'
 
 // -- Size / format gates -----------------------------------------------------------
 /** Text files larger than this aren't loaded into the editor - show the guard instead. */
@@ -57,10 +78,65 @@ export function writeStickyFileFont(n: number): void {
   }
 }
 
-/** ext -> CM language pack name (`@uiw/codemirror-extensions-langs`; its keys are the short,
- *  extension-style names like `ts`/`js`/`rs`). Only modern `LanguageSupport` packs are mapped;
- *  anything unmapped renders as plain text (still editable). Typed as `LanguageName` so a bad
- *  value fails the build, not at runtime. */
+/** The CM language packs we ship, keyed by the short, extension-style ids `LANG_BY_EXT` resolves
+ *  to. Each thunk is the EXACT call the `@uiw/codemirror-extensions-langs` barrel made for that id
+ *  (see its generated `langs` map) — same grammar, same options — so highlighting is byte-for-byte
+ *  identical to the old `loadLanguage` path; we just import the packs explicitly so the bundler can
+ *  drop the ~80 unreachable grammars. Every value is a modern `LanguageSupport` (no legacy
+ *  StreamLanguage in this set), so the snapshot parser path below always resolves. */
+const LANG_FACTORY = {
+  ts: () => javascript({ typescript: true }),
+  mts: () => javascript({ typescript: true }),
+  cts: () => javascript({ typescript: true }),
+  tsx: () => javascript({ jsx: true, typescript: true }),
+  js: () => javascript(),
+  mjs: () => javascript(),
+  cjs: () => javascript(),
+  jsx: () => javascript({ jsx: true }),
+  json: () => json(),
+  py: () => python(),
+  rs: () => rust(),
+  go: () => go(),
+  java: () => java(),
+  c: () => cpp(),
+  h: () => cpp(),
+  cpp: () => cpp(),
+  cc: () => cpp(),
+  cxx: () => cpp(),
+  hpp: () => cpp(),
+  hxx: () => cpp(),
+  css: () => css(),
+  scss: () => sass(),
+  sass: () => sass({ indented: true }),
+  less: () => less(),
+  html: () => html(),
+  htm: () => html(),
+  xml: () => xml(),
+  vue: () => vue(),
+  php: () => php(),
+  sql: () => sql({ dialect: StandardSQL }),
+  md: () => markdown(),
+  markdown: () => markdown(),
+  yaml: () => yaml(),
+  yml: () => yaml()
+} satisfies Record<string, () => LanguageSupport>
+
+/** Short, extension-style language id — the keys of `LANG_FACTORY`, i.e. the only grammars we
+ *  bundle. Typed as the literal union so a bad value in `LANG_BY_EXT` fails the build, not at
+ *  runtime (mirrors the old `LanguageName` guard, scoped to the reachable set). */
+type LanguageName = keyof typeof LANG_FACTORY
+
+/** Construct the `LanguageSupport` for a bundled language id (`null` for any other name — the same
+ *  "unknown ⇒ plain text" contract the old barrel `loadLanguage` had). Signature preserved so
+ *  callers (markdown code-fence highlighting, `resolveLanguage`) are unchanged. */
+function loadLanguage(name: LanguageName): LanguageSupport | null {
+  const factory = LANG_FACTORY[name]
+  return factory ? factory() : null
+}
+
+/** ext -> CM language pack name (the short, extension-style ids like `ts`/`js`/`rs`). Only modern
+ *  `LanguageSupport` packs are mapped; anything unmapped renders as plain text (still editable).
+ *  Typed as `LanguageName` so a bad value fails the build, not at runtime. */
 const LANG_BY_EXT: Record<string, LanguageName> = {
   ts: 'ts',
   mts: 'mts',
