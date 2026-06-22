@@ -52,6 +52,19 @@ interface OsrNetworkState {
   clearBoard: (id: string) => void
 }
 
+// Renderer-side caps MIRRORING MAIN's ring buffer (previewOsrNetwork.ts MAX_RECORDS / MAX_SOCKETS):
+// MAIN drops oldest beyond these, but deltas only carry NEW/updated rows — never "evict these old
+// ones" — so without a matching cap here the renderer's mirror grows unbounded on a chatty page while
+// the panel is open. Tail-cap after each upsert (newest are appended last → keep the most recent).
+const MAX_RECORDS = 1000
+const MAX_SOCKETS = 32
+
+/** Keep only the last `max` entries (drop-oldest), mirroring MAIN's ring eviction. Exported for the
+ *  unit test that guards the bound. */
+export function capTail<T>(list: T[], max: number): T[] {
+  return list.length > max ? list.slice(list.length - max) : list
+}
+
 /** Upsert `incoming` into `list` by requestId — replace in place if present, else append. */
 function upsert<T extends { requestId: string }>(list: T[], incoming: T[]): T[] {
   if (incoming.length === 0) return list
@@ -89,8 +102,8 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
       } else {
         next = {
           ...cur,
-          records: upsert(cur.records, msg.records ?? []),
-          ws: upsert(cur.ws, msg.ws ?? []),
+          records: capTail(upsert(cur.records, msg.records ?? []), MAX_RECORDS),
+          ws: capTail(upsert(cur.ws, msg.ws ?? []), MAX_SOCKETS),
           dropped: msg.dropped ?? cur.dropped
         }
       }

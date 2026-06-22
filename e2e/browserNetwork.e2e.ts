@@ -70,12 +70,22 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await filterInput.fill('')
     await expect(page.locator('.bb-net-row').first()).toBeVisible()
 
-    // Invert with an empty filter hides everything (NOT match-all).
+    // Invert is a NO-OP with an EMPTY filter (Chrome parity) — toggling it must NOT blank the list.
     const invertBtn = page.getByRole('button', { name: 'Invert filter' })
     await invertBtn.click()
     await expect(invertBtn).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.locator('.bb-net-empty')).toContainText('No matches')
-    await invertBtn.click()
+    await expect(
+      page.locator('.bb-net-row').first(),
+      'invert + empty query still shows all rows'
+    ).toBeVisible()
+    // With a query present, invert flips the match: a guaranteed-miss query inverted → shows rows.
+    await filterInput.fill('zzzz-no-such-request-zzzz')
+    await expect(
+      page.locator('.bb-net-row').first(),
+      'inverted miss-query shows rows (flips the empty match-set)'
+    ).toBeVisible()
+    await filterInput.fill('')
+    await invertBtn.click() // toggle invert back off for the regex check
 
     // Regex mode: an invalid pattern flags the filter box red.
     const regexBtn = page.getByRole('button', { name: 'Use regular expression' })

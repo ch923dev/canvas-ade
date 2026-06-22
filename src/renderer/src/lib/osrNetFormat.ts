@@ -304,7 +304,10 @@ export function applyNetFilter(records: NetRecord[], opts: NetFilterOpts): NetFi
   const { types, query, regex, invert } = opts
   const noTypeNarrow = types.length === 0 || types.includes('all')
   const byType = noTypeNarrow ? records : records.filter((r) => matchesAnyType(r, types))
-  if (!query.trim()) return { rows: invert ? [] : byType } // empty filter matches all → invert hides all
+  // Empty filter → show the type set. Invert is a NO-OP with no query (Chrome parity): toggling
+  // Invert on an empty box must not blank the list ("match all" inverted to "match none" reads as a
+  // broken "show nothing" button). Invert only flips a real text/regex match below.
+  if (!query.trim()) return { rows: byType }
   if (regex) {
     const re = compileFilterRegex(query)
     if (!re) return { rows: byType, regexError: true }

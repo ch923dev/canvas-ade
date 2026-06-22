@@ -306,8 +306,18 @@ describe('applyNetFilter (type pills + text/regex + invert)', () => {
       'b'
     ])
   })
-  it('invert + empty query hides everything', () => {
-    expect(applyNetFilter(list, { types: ['all'], query: '', invert: true }).rows).toEqual([])
+  it('invert is a no-op with an empty query — shows all (Chrome parity), pills still narrow', () => {
+    expect(ids(applyNetFilter(list, { types: ['all'], query: '', invert: true }).rows)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd'
+    ])
+    // a type pill still narrows even with invert on + an empty query.
+    expect(ids(applyNetFilter(list, { types: ['js'], query: '', invert: true }).rows)).toEqual([
+      'a',
+      'b'
+    ])
   })
   it('empty query passes the type set', () => {
     expect(ids(applyNetFilter(list, { types: ['js'], query: '' }).rows)).toEqual(['a', 'b'])
