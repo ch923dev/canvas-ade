@@ -8,6 +8,7 @@ import {
   applyOsrIme
 } from './previewOsr'
 import { sanitizeOsrSize, applyOsrSize } from './previewOsrSizing'
+import { scaleOsrInputEvent } from './previewOsrInput'
 
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
 // else, so a blocked (non-http(s)) scheme skipped the load AND emitted no lifecycle event ->
@@ -357,5 +358,69 @@ describe('applyOsrIme', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(sendInputEvent).not.toHaveBeenCalled()
+  })
+})
+
+// The hover-misalignment fix: the renderer forwards pointer coords in page-logical CSS px, but the
+// offscreen window is sized to logical·S with page zoom S (M1 supersample), so sendInputEvent coords
+// must be scaled by S into widget space or the page hit-tests at (x/S, y/S) — up-left of the cursor.
+describe('scaleOsrInputEvent (OSR hover/click alignment under supersample)', () => {
+  it('scales a mouseMove by the supersample so the page hit-tests under the cursor', () => {
+    // The exact symptom case: at S=2 the renderer sends logical (400,300); the page un-zooms by 2
+    // during hit-test, so the widget coord MUST be (800,600) to land back on CSS (400,300). Before
+    // the fix the unscaled (400,300) hit-tested at (200,150) — the misaligned hover.
+    expect(scaleOsrInputEvent({ type: 'mouseMove', x: 400, y: 300 }, 2)).toEqual({
+      type: 'mouseMove',
+      x: 800,
+      y: 600
+    })
+  })
+
+  it('scales mouseDown/mouseUp/contextMenu coords too (click + right-click land correctly)', () => {
+    expect(scaleOsrInputEvent({ type: 'mouseDown', x: 100, y: 50, button: 'left' }, 1.5)).toEqual({
+      type: 'mouseDown',
+      x: 150,
+      y: 75,
+      button: 'left'
+    })
+    expect(scaleOsrInputEvent({ type: 'mouseUp', x: 100, y: 50, button: 'left' }, 1.5)).toEqual({
+      type: 'mouseUp',
+      x: 150,
+      y: 75,
+      button: 'left'
+    })
+  })
+
+  it('scales a wheel anchor x/y but NOT its scroll deltas (Blink zoom-applies scrolling itself)', () => {
+    expect(
+      scaleOsrInputEvent({ type: 'mouseWheel', x: 200, y: 100, deltaX: 0, deltaY: -40 } as never, 2)
+    ).toEqual({ type: 'mouseWheel', x: 400, y: 200, deltaX: 0, deltaY: -40 })
+  })
+
+  it('rounds to integer widget coordinates (sendInputEvent requires integers)', () => {
+    expect(scaleOsrInputEvent({ type: 'mouseMove', x: 101, y: 201 }, 1.25)).toEqual({
+      type: 'mouseMove',
+      x: 126, // 101 * 1.25 = 126.25 → 126
+      y: 251 // 201 * 1.25 = 251.25 → 251
+    })
+  })
+
+  it('is a pass-through at S=1 (the common zoomed-out / dpr-1 case — no behaviour change)', () => {
+    const ev = { type: 'mouseMove', x: 42, y: 7 } as const
+    expect(scaleOsrInputEvent(ev, 1)).toBe(ev) // same reference — untouched
+  })
+
+  it('never scales keyboard events (no coordinates to misplace)', () => {
+    const down = { type: 'keyDown', keyCode: 'Enter' } as const
+    const up = { type: 'keyUp', keyCode: 'Enter' } as const
+    expect(scaleOsrInputEvent(down, 2)).toBe(down)
+    expect(scaleOsrInputEvent(up, 2)).toBe(up)
+  })
+
+  it('falls back to a pass-through for a degenerate (0 / NaN / negative) supersample', () => {
+    const ev = { type: 'mouseMove', x: 10, y: 20 } as const
+    expect(scaleOsrInputEvent(ev, 0)).toBe(ev)
+    expect(scaleOsrInputEvent(ev, Number.NaN)).toBe(ev)
+    expect(scaleOsrInputEvent(ev, -2)).toBe(ev)
   })
 })
