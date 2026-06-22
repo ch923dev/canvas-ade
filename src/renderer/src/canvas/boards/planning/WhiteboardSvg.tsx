@@ -9,7 +9,8 @@
  */
 import { memo, useMemo, type PointerEvent, type ReactElement } from 'react'
 import type { ArrowElement, StrokeElement } from '../../../lib/boardSchema'
-import { arrowPath, strokeToPath, arrowheadMarkerId } from './svgPaths'
+import { arrowPath, strokeToPath, arrowheadMarkerId, STROKE_OPTIONS } from './svgPaths'
+import { draftPolyline } from '../../../lib/pen'
 import { isLocked, setArrowEndpoint, type ArrowEnd } from './elements'
 
 /**
@@ -113,10 +114,17 @@ export const WhiteboardSvg = memo(function WhiteboardSvg({
   // identity changes whenever the parent re-derives it), so it only added overhead — the
   // WeakMap is the real cache and the .map is a cheap per-stroke lookup.
   const strokePaths = strokes.map((s) => strokeOutline(s.points))
-  const draftPath = useMemo(
-    () => (draftStroke && draftStroke.length >= 2 ? strokeToPath(draftStroke) : ''),
-    [draftStroke]
-  )
+  // In-progress DRAFT (SLICE-011): render a cheap O(N) centerline polyline, NOT the full
+  // perfect-freehand outline. `strokeToPath`/getStroke is O(stroke length) per call, so
+  // re-running it over the whole growing point list every pen-move frame is O(N^2) across
+  // one stroke (~135ms cumulative for an ~800-pt scribble). `draftPolyline` touches each
+  // point once, so the per-frame draft cost no longer grows with stroke length. The
+  // committed stroke is still rendered via `strokeOutline`/`strokeToPath` above (the
+  // store gets the raw points on pointer-up and re-runs full getStroke), so the final ink
+  // is byte-identical to today's output — only the live preview is the cheap centerline.
+  // Drawn as a stroked path at the pen size (`thinning: 0` => constant-width outline, so a
+  // round-cap/join centerline at `STROKE_OPTIONS.size` is a faithful preview).
+  const draftPath = useMemo(() => (draftStroke ? draftPolyline(draftStroke) : ''), [draftStroke])
 
   return (
     <svg
@@ -188,7 +196,16 @@ export const WhiteboardSvg = memo(function WhiteboardSvg({
           />
         ) : null
       )}
-      {draftPath && <path d={draftPath} fill="var(--text-2)" />}
+      {draftPath && (
+        <path
+          d={draftPath}
+          fill="none"
+          stroke="var(--text-2)"
+          strokeWidth={STROKE_OPTIONS.size}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
 
       {/* Endpoint handles (D3-B): hollow accent rings on the single selected arrow.
           Visible ring r=7 (signed-off artifact); a transparent r=12 circle on top is
