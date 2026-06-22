@@ -1,0 +1,39 @@
+/* ── D4-C wayfinding minimap island (user pick 2026-06-11: minimap, toggled +
+   remembered) ──────────────────────────────────────────────────────────────────
+   The DESIGN.md §8 optional bottom-right island. React Flow renders it (Panel +
+   svg); the look is ours via the --xy-minimap-* hooks: --surface-raised box,
+   board rects in --border-strong, the unmasked viewport window ringed in
+   --accent (stroke width is a viewScale-corrected PROP in MinimapIsland.tsx).
+   While visible its rect joins the preview manager's chrome-exclusion zones
+   (ADR 0002 — resolveChromeZones reads .react-flow__minimap). */
+.wayfinding-minimap.react-flow__minimap {
+  --xy-minimap-background-color: var(--surface-raised);
+  --xy-minimap-mask-background-color: rgba(10, 10, 11, 0.5); /* --void dim outside the viewport */
+  --xy-minimap-mask-stroke-color: var(--accent);
+  --xy-minimap-node-background-color: var(--border-strong);
+  --xy-minimap-node-stroke-color: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-inner);
+  overflow: hidden;
+  box-shadow: var(--shadow-pop);
+  animation: minimap-in 120ms ease-out;
+}
+/* Selected board = accent rect — the same selection grammar as the board ring. */
+.wayfinding-minimap .react-flow__minimap-node.selected {
+  fill: var(--accent);
+}
+@keyframes minimap-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wayfinding-minimap.react-flow__minimap {
+    animation: none;
+  }
+}

@@ -1,0 +1,43 @@
+/* Drag-to-create capture overlay (redesign 2026-06-06). Sits above the React Flow pane
+   (boards) but below the floating app chrome (z-50), so the dock stays clickable while armed. */
+.placement-capture {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  cursor: crosshair;
+}
+/* Ghost uses position:fixed so left/top match client coords (e.clientX/clientY) directly —
+   the same coordinate space that flowToScreenPosition and the connector rubber-band use.
+   The pane is position:absolute;inset:0 inside a position:fixed;inset:0 root, so client
+   coords equal pane-local coords today, but fixed is more robust if the layout ever gains
+   a header bar above the canvas. pointer-events:none so the capture overlay still owns
+   the gesture. */
+.placement-ghost {
+  position: fixed;
+  border: 1px solid var(--accent);
+  background: var(--accent-wash);
+  border-radius: var(--r-board);
+  pointer-events: none;
+}
+.placement-ghost-chip {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+/* Command board submit-well input: faint placeholder to match the inert Phase-A well it replaced. */
+.cmd-submit-input::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
+}

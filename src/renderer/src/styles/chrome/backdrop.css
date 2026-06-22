@@ -1,0 +1,226 @@
+/* ── Canvas backdrop — screen-fixed wallpaper layer (docs/canvas-backdrop) ────────
+   Sibling rendered BEFORE <ReactFlow> inside the pane; pointer-events:none keeps every
+   canvas gesture intact. While a backdrop is active ([data-backdrop] on the pane) the
+   RF surface goes transparent so the layer shows through; backdrop-less projects keep
+   the opaque void above — pixel-identical to pre-v9. */
+.backdrop-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.backdrop-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Void-colored dim veil above the media; alpha = background.dim (readability knob). */
+.backdrop-dim {
+  position: absolute;
+  inset: 0;
+  background: var(--void);
+}
+[data-backdrop] .react-flow {
+  background: transparent;
+}
+
+/* Backdrop picker popover (camera cluster — Tidy's sibling; Menu shell chrome). */
+.bd-trigger {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-3);
+}
+.bd-trigger:hover {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+.bd-trigger[data-active] {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.bd-menu {
+  min-width: 232px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-pop);
+}
+.bd-head {
+  font: 600 11px var(--ui);
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 8px 12px 6px;
+}
+.bd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 220px;
+  padding: 7px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: 12.5px var(--ui);
+  text-align: left;
+  cursor: pointer;
+}
+.bd-row:hover,
+.bd-row:focus-visible {
+  background: var(--surface-overlay);
+}
+.bd-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  flex: none;
+}
+.bd-dot[data-on] {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 2.5px var(--surface-raised);
+}
+.bd-tag {
+  margin-left: auto;
+  font: 10px var(--mono, monospace);
+  color: var(--text-3);
+}
+.bd-sep {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--border-subtle);
+}
+/* Scene gallery (PR 3a): tier-grouped thumbnail grid under the source rows. */
+.bd-tier {
+  font: 600 10px var(--ui);
+  color: var(--text-3);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 12px 4px;
+}
+.bd-gallery {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 2px 8px 4px;
+}
+.bd-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  text-align: left;
+}
+.bd-tile:hover,
+.bd-tile:focus-visible {
+  background: var(--surface-overlay);
+}
+.bd-tile[data-on] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bd-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+.bd-tile-label {
+  font: 11.5px var(--ui);
+  padding-left: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bd-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font: 12px var(--ui);
+  color: var(--text-2);
+}
+.bd-slider > span:first-child {
+  width: 62px;
+  flex: none;
+}
+.bd-slider input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.bd-val {
+  width: 38px;
+  text-align: right;
+  font: 11px var(--mono, monospace);
+  color: var(--text-3);
+}
+.bd-slider[data-disabled] {
+  opacity: 0.45;
+}
+/* Grid lattice segmented control (PR 4): Off · Dots · Lines · Cross. */
+.bd-grid {
+  padding: 8px 12px;
+  font: 12px var(--ui);
+  color: var(--text-2);
+}
+.bd-grid > span {
+  display: block;
+  margin-bottom: 6px;
+}
+.bd-grid[data-disabled] {
+  opacity: 0.45;
+}
+.bd-seg {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface-overlay);
+}
+.bd-seg-btn {
+  padding: 5px 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-2);
+  font: 11.5px var(--ui);
+  cursor: pointer;
+  text-align: center;
+}
+/* Exclude the active button so the grey hover never outranks its accent-wash
+   ([data-on] is (0,2,0); :hover:not(:disabled) would otherwise win at (0,3,0)). */
+.bd-seg-btn:not([data-on]):hover:not(:disabled),
+.bd-seg-btn:not([data-on]):focus-visible {
+  background: var(--surface-raised);
+}
+.bd-seg-btn[data-on] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--text);
+}
+.bd-seg-btn:disabled {
+  cursor: default;
+}

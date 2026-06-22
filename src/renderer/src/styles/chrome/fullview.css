@@ -1,0 +1,76 @@
+.fullview-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.66);
+  /* Slice 5 (§9): scrim opacity-fade. Starts closed; `[data-open]` plays it in. The frame
+     is position:fixed with JS-driven geometry (the stretch FLIP), so the scrim no longer
+     lays it out via flex/padding — the 5vh/5vw inset lives in viewportFullRect(). */
+  opacity: 0;
+  transition: opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.fullview-scrim[data-open] {
+  opacity: 1;
+}
+/* D0-9: transient "Esc to exit" hint — bottom-center pill, first full-view entry per
+   session. Fades with the same curve as the scrim; reduced-motion shows it instantly
+   (the JS hold-then-hide timer still runs). */
+.fullview-hint {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-ctl);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  color: var(--text-2);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.fullview-hint[data-show] {
+  opacity: 1;
+}
+.fullview-hint kbd {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fullview-hint {
+    transition: none;
+  }
+}
+.fullview-frame {
+  /* Stretch FLIP (USER DECISION 2026-06-20): position:fixed at the full-view rect so the
+     frame content rasterises at full res; FullViewModal animates a `transform` (origin
+     top-left) from the board's rect → identity with an overshoot spring — crisp, because the
+     full-res content is only scaled DOWN during the tween. Transform/geometry applied
+     imperatively; reduced-motion forces `transition: none` via the @media block above. */
+  position: fixed;
+  transform-origin: top left;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-board);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    var(--shadow-board);
+}
+.fullview-host {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}

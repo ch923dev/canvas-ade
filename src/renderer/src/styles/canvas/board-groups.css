@@ -1,0 +1,219 @@
+/* Named board groups — outline box + name tab (S2). Outline only; one accent. */
+.group-box {
+  border: 1.5px solid var(--accent-wash);
+  border-radius: var(--r-ctl);
+  pointer-events: none;
+}
+.group-box-tab {
+  position: absolute;
+  /* Centered headline straddling the top edge (fieldset-legend style) so the group
+     name reads as a title for the whole cluster, not a tiny corner chip. */
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 16px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  font-family: var(--ui);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.group-box-tab:hover {
+  color: var(--accent);
+  border-color: var(--accent-wash);
+}
+/* Group "absorb" reflow (S6): a transient class on the canvas pane arms a transition on
+   board nodes + the group box so members glide into the re-packed cluster and the border
+   tightens to enclose a newly-added board. Only while .reflowing is set (never during a
+   live drag). */
+.reflowing .react-flow__node {
+  transition: transform 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.reflowing .group-box {
+  transition:
+    left 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    top 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    width 280ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    height 280ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .reflowing .react-flow__node,
+  .reflowing .group-box {
+    transition: none;
+  }
+}
+/* Drag-onto-group drop target (S6): the hovered group box glows accent while a non-member
+   board is dragged inside it. */
+.group-box--drop-target {
+  border-color: var(--accent);
+  border-width: 2px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+/* ── PA-6 (GROUP-03): connector drop-target highlight ────────────────────────────────────
+   While a connector drag is in flight, the board the cable will land on glows accent — the
+   same treatment as the group-box drop target above (2px accent ring + 8% accent wash), plus a
+   "Connect here" pill so the action is unmistakable. Drawn fixed/client-space over the board. */
+.ca-connect-drop-target {
+  border: 2px solid var(--accent);
+  border-radius: var(--r-ctl);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ca-connect-drop-pill {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-family: var(--ui);
+  color: var(--void);
+  background: var(--accent);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+/* ── PA-6 (GROUP-06): board ⋯-menu group-section caption ──────────────────────────────────
+   A quiet uppercase label heading the per-group Add/Remove rows so they read as one cluster. */
+/* Mirrors the command-palette section header (.cp-section) so it reads as a quiet LABEL, not a
+   disabled menu item: --text-3 (a readable label tone, never the disabled-only --text-faint),
+   micro size, and a hairline rule above to separate it from the action rows. */
+.board-menu-cap {
+  margin-top: 4px;
+  padding: 6px 10px 3px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-micro);
+  letter-spacing: var(--tr-micro);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.group-name-pop {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+}
+.group-name-input {
+  width: 180px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-family: var(--ui);
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  outline: none;
+}
+.group-name-input:focus {
+  border-color: var(--accent);
+}
+.group-fab {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  font-family: var(--ui);
+  color: var(--accent);
+  background: var(--surface-raised);
+  border: 1px solid var(--accent-wash);
+  border-radius: 9px;
+  box-shadow: var(--shadow-pop);
+  cursor: pointer;
+}
+.group-fab:hover {
+  background: var(--accent-wash);
+}
+.group-pick-pop {
+  min-width: 200px;
+  padding: 6px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+}
+.group-pick-head {
+  padding: 2px 6px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+.group-pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: var(--ui);
+  cursor: pointer;
+}
+.group-pick-row:hover {
+  background: var(--accent-wash);
+  border-color: var(--accent-wash);
+}
+.group-pick-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+.group-ctx {
+  min-width: 170px;
+  padding: 5px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-pop);
+}
+.group-ctx-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: var(--ui);
+  cursor: pointer;
+}
+.group-ctx-row:hover:not(:disabled) {
+  background: var(--accent-wash);
+}
+.group-ctx-row:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.group-ctx-danger:hover:not(:disabled) {
+  color: var(--err);
+}
+.group-ctx-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-subtle);
+}

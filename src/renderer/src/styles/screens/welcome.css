@@ -1,0 +1,157 @@
+/* ── Phase 3 persistence — welcome / project-picker screen (tokenised in §B) ── */
+.welcome {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-16);
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+.welcome h1 {
+  font-size: 22px;
+  font-weight: var(--fw-h);
+  letter-spacing: var(--tr-h);
+  margin: 0;
+}
+/* D0-7: shown while a project load / switch pipeline is in flight. */
+.welcome-loading {
+  color: var(--text-2);
+  font-size: var(--fs-meta);
+  margin: 0;
+}
+.welcome-error {
+  color: var(--err);
+  font-size: var(--fs-meta);
+}
+.welcome-actions {
+  display: flex;
+  gap: var(--space-12);
+}
+.welcome-actions button {
+  padding: 8px 16px;
+  border-radius: var(--r-board);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-2);
+  cursor: pointer;
+  font-family: var(--ui);
+  font-size: var(--fs-label);
+  font-weight: var(--fw-label);
+  transition:
+    color 0.1s,
+    border-color 0.1s,
+    background 0.1s;
+}
+.welcome-actions button:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+/* Primary (Create) = accent-as-functional: accent text/border on the wash tint,
+   never a filled slop button (DESIGN.md §1.2/§1.3). */
+.welcome-actions button:first-child {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.welcome-actions button:first-child:hover {
+  color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.welcome-recents-wrap {
+  width: 420px;
+  max-width: 80vw;
+}
+/* Muted header row: "Recent" label + the quiet Clear-all text action (list-only). */
+.welcome-recents-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 12px 4px;
+}
+.welcome-recents-label {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-label);
+  color: var(--text-3);
+}
+.welcome-clear-recents {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.1s;
+}
+.welcome-clear-recents:hover {
+  color: var(--text);
+}
+.welcome-recents {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+}
+/* Each row = open button (grows) + a hover-revealed ✕ remove (list-only, never deletes
+   the folder). Hover tint lives on the row so both controls share one highlight. */
+.welcome-recents li {
+  display: flex;
+  align-items: center;
+  border-radius: var(--r-inner);
+  transition: background 0.1s;
+}
+.welcome-recents li:hover {
+  background: var(--surface-overlay);
+}
+.recent-open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: var(--r-inner);
+  cursor: pointer;
+}
+.recent-remove {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-meta);
+  line-height: 1;
+  padding: 6px 8px;
+  margin-right: 6px;
+  border-radius: var(--r-inner);
+  cursor: pointer;
+  /* Hidden until the row is hovered — but keep it keyboard-reachable: focus reveals it. */
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.welcome-recents li:hover .recent-remove,
+.recent-remove:focus-visible {
+  opacity: 1;
+}
+.recent-remove:hover {
+  color: var(--text);
+}
+.recent-name {
+  font-weight: var(--fw-label);
+  color: var(--text);
+}
+.recent-path {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
