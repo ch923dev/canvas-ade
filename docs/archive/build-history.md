@@ -343,3 +343,27 @@ research/spec docs dropped on merge → this entry is the residue).
   test-probe alert dispositioned inline). Pre-merge full e2e matrix — **Linux 173 passed + 1
   skip-by-design, exit 0**; **Windows 173 passed + 1 pre-existing flake** (`placement`, real-OS-input
   teardown race in untouched code; green on Linux + on re-run).
+
+- **Per-board volume mixer** (PR #214, `e3ee889e`) — the Browser URL-bar mute toggle became a speaker
+  button reflecting the audio level (full/low/muted) that opens a popover with a mute toggle + a
+  0–100% slider. Ephemeral per board (**no schema change**). Electron OSR has no native per-window
+  volume, so MAIN injects `el.volume` onto the page's HTML5 media via `executeJavaScript` + a guarded
+  `MutationObserver` (installed only below full volume, disconnected at 1), re-applied on
+  `did-finish-load` / zoom re-attach (Web Audio honors only mute). One post-rebase fix commit
+  (`df9f6052`) trimmed `previewOsr.ts` back under the 700-line `max-lines` cap — the rebase pulled
+  #210's additions over it — via an idempotent-`Map.delete` simplification in `disposeOsr`. Gate green;
+  full e2e matrix **Win 173 / Linux 174**.
+
+- **Project Library + downloads isolated under `.canvas/`** (PR #215, `3805a217`) — a project-level
+  slide-in Library panel (Downloads + Assets tabs, newest-first) browsing files under
+  `<project>/.canvas/`. **Relocates Browser-board downloads** off the OS Downloads folder into
+  `<project>/.canvas/downloads/` (ADR 0009; OS-Downloads fallback when no project). Library rows open
+  (OS handler) / reveal-in-folder / **drag-onto-canvas → open as a File board** (`FILEREF_MIME` glue);
+  auto-refresh on screenshot/download + project switch (`libraryStore` signal). **Removed the
+  per-board Network-inspector Assets/Downloads tabs** (#210 reconcile — the Library is now the single
+  place to browse saved files; `OsrResourceTabs.tsx` deleted). New `projectLibrary.ts` (MAIN):
+  `listLibrary` + `resolveLibraryItem` path-traversal containment + frame-guarded IPC. The toast
+  "Show" reveal is gated by an **exact-path allowlist** of MAIN-written downloads (`517b7629`, fixes a
+  review `[warning]`: a reveal-time `getDownloadsDir()` check silently failed after a project switch).
+  Gate green; full e2e matrix **Win 174 / Linux 174**; 4 CodeQL test-only alerts (JSON.stringify into
+  e2e `pollEval` code strings) dismissed as used-in-tests.
