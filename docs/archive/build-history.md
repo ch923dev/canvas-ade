@@ -402,3 +402,29 @@ research/spec docs dropped on merge → this entry is the residue).
   SEPARATE later PR**, output-changing, gated on e2e. Spec lived at
   `docs/research/2026-06-23-css-slice/PLAN.md` (deleted on merge per the doc-lifecycle; recover via
   `git show 4306aa12:docs/research/2026-06-23-css-slice/PLAN.md`).
+
+- **gitdiff completeness audit — 7 gaps closed** (PR #218, `cfa6a421`) — single-feature completeness
+  audit of `gitDiff` (read-only working-tree diff → Command-board result zone + `git_diff` MCP tool):
+  intent spec + impl-vs-intent coverage matrix + diagnoses found the existing tests/e2e all reproduced
+  **green** (the "failing tests" premise was stale) → **7 gaps** (2 Med · 5 Low; 0 blocking), all fixed
+  via a file-disjoint workflow (5 parallel lanes → e2e coverage → gate → adversarial review). **GAP-001**
+  includes untracked (never-staged) files **read-only** (`git ls-files --others` + `git diff --no-index
+  -- /dev/null <file>`; never `git add -N`); **GAP-002** bounds the MAIN-side read (a `CappedSink` taps
+  stdout + aborts the git child at 1 MB so a hostile tree can't OOM MAIN; the orchestrator 100 KB clamp
+  re-documented as a downstream-payload bound); **GAP-003** makes `parseDiffStat` hunk-aware (no longer
+  undercounts content lines whose body starts with `--`/`++`); **GAP-004** reconciles the stale
+  "`git_diff` tool not shipped" comments (it ships in `@expanse-ade/mcp` ≥0.11.0, pinned `^0.13.0`,
+  orchestrator-tier); **GAP-005** real-git integration tests (10) + a diffstat real-format fixture + e2e
+  delete/binary/untracked cases; **GAP-006** a result-zone scope caption (working-tree vs HEAD, whole
+  repo); **GAP-007** a MAIN-side timeout/abort (15 s) + renderer-side `gitDiff` race so a hung git can't
+  pin a task in `reporting`. Audit package at `docs/reviews/2026-06-23-gitdiff-audit/` (intent ·
+  coverage-matrix · diagnoses · punch-list; reviews index updated). The stricter hunk-aware parser
+  exposed an **unrealistic** `commandBoard` Phase-D e2e fixture (no `@@` header that real git always
+  emits) — fixed the fixture, not the parser. **Verification:** gate green (typecheck/lint 0-err/format ·
+  unit+integration **3286**); **full e2e matrix BOTH legs** (Windows + Linux Docker, **175 passed**;
+  `placement`/`browserNetwork`/`menuShell` retry-absorbed flakes). CI check/CodeQL/analyze/claude-review
+  ALL pass; **bot review APPROVE — 0 must-fix**; 1 `[warning]` (`git diff --no-index` missing the `--`
+  end-of-options separator → an untracked file named like a flag could be misparsed) fixed `20ebfb49` +
+  a pinning unit assertion + inline-replied; incremental re-review **CLEAN (0 findings)**. Also restored
+  a drifted `core.hooksPath` (`.git/hooks` → `.githooks`, which had silently bypassed the pre-push e2e
+  gate). Squash `cfa6a421`; branch deleted.
