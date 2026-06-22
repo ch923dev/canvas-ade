@@ -25,12 +25,14 @@ function setupApi(
     spawnGroup?: () => Promise<{ groupId: string; terminalId: string }>
     dispatchPrompt?: () => Promise<void>
     awaitSettled?: () => Promise<Result>
+    gitDiff?: () => Promise<string>
     summarize?: () => Promise<{ ok: boolean; text?: string; reason?: string }>
   } = {}
 ): {
   spawnGroup: ReturnType<typeof vi.fn>
   dispatchPrompt: ReturnType<typeof vi.fn>
   awaitSettled: ReturnType<typeof vi.fn>
+  gitDiff: ReturnType<typeof vi.fn>
   interrupt: ReturnType<typeof vi.fn>
   summarize: ReturnType<typeof vi.fn>
   /** Drive a board-status push (the MAIN → renderer onTaskStatus channel) into the live hook. */
@@ -39,6 +41,7 @@ function setupApi(
   const spawnGroup = vi.fn(opts.spawnGroup ?? (async () => ({ groupId: 'g1', terminalId: 't1' })))
   const dispatchPrompt = vi.fn(opts.dispatchPrompt ?? (async () => {}))
   const awaitSettled = vi.fn(opts.awaitSettled ?? (async () => ({ present: false })))
+  const gitDiff = vi.fn(opts.gitDiff ?? (async () => ''))
   const interrupt = vi.fn(async () => {})
   let statusListener: ((change: { id: string; status: string }) => void) | null = null
   const onTaskStatus = vi.fn((l: (change: { id: string; status: string }) => void) => {
@@ -50,13 +53,14 @@ function setupApi(
       (async () => ({ ok: true, text: 'TITLE: Build Feature\n\nBuild the feature end to end.' }))
   )
   ;(window as unknown as { api: unknown }).api = {
-    mcp: { spawnGroup, dispatchPrompt, awaitSettled, interrupt, onTaskStatus },
+    mcp: { spawnGroup, dispatchPrompt, awaitSettled, gitDiff, interrupt, onTaskStatus },
     llm: { summarize }
   }
   return {
     spawnGroup,
     dispatchPrompt,
     awaitSettled,
+    gitDiff,
     interrupt,
     summarize,
     fireStatus: (change) => statusListener?.(change)
@@ -247,6 +251,20 @@ describe('useCommandDispatch', () => {
     api.fireStatus({ id: 'some-other-board', status: 'gone' })
     await waitFor(() => expect(api.spawnGroup).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('done'))
+  })
+
+  // GAP-007: a hung MAIN gitDiff must not pin the task in 'reporting' — the renderer races the
+  // fetch against a timeout that resolves to '' so the task always advances to done/failed.
+  it('advances to done with no diff when gitDiff hangs (GAP-007)', async () => {
+    setupApi({ gitDiff: () => new Promise<string>(() => {}) }) // never resolves
+    const { result } = renderHook(() => useCommandDispatch(4))
+    result.current.dispatch('x', TERMINAL_ONLY)
+    await waitFor(() => expect(useCommandStore.getState().configuringTaskId).not.toBeNull())
+    const id = useCommandStore.getState().configuringTaskId as string
+    result.current.confirmConfig(id, { launchCommand: 'claude', prompt: 'go', config: CFG })
+    // Despite the stalled diff, the timeout fires (50ms under vitest) → task settles, no diff captured.
+    await waitFor(() => expect(useCommandStore.getState().tasks[0]?.status).toBe('done'))
+    expect(useCommandStore.getState().tasks[0]?.diff ?? '').toBe('')
   })
 
   it('serializes at the cap — 5 configured terminal-only tasks, only 4 spawn', async () => {

@@ -88,7 +88,8 @@ export type LifecycleOrchestrator = Orchestrator & {
   /**
    * PR-5b: spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group +
    * preview wiring) in one undoable step. App-local (NOT on the package `Orchestrator` interface)
-   * until the agent-facing `spawn_group` MCP tool lands in PR-5c — same split as gitDiff/PR-2b.
+   * until the agent-facing `spawn_group` MCP tool lands in PR-5c — the package registers no
+   * `spawn_group` tool yet (unlike `git_diff`/PR-2b, which the pinned package now DOES register).
    * Cap-checked (reserves all member slots), not human-gated (content-less empty boards).
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
