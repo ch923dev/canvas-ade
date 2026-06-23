@@ -135,10 +135,83 @@ values.** Concretely:
 - **Example-value reveal** — showing representative captured values inside a schema. A separate, deeper
   per-board opt-in with an explicit PII warning; **not** JD-3. (When built it must keep the MAIN-side
   scrub + cap + the per-field PII gate.)
-- **The id-lineage pass + structured-initiator capture** (JD-4) — request→request edges need MAIN to
-  preserve a structured initiator (script-url + triggering `requestId`); that capture change extends this
-  ADR's MAIN contract and is decided with JD-4.
-- **Persisted / exported inferred schemas** (JD-4) — the agent-context/Mermaid export into `.canvas/memory/`
-  is JD-4's added consent moment (scrub-on-export); it inherits ADR 0009's `.canvas/` git-ignore-by-default.
-- **Request-payload inference** — JD-3 infers response shapes only; request-body shape inference is a later
-  add behind the same contract.
+- **The id-lineage pass + structured-initiator capture** (JD-4) — ~~deferred~~ **now decided in the
+  JD-4 amendment below.** request→request edges need MAIN to preserve a structured initiator (the
+  triggering `requestId`), and id-lineage reads response/request *values* to match ids — the first
+  value-read past JD-3's shape-only contract.
+- **Persisted / exported inferred schemas** (JD-4) — ~~deferred~~ **now decided in the JD-4 amendment
+  below.** the agent-context/Mermaid export into `.canvas/memory/` is JD-4's added consent moment
+  (scrub-on-export); it inherits ADR 0009's `.canvas/` git-ignore-by-default.
+- **Request-payload *shape* inference** — JD-3/JD-4 infer response shapes only; full request-body shape
+  inference (beyond the bounded id-token slice id-lineage reads, §B below) is a later add behind the
+  same contract.
+
+## Amendment (JD-4) — structured-initiator capture + the id-lineage value-read
+
+- **Status:** Accepted (2026-06-23) — signed off with the JD-4 board mock + the schema-bump confirmation;
+  lands with JD-4 (the slice that adds the MAIN initiator + lineage path). Extends the Decision above.
+
+JD-4 extends this ADR's MAIN contract with two changes. They are **deliberately separated because only
+the second reads values** — the first is request metadata, the second is the one genuine privacy delta.
+
+### A. Structured-initiator capture — body-free, metadata only (NOT a value-read)
+
+Today `initiatorOf` (`previewOsrNetwork.ts`) flattens the CDP `Network.initiator` object to a display
+**string** (the initiating script url or a CDP type word), discarding the triggering `requestId`
+(finding B1 — so a request cannot be resolved back to its trigger). JD-4 additionally preserves the
+**structured initiator**: the CDP-supplied initiating `requestId` (when present), on a new **optional**
+`NetRecord.initiatorRequestId?`. The existing `initiator` display string is unchanged.
+
+This **reads no body** — `Network.initiator` is request metadata CDP already delivers on
+`requestWillBeSent`. It is a string, capped/validated at the trust boundary like every other
+page-controlled field, rides the existing replay/delta channel, and crosses **no new trust boundary**.
+It promotes the page→endpoint edges (already loader-derived) to the few true request→request edges
+without any value read.
+
+### B. The id-lineage pass — the only value-read, MAIN-side and capped
+
+id-lineage is the **first** pass that compares actual response/request **values**: an id returned by
+response A reappearing in request B ⇒ a directed `A ⊳ B` edge. Its contract:
+
+1. **Opt-in + frame-guarded.** Runs only under the existing per-board *"Infer data shapes"* opt-in (it
+   reads bodies). The new `preview:osrNetLineage` IPC is `isForeignSender`-guarded; the board id + every
+   `requestId` are re-validated against live MAIN state (unknown ⇒ no-op), built exactly like
+   `preview:osrNetSampleSchema` / `preview:osrNetGetBody`.
+2. **MAIN-side only; capped.** All value extraction + matching run in **MAIN**, reusing the JD-3 sampling
+   subsystem and its caps (`SCHEMA_SAMPLE_CAP` 20, `SCHEMA_BYTES_CAP` 8 MB/pass, `BODY_CAP` 5 MB/body).
+   Lineage adds its own bounds: only **id-shaped** tokens are extracted (short strings matching
+   `uuid` / opaque-id / numeric-id, length-capped); the count of distinct id values tracked per pass is
+   capped (`LINEAGE_VALUE_CAP`); consumer-side matching scans only the request **URL / query / path
+   segments + a capped slice of request post-data** — never an O(n²) full-body cross-join of all samples.
+3. **Edge-list-only over IPC — never the matched value.** MAIN emits **only** the lineage edge list:
+   `{ idName, fromTemplateKey/fromRequestId, toTemplateKey/toRequestId, location: 'url'|'query'|'path'|'body', confidence }`.
+   The matched raw id **value is never serialized** — only the field *name* that carried it and the
+   source/target request identifiers (the same value-less discipline as JD-3's shape skeletons).
+4. **Scrub before match + on export.** Every candidate id value is passed through `redactSecrets`
+   (`src/main/summaryLoop.ts`) **before** it is used for matching; a value that scrubs to a secret/token
+   is **excluded** from lineage (we never correlate on a bearer token / session secret). An id *name* in
+   the PII/secret class is surfaced with the `⚠ PII` chip — never a value.
+5. **Ephemeral; export is the consent moment.** Lineage edges live in the ephemeral store; **nothing
+   persists** in `canvas.json` (the Data-Flow board persists only its `sourceBoardId` binding — no
+   body-derived data). The **"→ Planning / Mermaid"** and **"→ Agent context (`.canvas/memory/`)"**
+   exports are JD-4's added consent moments: they write **shape only** (entity / field names + types +
+   relationships — *no values*), run `redactSecrets` over the serialized payload, and inherit ADR 0009's
+   `.canvas/` git-ignore-by-default for body-derived data.
+
+### Security posture unchanged
+
+`contextIsolation: true`, `sandbox: true`, `nodeIntegration: false` untouched. The new `osrNetLineage`
+handler is `isForeignSender`-guarded like every `preview:osrNet*` channel. No `eval` / `Function` /
+dynamic-import of body content; no `dangerouslySetInnerHTML` in any viewer (the Data-Flow board renders
+page-controlled strings as React-escaped text only). Browser-board content never reaches the PTY.
+
+### Accepted residual risk (JD-4)
+
+- **A reused id value is a weak correlator.** Two unrelated requests that both carry the same common
+  value (e.g. a tenant id or an enum) could produce a spurious lineage edge. Mitigated by: id-SHAPED
+  extraction only (not arbitrary values), a confidence score surfaced on the edge, the
+  focus-on-node-default graph (never the whole surface), and the never-invent-edges rule (a flat API
+  draws **zero** lineage edges). **Accepted** — lineage is a navigational hint, not an assertion.
+- **The lineage scan reuses the approved `Network.getResponseBody` trust boundary** (a body the board
+  already loaded), value-stripped before the edge list crosses IPC, bounded by
+  `LINEAGE_VALUE_CAP × BODY_CAP`. **Accepted** (same boundary as the JD-3 single-body + sampling paths).

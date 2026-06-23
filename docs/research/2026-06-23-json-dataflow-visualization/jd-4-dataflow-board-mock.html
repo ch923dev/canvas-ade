@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>JD-4 · Data Flow board — Canvas ADE design mock</title>
+<style>
+  :root{
+    --void:#0a0a0b; --surface:#141416; --surface-raised:#1a1a1d; --surface-overlay:#1e1e22; --inset:#0e0e10;
+    --border-subtle:rgba(255,255,255,.06); --border:rgba(255,255,255,.1); --border-strong:rgba(255,255,255,.16);
+    --text:#ededee; --text-2:#9b9ba1; --text-3:#7b7b81; --text-faint:#46464b;
+    --accent:#4f8cff; --accent-hover:#6ea0ff; --accent-wash:rgba(79,140,255,.14);
+    --ok:#3ecf8e; --warn:#e8b339; --err:#f2545b;
+    --ui:'Geist',system-ui,-apple-system,sans-serif;
+    --mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    --r-board:8px; --r-inner:6px; --r-ctl:5px; --r-pill:999px;
+    --shadow-board:0 1px 2px rgba(0,0,0,.45),0 10px 28px -12px rgba(0,0,0,.6);
+    --shadow-pop:0 8px 24px -6px rgba(0,0,0,.7);
+    --grid-dot:#202022; --connector:#5a6573;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--void);color:var(--text);font-family:var(--ui);font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  body{display:flex;flex-direction:column;align-items:center;gap:30px;padding:30px 0 56px}
+
+  .cap{width:1220px;display:flex;align-items:baseline;gap:12px;padding:0 2px 10px}
+  .cap .t{font-size:12px;font-weight:500;color:var(--text)}
+  .cap .s{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .grp-cap{width:1220px;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);padding:6px 2px 0}
+
+  /* ── board frame (the dedicated Data-Flow board on the canvas) ── */
+  .board{width:1220px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-board);
+    box-shadow:var(--shadow-board);overflow:hidden;display:flex;flex-direction:column}
+  .board.sel{box-shadow:0 0 0 1.5px var(--accent),var(--shadow-board)}
+
+  /* title bar (the drag handle row, 34px) */
+  .head{height:34px;flex:0 0 34px;display:flex;align-items:center;gap:8px;padding:0 10px;
+    border-bottom:1px solid var(--border-subtle);background:var(--surface-raised)}
+  .head .badge{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);
+    display:flex;align-items:center;gap:6px}
+  .head .badge .g{color:var(--text-faint);font-size:11px}
+  .head .ttl{font-size:12px;font-weight:600;color:var(--text)}
+  .head .sub{font-family:var(--mono);font-size:10px;color:var(--text-3)}
+  .head .prov{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--text-3);display:flex;align-items:center;gap:5px}
+  .head .prov .live{width:6px;height:6px;border-radius:var(--r-pill);background:var(--ok)}
+  .head .dots{color:var(--text-faint);font-size:13px;letter-spacing:1px;padding-left:4px}
+
+  /* toolbar row (tabs + focus + actions), 32px */
+  .bar{height:32px;flex:0 0 32px;display:flex;align-items:center;gap:8px;padding:0 10px;
+    border-bottom:1px solid var(--border-subtle);background:var(--surface)}
+  .tabs{display:flex;gap:2px}
+  .tab{height:22px;display:flex;align-items:center;gap:6px;padding:0 9px;border-radius:var(--r-ctl);
+    font-size:11px;color:var(--text-3);font-family:var(--mono)}
+  .tab .ic{font-size:11px}
+  .tab.on{color:var(--text);background:var(--surface-overlay);box-shadow:inset 0 -1.5px 0 var(--accent)}
+  .seg{display:flex;align-items:center;height:22px;border:1px solid var(--border-subtle);border-radius:var(--r-ctl);
+    background:var(--inset);overflow:hidden}
+  .focus{display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;border:1px solid var(--border-subtle);
+    border-radius:var(--r-ctl);background:var(--inset);font-size:11px;color:var(--text-2);font-family:var(--mono)}
+  .focus .lbl{color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;font-size:9px;font-family:var(--ui);font-weight:500}
+  .focus .v{color:var(--accent)}
+  .focus .cv{color:var(--text-faint);font-size:9px}
+  .diffchip{display:flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:var(--r-pill);
+    border:1px solid var(--border-subtle);background:var(--surface-overlay);font-size:10px;color:var(--text-2);font-family:var(--mono)}
+  .diffchip .d{width:6px;height:6px;border-radius:var(--r-pill)}
+  .spacer{margin-left:auto}
+  .btn{height:22px;display:flex;align-items:center;gap:6px;padding:0 9px;border-radius:var(--r-ctl);
+    border:1px solid var(--border-subtle);background:var(--surface-raised);font-size:11px;color:var(--text-2)}
+  .btn .ic{font-size:11px;color:var(--text-3)}
+  .btn.primary{color:var(--text);border-color:var(--border)}
+  .btn.primary .ic{color:var(--accent)}
+
+  /* graph canvas */
+  .gcanvas{position:relative;height:432px;background-color:var(--inset);
+    background-image:radial-gradient(var(--grid-dot) 1px,transparent 1px);background-size:20px 20px;overflow:hidden}
+  .edges{position:absolute;inset:0;z-index:1;pointer-events:none}
+  .elabel{position:absolute;z-index:6;font-family:var(--mono);font-size:9px;color:var(--text-3);
+    background:var(--void);padding:1px 6px;border:1px solid var(--border-subtle);border-radius:var(--r-pill);white-space:nowrap}
+  .elabel.acc{color:var(--accent);border-color:var(--accent-wash)}
+
+  /* graph node */
+  .gn{position:absolute;border-radius:var(--r-inner);border:1px solid var(--border);background:var(--surface-raised);
+    overflow:hidden;min-width:150px;z-index:2}
+  .gn .gh{height:24px;display:flex;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid var(--border-subtle);
+    font-family:var(--mono);font-size:10px}
+  .gn .gh .m{font-size:9px;font-weight:600;letter-spacing:.04em;padding:1px 4px;border-radius:3px;
+    color:var(--text-2);background:var(--surface-overlay)}
+  .gn .gh .ep{color:var(--text)}
+  .gn .gh .meta{margin-left:auto;color:var(--text-faint);font-size:9px}
+  .gn .gb{padding:5px 8px;display:flex;flex-direction:column;gap:3px}
+  .gf{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;white-space:nowrap}
+  .gf .k{color:var(--text-2)}
+  .gf .ty{color:var(--text-faint);margin-left:auto}
+  .gf .ty.id{color:var(--accent);opacity:.85}
+  .gn.entity{background:var(--surface)}
+  .gn.entity .gh .m{color:var(--text-3)}
+  .gn.shape .gh .m{color:var(--text-faint)}
+  /* focus model: focused + neighbors are bright; the rest dim back */
+  .gn.focused{box-shadow:0 0 0 1.5px var(--accent)}
+  .gn.dim{opacity:.34}
+  /* diff treatment (status semantics only: added/changed/removed) */
+  .gn.added{border-color:color-mix(in srgb,var(--ok) 45%,var(--border));border-style:dashed}
+  .gn.removed{opacity:.4;border-style:dashed}
+  .gchip{position:absolute;top:-9px;right:6px;height:15px;padding:0 6px;border-radius:var(--r-pill);
+    display:flex;align-items:center;gap:4px;font-size:9px;font-family:var(--mono);background:var(--surface-overlay);
+    border:1px solid var(--border-subtle);color:var(--text-2);z-index:3}
+  .gchip .d{width:5px;height:5px;border-radius:var(--r-pill)}
+  .gf.changed .k{color:var(--text)}
+  .gf.changed::after{content:'changed';font-family:var(--ui);font-size:8px;color:var(--warn);
+    text-transform:uppercase;letter-spacing:.04em;margin-left:6px}
+
+  /* legend / status bar */
+  .legend{height:26px;flex:0 0 26px;border-top:1px solid var(--border-subtle);background:var(--surface-raised);
+    display:flex;align-items:center;gap:16px;padding:0 12px;font-size:10px;color:var(--text-3)}
+  .legend .lg{display:flex;align-items:center;gap:6px}
+  .legend .lg i{width:16px;height:0;border-top-width:1.4px;border-top-style:solid;display:block}
+  .legend .lg .sw{width:7px;height:7px;border-radius:2px;display:block}
+  .legend .r{margin-left:auto;font-family:var(--mono);color:var(--text-faint)}
+
+  /* sequence (lane) layout */
+  .seqwrap{position:relative;height:300px;background:var(--inset);overflow:hidden}
+  .lane{position:absolute;left:0;right:0;height:50px;border-bottom:1px solid var(--border-subtle);display:flex;align-items:center}
+  .lane .ln{width:168px;flex:0 0 168px;height:100%;display:flex;align-items:center;gap:8px;padding:0 12px;
+    border-right:1px solid var(--border-subtle);background:var(--surface)}
+  .lane .ln .m{font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px;color:var(--text-2);background:var(--surface-overlay);font-family:var(--mono)}
+  .lane .ln .ep{font-family:var(--mono);font-size:11px;color:var(--text)}
+  .lane .track{position:relative;flex:1;height:100%}
+  .call{position:absolute;top:13px;height:24px;border-radius:var(--r-ctl);border:1px solid var(--border);
+    background:var(--surface-raised);display:flex;align-items:center;gap:7px;padding:0 9px;font-family:var(--mono);font-size:10px;color:var(--text-2)}
+  .call .dur{color:var(--text-faint);font-size:9px}
+  .call .st{width:6px;height:6px;border-radius:var(--r-pill);background:var(--ok)}
+  .call.focused{box-shadow:0 0 0 1.5px var(--accent)}
+  .seqedges{position:absolute;inset:0;z-index:4;pointer-events:none}
+  .taxis{position:absolute;left:168px;right:0;bottom:0;height:20px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 14px;font-family:var(--mono);font-size:9px;color:var(--text-faint);border-top:1px solid var(--border-subtle);background:var(--surface)}
+
+  /* flat-API banner */
+  .banner{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border-subtle);
+    background:var(--surface);font-size:11px;color:var(--text-2)}
+  .banner .ico{color:var(--text-3)}
+  .banner b{color:var(--text)}
+  .banner .layers{margin-left:auto;display:flex;gap:6px}
+  .layer{font-size:9px;font-family:var(--mono);padding:2px 7px;border-radius:var(--r-pill);
+    border:1px solid var(--border-subtle);color:var(--text-faint)}
+  .layer.on{color:var(--text-2);border-color:var(--border);background:var(--surface-overlay)}
+  .nodraw{position:absolute;left:50%;top:62%;transform:translate(-50%,-50%);text-align:center;width:340px}
+  .nodraw .h{font-size:11px;color:var(--text-2);display:flex;align-items:center;gap:6px;justify-content:center}
+  .nodraw .d{font-size:10px;color:var(--text-faint);margin-top:5px;line-height:1.55}
+
+  /* planning-result strip (→ Planning materialization) */
+  .strip{width:1220px;display:flex;gap:18px}
+  .pane{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-board);overflow:hidden}
+  .pane .ph{height:30px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--border-subtle);background:var(--surface-raised)}
+  .pane .ph .badge{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);display:flex;align-items:center;gap:6px}
+  .pane .ph .badge .g{color:var(--text-faint)}
+  .pane .ph .ttl{font-size:12px;font-weight:600;color:var(--text)}
+  .pane .pb{padding:14px;min-height:236px}
+  /* mermaid erDiagram element (the materialized export) */
+  .er{border:1px solid var(--border-subtle);border-radius:var(--r-inner);background:var(--inset);padding:12px;position:relative;height:208px}
+  .er .tag{position:absolute;top:8px;right:10px;font-size:9px;font-family:var(--mono);color:var(--text-3);
+    display:flex;align-items:center;gap:5px}
+  .erbox{position:absolute;border:1px solid var(--border);border-radius:var(--r-ctl);background:var(--surface-raised);min-width:108px}
+  .erbox .et{font-size:10px;font-weight:600;color:var(--text);padding:4px 8px;border-bottom:1px solid var(--border-subtle);font-family:var(--mono)}
+  .erbox .er-r{display:flex;gap:8px;padding:2px 8px;font-family:var(--mono);font-size:9px}
+  .erbox .er-r .pk{color:var(--accent);opacity:.85}
+  .erbox .er-r .nm{color:var(--text-2)}
+  .erbox .er-r .ty{margin-left:auto;color:var(--text-faint)}
+  .eredges{position:absolute;inset:0;pointer-events:none}
+  .erlabel{position:absolute;font-family:var(--mono);font-size:9px;color:var(--text-3);background:var(--inset);padding:0 4px}
+  /* agent-context export card */
+  .ctxcard{border:1px solid var(--border-subtle);border-radius:var(--r-inner);background:var(--inset);overflow:hidden;height:208px;display:flex;flex-direction:column}
+  .ctxcard .cth{height:26px;display:flex;align-items:center;gap:7px;padding:0 10px;border-bottom:1px solid var(--border-subtle);
+    font-family:var(--mono);font-size:10px;color:var(--text-2)}
+  .ctxcard .cth .path{color:var(--text-3)}
+  .ctxcard .ctb{flex:1;padding:10px 12px;font-family:var(--mono);font-size:10px;color:var(--text-2);line-height:1.7;overflow:hidden}
+  .ctxcard .ctb .key{color:var(--text-3)}
+  .ctxcard .ctb .scr{color:var(--text-faint);font-style:italic}
+  .ctxcard .ctf{height:26px;border-top:1px solid var(--border-subtle);display:flex;align-items:center;gap:6px;padding:0 10px;
+    font-size:10px;color:var(--text-3)}
+  .ctxcard .ctf .lock{color:var(--text-faint)}
+  .consent{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;border-radius:var(--r-inner);
+    border:1px solid var(--accent-wash);background:var(--accent-wash);font-size:11px;color:var(--text)}
+  .consent .box{width:14px;height:14px;border-radius:4px;border:1px solid var(--accent);background:var(--accent);
+    color:var(--void);display:grid;place-items:center;font-size:9px;flex:0 0 14px}
+  .consent .d{color:var(--text-2);font-size:10px}
+</style>
+</head>
+<body>
+
+  <div class="cap">
+    <span class="t">JD-4 · Data Flow board — dedicated React-Flow board (dagre · focus-on-node · sequence · diff · → Planning)</span>
+    <span class="s">Canvas ADE — design mock (not live)</span>
+  </div>
+
+  <!-- ════════════════ 1 · GRAPH layout, focus-on-node default, id-lineage + diff ════════════════ -->
+  <div class="grp-cap">1 · Graph layout — focus-on-node default · dashed id-lineage edge · regenerate diff</div>
+  <div class="board sel">
+    <div class="head">
+      <span class="badge"><span class="g">⌗</span> Data Flow</span>
+      <span class="ttl">Order surface</span>
+      <span class="sub">· from Browser “Orders app” · localhost:3000</span>
+      <span class="prov"><span class="live"></span> regenerated · 312 reqs · structure only</span>
+      <span class="dots">⋯</span>
+    </div>
+    <div class="bar">
+      <div class="tabs">
+        <span class="tab on"><span class="ic">⟲</span> Graph</span>
+        <span class="tab"><span class="ic">⇉</span> Sequence</span>
+      </div>
+      <span class="focus"><span class="lbl">focus</span><span class="v">GET /api/v2/users/:id</span><span class="cv">▾</span></span>
+      <span class="diffchip"><span class="d" style="background:var(--ok)"></span>+1 endpoint
+        <span class="d" style="background:var(--warn)"></span>1 field changed <span style="color:var(--text-faint)">· since last run</span></span>
+      <span class="spacer"></span>
+      <span class="btn"><span class="ic">⟳</span> Regenerate</span>
+      <span class="btn primary"><span class="ic">→</span> Planning</span>
+      <span class="btn"><span class="ic">✦</span> Agent context</span>
+    </div>
+
+    <div class="gcanvas">
+      <svg class="edges">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="var(--text-3)"/></marker>
+          <marker id="aA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="var(--accent)"/></marker>
+          <marker id="aD" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="var(--text-3)"/></marker>
+        </defs>
+        <!-- PAGE /home → POST /api/session (call) -->
+        <path d="M 150 96 C 210 96, 220 70, 268 70" fill="none" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#a)"/>
+        <!-- PAGE /home → GET /api/users/:id (call, focused neighbor) -->
+        <path d="M 150 110 C 220 130, 250 196, 300 200" fill="none" stroke="var(--connector)" stroke-width="1.3" marker-end="url(#a)"/>
+        <!-- POST /api/session → Session entity (returns) -->
+        <path d="M 470 70 C 540 70, 560 96, 600 104" fill="none" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#a)" opacity="0.4"/>
+        <!-- GET /api/users/:id → User entity (returns) -->
+        <path d="M 506 206 C 560 206, 580 150, 600 144" fill="none" stroke="var(--text-3)" stroke-width="1.3" marker-end="url(#a)"/>
+        <!-- GET /api/orders → Order entity (returns, dimmed + diff-new) -->
+        <path d="M 506 320 C 560 320, 590 300, 600 286" fill="none" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#a)" opacity="0.35"/>
+        <!-- id-lineage: POST /api/session response id ⊳ GET /api/users/:id request (dashed accent) -->
+        <path d="M 368 96 C 360 150, 320 178, 300 188" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#aA)"/>
+      </svg>
+
+      <div class="elabel" style="left:182px;top:74px">calls</div>
+      <div class="elabel acc" style="left:300px;top:140px">sessionId ⊳ propagated → /users/:id</div>
+
+      <!-- PAGE /home (focused neighbor) -->
+      <div class="gn" style="left:14px;top:78px;min-width:130px">
+        <div class="gh"><span class="m">PAGE</span><span class="ep">/home</span></div>
+        <div class="gb"><div class="gf"><span class="k">localhost:3000</span></div></div>
+      </div>
+
+      <!-- POST /api/session (lineage source) -->
+      <div class="gn" style="left:268px;top:42px">
+        <div class="gh"><span class="m">POST</span><span class="ep">/api/v2/session</span><span class="meta">9 · 41ms</span></div>
+        <div class="gb">
+          <div class="gf"><span class="k">sessionId</span><span class="ty id">uuid</span></div>
+          <div class="gf"><span class="k">expiresAt</span><span class="ty">iso8601</span></div>
+        </div>
+      </div>
+
+      <!-- GET /api/users/:id (FOCUSED) -->
+      <div class="gn focused" style="left:300px;top:172px">
+        <div class="gh"><span class="m">GET</span><span class="ep">/api/v2/users/:id</span><span class="meta">72 · 28ms</span></div>
+        <div class="gb">
+          <div class="gf"><span class="k">id</span><span class="ty id">uuid</span></div>
+          <div class="gf"><span class="k">email</span><span class="ty">string·email</span></div>
+          <div class="gf"><span class="k">roleId</span><span class="ty id">→FK Role</span></div>
+        </div>
+      </div>
+
+      <!-- GET /api/orders (dim + diff-new) -->
+      <div class="gn dim added" style="left:300px;top:296px">
+        <div class="gchip"><span class="d" style="background:var(--ok)"></span> new</div>
+        <div class="gh"><span class="m">GET</span><span class="ep">/api/v2/orders</span><span class="meta">86 · 34ms</span></div>
+        <div class="gb"><div class="gf"><span class="k">id</span><span class="ty id">OrderId</span></div></div>
+      </div>
+
+      <!-- Session entity (dim) -->
+      <div class="gn entity dim" style="left:600px;top:74px;min-width:120px">
+        <div class="gh"><span class="m">ENTITY</span><span class="ep">Session</span></div>
+        <div class="gb"><div class="gf"><span class="k">sessionId</span><span class="ty id">uuid</span></div></div>
+      </div>
+
+      <!-- User entity (focused neighbor, with a changed field) -->
+      <div class="gn entity" style="left:600px;top:118px;min-width:136px">
+        <div class="gh"><span class="m">ENTITY</span><span class="ep">User</span><span class="meta">9 fields</span></div>
+        <div class="gb">
+          <div class="gf"><span class="k">id</span><span class="ty id">uuid</span></div>
+          <div class="gf changed"><span class="k">avatarUrl</span><span class="ty">string|null</span></div>
+          <div class="gf"><span class="k">roleId</span><span class="ty id">uuid</span></div>
+        </div>
+      </div>
+
+      <!-- Order entity (dim) -->
+      <div class="gn entity dim" style="left:600px;top:258px;min-width:120px">
+        <div class="gh"><span class="m">ENTITY</span><span class="ep">Order</span></div>
+        <div class="gb"><div class="gf"><span class="k">customerId</span><span class="ty id">→FK User</span></div></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="lg"><i style="border-color:var(--text-3)"></i> call</span>
+      <span class="lg"><i style="border-color:var(--text-3)"></i> returns entity</span>
+      <span class="lg"><i style="border-color:var(--accent);border-top-style:dashed"></i> id-lineage</span>
+      <span class="lg"><span class="sw" style="background:transparent;border:1px dashed color-mix(in srgb,var(--ok) 60%,transparent)"></span> added</span>
+      <span class="lg"><span class="d" style="width:7px;height:7px;border-radius:50%;background:var(--warn);display:block"></span> changed</span>
+      <span class="r">focus subgraph · 3 of 6 endpoints · 1 lineage edge · we never draw the whole surface</span>
+    </div>
+  </div>
+
+  <!-- ════════════════ 2 · SEQUENCE layout (2nd tab) ════════════════ -->
+  <div class="grp-cap">2 · Sequence layout — the second tab · time-ordered login→home flow with the id-lineage hop</div>
+  <div class="board">
+    <div class="head">
+      <span class="badge"><span class="g">⌗</span> Data Flow</span>
+      <span class="ttl">Order surface</span>
+      <span class="sub">· login → home flow</span>
+      <span class="prov"><span class="live"></span> regenerated · 312 reqs · structure only</span>
+      <span class="dots">⋯</span>
+    </div>
+    <div class="bar">
+      <div class="tabs">
+        <span class="tab"><span class="ic">⟲</span> Graph</span>
+        <span class="tab on"><span class="ic">⇉</span> Sequence</span>
+      </div>
+      <span class="focus"><span class="lbl">flow</span><span class="v">/login → /home</span><span class="cv">▾</span></span>
+      <span class="spacer"></span>
+      <span class="btn"><span class="ic">⟳</span> Regenerate</span>
+      <span class="btn primary"><span class="ic">→</span> Planning</span>
+    </div>
+
+    <div class="seqwrap">
+      <svg class="seqedges">
+        <defs>
+          <marker id="sA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="var(--accent)"/></marker>
+        </defs>
+        <!-- lineage hop: POST /api/session (lane2, t≈300) response → GET /api/users/:id (lane4, t≈470) request -->
+        <path d="M 470 75 C 540 95, 540 150, 614 175" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#sA)"/>
+      </svg>
+      <div class="elabel acc" style="left:486px;top:120px">sessionId ⊳</div>
+
+      <!-- lane 0 : PAGE /login -->
+      <div class="lane" style="top:0">
+        <div class="ln"><span class="m">PAGE</span><span class="ep">/login</span></div>
+        <div class="track"><div class="call" style="left:18px;width:120px"><span class="st"></span>document <span class="dur">· 12ms</span></div></div>
+      </div>
+      <!-- lane 1 : POST /api/session -->
+      <div class="lane" style="top:50px">
+        <div class="ln"><span class="m">POST</span><span class="ep">/api/v2/session</span></div>
+        <div class="track"><div class="call" style="left:280px;width:138px"><span class="st"></span>→ Session{id} <span class="dur">· 41ms</span></div></div>
+      </div>
+      <!-- lane 2 : PAGE /home -->
+      <div class="lane" style="top:100px">
+        <div class="ln"><span class="m">PAGE</span><span class="ep">/home</span></div>
+        <div class="track"><div class="call" style="left:430px;width:120px"><span class="st"></span>document <span class="dur">· 9ms</span></div></div>
+      </div>
+      <!-- lane 3 : GET /api/users/:id (focused) -->
+      <div class="lane" style="top:150px">
+        <div class="ln"><span class="m">GET</span><span class="ep">/api/v2/users/:id</span></div>
+        <div class="track"><div class="call focused" style="left:600px;width:150px"><span class="st"></span>uses sessionId <span class="dur">· 28ms</span></div></div>
+      </div>
+      <!-- lane 4 : GET /api/orders -->
+      <div class="lane" style="top:200px;border-bottom:none">
+        <div class="ln"><span class="m">GET</span><span class="ep">/api/v2/orders</span></div>
+        <div class="track"><div class="call" style="left:792px;width:120px"><span class="st"></span>list <span class="dur">· 34ms</span></div></div>
+      </div>
+
+      <div class="taxis"><span>0 ms</span><span>+120</span><span>+260</span><span>+410</span><span>+520 ms →</span></div>
+    </div>
+
+    <div class="legend">
+      <span class="lg"><span class="sw" style="background:var(--surface-raised);border:1px solid var(--border)"></span> request (by start time)</span>
+      <span class="lg"><i style="border-color:var(--accent);border-top-style:dashed"></i> id-lineage hop</span>
+      <span class="r">ordered by Network.startTs · the lineage edge crosses lanes where a value flows forward</span>
+    </div>
+  </div>
+
+  <!-- ════════════════ 3 · FLAT-API graceful degradation ════════════════ -->
+  <div class="grp-cap">3 · Graceful degradation — flat / unrelated API · zero fabricated entity→entity edges (cf. mock-e)</div>
+  <div class="board">
+    <div class="head">
+      <span class="badge"><span class="g">⌗</span> Data Flow</span>
+      <span class="ttl">Dashboard surface</span>
+      <span class="sub">· from Browser “Day One” · localhost:5173</span>
+      <span class="prov"><span class="live" style="background:var(--text-3)"></span> 248 reqs · 0 links</span>
+      <span class="dots">⋯</span>
+    </div>
+    <div class="banner">
+      <span class="ico">ⓘ</span>
+      <span><b>Flat API</b> — no relationships between endpoints found. No shared identifier links one route to
+      another across <b>248</b> captured calls. You still get the full inventory + inferred schemas; we never invent edges.</span>
+      <span class="layers">
+        <span class="layer on">inventory</span>
+        <span class="layer on">schemas</span>
+        <span class="layer">relationships</span>
+        <span class="layer">lineage</span>
+      </span>
+    </div>
+    <div class="bar">
+      <div class="tabs">
+        <span class="tab on"><span class="ic">⟲</span> Graph</span>
+        <span class="tab"><span class="ic">⇉</span> Sequence</span>
+      </div>
+      <span class="focus"><span class="lbl">focus</span><span class="v">GET /api/weather</span><span class="cv">▾</span></span>
+      <span class="spacer"></span>
+      <span class="btn"><span class="ic">⟳</span> Regenerate</span>
+      <span class="btn primary"><span class="ic">→</span> Planning</span>
+    </div>
+
+    <div class="gcanvas" style="height:300px">
+      <svg class="edges">
+        <defs><marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" fill="var(--text-3)"/></marker></defs>
+        <!-- page → each endpoint (calls). NO endpoint→endpoint, NO entity→entity edges. -->
+        <path d="M 152 150 C 200 90, 230 70, 280 66" fill="none" stroke="var(--text-3)" stroke-width="1.1" marker-end="url(#fa)"/>
+        <path d="M 152 150 C 200 120, 230 116, 280 116" fill="none" stroke="var(--text-3)" stroke-width="1.1" marker-end="url(#fa)"/>
+        <path d="M 152 152 C 210 152, 240 166, 280 166" fill="none" stroke="var(--text-3)" stroke-width="1.1" marker-end="url(#fa)"/>
+        <path d="M 152 154 C 200 200, 230 212, 280 216" fill="none" stroke="var(--text-3)" stroke-width="1.1" marker-end="url(#fa)"/>
+        <!-- one endpoint → its island SHAPE (returns), but the shapes never link to each other -->
+        <path d="M 470 66 C 540 66, 560 70, 600 78" fill="none" stroke="var(--text-3)" stroke-width="1.1" marker-end="url(#fa)" opacity=".7"/>
+      </svg>
+
+      <!-- PAGE -->
+      <div class="gn" style="left:16px;top:128px;min-width:124px">
+        <div class="gh"><span class="m">PAGE</span><span class="ep">/dashboard</span></div>
+        <div class="gb"><div class="gf"><span class="k">localhost:5173</span></div></div>
+      </div>
+
+      <!-- endpoint island column (no inter-endpoint edges) -->
+      <div class="gn" style="left:280px;top:44px;min-width:150px"><div class="gh"><span class="m">GET</span><span class="ep">/api/weather</span><span class="meta">48 · 61ms</span></div></div>
+      <div class="gn focused" style="left:280px;top:96px;min-width:150px"><div class="gh"><span class="m">GET</span><span class="ep">/api/stocks</span><span class="meta">52 · 44ms</span></div></div>
+      <div class="gn" style="left:280px;top:148px;min-width:150px"><div class="gh"><span class="m">GET</span><span class="ep">/api/news</span><span class="meta">41 · 88ms</span></div></div>
+      <div class="gn" style="left:280px;top:200px;min-width:150px"><div class="gh"><span class="m">POST</span><span class="ep">/api/track</span><span class="meta">62 · 204</span></div></div>
+
+      <!-- island SHAPEs (named SHAPE, not ENTITY — no identity/relationship) -->
+      <div class="gn shape" style="left:600px;top:54px;min-width:118px"><div class="gh"><span class="m">SHAPE</span><span class="ep">Weather</span></div>
+        <div class="gb"><div class="gf"><span class="k">tempC</span><span class="ty">number</span></div><div class="gf"><span class="k">city</span><span class="ty">string</span></div></div></div>
+      <div class="gn shape" style="left:600px;top:150px;min-width:118px"><div class="gh"><span class="m">SHAPE</span><span class="ep">Stock</span></div>
+        <div class="gb"><div class="gf"><span class="k">ticker</span><span class="ty">string</span></div></div></div>
+
+      <div class="nodraw">
+        <div class="h">⊘ No relationships to draw</div>
+        <div class="d">Responses share no identifiers, so no entity → entity links are inferred. Each shape is a
+          leaf — expected for widgets &amp; third-party feeds. We never invent edges.</div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="lg"><i style="border-color:var(--text-3)"></i> call</span>
+      <span class="lg"><i style="border-color:var(--text-3)"></i> produces shape</span>
+      <span class="lg" style="color:var(--text-faint)">relationship — none</span>
+      <span class="lg" style="color:var(--text-faint)">lineage — none</span>
+      <span class="r">layers reached: inventory ✓ · schemas ✓ · relationships 0 · lineage 0</span>
+    </div>
+  </div>
+
+  <!-- ════════════════ 4 · → Planning + → Agent context (the two export consent moments) ════════════════ -->
+  <div class="grp-cap">4 · The two exports — “→ Planning” materializes an editable Mermaid erDiagram · “Agent context” writes scrubbed shape to .canvas/memory/</div>
+  <div class="strip">
+
+    <!-- Planning board with the materialized erDiagram element -->
+    <div class="pane">
+      <div class="ph"><span class="badge"><span class="g">◳</span> Planning</span><span class="ttl">Orders — data model</span></div>
+      <div class="pb">
+        <div class="er">
+          <div class="tag"><span class="m" style="font-size:9px;color:var(--text-faint)">⌗</span> diagram · mermaid erDiagram</div>
+          <svg class="eredges">
+            <path d="M 150 70 C 200 70, 210 78, 236 84" fill="none" stroke="var(--connector)" stroke-width="1.2"/>
+            <path d="M 150 96 C 190 110, 200 140, 236 150" fill="none" stroke="var(--connector)" stroke-width="1.2"/>
+          </svg>
+          <div class="erlabel" style="left:196px;top:66px">1 — *</div>
+          <div class="erlabel" style="left:188px;top:128px">1 — *</div>
+          <!-- User -->
+          <div class="erbox" style="left:20px;top:50px">
+            <div class="et">User</div>
+            <div class="er-r"><span class="pk">PK</span><span class="nm">id</span><span class="ty">uuid</span></div>
+            <div class="er-r"><span class="nm">email</span><span class="ty">string</span></div>
+          </div>
+          <!-- Order -->
+          <div class="erbox" style="left:240px;top:60px">
+            <div class="et">Order</div>
+            <div class="er-r"><span class="pk">PK</span><span class="nm">id</span><span class="ty">uuid</span></div>
+            <div class="er-r"><span class="pk">FK</span><span class="nm">customerId</span><span class="ty">uuid</span></div>
+            <div class="er-r"><span class="nm">total</span><span class="ty">number</span></div>
+          </div>
+          <!-- Item -->
+          <div class="erbox" style="left:240px;top:138px">
+            <div class="et">Item</div>
+            <div class="er-r"><span class="pk">FK</span><span class="nm">orderId</span><span class="ty">uuid</span></div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--text-3);margin-top:8px;font-family:var(--mono)">
+          editable Mermaid element · re-render via the hidden MAIN worker · names + types + relationships only
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent-context export with scrub-on-export consent -->
+    <div class="pane">
+      <div class="ph"><span class="badge"><span class="g">✦</span> Agent context</span><span class="ttl">Export to .canvas/memory/</span></div>
+      <div class="pb">
+        <div class="consent">
+          <span class="box">✓</span>
+          <span>Export inferred data model<span class="d"> — scrub secrets &amp; PII before writing (the consent moment)</span></span>
+        </div>
+        <div class="ctxcard">
+          <div class="cth">⌗ data-model.md <span class="path">· .canvas/memory/dataflow/</span></div>
+          <div class="ctb">
+            <span class="key">## Order surface — inferred</span><br/>
+            entities: User, Order, Item, Session<br/>
+            User.id <span style="color:var(--text-faint)">uuid · PK</span><br/>
+            User.email <span style="color:var(--text-faint)">string·email</span> <span class="scr">⚠ PII · value scrubbed</span><br/>
+            Order.customerId <span style="color:var(--text-faint)">→FK User</span><br/>
+            session.token <span class="scr">⟨redacted⟩</span>
+          </div>
+          <div class="ctf"><span class="lock">🔒</span> structure only · values scrubbed in main · git-ignored by default (ADR 0009)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
