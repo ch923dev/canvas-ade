@@ -424,6 +424,12 @@ export const DiagramCard = memo(function DiagramCard({
             type="button"
             title={editing ? 'Done editing' : 'Edit source'}
             onPointerDown={(e) => e.stopPropagation()}
+            // While editing, the source <textarea> holds focus. A bare press would blur it FIRST
+            // (onBlur → setEditing(false) → re-render), so by the time onClick fires it reads
+            // editing===false and RE-OPENS the editor — one click = close+reopen, the editor never
+            // closes ("clicking once does 2 clicks"). preventDefault on mousedown keeps focus in the
+            // textarea so no spurious blur fires and the single click toggles with the correct state.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => {
               e.stopPropagation()
               if (editing) {

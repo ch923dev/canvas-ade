@@ -33,6 +33,7 @@ import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
+import { buildDiagramThemeVars } from '../canvas/boards/planning/diagramTheme'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
 import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
 import { disposeLiveResources } from '../store/disposeLiveResources'
@@ -309,6 +310,10 @@ export interface CanvasE2E {
   /** JD-4 — set the Data-Flow board's noise filters (both default ON) so a spec can exercise the
    *  unfiltered firehose or assert the filtered view deterministically. */
   setDfFilters: (dataflowId: string, apiOnly: boolean, firstParty: boolean) => void
+  /** S4 — the LIVE Mermaid theme vars the app feeds the render worker (`buildDiagramThemeVars`).
+   *  The ER a11y contrast spec renders an erDiagram with EXACTLY these and asserts the row
+   *  backgrounds are dark — proving the builder's var names still match what Mermaid reads. */
+  diagramThemeVars: () => Record<string, string>
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -875,6 +880,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       const s = useDataFlowStore.getState()
       s.setApiOnly(dataflowId, apiOnly)
       s.setFirstParty(dataflowId, firstParty)
+    },
+    diagramThemeVars() {
+      return buildDiagramThemeVars()
     }
   }
   window.__canvasE2E = api
