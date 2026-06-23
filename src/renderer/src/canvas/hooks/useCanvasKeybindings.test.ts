@@ -62,6 +62,25 @@ describe('resolveCanvasKeyAction', () => {
     expect(resolveCanvasKeyAction(chord('d', { ctrlKey: true }), FREE)).toBeNull()
   })
 
+  it('Ctrl/Cmd+Shift+A toggles the audit log (W1-A) — not without Shift, not while typing', () => {
+    expect(resolveCanvasKeyAction(chord('a', { ctrlKey: true, shiftKey: true }), FREE)).toEqual({
+      kind: 'toggleAuditLog'
+    })
+    expect(resolveCanvasKeyAction(chord('A', { metaKey: true, shiftKey: true }), FREE)).toEqual({
+      kind: 'toggleAuditLog'
+    })
+    // No Shift → not the audit toggle (and bare/Ctrl-only `a` stays free for the agent).
+    expect(resolveCanvasKeyAction(chord('a', { ctrlKey: true }), FREE)).toBeNull()
+    // Suppressed while typing in a field.
+    expect(
+      resolveCanvasKeyAction(chord('a', { ctrlKey: true, shiftKey: true }), {
+        typing: true,
+        bareKeyAllowed: false,
+        boardNavAllowed: false
+      })
+    ).toBeNull()
+  })
+
   it('1 fits / 0 resets the camera — but not inside a board node or while typing', () => {
     expect(resolveCanvasKeyAction(chord('1'), FREE)).toEqual({ kind: 'fit' })
     expect(resolveCanvasKeyAction(chord('0'), FREE)).toEqual({ kind: 'reset' })

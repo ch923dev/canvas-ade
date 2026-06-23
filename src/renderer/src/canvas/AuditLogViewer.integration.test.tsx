@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import AuditLogViewer from './AuditLogViewer'
+import { useAuditLogStore } from './auditLogStore'
 
 // `globals: false` → register RTL cleanup manually; also drop the window.api stub so
-// tests don't leak the bridge into one another.
+// tests don't leak the bridge into one another. The open flag now lives in the shared
+// auditLogStore (W1-A) — a module singleton — so reset it too or one test's open panel
+// leaks into the next render's initial state.
 afterEach(() => {
   cleanup()
+  useAuditLogStore.setState({ open: false })
   delete (window as unknown as { api?: unknown }).api
 })
 
