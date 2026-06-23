@@ -428,3 +428,30 @@ research/spec docs dropped on merge → this entry is the residue).
   a pinning unit assertion + inline-replied; incremental re-review **CLEAN (0 findings)**. Also restored
   a drifted `core.hooksPath` (`.git/hooks` → `.githooks`, which had silently bypassed the pre-push e2e
   gate). Squash `cfa6a421`; branch deleted.
+
+## 2026-06-23 — JSON & Data Flow umbrella · JD-1 source-faithful JSON body viewer — #220 (`f6748711`, 2026-06-23)
+
+First slice of the **JD (JSON & Data Flow)** umbrella (research package + EPIC + per-slice specs at
+`docs/research/2026-06-23-json-dataflow-visualization/`; mocks A–E, palette decision = Option A). JD-1
+retires the Network inspector's flat `<pre>` JSON dump (`prettyBody` → `JSON.stringify(JSON.parse(body))`)
+and replaces it with a collapsible, **source-faithful** tree. The spine is a hand-written **lenient
+source-string tokenizer (NOT `JSON.parse`)** in `lib/osrJson.ts` → a flat-row model + fold math
+(`initialCollapsed`/`visibleRows`) + a lossless `reindent` (Raw mode); so duplicate keys, key order, big
+integers, and truncated bodies all stay wire-faithful. `osr/JsonView.tsx` renders it with **Option-A**
+coloring (accent keys · neutral values · grey type badges), collapse-to-depth-2, a Raw⇄Tree toggle,
+**click-a-value-to-copy + a "Copied" toast** (pulled forward from JD-2 per request), and dup/64-bit/
+truncated/max-depth chips — token→`<span>` only, **no `dangerouslySetInnerHTML`** (asserted). Both
+`prettyBody` call sites in `OsrNetworkDetail` (`BodyBar` + `PreviewTab`) swap to `<JsonView>`;
+`prettyBody` survives as the Raw/last-resort path sharing the one BOM-aware `looksJson`. Ephemeral
+viewer state → **no schema bump**. e2e: `localServer` gained a `/json` route + `?xhr`-gated `fetch('/json')`
+(the main-document body is CDP-evicted post-commit, so the viewer must load a **subresource**) + a
+`browserNetwork` `@preview` test (load body → fold → big-int verbatim → copy→toast → Raw). **Bot review
+caught a real crash vector** — `scanValue` recursed unbounded, so a page-controlled `[[[[…` (millions of
+levels under the 5 MB cap) would overflow V8's stack and crash the panel; fixed with a `MAX_DEPTH=200`
+guard that clamps deep nesting to a flagged `…(max depth)` truncation (`5cf0de28`, unit test + inline
+disposition). **Verification:** gate green (typecheck/lint 0-err/format · unit); **full e2e matrix BOTH
+legs** — Windows (worktree leg; only the documented `@terminal gitDiff` host-repo-escape false-fail) +
+**Linux Docker (176 passed, clean — gitDiff passes in-container)**. CI check/CodeQL/analyze/claude-review
+all pass. Squash `f6748711`; worktree `feat/json-dataflow-viz` retained for the umbrella's next slices.
+**Next:** JD-2 (viewer enrichments: virtualize/search/copy-path/a11y) ∥ JD-3 (Data Flow inventory +
+schema) → JD-4 (graph + canvas/agent). JD-3 needs a privacy ADR; JD-4 bumps the schema (new board type).
