@@ -17,8 +17,13 @@ import { evalIn, pollEval, seed } from './helpers'
 const liveScrollback = (id: string) =>
   `window.__canvasE2E.terminalScrollback(${JSON.stringify(id)})`
 const readBuf = (id: string) => `window.__canvasE2E.readTerminal(${JSON.stringify(id)})`
-const boardScrollback = (id: string) =>
-  `(window.__canvasE2E.getBoards().find((b) => b.id === ${JSON.stringify(id)}) || {}).scrollback`
+// Read the persisted board pin via a STRUCTURED ARG to page.evaluate — never interpolate the id
+// into an eval'd code string (CodeQL js/bad-code-sanitization; the newTerminal.e2e.ts convention).
+const boardScrollback = (page: Page, id: string): Promise<number | undefined> =>
+  page.evaluate(
+    (a) => (globalThis as any).__canvasE2E.getBoards().find((b: any) => b.id === a)?.scrollback,
+    id
+  )
 
 // Clear the per-machine sticky default so a test that asserts the BASELINE isn't tainted by an
 // earlier test (the Electron instance — hence localStorage — is shared across specs).
@@ -92,9 +97,9 @@ test.describe('@terminal configurable scrollback', () => {
     await page.locator('[data-test="new-terminal-create"]').click()
     await expect(dialog).toHaveCount(0)
 
-    expect(await pollEval(page, `${boardScrollback(id)} === 50000`, 6000), 'pin persisted').toBe(
-      true
-    )
+    await expect
+      .poll(() => boardScrollback(page, id), { timeout: 6000, message: 'pin persisted' })
+      .toBe(50000)
     expect(await pollEval(page, `${liveScrollback(id)} === 50000`, 6000), 'applied live').toBe(true)
   })
 
@@ -107,7 +112,9 @@ test.describe('@terminal configurable scrollback', () => {
     expect(await pollEval(page, `${liveScrollback(id)} === 10000`, 6000), 'inherited sticky').toBe(
       true
     )
-    expect(await pollEval(page, `${boardScrollback(id)} === undefined`, 4000), 'no pin').toBe(true)
+    await expect
+      .poll(() => boardScrollback(page, id), { timeout: 4000, message: 'no pin' })
+      .toBeUndefined()
     await clearSticky(page)
   })
 })
