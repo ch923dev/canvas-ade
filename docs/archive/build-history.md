@@ -791,3 +791,36 @@ Promotes the MCP Wave-1 integration umbrella (`feat/mcp-integration`) to `main`,
 **Package lockstep:** `@expanse-ade/mcp` **0.13.0 → 0.15.0** published to public npm (OIDC trusted publishing + build-provenance; canvas-ade-mcp PR #5 → tag `v0.15.0`) BEFORE the app dep bump; the app `pnpm-lock.yaml` was hand-edited (version + integrity) since no `pnpm install` runs from a junctioned worktree. App PR #233 adopted it into the umbrella; the umbrella was rebased onto main, then merged main in to pick up #235's `@xterm/addon-search` (the only deps overlap — auto-merged, lockfile frozen-validated in Docker).
 
 **Verification:** PR #234 CI all 4 green (`check` installed the published 0.15.0 + typecheck/lint/format/unit; analyze; CodeQL; claude-review 0 inline). **Full e2e matrix both legs green on the integrated state:** Linux Docker **192 passed** (full suite incl all 25 `@mcp` specs vs a fresh-installed 0.15.0 — W1-G's C1/C2/C3 live probes pass) + 1 flaky (retried) + 1 skip; Windows **162 passed** (`--grep-invert @mcp` — the node_modules 0.15.0 overlay was permission-blocked; `@mcp` is OS-agnostic + fully covered by the Linux leg) + 1 known `browserNetwork` cross-spec flake (re-ran isolated 12/12 green). **Unblocks Wave-2** (the S2 canvas-ade primer reads `APP_TOOLS` + the registered tool list, which now include `spawn_group` and `canvas://app-model`).
+
+## 2026-06-24 — JD-4 → main · the Data-Flow board (closes the JSON & Data Flow umbrella) — #236 (`d46ce69f`)
+
+Final slice of the JSON & Data Flow umbrella (after JD-1 #220, JD-2 #226, JD-3 #229). Adds a first-class
+**`dataflow` board** (schema **v14**) that turns a bound Browser board's captured network into a
+focus-on-node graph: endpoint inventory → inferred schemas → entities → **id-lineage**, with a Sequence
+view, a "since last run" diff, and a **"→ Planning"** export that materializes an editable Mermaid
+**erDiagram**.
+
+- **Privacy (ADR 0010 amendment).** Shape-not-values: the only value read (id-lineage) is MAIN-side,
+  capped, and value-LESS over IPC (id name + request ids only, `redactSecrets`-scrubbed). No `innerHTML`;
+  new MAIN IPC frame-guarded (`preview:osrNetLineage`, `preview:osrNetSampleSchema`).
+- **Pure libs:** `lib/lineage.ts` (URL-side + body-side id-lineage), `lib/erMermaid.ts` (ER serializer,
+  digit-leading-ident hardening + field cap), `lib/dataFlowGraph.ts` / `graphLayout.ts`, `lib/netFilter.ts`
+  (noise filter). `schemaInfer` dictionary collapse (ObjectId-keyed maps → one `{*}` member — fixes a
+  Mermaid erDiagram parse CRASH on id-keyed entity names + a 1300-line ER explosion).
+- **Live dev-check fixes:** noise filter (API-only + first-party, both default ON — a raw production
+  capture is mostly assets/3rd-party); ER a11y contrast (the unified Mermaid `erBox` renderer fills rows
+  from `rowOdd`/`rowEven`, NOT the legacy `attributeBackgroundColor*` — pinned both dark); infinite-canvas
+  zoom/pan on Diagram elements (focus-gated 0.25–8×, header no longer clips the top); `</>` source-toggle
+  blur-then-reopen fix.
+- **Review (2 rounds):** R1 0 inline; R2 (post-#234 rebase) 2 `[warning]` → fixed: dedupe the
+  self-referential `returns` edge (`new Set`), and remove the divergent agent-context clipboard stub (ADR
+  0010 §B makes it a consent-gated `.canvas/memory` MAIN write — deferred to a follow-up). Both
+  dispositioned inline; re-review 0 crit / 0 warn.
+
+**Verification:** PR #236 CI all 4 green (`check` fresh-installed 0.15.0 + typecheck/lint/format/unit;
+analyze; CodeQL; claude-review). **Linux Docker full e2e 197 passed / 0 failed** (199 specs incl #234 MCP +
+#235 terminal, fresh-installed 0.15.0) on the merge SHA. The Windows-native leg was not re-run on the
+post-#234 SHA (the worktree's shared `node_modules` sat on `@expanse-ade/mcp` 0.13.0 vs the rebase's 0.15.0;
+an isolated install would require deleting the shared-tree symlink — declined); cross-OS covered by the
+Linux full leg + CI, and the JD-4 renderer specs passed Windows pre-#234-rebase. **Closes the JSON & Data
+Flow umbrella.**
