@@ -495,12 +495,18 @@ export function buildOrchestrator(
           body: `Set this command to run on terminal "${boardLabel}" the next time it spawns?\n\n${safeLaunch}`
         })
         if (!approved) {
+          // F6: a human was shown this exact command and chose to block it → the audit verb
+          // is `denied` (human said no), NOT `rejected` (which is reserved for automated
+          // pre-gate failures: sanitizer reject, board-not-found, type mismatch). On this
+          // exec-vector-adjacent path the distinction is forensic, not cosmetic — it tells an
+          // auditor whether the system blocked the write before a human saw it or a human
+          // explicitly refused it. Mirrors every other human-deny path in this file.
           await writeAudit({
             type: 'configure_board',
             targetId: boardId,
             prompt: safeLaunch,
             nonce: '',
-            status: 'rejected',
+            status: 'denied',
             detail: 'launchCommand configure denied by the human gate'
           })
           throw new Error('configure_board: launchCommand denied by the human gate')
@@ -545,7 +551,33 @@ export function buildOrchestrator(
       // channel. The renderer's updateBoard filters to PATCHABLE_KEYS, so an off-type/
       // ephemeral key is dropped.
       const ack = await registry.sendCommand({ type: 'configureBoard', id: boardId, patch: config })
-      if (!ack.ok) throw new Error(`configure_board failed: ${ack.error}`)
+      if (!ack.ok) {
+        // F7: a shell/cwd change is a durable per-board config write that persists to
+        // canvas.json. "No exec vector" exempts it from the human gate, NOT from the audit
+        // trace — the locked invariant is that EVERY cross-board write leaves an audit entry,
+        // dangerous or not. Record the failed apply BEFORE the throw so the trail is symmetric
+        // with the launchCommand path.
+        await writeAudit({
+          type: 'configure_board',
+          targetId: boardId,
+          prompt: '',
+          nonce: '',
+          status: 'failed',
+          detail: `configure_board apply failed: ${ack.error}`
+        })
+        throw new Error(`configure_board failed: ${ack.error}`)
+      }
+      // F7: record the persisted shell/cwd write. prompt is '' (no exec content — matches the
+      // content-less add_planning_elements pattern); detail names which keys were patched
+      // (forensically useful) WITHOUT logging the cwd value, which could be a sensitive path.
+      await writeAudit({
+        type: 'configure_board',
+        targetId: boardId,
+        prompt: '',
+        nonce: '',
+        status: 'configured',
+        detail: `shell/cwd configured: ${Object.keys(config).join(', ')}`
+      })
     },
     async addPlanningElements(boardId: BoardId, spec: PlanningElementsSpec): Promise<void> {
       // 🔒 S2: the FIRST MCP path writing attacker-influenceable CONTENT onto the durable
