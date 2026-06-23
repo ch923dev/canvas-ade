@@ -19,6 +19,8 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import { useOsrNetworkStore, type SchemaState } from '../../../store/osrNetworkStore'
+import { useCanvasStore } from '../../../store/canvasStore'
+import type { Board } from '../../../lib/boardSchema'
 import type { NetRecord } from '../../../../../preload'
 import { groupByTemplate, type RouteTemplate, type TemplateGroup } from '../../../lib/routeTemplate'
 import { mergeShapes, type InferredField } from '../../../lib/schemaInfer'
@@ -164,6 +166,18 @@ export function DataFlowView({
   }).length
   const flat = inferShapes && filledSchemas >= 2 && model.relationships.length === 0
 
+  // JD-4 graph-mode entry: promote this inventory onto a dedicated Data-Flow board bound to this
+  // Browser board (the flagship graph surface). getState() in the handler so the click path doesn't
+  // add a re-rendering boards subscription to the panel.
+  const openAsBoard = (): void => {
+    const cs = useCanvasStore.getState()
+    const src = cs.boards.find((b) => b.id === boardId)
+    const at = src ? { x: src.x + src.w + 48, y: src.y } : { x: 200, y: 200 }
+    const id = cs.addBoard('dataflow', at)
+    cs.updateBoard(id, { sourceBoardId: boardId } as Partial<Board>)
+    cs.setSelection([id])
+  }
+
   return (
     <div className="bb-net-df">
       {/* toolbar: opt-in gate + privacy chip */}
@@ -190,6 +204,13 @@ export function DataFlowView({
         <span className="bb-net-df-privacy">
           {inferShapes ? '🔒 values scrubbed · structure only' : '🔒 bodies off · inventory only'}
         </span>
+        <button
+          className="bb-net-df-toboard"
+          onClick={openAsBoard}
+          title="Open this surface as a dedicated Data-Flow board on the canvas"
+        >
+          ⌗ Data Flow board
+        </button>
       </div>
 
       {flat && (
