@@ -45,6 +45,11 @@ export function buildDiagramThemeVars(): Record<string, string> {
     actorBkg: raised,
     actorBorder: line,
     actorTextColor: text,
+    // erDiagram attribute rows default to WHITE / light-gray in Mermaid even under a dark base theme,
+    // so our near-white text renders invisibly on them. Pin both to dark surfaces (a subtle zebra) so
+    // the rows meet contrast. (a11y fix — the JD-4 ER export readability pass.)
+    attributeBackgroundColorOdd: raised,
+    attributeBackgroundColorEven: surface,
     // The one saturated colour, used only on active/selected accents Mermaid draws.
     activeTaskBkgColor: accent,
     activeTaskBorderColor: accent,

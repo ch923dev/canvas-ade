@@ -32,4 +32,12 @@ describe('buildDiagramThemeVars — single-accent, neutral-elsewhere contract', 
     expect(vars.background).toBe('#141416')
     expect(vars.primaryColor).toBe('#1a1a1d')
   })
+
+  it('pins erDiagram attribute rows to dark surfaces (not Mermaid’s white/light defaults)', () => {
+    // Both must be dark so near-white attribute text stays readable (the a11y fix).
+    expect(vars.attributeBackgroundColorOdd).toBe('#1a1a1d')
+    expect(vars.attributeBackgroundColorEven).toBe('#141416')
+    expect(vars.attributeBackgroundColorOdd).not.toMatch(/#f{3,6}|#fff/i)
+    expect(vars.attributeBackgroundColorEven).not.toMatch(/#f{3,6}|#fff/i)
+  })
 })
