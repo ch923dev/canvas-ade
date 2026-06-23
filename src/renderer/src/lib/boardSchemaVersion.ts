@@ -33,8 +33,16 @@
  *   on the unknown type/kind — so the compat floor moves to 13 too (MIN_READER_VERSION below). The
  *   migration is identity (the new type/kind only appear on newly-authored content). The
  *   foundation slice owns the ENTIRE v13 bump; S2-S5 add zero schema (KICKOFF §6 bump coordination).
+ * - v14 = the `dataflow` board TYPE (JD-4 — the Data-Flow board, JD umbrella close-out). A NEW board
+ *   type is BREAKING per ADR 0007: a pre-14 `assertBoard` default branch throws on the unknown type,
+ *   so the compat floor moves to 14 too. The migration is identity (the type only appears on
+ *   newly-authored boards). The board persists only `BoardCommon` + an optional `sourceBoardId`
+ *   (the Browser board whose captured traffic it visualizes — mirrors `BrowserBoard.previewSourceId`);
+ *   the inferred model (endpoints/schemas/entities/lineage) is body-derived + EPHEMERAL (ADR 0010) and
+ *   is NEVER serialized (export to `.canvas/memory/` is the consent moment), so there are no new
+ *   body-derived persisted fields.
  */
-export const SCHEMA_VERSION = 13
+export const SCHEMA_VERSION = 14
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -56,6 +64,9 @@ export const SCHEMA_VERSION = 13
  * 13 has no `file` case in `assertBoard` nor a `fileref` case in `assertPlanningElement`, so it would
  * HARD-FAIL deep validation on a doc that contains either. Stamping `minReaderVersion: 13` makes
  * pre-13 apps show the clean "update the app to open it" message (assertReadableVersion) instead of a
- * confusing `.bak`-fallback parse failure. Every app from 13 on can read all future additive docs.
+ * confusing `.bak`-fallback parse failure. Floor moves to 14 with the v14 `dataflow` board type
+ * (JD-4): an app older than 14 has no `dataflow` case in `assertBoard`, so it would HARD-FAIL on a doc
+ * containing one — pre-14 apps get the clean update-the-app message instead. Every app from 14 on can
+ * read all future additive docs.
  */
-export const MIN_READER_VERSION = 13
+export const MIN_READER_VERSION = 14

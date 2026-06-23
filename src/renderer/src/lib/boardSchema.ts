@@ -51,6 +51,11 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
  *   Planning ELEMENT kind at once. Both are BREAKING (floor → 13): a pre-13 `assertBoard` /
  *   `assertPlanningElement` throws on the unknown type/kind. Identity migration (the new type/kind
  *   only appear on newly-authored content). The foundation slice owns the WHOLE v13 bump.
+ * - **v14 = the `dataflow` board type** (JD-4 — Data-Flow board, JD umbrella close). NEW board type ⇒
+ *   BREAKING (floor → 14): a pre-14 `assertBoard` throws on the unknown type. Identity migration; the
+ *   board persists only `BoardCommon` + an optional `sourceBoardId` (the bound Browser board — mirrors
+ *   `BrowserBoard.previewSourceId`). The inferred model is body-derived + EPHEMERAL (ADR 0010), never
+ *   serialized; export to `.canvas/memory/` is the consent moment.
  */
 // SCHEMA_VERSION + MIN_READER_VERSION are defined in ./boardSchemaVersion (a dependency-free module)
 // so a main-side lock-step test can import the authoritative numbers without dragging in this file's
@@ -76,7 +81,7 @@ export { SCHEMA_VERSION, MIN_READER_VERSION }
  */
 // MIN_READER_VERSION is imported + re-exported above from ./boardSchemaVersion (see BUG-013/014).
 
-export type BoardType = 'terminal' | 'browser' | 'planning' | 'command' | 'file'
+export type BoardType = 'terminal' | 'browser' | 'planning' | 'command' | 'file' | 'dataflow'
 
 /** Browser responsive presets (widths live in cameraBounds/the Browser board). */
 export type BrowserViewport = 'mobile' | 'tablet' | 'desktop'
@@ -289,7 +294,30 @@ export interface CommandBoard extends BoardCommon {
   type: 'command'
 }
 
-export type Board = TerminalBoard | BrowserBoard | PlanningBoard | CommandBoard | FileBoard
+/**
+ * v14: the Data-Flow board (JD-4) — a dedicated React-Flow board that visualizes the inferred API
+ * surface (endpoints → schemas → entities → id-lineage) of a Browser board's captured traffic. Like
+ * the Command board, the PERSISTED shape is just `BoardCommon` + one optional binding: `sourceBoardId`
+ * names the Browser board whose OSR Network capture it analyzes (mirrors `BrowserBoard.previewSourceId`
+ * — a board id, not body-derived data). The inferred model + view state (focus node, layout tab, diff
+ * baseline) live in the EPHEMERAL `dataFlowStore` and are NEVER serialized (the scene/session split +
+ * ADR 0010's "ephemeral by default; export is the consent moment"). Reopening a project shows an empty
+ * "no captures yet" state until the bound Browser board re-captures. A new board type is breaking →
+ * schema v14 / floor 14.
+ */
+export interface DataFlowBoard extends BoardCommon {
+  type: 'dataflow'
+  /** The Browser board whose captured traffic this board visualizes. Absent ⇒ unbound. */
+  sourceBoardId?: string
+}
+
+export type Board =
+  | TerminalBoard
+  | BrowserBoard
+  | PlanningBoard
+  | CommandBoard
+  | FileBoard
+  | DataFlowBoard
 
 // ── Connectors (M2 — spatial board↔board edges) ────────────────────────────────
 // A typed cable between two boards. `preview` mirrors the runtime `previewSourceId`
@@ -408,7 +436,9 @@ export const DEFAULT_BOARD_SIZE: Record<BoardType, { w: number; h: number }> = {
   // Wide enough for the five-column kanban body + the submit well + worker-pool strip (the
   // approved Phase-A production mock); collapses to a one-line rail when minimized.
   command: { w: 760, h: 440 },
-  file: { w: 520, h: 380 }
+  file: { w: 520, h: 380 },
+  // Wide enough for the focus-on-node graph + the bottom legend strip (the approved JD-4 mock).
+  dataflow: { w: 760, h: 520 }
 }
 
 const DEFAULT_TITLE: Record<BoardType, string> = {
@@ -416,7 +446,8 @@ const DEFAULT_TITLE: Record<BoardType, string> = {
   browser: 'Browser',
   planning: 'Planning',
   command: 'Orchestrator',
-  file: 'File'
+  file: 'File',
+  dataflow: 'Data Flow'
 }
 
 /** Seed URL for a new Browser board (basic edit lands in 2.2; port assignment Phase 3). */
@@ -434,6 +465,8 @@ export interface CreateBoardOpts {
   z?: number
   /** File board only (v13): bind the new board to this RELATIVE path; omitted ⇒ unbound. */
   path?: string
+  /** Data-Flow board only (v14): bind the new board to this Browser board id; omitted ⇒ unbound. */
+  sourceBoardId?: string
 }
 
 /**
@@ -467,6 +500,9 @@ export function createBoard(type: BoardType, opts: CreateBoardOpts): Board {
     case 'file':
       // Unbound by default; openFileBoard passes opts.path to bind it to a file.
       return { ...base, type, ...(opts.path ? { path: opts.path } : {}) }
+    case 'dataflow':
+      // Unbound by default; the opener (DataFlowView "→ board") passes opts.sourceBoardId to bind it.
+      return { ...base, type, ...(opts.sourceBoardId ? { sourceBoardId: opts.sourceBoardId } : {}) }
   }
 }
 
@@ -581,7 +617,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v13: the `file` board type AND `fileref` element kind (file-tree S1). Both only appear on
   // newly-authored content, so existing docs have nothing to backfill — identity bump. BREAKING
   // (floor → 13): a pre-13 reader can't validate either new type/kind (boardSchemaVersion.ts).
-  12: (doc) => ({ ...doc, schemaVersion: 13 })
+  12: (doc) => ({ ...doc, schemaVersion: 13 }),
+  // v14: the `dataflow` board type (JD-4). The type only appears on newly-authored boards, so existing
+  // docs have nothing to backfill — identity bump. BREAKING (floor → 14): a pre-14 reader's assertBoard
+  // default branch throws on the unknown type (boardSchemaVersion.ts).
+  13: (doc) => ({ ...doc, schemaVersion: 14 })
 }
 
 /**
@@ -853,6 +893,14 @@ function assertBoard(b: unknown): void {
         fail('file board readOnly is not a boolean')
       }
       return
+    case 'dataflow':
+      // v14: sourceBoardId is optional (absent = unbound). When present it must be a string; a
+      // dangling/non-browser binding is dropped in fromObject (mirrors previewSourceId), so this
+      // is a shape check only. No persisted body-derived data (the inferred model is ephemeral).
+      if (b.sourceBoardId !== undefined && typeof b.sourceBoardId !== 'string') {
+        fail('dataflow board sourceBoardId is not a string')
+      }
+      return
     default:
       fail(`board has an unknown type ${String(b.type)}`)
   }
@@ -1020,6 +1068,16 @@ export function fromObject(doc: unknown): CanvasDoc {
   for (const b of owned.boards) {
     if (b.type === 'browser' && b.previewSourceId && !terminalIdSet.has(b.previewSourceId)) {
       delete b.previewSourceId
+    }
+  }
+  // v14: drop a Data-Flow board's sourceBoardId if its bound source is gone OR is not a Browser
+  // board — a dataflow board only ever visualizes a Browser board's capture, so a non-browser /
+  // dangling binding is a stale half-link (mirrors the previewSourceId reconcile above). Clear it
+  // rather than fail the load; the board reopens unbound and the user re-binds.
+  const browserIdSet = new Set(owned.boards.filter((b) => b.type === 'browser').map((b) => b.id))
+  for (const b of owned.boards) {
+    if (b.type === 'dataflow' && b.sourceBoardId && !browserIdSet.has(b.sourceBoardId)) {
+      delete b.sourceBoardId
     }
   }
   const migrated = migrate(owned)
