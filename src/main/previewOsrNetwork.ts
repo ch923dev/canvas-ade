@@ -1,6 +1,6 @@
 import type { IpcMain, BrowserWindow, WebContents } from 'electron'
 import { isForeignSender } from './ipcGuard'
-import { sampleResponseShapes } from './previewOsrShape'
+import { registerOsrNetInferenceIpc } from './previewOsrLineage'
 
 /**
  * Per-board DevTools NETWORK + WebSocket capture for the OSR preview engine (MAIN-only).
@@ -76,6 +76,7 @@ export interface NetRecord {
   finishMono?: number // loadingFinished monotonic timestamp (seconds) — the Content Download end
   failed?: NetFailed
   initiator?: string // what triggered the request (DevTools "Initiator" column): a script url or a type word
+  initiatorRequestId?: string // JD-4: the CDP initiator's triggering requestId (structured initiator → request→request edges). Body-free metadata.
   loaderId?: string // the navigation/document loader (requestId===loaderId ⇒ the main document)
   preserved?: boolean // carried across a navigation under "Preserve log" (Chrome's request.preserved)
   navBoundary?: boolean // the document request that began a new navigation (the light-blue divider row)
@@ -186,6 +187,7 @@ export function recordFromRequest(
       typeof req.referrerPolicy === 'string' ? capText(req.referrerPolicy, 48) : undefined,
     startTs: eventTs(params, now),
     initiator: initiatorOf(params.initiator),
+    initiatorRequestId: initiatorRequestIdOf(params.initiator),
     loaderId: typeof params.loaderId === 'string' ? params.loaderId : undefined,
     frameId: typeof params.frameId === 'string' ? params.frameId : undefined,
     sessionId: sessionId || undefined,
@@ -200,6 +202,16 @@ export function initiatorOf(raw: unknown): string | undefined {
   const i = raw as Record<string, unknown>
   if (typeof i.url === 'string' && i.url) return capText(i.url, URL_CAP)
   return typeof i.type === 'string' ? capText(i.type, 32) : undefined
+}
+
+/** JD-4 structured-initiator capture (ADR 0010 amendment, §A): the CDP `Network.Initiator.requestId`
+ *  — the triggering request, when the initiator chains off another request. Body-free metadata CDP
+ *  already delivers on `requestWillBeSent`; capped like every page-controlled string. Enables true
+ *  request→request edges that the flattened display `initiator` string discards (finding B1). */
+export function initiatorRequestIdOf(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const i = raw as Record<string, unknown>
+  return typeof i.requestId === 'string' && i.requestId ? capText(i.requestId, 256) : undefined
 }
 
 /**
@@ -841,22 +853,8 @@ export function registerOsrNetworkIpc(
       return { error: capText((err as Error)?.message, 200) || 'body unavailable' }
     }
   })
-  // Data-shape sampling (ADR 0010): opt-in + lazy + capped + response-only. Returns VALUE-LESS shape
-  // skeletons only — raw bodies never cross this path (that stays the single-row getBody above). The
-  // loop (re-validate · cap · extract) lives in previewOsrShape; here we just frame-guard + bind state.
-  ipcMain.handle(
-    'preview:osrNetSampleSchema',
-    async (ev, args: { id: string; requestIds: string[] }) => {
-      if (isForeignSender(ev, getWin)) return { error: 'forbidden' }
-      const e = getEntry(args?.id)
-      if (!e) return { error: 'no board' }
-      return sampleResponseShapes(
-        (rid) => e.net.byId.get(rid),
-        (method, params, sessionId) =>
-          e.osrWin.webContents.debugger.sendCommand(method, params, sessionId),
-        capBody,
-        Array.isArray(args?.requestIds) ? args.requestIds : []
-      )
-    }
-  )
+  // The two ADR-0010 body-reading inference channels (schema sampling + id-lineage) — opt-in-gated,
+  // frame-guarded, re-validated against the live ring. Extracted to previewOsrLineage (file-size
+  // doctrine); both still register here so the panel/board reach them on the same OsrNetEntry.
+  registerOsrNetInferenceIpc(ipcMain, getWin, getEntry, capBody)
 }

@@ -143,6 +143,7 @@ export interface NetRecord {
   finishMono?: number
   failed?: { errorText: string; blockedReason?: string; canceled?: boolean }
   initiator?: string
+  initiatorRequestId?: string // JD-4: structured initiator's triggering requestId (body-free metadata)
   loaderId?: string
   preserved?: boolean
   navBoundary?: boolean
@@ -202,6 +203,23 @@ export interface OsrNetSchemaResult {
   samples?: ShapeSampleWire[]
   requested?: number
   sampled?: number
+  error?: string
+}
+// ── id-lineage wire types — MIRROR main `previewOsrLineage.ts`. VALUE-LESS edge list: the id NAME +
+//    source/target requestIds + location only, never the matched value (ADR 0010 amendment §B). ──
+export interface RequestLineageEdgeWire {
+  idName: string
+  fromRequestId: string
+  toRequestId: string
+  location: 'path' | 'query' | 'body'
+  confidence: 'body-match'
+}
+/** Result of the MAIN body-side lineage pass: the value-less edge list + bounded-pass counters. */
+export interface OsrNetLineageResult {
+  edges?: RequestLineageEdgeWire[]
+  producersScanned?: number
+  consumersScanned?: number
+  valuesTracked?: number
   error?: string
 }
 /** The offscreen page's cursor, mirrored onto the host <canvas>. `image` (a data URL) +
@@ -572,6 +590,9 @@ const api = {
   /** Sample response bodies for a template (opt-in, capped, MAIN-side) → value-less shape skeletons. */
   sampleOsrNetSchema: (id: string, requestIds: string[]): Promise<OsrNetSchemaResult> =>
     ipcRenderer.invoke('preview:osrNetSampleSchema', { id, requestIds }),
+  // JD-4 id-lineage: the MAIN body-side value-read pass. Returns only the value-less edge list.
+  lineageOsrNet: (id: string, requestIds?: string[]): Promise<OsrNetLineageResult> =>
+    ipcRenderer.invoke('preview:osrNetLineage', { id, requestIds }),
   onPreviewOsrNet: (id: string, listener: (m: OsrNetMessage) => void): (() => void) => {
     ensureOsrNetListener()
     osrNetHandlers.set(id, listener)
