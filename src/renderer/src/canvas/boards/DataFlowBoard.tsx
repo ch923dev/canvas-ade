@@ -34,8 +34,7 @@ import {
 import { buildGraph, focusSubgraph, diffGraphs } from '../../lib/dataFlowGraph'
 import { filterNetRecords, urlDomain } from '../../lib/netFilter'
 import { layoutGraph } from '../../lib/graphLayout'
-import { toErMermaid } from '../../lib/erMermaid'
-import { DIAGRAM_SIZE } from './planning/elements'
+import { toErMermaid, erDiagramSize } from '../../lib/erMermaid'
 import { useSharedOsrNet } from './osr/useSharedOsrNet'
 import { GraphCanvas, SequenceView } from './osr/DataFlowGraphView'
 
@@ -205,18 +204,21 @@ export function DataFlowBoard({
         .showToast({ message: 'No entities to sketch yet — infer shapes first.', kind: 'info' })
       return
     }
+    // Size the diagram element + its host board to the model so a production-scale ER isn't crushed into
+    // the default thumbnail (the readability fix — the SVG scales to fill via object-fit).
+    const { w: dw, h: dh } = erDiagramSize(model)
     const planId = addBoard('planning', { x: board.x + board.w + 48, y: board.y })
     const el: DiagramElement = {
       id: crypto.randomUUID(),
       kind: 'diagram',
       x: 24,
       y: 24,
-      w: DIAGRAM_SIZE.w,
-      h: DIAGRAM_SIZE.h,
+      w: dw,
+      h: dh,
       source: toErMermaid(model),
       engine: 'mermaid'
     }
-    updateBoard(planId, { elements: [el] } as Partial<Board>)
+    updateBoard(planId, { elements: [el], w: dw + 48, h: dh + 48 } as Partial<Board>)
     useToastStore
       .getState()
       .showToast({ message: 'Data model sketched to a Planning board.', kind: 'ok' })

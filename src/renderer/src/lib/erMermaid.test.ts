@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toErMermaid } from './erMermaid'
+import { toErMermaid, erDiagramSize } from './erMermaid'
 import type { Entity, EntityModel } from './entityInfer'
 import type { FormatHint, InferredField, ShapeType } from './schemaInfer'
 
@@ -147,5 +147,59 @@ describe('toErMermaid', () => {
     expect(out).toContain('E_6985e4721a7df4910de6434e {') // entity box header prefixed
     expect(out).toMatch(/User \|\|--o\{ E_6985e4721a7df4910de6434e/) // relationship target prefixed
     expect(out).not.toMatch(/\s6985e4721a7df4910de6434e\b/) // the raw id never appears as a bare token
+  })
+})
+
+describe('toErMermaid field cap (readability)', () => {
+  it('caps a wide entity, keeps PK + FK, and adds a "+N more" row', () => {
+    const fields = [
+      field('id', ['string']),
+      field('customerId', ['string']),
+      ...Array.from({ length: 25 }, (_v, i) => field(`f${i}`, ['string']))
+    ]
+    const m: EntityModel = {
+      entities: [
+        entity({
+          name: 'Big',
+          kind: 'entity',
+          pk: 'id',
+          fkFields: [{ via: 'customerId', target: 'customer' }],
+          fields
+        })
+      ],
+      relationships: []
+    }
+    const src = toErMermaid(m)
+    expect(src).toContain('string id PK')
+    expect(src).toContain('string customerId FK')
+    expect(src).toMatch(/\+\d+ more/)
+    // at most 12 attribute rows + 1 "+N more" row inside the Big block
+    const block = src.split('Big {')[1].split('}')[0]
+    const rows = block
+      .trim()
+      .split('\n')
+      .filter((l) => l.trim().length > 0)
+    expect(rows.length).toBeLessThanOrEqual(13)
+  })
+})
+
+describe('erDiagramSize', () => {
+  it('returns a small default for an empty model and scales (clamped) with entity count', () => {
+    expect(erDiagramSize({ entities: [], relationships: [] })).toEqual({ w: 360, h: 240 })
+    const one = erDiagramSize({
+      entities: [
+        entity({ name: 'A', kind: 'entity', pk: 'id', fields: [field('id', ['string'])] })
+      ],
+      relationships: []
+    })
+    const many = erDiagramSize({
+      entities: Array.from({ length: 20 }, (_v, i) =>
+        entity({ name: `E${i}`, kind: 'entity', pk: 'id', fields: [field('id', ['string'])] })
+      ),
+      relationships: []
+    })
+    expect(many.w).toBeGreaterThan(one.w)
+    expect(many.w).toBeLessThanOrEqual(2400)
+    expect(many.h).toBeLessThanOrEqual(1500)
   })
 })

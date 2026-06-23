@@ -58,18 +58,47 @@ function attrType(f: InferredField): string {
   return SCALAR_TYPE[t]
 }
 
+/** Members shown per entity — the structural skeleton (PK + FKs) is always kept, the rest fill up to
+ *  this cap with a final "+N more" row. Stops one wide entity (a 30-field row) from making the whole
+ *  diagram so tall it can't be read (the export-readability fix; mirrors the graph node's `+N more`). */
+const ER_FIELD_CAP = 12
+
 function entityBlock(e: Entity): string {
   const name = safeIdent(e.name, 'Entity')
   const fkKeys = new Set(e.fkFields.map((fk) => fk.via))
-  const lines = e.fields.map((f) => {
+  // Keep PK first, then FKs, then the rest — so a cap never hides the keys that carry the relationships.
+  const pk = e.fields.filter((f) => f.key === e.pk)
+  const fks = e.fields.filter((f) => f.key !== e.pk && fkKeys.has(f.key))
+  const rest = e.fields.filter((f) => f.key !== e.pk && !fkKeys.has(f.key))
+  const ordered = [...pk, ...fks, ...rest]
+  const shown = ordered.slice(0, ER_FIELD_CAP)
+  const lines = shown.map((f) => {
     const type = attrType(f)
     const attr = safeIdent(f.key, 'field')
     const key = f.key === e.pk ? ' PK' : fkKeys.has(f.key) ? ' FK' : ''
     return `    ${type} ${attr}${key}`
   })
+  const extra = ordered.length - shown.length
+  if (extra > 0) lines.push(`    more fields "+${extra} more"`)
   // A Mermaid entity with no attributes is still valid (empty braces); keep the box so a relationship
   // endpoint always resolves.
   return `  ${name} {\n${lines.join('\n')}\n  }`
+}
+
+/**
+ * A generous element size for the rendered ER diagram, scaled to the model (entity count → width, field
+ * rows → height) and clamped to canvas-friendly bounds. The default Diagram card (280×200) crushes a
+ * production-scale model into an unreadable thumbnail at the 2.5× zoom ceiling — sizing the element (the
+ * SVG scales to fill it via object-fit) is what makes the export legible. Pure, so the export can size
+ * both the element and its host Planning board before render.
+ */
+export function erDiagramSize(model: EntityModel): { w: number; h: number } {
+  const ents = model.entities.filter((e) => e.kind === 'entity')
+  if (ents.length === 0) return { w: 360, h: 240 }
+  const maxRows = Math.min(ER_FIELD_CAP + 1, Math.max(3, ...ents.map((e) => e.fields.length)))
+  const w = Math.max(420, Math.min(2400, 280 + ents.length * 130))
+  const h = Math.max(300, Math.min(1500, 200 + maxRows * 30 + ents.length * 12))
+  return { w, h }
 }
 
 /**
