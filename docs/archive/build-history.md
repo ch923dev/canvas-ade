@@ -493,3 +493,27 @@ test-only false-positives (worker got a defensive message-shape guard). Rebased 
 auto-merged the two overlapping net files cleanly). Squash `64c04f3b`; branch deleted. **Follow-up:** the
 `perf-slices/` package now lives at the repo root — per the doc-lifecycle policy it should be collapsed to
 a dated summary under `docs/reviews/` (deferred; SLICE-002.md is the valuable residue to preserve).
+
+## 2026-06-23 — MCP SDD Wave 1 · W1-B `spawnGroup` control-char sanitizer (F5) — branch `feat/mcp-w1b-sanitizer`
+
+Wave-1 P0 security fix from the 2026-06-23 MCP feature audit (SDD `SPEC-W1-B`). **Live terminal-escape
+injection fix:** `createMcpLifecycle.spawnGroup` (`mcpLifecycle.ts`) sanitized the worker `launchCommand`
+with a hand-rolled inline filter — `Array.from(rawSrc).filter((c) => c >= ' ')` — whose `c >= ' '`
+predicate kept **DEL (U+007F) and the entire C1 control range (U+0080–U+009F)**: the 8-bit CSI/OSC/DCS/NEL
+escape-sequence openers. Since the Command board (`useMcpCommands.ts`) already dispatches `spawnGroup`
+with a user-supplied `launchCommand` over IPC **today** (no MCP wiring required), an attacker/misbehaving
+agent could embed a C1 CSI sequence that the PTY interprets before the human sees output. Fix routes the
+field through the **centralized `sanitizeDispatchText`** (`dispatchSanitize.ts`) — the same function the
+dispatch path (`runGatedWrite`) and `configureBoard` already use — so there is **ONE** sanitization rule
+for every exec-vector input in MAIN: strips C0/DEL/C1, rejects embedded CR/LF (`DispatchPayloadError`
+propagates to the caller, rather than silently flattening `claude\nrm -rf /` into one line). The 400-char
+clamp, trim, and empty⇒bare-shell contract are unchanged. **Import note:** only `sanitizeDispatchText` is
+imported (not `DispatchPayloadError`) — the lifecycle factory has no audit dep to catch-and-log it, the
+spec's design leaves it uncaught to propagate, and an unused import would fail `noUnusedLocals`. No schema
+bump (in-flight IPC arg, not persisted). Shipped **independently of W1-G** (the `spawn_group` MCP wire-
+registration) per the audit mandate; **W1-G depends on this merging first.** Tests: 9 adversarial cases in
+`mcpLifecycle.test.ts` (DEL · C1 CSI/NEL · full C1 range · ESC · CR/LF reject · non-ASCII passthrough ·
+empty⇒undefined) run against the real production `spawnGroup`. **Verification:** gate green
+(typecheck/lint 0-err/format · 3317 unit tests · build); headless boot smoke clean (RENDERER_SMOKE
+reactflow/xterm/webgl all true, PTY + osrWin paint OK — no black-screen regression). MAIN-only sanitizer
+with full unit coverage → no e2e change (per spec §9).
