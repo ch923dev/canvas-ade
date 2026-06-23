@@ -72,7 +72,13 @@ import { registerRecapHandlers, readConsent } from './recapConsent'
 import { registerOrchestrationHandlers } from './orchestrationConsent'
 import { registerOrchestrationProvisionHandlers } from './orchestrationProvision'
 import { mintTerminalToken } from './orchestration/seam'
-import { makeOrchestrationSyncProvider, unsyncProvisioners } from './cliProvisioners'
+import {
+  bindProvisionedDirStore,
+  loadPersistedProvisionedDirs,
+  makeOrchestrationSyncProvider,
+  revokeOrchestration,
+  unsyncProvisioners
+} from './cliProvisioners'
 import {
   extractMilestones,
   isTrustedTranscriptPath,
@@ -625,6 +631,13 @@ app.whenReady().then(async () => {
   // proactive here: the Sync modal (explicit, project-level) and the spawn-time hook (per
   // terminal start, below) own writing the configs. Never throw here — the decision is already
   // durable (the IPC handler also wraps this in try/catch).
+  //
+  // W1-E / F8: hydrate the provisioned-dir registry from userData BEFORE registering the consent
+  // onChange callback, so a revoke fired in THIS session cleans the bearer tokens a PRIOR session
+  // wrote into divergent board cwds (the in-memory Map is empty after a restart). The userData path
+  // is stable across restarts, so binding here re-points at the same store the prior session wrote.
+  bindProvisionedDirStore(userData)
+  loadPersistedProvisionedDirs(userData)
   registerOrchestrationHandlers(
     ipcMain,
     () => mainWindow,
@@ -632,11 +645,13 @@ app.whenReady().then(async () => {
     getCurrentDir,
     (projectPath, on) => {
       if (!on) {
-        // FIND-001: clean every on-disk config we wrote (incl. divergent board cwds, not just the
-        // project root). FIND-015: invalidate the live connected tokens too, so a bearer still
-        // sitting in a CLI config on disk is dead immediately — not only after the next restart.
-        void unsyncProvisioners({ projectDir: projectPath }).catch(() => {})
-        mcp?.revokeAllConnected()
+        // FIND-001 / F8: clean every on-disk config we wrote — incl. divergent board cwds from THIS
+        // and prior sessions (now hydrated from userData) — so a revoked grant leaves NO bearer
+        // token on disk. FIND-015 / F22: `revokeOrchestration` awaits that disk cleanup, THEN
+        // invalidates the live connected tokens — disk tokens die BEFORE the in-memory store is
+        // zeroed (no window where an on-disk token outlives the in-memory one it mirrors). Best-
+        // effort + fire-and-forget: onChange returns synchronously and a locked file never blocks it.
+        void revokeOrchestration(projectPath, unsyncProvisioners, () => mcp?.revokeAllConnected())
       }
     }
   )
