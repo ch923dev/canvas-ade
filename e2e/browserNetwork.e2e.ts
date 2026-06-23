@@ -185,6 +185,47 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect(page.locator('.bb-net.bb-net-bottom')).toHaveCount(0)
   })
 
+  test('SLICE-010: a 1000-record capture is virtualized — only ~viewport rows mount; scroll + filter still reach every record', async ({
+    page,
+    electronApp
+  }) => {
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const id = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
+
+    // Seed 1000 synthetic records (replay REPLACES the few real document-load rows). MAIN's ring
+    // cap (MAX_RECORDS=1000) keeps the total at 1000 even if a stray live delta lands.
+    await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(id)}, 1000)`)
+
+    // The meta line reports the full 1000-record set …
+    await expect(page.locator('.bb-net-meta')).toContainText(/1\d{3} requests/)
+    // … but only a viewport-bounded number of <tr>s actually mount (virtualized — not 1000).
+    await expect
+      .poll(async () => page.locator('.bb-net-row').count(), { timeout: 4000 })
+      .toBeLessThan(80)
+    expect(await page.locator('.bb-net-row').count(), 'some rows render').toBeGreaterThan(0)
+
+    // The last record sits far below the fold → it is NOT in the DOM initially …
+    await expect(page.getByText('req-0999.js', { exact: true })).toHaveCount(0)
+    // … scrolling the list to the bottom mounts it (every record is reachable — the invariant).
+    await evalIn(
+      page,
+      `(() => { const el = document.querySelector('.bb-net-list'); if (el) el.scrollTop = el.scrollHeight })()`
+    )
+    await expect(page.getByText('req-0999.js', { exact: true })).toBeVisible({ timeout: 4000 })
+
+    // Filter still narrows the FULL set (not merely the rendered window): a unique mid-list id.
+    const filterInput = page.getByRole('textbox', { name: 'Filter requests' })
+    await filterInput.fill('req-0500.js')
+    await expect(page.getByText('req-0500.js', { exact: true })).toBeVisible()
+    await expect(page.locator('.bb-net-row'), 'filter resolves to the single match').toHaveCount(1)
+  })
+
   test('drag the resize handle grows the panel (bottom dock)', async ({ page, electronApp }) => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })

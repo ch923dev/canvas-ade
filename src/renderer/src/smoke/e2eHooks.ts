@@ -14,7 +14,9 @@ import { useCanvasStore } from '../store/canvasStore'
 import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { useOsrWidgetStore } from '../store/osrWidgetStore'
+import { useOsrNetworkStore } from '../store/osrNetworkStore'
 import { useFileTreeUiStore } from '../store/fileTreeUiStore'
+import type { NetRecord } from '../../../preload'
 import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
 import {
   fromObject,
@@ -294,6 +296,9 @@ export interface CanvasE2E {
   setOsrAudible: (id: string, audible: boolean) => void
   /** 4A — read a Browser board's ephemeral audio state (mute + volume) to assert control behavior. */
   getOsrAudio: (id: string) => { muted: boolean; volume: number }
+  /** SLICE-010 — replace a board's captured Network records with `count` synthetic rows, so the
+   *  virtualization probe can prove only ~viewport rows mount as `<tr>` at the 1000-record cap. */
+  seedOsrNet: (id: string, count: number) => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -754,6 +759,22 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     revealSidePanel() {
       useFileTreeUiStore.getState().reveal()
+    },
+    seedOsrNet(id, count) {
+      const records: NetRecord[] = Array.from({ length: count }, (_unused, i) => ({
+        requestId: `seed-${i}`,
+        url: `https://example.test/req-${String(i).padStart(4, '0')}.js`,
+        method: 'GET',
+        type: 'script',
+        status: 200,
+        startTs: i, // monotonic so the waterfall window is well-formed
+        endTs: i + 5,
+        encodedDataLength: 1234,
+        initiator: 'parser'
+      }))
+      // replay REPLACES the renderer mirror with exactly these rows (deterministic total + order),
+      // unaffected by the few real document-load rows already captured.
+      useOsrNetworkStore.getState().apply(id, { id, kind: 'replay', records })
     }
   }
   window.__canvasE2E = api
