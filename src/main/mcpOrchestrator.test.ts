@@ -504,7 +504,7 @@ describe('buildOrchestrator', () => {
       })
     })
 
-    it('🔒 a denied confirm blocks the launchCommand write — NO command sent, audits rejected', async () => {
+    it('🔒 a denied confirm blocks the launchCommand write — NO command sent, audits denied', async () => {
       const { registry, seen, audits, confirms } = configReg({
         confirm: async () => ({ approved: false })
       })
@@ -514,8 +514,13 @@ describe('buildOrchestrator', () => {
       ).rejects.toThrow(/deni|human gate/i)
       expect(confirms).toHaveLength(1)
       expect(seen).toEqual([]) // nothing reached the renderer / next-spawn config
-      const rejected = audits.find((a) => a.status === 'rejected')
-      expect(rejected).toMatchObject({ type: 'configure_board', targetId: 'board-5' })
+      // F6: a human-deny audits `denied` (human said no), not `rejected` (pre-gate failure).
+      const denied = audits.find((a) => a.status === 'denied')
+      expect(denied).toMatchObject({
+        type: 'configure_board',
+        targetId: 'board-5',
+        status: 'denied'
+      })
     })
 
     it('🔒 rejects a launchCommand with an embedded CR/LF (no confirm, no command, audits rejected)', async () => {
@@ -534,13 +539,24 @@ describe('buildOrchestrator', () => {
       })
     })
 
-    it('a shell/cwd-only patch (no launchCommand) passes WITHOUT a confirm or audit', async () => {
+    it('a shell/cwd-only patch (no launchCommand) passes WITHOUT a confirm and leaves a configured audit entry', async () => {
       const { registry, seen, audits, confirms } = configReg({})
       const orch = buildOrchestrator(registry)
       await orch.configureBoard('board-5', { shell: 'pwsh', cwd: '/repo' })
       // No exec vector → the existing contract: straight through, no gate.
       expect(confirms).toEqual([])
-      expect(audits).toEqual([])
+      // F7: but the durable write still leaves exactly one `configured` audit entry — the
+      // forensic trace every cross-board write owes. prompt is '' (no exec content); detail
+      // names the patched keys without logging the cwd value.
+      expect(audits).toHaveLength(1)
+      expect(audits[0]).toMatchObject({
+        type: 'configure_board',
+        targetId: 'board-5',
+        prompt: '',
+        status: 'configured'
+      })
+      expect(audits[0].detail).toContain('shell')
+      expect(audits[0].detail).toContain('cwd')
       expect(seen).toEqual([
         { type: 'configureBoard', id: 'board-5', patch: { shell: 'pwsh', cwd: '/repo' } }
       ])
@@ -588,6 +604,57 @@ describe('buildOrchestrator', () => {
       // The confirm title and body must contain the human-readable title, not just the raw UUID.
       expect(confirms[0].title).toContain('My Claude Agent')
       expect(confirms[0].body).toContain('My Claude Agent')
+    })
+
+    // F6 regression — the deny path must emit `denied`, never `rejected`. `rejected` is
+    // reserved for automated pre-gate failures; on this exec-vector-adjacent path conflating
+    // the two corrupts the one record that tells an auditor whether a HUMAN refused the write.
+    describe('F6 regression — configure_board deny path emits denied not rejected', () => {
+      it('F6: a human-denied launchCommand configure audits status=denied, not rejected', async () => {
+        const { registry, audits } = configReg({ confirm: async () => ({ approved: false }) })
+        const orch = buildOrchestrator(registry)
+        await expect(orch.configureBoard('board-5', { launchCommand: 'claude' })).rejects.toThrow()
+        const denied = audits.find((a) => a.status === 'denied')
+        expect(denied).toBeDefined()
+        expect(denied).toMatchObject({
+          type: 'configure_board',
+          targetId: 'board-5',
+          status: 'denied'
+        })
+        // 'rejected' must NOT appear on a human-deny — that token is for pre-gate failures only.
+        expect(audits.some((a) => a.status === 'rejected')).toBe(false)
+      })
+    })
+
+    // F7 regression — a shell/cwd-only configure is a durable write with no exec vector. It is
+    // exempt from the human gate but NOT from the audit trace: every cross-board write owes
+    // exactly one audit entry — `configured` on success, `failed` on a failed apply.
+    describe('F7 regression — shell/cwd-only configure_board path audits on success and failure', () => {
+      it('F7: shell/cwd success writes a configured audit entry', async () => {
+        const { registry, audits } = configReg({})
+        const orch = buildOrchestrator(registry)
+        await orch.configureBoard('board-5', { shell: 'pwsh', cwd: '/repo' })
+        const configured = audits.find((a) => a.status === 'configured')
+        expect(configured).toMatchObject({
+          type: 'configure_board',
+          targetId: 'board-5',
+          prompt: '',
+          status: 'configured'
+        })
+      })
+
+      it('F7: shell/cwd failure writes a failed audit entry before throwing', async () => {
+        const { registry, audits } = configReg({ ack: { ok: false, error: 'no-window' } })
+        const orch = buildOrchestrator(registry)
+        await expect(orch.configureBoard('board-5', { shell: 'pwsh' })).rejects.toThrow(/no-window/)
+        const failed = audits.find((a) => a.status === 'failed')
+        expect(failed).toMatchObject({
+          type: 'configure_board',
+          targetId: 'board-5',
+          prompt: '',
+          status: 'failed'
+        })
+      })
     })
   })
 
