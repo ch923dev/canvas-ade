@@ -505,3 +505,27 @@ not-achievable verdict, the reusable residue); the 12 other cards + `FIX-REPORT.
 Reviews index got a newest-first row; `docs/roadmap.md` Performance section flipped "not yet built" →
 SHIPPED #219 and repointed. Docs-only (no code/schema); gate format:check green; CI check/CodeQL/analyze
 pass. Squash `b75dcd20`; branch deleted.
+
+## 2026-06-23 — JD umbrella · JD-2 JSON viewer enrichments (virtualize · search · copy-path · a11y) — #226 (`396f4c15`, 2026-06-23)
+
+Second slice of the **JD (JSON & Data Flow)** umbrella (REPORT §6 P1), extending JD-1's source-faithful
+Network body viewer. Adds a vendored **uniform-height virtualizer** (`lib/virtualizer.ts`) + array windowing
+(`childCount > 100` default-collapse) + a hard global row cap (`MAX_ROWS = 200k`) — a 50k-element array
+opens with ≤~50 live DOM rows (e2e-asserted node count via the Playwright `_electron` harness). **In-body
+search** (Ctrl/Cmd+F, toggle-revealed — design sign-off = **Variant A**, token-accurate mock approved + live
+build verified): substring highlight via token-split `<span>`s (no `dangerouslySetInnerHTML`), next/prev
+(Enter · Ctrl/Cmd+G) that **auto-expands a match's collapsed ancestors**. **Copy property-path / copy-subtree**
+(hover affordances + keymap); **URL values → `shell.openExternal`** (scheme-gated in MAIN); big-number
+raw-source affordance. **ARIA `role="tree"`** + keymap + `aria-activedescendant` kept on a *mounted* row under
+virtualization (the hardest piece). WebSocket text frames (`WsRecord.frames[]`) routed through an embedded
+`JsonView`. Ephemeral viewer state ⇒ **no schema bump**. Files: add `lib/virtualizer.ts` (+test); extend
+`lib/osrJson.ts` (`srcStart/srcEnd` offsets, `pathOf`/`ancestorsOf`/`searchMatches`/`subtreeSource`/
+`urlInValue`, `MAX_ROWS`) + `canvas/boards/osr/JsonView.tsx`; WS routing in `osr/OsrNetworkDetail.tsx`
+(JD-1-owned, not JD-3's zone); append `styles/boards/browser-devtools.css`; test fixtures in
+`src/main/localServer.ts` (`?big`=50k array / `?find`=deep-nested) + `e2e/browserNetwork.e2e.ts`. Bot review
+caught **3 real bugs**, all fixed + regression-tested + inline-dispositioned (keymap `vis[-1]` TypeError on a
+stale/absent active row; close-brace-row path-copy returning bogus `$`; `onRootKeyDown` stealing the parent
+panel's Ctrl+F in embedded mode). Full e2e matrix both legs green (Win 182 + 2 env-flakes that pass on
+isolated re-run; Linux Docker 182+1flaky-retried+1skip; all 4 JD-2 tests pass both legs). Retires
+H5/H7/M1/A6 + a11y. Squash `396f4c15`; branch deleted. **Next (umbrella):** JD-3 (inventory + schema; in
+flight) → JD-4 (graph + canvas/agent, schema bump) last.
