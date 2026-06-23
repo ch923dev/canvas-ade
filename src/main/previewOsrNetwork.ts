@@ -1,5 +1,6 @@
 import type { IpcMain, BrowserWindow, WebContents } from 'electron'
 import { isForeignSender } from './ipcGuard'
+import { sampleResponseShapes } from './previewOsrShape'
 
 /**
  * Per-board DevTools NETWORK + WebSocket capture for the OSR preview engine (MAIN-only).
@@ -840,4 +841,22 @@ export function registerOsrNetworkIpc(
       return { error: capText((err as Error)?.message, 200) || 'body unavailable' }
     }
   })
+  // Data-shape sampling (ADR 0010): opt-in + lazy + capped + response-only. Returns VALUE-LESS shape
+  // skeletons only — raw bodies never cross this path (that stays the single-row getBody above). The
+  // loop (re-validate · cap · extract) lives in previewOsrShape; here we just frame-guard + bind state.
+  ipcMain.handle(
+    'preview:osrNetSampleSchema',
+    async (ev, args: { id: string; requestIds: string[] }) => {
+      if (isForeignSender(ev, getWin)) return { error: 'forbidden' }
+      const e = getEntry(args?.id)
+      if (!e) return { error: 'no board' }
+      return sampleResponseShapes(
+        (rid) => e.net.byId.get(rid),
+        (method, params, sessionId) =>
+          e.osrWin.webContents.debugger.sendCommand(method, params, sessionId),
+        capBody,
+        Array.isArray(args?.requestIds) ? args.requestIds : []
+      )
+    }
+  )
 }

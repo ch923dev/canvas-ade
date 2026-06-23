@@ -424,4 +424,46 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect(rows).toContainText('FINDME_DEEP')
     await expect(details.locator('.bb-net-json-match.current')).toBeVisible()
   })
+
+  test('Data Flow tab: body-free inventory, opt-in gate, then VALUE-LESS inferred schema (JD-3)', async ({
+    page,
+    electronApp
+  }) => {
+    const base = await mainCall<string>(electronApp, 'localUrl')
+    // ?xhr → the page fetches /json as a SUBRESOURCE so its response body is loadable over CDP for
+    // sampling (the main-document body is evicted post-commit — same gotcha as the JsonView test).
+    const id = await seed(page, 'browser', { url: `${base}?xhr=1` })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
+
+    // Switch to the Data Flow tab → the body-free inventory renders immediately.
+    await page.getByRole('button', { name: 'Data Flow' }).click()
+    const jsonRow = page.locator('.bb-net-df-row', { hasText: 'json' }).first()
+    await expect(jsonRow, 'the /json route appears as a body-free inventory row').toBeVisible({
+      timeout: 8000
+    })
+
+    // Expand it while bodies are OFF → the opt-in gate, NOT a schema (zero body reads yet).
+    await jsonRow.click()
+    await expect(page.locator('.bb-net-df-gate')).toBeVisible()
+    await expect(page.locator('.bb-net-df-gate')).toContainText('Shapes are off')
+
+    // Enable inference → MAIN samples the /json body and returns a VALUE-LESS skeleton.
+    await page.getByRole('button', { name: 'Enable' }).click()
+    const fields = page.locator('.bb-net-df-fields').first()
+    await expect(fields, 'the inferred schema renders').toBeVisible({ timeout: 8000 })
+    await expect(fields).toContainText('id')
+    await expect(fields).toContainText('name')
+    await expect(fields).toContainText('tags')
+    // the response is fully deconstructed — the nested object is expanded inline, not summarized.
+    await expect(fields).toContainText('nested')
+    // shape, NOT values: the captured value "e2e" (name) must never appear in the rendered schema.
+    await expect(fields).not.toContainText('e2e')
+    // an always-present field is marked required (single sample → every field required).
+    await expect(fields).toContainText('required')
+  })
 })

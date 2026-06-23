@@ -183,6 +183,27 @@ export interface OsrNetBody {
   truncated?: boolean
   error?: string
 }
+// ── Data-shape inference wire types — MIRROR main `previewOsrShape.ts` (ShapeNode/ShapeSampleWire/
+//    OsrNetSchemaResult). Value-LESS skeletons: types/keys/format only, never raw values (ADR 0010). ──
+export type ShapeType = 'string' | 'number' | 'bool' | 'null' | 'object' | 'array' | 'unknown'
+export type FormatHint = 'uuid' | 'date-time' | 'email' | 'uri' | 'int64'
+export interface ShapeNode {
+  types: ShapeType[]
+  format?: FormatHint
+  children?: Record<string, ShapeNode>
+  elem?: ShapeNode
+}
+export interface ShapeSampleWire {
+  root: ShapeNode
+  complete: boolean
+}
+/** Result of a sampling pass: value-less skeletons + how many were requested vs actually sampled. */
+export interface OsrNetSchemaResult {
+  samples?: ShapeSampleWire[]
+  requested?: number
+  sampled?: number
+  error?: string
+}
 /** The offscreen page's cursor, mirrored onto the host <canvas>. `image` (a data URL) +
  *  `hotspot` are present only for type:'custom'. Mirrors main `OsrCursorPayload`. */
 export interface OsrCursor {
@@ -539,6 +560,9 @@ const api = {
     requestId: string,
     kind: 'response' | 'request' = 'response'
   ): Promise<OsrNetBody> => ipcRenderer.invoke('preview:osrNetGetBody', { id, requestId, kind }),
+  /** Sample response bodies for a template (opt-in, capped, MAIN-side) → value-less shape skeletons. */
+  sampleOsrNetSchema: (id: string, requestIds: string[]): Promise<OsrNetSchemaResult> =>
+    ipcRenderer.invoke('preview:osrNetSampleSchema', { id, requestIds }),
   onPreviewOsrNet: (id: string, listener: (m: OsrNetMessage) => void): (() => void) => {
     ensureOsrNetListener()
     osrNetHandlers.set(id, listener)
