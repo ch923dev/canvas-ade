@@ -455,3 +455,41 @@ legs** — Windows (worktree leg; only the documented `@terminal gitDiff` host-r
 all pass. Squash `f6748711`; worktree `feat/json-dataflow-viz` retained for the umbrella's next slices.
 **Next:** JD-2 (viewer enrichments: virtualize/search/copy-path/a11y) ∥ JD-3 (Data Flow inventory +
 schema) → JD-4 (graph + canvas/agent). JD-3 needs a privacy ADR; JD-4 bumps the schema (new board type).
+
+## 2026-06-23 — Performance wave (measurement-grounded slices) — #219 (`64c04f3b`, 2026-06-23)
+
+Executed the measurement-grounded `perf-slices/` package (43 candidates → 15 confirmed → 13 slices),
+one slice per commit. **12 slices shipped + SLICE-002 closed as not-achievable.** No schema bump; no
+security-invariant change. **Bundle/cold-start:** 001 drops the ~100 unreachable CodeMirror grammars
+from the FileBoard chunk (708→486 KB gzip, −31%); 013 lazy-loads the FileTree side panel (react-arborist
++ react-window) into an on-demand chunk (~50 KB off the cold-start entry). **OSR preview pipeline:** 005
+crops frames to the dirty-rect at supersample>1 (probe-verified device-px dirtyRect — small paints fall
+from 16.4 MB/frame to ≈KB); 006 moves the BGRA→RGBA swizzle off the renderer main thread into a
+round-trip worker (`osrBlitWorker`, ~0.58 core reclaimed at 4 boards; CSP-safe `script-src 'self'`).
+**Network inspector:** 007 memoizes the filter→waterfall→summary→sort pipeline + decorate-sorts
+`urlName` (~13→<2 ms/render on Name sort); 010 virtualizes the request table via **table-preserving
+spacer-row windowing** (`virtualRows.ts`: pure `computeRowWindow` + `useVirtualRows` hook,
+rAF-coalesced, runtime row-pitch measure) + `React.memo`'d `Row` — ~30 `<tr>`s mount at the 1000-record
+cap instead of ~10,000 elements/delta — **with no `react-window` dependency** (it is only transitive via
+react-arborist; a div-grid rewrite would have broken the column/waterfall invariant). **File board:**
+008 time-slices the snapshot Lezer highlight off the open-time critical path (64–197 ms sync parse →
+<16 ms; byte-identical output); 009 defers markdown reparse via `useDeferredValue`. **Planning:** 004
+caches the static snap set per drag; 011 makes pen-draft tessellation incremental (O(N²)→O(N)).
+**Command/terminal:** 003 a derived-fingerprint CommandBoard subscription (kills ~60 per-drag-frame
+re-renders/s); 012 caps xterm default scrollback 5000→2000. **SLICE-002 (transferable ArrayBuffer frame
+IPC) was closed, not shipped:** zero-copy is impossible across the main→renderer **process** boundary —
+every Electron 42 transfer list is `MessagePort[]`/`MessagePortMain[]`, none accepts an `ArrayBuffer`, so
+a `MessageChannelMain` rewrite would still structured-clone the buffer while adding a security-sensitive
+preload port surface for zero gain; 005 already shrank the copy to KB for the common case, and the only
+true zero-copy path is shared-texture OSR (a GPU pipeline rewrite, out of scope). Rationale on
+`perf-slices/slices/SLICE-002.md`. **New seam:** `seedOsrNet` e2e hook (seeds synthetic NetRecords for
+the virtualization probe). **Verification:** gate green (typecheck/lint 0-err/format · unit **3282**, +8
+new `computeRowWindow` tests); **full e2e matrix BOTH legs ×2** (pre-PR and post-rebase: Windows
+**180** / Linux Docker **180**). CI check/CodeQL/analyze/claude-review all pass. Bot review caught a real
+`[warning]` — SLICE-010's virtual-row `scrollTop` state survived a panel close while the list remounted
+fresh at 0, blanking the table on reopen; fixed by seeding `scrollTop` on (re)attach (`bd78c46c`) + a
+reopen regression test, inline-dispositioned; two CodeQL alerts dispositioned as dedicated-worker /
+test-only false-positives (worker got a defensive message-shape guard). Rebased onto #220 (JSON viewer;
+auto-merged the two overlapping net files cleanly). Squash `64c04f3b`; branch deleted. **Follow-up:** the
+`perf-slices/` package now lives at the repo root — per the doc-lifecycle policy it should be collapsed to
+a dated summary under `docs/reviews/` (deferred; SLICE-002.md is the valuable residue to preserve).
