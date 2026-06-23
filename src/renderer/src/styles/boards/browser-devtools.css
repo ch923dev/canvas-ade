@@ -904,6 +904,12 @@
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-all;
+  cursor: pointer;
+}
+.bb-net-json-val:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--text-faint);
+  text-underline-offset: 2px;
 }
 .bb-net-json-val.t-null,
 .bb-net-json-val.t-raw {

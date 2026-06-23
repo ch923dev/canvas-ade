@@ -252,6 +252,10 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await openRow.click()
     await expect(rows).toContainText('tags')
 
+    // Click a value → it copies and a transient toast confirms.
+    await rows.locator('.bb-net-json-val').first().click()
+    await expect(page.locator('.toast-msg', { hasText: 'Copied' })).toBeVisible()
+
     // Raw mode shows the lossless re-indented source.
     await details.getByRole('button', { name: 'Raw' }).click()
     await expect(details.locator('.bb-net-bodytext')).toContainText('"id": 12345678901234567890')

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { JsonView } from './JsonView'
+import { useToastStore } from '../../../store/toastStore'
 
 afterEach(cleanup)
 
@@ -46,6 +47,19 @@ describe('JsonView — tree', () => {
     const pre = document.querySelector('.bb-net-bodytext') as HTMLElement
     expect(pre).toBeTruthy()
     expect(pre.textContent).toContain('"a": 1')
+  })
+
+  it('copies a value to the clipboard and shows a toast on click', () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.assign(navigator, { clipboard: { writeText } })
+    useToastStore.setState({ toasts: [] })
+    const { container } = render(
+      <JsonView body='{"url":"https://x.test/a"}' mime="application/json" base64={false} />
+    )
+    fireEvent.click(container.querySelector('.bb-net-json-val') as HTMLElement)
+    // JSON string copies its content without the surrounding quotes.
+    expect(writeText).toHaveBeenCalledWith('https://x.test/a')
+    expect(useToastStore.getState().toasts.some((t) => /copied/i.test(t.message))).toBe(true)
   })
 
   it('renders binary bodies as a labeled passthrough (no tree)', () => {

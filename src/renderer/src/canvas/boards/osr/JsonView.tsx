@@ -4,10 +4,12 @@
  * Presentational only: all parsing/fold/raw logic lives in `lib/osrJson.ts`. Renders a collapsible
  * tree with Option-A coloring (accent keys · neutral values · grey type badges). Every key/value/URL
  * from the page is emitted as React text inside a `<span>` — auto-escaped, NO `dangerouslySetInnerHTML`
- * anywhere (the page controls these strings). No virtualization / search / copy yet — those are JD-2.
+ * anywhere (the page controls these strings). Click a value to copy it (toast confirms). No
+ * virtualization / search / copy-path yet — those are JD-2.
  */
 import { useMemo, useState, type ReactElement } from 'react'
 import { formatSize } from '../../../lib/osrNetFormat'
+import { showToast } from '../../../store/toastStore'
 import {
   buildModel,
   initialCollapsed,
@@ -18,6 +20,22 @@ import {
 } from '../../../lib/osrJson'
 
 const INDENT_PX = 12
+
+/** The text a value copies: a JSON string copies its decoded-of-quotes content; everything else
+ *  (number / bigint / bool / null / form value) copies its literal source. */
+function copyTextOf(row: JsonRow): string {
+  const raw = row.valueText ?? ''
+  if (row.valueType === 'string' && raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    return raw.slice(1, -1)
+  }
+  return raw
+}
+
+/** Click-to-copy a value → clipboard + a transient "Copied" toast (keyed so rapid copies replace). */
+function copyValue(row: JsonRow): void {
+  void navigator.clipboard?.writeText(copyTextOf(row))?.catch(() => {})
+  showToast({ id: 'json-copy', kind: 'ok', message: 'Copied' })
+}
 
 const TYPE_BADGE: Record<ValueType, string> = {
   string: 'string',
@@ -88,7 +106,18 @@ function Row({
   return (
     <div className="bb-net-json-row" style={pad}>
       {key}
-      <span className={`bb-net-json-val t-${row.valueType ?? 'raw'}`}>{row.valueText}</span>
+      <span
+        className={`bb-net-json-val t-${row.valueType ?? 'raw'}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          copyValue(row)
+        }}
+        title="Click to copy"
+        role="button"
+        tabIndex={-1}
+      >
+        {row.valueText}
+      </span>
       {badge && <span className="bb-net-json-badge">{badge}</span>}
       {row.valueType === 'bigint' && <span className="bb-net-json-chip warn">64-bit</span>}
       {row.duplicateKey && <span className="bb-net-json-chip warn">dup</span>}
