@@ -19,9 +19,9 @@ import {
   hasPayload,
   hasCookies,
   initiatorLabel,
-  prettyBody,
   type NetKV
 } from '../../../lib/osrNetFormat'
+import { JsonView } from './JsonView'
 
 export type DetailTab =
   | 'headers'
@@ -103,11 +103,12 @@ function BodyBar({
   return (
     <div className="bb-net-bodybar">
       {state?.body !== undefined ? (
-        <pre className="bb-net-bodytext">
-          {state.base64 ? '[binary · base64]\n' : ''}
-          {prettyBody(state.body, rec.mimeType, state.base64)}
-          {state.truncated && '\n…(truncated)'}
-        </pre>
+        <JsonView
+          body={state.body}
+          mime={rec.mimeType}
+          base64={state.base64}
+          truncated={state.truncated}
+        />
       ) : state?.error ? (
         <span className="bb-net-err">Couldn’t load body: {state.error}</span>
       ) : (
@@ -246,10 +247,12 @@ function PreviewTab({
     )
   }
   return (
-    <pre className="bb-net-bodytext">
-      {prettyBody(state.body, rec.mimeType, state.base64)}
-      {state.truncated && '\n…(truncated)'}
-    </pre>
+    <JsonView
+      body={state.body}
+      mime={rec.mimeType}
+      base64={state.base64}
+      truncated={state.truncated}
+    />
   )
 }
 

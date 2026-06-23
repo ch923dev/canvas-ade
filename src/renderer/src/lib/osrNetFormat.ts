@@ -4,6 +4,7 @@
  * already-capped record fields from the renderer mirror.
  */
 import type { NetRecord, NetHeader } from '../../../preload'
+import { looksJson } from './osrJson'
 
 /** Human byte size: "35 B" · "88 kB" · "4.0 MB" (DevTools-style, base-1000). */
 export function formatSize(bytes: number | undefined): string {
@@ -570,14 +571,14 @@ export function netPanelResizeFraction(
 
 /**
  * Pretty-print a body for display: indent JSON 2-space when the mime says JSON OR the text looks
- * like JSON (begins with `{`/`[`), so both responses (mime-typed) and request payloads (whose
- * content-type we don't carry) format. Returns the input unchanged when it isn't valid JSON, or for
- * binary (base64) bodies. Pure — used by the Response, Payload, and Preview tabs alike.
+ * like JSON (begins with `{`/`[`). Returns the input unchanged when it isn't valid JSON, or for
+ * binary (base64) bodies. Pure. NOTE: the Network body tabs now render via `JsonView` (a
+ * source-faithful tree); this remains only as a last-resort/text fallback. The JSON gate is the
+ * shared, BOM-aware `looksJson` from `osrJson.ts` (one detector).
  */
 export function prettyBody(body: string, mime: string | undefined, base64?: boolean): string {
   if (base64) return body // binary — never reparse
-  const looksJson = (mime ?? '').toLowerCase().includes('json') || /^\s*[{[]/.test(body)
-  if (looksJson) {
+  if (looksJson(body, mime)) {
     try {
       return JSON.stringify(JSON.parse(body), null, 2)
     } catch {

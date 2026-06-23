@@ -213,4 +213,51 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
       .poll(async () => (await panel.boundingBox())?.height ?? 0, { timeout: 3000 })
       .toBeGreaterThan(before.height + 10)
   })
+
+  test('JSON response body renders as a foldable tree (JsonView) + Raw toggle', async ({
+    page,
+    electronApp
+  }) => {
+    const base = await mainCall<string>(electronApp, 'localUrl')
+    // ?xhr makes the page fetch('/json') as a SUBRESOURCE — its body is loadable over CDP (the main
+    // document's body is evicted after navigation commits → "No resource with given identifier found").
+    const id = await seed(page, 'browser', { url: `${base}?xhr=1` })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    // Select the JSON fetch row (urlName → "json").
+    const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
+    await expect(row).toBeVisible({ timeout: 8000 })
+    await row.click()
+
+    const details = page.locator('.bb-net-details')
+    await expect(details).toBeVisible()
+    await details.getByRole('button', { name: 'Response' }).click()
+    await details.getByRole('button', { name: 'Load body' }).click()
+
+    // It renders as a TREE (not a flat <pre>): the big int is shown verbatim from source with a chip,
+    // proving the source-string tokenizer path (JSON.parse would have lost precision → 1.2345e19).
+    const rows = details.locator('.bb-net-json-rows')
+    await expect(rows).toBeVisible({ timeout: 8000 })
+    await expect(rows).toContainText('tags')
+    await expect(rows).toContainText('12345678901234567890')
+    await expect(rows).toContainText('64-bit')
+
+    // Fold the root container → children vanish; unfold → they return.
+    const openRow = rows.locator('.bb-net-json-open').first()
+    await openRow.click()
+    await expect(rows).not.toContainText('tags')
+    await openRow.click()
+    await expect(rows).toContainText('tags')
+
+    // Click a value → it copies and a transient toast confirms.
+    await rows.locator('.bb-net-json-val').first().click()
+    await expect(page.locator('.toast-msg', { hasText: 'Copied' })).toBeVisible()
+
+    // Raw mode shows the lossless re-indented source.
+    await details.getByRole('button', { name: 'Raw' }).click()
+    await expect(details.locator('.bb-net-bodytext')).toContainText('"id": 12345678901234567890')
+  })
 })

@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>E · Data Flow — Flat API (no relationships) — Canvas ADE mock</title>
+<style>
+  :root{
+    /* Surfaces */
+    --void:#0a0a0b; --surface:#141416; --surface-raised:#1a1a1d; --surface-overlay:#1e1e22; --inset:#0e0e10;
+    /* Borders */
+    --border-subtle:rgba(255,255,255,0.06); --border:rgba(255,255,255,0.1); --border-strong:rgba(255,255,255,0.16);
+    /* Text */
+    --text:#ededee; --text-2:#9b9ba1; --text-3:#7b7b81; --text-faint:#46464b;
+    /* Accent */
+    --accent:#4f8cff; --accent-hover:#6ea0ff; --accent-wash:rgba(79,140,255,0.14);
+    /* Status */
+    --ok:#3ecf8e; --warn:#e8b339; --err:#f2545b;
+    /* Fonts */
+    --ui:'Geist',system-ui,-apple-system,sans-serif;
+    --mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    /* Radius */
+    --r-board:8px; --r-inner:6px; --r-ctl:5px; --r-pill:999px;
+    /* Elevation */
+    --shadow-pop:0 8px 24px -6px rgba(0,0,0,0.7);
+    /* graph edge (local var — never shadow the contract --connector token) */
+    --edge:rgba(255,255,255,0.10);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--void); color:var(--text); font-family:var(--ui);
+    font-size:13px; line-height:1.45; -webkit-font-smoothing:antialiased;
+    padding:20px 24px 40px; display:flex; flex-direction:column; align-items:center;
+  }
+  .micro{font-size:10px; font-weight:500; text-transform:uppercase; letter-spacing:0.06em;}
+  .meta{font-family:var(--mono); font-size:11px;}
+  .label{font-size:12px; font-weight:500;}
+  .mono{font-family:var(--mono);}
+
+  /* caption strip */
+  .caption{
+    width:1280px; max-width:100%; display:flex; align-items:baseline; gap:10px;
+    margin-bottom:12px; padding:0 2px;
+  }
+  .caption .title{font-size:13px; font-weight:600; color:var(--text);}
+  .caption .sub{font-size:11px; color:var(--text-3); font-family:var(--mono);}
+
+  /* board */
+  .board{
+    width:1280px; max-width:100%; background:var(--surface);
+    border:1px solid var(--border); border-radius:var(--r-board);
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  /* board title chrome */
+  .board-chrome{
+    height:30px; display:flex; align-items:center; gap:8px; padding:0 10px;
+    background:var(--surface-raised); border-bottom:1px solid var(--border-subtle);
+  }
+  .dot-row{display:flex; gap:6px; align-items:center;}
+  .winbtn{width:9px; height:9px; border-radius:50%; background:var(--border-strong);}
+  .board-name{font-size:11px; color:var(--text-2); display:flex; align-items:center; gap:6px;}
+  .board-name .badge{
+    font-family:var(--mono); font-size:10px; color:var(--text-3);
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill); padding:1px 6px;
+  }
+  .board-chrome .spacer{flex:1;}
+  .live-dot{width:7px; height:7px; border-radius:50%; background:var(--ok);}
+
+  /* url bar */
+  .urlbar{
+    height:34px; display:flex; align-items:center; gap:8px; padding:0 10px;
+    background:var(--surface); border-bottom:1px solid var(--border-subtle);
+  }
+  .nav-ctrls{display:flex; gap:2px;}
+  .icbtn{
+    width:22px; height:22px; border-radius:var(--r-ctl); display:flex; align-items:center; justify-content:center;
+    color:var(--text-3); border:1px solid transparent;
+  }
+  .icbtn:hover{background:var(--surface-raised);}
+  .icbtn svg{width:13px; height:13px;}
+  .url-field{
+    flex:1; height:24px; display:flex; align-items:center; gap:7px; padding:0 9px;
+    background:var(--inset); border:1px solid var(--border-subtle); border-radius:var(--r-pill);
+    font-family:var(--mono); font-size:11px; color:var(--text-2);
+  }
+  .url-field .lock{color:var(--text-faint);}
+  .url-field .host{color:var(--text);}
+  .url-field .path{color:var(--text-2);}
+  .url-meta{font-family:var(--mono); font-size:10px; color:var(--text-faint); display:flex; gap:8px; align-items:center;}
+
+  /* page area */
+  .page-area{
+    height:140px; background:var(--inset); position:relative; overflow:hidden;
+    border-bottom:1px solid var(--border);
+    display:flex; flex-direction:column;
+  }
+  .page-topbar{
+    height:34px; display:flex; align-items:center; gap:14px; padding:0 18px;
+    border-bottom:1px solid var(--border-subtle); background:var(--surface);
+  }
+  .pt-logo{width:16px;height:16px;border-radius:4px;background:var(--accent-wash);border:1px solid var(--border);}
+  .pt-brand{font-size:12px;font-weight:600;color:var(--text);}
+  .pt-nav{display:flex;gap:16px;font-size:12px;color:var(--text-3);}
+  .pt-nav .on{color:var(--text);}
+  .page-body{flex:1;display:flex;}
+  .page-body .skel-col{padding:14px 18px;flex:1;}
+  .sk-h{font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:10px;}
+  .sk-row{height:9px;border-radius:3px;background:var(--surface-raised);margin-bottom:8px;}
+  .sk-row.w1{width:70%;} .sk-row.w2{width:52%;} .sk-row.w3{width:61%;} .sk-row.w4{width:40%;}
+  .sk-card{
+    border:1px solid var(--border-subtle); border-radius:var(--r-inner); background:var(--surface);
+    padding:10px 12px; flex:1; max-width:150px;
+  }
+  .page-dim{
+    position:absolute; inset:0; background:rgba(10,10,11,0.35); pointer-events:none;
+  }
+  .page-tag{
+    position:absolute; left:18px; bottom:10px; font-family:var(--mono); font-size:10px;
+    color:var(--text-faint);
+  }
+
+  /* inspector dock */
+  .inspector{
+    background:var(--surface); border-top:1px solid var(--border-strong);
+    display:flex; flex-direction:column;
+  }
+  .insp-tabs{
+    height:32px; display:flex; align-items:stretch; gap:0; padding:0 6px;
+    border-bottom:1px solid var(--border-subtle); background:var(--surface-raised);
+  }
+  .tab{
+    display:flex; align-items:center; gap:7px; padding:0 12px; font-size:12px; font-weight:500;
+    color:var(--text-3); position:relative; cursor:default;
+  }
+  .tab.active{color:var(--text);}
+  .tab.active::after{
+    content:""; position:absolute; left:8px; right:8px; bottom:-1px; height:2px;
+    background:var(--accent); border-radius:2px;
+  }
+  .tab .count{font-family:var(--mono); font-size:10px; color:var(--text-faint);}
+  .tab.active .count{color:var(--text-3);}
+  .insp-tabs .spacer{flex:1;}
+  .insp-tools{display:flex; align-items:center; gap:6px; padding-right:4px;}
+  .privacy-chip{
+    display:flex; align-items:center; gap:6px; height:20px; padding:0 8px;
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill);
+    font-family:var(--mono); font-size:10px; color:var(--text-3);
+  }
+  .privacy-chip svg{width:11px;height:11px;color:var(--text-faint);}
+  .seg{
+    display:flex; border:1px solid var(--border-subtle); border-radius:var(--r-ctl); overflow:hidden; height:20px;
+  }
+  .seg span{padding:0 8px; display:flex; align-items:center; font-size:10px; color:var(--text-3); font-family:var(--mono);}
+  .seg span.on{background:var(--surface-overlay); color:var(--text);}
+
+  /* degrade note strip — the calm "this is expected" banner */
+  .degrade-note{
+    display:flex; align-items:center; gap:10px; padding:8px 14px;
+    background:var(--surface-raised); border-bottom:1px solid var(--border-subtle);
+    font-size:12px; color:var(--text-2);
+  }
+  .degrade-note .ic{
+    width:16px; height:16px; flex:none; color:var(--text-3);
+  }
+  .degrade-note .ic svg{width:16px;height:16px;}
+  .degrade-note b{color:var(--text); font-weight:600;}
+  .degrade-note .tail{color:var(--text-3); font-family:var(--mono); font-size:11px;}
+  .degrade-note .spacer{flex:1;}
+  .degrade-note .lvls{display:flex; gap:6px; align-items:center;}
+  .lvl-pill{
+    display:flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10px;
+    padding:2px 8px; border-radius:var(--r-pill); border:1px solid var(--border-subtle);
+    color:var(--text-3);
+  }
+  .lvl-pill i{width:6px;height:6px;border-radius:50%;}
+  .lvl-pill.on{color:var(--text-2); border-color:var(--border);}
+  .lvl-pill.on i{background:var(--ok);}
+  .lvl-pill.off{color:var(--text-faint);}
+  .lvl-pill.off i{background:var(--border-strong);}
+
+  /* dock body: 3 columns */
+  .dock-body{display:flex; height:512px;}
+  .col-inv{
+    width:560px; border-right:1px solid var(--border-subtle); display:flex; flex-direction:column;
+    background:var(--surface);
+  }
+  .col-graph{flex:1; border-right:1px solid var(--border-subtle); background:var(--inset); position:relative;}
+  .col-insp{width:300px; background:var(--surface); display:flex; flex-direction:column;}
+
+  .col-head{
+    height:28px; display:flex; align-items:center; gap:8px; padding:0 12px;
+    border-bottom:1px solid var(--border-subtle); color:var(--text-3);
+    font-size:10px; font-weight:500; text-transform:uppercase; letter-spacing:0.06em;
+    background:var(--surface);
+  }
+  .col-head .ct{font-family:var(--mono); color:var(--text-faint); letter-spacing:0; text-transform:none; font-size:10px;}
+  .col-head .spacer{flex:1;}
+  .col-graph .col-head{background:var(--inset);}
+
+  /* inventory list */
+  .inv-list{overflow:auto;}
+  .ep-row{
+    display:grid; grid-template-columns:46px 1fr 54px 70px 56px 18px;
+    align-items:center; column-gap:10px; height:30px; padding:0 12px;
+    border-bottom:1px solid var(--border-subtle); font-size:12px;
+  }
+  .ep-row:hover{background:var(--surface-raised);}
+  .ep-row.sel{background:var(--accent-wash);}
+  .ep-row.sel .route{color:var(--text);}
+  .method{
+    font-family:var(--mono); font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.02em;
+    height:17px; display:flex; align-items:center; justify-content:center; border-radius:var(--r-ctl);
+    border:1px solid var(--border-subtle);
+  }
+  /* Methods are neutral labels — accent is reserved for the selected row/path only (one-accent rule). */
+  .m-get{color:var(--text-2); background:var(--surface-raised); border-color:var(--border-subtle);}
+  .m-post{color:var(--text-2); background:var(--surface-raised); border-color:var(--border-subtle);}
+  .m-ws{color:var(--text-2); background:var(--surface-raised); border-color:var(--border-subtle);}
+  .route{font-family:var(--mono); font-size:12px; color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .route .seg-dyn{color:var(--accent);}
+  .calls{font-family:var(--mono); font-size:11px; color:var(--text-3); text-align:right;}
+  .statusmix{display:flex; height:5px; border-radius:3px; overflow:hidden; background:var(--inset);}
+  .statusmix i{display:block; height:100%;}
+  .sm-2xx{background:var(--ok);}
+  .sm-4xx{background:var(--err);}
+  .sm-3xx{background:var(--warn);}
+  .p50{font-family:var(--mono); font-size:11px; color:var(--text-3); text-align:right;}
+  .p50 b{color:var(--text-2); font-weight:500;}
+  .expand{display:flex; align-items:center; justify-content:flex-end; color:var(--text-faint);}
+  .expand svg{width:11px; height:11px;}
+  .ep-row.open .expand svg{transform:rotate(90deg);}
+
+  /* schema reveal */
+  .schema{
+    background:var(--inset); border-bottom:1px solid var(--border-subtle);
+    padding:9px 12px 11px 56px;
+  }
+  .schema-head{
+    display:flex; align-items:center; gap:8px; margin-bottom:7px;
+  }
+  .schema-head .lbl{font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:500;}
+  .schema-head .ent{
+    font-family:var(--mono); font-size:10px; color:var(--text-2);
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill); padding:1px 7px; background:var(--surface-raised);
+  }
+  .schema-head .src{font-family:var(--mono); font-size:10px; color:var(--text-faint);}
+  .fields{font-family:var(--mono); font-size:11px; line-height:1.7;}
+  .fields .f{display:flex; gap:0; white-space:pre; color:var(--text-3);}
+  .fields .brace{color:var(--text-faint);}
+  .fields .key{color:var(--text);}
+  .fields .opt{color:var(--accent);}
+  .fields .colon{color:var(--text-faint); padding:0 6px 0 1px;}
+  /* Types are neutral annotations; only id/foreign-key types carry the accent (the lineage signal). */
+  .fields .t-string{color:var(--text-2);}
+  .fields .t-number{color:var(--text-2);}
+  .fields .t-bool{color:var(--text-2);}
+  .fields .t-id{color:var(--accent);}
+  .fields .t-null{color:var(--text-faint);}
+  .fields .union{color:var(--text-faint);}
+  .fields .nest{color:var(--text-3);}
+  .fields .arr{color:var(--text-faint);}
+  /* a "no lineage" inline note in the schema, instead of a lineage tag */
+  .nolink-tag{
+    margin-top:8px; display:inline-flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+    border:1px dashed var(--border-subtle); border-radius:var(--r-pill); padding:2px 8px;
+  }
+  .nolink-tag svg{width:11px;height:11px;}
+
+  /* GRAPH */
+  .graph-wrap{position:absolute; inset:28px 0 0 0; overflow:hidden;}
+  .graph-svg{position:absolute; inset:0; width:100%; height:100%;}
+  .gnode{
+    position:absolute; border-radius:var(--r-inner); border:1px solid var(--border);
+    background:var(--surface-raised); padding:7px 10px; min-width:104px;
+  }
+  .gnode .gn-kind{font-size:9px; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-faint); margin-bottom:3px;}
+  .gnode .gn-name{font-family:var(--mono); font-size:11px; color:var(--text);}
+  .gnode .gn-sub{font-family:var(--mono); font-size:10px; color:var(--text-3); margin-top:2px;}
+  .gnode.page{border-color:var(--border-strong); background:var(--surface-overlay);}
+  .gnode.page .gn-name{color:var(--text);}
+  .gnode.endpoint .m{
+    display:inline-block; font-family:var(--mono); font-size:9px; font-weight:600;
+    color:var(--text-2); margin-right:5px;
+  }
+  .gnode.entity{border-color:var(--border); min-width:88px;}
+  .gnode.entity.island{border-style:dashed; border-color:var(--border-subtle);}
+  .gnode.entity .gn-name{color:var(--text);}
+  /* selected path */
+  .gnode.on{box-shadow:0 0 0 1.5px var(--accent);}
+  .gnode.entity.on{background:var(--accent-wash);}
+
+  /* the honest "no relationships" callout — sits below the endpoints, clear of nodes */
+  .island-note{
+    position:absolute; left:50%; top:398px; transform:translateX(-50%);
+    width:312px; text-align:center;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+    border:1px dashed var(--border-subtle); border-radius:var(--r-inner);
+    padding:8px 12px; background:color-mix(in srgb, var(--inset) 86%, transparent);
+    line-height:1.5;
+  }
+  .island-note b{color:var(--text-3); font-weight:600; display:block; margin-bottom:2px; font-family:var(--ui); font-size:11px;}
+  .island-note .sub{color:var(--text-faint);}
+
+  .glegend{
+    position:absolute; left:12px; bottom:10px; display:flex; gap:14px; align-items:center;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+  }
+  .glegend .k{display:flex; align-items:center; gap:5px;}
+  .glegend .k.muted{opacity:0.55;}
+  .glegend .ln{width:16px; height:0; border-top:1px solid var(--edge);}
+  .glegend .ln.prod{border-top:1px solid var(--border);}
+  .glegend .ln.rel{border-top:1px dashed var(--border-subtle);}
+  .glegend .zero{color:var(--text-faint);}
+
+  /* right inspector */
+  .insp-entity-head{padding:12px 14px 10px; border-bottom:1px solid var(--border-subtle);}
+  .insp-entity-head .ttl{display:flex; align-items:center; gap:8px;}
+  .insp-entity-head .ent-name{font-size:15px; font-weight:600; color:var(--text);}
+  .insp-entity-head .ent-pill{
+    font-family:var(--mono); font-size:9px; color:var(--text-3); background:var(--surface-raised);
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill); padding:1px 6px;
+  }
+  .insp-entity-head .ent-meta{font-family:var(--mono); font-size:10px; color:var(--text-faint); margin-top:5px;}
+  .insp-section{padding:11px 14px; border-bottom:1px solid var(--border-subtle);}
+  .insp-section .sec-h{
+    font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint);
+    font-weight:500; margin-bottom:9px; display:flex; align-items:center; gap:6px;
+  }
+  .insp-section .sec-h .ct{font-family:var(--mono); letter-spacing:0; text-transform:none; color:var(--text-faint);}
+  .field-line{
+    display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+    font-family:var(--mono); font-size:11px; padding:3px 0; line-height:1.5;
+  }
+  .field-line .fk{color:var(--text);}
+  .field-line .ft{color:var(--text-3);}
+  .field-line .ft .t-string{color:var(--text-2);}
+  .field-line .ft .t-number{color:var(--text-2);}
+  .field-line .ft .t-bool{color:var(--text-2);}
+  .field-line .ft .t-null{color:var(--text-faint);}
+  .endpoint-chip{
+    display:flex; align-items:center; gap:8px; padding:5px 8px; margin-bottom:5px;
+    border:1px solid var(--border-subtle); border-radius:var(--r-ctl); background:var(--surface-raised);
+  }
+  .endpoint-chip .m{font-family:var(--mono); font-size:9px; font-weight:600; color:var(--text-2);}
+  .endpoint-chip .r{font-family:var(--mono); font-size:11px; color:var(--text-2); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .endpoint-chip .role{
+    font-size:9px; text-transform:uppercase; letter-spacing:0.05em; font-weight:500;
+    padding:1px 6px; border-radius:var(--r-pill); color:var(--text-3); background:var(--surface-raised);
+  }
+  /* empty-state block for the relationship sections */
+  .empty-rel{
+    border:1px dashed var(--border-subtle); border-radius:var(--r-inner);
+    padding:10px 12px; background:var(--inset);
+    display:flex; flex-direction:column; gap:4px;
+  }
+  .empty-rel .er-h{display:flex; align-items:center; gap:7px; color:var(--text-3); font-size:11px; font-weight:500;}
+  .empty-rel .er-h svg{width:13px; height:13px; color:var(--text-faint);}
+  .empty-rel .er-b{font-family:var(--mono); font-size:10px; color:var(--text-faint); line-height:1.5;}
+
+  .footnote{
+    width:1280px; max-width:100%; margin-top:10px; padding:0 2px;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+    display:flex; gap:16px; align-items:center;
+  }
+  .footnote .live{display:flex;align-items:center;gap:5px;}
+  .footnote .live i{width:6px;height:6px;border-radius:50%;background:var(--ok);}
+</style>
+</head>
+<body>
+
+  <!-- caption strip -->
+  <div class="caption">
+    <span class="title">E · Data Flow — flat API (graceful degradation)</span>
+    <span class="sub">Canvas ADE — design mock (not live) · the "no relationships" case</span>
+  </div>
+
+  <!-- BROWSER BOARD -->
+  <div class="board">
+
+    <!-- board chrome -->
+    <div class="board-chrome">
+      <div class="dot-row">
+        <span class="winbtn"></span><span class="winbtn"></span><span class="winbtn"></span>
+      </div>
+      <div class="board-name">
+        Browser <span class="badge">localhost:5173</span>
+      </div>
+      <div class="spacer"></div>
+      <span class="meta" style="color:var(--text-faint)">390 × 844</span>
+      <span class="live-dot"></span>
+    </div>
+
+    <!-- url bar -->
+    <div class="urlbar">
+      <div class="nav-ctrls">
+        <div class="icbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></div>
+        <div class="icbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+        <div class="icbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v6h6"/><path d="M20 20v-6h-6"/><path d="M4 10a8 8 0 0 1 14-3M20 14a8 8 0 0 1-14 3"/></svg></div>
+      </div>
+      <div class="url-field">
+        <span class="lock"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+        <span><span class="host">localhost:5173</span><span class="path">/dashboard</span></span>
+      </div>
+      <div class="url-meta">
+        <span>248 req</span>
+        <span style="color:var(--text-faint)">·</span>
+        <span>640 KB</span>
+      </div>
+    </div>
+
+    <!-- page area -->
+    <div class="page-area">
+      <div class="page-topbar">
+        <div class="pt-logo"></div>
+        <div class="pt-brand">Day One</div>
+        <div class="pt-nav"><span class="on">Dashboard</span><span>Feeds</span><span>Markets</span><span>Settings</span></div>
+      </div>
+      <div class="page-body">
+        <div class="skel-col">
+          <div class="sk-h">Today</div>
+          <div class="sk-row w1"></div><div class="sk-row w3"></div><div class="sk-row w2"></div>
+        </div>
+        <div class="skel-col" style="display:flex;gap:10px;max-width:330px;border-left:1px solid var(--border-subtle)">
+          <div class="sk-card"><div class="sk-h" style="font-size:11px;color:var(--text-3)">Weather</div><div class="sk-row w1"></div><div class="sk-row w2"></div></div>
+          <div class="sk-card"><div class="sk-h" style="font-size:11px;color:var(--text-3)">Markets</div><div class="sk-row w3"></div><div class="sk-row w1"></div></div>
+        </div>
+      </div>
+      <div class="page-dim"></div>
+      <div class="page-tag">// live page — captured for analysis</div>
+    </div>
+
+    <!-- INSPECTOR DOCK -->
+    <div class="inspector">
+
+      <!-- tabs -->
+      <div class="insp-tabs">
+        <div class="tab">Network <span class="count">248</span></div>
+        <div class="tab active">Data Flow <span class="count">6 routes · 0 links</span></div>
+        <div class="spacer"></div>
+        <div class="insp-tools">
+          <div class="privacy-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
+            values scrubbed · structure only
+          </div>
+          <div class="seg"><span class="on">Group: route</span><span>raw</span></div>
+        </div>
+      </div>
+
+      <!-- DEGRADE NOTE — the calm "this is expected" banner (the heart of this mock) -->
+      <div class="degrade-note">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.5" r="0.6" fill="currentColor" stroke="none"/></svg></span>
+        <span><b>Flat API</b> — no relationships between endpoints found. Every response stands alone; no shared identifier links one route to another across <span class="tail">248 captured calls</span>. You still get the full inventory and inferred schemas below.</span>
+        <span class="spacer"></span>
+        <span class="lvls">
+          <span class="lvl-pill on"><i></i>inventory</span>
+          <span class="lvl-pill on"><i></i>schemas</span>
+          <span class="lvl-pill off"><i></i>relationships</span>
+          <span class="lvl-pill off"><i></i>lineage</span>
+        </span>
+      </div>
+
+      <!-- 3-column body -->
+      <div class="dock-body">
+
+        <!-- COLUMN 1: ENDPOINT INVENTORY -->
+        <div class="col-inv">
+          <div class="col-head">
+            Endpoint Inventory
+            <span class="spacer"></span>
+            <span class="ct">6 templates · 248 calls</span>
+          </div>
+          <div class="inv-list">
+
+            <!-- GET /weather  (selected, expanded) -->
+            <div class="ep-row open sel">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/weather</span>
+              <span class="calls">48</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:100%"></i></span>
+              <span class="p50"><b>61</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+            <!-- schema reveal — flat, no id, NO lineage tag -->
+            <div class="schema">
+              <div class="schema-head">
+                <span class="lbl">Inferred response</span>
+                <span class="ent">Weather</span>
+                <span class="src">merged from 48 responses</span>
+              </div>
+              <div class="fields">
+                <div class="f"><span class="brace">{</span></div>
+                <div class="f">  <span class="key">city</span><span class="colon">:</span><span class="t-string">string</span></div>
+                <div class="f">  <span class="key">tempC</span><span class="colon">:</span><span class="t-number">number</span></div>
+                <div class="f">  <span class="key">conditions</span><span class="colon">:</span><span class="t-string">string</span></div>
+                <div class="f">  <span class="key">humidity</span><span class="colon">:</span><span class="t-number">number</span></div>
+                <div class="f">  <span class="key">windKph</span><span class="colon">:</span><span class="t-number">number</span></div>
+                <div class="f">  <span class="key">updatedAt</span><span class="colon">:</span><span class="t-string">string</span><span class="nest"> (iso8601)</span></div>
+                <div class="f"><span class="brace">}</span></div>
+              </div>
+              <div class="nolink-tag">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 12h8"/><path d="M4 6l16 12" opacity="0.7"/></svg>
+                no id field · no foreign keys · stands alone
+              </div>
+            </div>
+
+            <!-- GET /stocks -->
+            <div class="ep-row">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/stocks</span>
+              <span class="calls">52</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:98%"></i><i class="sm-4xx" style="width:2%"></i></span>
+              <span class="p50"><b>44</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- GET /news -->
+            <div class="ep-row">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/news</span>
+              <span class="calls">41</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:100%"></i></span>
+              <span class="p50"><b>88</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- GET /quote -->
+            <div class="ep-row">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/quote</span>
+              <span class="calls">33</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:100%"></i></span>
+              <span class="p50"><b>19</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- GET /config -->
+            <div class="ep-row">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/config</span>
+              <span class="calls">12</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:100%"></i></span>
+              <span class="p50"><b>9</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- POST /track -->
+            <div class="ep-row">
+              <span class="method m-post">POST</span>
+              <span class="route">/api/track</span>
+              <span class="calls">62</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:100%"></i></span>
+              <span class="p50"><b>12</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- COLUMN 2: DATA-FLOW GRAPH (degraded — islands, no relationship/lineage edges) -->
+        <div class="col-graph">
+          <div class="col-head">
+            Data Flow Graph
+            <span class="spacer"></span>
+            <span class="ct">page → endpoint · 0 relationships</span>
+          </div>
+          <div class="graph-wrap">
+            <!--
+              viewBox maps 1:1 to the graph-wrap box (~392 × 484).
+              PAGE:      left 14, top 168, ~104w  -> right edge x=118, v-center y≈194
+              ENDPOINT:  left 150, ~120w (x 150..270), centers y = 40/100/160/220/280/340 (spacing 60)
+              ENTITY:    left 300, ~88w (islands), centers y = 92 / 210
+              NOTE band: below endpoints (last node bottom ≈367), y 398+
+            -->
+            <svg class="graph-svg" preserveAspectRatio="none" viewBox="0 0 392 484">
+              <!-- page (x=118, center y=194) -> 6 endpoints (x=150). Only CALL edges — these always exist. -->
+              <path d="M118 188 C 134 188, 134 40, 150 40" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 190 C 134 190, 134 100, 150 100" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 192 C 134 192, 134 160, 150 160" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 196 C 134 196, 134 220, 150 220" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 198 C 134 198, 134 280, 150 280" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 200 C 134 200, 134 340, 150 340" fill="none" stroke="var(--edge)" stroke-width="1"/>
+
+              <!-- endpoint -> its own shape (PRODUCES — solid, calm border colour). Only the 2 repeated-array shapes. -->
+              <!-- GET /stocks (y100) -> Stock[] island (y92) -->
+              <path d="M270 100 C 286 100, 288 92, 300 92" fill="none" stroke="var(--border)" stroke-width="1"/>
+              <!-- GET /news (y160) -> NewsItem[] island (y210) -->
+              <path d="M270 160 C 286 160, 288 210, 300 210" fill="none" stroke="var(--border)" stroke-width="1"/>
+
+              <!-- NO entity->entity edges. NO dashed lineage edges. That absence is the point. -->
+            </svg>
+
+            <!-- PAGE node (center y=194 -> top=168) -->
+            <div class="gnode page" style="left:14px; top:168px;">
+              <div class="gn-kind">Page</div>
+              <div class="gn-name">/dashboard</div>
+              <div class="gn-sub">localhost:5173</div>
+            </div>
+
+            <!-- ENDPOINT nodes (centers 40/100/160/220/280/340 -> top = center-20) -->
+            <div class="gnode endpoint sel-row" style="left:150px; top:20px; box-shadow:0 0 0 1.5px var(--accent);">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/weather</div>
+              <div class="gn-sub">48 calls · 61ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:80px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/stocks</div>
+              <div class="gn-sub">52 calls · 44ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:140px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/news</div>
+              <div class="gn-sub">41 calls · 88ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:200px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/quote</div>
+              <div class="gn-sub">33 calls · 19ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:260px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/config</div>
+              <div class="gn-sub">12 calls · 9ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:320px;">
+              <div class="gn-kind"><span class="m">POST</span>endpoint</div>
+              <div class="gn-name">/track</div>
+              <div class="gn-sub">62 calls · 204</div>
+            </div>
+
+            <!-- ENTITY islands (only repeated array shapes; dashed border = "island, unlinked") -->
+            <div class="gnode entity island" style="left:300px; top:75px;">
+              <div class="gn-kind">Shape</div>
+              <div class="gn-name">Stock</div>
+            </div>
+            <div class="gnode entity island" style="left:300px; top:193px;">
+              <div class="gn-kind">Shape</div>
+              <div class="gn-name">NewsItem</div>
+            </div>
+
+            <!-- honest empty-state note where relationship edges would be -->
+            <div class="island-note">
+              <b>No relationships to draw</b>
+              <span class="sub">responses share no identifiers, so no entity → entity links are inferred. We never invent edges.</span>
+            </div>
+
+            <div class="glegend">
+              <span class="k"><span class="ln"></span> call</span>
+              <span class="k"><span class="ln prod"></span> produces</span>
+              <span class="k muted"><span class="ln rel"></span> relationship <span class="zero">· 0</span></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- COLUMN 3: ENTITY / ENDPOINT INSPECTOR -->
+        <div class="col-insp">
+          <div class="insp-entity-head">
+            <div class="ttl">
+              <span class="ent-name">Weather</span>
+              <span class="ent-pill">response shape</span>
+            </div>
+            <div class="ent-meta">GET /api/weather · inferred · 6 fields · 48 responses</div>
+          </div>
+
+          <div class="insp-section">
+            <div class="sec-h">Inferred fields <span class="ct">6</span></div>
+            <div class="field-line"><span class="fk">city</span><span class="ft"><span class="t-string">string</span></span></div>
+            <div class="field-line"><span class="fk">tempC</span><span class="ft"><span class="t-number">number</span></span></div>
+            <div class="field-line"><span class="fk">conditions</span><span class="ft"><span class="t-string">string</span></span></div>
+            <div class="field-line"><span class="fk">humidity</span><span class="ft"><span class="t-number">number</span></span></div>
+            <div class="field-line"><span class="fk">windKph</span><span class="ft"><span class="t-number">number</span></span></div>
+            <div class="field-line"><span class="fk">updatedAt</span><span class="ft"><span class="t-string">string</span></span></div>
+          </div>
+
+          <div class="insp-section">
+            <div class="sec-h">Produced by <span class="ct">1</span></div>
+            <div class="endpoint-chip">
+              <span class="m">GET</span>
+              <span class="r">/api/weather</span>
+              <span class="role">produces</span>
+            </div>
+          </div>
+
+          <div class="insp-section">
+            <div class="sec-h">Relationships <span class="ct">0</span></div>
+            <div class="empty-rel">
+              <div class="er-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+                None detected
+              </div>
+              <div class="er-b">No id field and no value overlaps another endpoint's keys. Nothing references this shape, and it references nothing. This is a leaf — expected for widgets &amp; third-party feeds.</div>
+            </div>
+          </div>
+
+          <div class="insp-section" style="border-bottom:none">
+            <div class="sec-h">Lineage <span class="ct">0</span></div>
+            <div class="empty-rel">
+              <div class="er-h">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h9"/><path d="M13 8l4 4-4 4" opacity="0.5"/><path d="M5 6l14 12" opacity="0.7"/></svg>
+                No id propagation
+              </div>
+              <div class="er-b">No value from this response reappears in a later request. Capture-request bodies to deepen lineage as you click through the app.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <span class="live"><i></i> analyzing 248 captured requests</span>
+    <span>layers reached: inventory ✓ · schema ✓ · relationships 0 · lineage 0</span>
+    <span style="color:var(--text-3)">Data Flow · Canvas ADE</span>
+  </div>
+
+</body>
+</html>

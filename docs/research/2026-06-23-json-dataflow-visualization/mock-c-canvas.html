@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C · Data Flow on the Canvas — Canvas ADE design mock</title>
+<style>
+  :root {
+    /* Surfaces (furthest -> closest) */
+    --void: #0a0a0b;
+    --surface: #141416;
+    --surface-raised: #1a1a1d;
+    --surface-overlay: #1e1e22;
+    --inset: #0e0e10;
+    /* Borders */
+    --border-subtle: rgba(255,255,255,0.06);
+    --border: rgba(255,255,255,0.1);
+    --border-strong: rgba(255,255,255,0.16);
+    /* Text */
+    --text: #ededee;
+    --text-2: #9b9ba1;
+    --text-3: #7b7b81;
+    --text-faint: #46464b;
+    /* Accent */
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+    --accent-wash: rgba(79,140,255,0.14);
+    /* Status */
+    --ok: #3ecf8e;
+    --warn: #e8b339;
+    --err: #f2545b;
+    /* Fonts */
+    --ui: 'Geist', system-ui, -apple-system, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    /* Radius */
+    --r-board: 8px;
+    --r-inner: 6px;
+    --r-ctl: 5px;
+    --r-pill: 999px;
+    /* Elevation */
+    --shadow-pop: 0 8px 24px -6px rgba(0,0,0,0.7);
+    /* Canvas grid dot + the real orchestration-connector token (board-to-board edges) */
+    --grid-dot: #202022;
+    --connector: #5a6573;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--void);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 0 48px;
+    min-height: 100vh;
+  }
+
+  /* ---------- caption strip ---------- */
+  .caption {
+    width: 1280px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 0 4px 12px;
+  }
+  .caption .title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .caption .sub {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+  }
+
+  /* ---------- browser board frame ---------- */
+  .board-frame {
+    width: 1280px;
+    height: 760px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  /* URL bar */
+  .url-bar {
+    height: 38px;
+    flex: 0 0 38px;
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    z-index: 5;
+  }
+  .traffic { display: flex; gap: 6px; }
+  .traffic i {
+    width: 8px; height: 8px; border-radius: var(--r-pill);
+    background: var(--border-strong);
+    display: block;
+  }
+  .url-nav { display: flex; gap: 4px; margin-left: 4px; color: var(--text-3); }
+  .url-nav span {
+    width: 22px; height: 22px;
+    display: grid; place-items: center;
+    border-radius: var(--r-ctl);
+    font-size: 13px;
+  }
+  .url-input {
+    flex: 1;
+    height: 24px;
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+    max-width: 420px;
+  }
+  .url-input .lock { color: var(--text-faint); font-size: 10px; }
+  .url-input .host { color: var(--text-3); }
+  .url-input .path { color: var(--text); }
+  .url-tools { display: flex; gap: 6px; margin-left: auto; }
+  .url-pill {
+    height: 22px;
+    padding: 0 8px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--border-subtle);
+    background: var(--surface-overlay);
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 500;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .url-pill .dot { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ok); }
+
+  /* ---------- the canvas scene ---------- */
+  .canvas {
+    flex: 1;
+    position: relative;
+    background-color: var(--void);
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+    overflow: hidden;
+  }
+
+  /* zoom/scene chrome - bottom-left zoom indicator */
+  .scene-chrome {
+    position: absolute;
+    left: 12px; bottom: 12px;
+    display: flex; gap: 6px; align-items: center;
+    z-index: 30;
+  }
+  .scene-chrome .ctl {
+    height: 24px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    display: flex; align-items: center;
+    padding: 0 8px;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .scene-chrome .ctl b { color: var(--text); font-weight: 500; }
+
+  /* mini-toolbar top-right of scene */
+  .scene-tools {
+    position: absolute;
+    right: 12px; top: 12px;
+    display: flex; gap: 6px;
+    z-index: 30;
+  }
+  .scene-tools .t {
+    height: 26px; padding: 0 10px;
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    font-size: 11px; color: var(--text-2);
+  }
+  .scene-tools .t.primary { color: var(--text); border-color: var(--border); }
+  .scene-tools .t .ico { font-size: 12px; color: var(--text-3); }
+
+  /* ---------- SVG connector layer ---------- */
+  .edges { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+  .edge-label {
+    position: absolute;
+    z-index: 25;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-3);
+    background: var(--void);
+    padding: 1px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-pill);
+    white-space: nowrap;
+  }
+
+  /* ---------- generic board on canvas ---------- */
+  .node {
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-board);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .node-head {
+    height: 28px;
+    flex: 0 0 28px;
+    display: flex; align-items: center; gap: 7px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+  }
+  .node-head .badge {
+    font-size: 10px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-3);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .node-head .badge .gico { color: var(--text-faint); font-size: 11px; }
+  .node-head .title { font-size: 12px; font-weight: 600; color: var(--text); }
+  .node-head .dots { margin-left: auto; color: var(--text-faint); font-size: 13px; letter-spacing: 1px; }
+  .selected { box-shadow: 0 0 0 1.5px var(--accent); }
+
+  /* ---- Browser board (small) ---- */
+  .nb-browser { left: 56px; top: 96px; width: 300px; height: 224px; }
+  .mini-url {
+    height: 22px; margin: 8px; flex: 0 0 22px;
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-ctl);
+    display: flex; align-items: center; padding: 0 8px;
+    font-family: var(--mono); font-size: 10px; color: var(--text-3);
+  }
+  .mini-page {
+    flex: 1; margin: 0 8px 8px;
+    background: var(--inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-inner);
+    overflow: hidden;
+    position: relative;
+  }
+  .mp-top { height: 24px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 6px; padding: 0 8px; }
+  .mp-top .logo { width: 14px; height: 14px; border-radius: 3px; background: var(--accent); opacity: 0.85; }
+  .mp-top .nav { font-size: 9px; color: var(--text-3); }
+  .mp-body { padding: 8px; }
+  .mp-row {
+    height: 16px; border-radius: 3px; background: var(--surface-overlay);
+    border: 1px solid var(--border-subtle);
+    margin-bottom: 5px; display: flex; align-items: center; padding: 0 6px; gap: 6px;
+  }
+  .mp-row .cell { height: 5px; border-radius: 2px; background: var(--border-strong); }
+  .mp-row .c1 { width: 38px; } .mp-row .c2 { width: 54px; } .mp-row .c3 { width: 28px; }
+  .mp-row .pricetag { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--text-2); }
+  .mp-stat { width: 5px; height: 5px; border-radius: var(--r-pill); }
+
+  /* ---- Data Flow artifact board ---- */
+  .nb-flow { left: 470px; top: 64px; width: 416px; height: 380px; }
+  .flow-canvas {
+    flex: 1;
+    position: relative;
+    background-color: var(--inset);
+    background-image: radial-gradient(var(--border-subtle) 1px, transparent 1px);
+    background-size: 16px 16px;
+    overflow: hidden;
+  }
+  .gnode {
+    position: absolute;
+    border-radius: var(--r-inner);
+    border: 1px solid var(--border);
+    background: var(--surface-raised);
+    overflow: hidden;
+    min-width: 116px;
+    z-index: 2;
+  }
+  .gnode .gh {
+    height: 22px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono); font-size: 10px;
+  }
+  .gnode .gh .m {
+    font-size: 9px; font-weight: 600; letter-spacing: 0.04em;
+    padding: 1px 4px; border-radius: 3px;
+  }
+  /* Methods are neutral labels (one-accent rule); accent stays on lineage + id-type + selection. */
+  .m.get { color: var(--text-2); background: var(--surface-overlay); }
+  .m.post { color: var(--text-2); background: var(--surface-overlay); }
+  .m.entity { color: var(--text-3); background: var(--surface-overlay); }
+  .gnode .gh .ep { color: var(--text); }
+  .gnode .gbody { padding: 5px 8px; display: flex; flex-direction: column; gap: 3px; }
+  .gfield { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 9px; }
+  .gfield .k { color: var(--text-2); }
+  .gfield .ty { color: var(--text-faint); margin-left: auto; }
+  .gfield .ty.id { color: var(--accent); opacity: 0.8; }
+  .gfield .null { color: var(--warn); }
+  .gnode.flagged { border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+
+  /* edges inside flow */
+  .flow-edges { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+  .flow-legend {
+    height: 24px; flex: 0 0 24px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 10px;
+    font-size: 10px; color: var(--text-3);
+  }
+  .flow-legend .lg { display: flex; align-items: center; gap: 5px; }
+  .flow-legend .lg i { width: 7px; height: 7px; border-radius: 2px; display: block; }
+
+  /* artifact provenance pill on head */
+  .prov {
+    margin-left: auto;
+    font-family: var(--mono); font-size: 9px; color: var(--text-3);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .prov .live { width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--ok); }
+
+  /* ---- Planning board ---- */
+  .nb-plan { left: 920px; top: 120px; width: 300px; height: 386px; }
+  .plan-body {
+    flex: 1; padding: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+    overflow: hidden;
+  }
+  .sticky {
+    border-radius: var(--r-inner);
+    border: 1px solid var(--border-subtle);
+    padding: 8px 10px;
+    background: var(--surface-overlay);
+    position: relative;
+  }
+  .sticky .stag {
+    font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-3); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;
+  }
+  .sticky .stxt { font-size: 12px; color: var(--text); line-height: 1.45; }
+  .sticky .stxt code { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .sticky.target { border-color: var(--accent); }
+  .sticky.target .stag { color: var(--accent); }
+
+  /* checklist */
+  .checklist {
+    border-radius: var(--r-inner);
+    border: 1px solid var(--border-subtle);
+    background: var(--inset);
+    overflow: hidden;
+  }
+  .cl-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px 5px;
+  }
+  .cl-head .ct { font-size: 12px; font-weight: 600; color: var(--text); }
+  .cl-head .cprog { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+  .cl-bar { height: 3px; background: var(--surface-overlay); margin: 0 10px 6px; border-radius: var(--r-pill); overflow: hidden; }
+  .cl-bar i { display: block; height: 100%; width: 40%; background: var(--accent); border-radius: var(--r-pill); }
+  .cl-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px;
+    font-size: 12px; color: var(--text);
+    border-top: 1px solid var(--border-subtle);
+  }
+  .cl-item .box {
+    width: 14px; height: 14px; border-radius: 4px;
+    border: 1px solid var(--border-strong);
+    flex: 0 0 14px; display: grid; place-items: center;
+    font-size: 9px; color: var(--void);
+  }
+  .cl-item.done .box { background: var(--accent); border-color: var(--accent); }
+  .cl-item.done span { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--text-faint); }
+
+  /* ---------- context menu popover ---------- */
+  .ctx-menu {
+    position: absolute;
+    left: 470px; top: 470px;
+    width: 232px;
+    background: var(--surface-overlay);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-inner);
+    box-shadow: var(--shadow-pop);
+    z-index: 40;
+    padding: 4px;
+  }
+  .ctx-menu .grp {
+    font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-faint); padding: 6px 8px 4px;
+  }
+  .ctx-item {
+    display: flex; align-items: center; gap: 9px;
+    height: 28px; padding: 0 8px;
+    border-radius: var(--r-ctl);
+    font-size: 12px; color: var(--text-2);
+  }
+  .ctx-item .ico { width: 14px; text-align: center; color: var(--text-3); font-size: 12px; }
+  .ctx-item .kbd {
+    margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--text-faint);
+  }
+  .ctx-item.active {
+    background: var(--accent-wash); color: var(--text);
+  }
+  .ctx-item.active .ico { color: var(--accent); }
+  .ctx-sep { height: 1px; background: var(--border-subtle); margin: 4px 6px; }
+
+  /* small generic dot */
+  .sdot { width: 6px; height: 6px; border-radius: var(--r-pill); display: inline-block; }
+</style>
+</head>
+<body>
+
+  <div class="caption">
+    <span class="title">C · Data Flow on the Canvas — Planning / agent integration</span>
+    <span class="sub">Canvas ADE — design mock (not live)</span>
+  </div>
+
+  <div class="board-frame">
+
+    <!-- URL bar of the Browser board hosting the running app -->
+    <div class="url-bar">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <div class="url-nav"><span>‹</span><span>›</span><span>⟳</span></div>
+      <div class="url-input">
+        <span class="lock">▣</span>
+        <span class="host">localhost:3000</span><span class="path">/orders</span>
+      </div>
+      <div class="url-tools">
+        <div class="url-pill"><span class="dot"></span> 200 OK</div>
+        <div class="url-pill" style="text-transform:none;letter-spacing:0">390 × 844</div>
+      </div>
+    </div>
+
+    <!-- The zoomed-out canvas scene -->
+    <div class="canvas">
+
+      <!-- scene mini toolbar -->
+      <div class="scene-tools">
+        <div class="t"><span class="ico">⌘</span> Fit</div>
+        <div class="t primary"><span class="ico" style="color:var(--accent)">⌗</span> Data Flow</div>
+      </div>
+
+      <!-- bottom-left zoom + scene name -->
+      <div class="scene-chrome">
+        <div class="ctl"><b>orders</b> · canvas</div>
+        <div class="ctl">−&nbsp;&nbsp;<b>48%</b>&nbsp;&nbsp;+</div>
+        <div class="ctl"><span class="sdot" style="background:var(--ok)"></span>&nbsp;4 boards</div>
+      </div>
+
+      <!-- ===== connector edge layer (canvas-level) ===== -->
+      <svg class="edges">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--connector)"/>
+          </marker>
+          <marker id="arrowAccent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- Browser board (right edge ~356,208) -> Data Flow board (left edge ~470,210) -->
+        <path d="M 356 208 C 410 208, 420 220, 470 222"
+              fill="none" stroke="var(--connector)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+        <!-- Data Flow board (top-right ~880,168) -> Planning target note (left edge ~920,250) -->
+        <path d="M 880 178 C 905 172, 912 250, 922 262"
+              fill="none" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#arrowAccent)"
+              stroke-dasharray="0"/>
+      </svg>
+
+      <div class="edge-label" style="left:374px; top:182px;">captures /orders traffic</div>
+      <div class="edge-label" style="left:778px; top:148px; border-color:var(--accent-wash); color:var(--accent);">→ promoted to Planning note</div>
+
+      <!-- ====================== Browser board (small) ====================== -->
+      <div class="node nb-browser">
+        <div class="node-head">
+          <span class="badge"><span class="gico">▢</span> Browser</span>
+          <span class="title">Orders app</span>
+          <span class="dots">⋯</span>
+        </div>
+        <div class="mini-url">localhost:3000/orders</div>
+        <div class="mini-page">
+          <div class="mp-top">
+            <span class="logo"></span>
+            <span class="nav">Orders · Customers · Settings</span>
+          </div>
+          <div class="mp-body">
+            <div class="mp-row"><span class="mp-stat" style="background:var(--ok)"></span><span class="cell c1"></span><span class="cell c3"></span><span class="pricetag">$128.40</span></div>
+            <div class="mp-row"><span class="mp-stat" style="background:var(--ok)"></span><span class="cell c2"></span><span class="cell c3"></span><span class="pricetag">$54.00</span></div>
+            <div class="mp-row"><span class="mp-stat" style="background:var(--warn)"></span><span class="cell c1"></span><span class="cell c2"></span><span class="pricetag">$0.00</span></div>
+            <div class="mp-row"><span class="mp-stat" style="background:var(--ok)"></span><span class="cell c2"></span><span class="cell c1"></span><span class="pricetag">$312.10</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====================== Data Flow artifact board ====================== -->
+      <div class="node nb-flow selected">
+        <div class="node-head">
+          <span class="badge"><span class="gico">⌗</span> Artifact</span>
+          <span class="title">Data Flow — /orders</span>
+          <span class="prov"><span class="live"></span> captured · 14 reqs</span>
+        </div>
+
+        <div class="flow-canvas">
+          <!-- internal graph edges -->
+          <svg class="flow-edges">
+            <defs>
+              <marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--text-3)"/>
+              </marker>
+              <marker id="faA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+              </marker>
+            </defs>
+            <!-- GET /orders -> Order entity -->
+            <path d="M 130 56 C 170 56, 180 118, 156 132" fill="none" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#fa)"/>
+            <!-- GET /orders/:id -> Order entity -->
+            <path d="M 286 70 C 250 70, 210 118, 200 130" fill="none" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#fa)"/>
+            <!-- Order entity -> Customer entity (the flagged field link) -->
+            <path d="M 200 196 C 250 200, 280 224, 286 234" fill="none" stroke="var(--accent)" stroke-width="1.3" marker-end="url(#faA)"/>
+            <!-- POST /orders -> Order entity -->
+            <path d="M 96 250 C 110 230, 130 210, 150 196" fill="none" stroke="var(--text-3)" stroke-width="1.2" marker-end="url(#fa)"/>
+          </svg>
+
+          <!-- endpoint: GET /orders -->
+          <div class="gnode" style="left:14px; top:14px;">
+            <div class="gh"><span class="m get">GET</span><span class="ep">/orders</span></div>
+            <div class="gbody">
+              <div class="gfield"><span class="k">page</span><span class="ty">int?</span></div>
+              <div class="gfield"><span class="k">status</span><span class="ty">enum</span></div>
+            </div>
+          </div>
+
+          <!-- endpoint: GET /orders/:id -->
+          <div class="gnode" style="left:284px; top:28px;">
+            <div class="gh"><span class="m get">GET</span><span class="ep">/orders/:id</span></div>
+            <div class="gbody">
+              <div class="gfield"><span class="k">id</span><span class="ty id">uuid</span></div>
+            </div>
+          </div>
+
+          <!-- entity: Order (flagged) -->
+          <div class="gnode flagged" style="left:118px; top:132px; width:128px;">
+            <div class="gh"><span class="m entity">ENTITY</span><span class="ep">Order</span></div>
+            <div class="gbody">
+              <div class="gfield"><span class="k">id</span><span class="ty id">uuid</span></div>
+              <div class="gfield"><span class="k">customerId</span><span class="null">str | null</span></div>
+              <div class="gfield"><span class="k">total</span><span class="ty">decimal</span></div>
+              <div class="gfield"><span class="k">status</span><span class="ty">enum</span></div>
+            </div>
+          </div>
+
+          <!-- entity: Customer -->
+          <div class="gnode" style="left:284px; top:234px; width:118px;">
+            <div class="gh"><span class="m entity">ENTITY</span><span class="ep">Customer</span></div>
+            <div class="gbody">
+              <div class="gfield"><span class="k">id</span><span class="ty id">uuid</span></div>
+              <div class="gfield"><span class="k">name</span><span class="ty">str</span></div>
+            </div>
+          </div>
+
+          <!-- endpoint: POST /orders -->
+          <div class="gnode" style="left:14px; top:250px;">
+            <div class="gh"><span class="m post">POST</span><span class="ep">/orders</span></div>
+            <div class="gbody">
+              <div class="gfield"><span class="k">items[]</span><span class="ty">array</span></div>
+              <div class="gfield"><span class="k">customerId</span><span class="null">str | null</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flow-legend">
+          <span class="lg"><i style="background:var(--text-2)"></i> endpoint</span>
+          <span class="lg"><i style="background:var(--text-3)"></i> entity</span>
+          <span class="lg"><i style="background:var(--warn)"></i> nullable</span>
+          <span class="lg" style="margin-left:auto; font-family:var(--mono)">3 endpoints · 2 entities</span>
+        </div>
+      </div>
+
+      <!-- ====================== Planning board ====================== -->
+      <div class="node nb-plan">
+        <div class="node-head">
+          <span class="badge"><span class="gico">◳</span> Planning</span>
+          <span class="title">Orders — review</span>
+          <span class="dots">⋯</span>
+        </div>
+        <div class="plan-body">
+
+          <!-- target sticky note (edge lands here) -->
+          <div class="sticky target">
+            <div class="stag"><span class="sdot" style="background:var(--accent)"></span> from Data Flow</div>
+            <div class="stxt">Order schema — verify <code>customerId</code> nullable. Guest checkout writes <code>null</code>; FE assumes string.</div>
+          </div>
+
+          <div class="sticky">
+            <div class="stag"><span class="sdot" style="background:var(--warn)"></span> bug</div>
+            <div class="stxt">Row with $0.00 total renders a warn dot — refunded order, not an error state.</div>
+          </div>
+
+          <!-- checklist element -->
+          <div class="checklist">
+            <div class="cl-head">
+              <span class="ct">Schema hardening</span>
+              <span class="cprog">2 / 5</span>
+            </div>
+            <div class="cl-bar"><i></i></div>
+            <div class="cl-item done"><span class="box">✓</span><span>Capture /orders surface</span></div>
+            <div class="cl-item done"><span class="box">✓</span><span>Send map to Planning</span></div>
+            <div class="cl-item"><span class="box"></span><span>Make customerId required</span></div>
+            <div class="cl-item"><span class="box"></span><span>Backfill guest orders</span></div>
+            <div class="cl-item"><span class="box"></span><span>Add agent context</span></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ====================== context menu popover (affordance) ====================== -->
+      <div class="ctx-menu">
+        <div class="grp">Data Flow artifact</div>
+        <div class="ctx-item active">
+          <span class="ico">→</span> Send data-flow to Planning
+          <span class="kbd">⇧⌘P</span>
+        </div>
+        <div class="ctx-item">
+          <span class="ico">✦</span> Add as agent context
+          <span class="kbd">⇧⌘A</span>
+        </div>
+        <div class="ctx-item">
+          <span class="ico">⧉</span> Promote to its own board
+        </div>
+        <div class="ctx-sep"></div>
+        <div class="ctx-item">
+          <span class="ico">⤓</span> Export as JSON schema
+        </div>
+        <div class="ctx-item">
+          <span class="ico">⟳</span> Re-capture surface
+          <span class="kbd">⌘R</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</body>
+</html>

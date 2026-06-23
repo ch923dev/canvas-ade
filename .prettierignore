@@ -14,3 +14,5 @@ resources/diagram-worker/mermaid.min.js
 pnpm-lock.yaml
 # Hand-authored docs (tables/prose) — keep Prettier's markdown reflow off them.
 *.md
+# Hand-tuned, token-accurate design mocks (throwaway HTML built from the design tokens) — never reflow.
+docs/research/**/mock-*.html
