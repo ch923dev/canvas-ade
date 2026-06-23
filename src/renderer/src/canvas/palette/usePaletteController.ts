@@ -13,13 +13,48 @@ import type { ReactFlowInstance } from '@xyflow/react'
 import type { BoardType } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useWayfindingStore } from '../../store/wayfindingStore'
+import { useCommandStore } from '../../store/commandStore'
+import { useOrchestrationStore } from '../../store/orchestrationStore'
+import { showToast } from '../../store/toastStore'
 import { cameraAnim } from '../../lib/motion'
 import { FIT_FRAME, RESET_FRAME, Z_MAX } from '../../lib/canvasView'
 import { runBoardExport } from '../boards/planning/runExport'
 import type { BoardActions } from '../boardActions'
+import { useAuditLogStore } from '../auditLogStore'
 import type { PaletteVerbs } from './commandRegistry'
 import type { PaletteView } from './CommandPalette'
 import { sendPaletteIntent } from './paletteIntentStore'
+
+/**
+ * W1-A: revoke this project's orchestration consent — the SAME direct revoke the Settings toggle's
+ * OFF path runs (there is no "disable" modal; `OrchestrationConsentModal` is grant-only). The cache
+ * flips only on a resolved `{ ok: true }`; any failure surfaces a keyed toast and leaves the cache
+ * untouched — the privacy-relevant fail-closed the Settings toggle also takes (a silent failure
+ * must never read as "disabled"). The actual consent write stays MAIN-side over the existing IPC.
+ */
+async function revokeOrchestration(): Promise<void> {
+  const fail = (): void => {
+    showToast({
+      id: 'orchestration-revoke',
+      kind: 'error',
+      message: 'Could not disable agent orchestration — please try again.'
+    })
+  }
+  try {
+    const r = await window.api?.orchestration?.setConsent('declined')
+    if (r?.ok) useOrchestrationStore.getState().setEnabled(false)
+    else fail()
+  } catch {
+    fail()
+  }
+}
+
+/** Navigate to the singleton Command board, creating one if absent. */
+function openOrCreateCommandBoard(goToBoard: (id: string) => void, add: () => void): void {
+  const cmd = useCanvasStore.getState().boards.find((b) => b.type === 'command')
+  if (cmd) goToBoard(cmd.id)
+  else add()
+}
 
 export interface PaletteControllerDeps {
   rf: ReactFlowInstance
@@ -128,6 +163,21 @@ export function usePaletteController(deps: PaletteControllerDeps): PaletteContro
             ((x.sourceId === a && x.targetId === b) || (x.sourceId === b && x.targetId === a))
         )
         if (c) removeConnector(c.id)
+      },
+      // ── Orchestration (W1-A) — navigate to existing surfaces / open existing modals only. No
+      // verb here writes to MAIN except `disableOrchestration`, which mirrors the Settings revoke. ──
+      openCommandBoard: () => openOrCreateCommandBoard(goToBoard, () => addCentered('command')),
+      // Toggle the read-only audit panel (same store the corner launcher + Ctrl+Shift+A flip).
+      viewAuditLog: () => useAuditLogStore.getState().toggle(),
+      // Grant routes through the informed consent modal (capabilities + security callout); the
+      // grant itself happens inside it (do not bypass — security invariant).
+      enableOrchestration: () => useOrchestrationStore.getState().setModal('enable'),
+      disableOrchestration: () => void revokeOrchestration(),
+      syncAgentCLIs: () => useOrchestrationStore.getState().setModal('sync'),
+      // Show the running work: jump to the Command board with its kanban (executing column) up.
+      goToExecutingTasks: () => {
+        useCommandStore.getState().setView('kanban')
+        openOrCreateCommandBoard(goToBoard, () => addCentered('command'))
       },
       tidy: tidyAndFit,
       fitAll: () => void rf.fitView(cameraAnim(FIT_FRAME)),
