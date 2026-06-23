@@ -384,7 +384,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       cursorBlink: true,
       theme: THEME,
       allowProposedApi: true,
-      scrollback: 5000
+      // Bounded scrollback (perf SLICE-012): xterm retains ~12 B/cell, so 5000 lines pins
+      // ~7 MB/terminal that never releases while a board stays mounted at LOD (~137 MB across 20
+      // terminals). 2000 keeps generous history at ~40% of the resident buffer. UX-tunable.
+      scrollback: 2000
     })
     const fit = new FitAddon()
     term.loadAddon(fit)

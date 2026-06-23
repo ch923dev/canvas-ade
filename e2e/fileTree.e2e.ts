@@ -6,11 +6,14 @@ import { evalIn, mainCall, pollEval } from './helpers'
  *   project:open → onProjectOpen → fileWatch.ts (chokidar) emits `file:treeEvent`
  *   FileTree.listDir (S1 IPC) → rows → openFileBoard (S1 action) → a File board.
  *
- * The panel auto-hides, but its rows stay in the DOM (laid out, just opacity:0) — so DOM
- * queries + programmatic `el.click()` exercise the wiring without driving the reveal/occlusion
- * (and they work through the recap-consent scrim, which only blocks REAL pointer events).
- * Lazy per-folder expansion + the immutable tree merges are covered by the fileTreeData unit
- * tests + the watcher mapping by fileWatch unit tests; here we prove the live integration.
+ * The panel auto-hides. Since SLICE-013 the FileTree is lazy and only MOUNTS once the panel has
+ * been revealed at least once (its react-arborist/react-window chunk loads on first open, not at
+ * boot), so each probe reveals the panel first (`revealSidePanel()`); after that the rows stay in
+ * the DOM (laid out, just opacity:0) — so DOM queries + programmatic `el.click()` exercise the
+ * wiring without driving real pointer occlusion (and they work through the recap-consent scrim,
+ * which only blocks REAL pointer events). Lazy per-folder expansion + the immutable tree merges are
+ * covered by the fileTreeData unit tests + the watcher mapping by fileWatch unit tests; here we
+ * prove the live integration.
  */
 test.describe('@chrome file tree side panel (S2)', () => {
   test('lists the project files and opens one as a File board', async ({ page, electronApp }) => {
@@ -23,6 +26,8 @@ test.describe('@chrome file tree side panel (S2)', () => {
         `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`
       )
       expect(res.status, 'project opened').toBe('open')
+      // SLICE-013: the FileTree is lazy — reveal the panel so it mounts before we probe its rows.
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
 
       const listed = await pollEval(
         page,
@@ -58,6 +63,8 @@ test.describe('@chrome file tree side panel (S2)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'seed.txt', 'seed\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it mounts before we probe its rows.
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await pollEval(
         page,
         `!!Array.from(document.querySelectorAll('.ca-ftree-row')).find((r) => r.title === 'seed.txt')`,

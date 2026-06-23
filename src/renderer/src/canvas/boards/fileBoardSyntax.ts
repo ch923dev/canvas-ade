@@ -10,11 +10,32 @@
  */
 import { EditorView, keymap } from '@uiw/react-codemirror'
 import type { Extension } from '@uiw/react-codemirror'
-import { loadLanguage, type LanguageName } from '@uiw/codemirror-extensions-langs'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { HighlightStyle, syntaxHighlighting, type LanguageSupport } from '@codemirror/language'
 import { search, searchKeymap } from '@codemirror/search'
 import { highlightCode, tags as t } from '@lezer/highlight'
 import type { Highlighter, Tag } from '@lezer/highlight'
+// Explicit per-language imports (NOT the `@uiw/codemirror-extensions-langs` barrel): the barrel
+// statically bundles ~103 grammars (the whole `@codemirror/legacy-modes` pack) and its runtime
+// `loadLanguage(name)` name-indexing defeats tree-shaking, so the FileBoard chunk dragged in every
+// grammar. We import ONLY the modern `@codemirror/lang-*` packs reachable from `LANG_BY_EXT` and
+// resolve them through a static map below, so the bundler can drop everything else.
+import { javascript } from '@codemirror/lang-javascript'
+import { json } from '@codemirror/lang-json'
+import { python } from '@codemirror/lang-python'
+import { rust } from '@codemirror/lang-rust'
+import { go } from '@codemirror/lang-go'
+import { java } from '@codemirror/lang-java'
+import { cpp } from '@codemirror/lang-cpp'
+import { css } from '@codemirror/lang-css'
+import { sass } from '@codemirror/lang-sass'
+import { less } from '@codemirror/lang-less'
+import { html } from '@codemirror/lang-html'
+import { xml } from '@codemirror/lang-xml'
+import { vue } from '@codemirror/lang-vue'
+import { php } from '@codemirror/lang-php'
+import { markdown } from '@codemirror/lang-markdown'
+import { yaml } from '@codemirror/lang-yaml'
+import { sql, StandardSQL } from '@codemirror/lang-sql'
 
 // -- Size / format gates -----------------------------------------------------------
 /** Text files larger than this aren't loaded into the editor - show the guard instead. */
@@ -57,10 +78,65 @@ export function writeStickyFileFont(n: number): void {
   }
 }
 
-/** ext -> CM language pack name (`@uiw/codemirror-extensions-langs`; its keys are the short,
- *  extension-style names like `ts`/`js`/`rs`). Only modern `LanguageSupport` packs are mapped;
- *  anything unmapped renders as plain text (still editable). Typed as `LanguageName` so a bad
- *  value fails the build, not at runtime. */
+/** The CM language packs we ship, keyed by the short, extension-style ids `LANG_BY_EXT` resolves
+ *  to. Each thunk is the EXACT call the `@uiw/codemirror-extensions-langs` barrel made for that id
+ *  (see its generated `langs` map) — same grammar, same options — so highlighting is byte-for-byte
+ *  identical to the old `loadLanguage` path; we just import the packs explicitly so the bundler can
+ *  drop the ~80 unreachable grammars. Every value is a modern `LanguageSupport` (no legacy
+ *  StreamLanguage in this set), so the snapshot parser path below always resolves. */
+const LANG_FACTORY = {
+  ts: () => javascript({ typescript: true }),
+  mts: () => javascript({ typescript: true }),
+  cts: () => javascript({ typescript: true }),
+  tsx: () => javascript({ jsx: true, typescript: true }),
+  js: () => javascript(),
+  mjs: () => javascript(),
+  cjs: () => javascript(),
+  jsx: () => javascript({ jsx: true }),
+  json: () => json(),
+  py: () => python(),
+  rs: () => rust(),
+  go: () => go(),
+  java: () => java(),
+  c: () => cpp(),
+  h: () => cpp(),
+  cpp: () => cpp(),
+  cc: () => cpp(),
+  cxx: () => cpp(),
+  hpp: () => cpp(),
+  hxx: () => cpp(),
+  css: () => css(),
+  scss: () => sass(),
+  sass: () => sass({ indented: true }),
+  less: () => less(),
+  html: () => html(),
+  htm: () => html(),
+  xml: () => xml(),
+  vue: () => vue(),
+  php: () => php(),
+  sql: () => sql({ dialect: StandardSQL }),
+  md: () => markdown(),
+  markdown: () => markdown(),
+  yaml: () => yaml(),
+  yml: () => yaml()
+} satisfies Record<string, () => LanguageSupport>
+
+/** Short, extension-style language id — the keys of `LANG_FACTORY`, i.e. the only grammars we
+ *  bundle. Typed as the literal union so a bad value in `LANG_BY_EXT` fails the build, not at
+ *  runtime (mirrors the old `LanguageName` guard, scoped to the reachable set). */
+type LanguageName = keyof typeof LANG_FACTORY
+
+/** Construct the `LanguageSupport` for a bundled language id (`null` for any other name — the same
+ *  "unknown ⇒ plain text" contract the old barrel `loadLanguage` had). Signature preserved so
+ *  callers (markdown code-fence highlighting, `resolveLanguage`) are unchanged. */
+function loadLanguage(name: LanguageName): LanguageSupport | null {
+  const factory = LANG_FACTORY[name]
+  return factory ? factory() : null
+}
+
+/** ext -> CM language pack name (the short, extension-style ids like `ts`/`js`/`rs`). Only modern
+ *  `LanguageSupport` packs are mapped; anything unmapped renders as plain text (still editable).
+ *  Typed as `LanguageName` so a bad value fails the build, not at runtime. */
 const LANG_BY_EXT: Record<string, LanguageName> = {
   ts: 'ts',
   mts: 'mts',
@@ -265,8 +341,15 @@ const EDITOR_THEME = EditorView.theme(
 
 // `highlightCode`'s tree/parser types, borrowed structurally so we don't import @lezer/common.
 type LezerTree = Parameters<typeof highlightCode>[1]
+/** One bounded batch of Lezer's incremental parse: `advance()` does a small amount of work and
+ *  returns the finished `Tree`, or `null` while more work remains. (The real `LRParser.startParse`
+ *  returns a `PartialParse`; we borrow only the surface SLICE-008's time-slicer drives.) */
+interface LezerPartialParse {
+  advance(): LezerTree | null
+}
 interface LezerParser {
   parse(input: string): LezerTree
+  startParse(input: string): LezerPartialParse
 }
 
 // -- Pure helpers ------------------------------------------------------------------
@@ -328,17 +411,12 @@ export function buildEditorExtensions(support: Extension | null): Extension[] {
   return exts
 }
 
-/**
- * Build the static snapshot's inner HTML: highlighted `<span>`s with newlines preserved for
- * `<pre>`. XSS-safe by construction: every run of FILE text is escaped via `escapeHtml`, and
- * the only attribute is `style="color:<hex>"` where the hex is a FIXED value from our own
- * palette (never file data). Falls back to escaped plain text when there is no parser or the
- * file is over the highlight cap.
- */
-export function buildSnapshotHtml(code: string, parser: LezerParser | null): string {
-  if (!parser || code.length > HIGHLIGHT_MAX_CHARS) return escapeHtml(code)
+/** Walk a parsed `tree` into highlighted `<span>` HTML — the shared emit used by BOTH the synchronous
+ *  `buildSnapshotHtml` and the async time-sliced path, so the two can't drift. XSS-safe by
+ *  construction: every run of FILE text is escaped via `escapeHtml`, and the only attribute is
+ *  `style="color:<hex>"` where the hex is a FIXED value from our own palette (never file data). */
+function treeToHtml(code: string, tree: LezerTree): string {
   let html = ''
-  const tree = parser.parse(code)
   highlightCode(
     code,
     tree,
@@ -352,4 +430,86 @@ export function buildSnapshotHtml(code: string, parser: LezerParser | null): str
     }
   )
   return html
+}
+
+/**
+ * Build the static snapshot's inner HTML: highlighted `<span>`s with newlines preserved for
+ * `<pre>`. Falls back to escaped plain text when there is no parser or the file is over the
+ * highlight cap. SYNCHRONOUS — the one-shot path for small files (and the unit-test oracle the async
+ * path is checked against). For large files, `highlightSnapshotAsync` produces byte-identical HTML
+ * off the critical path.
+ */
+export function buildSnapshotHtml(code: string, parser: LezerParser | null): string {
+  if (!parser || code.length > HIGHLIGHT_MAX_CHARS) return escapeHtml(code)
+  return treeToHtml(code, parser.parse(code))
+}
+
+// -- SLICE-008: highlight off the open-time critical path -----------------------------------------
+// The full `parser.parse(code)` is a single unbroken main-thread block — ~64 ms for a 200 KB real
+// TS file, up to ~197 ms token-dense — that froze the frame on file open. The parser is a Lezer
+// `LRParser` that lives only on this thread and isn't structured-cloneable, and a worker that
+// re-imported the grammars would duplicate every CodeMirror grammar into a second chunk (undoing
+// SLICE-001's bundle cut). So instead of a worker we drive Lezer's INCREMENTAL parser cooperatively:
+// short synchronous batches that yield to the event loop between them, so paint/input interleave and
+// no single task exceeds a frame (the card's sanctioned alternative).
+
+/** Below this char count the snapshot highlights SYNCHRONOUSLY in render (well under one frame — a
+ *  ~30 KB file parses in ~7 ms), so the common case stays flash-free and identical to the old path.
+ *  At/above it (and within the 200 KB highlight cap) the parse is time-sliced off the critical path. */
+export const SYNC_HIGHLIGHT_MAX_CHARS = 30_000
+
+/** Per-batch time budget (ms) for the sliced parse — kept under a frame so paint/input run between
+ *  batches. The total CPU is unchanged; it is spread across tasks instead of one blocking task. */
+const PARSE_SLICE_MS = 8
+
+/** True when the snapshot for `code` must be highlighted ASYNCHRONOUSLY: there is a parser, the file
+ *  is over the synchronous ceiling, and it is within the highlight cap (over the cap ⇒ plain text). */
+export function needsAsyncHighlight(code: string, parser: LezerParser | null): boolean {
+  return !!parser && code.length > SYNC_HIGHLIGHT_MAX_CHARS && code.length <= HIGHLIGHT_MAX_CHARS
+}
+
+/** The IMMEDIATE (synchronous) snapshot HTML: a full highlight for small files, or the escaped
+ *  plain-text placeholder for large files (which `highlightSnapshotAsync` then upgrades). For the
+ *  no-parser / over-cap cases this IS the permanent result (plain text). */
+export function snapshotImmediateHtml(code: string, parser: LezerParser | null): string {
+  return needsAsyncHighlight(code, parser) ? escapeHtml(code) : buildSnapshotHtml(code, parser)
+}
+
+/** Yield to the event loop as a MACROtask (so paint/input get a turn) without `setTimeout`'s ~4 ms
+ *  clamp: a one-shot `MessageChannel` ping. CSP-safe — no eval / blob / worker. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    const ch = new MessageChannel()
+    ch.port1.onmessage = (): void => {
+      ch.port1.close()
+      resolve()
+    }
+    ch.port2.postMessage(0)
+  })
+}
+
+/**
+ * Highlight a snapshot OFF the open-time critical path. Drives Lezer's incremental parser in
+ * `PARSE_SLICE_MS` batches that yield between them, then emits the SAME HTML as `buildSnapshotHtml`.
+ * Resolves to the highlighted HTML, or `null` if `isStale()` reports the request was superseded by a
+ * newer edit/parser before it finished (the caller then drops it). For the no-parser / over-cap cases
+ * it resolves to the plain-text fallback (matching `buildSnapshotHtml`).
+ */
+export async function highlightSnapshotAsync(
+  code: string,
+  parser: LezerParser | null,
+  isStale: () => boolean
+): Promise<string | null> {
+  if (!parser || code.length > HIGHLIGHT_MAX_CHARS) return escapeHtml(code)
+  const parse = parser.startParse(code)
+  for (;;) {
+    if (isStale()) return null
+    const deadline = performance.now() + PARSE_SLICE_MS
+    let tree: LezerTree | null = null
+    do {
+      tree = parse.advance()
+    } while (tree === null && performance.now() < deadline)
+    if (tree !== null) return treeToHtml(code, tree)
+    await yieldToEventLoop()
+  }
 }

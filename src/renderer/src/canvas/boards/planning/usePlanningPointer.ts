@@ -23,7 +23,7 @@ import type { ArrowElement, PlanningElement } from '../../../lib/boardSchema'
 import { pushBoardPoint } from '../../../lib/pen'
 import { eraseHitTest } from './erase'
 import { rectFromPoints, marqueeHits } from './marquee'
-import { computeSnap, SNAP_TOL, type Guide } from './snapping'
+import { computeSnap, precomputeStatics, SNAP_TOL, type Guide, type StaticSnap } from './snapping'
 import type { PlanTool } from './tools'
 import type { MenuEntry } from './ElementContextMenu'
 import {
@@ -123,8 +123,23 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
   // A move records the grab point in board space so the delta = pointer − grab.
   // A move also records whether Alt was held at grab → an alt-drag DUPLICATES the
   // moving set on pointer-up (originals stay put; a ghost preview tracks the copies).
+  //
+  // SLICE-004: a move also carries a lazily-built `snapCache` — the static (non-moving)
+  // neighbors' bboxes + anchors, which are IDENTICAL for the whole single drag. Computed
+  // once on the first move frame and reused across every frame, instead of rebuilding the
+  // statics set + bboxes + anchors from scratch each pointermove (the per-frame allocation
+  // + recompute hot spot). It is invalidated implicitly when the drag record is cleared on
+  // pointer-up/cancel (a fresh drag starts with `snapCache: null`), and defensively rebuilt
+  // if the `elements` reference changes mid-gesture (so a stale cache is impossible).
   const drag = useRef<
-    | { mode: 'move'; ids: string[]; grabX: number; grabY: number; alt: boolean }
+    | {
+        mode: 'move'
+        ids: string[]
+        grabX: number
+        grabY: number
+        alt: boolean
+        snapCache: { elements: PlanningElement[]; statics: StaticSnap[] } | null
+      }
     | { mode: 'arrow'; id: string }
     | { mode: 'arrowEnd'; id: string; end: ArrowEnd; sx: number; sy: number; moved: boolean }
     | { mode: 'pen'; points: number[] }
@@ -194,7 +209,15 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       // Record the grab point; the live delta is pointer − grab. Works for every
       // kind (cards + arrows + strokes) since we translate by delta (#28, #37).
       // Capture Alt at grab → an alt-drag duplicates rather than moves on pointer-up.
-      drag.current = { mode: 'move', ids: movingIds, grabX: p.x, grabY: p.y, alt: e.altKey }
+      // snapCache starts null and is filled on the first move frame (SLICE-004).
+      drag.current = {
+        mode: 'move',
+        ids: movingIds,
+        grabX: p.x,
+        grabY: p.y,
+        alt: e.altKey,
+        snapCache: null
+      }
       // Capture on the WELL (not the card) so move/up route to the well handlers
       // even when the cursor leaves the card during a fast drag.
       wellRef.current?.setPointerCapture(e.pointerId)
@@ -337,10 +360,18 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
                 return { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }
               })
           )
-          const statics = elements
-            .filter((el) => !moving.has(el.id))
-            .map((el) => elementBBox(el, measuredRef.current.get(el.id)))
-          const snap = computeSnap(movingUnion, statics, SNAP_TOL)
+          // The static set + its bboxes/anchors are IDENTICAL for the whole single
+          // drag, so build them ONCE (here, on the first frame) and reuse the cache
+          // across every subsequent frame instead of rebuilding from scratch each
+          // pointermove (SLICE-004). Defensively rebuild if the `elements` reference
+          // changed mid-gesture so a stale cache is impossible.
+          if (!d.snapCache || d.snapCache.elements !== elements) {
+            const staticBoxes = elements
+              .filter((el) => !moving.has(el.id))
+              .map((el) => elementBBox(el, measuredRef.current.get(el.id)))
+            d.snapCache = { elements, statics: precomputeStatics(staticBoxes) }
+          }
+          const snap = computeSnap(movingUnion, d.snapCache.statics, SNAP_TOL)
           dx += snap.dx
           dy += snap.dy
           setSnapGuides(snap.guides.length > 0 ? snap.guides : null)

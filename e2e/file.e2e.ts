@@ -107,6 +107,41 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     }
   })
 
+  // SLICE-008: a large file's snapshot highlight runs OFF the open-time critical path (Lezer's
+  // incremental parser, time-sliced) — escaped plaintext shows immediately, then the highlighted HTML
+  // swaps in when the async pass resolves. This guards that the async swap actually lands: a >30 KB
+  // (async-threshold) file's deselected snapshot ends up syntax-highlighted, identical in kind to the
+  // small-file path. (Pixel-identity to the old synchronous output is pinned by the unit test; this is
+  // the integration safety net that the async wiring resolves + paints.)
+  test('large file: the deselected snapshot highlights via the off-critical-path async pass', async ({
+    page,
+    electronApp
+  }) => {
+    const tmp = await mainCall<string>(electronApp, 'createTempProject', 'file-s3big-', 'Big')
+    try {
+      // ~60 KB of real TS — over SYNC_HIGHLIGHT_MAX_CHARS (30 KB) so it takes the async sliced path.
+      const unit =
+        'export function add(a: number, b: number): number {\n' +
+        "  const tag = 'sum=' + String(a + b)\n" +
+        '  return /[0-9]+/.test(tag) ? a + b : 0xff\n' +
+        '}\n'
+      const big = unit.repeat(Math.ceil(60_000 / unit.length))
+      await mainCall(electronApp, 'writeProjectFile', tmp, 'big.ts', big)
+
+      const id = await seed(page, 'file', { path: 'big.ts' })
+      const node = `.react-flow__node[data-id="${id}"]`
+      // Deselect so the static snapshot (not the live editor) renders.
+      await evalIn(page, `window.__canvasE2E.select(null)`)
+      const snap = page.locator(`${node} [data-test="file-snapshot"]`)
+      await expect(snap).toBeVisible({ timeout: 6000 })
+      await expect(snap).toContainText('add')
+      // The async highlight pass resolves and swaps in the coloured spans (was plaintext at first paint).
+      await expect.poll(() => snap.innerHTML(), { timeout: 8000 }).toContain('<span style="color:')
+    } finally {
+      await mainCall(electronApp, 'teardownProject', tmp)
+    }
+  })
+
   test('right-click -> Copy path puts the relative path on the clipboard', async ({
     page,
     electronApp
@@ -300,6 +335,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'alpha.ts', 'export const A = 1\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -345,6 +383,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       writeFileSync(join(tmp, 'pkg', 'sub', 'leaf.ts'), 'export const L = 1\n')
       writeFileSync(join(tmp, 'zzz.txt'), 'root sibling\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -384,6 +425,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'a.ts', 'export const A = 1\n')
       await mainCall(electronApp, 'writeProjectFile', tmp, 'b.ts', 'export const B = 2\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -444,6 +488,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'note.ts', 'export const N = 1\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -504,6 +551,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
         await mainCall(electronApp, 'writeProjectFile', tmp, f, `export const X = '${f}'\n`)
       }
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000
@@ -556,6 +606,9 @@ test.describe('@core file board (CodeMirror 6 viewer/editor)', () => {
     try {
       await mainCall(electronApp, 'writeProjectFile', tmp, 'x.ts', 'export const X = 1\n')
       await evalIn(page, `window.__canvasE2E.openProjectFromDisk(${JSON.stringify(tmp)})`)
+      // SLICE-013: the FileTree is lazy — reveal the panel so it MOUNTS before we probe its rows
+      // (a real user can't interact with the still-hidden, unmounted tree either).
+      await evalIn(page, `window.__canvasE2E.revealSidePanel()`)
       await expect
         .poll(() => evalIn<number>(page, `document.querySelectorAll('.ca-ftree-row').length`), {
           timeout: 6000

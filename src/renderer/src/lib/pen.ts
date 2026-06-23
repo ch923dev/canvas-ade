@@ -82,3 +82,24 @@ export function pointsToPairs(points: number[]): Array<[number, number]> {
   }
   return pairs
 }
+
+/**
+ * Cheap O(N) centerline polyline (`M x y L x y …`) traced straight through the
+ * raw board-local points — NO perfect-freehand smoothing. Used ONLY for the
+ * in-progress draft preview: `getStroke` is O(stroke length) per call, so
+ * re-running it over the whole growing point list every pen-move frame is O(N²)
+ * across one stroke. This builder touches each point once, so the per-frame draft
+ * cost stays bounded by the number of points added this frame, not the whole
+ * stroke. The committed stroke is still rendered via the full `strokeToPath`
+ * (perfect-freehand) on pointer-up, so the final ink is unchanged — only the
+ * live preview is the cheap centerline (drawn as a stroked path at the pen size).
+ * Empty for fewer than two points (nothing to draw yet).
+ */
+export function draftPolyline(points: number[]): string {
+  if (points.length < 4) return ''
+  let d = `M ${points[0]} ${points[1]}`
+  for (let i = 2; i + 1 < points.length; i += 2) {
+    d += ` L ${points[i]} ${points[i + 1]}`
+  }
+  return d
+}

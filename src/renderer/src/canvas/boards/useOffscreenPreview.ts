@@ -1,12 +1,20 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import { usePreviewStore } from '../../store/previewStore'
 import { useOsrLivenessStore } from '../../store/osrLivenessStore'
-import { bgraToRgba } from '../../lib/bgraToRgba'
 
 // One streamed OSR frame. Derived from the (now id-keyed) preload listener so the type stays in
 // lockstep with preload's OsrFrame without a cross-package import (same pattern as useOffscreenInput).
 type OsrFrame = Parameters<Parameters<typeof window.api.onPreviewOsrFrame>[1]>[0]
+
+// SLICE-006: the worker swizzles BGRA→RGBA off the main thread and transfers the RGBA buffer back,
+// echoing `gen` so a response for a frame posted before a clear (fail/crash/url-change) is dropped.
+interface OsrSwizzleResponse {
+  gen: number
+  buffer: ArrayBuffer
+  dirty: { x: number; y: number; width: number; height: number }
+  full: { width: number; height: number }
+}
 
 /**
  * Drive a Browser board's offscreen preview (OSR — the sole preview engine since OS-3 Phase 5C).
@@ -23,6 +31,12 @@ type OsrFrame = Parameters<Parameters<typeof window.api.onPreviewOsrFrame>[1]>[0
  * snapshot (a "paused" badge over it); it re-opens when it climbs back into the cap. So
  * the canvas-clear is split into its OWN effect (url-change / unmount only) — the
  * lifecycle effect closes WITHOUT clearing so an evict keeps the frame.
+ *
+ * SLICE-006: the BGRA→RGBA swizzle runs in a dedicated worker (`osrBlitWorker`), not on the main
+ * thread. Each frame's BGRA buffer is transferred to the worker (zero-copy); the worker swizzles and
+ * transfers the RGBA back; the cheap GPU-backed `putImageData` then runs on the main-thread 2D canvas
+ * here. The canvas stays a normal main-thread canvas (not an OffscreenCanvas) so the clear / evict /
+ * `osrCanvasNonBlank` paths keep reading it via `getContext('2d')` unchanged.
  */
 export function useOffscreenPreview(
   boardId: string,
@@ -33,85 +47,70 @@ export function useOffscreenPreview(
   // opens immediately; the manager flips it false to evict (over-cap), true to revive.
   const alive = useOsrLivenessStore((s) => s.alive[boardId] ?? true)
 
+  // The swizzle worker (lives for the whole board mount; survives url/alive changes) + a generation
+  // counter bumped on every clear so an in-flight worker response can't repaint over a cleared canvas.
+  const workerRef = useRef<Worker | null>(null)
+  const genRef = useRef(0)
+
+  // Worker lifecycle (mount-only): a persistent `message` handler blits each swizzled response onto
+  // the main-thread canvas, dropping stale-generation responses. (No React.StrictMode in this app, so
+  // this runs once per mount — no listener churn / double worker.)
+  useEffect(() => {
+    const worker = new Worker(new URL('./osrBlitWorker.ts', import.meta.url), { type: 'module' })
+    workerRef.current = worker
+    worker.onmessage = (e: MessageEvent<OsrSwizzleResponse>): void => {
+      const { gen, buffer, dirty, full } = e.data
+      if (gen !== genRef.current) return // posted before a clear → drop (canvas was wiped since)
+      const cv = canvasRef.current
+      const ctx = cv?.getContext('2d')
+      if (!cv || !ctx) return
+      // OS-3 Phase 2 (2C) — dirty-rect aware. A full repaint reports dirty == the whole frame; a
+      // partial paint covers only the changed sub-rect.
+      const isFull =
+        dirty.x === 0 && dirty.y === 0 && dirty.width === full.width && dirty.height === full.height
+      // The <canvas> tracks the FULL frame size; setting cv.width/height also CLEARS it. A partial
+      // frame can't fill a freshly-cleared canvas, so only adopt a new size on a FULL frame — MAIN
+      // guarantees the first frame after any resize is full (invalidate()).
+      if (cv.width !== full.width || cv.height !== full.height) {
+        if (!isFull) return
+        cv.width = full.width
+        cv.height = full.height
+      }
+      // `buffer` is the worker-swizzled RGBA (transferred back); wrap it (no copy) and blit ONLY the
+      // dirty sub-rect — the rest of the canvas keeps the previous frame's pixels.
+      ctx.putImageData(
+        new ImageData(new Uint8ClampedArray(buffer), dirty.width, dirty.height),
+        dirty.x,
+        dirty.y
+      )
+    }
+    return () => {
+      workerRef.current = null
+      worker.terminate()
+    }
+  }, [canvasRef])
+
   // Clear the canvas on a URL change or unmount — but NOT on an evict (alive→false), which keeps
   // the frozen last frame. Its own effect (deps exclude `alive`) so the lifecycle effect can
   // close-without-clearing. A failed-load / crash clear stays in the event handler below.
   useEffect(() => {
-    const clearCanvas = (): void => {
-      const cv = canvasRef.current
+    const cv = canvasRef.current // captured at setup (same element across url changes) for cleanup
+    return () => {
+      genRef.current += 1 // invalidate in-flight worker responses for the page being torn down
       cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
     }
-    return () => clearCanvas()
   }, [boardId, url, canvasRef])
 
   useEffect(() => {
     if (!url || !alive) return
 
-    // PREV-02: per-board frame queue drained once per animation frame. Frames are dirty-rect
-    // PARTIAL blits, so drain ALL queued frames in order — never "keep only the latest", which
-    // would drop intermediate sub-rect paints and corrupt the canvas. This only defers the blits
-    // from the IPC callback to display cadence (no extra work, no dropped pixels).
-    let queue: OsrFrame[] = []
-    let rafId = 0
-    // Reused across same-size frames (full repaints + repeated same-region dirty rects, e.g. a
-    // blinking caret) so steady-state painting allocates nothing. ImageData requires
-    // length === w*h*4 exactly, so only reuse when the size matches; reallocate on a size change.
-    let reuseRgba: Uint8ClampedArray<ArrayBuffer> | undefined
-
-    // Clear a stale page bitmap so it never sits OVER the board's Couldn't-load / Crashed
-    // fallback. Used by the fail/crash handlers (the stream stops, leaving the last frame frozen).
-    // Also drops any queued/pending frame so a stale blit can't repaint over the fallback.
+    // Clear a stale page bitmap so it never sits OVER the board's Couldn't-load / Crashed fallback.
+    // Used by the fail/crash handlers (the stream stops, leaving the last frame frozen). The gen bump
+    // also drops any worker response still in flight so a stale blit can't repaint over the fallback.
     const clearCanvas = (): void => {
-      queue = []
-      if (rafId) {
-        cancelAnimationFrame(rafId)
-        rafId = 0
-      }
+      genRef.current += 1
       const cv = canvasRef.current
       cv?.getContext('2d')?.clearRect(0, 0, cv.width, cv.height)
-    }
-
-    // Blit one frame (dirty-rect aware, BGRA→RGBA swizzle). Verbatim from the old inline handler.
-    const applyFrame = (
-      cv: HTMLCanvasElement,
-      ctx: CanvasRenderingContext2D,
-      f: OsrFrame
-    ): void => {
-      // OS-3 Phase 2 (2C) — dirty-rect aware. A full repaint reports dirty == the whole frame;
-      // a partial paint covers only the changed sub-rect.
-      const isFull =
-        f.dirty.x === 0 &&
-        f.dirty.y === 0 &&
-        f.dirty.width === f.full.width &&
-        f.dirty.height === f.full.height
-      // The <canvas> tracks the FULL frame size; setting cv.width/height also CLEARS it. A
-      // partial frame can't fill a freshly-cleared canvas, so only adopt a new size on a FULL
-      // frame — MAIN guarantees the first frame after any resize is full (invalidate()). A
-      // stray partial frame for a not-yet-sized canvas is dropped (never happens in practice).
-      if (cv.width !== f.full.width || cv.height !== f.full.height) {
-        if (!isFull) return
-        cv.width = f.full.width
-        cv.height = f.full.height
-      }
-      // NativeImage.toBitmap() is BGRA; ImageData is RGBA → swap R/B. The fast 32-bit-word
-      // swizzle (bgraToRgba) replaces the old per-byte loop (~4× fewer typed-array ops). Blit
-      // ONLY the dirty sub-rect; the rest of the canvas keeps the previous frame's pixels.
-      const src = f.buffer instanceof Uint8Array ? f.buffer : new Uint8Array(f.buffer)
-      if (!reuseRgba || reuseRgba.length !== src.length)
-        reuseRgba = new Uint8ClampedArray(src.length)
-      const rgba = bgraToRgba(src, reuseRgba)
-      ctx.putImageData(new ImageData(rgba, f.dirty.width, f.dirty.height), f.dirty.x, f.dirty.y)
-    }
-
-    const drain = (): void => {
-      rafId = 0
-      const frames = queue
-      queue = []
-      if (frames.length === 0) return
-      const cv = canvasRef.current
-      const ctx = cv?.getContext('2d')
-      if (!cv || !ctx) return
-      for (const f of frames) applyFrame(cv, ctx, f)
     }
 
     void window.api.openOsrPreview({ id: boardId, url })
@@ -164,17 +163,26 @@ export function useOffscreenPreview(
         clearCanvas()
       }
     })
-    // PREV-02: the shared frame listener dispatches by board id, so this handler only ever sees
-    // THIS board's frames (no per-frame id check). Queue + rAF-coalesce the blits (drain above).
-    const off = window.api.onPreviewOsrFrame(boardId, (f) => {
-      queue.push(f)
-      if (!rafId) rafId = requestAnimationFrame(drain)
+    // PREV-02: the shared frame listener dispatches by board id, so this handler only ever sees THIS
+    // board's frames. SLICE-006: hand the BGRA buffer to the swizzle worker (transferred → zero-copy);
+    // the worker's response (above) does the main-thread putImageData. No main-thread swizzle.
+    const off = window.api.onPreviewOsrFrame(boardId, (f: OsrFrame) => {
+      const worker = workerRef.current
+      if (!worker) return
+      // Transfer the BGRA ArrayBuffer when this view owns it whole (the common case — IPC delivers a
+      // fresh, fully-owned buffer per frame); otherwise hand the worker a compact copy. Either way the
+      // swizzle leaves the main thread.
+      const ownsWhole =
+        f.buffer.byteOffset === 0 && f.buffer.byteLength === f.buffer.buffer.byteLength
+      const ab = ownsWhole ? f.buffer.buffer : f.buffer.slice().buffer
+      worker.postMessage({ gen: genRef.current, buffer: ab, dirty: f.dirty, full: f.full }, [
+        ab as Transferable
+      ])
     })
     return () => {
       off()
       offEvent()
-      if (rafId) cancelAnimationFrame(rafId)
-      queue = []
+      genRef.current += 1 // drop in-flight responses for the closing window
       // Close the offscreen window. On a URL change the separate clear effect wipes the canvas;
       // on an EVICT (alive→false) it does NOT, so the frozen last frame stays as a snapshot.
       void window.api.closeOsrPreview(boardId)

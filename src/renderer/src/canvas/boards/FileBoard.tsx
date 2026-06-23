@@ -23,6 +23,7 @@
  */
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -47,7 +48,6 @@ import {
   MAX_IMAGE_BYTES,
   baseName,
   buildEditorExtensions,
-  buildSnapshotHtml,
   clampFileFont,
   extOf,
   fileCaps,
@@ -57,6 +57,7 @@ import {
   resolveLanguage,
   writeStickyFileFont
 } from './fileBoardSyntax'
+import { useFileSnapshotHtml } from './useFileSnapshotHtml'
 import { renderMarkdownToHtml } from './fileBoardMarkdown'
 import { useFileSave } from './fileBoardSave'
 import { Centered, EmptyState, FileActionsMenu, GuardCard, MarkdownPreview } from './fileBoardUi'
@@ -254,14 +255,22 @@ export function FileBoard({
   }, [path, ext])
 
   // -- Language resolution + highlighting (sync; no worker, no eval) -------------
+  // SLICE-009: the highlight (Lezer parse) + markdown render are the per-keystroke hot paths. Key
+  // them on a DEFERRED copy of `text` (React 19) so an edit commits the urgent editor update first
+  // and the expensive parse runs at low priority — fast typing skips intermediate values (coalesced
+  // like a debounce) and never blocks input. VIEW-mode snapshot / split preview converge once typing
+  // settles. (Does NOT move the parse off-thread — that first-open block is SLICE-008's worker.)
+  const deferredText = useDeferredValue(text)
   const { support, parser } = useMemo(() => resolveLanguage(ext), [ext])
   const extensions = useMemo(() => buildEditorExtensions(support), [support])
-  const snapshotHtml = useMemo(() => buildSnapshotHtml(text, parser), [text, parser])
+  // SLICE-008: the snapshot highlight runs off the open-time critical path (small files sync, large
+  // files time-sliced async). The deferred text (SLICE-009) coalesces fast typing into the parse.
+  const snapshotHtml = useFileSnapshotHtml(deferredText, parser)
   // Render Markdown only when a markdown board is showing the preview or the split (cheap to skip).
   const showMarkdown = isMarkdown && (mode === 'preview' || mode === 'split')
   const markdownHtml = useMemo(
-    () => (showMarkdown ? renderMarkdownToHtml(text) : ''),
-    [showMarkdown, text]
+    () => (showMarkdown ? renderMarkdownToHtml(deferredText) : ''),
+    [showMarkdown, deferredText]
   )
 
   // -- Save (atomic write via the S1 contract) ----------------------------------

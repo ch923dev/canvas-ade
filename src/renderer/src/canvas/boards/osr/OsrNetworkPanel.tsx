@@ -8,7 +8,10 @@
 import {
   useState,
   useEffect,
+  useMemo,
   useRef,
+  useCallback,
+  memo,
   type ReactElement,
   type PointerEvent as ReactPointerEvent
 } from 'react'
@@ -37,6 +40,7 @@ import {
   type SortState
 } from '../../../lib/osrNetFormat'
 import { HttpDetail, WsDetail, tabsFor, type DetailTab, type BodyState } from './OsrNetworkDetail'
+import { useVirtualRows } from './virtualRows'
 
 export function OsrNetworkPanel({
   boardId,
@@ -91,6 +95,47 @@ export function OsrNetworkPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedId, boardId, select])
 
+  // Memoize the filter → waterfall → summary → sort pipeline so the panel's 10x/s re-render
+  // (FLUSH_MS=100) does NOT recompute it unless an input actually changed. `sortRecords` is the
+  // hot path — its comparator parses a `new URL()` per row (decorated once internally now). Keyed
+  // on (records, type pills, query, regex, invert, sort); a `records` reference change (the store
+  // mirrors a new array on each capture batch) recomputes, unrelated state never does. Runs before
+  // the early `return null` so the hook order is unconditional (board may be undefined here).
+  const records = board?.records
+  const pipeline = useMemo(() => {
+    const recs = records ?? []
+    const { rows, regexError } = applyNetFilter(recs, {
+      types: typeKeys,
+      query: filter,
+      regex,
+      invert
+    })
+    return {
+      rows,
+      regexError,
+      wfWin: waterfallWindow(rows),
+      summary: summaryStats(rows),
+      sortedRows: sortRecords(rows, sort)
+    }
+  }, [records, typeKeys, filter, regex, invert, sort])
+
+  // SLICE-010: virtualize the request list — render only the viewport (+overscan) rows so a chatty
+  // page (≤1000 records, 10 deltas/s) reconciles ~30 `<tr>`s, not 10,000. The scroll host is the
+  // `.bb-net-list` below; the window math + spacer rows keep the real <table> intact.
+  const listRef = useRef<HTMLDivElement>(null)
+  // `board?.open` gates the list's existence (the panel returns null until open), so it is also the
+  // signal the hook needs to (re-)attach its scroll/resize listeners once the list is in the DOM.
+  const win = useVirtualRows(listRef, pipeline.sortedRows.length, !!board?.open)
+  // Stable so `memo(Row)` holds across re-renders that don't change a row's data (selection, scroll).
+  const onSelect = useCallback(
+    (rec: NetRecord): void => {
+      select(boardId, rec.requestId)
+      // Keep the last-used tab (Chrome) — only fall back when it isn't available for this request type.
+      setDetailTab((cur) => (tabsFor(rec).includes(cur) ? cur : tabsFor(rec)[0]))
+    },
+    [boardId, select]
+  )
+
   if (!board?.open) return null
   const preserve = board.preserve
   const dock: NetDock = board.dock
@@ -105,17 +150,9 @@ export function OsrNetworkPanel({
       : dock === 'right'
         ? { width: `${sizeFrac * 100}%`, maxWidth: 'none', flexShrink: 0 }
         : { height: `${sizeFrac * 100}%`, flexShrink: 0 }
-  const { rows, regexError } = applyNetFilter(board.records, {
-    types: typeKeys,
-    query: filter,
-    regex,
-    invert
-  })
+  const { rows, regexError, wfWin, summary, sortedRows } = pipeline
   const typeNarrowed = !(typeKeys.length === 1 && typeKeys[0] === 'all')
   const filtered = typeNarrowed || filter.trim().length > 0 || invert
-  const wfWin = waterfallWindow(rows)
-  const summary = summaryStats(rows)
-  const sortedRows = sortRecords(rows, sort)
   const onSort = (col: SortCol): void =>
     setSort((cur) =>
       cur?.col === col ? { col, dir: cur.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }
@@ -147,11 +184,6 @@ export function OsrNetworkPanel({
   const clear = (): void => {
     setBodies({}) // drop cached bodies up-front (the records→empty effect also covers clear-on-nav)
     void window.api.clearOsrNet(boardId)
-  }
-  const onSelect = (rec: NetRecord): void => {
-    select(boardId, rec.requestId)
-    // Keep the last-used tab (Chrome) — only fall back when it isn't available for this request type.
-    setDetailTab((cur) => (tabsFor(rec).includes(cur) ? cur : tabsFor(rec)[0]))
   }
   const loadBody = async (rec: NetRecord, kind: 'response' | 'request'): Promise<void> => {
     const key = `${rec.requestId}:${kind}`
@@ -305,7 +337,7 @@ export function OsrNetworkPanel({
           )}
 
           {/* request list */}
-          <div className="bb-net-list">
+          <div className="bb-net-list" ref={listRef}>
             <table className="bb-net-rows">
               <thead>
                 <tr>
@@ -338,7 +370,14 @@ export function OsrNetworkPanel({
                     </td>
                   </tr>
                 )}
-                {sortedRows.map((r) => (
+                {/* SLICE-010: spacer rows reserve the off-screen scroll extent so only the
+                    windowed slice mounts as real <tr>s (column layout + waterfall unchanged). */}
+                {win.topPad > 0 && (
+                  <tr aria-hidden="true">
+                    <td colSpan={7} style={{ height: win.topPad, padding: 0, border: 0 }} />
+                  </tr>
+                )}
+                {sortedRows.slice(win.start, win.end).map((r) => (
                   <Row
                     key={r.requestId}
                     rec={r}
@@ -347,6 +386,11 @@ export function OsrNetworkPanel({
                     wfWin={wfWin}
                   />
                 ))}
+                {win.bottomPad > 0 && (
+                  <tr aria-hidden="true">
+                    <td colSpan={7} style={{ height: win.bottomPad, padding: 0, border: 0 }} />
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -526,7 +570,10 @@ function SortTh({
   )
 }
 
-function Row({
+// memo'd so a panel re-render that leaves a row's data untouched (selection elsewhere, a scroll that
+// doesn't shift the window) skips it. `onClick` (useCallback) + `wfWin` (the pipeline memo) are
+// referentially stable across those re-renders, so the memo actually holds.
+const Row = memo(function Row({
   rec,
   selected,
   onClick,
@@ -593,4 +640,4 @@ function Row({
       </td>
     </tr>
   )
-}
+})

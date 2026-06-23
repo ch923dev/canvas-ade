@@ -4,7 +4,7 @@
  * to the raw drag delta + the guide lines to draw. Zoom-stable because every input is
  * board-local px (the caller maps screen→board before calling). No React/DOM.
  */
-import { anchors, type BBox } from './elements'
+import { anchors, type Anchors, type BBox } from './elements'
 
 /** A guide line. `axis:'x'` = a VERTICAL line at x=`at` (snapping the X coordinate). */
 export interface Guide {
@@ -19,28 +19,45 @@ export interface SnapResult {
   guides: Guide[]
 }
 
+/**
+ * A static neighbor with its anchors precomputed. The static set is identical for the
+ * whole of one move-drag, so the caller builds this ONCE at drag start (precomputeStatics)
+ * and reuses it across every pointer-move frame, instead of rebuilding the bboxes + anchors
+ * from scratch each frame (SLICE-004). Each entry pairs the neighbor's bbox with its anchors;
+ * `bestAxis` reads them directly rather than re-deriving `anchors(s)` per frame.
+ */
+export interface StaticSnap {
+  box: BBox
+  anchors: Anchors
+}
+
 /** Snap radius in board-local px (zoom-stable). */
 export const SNAP_TOL = 6
 
 const X_KEYS = ['left', 'centerX', 'right'] as const
 const Y_KEYS = ['top', 'centerY', 'bottom'] as const
 
-type AnchorKey = keyof ReturnType<typeof anchors>
+type AnchorKey = keyof Anchors
+
+/** Pair each static neighbor's bbox with its anchors (computed once per drag, reused per frame). */
+export function precomputeStatics(boxes: BBox[]): StaticSnap[] {
+  return boxes.map((box) => ({ box, anchors: anchors(box) }))
+}
 
 /** Nearest in-tolerance alignment of `moving`'s anchors to any static neighbor's anchors, one axis. */
 function bestAxis(
-  moving: BBox,
-  statics: BBox[],
+  movingAnchors: Anchors,
+  statics: StaticSnap[],
   keys: readonly AnchorKey[],
   tol: number
 ): { delta: number; at: number | null; neighbor: BBox | null } {
-  const mv = anchors(moving)
+  const mv = movingAnchors
   let delta = 0
   let dist = tol + 1
   let at: number | null = null
   let neighbor: BBox | null = null
   for (const s of statics) {
-    const sa = anchors(s)
+    const sa = s.anchors
     for (const mk of keys) {
       for (const sk of keys) {
         const d = sa[sk] - mv[mk]
@@ -49,7 +66,7 @@ function bestAxis(
           dist = ad
           delta = d
           at = sa[sk]
-          neighbor = s
+          neighbor = s.box
         }
       }
     }
@@ -59,12 +76,16 @@ function bestAxis(
 
 /**
  * @param moving  union bbox of the moving set AFTER the raw drag delta is applied.
- * @param statics bboxes of the static (non-moving) neighbor elements.
+ * @param statics static (non-moving) neighbors. Pass `BBox[]` (rebuilt per call) or a
+ *                precomputed `StaticSnap[]` (built once per drag via `precomputeStatics`,
+ *                the SLICE-004 hot-path); both yield identical results.
  * @param tol     snap radius (board-local px).
  */
-export function computeSnap(moving: BBox, statics: BBox[], tol: number): SnapResult {
-  const sx = bestAxis(moving, statics, X_KEYS, tol)
-  const sy = bestAxis(moving, statics, Y_KEYS, tol)
+export function computeSnap(moving: BBox, statics: BBox[] | StaticSnap[], tol: number): SnapResult {
+  const prepared: StaticSnap[] = isPrecomputed(statics) ? statics : precomputeStatics(statics)
+  const mv = anchors(moving)
+  const sx = bestAxis(mv, prepared, X_KEYS, tol)
+  const sy = bestAxis(mv, prepared, Y_KEYS, tol)
   const guides: Guide[] = []
   if (sx.at !== null && sx.neighbor) {
     guides.push({
@@ -83,4 +104,9 @@ export function computeSnap(moving: BBox, statics: BBox[], tol: number): SnapRes
     })
   }
   return { dx: sx.delta, dy: sy.delta, guides }
+}
+
+/** Distinguish a precomputed `StaticSnap[]` from a raw `BBox[]` (empty array → treat as raw). */
+function isPrecomputed(statics: BBox[] | StaticSnap[]): statics is StaticSnap[] {
+  return statics.length > 0 && 'anchors' in statics[0]
 }

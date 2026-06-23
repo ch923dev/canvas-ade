@@ -10,11 +10,22 @@
  * This mirrors AppChrome's `Dock` reveal machine — registered ONCE with all mutable state in
  * closure locals so a deps-driven re-register can't drop the window listener mid-dispatch
  * (the mid-dispatch-listener-removal hazard); only the committed `inZone` crosses into React.
+ *
+ * Perf (SLICE-013): the FileTree pulls react-arborist + react-window (~34KB gz). It is
+ * code-split via React.lazy so that trio leaves the eager cold-start index chunk and loads on
+ * first panel open. We only MOUNT the lazy boundary once the panel has been revealed at least
+ * once (`revealedOnce`) — before that the panel is hidden anyway, so the chunk never loads at
+ * boot — then keep it mounted so tree state (expansion/selection) survives hide/show.
  */
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useCanvasStore } from '../store/canvasStore'
 import { useFileTreeUiStore } from '../store/fileTreeUiStore'
-import { FileTree, type FileTreeHandle } from './FileTree'
+import type { FileTreeHandle } from './FileTree'
+
+// React.lazy needs a default export; FileTree is a named forwardRef export, so adapt the module
+// shape here. lazy forwards refs through to the wrapped forwardRef component, so the SidePanel's
+// imperative handle (collapseAll / openSelected) still works once the chunk has loaded.
+const FileTree = lazy(() => import('./FileTree').then((m) => ({ default: m.FileTree })))
 
 /** Revealed panel width (px). */
 const PANEL_W = 264
@@ -42,6 +53,13 @@ export function SidePanel(): ReactElement | null {
   // Number of FILES currently multi-selected in the tree → drives the "Open N boards" button.
   const [selCount, setSelCount] = useState(0)
   const revealed = inZone || focused || forced
+  // Latch: stays true once the panel has been revealed for the first time. Gates the lazy
+  // FileTree mount so its react-arborist/react-window chunk loads on first open, not at boot.
+  // Guarded setState during render (React's sanctioned "adjust state from prior renders" pattern,
+  // not a setState-in-effect): the first reveal mounts the lazy chunk, then it stays mounted so
+  // tree expansion/selection survives hide/show.
+  const [revealedOnce, setRevealedOnce] = useState(false)
+  if (revealed && !revealedOnce) setRevealedOnce(true)
 
   useEffect(() => {
     if (revealNonce === seenNonce.current) return // ignore the mount-time value; react only to bumps
@@ -182,7 +200,15 @@ export function SidePanel(): ReactElement | null {
             </svg>
           </button>
         </div>
-        <FileTree ref={treeRef} onSelectionCount={setSelCount} />
+        {/* Lazy boundary (SLICE-013): mount the code-split FileTree only after the panel has
+            been revealed once, then keep it mounted. The Suspense fallback reuses the tree's
+            own quiet placeholder styling — it only ever shows while the chunk is in flight on
+            first open, inside the (now-visible) panel. */}
+        {revealedOnce && (
+          <Suspense fallback={<div className="ca-ftree-empty">Loading files…</div>}>
+            <FileTree ref={treeRef} onSelectionCount={setSelCount} />
+          </Suspense>
+        )}
       </aside>
     </div>
   )

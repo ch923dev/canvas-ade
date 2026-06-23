@@ -219,6 +219,21 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
 - Dependabot: **#77 react HELD — CI-RED** (React major, own slice; #76/#78/#79/#80 merged 2026-06-08).
 - Research-only docs (#25/27/29/71/72). **Diagram #72** — next free schema version when implemented (v8 now taken by #92).
 
+**Performance review (2026-06-23) — measure-and-plan, not yet built:**
+- A codebase-wide, measurement-grounded perf review (8 parallel discovery zones → adversarial
+  verify) produced **13 ROI-ranked, independently-shippable slices** from 15 confirmed findings.
+  Package: **`perf-slices/`** (`SLICES.md` = wave queue; `slices/` = cards; `skipped-roadmap.md`;
+  `unconfirmed.md`). The obvious wins were already shipped (PA umbrella + Planning epic), so the
+  queue is "deep cuts": the **File Tree / File Board / Command Board** white space (excluded from the
+  PA audit) plus the OSR frame pipeline's MAIN-side cost. Top ROI: FileBoard all-langs barrel
+  (~708 KB→~180 KB gzip), OSR transferable-ArrayBuffer frame IPC (kills ~0.5 core of MAIN copy),
+  CommandBoard fingerprint subscription, planning per-drag snap cache.
+- **PARTIAL cross-refs (kept, not skipped):** (1) the OSR frame slices are the *MAIN-side*
+  complement to **PA-7 (#196)** which only fixed renderer-side rAF coalesce; (2) the planning
+  per-drag snap cache (SLICE-004) is the cheap in-scope subset of the **R3 spatial index**, which
+  stays *deferred* per `docs/research/2026-06-15-planning-board-optimization/REPORT.md` §3b ("defer
+  until the target element-count is known").
+
 ---
 
 ## Phase 5 — Packaging & release ⛓ Phase 4
