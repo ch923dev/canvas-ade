@@ -185,4 +185,37 @@ describe('boardGitDiff (integration — real git)', () => {
     expect(untrackedAt).toBeGreaterThanOrEqual(0)
     expect(trackedAt).toBeLessThan(untrackedAt)
   })
+
+  it('REGRESSION: diffs the board cwd repo even when ambient GIT_DIR/GIT_WORK_TREE point elsewhere', async () => {
+    // Reproduces the "gitDiff host-repo escape": git is run as a HOOK (our pre-push e2e gate) with
+    // GIT_DIR exported to the HOST repo, and e2e/fixtures.ts forwards process.env into the app, so
+    // boardGitDiff inherited those vars and silently diffed the host repo instead of the board's.
+    // Here `host` stands in for that escape target and `board` is the terminal board's real repo.
+    const { repo: board, git: gitBoard } = newRepo()
+    writeFileSync(join(board, 'app.txt'), 'v1\n')
+    gitBoard('add', '-A')
+    gitBoard('commit', '-q', '-m', 'initial')
+    writeFileSync(join(board, 'app.txt'), 'v1\nESCAPE-CANARY-A\n')
+
+    const { repo: host, git: gitHost } = newRepo()
+    writeFileSync(join(host, 'host.txt'), 'h1\n')
+    gitHost('add', '-A')
+    gitHost('commit', '-q', '-m', 'initial')
+    writeFileSync(join(host, 'host.txt'), 'h1\nHOST-REPO-B-CHANGE\n')
+
+    // Simulate the inherited hook env (restored in finally so no other test is polluted).
+    const saved = { dir: process.env.GIT_DIR, work: process.env.GIT_WORK_TREE }
+    process.env.GIT_DIR = join(host, '.git')
+    process.env.GIT_WORK_TREE = host
+    try {
+      const out = await boardGitDiff('board-1', getCwd(board))
+      expect(out).toContain('ESCAPE-CANARY-A') // the BOARD's diff, resolved from its cwd
+      expect(out).not.toContain('HOST-REPO-B-CHANGE') // never the ambient GIT_DIR's repo
+    } finally {
+      if (saved.dir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = saved.dir
+      if (saved.work === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = saved.work
+    }
+  })
 })
