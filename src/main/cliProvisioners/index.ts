@@ -23,6 +23,11 @@ import { codexProvisioner } from './codex'
 import { geminiProvisioner } from './gemini'
 import { opencodeProvisioner } from './opencode'
 import {
+  clearPersistedDirs,
+  loadProvisionedDirs,
+  persistProvisionedDir
+} from './provisionedDirStore'
+import {
   type AppCliProvisioner,
   type CliId,
   type ProvisionStatus,
@@ -167,6 +172,31 @@ export async function runProvisionerSync(opts: {
  */
 const provisionedDirs = new Map<string, Set<string>>()
 
+/**
+ * W1-E / F8: the userData dir the divergent-dir registry persists THROUGH. Bound once at boot
+ * (`bindProvisionedDirStore`); `null` in unit tests that don't exercise persistence. When null,
+ * `recordProvisionedDir` still updates the in-memory Map but skips the disk write — graceful
+ * degradation, the in-session FIND-001 fix is unaffected. The binding lives here (next to the Map it
+ * guards) so `provisionedDirStore.ts` stays a pure, electron-free unit-test target (mirrors how the
+ * consent binding lives in orchestrationConsent.ts, not the seam).
+ */
+let provisionedDirsUserData: string | null = null
+
+/** Bind the userData dir the provisioned-dir store persists through. Idempotent; called once at boot. */
+export function bindProvisionedDirStore(userDataDir: string): void {
+  provisionedDirsUserData = userDataDir
+}
+
+/**
+ * Boot hydration (F8): merge the persisted divergent-dir set into the in-memory Map BEFORE any
+ * consent-revoke callback can fire, so a revoke in THIS session cleans the bearer tokens a PRIOR
+ * session wrote into divergent board cwds (the in-memory Map would otherwise be empty after a
+ * restart). Set-union merge → safe to call after some dirs were already recorded in-session.
+ */
+export function loadPersistedProvisionedDirs(userDataDir: string): void {
+  loadProvisionedDirs(userDataDir, provisionedDirs)
+}
+
 /** Record a divergent target dir we wrote a config into for `projectDir` (FIND-001). */
 function recordProvisionedDir(projectDir: string, targetDir: string): void {
   if (targetDir === projectDir) return // the root is always cleaned; only track divergent dirs
@@ -176,11 +206,22 @@ function recordProvisionedDir(projectDir: string, targetDir: string): void {
     provisionedDirs.set(projectDir, dirs)
   }
   dirs.add(targetDir)
+  // F8: persist the divergent dir so a consent-revoke in a LATER app session (when this in-memory
+  // Map is empty) still finds and removes its on-disk bearer token. Best-effort: skip silently when
+  // unbound (tests), and never let a write failure break the spawn or the in-memory fix.
+  if (provisionedDirsUserData) {
+    try {
+      persistProvisionedDir(provisionedDirsUserData, projectDir, targetDir)
+    } catch {
+      /* best-effort persistence — an unwritable userData must not break the spawn-time write */
+    }
+  }
 }
 
-/** Test seam: clear the divergent-dir registry between cases (module-level state). */
+/** Test seam: clear the divergent-dir registry + its userData binding between cases. */
 export function __resetProvisionedDirs(): void {
   provisionedDirs.clear()
+  provisionedDirsUserData = null
 }
 
 /**
@@ -207,7 +248,39 @@ export async function unsyncProvisioners(opts: {
   }
   // A full unsync cleaned everything tracked for this project → forget it. A scoped (ids-subset)
   // unsync leaves the registry intact so a later full unsync still covers the untouched CLIs/dirs.
-  if (!opts.ids) provisionedDirs.delete(opts.projectDir)
+  if (!opts.ids) {
+    provisionedDirs.delete(opts.projectDir)
+    // F8: drop the persisted entry too, so the store doesn't accumulate dead projects. Best-effort:
+    // a write failure here must never reject (the on-disk configs are already removed above).
+    if (provisionedDirsUserData) {
+      try {
+        clearPersistedDirs(provisionedDirsUserData, opts.projectDir)
+      } catch {
+        /* best-effort — a locked store file must not block the in-memory + on-disk cleanup */
+      }
+    }
+  }
+}
+
+/**
+ * F22: coordinate consent-revoke ordering — run the on-disk cleanup (`unsync`) to completion, THEN
+ * revoke the live in-memory connected tokens (`revoke`). Disk-resident bearer tokens must die
+ * BEFORE the in-memory store is zeroed, so there is no window in which an on-disk token is still
+ * readable after the in-memory token it mirrors has been invalidated (defense-in-depth). `unsync`
+ * failures are swallowed so a locked/missing config file can never block the in-memory revoke, and
+ * `revoke` always fires via `.finally`. Returns the promise so callers/tests can await the full
+ * chain; the caller `void`s it so its own frame (the consent `onChange` callback) stays synchronous.
+ */
+export function revokeOrchestration(
+  projectDir: string,
+  unsync: (opts: { projectDir: string }) => Promise<void>,
+  revoke: () => void
+): Promise<void> {
+  return unsync({ projectDir })
+    .catch(() => {})
+    .finally(() => {
+      revoke()
+    })
 }
 
 /** The synchronous provider wired into `pty.ts` (see module header). */

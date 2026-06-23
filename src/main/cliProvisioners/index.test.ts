@@ -31,10 +31,13 @@ vi.mock('../orchestration/seam', async (importOriginal) => {
 
 import {
   __resetProvisionedDirs,
+  bindProvisionedDirStore,
   cliIdForLaunchCommand,
   detectInstalled,
   getProvisionStatus,
+  loadPersistedProvisionedDirs,
   makeOrchestrationSyncProvider,
+  revokeOrchestration,
   runProvisionerSync,
   unsyncProvisioners
 } from './index'
@@ -196,5 +199,113 @@ describe('makeOrchestrationSyncProvider (spawn-time hook)', () => {
     const provider = makeOrchestrationSyncProvider({ getProjectDir: () => dir, mintToken })
     provider({ id: 'b', launchCommand: 'claude', cwd: '' })
     expect(existsSync(join(dir, '.mcp.json'))).toBe(true)
+  })
+})
+
+// W1-E / F8 (HIGH, defect-audit 2026-06-20): the divergent-dir registry is in-memory only, so a
+// bearer token the spawn hook wrote into a board cwd in Session A survives BOTH an app restart AND a
+// consent-revoke in Session B (the empty Map makes unsync clean only the project root). The fix
+// persists the registry to userData and re-hydrates it at boot. A fresh temp userData stands in for
+// `app.getPath('userData')` (stable across restarts → re-binding the same path == the binding surviving).
+describe('persisted provisionedDirs across restart (F8)', () => {
+  const freshUserData = (): string => mkdtempSync(join(TEST_HOME, 'ud-'))
+
+  it('after a simulated restart + reload, revoke cleans a PRIOR-session divergent cwd (F8-cross-restart)', () => {
+    const ud = freshUserData()
+    bindProvisionedDirStore(ud)
+    const dir = freshProject()
+    const sub = join(dir, 'packages', 'api')
+    mkdirSync(sub, { recursive: true })
+
+    // Session A: the spawn hook writes a project-scoped config (plaintext bearer) into the board cwd.
+    const provider = makeOrchestrationSyncProvider({ getProjectDir: () => dir, mintToken })
+    provider({ id: 'b-sub', launchCommand: 'claude', cwd: sub })
+    expect(existsSync(join(sub, '.mcp.json'))).toBe(true)
+    expect(
+      JSON.parse(readFileSync(join(sub, '.mcp.json'), 'utf8')).mcpServers['canvas-ade'].headers
+        .Authorization
+    ).toContain('SECRET')
+
+    // Quit + restart: the in-memory Map (and its binding) are gone; boot re-binds the SAME userData
+    // path and hydrates the persisted set before any revoke callback can fire.
+    __resetProvisionedDirs()
+    bindProvisionedDirStore(ud)
+    loadPersistedProvisionedDirs(ud)
+
+    return unsyncProvisioners({ projectDir: dir }).then(() => {
+      // The divergent token is gone even though THIS session never spawned a board with that cwd.
+      expect(existsSync(join(sub, '.mcp.json'))).toBe(false)
+    })
+  })
+
+  it('WITHOUT the reload, the prior-session token survives revoke (documents the F8 bug)', () => {
+    const ud = freshUserData()
+    bindProvisionedDirStore(ud)
+    const dir = freshProject()
+    const sub = join(dir, 'packages', 'api')
+    mkdirSync(sub, { recursive: true })
+    const provider = makeOrchestrationSyncProvider({ getProjectDir: () => dir, mintToken })
+    provider({ id: 'b-sub', launchCommand: 'claude', cwd: sub })
+
+    // Restart WITHOUT hydrating from disk (the pre-fix behavior): the Map is empty…
+    __resetProvisionedDirs()
+
+    return unsyncProvisioners({ projectDir: dir }).then(() => {
+      // …so unsync touches only the project root and the divergent token is left readable on disk.
+      expect(existsSync(join(sub, '.mcp.json'))).toBe(true)
+    })
+  })
+
+  it('reloaded revoke is safe when the persisted dir no longer exists (F8-vanished-dir)', () => {
+    const ud = freshUserData()
+    bindProvisionedDirStore(ud)
+    const dir = freshProject()
+    const sub = join(dir, 'gone')
+    mkdirSync(sub, { recursive: true })
+    const provider = makeOrchestrationSyncProvider({ getProjectDir: () => dir, mintToken })
+    provider({ id: 'b-sub', launchCommand: 'claude', cwd: sub })
+
+    // The board cwd vanished between sessions (deleted project subfolder), but the store still lists it.
+    rmSync(sub, { recursive: true, force: true })
+    __resetProvisionedDirs()
+    bindProvisionedDirStore(ud)
+    loadPersistedProvisionedDirs(ud)
+
+    // removeSync on a vanished dir is a clean no-op (existsSync guards the read) → unsync resolves.
+    return expect(unsyncProvisioners({ projectDir: dir })).resolves.toBeUndefined()
+  })
+})
+
+// W1-E / F22 (LOW): on consent-revoke the on-disk bearer tokens must be removed BEFORE the live
+// in-memory tokens are invalidated — otherwise there is a window where an on-disk token outlives the
+// in-memory one it mirrors. `revokeOrchestration` chains revoke in `.finally` after unsync resolves.
+describe('revokeOrchestration ordering (F22)', () => {
+  it('revokes in-memory tokens only AFTER the on-disk unsync resolves', async () => {
+    const order: string[] = []
+    const unsync = vi.fn(
+      (_opts: { projectDir: string }) =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            order.push('unsync')
+            resolve()
+          }, 10)
+        })
+    )
+    const revoke = vi.fn(() => void order.push('revoke'))
+
+    await revokeOrchestration('/proj', unsync, revoke)
+
+    expect(unsync).toHaveBeenCalledWith({ projectDir: '/proj' })
+    expect(order).toEqual(['unsync', 'revoke'])
+  })
+
+  it('still revokes when the on-disk unsync rejects (best-effort cleanup must not block revoke)', async () => {
+    const revoke = vi.fn()
+    await revokeOrchestration(
+      '/proj',
+      () => Promise.reject(new Error('locked config file')),
+      revoke
+    )
+    expect(revoke).toHaveBeenCalledTimes(1)
   })
 })
