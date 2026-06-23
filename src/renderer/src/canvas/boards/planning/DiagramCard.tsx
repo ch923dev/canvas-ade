@@ -29,7 +29,7 @@ import {
 import type { DiagramElement } from '../../../lib/boardSchema'
 import { buildDiagramThemeVars, diagramTypeLabel } from './diagramTheme'
 import { resizeFromDrag } from './diagramResize'
-import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, type Vec2 } from './diagramZoom'
+import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
@@ -158,26 +158,28 @@ export const DiagramCard = memo(function DiagramCard({
     }
   }, [])
 
-  // Wheel = zoom (only fires here because the viewport carries `.nowheel` when selected). A return to
-  // fit recentres the pan so the thumbnail reads cleanly again.
+  // Set zoom and re-clamp the pan to the new scale (zooming out toward/below fit recentres the model,
+  // so it can never get stranded off-screen — the infinite-canvas feel without losing the diagram).
+  const applyZoom = useCallback(
+    (z: number) => {
+      setZoom(z)
+      setPan((p) => clampPan(p, { w, h: Math.max(0, h - 22) }, z))
+    },
+    [w, h]
+  )
+  // Wheel = zoom (only fires here because the viewport carries `.nowheel` when selected).
   const onWheel = useCallback(
     (e: ReactWheelEvent) => {
       e.stopPropagation()
-      const z = wheelZoom(zoom, e.deltaY)
-      setZoom(z)
-      if (z === ZOOM_MIN) setPan({ x: 0, y: 0 })
+      applyZoom(wheelZoom(zoom, e.deltaY))
     },
-    [zoom]
+    [zoom, applyZoom]
   )
-  const applyZoom = useCallback((z: number) => {
-    setZoom(z)
-    if (z === ZOOM_MIN) setPan({ x: 0, y: 0 })
-  }, [])
 
-  // Drag inside a zoomed-in diagram PANS it; at fit the press falls through to the card (select + move).
+  // Drag inside a zoomed-in diagram PANS it; at/below fit the press falls through to the card (move).
   const onViewportPointerDown = useCallback(
     (e: ReactPointerEvent) => {
-      if (!interactive || e.button !== 0 || editing || zoom <= ZOOM_MIN) return
+      if (!interactive || e.button !== 0 || editing || zoom <= ZOOM_FIT) return
       e.stopPropagation()
       const host = e.currentTarget as HTMLElement
       const well = host.closest('.pl-well') as HTMLElement | null
@@ -221,7 +223,7 @@ export const DiagramCard = memo(function DiagramCard({
   // Snap back to a clean fit thumbnail whenever the element loses focus.
   useEffect(() => {
     if (!selected) {
-      setZoom(ZOOM_MIN)
+      setZoom(ZOOM_FIT)
       setPan({ x: 0, y: 0 })
     }
   }, [selected])
@@ -385,16 +387,25 @@ export const DiagramCard = memo(function DiagramCard({
               >
                 −
               </button>
-              <span
+              <button
+                type="button"
+                title="Reset to fit"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  applyZoom(ZOOM_FIT)
+                }}
                 style={{
-                  minWidth: 30,
+                  all: 'unset',
+                  cursor: 'pointer',
+                  minWidth: 34,
                   textAlign: 'center',
                   color: 'var(--text-2)',
                   fontVariantNumeric: 'tabular-nums'
                 }}
               >
                 {Math.round(zoom * 100)}%
-              </span>
+              </button>
               <button
                 type="button"
                 title="Zoom in"
@@ -477,9 +488,11 @@ export const DiagramCard = memo(function DiagramCard({
           onPointerCancel={onViewportPointerUp}
           style={{
             position: 'absolute',
-            inset: 0,
+            // Sit BELOW the header bar when it's shown — otherwise it overlays (clips) the top of the
+            // diagram (the "cut off at the top" bug).
+            inset: showHeader ? '22px 0 0 0' : 0,
             overflow: 'hidden',
-            cursor: selected && zoom > ZOOM_MIN ? 'grab' : undefined,
+            cursor: selected && zoom > ZOOM_FIT ? 'grab' : undefined,
             touchAction: 'none'
           }}
         >

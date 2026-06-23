@@ -4,8 +4,9 @@
  * escape hatches hand the wheel/drag to the card, and these helpers compute the clamped zoom + pan.
  */
 
-export const ZOOM_MIN = 1 // 1 = "fit" (object-fit contain); never zoom out past the card
-export const ZOOM_MAX = 6
+export const ZOOM_FIT = 1 // 1 = "fit" (object-fit contain fills the card)
+export const ZOOM_MIN = 0.25 // zoom out PAST fit (infinite-canvas feel — extra margin around the model)
+export const ZOOM_MAX = 8
 const WHEEL_STEP = 1.15
 
 /** Clamp a zoom factor into the allowed range. */

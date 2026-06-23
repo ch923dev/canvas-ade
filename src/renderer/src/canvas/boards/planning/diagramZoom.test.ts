@@ -3,7 +3,7 @@ import { clampZoom, wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_MAX } from './
 
 describe('clampZoom', () => {
   it('clamps into [ZOOM_MIN, ZOOM_MAX] and survives NaN', () => {
-    expect(clampZoom(0.2)).toBe(ZOOM_MIN)
+    expect(clampZoom(0.05)).toBe(ZOOM_MIN)
     expect(clampZoom(99)).toBe(ZOOM_MAX)
     expect(clampZoom(2)).toBe(2)
     expect(clampZoom(NaN)).toBe(ZOOM_MIN)
@@ -11,10 +11,11 @@ describe('clampZoom', () => {
 })
 
 describe('wheelZoom / stepZoom', () => {
-  it('wheel-up zooms in, wheel-down zooms out, clamped at the floor/ceiling', () => {
+  it('wheel-up zooms in, wheel-down zooms out below fit, clamped at the floor/ceiling', () => {
     expect(wheelZoom(1, -100)).toBeGreaterThan(1) // up = in
-    expect(wheelZoom(1, 100)).toBe(ZOOM_MIN) // already at fit, can't go below
-    expect(wheelZoom(ZOOM_MAX, -100)).toBe(ZOOM_MAX) // capped
+    expect(wheelZoom(1, 100)).toBeLessThan(1) // down = out, past fit (infinite-canvas)
+    expect(wheelZoom(ZOOM_MIN, 100)).toBe(ZOOM_MIN) // floor
+    expect(wheelZoom(ZOOM_MAX, -100)).toBe(ZOOM_MAX) // ceiling
     expect(stepZoom(2, 1)).toBeGreaterThan(2)
     expect(stepZoom(2, -1)).toBeLessThan(2)
   })
