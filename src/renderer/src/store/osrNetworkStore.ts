@@ -7,12 +7,18 @@
  */
 import { create } from 'zustand'
 import type { NetRecord, WsRecord, OsrNetMessage } from '../../../preload'
+import type { InferredSchema } from '../lib/schemaInfer'
 
 export type NetDock = 'bottom' | 'right'
-/** The inspector view. Only the Network view remains (the Assets/Downloads tabs were removed once the
- *  project-level Project Library became the home for project files); kept as a one-member union so the
- *  store shape + the header tab affordance stay intact. */
-export type NetTab = 'network'
+/** The inspector view: the per-request **Network** table, or the aggregate **Data Flow** inventory
+ *  (route templates + inferred schemas + entities — JD-3). Ephemeral, like the rest of the store. */
+export type NetTab = 'network' | 'dataflow'
+
+/** Per-template inferred-schema state for the Data Flow tab (lazy, memoized for the session). */
+export type SchemaState =
+  | { loading: true }
+  | { error: string }
+  | { schema: InferredSchema; sampled: number; requested: number }
 
 export interface BoardNet {
   records: NetRecord[] // insertion-ordered (deltas upsert by requestId)
@@ -26,6 +32,11 @@ export interface BoardNet {
   // Drag-resized panel size as a FRACTION (0..1) of the stage cross-axis, kept per dock since
   // bottom resizes height and right resizes width independently. Undefined ⇒ the CSS default.
   size?: { bottom?: number; right?: number }
+  // ── Data Flow tab (JD-3, ephemeral) ──
+  inferShapes: boolean // the per-board "Infer data shapes" opt-in (ADR 0010; default off)
+  expanded: string[] // template keys whose inventory row is expanded (schema shown)
+  schemas: Record<string, SchemaState> // per-template inferred-schema state (lazy, session-memoized)
+  dfInspW?: number // Data Flow inspector column width (px), drag-resized; undefined ⇒ the CSS default
 }
 
 const EMPTY: BoardNet = {
@@ -35,7 +46,10 @@ const EMPTY: BoardNet = {
   open: false,
   dock: 'bottom',
   tab: 'network',
-  preserve: false
+  preserve: false,
+  inferShapes: false,
+  expanded: [],
+  schemas: {}
 }
 
 interface OsrNetworkState {
@@ -49,6 +63,14 @@ interface OsrNetworkState {
   setSize: (id: string, dock: NetDock, frac: number) => void
   setPreserve: (id: string, preserve: boolean) => void
   select: (id: string, requestId?: string) => void
+  /** Data Flow: flip the per-board "Infer data shapes" opt-in (ADR 0010). */
+  setInferShapes: (id: string, on: boolean) => void
+  /** Data Flow: expand/collapse a template's inventory row (toggles schema visibility). */
+  toggleExpanded: (id: string, key: string) => void
+  /** Data Flow: record a template's inferred-schema state (loading / error / merged). */
+  setSchema: (id: string, key: string, state: SchemaState) => void
+  /** Data Flow: persist (for the session) the drag-resized inspector column width. */
+  setDfInspW: (id: string, px: number) => void
   /** Drop a board's state (unmount). */
   clearBoard: (id: string) => void
 }
@@ -96,10 +118,20 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
           records: msg.records ?? [],
           ws: msg.ws ?? [],
           dropped: msg.dropped ?? 0,
-          preserve: msg.preserve ?? cur.preserve // seed the checkbox from MAIN's real flag
+          preserve: msg.preserve ?? cur.preserve, // seed the checkbox from MAIN's real flag
+          expanded: [], // bodies-derived schemas are stale across a fresh replay
+          schemas: {}
         }
       } else if (msg.kind === 'cleared') {
-        next = { ...cur, records: [], ws: [], dropped: 0, selected: undefined }
+        next = {
+          ...cur,
+          records: [],
+          ws: [],
+          dropped: 0,
+          selected: undefined,
+          expanded: [],
+          schemas: {}
+        }
       } else {
         next = {
           ...cur,
@@ -135,6 +167,31 @@ export const useOsrNetworkStore = create<OsrNetworkState>((set) => ({
     set((s) => ({
       byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), selected: requestId } }
     })),
+
+  setInferShapes: (id, on) =>
+    set((s) => ({
+      byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), inferShapes: on } }
+    })),
+
+  toggleExpanded: (id, key) =>
+    set((s) => {
+      const cur = s.byBoard[id] ?? EMPTY
+      const expanded = cur.expanded.includes(key)
+        ? cur.expanded.filter((k) => k !== key)
+        : [...cur.expanded, key]
+      return { byBoard: { ...s.byBoard, [id]: { ...cur, expanded } } }
+    }),
+
+  setSchema: (id, key, state) =>
+    set((s) => {
+      const cur = s.byBoard[id] ?? EMPTY
+      return {
+        byBoard: { ...s.byBoard, [id]: { ...cur, schemas: { ...cur.schemas, [key]: state } } }
+      }
+    }),
+
+  setDfInspW: (id, px) =>
+    set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), dfInspW: px } } })),
 
   clearBoard: (id) =>
     set((s) => {

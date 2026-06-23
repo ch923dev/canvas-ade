@@ -41,6 +41,7 @@ import {
 } from '../../../lib/osrNetFormat'
 import { HttpDetail, WsDetail, tabsFor, type DetailTab, type BodyState } from './OsrNetworkDetail'
 import { useVirtualRows } from './virtualRows'
+import { DataFlowView } from './DataFlowView'
 
 export function OsrNetworkPanel({
   boardId,
@@ -208,6 +209,11 @@ export function OsrNetworkPanel({
           label="Network"
           active={tab === 'network'}
           onClick={() => setTab(boardId, 'network')}
+        />
+        <TabBtn
+          label="Data Flow"
+          active={tab === 'dataflow'}
+          onClick={() => setTab(boardId, 'dataflow')}
         />
         <span className="bb-net-spacer" />
         <div className="bb-net-dockswitch" role="group" aria-label="Dock position">
@@ -397,8 +403,11 @@ export function OsrNetworkPanel({
         </>
       )}
 
-      {/* details pane (a selected request/WS row) */}
-      {selected && (
+      {/* ── Data Flow tab ── aggregate inventory + inferred schemas + entities (JD-3) */}
+      {tab === 'dataflow' && <DataFlowView boardId={boardId} records={board.records} />}
+
+      {/* details pane (a selected request/WS row) — Network tab only */}
+      {tab === 'network' && selected && (
         <div className="bb-net-details">
           <div className="bb-net-subtabs">
             {tabsFor(selected).map((t) => (

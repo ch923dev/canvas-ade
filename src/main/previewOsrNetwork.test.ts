@@ -39,6 +39,7 @@ import {
   type OsrNetState,
   type OsrNetEntry
 } from './previewOsrNetwork'
+import { extractShape, SCHEMA_SAMPLE_CAP } from './previewOsrShape'
 
 describe('capText', () => {
   it('caps a string at the boundary', () => {
@@ -584,5 +585,77 @@ describe('registerOsrNetworkIpc', () => {
     expect(() => call('preview:osrNetSetPreserve', allow, undefined)).not.toThrow()
     expect(call('preview:osrNetSetPreserve', allow, undefined)).toBe(false)
     expect(await call('preview:osrNetGetBody', allow, undefined)).toEqual({ error: 'no board' })
+  })
+
+  type SchemaResp = {
+    requested: number
+    sampled: number
+    samples: { root: { children?: Record<string, { format?: string }> } }[]
+  }
+  it('sampleSchema returns VALUE-LESS skeletons (no raw value crosses the IPC)', async () => {
+    const { call } = setup(
+      entryWith({ body: '{"id":"u1","email":"a@b.co","n":5}', base64Encoded: false })
+    )
+    const res = (await call('preview:osrNetSampleSchema', allow, {
+      id: 'b',
+      requestIds: ['r1']
+    })) as SchemaResp
+    expect(res.requested).toBe(1)
+    expect(res.sampled).toBe(1)
+    const root = res.samples[0].root
+    expect(Object.keys(root.children ?? {})).toEqual(['id', 'email', 'n'])
+    expect(root.children?.email.format).toBe('email')
+    // the raw value strings must be absent from the entire payload
+    expect(JSON.stringify(res)).not.toContain('a@b.co')
+    expect(JSON.stringify(res)).not.toContain('u1')
+  })
+  it('sampleSchema skips a truncated/unparseable body (never partially trusted)', async () => {
+    const big = '{"id":"x","tail":"' + 'y'.repeat(BODY_CAP) + '"}'
+    const { call } = setup(entryWith({ body: big, base64Encoded: false }))
+    const res = (await call('preview:osrNetSampleSchema', allow, {
+      id: 'b',
+      requestIds: ['r1']
+    })) as SchemaResp
+    // capBody clipped the body mid-token → JSON.parse fails → sample skipped
+    expect(res.sampled).toBe(0)
+  })
+  it('sampleSchema skips an unknown requestId and refuses a foreign sender', async () => {
+    const { call } = setup(entryWith({ body: '{"a":1}', base64Encoded: false }))
+    expect(
+      await call('preview:osrNetSampleSchema', allow, { id: 'b', requestIds: ['nope'] })
+    ).toMatchObject({ sampled: 0 })
+    expect(
+      await call('preview:osrNetSampleSchema', foreign, { id: 'b', requestIds: ['r1'] })
+    ).toEqual({ error: 'forbidden' })
+  })
+  it('sampleSchema caps the number of sampled requestIds', async () => {
+    const { call } = setup(entryWith({ body: '{"a":1}', base64Encoded: false }))
+    const ids = Array.from({ length: SCHEMA_SAMPLE_CAP + 50 }, (_, i) => `q${i}`)
+    const res = (await call('preview:osrNetSampleSchema', allow, {
+      id: 'b',
+      requestIds: ids
+    })) as SchemaResp
+    expect(res.requested).toBe(SCHEMA_SAMPLE_CAP) // sliced to the cap before any fetch
+  })
+})
+
+describe('extractShape', () => {
+  it('drops values, keeps types + keys, detects formats', () => {
+    const root = extractShape(
+      '{"id":"550e8400-e29b-41d4-a716-446655440000","at":"2026-06-23T00:00:00Z","big":123456789012345678901,"ok":true}'
+    )!
+    expect(root.types).toEqual(['object'])
+    expect(root.children!.id.format).toBe('uuid')
+    expect(root.children!.at.format).toBe('date-time')
+    expect(root.children!.big.format).toBe('int64')
+    expect(root.children!.ok.types).toEqual(['bool'])
+  })
+  it('merges array element shapes (union of element keys)', () => {
+    const root = extractShape('[{"a":1},{"a":2,"b":3}]')!
+    expect(root.types).toEqual(['array'])
+    expect(Object.keys(root.elem!.children!).sort()).toEqual(['a', 'b'])
+  })
+  it('returns null on parse failure', () => {
+    expect(extractShape('{not json')).toBeNull()
   })
 })
