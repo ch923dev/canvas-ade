@@ -28,6 +28,12 @@ function verbsMock(): PaletteVerbs {
     ungroup: vi.fn(),
     connectSelectedBoards: vi.fn(),
     disconnectSelectedBoards: vi.fn(),
+    openCommandBoard: vi.fn(),
+    viewAuditLog: vi.fn(),
+    enableOrchestration: vi.fn(),
+    disableOrchestration: vi.fn(),
+    syncAgentCLIs: vi.fn(),
+    goToExecutingTasks: vi.fn(),
     tidy: vi.fn(),
     fitAll: vi.fn(),
     resetZoom: vi.fn(),
@@ -46,6 +52,8 @@ function snap(over: Partial<PaletteSnapshot> = {}): PaletteSnapshot {
     connectors: [],
     canUndo: false,
     canRedo: false,
+    orchestrationEnabled: false,
+    hasExecutingTasks: false,
     ...over
   }
 }
@@ -55,14 +63,19 @@ const P = { id: 'p1', type: 'planning', title: 'plan' } as const
 const B = { id: 'b1', type: 'browser', title: 'preview' } as const
 
 describe('buildCommands — visibility matrix', () => {
-  it('baseline: creates + canvas + help only (no selection, no groups, empty rails)', () => {
+  it('baseline: creates + always-on orchestration + canvas + help (no selection/groups/tasks)', () => {
     const cmds = buildCommands(snap(), verbsMock())
     const ids = cmds.map((c) => c.id)
+    // The two always-shown orchestration rows + the enable row (orchestrationEnabled:false) sit
+    // between Groups and Canvas; the enabled-only + executing rows are absent here.
     expect(ids).toEqual([
       'new-terminal',
       'new-browser',
       'new-planning',
       'new-command',
+      'open-command-board',
+      'view-audit-log',
+      'enable-orchestration',
       'tidy',
       'fit',
       'reset-zoom',
@@ -167,6 +180,36 @@ describe('buildCommands — visibility matrix', () => {
     expect(cmds.some((c) => c.id === 'redo')).toBe(false)
   })
 
+  it('orchestration (disabled): always-on rows + Enable; hides enabled-only + executing rows', () => {
+    const ids = buildCommands(snap({ orchestrationEnabled: false }), verbsMock()).map((c) => c.id)
+    expect(ids).toContain('open-command-board')
+    expect(ids).toContain('view-audit-log')
+    expect(ids).toContain('enable-orchestration')
+    expect(ids).not.toContain('disable-orchestration')
+    expect(ids).not.toContain('sync-agent-clis')
+    expect(ids).not.toContain('go-to-executing-tasks')
+  })
+
+  it('orchestration (enabled): Disable + Sync appear, Enable hidden', () => {
+    const ids = buildCommands(snap({ orchestrationEnabled: true }), verbsMock()).map((c) => c.id)
+    expect(ids).toContain('disable-orchestration')
+    expect(ids).toContain('sync-agent-clis')
+    expect(ids).not.toContain('enable-orchestration')
+    expect(ids).not.toContain('go-to-executing-tasks')
+  })
+
+  it('orchestration: "Go to executing tasks" gates on hasExecutingTasks', () => {
+    const off = buildCommands(snap({ hasExecutingTasks: false }), verbsMock())
+    const on = buildCommands(snap({ hasExecutingTasks: true }), verbsMock())
+    expect(off.some((c) => c.id === 'go-to-executing-tasks')).toBe(false)
+    expect(on.some((c) => c.id === 'go-to-executing-tasks')).toBe(true)
+  })
+
+  it('the "View audit log" row carries the Ctrl+Shift+A chips', () => {
+    const cmds = buildCommands(snap(), verbsMock())
+    expect(cmds.find((c) => c.id === 'view-audit-log')?.chips).toEqual(['Ctrl', 'Shift', 'A'])
+  })
+
   it('every command sits in a known section', () => {
     const cmds = buildCommands(
       snap({
@@ -206,7 +249,13 @@ describe('chip ↔ resolveCanvasKeyAction drift guard', () => {
     { id: 'toggle-minimap', chord: key('m'), kind: 'toggleMinimap' },
     { id: 'group-selection', chord: key('g', { ctrlKey: true }), kind: 'group' },
     { id: 'undo', chord: key('z', { ctrlKey: true }), kind: 'undo' },
-    { id: 'redo', chord: key('z', { ctrlKey: true, shiftKey: true }), kind: 'redo' }
+    { id: 'redo', chord: key('z', { ctrlKey: true, shiftKey: true }), kind: 'redo' },
+    // W1-A (F3): the audit-log chip claims the live Ctrl+Shift+A chord — pin it to the resolver.
+    {
+      id: 'view-audit-log',
+      chord: key('a', { ctrlKey: true, shiftKey: true }),
+      kind: 'toggleAuditLog'
+    }
   ]
 
   function key(k: string, over: Partial<KeyChord> = {}): KeyChord {
@@ -314,5 +363,14 @@ describe('SHORTCUT_ROWS + displayChip', () => {
     expect(displayChip('Shift', true)).toBe('⇧')
     expect(displayChip('Shift', false)).toBe('⇧')
     expect(displayChip('F2', true)).toBe('F2')
+  })
+
+  it('W1-A: the Orchestration "View audit log" row is on the ? sheet with Ctrl+Shift+A', () => {
+    expect(
+      SHORTCUT_ROWS.some(
+        (r) =>
+          r.section === 'Orchestration' && r.label === 'View audit log' && r.chips.includes('A')
+      )
+    ).toBe(true)
   })
 })

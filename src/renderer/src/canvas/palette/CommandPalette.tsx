@@ -25,6 +25,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
 import { useCanvasStore } from '../../store/canvasStore'
+import { useCommandStore } from '../../store/commandStore'
+import { useOrchestrationStore } from '../../store/orchestrationStore'
 import { Modal } from '../Modal'
 import { TypeGlyph } from '../TypeGlyph'
 import {
@@ -82,6 +84,14 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
   const connectors = useCanvasStore((s) => s.connectors)
   const canUndo = useCanvasStore((s) => s.past.length > 0)
   const canRedo = useCanvasStore((s) => s.future.length > 0)
+  // W1-A: the orchestration section's predicate inputs. The `hasExecutingTasks` selector returns a
+  // boolean so this only re-renders on a routing/executing/reporting ↔ none transition, not per task.
+  const orchestrationEnabled = useOrchestrationStore((s) => s.enabled)
+  const hasExecutingTasks = useCommandStore((s) =>
+    s.tasks.some(
+      (t) => t.status === 'routing' || t.status === 'executing' || t.status === 'reporting'
+    )
+  )
 
   // switchView is deliberately not a dep: it only touches setState setters + a ref,
   // so a stale capture is harmless and the memo stays keyed on the caller's verbs.
@@ -107,11 +117,23 @@ export function CommandPalette({ initialView, verbs, onClose }: CommandPalettePr
             kind: c.kind
           })),
           canUndo,
-          canRedo
+          canRedo,
+          orchestrationEnabled,
+          hasExecutingTasks
         },
         fullVerbs
       ),
-    [boards, groups, selectedIds, connectors, canUndo, canRedo, fullVerbs]
+    [
+      boards,
+      groups,
+      selectedIds,
+      connectors,
+      canUndo,
+      canRedo,
+      orchestrationEnabled,
+      hasExecutingTasks,
+      fullVerbs
+    ]
   )
 
   // Filter + rank within each section; flat order = section order (calm while typing).

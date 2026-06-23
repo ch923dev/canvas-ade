@@ -33,6 +33,7 @@ export type CanvasKeyAction =
   | { kind: 'redo' }
   | { kind: 'clearSelection' }
   | { kind: 'toggleDiag' }
+  | { kind: 'toggleAuditLog' }
   | { kind: 'fit' }
   | { kind: 'reset' }
   | { kind: 'tidy' }
@@ -92,6 +93,12 @@ export function resolveCanvasKeyAction(
   // Then the mutually-exclusive chain.
   if (e.key === 'Escape' && !typing) return { kind: 'clearSelection' }
   if (k === 'd' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing) return { kind: 'toggleDiag' }
+  // Ctrl/⌘+Shift+A toggles the MCP dispatch audit log (W1-A / F3 — moved out of a
+  // self-registered listener in AuditLogViewer into this drift-guarded keymap). Same
+  // modifier grammar as the diag toggle; no `!e.altKey` guard needed (Alt+Shift+A is an
+  // unrelated OS chord, and the registry chip never claims it).
+  if (k === 'a' && (e.ctrlKey || e.metaKey) && e.shiftKey && !typing)
+    return { kind: 'toggleAuditLog' }
   if (e.key === '1' && bareKeyAllowed) return { kind: 'fit' }
   if (e.key === '0' && bareKeyAllowed) return { kind: 'reset' }
   if (k === 't' && bareKeyAllowed && !e.ctrlKey && !e.metaKey && !e.altKey) return { kind: 'tidy' }
@@ -147,6 +154,8 @@ export interface CanvasKeybindingDeps {
   openPalette?: (view: 'commands' | 'shortcuts') => void
   /** Toggle the wayfinding minimap island (bare `m`). D4-C. */
   toggleMinimap?: () => void
+  /** Toggle the MCP dispatch audit log panel (Ctrl/⌘+Shift+A). W1-A. */
+  toggleAuditLog?: () => void
   /** D4-B board nav (useBoardKeyboardNav). Each returns true if it ACTED — only then is
    *  the key swallowed (preventDefault), so e.g. Tab on an empty canvas falls through to
    *  native focus order and the chrome stays keyboard-reachable. */
@@ -176,6 +185,7 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     focusGroup,
     openPalette,
     toggleMinimap,
+    toggleAuditLog,
     cycleBoard,
     moveSelectedBoards,
     resizeSelectedBoards,
@@ -232,6 +242,10 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
         case 'toggleDiag':
           e.preventDefault()
           setDiag((v) => !v)
+          break
+        case 'toggleAuditLog':
+          e.preventDefault()
+          toggleAuditLog?.()
           break
         case 'fit':
           void rf.fitView(cameraAnim(FIT_FRAME))
@@ -293,6 +307,7 @@ export function useCanvasKeybindings(deps: CanvasKeybindingDeps): void {
     focusGroup,
     openPalette,
     toggleMinimap,
+    toggleAuditLog,
     cycleBoard,
     moveSelectedBoards,
     resizeSelectedBoards,
