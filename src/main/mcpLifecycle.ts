@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { BoardId, BoardSummary } from '@expanse-ade/mcp'
+import { sanitizeDispatchText } from './dispatchSanitize'
 import type { BoardRegistry } from './mcpRegistry'
 
 /**
@@ -149,15 +150,20 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     if (name.length === 0) {
       throw new Error('spawn_group: a non-empty group name is required')
     }
-    // Sanitize the worker launchCommand → a single PTY-safe line: strip control chars (CR/LF would
-    // inject extra PTY lines — the exec-vector class), trim, clamp. Empty ⇒ a bare shell (legacy).
+    // Sanitize the worker launchCommand → a single PTY-safe line, then trim + clamp. Empty ⇒ a
+    // bare shell (legacy contract).
     const rawSrc = typeof input.launchCommand === 'string' ? input.launchCommand : ''
-    const launchClean = Array.from(rawSrc)
-      .filter((c) => c >= ' ')
-      .join('')
-      .trim()
-      .slice(0, 400)
-    const launchCommand = launchClean || undefined
+    let launchCommand: string | undefined
+    if (rawSrc) {
+      // 🔒 F5: route through the centralized sanitizer (strips C0/DEL/C1; rejects embedded CR/LF)
+      // so spawnGroup and the configureBoard/runGatedWrite dispatch path share ONE sanitization
+      // rule. The old inline `c >= ' '` filter PASSED DEL (0x7F) + the C1 range (0x80-0x9F) — the
+      // 8-bit CSI/OSC/NEL escape openers — a terminal-escape injection on the PTY write path.
+      // DispatchPayloadError propagates (not caught): a multiline launchCommand is rejected to the
+      // caller, not silently flattened into multiple PTY commands.
+      const clean = sanitizeDispatchText(rawSrc).trim().slice(0, 400)
+      launchCommand = clean || undefined
+    }
     // Compose the cluster: terminal always; planning/browser opt-in. The member COUNT is the
     // cap budget this spawn consumes (the group record itself isn't a board, so it's uncapped).
     const wantPlanning = input.planning === true
