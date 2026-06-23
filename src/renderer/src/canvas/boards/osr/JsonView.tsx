@@ -157,7 +157,7 @@ export function JsonView({
       return next
     })
 
-  const isTruncated = truncated || model.meta.truncated
+  const isTruncated = truncated || model.meta.truncated || model.meta.maxDepth
 
   // Binary / plain-text / empty → graceful passthrough (no tree).
   if (model.kind === 'binary') {
@@ -226,7 +226,11 @@ export function JsonView({
           {visibleRows(model.rows, collapsed).map((r) => (
             <Row key={r.id} row={r} collapsed={collapsed.has(r.id)} onToggle={toggle} />
           ))}
-          {isTruncated && <div className="bb-net-json-trunc">…(truncated)</div>}
+          {isTruncated && (
+            <div className="bb-net-json-trunc">
+              …({model.meta.maxDepth ? 'max depth' : 'truncated'})
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -65,6 +65,16 @@ describe('buildModel — fidelity', () => {
     expect(scalars(rows).find((r) => r.key === 'c')?.valueText).toBe('2')
   })
 
+  it('clamps pathologically deep nesting instead of overflowing the stack', () => {
+    const deep = '['.repeat(50_000) + '1' + ']'.repeat(50_000)
+    const run = (): ReturnType<typeof buildModel> => buildModel(deep, 'application/json')
+    expect(run).not.toThrow() // would be RangeError: Maximum call stack size exceeded without the cap
+    const { rows, meta } = run()
+    expect(meta.maxDepth).toBe(true)
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.filter((r) => r.kind === 'open').length).toBeLessThan(1000) // bounded ≪ 50k
+  })
+
   it('strips a BOM before scanning', () => {
     const { rows, meta } = buildModel('﻿{"ok":true}', 'application/json')
     expect(meta.parseError).toBe(false)

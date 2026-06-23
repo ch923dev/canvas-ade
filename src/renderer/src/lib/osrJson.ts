@@ -64,7 +64,16 @@ export interface JsonMeta {
   bigInts: number
   truncated: boolean
   parseError: boolean
+  /** Hit the recursion cap — body is page-controlled, so deep nesting is clamped, not crashed. */
+  maxDepth: boolean
 }
+
+/**
+ * Recursion cap for the scanner. The body is page-controlled, so a crafted `[[[[…` (millions of
+ * levels under the 5 MB cap) would otherwise overflow V8's call stack and crash the panel. 200 is
+ * far above any real API nesting; past it the tree is clamped + flagged (graceful, not a throw).
+ */
+const MAX_DEPTH = 200
 
 export interface JsonModel {
   rows: JsonRow[]
@@ -73,7 +82,7 @@ export interface JsonModel {
 }
 
 function zeroMeta(): JsonMeta {
-  return { duplicateKeys: 0, bigInts: 0, truncated: false, parseError: false }
+  return { duplicateKeys: 0, bigInts: 0, truncated: false, parseError: false, maxDepth: false }
 }
 
 /**
@@ -190,6 +199,10 @@ function scanJson(src: string): JsonModel {
 
   /** Scan one value at the cursor, appending its rows. Returns false on a hard parse error / EOF. */
   const scanValue = (depth: number, key: string | undefined, dup: boolean): boolean => {
+    if (depth > MAX_DEPTH) {
+      meta.maxDepth = true // clamp page-controlled deep nesting instead of overflowing the stack
+      return false
+    }
     skipWs()
     if (p.i >= n) {
       meta.truncated = true
