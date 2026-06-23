@@ -672,3 +672,38 @@ re-arm) · headless real-app smoke (OSR paints, no spew) · full e2e matrix both
 Windows `@preview` 31✓; the `@terminal gitDiff` Windows fail is the known worktree host-repo-escape, passes
 in-container). CI all 4 checks green; claude-review 0 crit/0 warn (bot endorsed the failed-reload re-arm +
 the `ownerWired` decision). Files: new `previewOsrOwner.ts`; `previewOsr.ts` + `previewOsr.test.ts`.
+
+## 2026-06-24 — Terminal capabilities umbrella · scrollback full-view fix + find-in-terminal (Phases 1 · 1b · 2) — #235 (`7ff0238b`, rebase-merge of `feat/terminal-capabilities`)
+
+Promoted the **terminal-capabilities umbrella** to `main` as a unit (rebase-merge → 4 linear commits: the
+scrollback report · #227 · #230 · #232). Originated from the user's bug report: scrolling up after a
+full-view enter/exit showed **truncated/duplicated scrollback**. Investigation
+(`docs/research/2026-06-23-terminal-scrollback-reflow/REPORT.md` + a 10-agent workflow + reading xterm's
+vendored source) traced it to full view being the ONLY path that changes `term.cols` → xterm's lossy reflow
+(a known-UNFIXED upstream bug #5319/#3513 — no version bump helps).
+
+- **Phase 1 — Pure A1 full-view freeze (#227, `1a00d88b`).** Full view keeps the in-canvas cols/rows and
+  scales the grid up via the FREEZE counter-scale seam (the modal-fill factor `fullViewScale`, never re-fit
+  cols) — no col delta ⇒ xterm's `_reflow` early-returns ⇒ scrollback intact; + A-Polish (`refresh()` after
+  settle). The ResizeObserver skips the toggle for an established grid (zero `term.resize`/SIGWINCH across
+  enter↔exit). e2e `terminalScrollback.e2e.ts`: marker identity L000–L119 survives the round-trip + cols
+  frozen DURING full view.
+- **Phase 1b — A-Win Windows ConPTY hint (#230, `51bb8851`).** `windowsPty:{backend:'conpty',buildNumber}`
+  gated to Win 11 builds ≥ 21376 (`conptyHint`/`winBuildFromRelease` via new `src/main/platformIpc.ts` +
+  preload `osWinBuild`), to cut the residual drag-resize row duplication without disabling reflow on Win 10.
+- **Phase 2 — find-in-terminal Ctrl/Cmd+F (#232, `7ff0238b`).** A calm find bar (`@xterm/addon-search`
+  devDep `^0.15.0`): type-ahead highlight + match counter, Enter/Shift+Enter next/prev (wrap), match-case +
+  regex toggles, Esc-close. A DOM input (no collision with xterm's LF). New `TerminalFindBar.tsx` (memo'd,
+  compiler-clean) + `terminalSearch.ts` (pure helpers) + `terminal-find.css`; Ctrl+F via `terminalKeymap`'s
+  `find` action; SearchAddon loaded per-term in `useTerminalSpawn`. Design signed off (mock + real-app shot,
+  `docs/research/2026-06-23-terminal-search/`), eyeballed in a title-stamped dev build. Review found 1
+  warning (stale `onDidChangeResults` on a full xterm re-spawn) → fixed `161b8d6a` (close the bar on the
+  spawn cleanup) + e2e regression. TerminalBoard styles extracted to `terminalBoardStyles.ts` (max-lines
+  budget); `.prettierignore` now ignores `.canvas/` (ADR 0009 runtime data, was being format-checked).
+
+**Verification:** each phase its own child PR with green CI + reviewer dispositions. Umbrella rebased onto
+main (clean — terminal is disjoint from the parallel mcp/preview work). Pre-merge gate: typecheck · lint
+(0 err) · format · unit (3155) · **full e2e matrix both legs green** (Windows 188 + Linux Docker 188, the
+menuShell tidy-picker flake retried). PR #235 CI all 4 green; claude-review 0 crit/0 warn, 0 inline comments.
+Remaining roadmap (its own umbrella later): Phase 3 configurable+persisted scrollback · Phase 4
+web-links+unicode11 · Phase 5 serialize/restore+save.
