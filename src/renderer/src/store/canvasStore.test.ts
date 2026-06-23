@@ -822,7 +822,7 @@ describe('canvasStore — duplicateBoard', () => {
     const id = useCanvasStore.getState().addBoard('browser', { x: 0, y: 0 }) // default 'desktop'
     const copyId = useCanvasStore.getState().duplicateBoard(id)
     const copy = useCanvasStore.getState().boards.find((b) => b.id === copyId)!
-    expect(copy.type === 'browser' && copy.viewport).toBe('mobile') // desktop → mobile
+    expect(copy.type === 'browser' && copy.viewport).toBe('qhd') // desktop → qhd (next preset)
   })
 
   it('planning copy deep-clones elements with fresh ids', () => {

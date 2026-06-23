@@ -18,6 +18,8 @@
  * camera doesn't teleport. Fewer than 2 boards is a no-op. Safe for undo/redo + persistence.
  */
 
+import type { BrowserViewport } from './boardSchema'
+
 export type TidyMode = 'smart' | 'by-type' | 'grid'
 
 /** Board fields the packer reads. `type`/`viewport`/`previewSourceId` drive smart + by-type;
@@ -29,7 +31,7 @@ export interface TidyBoard {
   w: number
   h: number
   type?: 'terminal' | 'browser' | 'planning' | 'command' | 'file' | 'dataflow'
-  viewport?: 'mobile' | 'tablet' | 'desktop'
+  viewport?: BrowserViewport
   previewSourceId?: string | null
 }
 
@@ -58,12 +60,12 @@ export const DEFAULT_ASPECT = 16 / 10
 /** Stable id comparator (total order) — keeps every mode reproducible. */
 const byId = (a: TidyBoard, b: TidyBoard): number => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
-/** Viewport display order for a browser row: widest first (desktop → tablet → mobile). */
-const VIEWPORT_ORDER: Record<string, number> = { desktop: 0, tablet: 1, mobile: 2 }
+/** Viewport display order for a browser row: widest first (4K → 1440p → desktop → tablet → mobile). */
+const VIEWPORT_ORDER: Record<string, number> = { uhd: 0, qhd: 1, desktop: 2, tablet: 3, mobile: 4 }
 const sortBrowsers = (bs: TidyBoard[]): TidyBoard[] =>
   [...bs].sort(
     (a, b) =>
-      (VIEWPORT_ORDER[a.viewport ?? ''] ?? 3) - (VIEWPORT_ORDER[b.viewport ?? ''] ?? 3) ||
+      (VIEWPORT_ORDER[a.viewport ?? ''] ?? 5) - (VIEWPORT_ORDER[b.viewport ?? ''] ?? 5) ||
       byId(a, b)
   )
 

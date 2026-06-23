@@ -100,6 +100,13 @@ describe('sanitizeOsrSize', () => {
     expect(s.logicalW).toBe(4096)
     expect(s.logicalH).toBe(4096)
   })
+  it('passes the 4K (uhd) preset 3840×2160 through under the 4096 cap (v15)', () => {
+    const s = sanitizeOsrSize({ logicalW: 3840, logicalH: 2160, supersample: 2 })
+    expect(s.logicalW).toBe(3840)
+    expect(s.logicalH).toBe(2160)
+    // physical = logical · S = 3840·2 = 7680 ≤ the ~16384 GPU texture limit.
+    expect(s.logicalW * s.supersample).toBeLessThanOrEqual(16384)
+  })
 })
 
 /** A structural OsrResizeTarget + spies — applyOsrSize drives this without a real BrowserWindow.

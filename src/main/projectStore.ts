@@ -47,24 +47,24 @@ const legacyBak = (dir: string): string => join(dir, CANVAS_BAK)
 const legacyAssets = (dir: string): string => join(dir, ASSETS)
 
 /**
- * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (14). MAIN cannot import the
+ * BUG-024/BUG-013: must mirror boardSchema.SCHEMA_VERSION (15). MAIN cannot import the
  * renderer module in shipped code, so this constant is duplicated here. It is tested (see
  * projectStore.test.ts, which cross-imports the renderer constant and asserts equality)
  * and must be bumped in lock-step whenever boardSchema.SCHEMA_VERSION increases.
  * Kept intentionally minimal — the renderer still owns migration; MAIN only writes the
  * canonical version marker on fresh-project creation.
  */
-export const SCHEMA_VERSION = 14
+export const SCHEMA_VERSION = 15
 
 /**
  * Mirrors boardSchema.MIN_READER_VERSION (ADR 0007) under the same lock-step rule: bumped
  * here whenever the renderer constant bumps (breaking changes only). The floor moved to 12 with
  * the breaking `command` board type (v12), to 13 with the breaking `file` board type AND `fileref`
- * element kind (v13, file-tree S1), and to 14 with the breaking `dataflow` board type (v14, JD-4) —
- * pre-14 apps get the clean "update the app" message instead of failing deep validation on the
- * unknown type.
+ * element kind (v13, file-tree S1), to 14 with the breaking `dataflow` board type (v14, JD-4), and to
+ * 15 with the breaking `qhd`/`uhd` viewport presets (v15) — pre-15 apps reject the unrecognized
+ * viewport, so they get the clean "update the app" message instead of a `.bak`-fallback parse failure.
  */
-export const MIN_READER_VERSION = 14
+export const MIN_READER_VERSION = 15
 
 export type ProjectResult =
   | { ok: true; dir: string; name: string; doc: unknown }

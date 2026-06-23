@@ -12,6 +12,7 @@ import {
   migrate,
   previewConnectorsFor,
   type Board,
+  type BrowserViewport,
   type CanvasBackground,
   type Connector,
   type PlanningBoard,
@@ -319,22 +320,42 @@ describe('fromObject deep validation', () => {
     ).toThrow()
   })
 
-  it('throws when a browser board has an invalid viewport', () => {
-    expect(() =>
-      fromObject(
+  it('coerces an UNRECOGNIZED browser viewport to desktop (v15 forward-compat, not a throw)', () => {
+    // A preset value from a NEWER app rides in additively (floor stays 15); fromObject must
+    // degrade-not-reject it to `desktop` rather than failing the whole document.
+    const out = fromObject(
+      wrap({
+        id: 'b',
+        type: 'browser',
+        title: 'B',
+        x: 0,
+        y: 0,
+        w: 700,
+        h: 500,
+        url: 'http://x',
+        viewport: 'watch'
+      })
+    )
+    expect((out.boards[0] as { viewport: BrowserViewport }).viewport).toBe('desktop')
+  })
+
+  it('round-trips the wide-desktop viewports (qhd / uhd) unchanged (v15)', () => {
+    for (const viewport of ['qhd', 'uhd'] as const) {
+      const out = fromObject(
         wrap({
-          id: 'b',
+          id: `b-${viewport}`,
           type: 'browser',
           title: 'B',
           x: 0,
           y: 0,
-          w: 1,
-          h: 1,
+          w: 700,
+          h: 500,
           url: 'http://x',
-          viewport: 'watch'
+          viewport
         })
       )
-    ).toThrow()
+      expect((out.boards[0] as { viewport: BrowserViewport }).viewport).toBe(viewport)
+    }
   })
 
   it('accepts valid optional terminal fields but throws on wrong-typed ones', () => {
@@ -574,9 +595,9 @@ describe('migrate', () => {
     expect(migrate(doc)).toEqual(doc)
   })
 
-  // v11/S4 (diagram kind), v12 (command board type), v13 (file board + fileref element) and v14
-  // (dataflow board type) are all breaking → SCHEMA_VERSION and the compat floor moved with each.
-  // migrate() always brings a doc to the CURRENT version (14).
+  // v11/S4 (diagram kind), v12 (command board type), v13 (file board + fileref element), v14
+  // (dataflow board type) and v15 (qhd/uhd viewport presets) are all breaking → SCHEMA_VERSION and
+  // the compat floor moved with each. migrate() always brings a doc to the CURRENT version (15).
   it('migrates a v10 doc forward to the current version without touching existing elements', () => {
     const note = { id: 'n', kind: 'note', x: 0, y: 0, w: 10, h: 10, text: 'hi', tint: 'yellow' }
     const v10 = {
@@ -589,8 +610,8 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(14)
-    expect(MIN_READER_VERSION).toBe(14)
+    expect(SCHEMA_VERSION).toBe(15)
+    expect(MIN_READER_VERSION).toBe(15)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
 
@@ -646,6 +667,35 @@ describe('migrate', () => {
     const out = migrate(structuredClone(v13) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect(out.boards).toEqual(v13.boards)
+  })
+
+  // v15: the `qhd`/`uhd` BrowserBoard viewport presets are breaking — both SCHEMA_VERSION and the
+  // floor move to 15. The migration is identity (the values only appear on newly-selected boards),
+  // so a v14 doc with an existing `desktop` browser board has nothing to backfill.
+  it('migrates a v14 doc (viewport-preset bump) to the current version as an identity bump', () => {
+    const v14 = {
+      schemaVersion: 14,
+      minReaderVersion: 14,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [
+        {
+          id: 'b',
+          type: 'browser',
+          title: 'B',
+          x: 0,
+          y: 0,
+          w: 700,
+          h: 500,
+          url: 'http://x',
+          viewport: 'desktop'
+        }
+      ]
+    }
+    const out = migrate(structuredClone(v14) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(out.boards).toEqual(v14.boards)
   })
 
   // v14 round-trip: a Data-Flow board (bound + unbound) survives toObject → wire → fromObject.
@@ -801,15 +851,15 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 14', () => {
-    expect(SCHEMA_VERSION).toBe(14)
+  it('SCHEMA_VERSION is 15', () => {
+    expect(SCHEMA_VERSION).toBe(15)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 14,
-      minReaderVersion: 14,
+      schemaVersion: 15,
+      minReaderVersion: 15,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -994,8 +1044,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 14', () => {
-    expect(SCHEMA_VERSION).toBe(14)
+  it('SCHEMA_VERSION is 15', () => {
+    expect(SCHEMA_VERSION).toBe(15)
   })
 
   it('round-trips a valid image element', () => {
@@ -1048,8 +1098,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 14', () => {
-    expect(SCHEMA_VERSION).toBe(14)
+  it('SCHEMA_VERSION is 15', () => {
+    expect(SCHEMA_VERSION).toBe(15)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -1690,12 +1740,13 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('v10 was additive (no floor move of its own) — the current writer stamps the CURRENT floor (14)', () => {
+  it('v10 was additive (no floor move of its own) — the current writer stamps the CURRENT floor (15)', () => {
     // v10 (agentKind/monitorActivity) was additive; the compat floor moved with the breaking v11
     // `diagram` element kind, the v12 `command` board type, the v13 `file` board + `fileref` element
-    // kinds, and the v14 `dataflow` board type. toObject stamps the CURRENT floor (MIN_READER_VERSION = 14).
-    expect(toObject([], null).minReaderVersion).toBe(14)
-    expect(MIN_READER_VERSION).toBe(14)
+    // kinds, the v14 `dataflow` board type, and the v15 `qhd`/`uhd` viewport presets. toObject stamps
+    // the CURRENT floor (MIN_READER_VERSION = 15).
+    expect(toObject([], null).minReaderVersion).toBe(15)
+    expect(MIN_READER_VERSION).toBe(15)
   })
 
   it('round-trips agentKind + monitorActivity', () => {

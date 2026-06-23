@@ -85,7 +85,7 @@ export { SCHEMA_VERSION, MIN_READER_VERSION }
 export type BoardType = 'terminal' | 'browser' | 'planning' | 'command' | 'file' | 'dataflow'
 
 /** Browser responsive presets (widths live in cameraBounds/the Browser board). */
-export type BrowserViewport = 'mobile' | 'tablet' | 'desktop'
+export type BrowserViewport = 'mobile' | 'tablet' | 'desktop' | 'qhd' | 'uhd'
 
 /** Fields shared by every board type. `z` (stacking order) is optional. */
 export interface BoardCommon {
@@ -629,7 +629,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v14: the `dataflow` board type (JD-4). The type only appears on newly-authored boards, so existing
   // docs have nothing to backfill — identity bump. BREAKING (floor → 14): a pre-14 reader's assertBoard
   // default branch throws on the unknown type (boardSchemaVersion.ts).
-  13: (doc) => ({ ...doc, schemaVersion: 14 })
+  13: (doc) => ({ ...doc, schemaVersion: 14 }),
+  // v15: the `qhd`/`uhd` BrowserBoard viewport presets (1440p / 4K). The values only appear on
+  // newly-selected boards, so existing docs have nothing to backfill — identity bump. BREAKING
+  // (floor → 15): a pre-15 assertBoard rejects the unrecognized viewport string (boardSchemaVersion.ts).
+  14: (doc) => ({ ...doc, schemaVersion: 15 })
 }
 
 /**
@@ -727,7 +731,7 @@ function fail(msg: string): never {
   throw new Error(`fromObject: ${msg}`)
 }
 
-const VIEWPORTS: readonly BrowserViewport[] = ['mobile', 'tablet', 'desktop']
+const VIEWPORTS: readonly BrowserViewport[] = ['mobile', 'tablet', 'desktop', 'qhd', 'uhd']
 const NOTE_TINTS: readonly NoteTint[] = ['yellow', 'blue', 'green', 'plain']
 
 /**
@@ -1050,12 +1054,24 @@ export function fromObject(doc: unknown): CanvasDoc {
   // doc (e.g. a new board type from a future schema) surfaces the actionable
   // "update the app" message instead of assertBoard's "unknown type" (#134 review r1).
   assertReadableVersion(doc)
-  doc.boards.forEach(assertBoard)
   // Own the data: deep-clone the input so the returned doc (and any store it feeds)
   // does not alias the caller's object — symmetric with toObject's structuredClone,
   // and covers the no-migration (already-current) case which migrate() returns by
-  // reference (#BUG-027).
+  // reference (#BUG-027). Cloned BEFORE assertBoard so the forward-compat viewport
+  // coercion below mutates our copy, never the caller's object.
   const owned = structuredClone(doc)
+  // v15 forward-compat (ADR 0007): coerce an UNRECOGNIZED BrowserBoard viewport down to
+  // `desktop` BEFORE validation. A preset value added by a NEWER app rides in additively
+  // (the doc's floor stays 15), so an older-but-≥15 reader must degrade-not-reject it —
+  // exactly the reconcileBackground "unknown scene → none" discipline. assertBoard stays
+  // STRICT (rejects unknown viewport) as defense-in-depth for the in-process MCP path,
+  // which never carries a future value; only this persisted-read path tolerates one.
+  for (const b of owned.boards) {
+    if (isRecord(b) && b.type === 'browser' && !VIEWPORTS.includes(b.viewport as BrowserViewport)) {
+      b.viewport = 'desktop'
+    }
+  }
+  owned.boards.forEach(assertBoard)
   // Clamp each board to the MIN_BOARD_SIZE floor — assertBoard already rejects
   // non-positive w/h, but a valid-yet-below-minimum size (e.g. w:5) is normalized
   // here rather than dropped, so corrupt-but-recoverable input still loads (#BUG-025).
