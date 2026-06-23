@@ -28,6 +28,7 @@ import {
   stopNetFlush,
   type OsrNetState
 } from './previewOsrNetwork'
+import { armOwner, clearOwner, emitToOwner, getOwner } from './previewOsrOwner'
 import {
   OSR_WIDTH,
   OSR_HEIGHT,
@@ -136,8 +137,6 @@ function scheduleResizeSettle(id: string): void {
     }, RESIZE_SETTLE_MS)
   )
 }
-let owner: BrowserWindow | null = null
-
 /** Frame-rate cap for the offscreen renderer (spec M2 throughput knob). */
 const OSR_FRAME_RATE = 30
 
@@ -345,39 +344,26 @@ export interface OsrCursorPayload {
   scale?: number
 }
 
+// The host-owner reference + the disposed-frame send guard live in previewOsrOwner.ts (kept out of
+// this god-file under the max-lines ratchet). emitFrame/emitCursor/emitEvent/emitWidget are typed
+// thin wrappers over the gated `emitToOwner`; the readiness gate is armed by armOwner in ensureOsr.
 function emitFrame(payload: OsrFramePayload): void {
-  try {
-    owner?.webContents.send('preview:osrFrame', payload)
-  } catch {
-    /* window gone */
-  }
+  emitToOwner('preview:osrFrame', payload)
 }
 
 function emitCursor(payload: OsrCursorPayload): void {
-  try {
-    owner?.webContents.send('preview:osrCursor', payload)
-  } catch {
-    /* window gone */
-  }
+  emitToOwner('preview:osrCursor', payload)
 }
 
 function emitEvent(payload: PreviewEvent): void {
-  try {
-    owner?.webContents.send('preview:event', payload)
-  } catch {
-    /* window gone */
-  }
+  emitToOwner('preview:event', payload)
 }
 
 /* ── OS-3 Phase 4 emit helpers (native widgets & dialogs) ───────────────────────────────────────
  * Ferry a MAIN-detected page event to the renderer (its osrWidgetStore + OsrWidgetLayer draw the
  * dialog modal / popup overlay; downloads → showToast). One generic sender; audible diff-skips. */
 function emitWidget(channel: string, payload: object): void {
-  try {
-    owner?.webContents.send(channel, payload)
-  } catch {
-    /* window gone */
-  }
+  emitToOwner(channel, payload)
 }
 
 function emitAudible(e: OsrEntry, id: string, audible: boolean): void {
@@ -423,7 +409,9 @@ export function applyOsrInitialLoad(
 }
 
 function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
-  owner = win
+  // Adopt the host window as the emit owner + (re-)arm the disposed-frame readiness gate (idempotent
+  // host listener wiring + reset-ready-on-open live in previewOsrOwner.armOwner).
+  armOwner(win)
   const existing = osr.get(id)
   if (existing) return existing
   // Hidden offscreen BrowserWindow (never shown, off the taskbar). Its width/height set
@@ -494,7 +482,7 @@ function ensureOsr(id: string, win: BrowserWindow, url: string): OsrEntry {
   attachOsrWidgets(wc, {
     onDialog: (info) => emitWidget('preview:osrDialog', { id, ...info }),
     onPopup: (info) => emitWidget('preview:osrPopup', { id, ...info }),
-    getWin: () => owner
+    getWin: () => getOwner()
   })
   // Per-board DevTools Network/WS capture over the SAME debugger (MAIN-only, ADR 0002). Root Network
   // covers the main doc + all frames (incl. cross-origin iframes); flat-mode auto-attach adds workers
@@ -689,7 +677,8 @@ function disposeOsr(id: string): void {
 /** Close every offscreen view (window close / app shutdown). */
 export function disposeAllOsr(): void {
   for (const id of [...osr.keys()]) disposeOsr(id)
-  owner = null
+  // Drop the host owner + close the readiness gate (previewOsrOwner.clearOwner).
+  clearOwner()
 }
 
 /**
