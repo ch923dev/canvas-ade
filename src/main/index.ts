@@ -59,6 +59,7 @@ import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
 import { registerClipboardHandlers } from './clipboardIpc'
+import { registerPlatformIpc } from './platformIpc'
 import { makeFlushChannel, makeFlushFinish } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
 import {
@@ -304,6 +305,8 @@ app.whenReady().then(async () => {
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerClipboardHandlers(ipcMain, () => mainWindow)
+  // SYNC platform info (Windows build number) for the terminal's xterm windowsPty hint (A-Win).
+  registerPlatformIpc(ipcMain)
   // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The
   // chokidar watcher that emits file:treeEvent lands in S2; the channel is reserved here.
   registerFileIpc(ipcMain, () => mainWindow)

@@ -418,7 +418,16 @@ export type UpdateStatus =
   | { state: 'ready'; version: string }
   | { state: 'error'; message: string }
 
+// Windows OS build number (null off Windows), read SYNC once at preload load so the renderer has it
+// synchronously when constructing xterm (A-Win: the `windowsPty` hint — see main/platformIpc.ts +
+// useTerminalSpawn). One-time sendSync of a static value; the handler is registered at app init,
+// before this preload runs.
+const osWinBuild: number | null =
+  process.platform === 'win32' ? (ipcRenderer.sendSync('platform:winBuild') as number | null) : null
+
 const api = {
+  /** Windows OS build number, or null off Windows (A-Win xterm windowsPty hint). */
+  osWinBuild,
   // ── Terminal (control plane; data flows over a MessagePort) ──
   spawnTerminal: (opts: SpawnTerminalOpts): Promise<SpawnTerminalResult> =>
     ipcRenderer.invoke('pty:spawn', opts),
