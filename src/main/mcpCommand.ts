@@ -1,77 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import type { BrowserWindow, IpcMain, IpcMainEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
+import type { McpCommand, McpCommandAck, PlanningOp, PlanningOpTint } from '../shared/mcpTypes'
 
 /**
- * Control-plane command envelope, MAIN → renderer — the inverse of the `mcp:boards`
- * mirror (which carries board facts renderer → MAIN). This is how the MCP layer
- * *drives* the canvas once it gains write tools.
- *
- * **This type is the contract M3 builds on.** T0.3 ships only `ping` (a round-trip
- * proof); M3 (lifecycle) extends the union with board CRUD. `addBoard` carries only
- * a MINIMAL spec (id + type), NOT a full PersistedBoard: MAIN mints the id but does
- * not know canvas geometry, so the renderer builds the full board (free-slot
- * placement, per-type defaults) from this spec. `removeBoard` (T3.2) tears one down
- * by id. `configureBoard` (T3.3) changes a board's durable per-type config (the
- * renderer applies it through `updateBoard`, which filters to PATCHABLE_KEYS).
- * `patchPlanning` (S2) appends agent-authored CONTENT (notes/checklists/text/arrows) to a
- * planning board's `elements`; the ops are already validated + sanitized + capped + human-
- * confirmed by the orchestrator before this carries them.
- * `spawnGroup` (PR-5b) creates a whole feature-zone cluster — a terminal (always) + an
- * optional planning + browser member, plus a Named Group over them and the browser→terminal
- * preview wiring — in ONE undoable step. MAIN mints every id (so the tool can return them and
- * later lifecycle tools can address each member); the renderer lays out the cluster (free-slot
- * placement, per-type defaults) and folds the browser's `previewSourceId` onto the terminal.
- * Content-less like `addBoard` (empty boards), so it is cap-checked, not human-gated.
- * Keep this the single source of truth; the renderer applier (`useMcpCommands`,
- * a separate bundle) mirrors it by hand.
+ * The MCP control-plane types (`McpCommand`, `McpCommandAck`, `PlanningOp`, `PlanningOpTint`)
+ * now live in the cross-bundle single-source-of-truth module `src/shared/mcpTypes.ts`, imported
+ * by both MAIN and the renderer applier (`useMcpCommands`, a separate bundle) so the union is
+ * defined ONCE and the two processes can no longer drift (W1-D / F9). Their per-variant docs live
+ * with the canonical definitions there. Re-exported from here so MAIN call sites + tests that
+ * import them from `./mcpCommand` keep resolving unchanged.
  */
-export type McpCommand =
-  | { type: 'ping' }
-  | { type: 'addBoard'; board: { id: string; type: string } }
-  | { type: 'removeBoard'; id: string }
-  | {
-      type: 'configureBoard'
-      id: string
-      patch: { shell?: string; launchCommand?: string; cwd?: string }
-    }
-  | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
-  | {
-      type: 'spawnGroup'
-      group: { id: string; name: string }
-      members: {
-        // Phase C: the terminal member may boot an agentic CLI (sanitized to a single line in
-        // `mcpLifecycle.spawnGroup`) so a dispatched prompt reaches an agent, not a bare shell.
-        terminal: { id: string; launchCommand?: string }
-        planning?: { id: string }
-        browser?: { id: string }
-      }
-    }
-
-/** Note tint a `note` op carries (mirrors the renderer `NoteTint`). */
-export type PlanningOpTint = 'yellow' | 'blue' | 'green' | 'plain'
-
-/**
- * One SANITIZED, fully-normalized planning-element write op (S2), MAIN → renderer. The
- * orchestrator's `addPlanningElements` validates + sanitizes + caps the agent's content
- * BEFORE minting these (so the renderer receives clean, fully-specified ops: `tint` and
- * item `done` are no longer optional). The renderer materializes each into a full
- * `PlanningElement` — minting ids, stacking positions below existing content, and default
- * sizes — and re-validates against the schema (defense in depth) before it lands. The schema
- * kinds that carry agent content are expressible (note · checklist · text · arrow · diagram); a
- * `diagram` carries a Mermaid `source` the renderer materializes into a `DiagramElement` (host
- * schema v11) and renders to a themed SVG in the sandboxed worker. 🔒 Untrusted passive content:
- * it renders, never auto-arms an action.
- */
-export type PlanningOp =
-  | { kind: 'note'; text: string; tint: PlanningOpTint }
-  | { kind: 'checklist'; title: string; items: Array<{ label: string; done: boolean }> }
-  | { kind: 'text'; text: string }
-  | { kind: 'arrow'; dx: number; dy: number }
-  | { kind: 'diagram'; source: string }
-
-/** The renderer's reply to a command. `type` echoes the handled command. */
-export type McpCommandAck = { ok: true; type: string } | { ok: false; error: string }
+export type { McpCommand, McpCommandAck, PlanningOp, PlanningOpTint }
 
 const ACK_TIMEOUT_MS = 2000
 

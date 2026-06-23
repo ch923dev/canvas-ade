@@ -5,42 +5,28 @@ import { viewportCenterWorld } from '../lib/freeSlot'
 import {
   materializePlanningOps,
   neededBoardHeight,
-  MAX_PLANNING_BOARD_ELEMENTS,
-  type PlanningOp
+  MAX_PLANNING_BOARD_ELEMENTS
 } from './planningMcpApply'
+import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
 
 /**
- * Renderer mirror of MAIN's `McpCommand` union (`src/main/mcpCommand.ts`) — kept in
- * sync BY HAND (the two live in separate bundles). MAIN posts these; this module
- * applies them to `canvasStore` and acks.
+ * MAIN posts {@link McpCommand}s; this module applies them to `canvasStore` and replies with a
+ * {@link McpCommandAck}. Both are the canonical definitions imported from the cross-bundle
+ * `src/shared/mcpTypes.ts` (W1-D / F9) — the SAME union MAIN's `sendMcpCommand` serializes, so the
+ * applier can no longer silently drift from the sender (a new variant added on one side is now a
+ * compile error on the other). `addBoard.board.type` is a loose `string` in the canonical union;
+ * the SPAWNABLE guard below re-validates it at runtime (defense in depth).
  */
-export type McpCommandIn =
-  | { type: 'ping' }
-  | { type: 'addBoard'; board: { id: string; type: BoardType } }
-  | { type: 'removeBoard'; id: string }
-  | {
-      type: 'configureBoard'
-      id: string
-      patch: { shell?: string; launchCommand?: string; cwd?: string }
-    }
-  | { type: 'patchPlanning'; id: string; ops: PlanningOp[] }
-  | {
-      type: 'spawnGroup'
-      group: { id: string; name: string }
-      members: {
-        // Phase C: the terminal may boot an agentic CLI (MAIN-sanitized) so a dispatched prompt
-        // reaches an agent, not a bare shell.
-        terminal: { id: string; launchCommand?: string }
-        planning?: { id: string }
-        browser?: { id: string }
-      }
-    }
-
-/** The ack shape MAIN's `sendMcpCommand` awaits (`McpCommandAck`). */
-export type McpAck = { ok: true; type: string } | { ok: false; error: string }
 
 /** Board types the spawn path may create — mirrors the package's closed allowlist. */
 const SPAWNABLE: readonly BoardType[] = ['terminal', 'browser', 'planning']
+/**
+ * Runtime narrow of the canonical command's loose `board.type` (a `string` — MAIN is the sender
+ * and does not import renderer types) down to a spawnable `BoardType`. This guard IS the defense-
+ * in-depth enforcement point the widening relies on (a value crosses IPC as JSON anyway).
+ */
+const isSpawnable = (type: string): type is BoardType =>
+  (SPAWNABLE as readonly string[]).includes(type)
 /** Default anchor for an MCP-spawned board; `addBoard`'s free-slot search spreads collisions. */
 const SPAWN_ANCHOR = { x: 120, y: 120 } as const
 
@@ -50,13 +36,13 @@ const SPAWN_ANCHOR = { x: 120, y: 120 } as const
  * re-validates the type even though MAIN is trusted (frame-guarded control plane) —
  * defense in depth keeps a malformed spec from forging an off-type board.
  */
-export function applyMcpCommand(command: McpCommandIn): McpAck {
+export function applyMcpCommand(command: McpCommand): McpCommandAck {
   switch (command.type) {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
       const { id, type } = command.board
-      if (typeof id !== 'string' || id.length === 0 || !SPAWNABLE.includes(type)) {
+      if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
       // Idempotent by id (mirrors removeBoard): a board with this id already exists →
@@ -204,7 +190,7 @@ export function useMcpCommands(): void {
     if (!onCommand) return
     return onCommand((command, reply) => {
       try {
-        reply(applyMcpCommand(command as McpCommandIn))
+        reply(applyMcpCommand(command as McpCommand))
       } catch (err) {
         // A malformed envelope must never throw PAST the ack — that strands MAIN's
         // sendMcpCommand on its 2s timeout. Convert any unexpected throw into a resolved
