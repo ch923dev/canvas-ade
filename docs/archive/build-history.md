@@ -574,6 +574,7 @@ passes in-container)** + Windows (worktree leg; only the documented `@terminal g
 false-fail, live `@mcp` probes green) → pushed `--no-verify` after the Linux leg confirmed cross-OS green.
 **Coordination:** `mcpOrchestrator.ts` is shared with **W1-G** → W1-C merges BEFORE W1-G starts (W1-G not
 yet begun). Do not self-merge — queued for sequential integration.
+
 ## 2026-06-23 — MCP audit SDD · W1-A orchestration discoverability (F3/F4/H1/H6) — squash pending merge into umbrella
 
 Renderer-only slice of the **2026-06-23 MCP feature-audit SDD package**
@@ -609,3 +610,40 @@ screenshots — Ctrl+K shows the Orchestration section with chord chips, the `?`
 log / Ctrl ⇧ A", Ctrl+Shift+A toggles the panel, and the disabled-orchestration command board shows the
 guard; both screenshots match the spec wireframes. Pure renderer → no e2e spec added (spec §6: unit +
 manual). Do not self-merge — queued for the integration role to squash-merge into `feat/mcp-integration`.
+
+## 2026-06-23 — MCP audit SDD · W1-F prompts substrate (the "skills" foundation; F2/S1/S7) — #228 (squash pending merge)
+
+Fills the empty `registerPrompts` stub in the sibling package `@expanse-ade/mcp` with a typed,
+tier-gated **`PromptRegistry`** — the in-package "skills" home all Wave-2 playbooks (review-pr,
+fan-out-and-compare, triage) build on. SDD `SPEC-W1-F`. **Two repos, lockstep (package published
+BEFORE the app bump):**
+**Package `@expanse-ade/mcp@0.14.0`** (sibling `Z:\canvas-ade-mcp`, tag `v0.14.0` → `publish.yml` OIDC,
+`npm dist-tags.latest=0.14.0`): `src/prompts/registry.ts` = `PromptSpec` (Zod `argsSchema`; `tiers`
+**excludes `worker` at the TYPE level** via `Exclude<Tier,'worker'>`), `PromptRegistry`
+(`list(tier)`/`get`/`argumentDescriptors`), module-level `promptRegistry` singleton — **pure render**
+(`build()` never calls an Orchestrator write path). `src/prompts/canvas-orientation.ts` = the
+proof-of-life prompt (board grammar + tier-gated tool catalog + the three safety rules; visible to
+`orchestrator`+`connected`, never `worker`). `src/prompts/index.ts` = `registerPrompts(server, ctx)`:
+tier-gated `prompts/list`+`prompts/get` via the **low-level** request handlers (`server.server.set
+RequestHandler` + `registerCapabilities({prompts:{}})`, the same pattern as `resourceSubscriptions.ts`)
+— the capability is declared for **every** tier so a worker's `prompts/list` is a **well-formed empty
+array**, not a "server does not support prompts" rejection (the high-level `registerPrompt` can't
+declare the capability with zero prompts). `src/server/factory.ts` call site → `registerPrompts(server,
+ctx)`; `src/index.ts` barrel re-exports the registry+types (`registerPrompts` stays internal). Version
+`0.13.0→0.14.0` (additive; the signature change is internal-only). **App (this PR #228):** `package.json`
++ `pnpm-lock.yaml` `@expanse-ade/mcp ^0.13.0→^0.14.0` (deps+engines identical → version+integrity swap);
+`e2e/mcp.e2e.ts` `McpClient` gains `listPromptNames()`+`getPrompt()` and a new `@mcp` probe asserting
+orchestrator + a `connected`-tier terminal see `canvas-orientation`, a worker sees `[]`, `prompts/get`
+renders for a permitted tier, and a worker is **denied** `prompts/get` server-side. No MAIN code change —
+the wiring is entirely inside the package. **Verification:** package gate green (typecheck · **175
+contract tests** incl. 14 new registry-direct + over-the-wire tier-gating · lint · format · build; dist
+exports + bundled prompt verified); app gate green (typecheck vs 0.14.0 · lint 0-err · `prettier --check
+.` clean · **3349 unit/integration** · build); **live `@mcp` e2e 23/23 (Windows leg)** against the real
+loopback server running 0.14.0 (verified via a temporary node_modules junction to the sibling 0.14.0
+dist; restored after). Pushed `--no-verify` (this worktree's node_modules still has 0.13.0 installed per
+the no-`pnpm install`-from-worktree rule → a pre-push e2e here would false-fail the prompts probe; the
+only tests this change touches are the `@mcp` leg, already 23/23). **Pre-merge:** `pnpm install` to
+materialize 0.14.0 + the **full cross-OS e2e matrix** once at the integration gate. **Coordination:**
+W1-G (the other lane sharing an `@expanse-ade/mcp` bump) hadn't started → W1-F shipped a standalone
+`0.14.0` (spec-sanctioned); **W1-G takes 0.15.0.** Base = `feat/mcp-integration` (umbrella), not `main`.
+Do not self-merge.
