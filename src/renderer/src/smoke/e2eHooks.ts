@@ -15,6 +15,8 @@ import { usePreviewStore } from '../store/previewStore'
 import { useTerminalRuntimeStore } from '../store/terminalRuntimeStore'
 import { useOsrWidgetStore } from '../store/osrWidgetStore'
 import { useOsrNetworkStore } from '../store/osrNetworkStore'
+import { useDataFlowStore } from '../store/dataFlowStore'
+import { mergeShapes, type ShapeSample, type ShapeNode, type FormatHint } from '../lib/schemaInfer'
 import { useFileTreeUiStore } from '../store/fileTreeUiStore'
 import type { NetRecord } from '../../../preload'
 import { boardStatusBucket, bucketToPill } from '../store/boardStatus'
@@ -299,6 +301,11 @@ export interface CanvasE2E {
   /** SLICE-010 — replace a board's captured Network records with `count` synthetic rows, so the
    *  virtualization probe can prove only ~viewport rows mount as `<tr>` at the 1000-record cap. */
   seedOsrNet: (id: string, count: number) => void
+  /** JD-4 — inject a canned, deterministic login→home API capture into the source board's network +
+   *  the inferred schemas + a body-lineage edge into the dataflow board, so the Data-Flow board renders
+   *  a populated focus-on-node graph (entities + a dashed lineage edge) without a live page/MAIN sample.
+   *  Returns the route template keys for assertions. */
+  seedDataFlowDemo: (sourceId: string, dataflowId: string) => { templates: string[] }
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -775,6 +782,91 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // replay REPLACES the renderer mirror with exactly these rows (deterministic total + order),
       // unaffected by the few real document-load rows already captured.
       useOsrNetworkStore.getState().apply(id, { id, kind: 'replay', records })
+    },
+    seedDataFlowDemo(sourceId, dataflowId) {
+      const ORIGIN = 'http://localhost:3000'
+      const U = '550e8400-e29b-41d4-a716-446655440000'
+      const records: NetRecord[] = [
+        {
+          requestId: 'home',
+          url: `${ORIGIN}/home`,
+          method: 'GET',
+          type: 'document',
+          status: 200,
+          startTs: 0,
+          endTs: 9
+        },
+        {
+          requestId: 'sess',
+          url: `${ORIGIN}/api/v2/session`,
+          method: 'POST',
+          type: 'fetch',
+          status: 201,
+          startTs: 10,
+          endTs: 51
+        },
+        {
+          requestId: 'cust',
+          url: `${ORIGIN}/api/v2/customers/${U}`,
+          method: 'GET',
+          type: 'fetch',
+          status: 200,
+          startTs: 20,
+          endTs: 48
+        },
+        {
+          requestId: 'ord',
+          url: `${ORIGIN}/api/v2/orders`,
+          method: 'GET',
+          type: 'fetch',
+          status: 200,
+          startTs: 30,
+          endTs: 64
+        }
+      ]
+      const net = useOsrNetworkStore.getState()
+      net.apply(sourceId, { id: sourceId, kind: 'replay', records })
+      net.setInferShapes(sourceId, true)
+      const obj = (children: Record<string, ShapeNode>): ShapeNode => ({
+        types: ['object'],
+        children
+      })
+      const str = (format?: FormatHint): ShapeNode =>
+        format ? { types: ['string'], format } : { types: ['string'] }
+      const num = (): ShapeNode => ({ types: ['number'] })
+      const one = (root: ShapeNode): ShapeSample[] => [{ root, complete: true }]
+      const templates = [
+        'POST http://localhost:3000/api/v2/session',
+        'GET http://localhost:3000/api/v2/customers/{uuid}',
+        'GET http://localhost:3000/api/v2/orders'
+      ]
+      net.setSchema(sourceId, templates[0], {
+        schema: mergeShapes(one(obj({ id: str('uuid'), customerId: str('uuid') }))),
+        sampled: 9,
+        requested: 9
+      })
+      net.setSchema(sourceId, templates[1], {
+        schema: mergeShapes(one(obj({ id: str('uuid'), email: str('email'), name: str() }))),
+        sampled: 12,
+        requested: 12
+      })
+      net.setSchema(sourceId, templates[2], {
+        schema: mergeShapes(one(obj({ id: str('uuid'), customerId: str('uuid'), total: num() }))),
+        sampled: 8,
+        requested: 8
+      })
+      // The MAIN body-side lineage pass would return this value-less edge (session.customerId reappears
+      // in the orders request); seed it directly so the dashed lineage edge renders headlessly.
+      useDataFlowStore.getState().setBodyLineage(dataflowId, [
+        {
+          idName: 'customerId',
+          fromRequestId: 'sess',
+          toRequestId: 'ord',
+          location: 'body',
+          confidence: 'body-match'
+        }
+      ])
+      return { templates }
     }
   }
   window.__canvasE2E = api

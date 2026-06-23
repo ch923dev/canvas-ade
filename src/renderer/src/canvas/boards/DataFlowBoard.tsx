@@ -123,15 +123,18 @@ export function DataFlowBoard({
   const diff = useMemo(() => diffGraphs(baseline, graph), [baseline, graph])
 
   const tab = view?.tab ?? 'graph'
-  const busiest = useMemo(
-    () =>
-      groups.reduce<TemplateGroup | undefined>(
-        (a, b) => (b.calls > (a?.calls ?? -1) ? b : a),
-        undefined
-      ),
-    [groups]
-  )
-  const focusId = view?.focusId ?? busiest?.key
+  // Default focus = the busiest endpoint that maps to an inferred entity (so the focus subgraph shows a
+  // route + its entity + any lineage), falling back to the busiest endpoint overall (flat API).
+  const defaultFocus = useMemo(() => {
+    const producing = new Set(model.entities.flatMap((e) => [...e.producedBy, ...e.consumedBy]))
+    const pool = groups.filter((g) => producing.has(g.key))
+    const pick = (pool.length ? pool : groups).reduce<TemplateGroup | undefined>(
+      (a, b) => (b.calls > (a?.calls ?? -1) ? b : a),
+      undefined
+    )
+    return pick?.key
+  }, [groups, model])
+  const focusId = view?.focusId ?? defaultFocus
   const bright = useMemo(() => focusSubgraph(graph, focusId), [graph, focusId])
 
   const filled = groups.filter((g) => {
