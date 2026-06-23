@@ -493,3 +493,33 @@ test-only false-positives (worker got a defensive message-shape guard). Rebased 
 auto-merged the two overlapping net files cleanly). Squash `64c04f3b`; branch deleted. **Follow-up:** the
 `perf-slices/` package now lives at the repo root — per the doc-lifecycle policy it should be collapsed to
 a dated summary under `docs/reviews/` (deferred; SLICE-002.md is the valuable residue to preserve).
+
+## 2026-06-23 — MCP audit SDD · W1-C `configure_board` audit integrity (F6/F7) — #221 (squash pending merge)
+
+First implementation slice of the **2026-06-23 MCP feature-audit SDD package**
+(`docs/reviews/2026-06-23-mcp-audit/sdd/`). Two correctness fixes on the exec-adjacent
+`configure_board` path in `src/main/mcpOrchestrator.ts`, restoring the invariant that **every**
+`configure_board` call — across all three branches — leaves exactly one correctly-labelled audit entry.
+- **F6 (deny verb):** the human-deny path on a `launchCommand` configure audited `status: 'rejected'`;
+  `'rejected'` is reserved for **automated pre-gate failures** (sanitizer / board-not-found / type
+  mismatch). A human-gated denial must audit `'denied'` (matching `handoffPrompt` / `addPlanningElements`
+  / `relayPrompt`). On this exec-vector-adjacent path the verb is the one forensic record that separates
+  "system blocked before a human saw it" from "a human saw the exact command and refused it." The
+  existing deny-path test asserted the wrong value too → corrected to `'denied'`.
+- **F7 (shell/cwd trace):** the `shell`/`cwd`-only path (no `launchCommand` → no exec vector) applied a
+  durable per-board config write with **no audit entry**. "No exec vector" exempts it from the human gate,
+  NOT from the locked "every cross-board write leaves a trace" invariant. Now emits `'configured'` on a
+  successful apply (`prompt: ''`; `detail` names the patched keys WITHOUT logging the possibly-sensitive
+  `cwd` value) and `'failed'` before the throw on a failed apply (symmetric with the `launchCommand`
+  path). The existing test asserted `audits` was empty → inverted to assert the `configured` entry.
+
+Both verbs already live in the `DispatchStatus` union → **no schema impact**, no `auditLog.ts` change.
+Added F6/F7 named regression tests; the CR/LF sanitizer-reject test still correctly asserts `'rejected'`
+(a pre-gate failure — unchanged per the spec's non-goals). **Verification:** gate green
+(typecheck/lint 0-err/format · unit 3311 incl. 102 in `mcpOrchestrator.test.ts` · build); manual dev
+check (`CANVAS_DEV_TITLE='W1-C config-audit'`, MAIN-only audit logic, app boots clean); **full e2e matrix
+both legs** — **Linux Docker (176 passed, 1 skip, 1 unrelated `@chrome menuShell` flaky-on-retry; gitDiff
+passes in-container)** + Windows (worktree leg; only the documented `@terminal gitDiff` host-repo-escape
+false-fail, live `@mcp` probes green) → pushed `--no-verify` after the Linux leg confirmed cross-OS green.
+**Coordination:** `mcpOrchestrator.ts` is shared with **W1-G** → W1-C merges BEFORE W1-G starts (W1-G not
+yet begun). Do not self-merge — queued for sequential integration.
