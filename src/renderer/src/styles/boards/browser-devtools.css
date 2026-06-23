@@ -1042,3 +1042,216 @@
   color: var(--text-3);
   font-style: italic;
 }
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────
+   JD-2 — JSON viewer enrichments (virtualization · in-body search · copy-path · a11y).
+   Appended block: refines the JD-1 .bb-net-json* rules for the uniform-height virtualizer (a few
+   higher-specificity selectors) and adds the search/affordance classes. One accent only; --warn for
+   fidelity chips; the match highlight is the lone inverted-accent run (active-only, on-contract).
+   ─────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/* fill the details body so the row list (not the dbody) is the scroll boundary the virtualizer measures */
+.bb-net-json {
+  height: 100%;
+}
+.bb-net-json-rows {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  outline: none;
+}
+.bb-net-json-rows:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-wash);
+}
+/* uniform fixed-height single-line rows (the virtualizer is row-height-driven; long values ellipsize,
+   never wrap — kills the JD-1 word-break reflow that broke the indent ladder, audit H3) */
+.bb-net-json-rows .bb-net-json-row {
+  height: 18px;
+  line-height: 18px;
+  align-items: center;
+  position: relative;
+}
+.bb-net-json-rows .bb-net-json-val {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.bb-net-json-pad {
+  flex: none;
+}
+
+/* keyboard-active (aria-activedescendant) row + the current search match's row rail */
+.bb-net-json-row.active {
+  background: var(--surface-raised);
+}
+.bb-net-json-row.current {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* URL value → opens externally (scheme-gated in MAIN); accent link affordance */
+.bb-net-json-link {
+  color: var(--accent);
+  cursor: pointer;
+}
+.bb-net-json-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* per-row hover affordances: copy path (every row) + copy subtree (containers) */
+.bb-net-json-rowactions {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 8px;
+  opacity: 0;
+  background: linear-gradient(to right, transparent, var(--surface) 22%);
+}
+.bb-net-json-row:hover .bb-net-json-rowactions {
+  opacity: 1;
+}
+.bb-net-json-open:hover .bb-net-json-rowactions {
+  background: linear-gradient(to right, transparent, var(--surface-raised) 22%);
+}
+.bb-net-json-pathbtn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1;
+  width: 18px;
+  height: 16px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.bb-net-json-pathbtn:hover {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+
+/* the search match highlight — accent-wash run; the current match inverts on solid accent */
+.bb-net-json-match {
+  background: var(--accent-wash);
+  border-radius: 2px;
+}
+.bb-net-json-match.current {
+  background: var(--accent);
+  color: var(--void);
+}
+
+/* toolbar find toggle (left of Tree|Raw) */
+.bb-net-json-findbtn {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-3);
+  border-radius: var(--r-ctl);
+  height: 18px;
+  width: 22px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.bb-net-json-findbtn.on {
+  background: var(--surface-raised);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+/* the revealed search row */
+.bb-net-json-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 6px;
+  flex: none;
+}
+.bb-net-json-search-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 7px;
+  background: var(--inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+}
+.bb-net-json-search-field:focus-within {
+  border-color: var(--border-strong);
+}
+.bb-net-json-search-ico {
+  color: var(--text-faint);
+  font-size: 11px;
+  flex: none;
+}
+.bb-net-json-search-field input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.bb-net-json-search-field input::placeholder {
+  color: var(--text-faint);
+}
+.bb-net-json-count2 {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  min-width: 30px;
+  text-align: right;
+  flex: none;
+}
+.bb-net-json-count2.zero {
+  color: var(--warn);
+}
+.bb-net-json-navbtn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  line-height: 1;
+  cursor: pointer;
+  flex: none;
+}
+.bb-net-json-navbtn:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.bb-net-json-navbtn:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+/* embedded form (WebSocket text frames) — no toolbar chrome; capped, self-scrolling */
+.bb-net-json.embedded {
+  height: auto;
+}
+.bb-net-json.embedded .bb-net-json-rows {
+  max-height: 260px;
+}
+/* WebSocket Messages: the per-frame "▸ JSON" expander + the embedded-viewer expansion row */
+.bb-net-ws-jsontoggle {
+  margin-left: 0;
+  margin-right: 6px;
+}
+.bb-net-ws-jsonrow > td {
+  padding: 2px 0 8px;
+}

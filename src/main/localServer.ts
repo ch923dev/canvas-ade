@@ -49,9 +49,13 @@ const PAGE = `<!doctype html>
   const sync = () => { w.textContent = window.innerWidth + 'px'; };
   sync(); window.addEventListener('resize', sync);
   setInterval(() => { t.textContent = new Date().toLocaleTimeString(); }, 1000);
-  // Gated on ?xhr so only the JSON-viewer e2e triggers it (other tests' row counts stay unchanged):
-  // fetch a JSON subresource whose body CDP CAN return (the main document's body is evicted post-commit).
-  if (location.search.indexOf('xhr') !== -1) { fetch('/json').catch(function(){}); }
+  // Gated so only the JSON-viewer e2e triggers it (other tests' row counts stay unchanged): fetch a
+  // JSON subresource whose body CDP CAN return (the main document's body is evicted post-commit).
+  // ?big → a 50k-element array (virtualization stress); ?find → a nested body with a deep match;
+  // ?xhr → the default small fixture. The query rides through so the served body matches.
+  if (location.search.indexOf('big') !== -1) { fetch('/json?big=1').catch(function(){}); }
+  else if (location.search.indexOf('find') !== -1) { fetch('/json?find=1').catch(function(){}); }
+  else if (location.search.indexOf('xhr') !== -1) { fetch('/json').catch(function(){}); }
   console.log('LOCAL_PAGE_OK');
 </script></body></html>`
 
@@ -95,10 +99,24 @@ export function startLocalServer(): Promise<LocalServer> {
         res.end('canvas-ade e2e download payload')
         return
       }
-      // `/json` → a small nested JSON document (big int + array + nested object) so the Network
-      // inspector's JSON body viewer (JsonView) can be exercised end-to-end (load body → fold a row).
+      // `/json` → a JSON document so the Network inspector's JSON body viewer (JsonView) can be
+      // exercised end-to-end. Default = a small nested doc (big int + array + nested object). The
+      // JD-2 enrichment e2es opt into bigger shapes by query:
+      //   ?big  → a 50k-element array (virtualization stress: ≤~50 live DOM rows when expanded)
+      //   ?find → a deeply-nested body whose match lives inside a default-collapsed subtree
       if ((req.url ?? '').split('?')[0] === '/json') {
+        const q = (req.url ?? '').split('?')[1] ?? ''
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+        if (q.indexOf('big') !== -1) {
+          const arr = []
+          for (let i = 0; i < 50_000; i++) arr.push(i)
+          res.end(JSON.stringify(arr))
+          return
+        }
+        if (q.indexOf('find') !== -1) {
+          res.end('{"a":{"b":{"c":{"needle":"FINDME_DEEP"}}}}')
+          return
+        }
         res.end(
           '{"id":12345678901234567890,"name":"e2e","tags":["a","b","c","d"],"nested":{"x":1,"y":2}}'
         )

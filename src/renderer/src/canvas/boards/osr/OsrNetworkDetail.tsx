@@ -22,6 +22,7 @@ import {
   type NetKV
 } from '../../../lib/osrNetFormat'
 import { JsonView } from './JsonView'
+import { looksJson } from '../../../lib/osrJson'
 
 export type DetailTab =
   | 'headers'
@@ -100,16 +101,22 @@ function BodyBar({
   state: BodyState | undefined
   onLoad: (r: NetRecord, k: 'response' | 'request') => void
 }): ReactElement {
+  // Once the body is loaded, render JsonView as the DIRECT detail-body child (no .bb-net-bodybar
+  // wrapper) so the height chain resolves and its row list — not the dbody — is the scroll boundary
+  // the JD-2 virtualizer measures.
+  if (state?.body !== undefined) {
+    return (
+      <JsonView
+        body={state.body}
+        mime={rec.mimeType}
+        base64={state.base64}
+        truncated={state.truncated}
+      />
+    )
+  }
   return (
     <div className="bb-net-bodybar">
-      {state?.body !== undefined ? (
-        <JsonView
-          body={state.body}
-          mime={rec.mimeType}
-          base64={state.base64}
-          truncated={state.truncated}
-        />
-      ) : state?.error ? (
+      {state?.error ? (
         <span className="bb-net-err">Couldn’t load body: {state.error}</span>
       ) : (
         <>
@@ -359,6 +366,55 @@ function frameClock(ts: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
 }
 
+/** One Messages row. A text frame (opcode 1) carrying JSON gets a toggle that expands the payload
+ *  into an embedded JsonView (lazy — mounted only while open), routing WS JSON through the same
+ *  source-faithful tree as HTTP bodies (JD-2 / audit A6). Non-JSON / control frames stay as today. */
+function WsFrameRow({ f }: { f: WsFrame }): ReactElement {
+  const [expanded, setExpanded] = useState(false)
+  const ctrl = WS_OPCODE[f.opcode]
+  const isText = f.opcode === 1
+  const isJson = isText && looksJson(f.payload)
+  return (
+    <>
+      <tr className={wsFrameClass(f)}>
+        <td className="ws-dir">
+          <span className="ws-arrow">{f.dir === 'sent' ? '↑' : '↓'}</span>
+        </td>
+        <td className="ws-data">
+          {isText ? (
+            <>
+              {isJson && (
+                <button
+                  className="bb-net-srctoggle bb-net-ws-jsontoggle"
+                  aria-expanded={expanded}
+                  aria-label={expanded ? 'Collapse JSON frame' : 'Expand JSON frame'}
+                  onClick={() => setExpanded((v) => !v)}
+                >
+                  {expanded ? '▾ JSON' : '▸ JSON'}
+                </button>
+              )}
+              {f.payload}
+              {f.truncated && <span className="bb-net-dim"> ·truncated</span>}
+            </>
+          ) : (
+            <span className="bb-net-dim">{ctrl ?? 'Frame'}</span>
+          )}
+        </td>
+        <td className="net-num">{f.length}</td>
+        <td className="net-num">{frameClock(f.ts)}</td>
+      </tr>
+      {isJson && expanded && (
+        <tr className="bb-net-ws-jsonrow">
+          <td />
+          <td colSpan={3}>
+            <JsonView body={f.payload} mime="application/json" truncated={f.truncated} embedded />
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
 export function WsDetail({ ws, tab }: { ws: WsRecord; tab: DetailTab }): ReactElement {
   if (tab === 'headers')
     return (
@@ -398,28 +454,9 @@ export function WsDetail({ ws, tab }: { ws: WsRecord; tab: DetailTab }): ReactEl
             </td>
           </tr>
         )}
-        {ws.frames.map((f, i) => {
-          const ctrl = WS_OPCODE[f.opcode]
-          return (
-            <tr key={i} className={wsFrameClass(f)}>
-              <td className="ws-dir">
-                <span className="ws-arrow">{f.dir === 'sent' ? '↑' : '↓'}</span>
-              </td>
-              <td className="ws-data">
-                {f.opcode === 1 ? (
-                  <>
-                    {f.payload}
-                    {f.truncated && <span className="bb-net-dim"> ·truncated</span>}
-                  </>
-                ) : (
-                  <span className="bb-net-dim">{ctrl ?? 'Frame'}</span>
-                )}
-              </td>
-              <td className="net-num">{f.length}</td>
-              <td className="net-num">{frameClock(f.ts)}</td>
-            </tr>
-          )
-        })}
+        {ws.frames.map((f, i) => (
+          <WsFrameRow key={i} f={f} />
+        ))}
       </tbody>
     </table>
   )

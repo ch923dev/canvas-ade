@@ -351,4 +351,77 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await details.getByRole('button', { name: 'Raw' }).click()
     await expect(details.locator('.bb-net-bodytext')).toContainText('"id": 12345678901234567890')
   })
+
+  test('a 50k-element array opens virtualized — the live DOM holds ≤~50 rows (JD-2)', async ({
+    page,
+    electronApp
+  }) => {
+    const base = await mainCall<string>(electronApp, 'localUrl')
+    // ?big → the page fetches /json?big=1 (a 50,000-element array) as a loadable subresource.
+    const id = await seed(page, 'browser', { url: `${base}?big=1` })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
+    await expect(row).toBeVisible({ timeout: 8000 })
+    await row.click()
+
+    const details = page.locator('.bb-net-details')
+    await expect(details).toBeVisible()
+    await details.getByRole('button', { name: 'Response' }).click()
+    await details.getByRole('button', { name: 'Load body' }).click()
+
+    const rows = details.locator('.bb-net-json-rows')
+    await expect(rows).toBeVisible({ timeout: 8000 })
+    // The huge array starts default-collapsed (childCount ≫ 100) → its 50000 count shows on the summary.
+    await expect(rows).toContainText('50000')
+
+    // Expand it: the visible list is now 50k+ rows, but the virtualizer mounts only a windowful.
+    await rows.locator('.bb-net-json-open').first().click()
+    await expect
+      .poll(async () => rows.locator('.bb-net-json-row').count(), { timeout: 5000 })
+      .toBeGreaterThan(5) // expanded (no longer just the collapsed root)
+    const liveRows = await rows.locator('.bb-net-json-row').count()
+    expect(
+      liveRows,
+      'live DOM rows for a 50k array stay window-bounded (virtualized)'
+    ).toBeLessThanOrEqual(50)
+  })
+
+  test('in-body search: Ctrl/Cmd+G jumps to a match inside a collapsed subtree (JD-2)', async ({
+    page,
+    electronApp
+  }) => {
+    const base = await mainCall<string>(electronApp, 'localUrl')
+    // ?find → /json?find=1 = {"a":{"b":{"c":{"needle":"FINDME_DEEP"}}}} — the match sits at depth 4,
+    // inside default-collapsed (depth ≥ 2) containers, so it is hidden until the search auto-expands.
+    const id = await seed(page, 'browser', { url: `${base}?find=1` })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    const row = page.locator('.bb-net-row', { hasText: 'json' }).first()
+    await expect(row).toBeVisible({ timeout: 8000 })
+    await row.click()
+
+    const details = page.locator('.bb-net-details')
+    await details.getByRole('button', { name: 'Response' }).click()
+    await details.getByRole('button', { name: 'Load body' }).click()
+
+    const rows = details.locator('.bb-net-json-rows')
+    await expect(rows).toBeVisible({ timeout: 8000 })
+    // The deep match is inside a collapsed subtree → not in the visible tree yet.
+    await expect(rows).not.toContainText('FINDME_DEEP')
+
+    // Open the find bar, type a query, then Ctrl+G → step to the match (auto-expanding its ancestors).
+    await details.getByRole('button', { name: 'Find in body' }).click()
+    await details.getByRole('searchbox', { name: 'Find in body' }).fill('FINDME')
+    await page.keyboard.press('Control+g')
+
+    await expect(rows).toContainText('FINDME_DEEP')
+    await expect(details.locator('.bb-net-json-match.current')).toBeVisible()
+  })
 })
