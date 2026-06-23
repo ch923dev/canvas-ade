@@ -1,0 +1,904 @@
+{
+  "generatedAt": "2026-06-23",
+  "runId": "wf_59e226e1-084",
+  "counts": {
+    "zones": 6,
+    "findings": 57,
+    "proposals": 32
+  },
+  "proposals": [
+    {
+      "name": "canvas://app-model (wire-register the existing resource)",
+      "type": "mcp-resource",
+      "userValue": "A connected CLI agent (the user's Claude/Codex/Gemini in a Terminal board) can finally self-orient: read the live board list, the tool catalog with tiers, the spawn cap, and the 'every write is human-gated' rule in ONE read, instead of the user having to paste context or the agent guessing. Fewer wrong tool calls = fewer confirm prompts the human has to dismiss.",
+      "problem": "AUDIT/ZONE GAP (med, multiple zones): buildAppModel()/describeApp() is fully implemented in src/main/appModel.ts, e2e-proven via the CANVAS_E2E seam, but NOT wire-registered in @expanse-ade/mcp (PR-3b deferred). mcp.ts:114-117 documents the gap. An agent over loopback HTTP cannot read the self-model — it is blind to the canvas topology and its own tool surface.",
+      "sketch": "Register a read-only MCP resource `canvas://app-model` in the package's ServerFactory whose handler calls the already-wired `orchestrator.describeApp()` (no new MAIN code — the Orchestrator interface already exposes it; only the package registration is missing). Returns the AppModel JSON (version, boardTypes, tools, canvas{boards,connectors,groups}, rules). No-arg, read-only, available at orchestrator + connected tiers (workers stay read-minimal). Example: agent does resources/read canvas://app-model → gets {tools:[...], rules:{spawnCap:4, everyWriteGated:true}, canvas:{boards:[...]}}. Close the appModel.ts:15 'deferred PR-3b' comment when shipped. ALSO add the drift-guard test the audit asks for (appModel.test.ts: assert APP_TOOLS names ⊆ live package tool registration) so the self-model can't silently lie about the catalog.",
+      "placement": "Registration in @expanse-ade/mcp package (resources/index.ts) + the ServerFactory resource list; zero new MAIN code (orchestrator.describeApp already bound). Drift-guard test in src/main/appModel.test.ts.",
+      "dependencies": "None — describeApp() is shipped and bound. Pre-M6; unblock by unbundling PR-3b from the worktree milestone.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P0",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "spawn_group (wire-register the existing tool)",
+      "type": "mcp-tool",
+      "userValue": "The user can ask their agent 'set up a feature zone for the auth refactor' and the agent creates a coordinated terminal+planning+browser cluster as a Named Group in ONE call — instead of three separate spawn_board calls (each its own confirm) plus manual grouping. Matches how humans already build zones on the canvas.",
+      "problem": "AUDIT/ZONE GAP (med): spawnGroup() is fully implemented in src/main/mcpLifecycle.ts (mints terminal+optional planning/browser+group, atomic cap reservation, preview wiring, launchCommand sanitize, 80-char name clamp) and driven by the Command board over mcp:spawnGroup IPC, but the package registers NO spawn_group tool (PR-5c deferred, mcp.ts:118-125). Agents can spawn single boards but not a zone.",
+      "sketch": "Register `spawn_group(name, terminal:{launchCommand?,cwd?}, planning?:bool, browser?:{url?})` as an orchestrator-tier tool routing to the existing `orchestrator.spawnGroup(input)`. Reuse the SAME cap reservation + launchCommand sanitize path already in mcpLifecycle.spawnGroup — and FIX the spawnGroup sanitizer first (audit finding: mcpLifecycle.ts:155 `c >= ' '` passes DEL/C1; replace with the dispatchSanitize codepoint strip) so the wire tool inherits a correct sanitizer. launchCommand delivery already goes through the gated path. Returns {groupId, boardIds, name}. Connected-tier callers gated to NOT spawn (orchestrator-only) to bound swarm growth, or allow under the existing spawn cap of 4.",
+      "placement": "Registration in @expanse-ade/mcp package; the MAIN handler (orchestrator.spawnGroup) already exists. Sanitizer fix in src/main/mcpLifecycle.ts:155 before wiring.",
+      "dependencies": "Ships alongside the app-model resource (both are deferred PR-3b/PR-5c follow-ups). Independent of M6.",
+      "effort": "S",
+      "risk": "med",
+      "priority": "P0",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "answer_permission (M8 — unblock a permission-prompted worker)",
+      "type": "mcp-tool",
+      "userValue": "When a worker agent stalls on its CLI's 'allow this action? (y/n)' prompt mid-task, the orchestrator can detect it and the USER gets one native confirm to approve/deny — instead of the task silently hanging forever in 'executing' until the human notices and walks over to that Terminal board. This is the single most common real-world stall in multi-agent runs.",
+      "problem": "AUDIT (med, top-risk): SCOPE_ANSWER_PERMISSION is minted into EVERY orchestrator token but no answer_permission tool exists — a dead scope with no capability (asymmetry the audit flags as an implicit-pre-authorization risk). The 'blocked'/'awaiting-review' boardStatus buckets are defined but boardStatusBucket() never emits them. M8 (T8.1 detect + T8.2 tool) is spec-only. M8 depends only on M4+M5, both SHIPPED — it is the next unblocked milestone, no worktrees needed.",
+      "sketch": "T8.1: add a per-CLI permission-prompt heuristic in deriveStatus/ptyOutput tail (start with Claude Code's known prompt shape) → emit the 'blocked' bucket so canvas://attention surfaces it. T8.2: `answer_permission(id, answer:'yes'|'no')` orchestrator-tier tool. CRITICAL security: route through runGatedWrite with an UNCONDITIONAL human-confirm (never auto-answer from worker output — the lethal-trifecta rule), terminator = the y/n byte + CR, full audit (status: dispatched/denied/failed). Re-check the board is still in 'blocked' state in preWriteRecheck (TOCTOU). Returns {id, answered, status}.",
+      "placement": "MAIN: src/main/mcpOrchestrator.ts (new method through runGatedWrite) + detection in mcpRegistry deriveStatus / ptyOutput. Package: register the tool at orchestrator tier (scope already granted). Renderer: boardStatus.ts to emit 'blocked'.",
+      "dependencies": "M4 (gating) + M5 (status buckets) — both shipped. Closes the dead-scope asymmetry.",
+      "effort": "M",
+      "risk": "med",
+      "priority": "P1",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "get_changed_files + canvas://board/{id}/diff (read-only, pre-commit)",
+      "type": "mcp-tool",
+      "userValue": "The orchestrator can answer 'what did worker-3 change?' precisely — a structured file list with +/− counts — to decide whether to merge, ask for revisions, or compare two workers, WITHOUT the human eyeballing a raw blob. Feeds a real review-before-merge workflow on the user's own machine.",
+      "problem": "ROADMAP GAP (M7 partial): git_diff (raw text) is shipped, but the STRUCTURED file-list primitive (get_changed_files) and the per-board diff RESOURCE (canvas://board/{id}/diff, T7.1) are spec-only. The Command board's diff panel renders raw uncolored unified-diff text (audit UX finding) precisely because no structured shape exists. These are READ-ONLY — they do NOT need M6 worktrees (unlike commit/merge).",
+      "sketch": "`get_changed_files(id)` orchestrator-tier tool → reuse the existing boardGitDiff path (gitDiff.ts CappedSink + cwd resolution) but parse via the existing parseDiffStat helper (diffStat.ts is hunk-aware) into [{path, insertions, deletions, status:'M'|'A'|'D'}]. `canvas://board/{id}/diff` resource = the raw capped diff (same 100KB clamp) as a subscribable-free resource so an agent can resources/read it. Both strictly read-only (no git add/commit/checkout — same discipline as gitDiff.ts). Returns the structured list; powers a colored/grouped diff panel renderer-side later.",
+      "placement": "MAIN: src/main/mcpOrchestrator.ts (new getChangedFiles wrapping boardGitDiff + parseDiffStat lifted to a MAIN-safe util) + register canvas://board/{id}/diff resource. Package: register the tool + resource at orchestrator tier.",
+      "dependencies": "git_diff/gitDiff.ts (shipped). parseDiffStat (renderer lib — extract the pure parser to a shared util). Does NOT depend on M6.",
+      "effort": "M",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "await_settled (wire-register + make event-driven)",
+      "type": "mcp-tool",
+      "userValue": "An agent that dispatched a task via a launch-arg (not handoff_prompt) can block on the result over the wire — and the wait is event-driven, so a canvas with several concurrent waits stays cool instead of every wait waking the CPU once a second. Faster, lower-latency 'is it done yet?' for batch runs.",
+      "problem": "AUDIT (low, but the only remaining poll loop): awaitSettled() is implemented in mcpOrchestrator.ts and exposed to the Command board over IPC, but is NOT a wire-registered MCP tool — an agent cannot call await_settled directly. AND it busy-polls listBoards()+boardActivityStaleMs every 1s (SETTLE_POLL_MS), unlike the event-driven awaitHandoffSettled. Under MCP_SPAWN_CAP=4 concurrent dispatches that is 4 timer wakes/sec.",
+      "sketch": "Two-part: (1) wire `await_settled(id, timeoutMs?)` as an orchestrator-tier tool routing to the existing orchestrator.awaitSettled; returns {id, status, result?}. (2) Refactor awaitSettled to park on registry.subscribeStatus + the onResultSettled fast-path (the pattern awaitHandoffSettled already uses), falling back to a longer (e.g. 5s) output-silence poll only when no status event fires — eliminating the steady-state per-second wake. Read-only (it awaits, never writes), so no runGatedWrite needed.",
+      "placement": "MAIN: refactor awaitSettled in src/main/mcpOrchestrator.ts to event-driven. Package: register await_settled at orchestrator tier.",
+      "dependencies": "subscribeStatus event stream (shipped, M5). Independent of M6.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "spawn_fanout + broadcast_prompt (best-of-N, M9 read-side first)",
+      "type": "mcp-tool",
+      "userValue": "The user can say 'try this fix three ways and I'll pick the best' — the agent spawns N parallel worker zones, sends them the SAME task, and the user reviews N candidate diffs side by side. This is the headline 'parallel agents on a canvas' workflow the product is built around, and nothing exposes it to agents today.",
+      "problem": "ROADMAP GAP (M9, high-value): best-of-N (spawn_fanout, broadcast_prompt, compare_diffs, judge_outputs, promote_winner) is entirely spec-only. The audit notes M9 'depends on M6 worktrees' for the MERGE side — but the SPAWN + BROADCAST + COMPARE read-side does NOT (it only needs N independent cwds, which spawn_board already supports). Shipping the read-side now delivers the core UX (parallel candidates + side-by-side diffs) while merge waits for M6.",
+      "sketch": "`spawn_fanout(name, n:2..4, terminal:{launchCommand?,cwd?})` → mint N worker zones under the existing spawn cap (reuse spawnGroup N times, atomic reservation), return {groupIds[], boardIds[]}. `broadcast_prompt(boardIds[], prompt)` → the SAME prompt to each via the existing runGatedWrite path, with ONE human-confirm covering the whole fan-out batch (the confirm body lists all N targets, like renderPlanningConfirmBody shows full content) + per-target audit rows. Cap n at the spawn cap (4). Read-side compare = pair with get_changed_files per board. Defer promote_winner/merge to M6.",
+      "placement": "MAIN: src/main/mcpLifecycle.ts (spawnFanout = spawnGroup×N) + mcpOrchestrator.ts (broadcastPrompt = runGatedWrite per target under one confirm). Package: register both at orchestrator tier.",
+      "dependencies": "spawn_group (P0 above), runGatedWrite (shipped), get_changed_files (P1 above) for the compare step. Merge half needs M6 (deferred).",
+      "effort": "L",
+      "risk": "med",
+      "priority": "P2",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "judge_outputs (LLM-judge over N candidate results, no auto-act)",
+      "type": "mcp-tool",
+      "userValue": "After a fan-out, the user gets a ranked recommendation ('candidate B is best: passes the described check, smallest diff, no unrelated changes') with reasoning — turning N raw diffs into a decision aid. The human still clicks to promote; the judge just does the reading-and-ranking grunt work.",
+      "problem": "ROADMAP GAP (M9 T9.x): judge_outputs is spec-only. The roadmap notes a 'judging pivot' (gate+judge-board) because the 2026-07-28 MCP RC deprecates sampling — so the judge must run as an explicit tool, not via MCP sampling. There is no primitive to compare/rank N worker results today.",
+      "sketch": "`judge_outputs(boardIds[], criteria?)` orchestrator-tier tool. Gathers each board's BoardResult (boardResults.ts) + get_changed_files summary, builds a structured comparison, and asks the app's own LLM egress path (the same one DISPATCH_ENGINEER_SYSTEM uses — NOT MCP sampling, per the RC deprecation) to rank them. Returns {ranking:[{boardId, score, rationale}], recommended}. STRICTLY advisory: it NEVER promotes/merges/dispatches — output is tainted worker content (lethal-trifecta), so it is read-only and cannot auto-trigger an action. The human reads the ranking and clicks promote. Audit the judge invocation (read-only, no PTY write).",
+      "placement": "MAIN: src/main/(new boardJudge.ts, pure ranking-prompt builder + LLM call via the existing egress seam) + mcpOrchestrator.ts method. Package: register at orchestrator tier.",
+      "dependencies": "get_changed_files (P1), spawn_fanout (P2), the app LLM egress path (shipped, ADR 0003). Independent of M6.",
+      "effort": "M",
+      "risk": "med",
+      "priority": "P2",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "canvas://tasks + claim_task (lightweight self-claiming task graph, M10 slice)",
+      "type": "mcp-resource",
+      "userValue": "For multi-worker runs, the user drops a list of tasks and workers self-claim them instead of the user hand-assigning each one — and the user sees a live task board (queued/claimed/done) on the canvas. Turns N idle terminals into a self-coordinating pool with zero per-task babysitting.",
+      "problem": "ROADMAP GAP (M10): the task graph (canvas://tasks, create_task, claim_task, update_status) is spec-only. The Command board kanban is human-driven only; there is no agent-facing task pool. M10 is large, but a MINIMAL claim-only slice (no dependencies/budget guards) is independently shippable and does NOT need M6.",
+      "sketch": "`canvas://tasks` read-only resource = the live task list [{id, title, status:'open'|'claimed'|'done', claimedBy?}] from a new in-memory MAIN task store (mirrors boardResults.ts pattern, pruned on project switch). `create_task(title)` orchestrator-tier + `claim_task(taskId)` connected-tier (a worker claims into its OWN boardId — bound to the token's boardId like write_result, so it can't claim FOR another board) + `update_status(taskId, 'done')`. Claims are atomic (first-claim-wins via the same single-promise-chain discipline as auditLog). No PTY write → no runGatedWrite, but every mutation audits. Drives a renderer task-pool view later.",
+      "placement": "MAIN: new src/main/taskStore.ts (in-memory, bounded, pruned) + orchestrator methods + audit. Package: register canvas://tasks resource + create_task/claim_task/update_status tools at the noted tiers.",
+      "dependencies": "Token boardId binding (shipped — write_result uses it). Independent of M6. Full M10 (dependencies, budget guards) deferred.",
+      "effort": "L",
+      "risk": "med",
+      "priority": "P2",
+      "lens": "New agent-facing MCP TOOLS + RESOURCES (functions) that close roadmap gaps and unlock real user workflows — wire-register what is already MAIN-complete, then add the highest-leverage orchestration primitives (self-orient, permission-unblock, diff/commit, fan-out + judge), all behind server-side tier gating + the runGatedWrite (sanitize → nonce → human-confirm → audit) keystone."
+    },
+    {
+      "name": "registerPrompts scaffold",
+      "type": "mcp-prompt-skill",
+      "userValue": "prompts/list shows named playbooks; unblocks catalogue",
+      "problem": "empty stub all tiers dist 891 no ctx",
+      "sketch": "pass orchestrator+ctx, gate by tier, pure renderPlaybook never writes",
+      "placement": "expanse-ade-mcp src prompts",
+      "dependencies": "none pre-M6",
+      "effort": "M",
+      "risk": "low",
+      "priority": "P0",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "review-pr",
+      "type": "mcp-prompt-skill",
+      "userValue": "read diff spawn reviewer report verdict",
+      "problem": "no review recipe; DISPATCH_ENGINEER_SYSTEM fixed",
+      "sketch": "git_diff spawn_board handoff_prompt wait_for_idle relay",
+      "placement": "playbooks reviewPr.ts",
+      "dependencies": "P0",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "triage-attention",
+      "type": "mcp-prompt-skill",
+      "userValue": "summarize blocked boards; ships M5-T5.4",
+      "problem": "M5-T5.4 UI unbuilt only SSE feed",
+      "sketch": "read attention classify propose interrupt but never auto-fire tainted output",
+      "placement": "playbooks triageAttention.ts",
+      "dependencies": "P0",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "fan-out-and-merge",
+      "type": "mcp-prompt-skill",
+      "userValue": "try 3 ways human picks; M9 value no worktrees",
+      "problem": "M9 spec-only blocked on M6",
+      "sketch": "spawn N same task wait_for_all git_diff each table to human no merge",
+      "placement": "playbooks fanOutAndMerge.ts",
+      "dependencies": "P0 not M6/M9",
+      "effort": "M",
+      "risk": "med",
+      "priority": "P1",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "sequential-handoff",
+      "type": "mcp-prompt-skill",
+      "userValue": "A builds B reviews along an existing cable",
+      "problem": "cable drawn but no guided choreography",
+      "sketch": "CONNECTED source=caller boardId canRelay BUG-021; handoff relay summarize",
+      "placement": "playbooks sequentialHandoff.ts",
+      "dependencies": "P0",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P2",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "set-up-feature-zone",
+      "type": "mcp-prompt-skill",
+      "userValue": "stand up terminal+planning+browser zone",
+      "problem": "spawn_group unwired PR-5c",
+      "sketch": "Phase1 spawn 3+checklist+Ctrl+G; Phase2 spawn_group",
+      "placement": "playbooks setUpFeatureZone.ts",
+      "dependencies": "P0 PR-5c optional",
+      "effort": "M",
+      "risk": "med",
+      "priority": "P2",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "recipe-picker",
+      "type": "claude-code-skill",
+      "userValue": "human chips pre-fill task+config",
+      "problem": "no user templates; empty palette placeholder",
+      "sketch": "renderer skillTemplates in canvas.json additive ADR-0007; Orchestration palette section",
+      "placement": "store skillTemplates.ts commandRegistry.ts",
+      "dependencies": "after P0/P1",
+      "effort": "M",
+      "risk": "low",
+      "priority": "P2",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "e2e-probe",
+      "type": "other",
+      "userValue": "assert prompts/list tier-correct catch regression",
+      "problem": "mcp.e2e.ts no prompts coverage",
+      "sketch": "orch all names connected subset worker none get names tools",
+      "placement": "e2e mcp.e2e.ts",
+      "dependencies": "P0+one playbook",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "MCP Prompts as skills"
+    },
+    {
+      "name": "Orchestration palette section (Ctrl+K)",
+      "type": "palette-command",
+      "userValue": "Reach every MCP surface from Ctrl+K.",
+      "problem": "commandRegistry.ts:11 placeholder unfilled; no Orchestration section. UX high.",
+      "sketch": "Add section: open board, view audit, setup, interrupt-all (loops mcp:interrupt, still gated).",
+      "placement": "commandRegistry.ts + Canvas injection.",
+      "dependencies": "mcp:interrupt shipped.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P0",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "Canonical audit shortcut",
+      "type": "palette-command",
+      "userValue": "Audit panel discoverable in ? sheet + Ctrl+K.",
+      "problem": "AuditLogViewer.tsx:70 self-registers Ctrl+Shift+A; absent from palette/SHORTCUT_ROWS. UX high.",
+      "sketch": "toggle-audit-log keyaction + SHORTCUT_ROWS row + shared ui flag; drop self-listener.",
+      "placement": "useCanvasKeybindings.ts, commandRegistry.ts, AuditLogViewer.tsx.",
+      "dependencies": "Shares openAuditLog with section.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P0",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "Attention Queue badge+panel",
+      "type": "command-board-verb",
+      "userValue": "Glanceable count of boards needing the human; one-click jump.",
+      "problem": "M5-T5.4 queue has no UI; forwardBoardStatus/attention feed live but unconsumed.",
+      "sketch": "Chrome badge from boardStatus buckets; complementary side panel with Jump (goToBoard). Read-only.",
+      "placement": "New AttentionQueue.tsx in AppChrome.",
+      "dependencies": "forwardBoardStatus shipped; blocked needs M8.",
+      "effort": "M",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "Recipe launcher in SubmitWell",
+      "type": "command-board-verb",
+      "userValue": "Click Review PR/Implement/Test/Debug/Triage to pre-fill dispatch; defaults survive restarts.",
+      "problem": "Only recipe is hidden DISPATCH_ENGINEER_SYSTEM (commandDispatch.ts:29); lastWorkerConfig ephemeral. Skills high.",
+      "sketch": "Built-in recipe chip strip above textarea pre-fills text+chips+WorkerConfigDialog; persist to canvas.json additive field. Gated pipeline unchanged.",
+      "placement": "commandDispatch.ts, SubmitWell.tsx, WorkerConfigDialog.tsx, boardSchema.",
+      "dependencies": "Additive canvas.json field (ADR 0007).",
+      "effort": "M",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "Test-connection after Sync",
+      "type": "command-board-verb",
+      "userValue": "Real reachable/unreachable signal instead of silent misconfig.",
+      "problem": "Only feedback is synced badge (file written, not reachable); no ping. UX med.",
+      "sketch": "Button calls new frame-guarded orchestration:ping; MAIN invokes orchestrator_ping; token never crosses; renderer gets ok+latency/error. Read-only.",
+      "placement": "orchestrationProvision.ts, preload index.ts, OrchestrationSyncModal.tsx.",
+      "dependencies": "Shipped ping tools + mounted server.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "Cancel queued task on TaskCard",
+      "type": "command-board-verb",
+      "userValue": "Pull a mistaken task from the queue with one click; no whole-board delete.",
+      "problem": "Configured-but-waiting task has no button; cancelConfig only closes the dialog. UX med.",
+      "sketch": "discard control for queued status wired to discardTask in commandStore; frees cap slot. No board spawned/PTY written, so no MAIN call/gate/audit.",
+      "placement": "commandStore.ts, TaskCard.tsx, useCommandDispatch.ts.",
+      "dependencies": "None.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "Diff coloring in TaskCard/Recap",
+      "type": "command-board-verb",
+      "userValue": "Diff readable at a glance (add green, del red, headers accent) vs monochrome wall.",
+      "problem": "TaskCard/CommandRecapView render diff as monochrome pre, no coloring/grouping; unreadable at size. UX med.",
+      "sketch": "~15-line pure helper colors lines via spans in the existing pre block; optional per-file collapse via parseDiffStat. Functional color only.",
+      "placement": "New diffColor.tsx, used by TaskCard.tsx + CommandRecapView.tsx.",
+      "dependencies": "None; presentation only.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P2",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "Empty Command board orch-state guard",
+      "type": "command-board-verb",
+      "userValue": "Told why first dispatch fails + one-click Enable, not an opaque MAIN failure.",
+      "problem": "Empty state omits the orchestration prerequisite; SubmitWell accepts input regardless. UX low.",
+      "sketch": "Read orchestrationStore.enabled; when off+empty show explanation + Enable button calling openOrchestrationModal. Pure renderer.",
+      "placement": "CommandBoard.tsx.",
+      "dependencies": "orchestrationStore.enabled shipped.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P2",
+      "lens": "New HUMAN-facing commands making the MCP swarm usable and discoverable: Ctrl+K palette verbs, Command-board affordances, on-canvas badges. All route to already-gated MAIN paths (runGatedWrite) or read-only resources; none weakens tier gating, lets browser content reach the PTY, or hands a token to the renderer. Tied to UX findings: empty Orchestration palette placeholder (commandRegistry.ts:11), orphaned Ctrl+Shift+A shortcut (AuditLogViewer.tsx:70), no post-Sync verify, no cancel-queued affordance, no on-canvas attention queue (M5-T5.4 data shipped, UI absent), no recipe launcher.</lens>\n</invoke>\n"
+    },
+    {
+      "name": "/canvas-connect (orchestration onboarding + connection-verify skill)",
+      "type": "claude-code-skill",
+      "userValue": "A first-time user types /canvas-connect in their agent CLI and the agent walks them through enabling Expanse orchestration, confirms its own .mcp.json is present and points at the live rotated endpoint, and proves the wire works by calling ping — turning today's opaque 'did it actually connect?' failure mode into a single guided check. Directly fixes the audit's 'no verify-it-is-working affordance' and 'silent misconfiguration' top risks.",
+      "problem": "AUDIT (UX dimension, high/med): after the Sync modal the user has NO signal the MCP server is reachable; the only verification loop is launching an agent and hoping it picks up tools unprompted. The port ROTATES on restart, so a stale .mcp.json silently breaks the connection with no error. Codex (TOML) and OpenCode (XDG) config paths are non-obvious. There is no agent-side skill that self-checks the connection.",
+      "sketch": "SKILL.md frontmatter: name 'canvas-connect', description 'Connect this agent CLI to the Expanse canvas and verify the MCP link is live. Trigger when the user says connect to canvas / set up Expanse orchestration / is the canvas connected / canvas tools not showing.' Procedure the agent follows: (1) check whether the canvas-ade MCP server is registered in this CLI's config (it lists its own MCP servers) and whether canvas-ade tools are visible; (2) if visible, call the ping tool and report pong + the resolved 127.0.0.1:<port>/mcp endpoint as proof-of-life; (3) if NOT visible, detect the CLI (claude/codex/gemini/opencode) and tell the user the exact in-app step: open Expanse Settings -> Agent orchestration -> Sync (or the Ctrl+K 'Sync agent CLIs' verb once that ships), noting the port rotates on restart so a re-Sync is needed after restarting Expanse; (4) on success, read canvas://boards and print a one-line canvas summary so the user sees live state. No new IPC or tools needed — uses ping + canvas://boards which already ship.",
+      "placement": ".claude/skills/canvas-connect/SKILL.md — shipped as part of the app's project scaffolding (the same spawn-time provisioner that writes .mcp.json can also drop this skill file into .claude/skills/ for Claude Code; for other CLIs ship it as docs the user can paste). Authoritative copy lives in the app repo under resources/agent-skills/canvas-connect/SKILL.md and is copied alongside the provisioner write.",
+      "dependencies": "None hard — uses only the shipped ping tool + canvas://boards resource. Soft synergy with the 'Test connection' IPC affordance proposed in the UX audit (the skill can call it if it lands). Should reuse SERVER_NAME='canvas-ade' and the mcpUrl() endpoint format from cliProvisioners/shared.ts so wording stays accurate.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P0",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    },
+    {
+      "name": "/canvas-orchestrate (safe swarm dispatch playbook skill)",
+      "type": "claude-code-skill",
+      "userValue": "A user tells their connected agent '/canvas-orchestrate split this refactor across 3 workers' and the agent runs a vetted, safety-aware fan-out: spawn workers within the cap, dispatch the same task, wait on the event-driven barriers, collect each worker's result, and summarize — WITHOUT the agent reinventing an unsafe loop or spamming dispatches. Gives users the best-of-N / fan-out workflow that M9 specs but hasn't shipped, today, purely as agent guidance over existing tools.",
+      "problem": "AUDIT + ROADMAP: M9 best-of-N (spawn_fanout/broadcast_prompt/judge_outputs) is entirely spec-only, and the MCP prompts primitive that would host orchestration recipes is an empty stub (registerPrompts is a no-op). The connected agent has spawn_board + handoff_prompt + wait_for_all + canvas://board/{id}/result but no operating manual for composing them safely. Without guidance an agent may exceed the spawn cap (MCP_SPAWN_CAP=4) in a tight loop or busy-poll results instead of using the event-driven barriers.",
+      "sketch": "SKILL.md description 'Run a multi-worker task on the Expanse canvas safely: fan out N workers, wait for all, collect and compare results. Trigger on fan out / split across workers / run best-of-N / parallelize this on the canvas.' Procedure: (1) read canvas://boards + canvas://board-states to see current load and how many of the 4 spawn slots are free; (2) clamp N to the free slots and tell the user if it was reduced; (3) for each worker call spawn_board (terminal, with the launchCommand) then handoff_prompt the task — reminding the user each handoff raises a human-confirm modal in the app (this is expected, not a bug); (4) call wait_for_all on the spawned ids (event-driven, no polling) with a sane timeout; (5) read canvas://board/{id}/result for each and present a compact comparison (verdict + summary + refs + diffstat) and ask the user which to keep. Explicitly documents that the SKILL never auto-acts on worker output (lethal-trifecta discipline) — it presents results for a human decision. Honest caveat in the skill body: until spawn_group is wire-registered (PR-5c), zone clusters require 3 separate spawn_board calls.",
+      "placement": ".claude/skills/canvas-orchestrate/SKILL.md (app-shipped scaffolding, same delivery as canvas-connect). Pure agent guidance — no MAIN/renderer/package code. It composes only tools the connected tier already holds (spawn_board, handoff_prompt, wait_for_all, canvas://* resources).",
+      "dependencies": "Hard: relies on connected-tier scopes already granting spawn + dispatch (they do per defaultScopesFor('connected')). Soft: dramatically better once spawn_group (PR-5c) and canvas://app-model (PR-3b) are wire-registered so the agent can self-orient and one-shot a zone; the skill should be revised to prefer spawn_group when present.",
+      "effort": "M",
+      "risk": "low",
+      "priority": "P0",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    },
+    {
+      "name": "/canvas-status (swarm attention + triage skill)",
+      "type": "claude-code-skill",
+      "userValue": "A user juggling several agent workers types '/canvas-status' and their connected agent reads the live canvas, surfaces exactly which boards need the human (failed / blocked / awaiting-review), and offers safe next steps (open that board, interrupt a runaway, read its tail output) — replacing the missing on-canvas attention queue with a conversational one the user already has open in their CLI.",
+      "problem": "AUDIT + ROADMAP: M5-T5.4 (the glanceable on-canvas attention queue / chrome badge) is unimplemented — only the data feed (canvas://attention SSE + board-states) shipped. A user running a swarm has no quick 'what needs me right now' view inside the app. The connected agent can read canvas://attention but has no skill telling it to summarize it as a triage list.",
+      "sketch": "SKILL.md description 'Show what on the Expanse canvas needs your attention and help triage it. Trigger on canvas status / what needs me / swarm status / which workers are stuck / is anything done.' Procedure: (1) read canvas://board-states for the bucket roll-up and canvas://attention for the needs-you set; (2) print a compact table: board title, status bucket, one-line latest activity (from a short canvas://board/{id}/output tail or canvas://board/{id}/result when present); (3) for each attention board, offer a concrete safe action and let the user pick: read more output, interrupt (Ctrl-C — reminds the user this is human-confirm gated), or jump to it in the app; (4) note that 'blocked / awaiting-review' buckets only populate once M8 permission-detection ships, so today it surfaces 'failed' and long-idle running boards. Read-only by default; any write (interrupt) goes through the gated tool.",
+      "placement": ".claude/skills/canvas-status/SKILL.md (app-shipped scaffolding). Read-mostly skill over canvas://attention + canvas://board-states + canvas://board/{id}/output|result — all shipped. The one write affordance (interrupt) uses the existing gated tool.",
+      "dependencies": "None hard (all resources shipped). Becomes richer when M8 answer_permission + blocked/awaiting-review emission lands (then it can offer answer_permission too). Pairs naturally with /canvas-orchestrate as the monitoring half.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    },
+    {
+      "name": "/canvas-revoke (disconnect + stale-token cleanup skill)",
+      "type": "claude-code-skill",
+      "userValue": "A security-conscious user types '/canvas-revoke' and the agent guides them to turn orchestration off AND helps find any stale bearer-token config files left on disk in non-root board working dirs — closing the real credential-leak gap where a token survives a consent revoke after an app restart. Gives the user a concrete cleanup path that the app's in-memory cleanup misses today.",
+      "problem": "AUDIT (security, med, top risk): provisionedDirs is in-memory only, so a .mcp.json / opencode.json bearer token written into a board's non-root cwd SURVIVES an app restart + consent revoke and stays valid (365-day TTL) on disk. The app-side fix (persisting provisionedDirs) is a separate workstream; meanwhile the user has no way to know stale tokens exist or to clean them.",
+      "sketch": "SKILL.md description 'Disconnect this agent from the Expanse canvas and clean up any leftover MCP credential files. Trigger on revoke canvas access / disconnect from Expanse / remove canvas mcp config / clean up tokens.' Procedure: (1) tell the user to toggle Agent orchestration OFF in Expanse Settings (this revokes in-memory tokens and unsyncs the project root); (2) then have the agent scan the project tree for config files containing the 'canvas-ade' MCP server entry — .mcp.json, opencode.json, plus the global ~/.gemini/settings.json and ~/.codex/config.toml [mcp_servers.canvas-ade] table and ~/.claude/settings.local.json enabledMcpjsonServers — and LIST every hit with its path; (3) for each, show the user the exact key/table to delete (matching the unsync surgical-removal shape) and offer to remove only the canvas-ade entry, preserving the user's other servers (merge-not-clobber discipline). The skill is read+report by default and only edits files the user explicitly approves. It explicitly notes the bearer token in a stale file is a live credential until removed.",
+      "placement": ".claude/skills/canvas-revoke/SKILL.md (app-shipped scaffolding). Operates on the user's own config files via the agent's normal file tools; it mirrors the removal shape defined in cliProvisioners/shared.ts (SERVER_NAME, codexBlock, enabledMcpjsonServers) so its instructions stay exactly aligned with what the app wrote.",
+      "dependencies": "Soft: complements (does not replace) the recommended app-side persistence of provisionedDirs. Must be kept in sync with the four provisioner file formats (claude/codex/gemini/opencode) — pin its instructions to shared.ts so a format change is a one-place update.",
+      "effort": "S",
+      "risk": "med",
+      "priority": "P1",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    },
+    {
+      "name": "/canvas-plan (write structured plan to a Planning board skill)",
+      "type": "claude-code-skill",
+      "userValue": "A user says '/canvas-plan turn my notes into a checklist on the canvas' and the connected agent materializes a clean planning artifact (notes + an interactive checklist + a mermaid diagram) onto a Planning board via add_planning_elements — giving non-expert users a one-line way to get agent reasoning OUT of the terminal and onto the spatial canvas where they can see and toggle it.",
+      "problem": "ROADMAP/UX: add_planning_elements is shipped and consent-gated, but it's an advanced tool a connected agent rarely uses unprompted, and users don't know it exists. The canvas is the product's differentiator yet the agent's output mostly stays as terminal text. There's no skill teaching the agent the caps, kinds (note/checklist/text/arrow/diagram), and the fact that the write is human-confirm gated with the full content shown.",
+      "sketch": "SKILL.md description 'Write a plan, checklist, or diagram onto an Expanse Planning board. Trigger on put this on the canvas / make a checklist on the board / draw a diagram of this / add planning notes.' Procedure: (1) read canvas://boards to find an existing planning board or ask the user to create one (or spawn_board planning if consented); (2) shape the content into the supported kinds respecting the host caps (<=50 elements, <=100 checklist items, <=4000 chars text/diagram, <=16KB batch) — the skill states these limits so the agent self-trims rather than getting rejected; (3) call add_planning_elements, telling the user a human-confirm modal will show the FULL content for approval (this is the safety gate, not an error); (4) confirm what landed. Honest note: planning write requires orchestration consent (or the dev flag) to be enabled, else the tool is gated off — the skill detects the 'planning write disabled' response and points the user to enable it.",
+      "placement": ".claude/skills/canvas-plan/SKILL.md (app-shipped scaffolding). Uses only the shipped add_planning_elements tool + canvas://boards; caps mirror mcpPlanning.ts constants and should cite them so the skill text and host validator agree.",
+      "dependencies": "Hard: planningWriteEnabled must be true (orchestration consent on). The skill must handle the gated-off path gracefully. No package change.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    },
+    {
+      "name": "/canvas-review-pr (multi-agent PR review recipe skill)",
+      "type": "claude-code-skill",
+      "userValue": "A user with a branch open types '/canvas-review-pr' and their connected agent runs a structured review swarm on the canvas: spawn a reviewer worker and a tester worker, hand each a scoped prompt, collect both verdicts plus the git diff, and present a consolidated review the user can act on — delivering the headline 'review-PR playbook' value as a ready-made recipe instead of every user hand-rolling it.",
+      "problem": "AUDIT (skills lens, high): the strongest 'skills' use-cases named in the task (review-PR, fan-out-and-merge, triage-failures) have NO home — MCP prompts are an empty stub and there are no canned Command-board recipes. A connected agent has all the primitives (spawn_board, handoff_prompt, git_diff, wait_for_all, canvas://board/{id}/result) but no opinionated review recipe.",
+      "sketch": "SKILL.md description 'Run a two-agent review of the current branch on the Expanse canvas (one reviewer, one tester) and consolidate the findings. Trigger on review this PR / review my branch / get a second pair of eyes on the canvas.' Procedure: (1) read git_diff for the current terminal board (orchestrator-tier) OR instruct the user to run it from the Command board if the connected tier can't (git_diff is orchestrator-only — the skill states this and falls back to the agent's own `git diff` shell read for the connected case); (2) spawn a 'reviewer' worker and a 'tester' worker within cap; (3) handoff_prompt each a scoped instruction (reviewer: correctness/security; tester: run tests, report failures) — noting both raise human-confirm; (4) wait_for_all; (5) read each board's result and present a merged review (agreements, conflicts, blocking items) for the user's decision. Never auto-merges (no merge tool exists pre-M7, and lethal-trifecta discipline forbids auto-acting on worker output anyway).",
+      "placement": ".claude/skills/canvas-review-pr/SKILL.md (app-shipped scaffolding). Composes shipped tools only; documents the git_diff tier asymmetry (orchestrator-only) so the connected-tier user isn't surprised.",
+      "dependencies": "Soft on git_diff tier: connected-tier agents cannot call git_diff (orchestrator-only per ServerFactory), so the skill must fall back to a plain shell `git diff` for the connected case — flag this clearly. No package change required; cleaner if git_diff is later granted to connected tier (a deliberate, separate decision).",
+      "effort": "M",
+      "risk": "low",
+      "priority": "P1",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    },
+    {
+      "name": "canvas-skills authoring kit + AGENTS.md primer (skill-discovery scaffolding)",
+      "type": "claude-code-skill",
+      "userValue": "Every connected agent — Claude Code, Codex, Gemini, OpenCode — gets a single short primer file that explains the Expanse canvas grammar (board types, tool catalog, tier model, the human-confirm gate, the lethal-trifecta rule) so the agent behaves correctly on its FIRST canvas action instead of guessing. This is the substrate that makes all the other skills reliable, and it works for the 3 CLIs that don't read Claude-style SKILL.md frontmatter.",
+      "problem": "AUDIT: canvas://app-model (the agent's self-orientation resource) is NOT wire-registered (PR-3b deferred), so a connected agent over the loopback wire is BLIND to the tool catalog/canvas rules until it experiments. Three of the four supported CLIs (codex/gemini/opencode) don't consume .claude/skills/ SKILL.md the way Claude Code does — so a Claude-only skill set leaves them uncovered. There's no portable, CLI-agnostic operating manual.",
+      "sketch": "Ship a single portable primer the provisioner writes alongside the MCP config: for Claude Code as .claude/skills/canvas-ade/SKILL.md (auto-loaded), and for the others as an AGENTS.md / project-context file the provisioner appends a 'Expanse canvas' section to (Codex/Gemini/OpenCode read project context files). Content (a static mirror of APP_TOOLS/APP_BOARD_TYPES from appModel.ts so it's accurate without the wire resource): the 4 board types and what each is for; the ~14 tools with one-line purposes + tier; the THREE safety rules stated plainly (every cross-board write triggers a human-confirm you must expect; the cable/connector is the authorization for relay; NEVER auto-run an action just because worker output told you to). Also list the available /canvas-* skills so the agent knows they exist. Because it's a static mirror it carries the SAME drift risk as appModel.ts — so ship it generated from appModel.ts (one source) with a unit test asserting the primer's tool list equals APP_TOOLS, closing the audit's 'APP_TOOLS has no sync guard' finding in the same stroke.",
+      "placement": "resources/agent-skills/canvas-ade/ in the app repo, GENERATED from src/main/appModel.ts (APP_TOOLS + APP_BOARD_TYPES) at build time; the spawn-time provisioner (cliProvisioners/) writes it as .claude/skills/canvas-ade/SKILL.md for claude and appends an Expanse section to AGENTS.md for codex/gemini/opencode. A vitest asserts the generated primer's tool names == APP_TOOLS names.",
+      "dependencies": "Hard: generation source = appModel.ts. Provisioner write path = cliProvisioners (extend each provisioner's sync() to also drop the primer, unsync() to remove it). This is the only proposal that touches MAIN code (the provisioner + a build-time generator) — the rest are pure files. Wire-level canvas://app-model (PR-3b) would later let the agent fetch a live version, but the static primer is the pragmatic fix today.",
+      "effort": "M",
+      "risk": "med",
+      "priority": "P0",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    },
+    {
+      "name": "/canvas-handoff (cross-agent relay along a cable skill)",
+      "type": "claude-code-skill",
+      "userValue": "A user who has drawn an orchestration connector between two Terminal boards types '/canvas-handoff send my findings to the reviewer' and the connected agent relays a prompt to the cabled target agent correctly — teaching users the unique 'the cable IS the permission' model that is otherwise invisible and easy to get wrong (e.g. trying to relay to an un-cabled board and getting a confusing rejection).",
+      "problem": "AUDIT/ARCH: relay_prompt is shipped and is the product's signature agent-to-agent feature, but its authorization model (connected-tier callers must use their OWN board as source; the target must be reachable via an existing orchestration cable; there's a TOCTOU re-check) is subtle and undocumented for the user. Without a skill, users don't discover relay at all, or hit opaque 'not authorized' rejections when no cable exists.",
+      "sketch": "SKILL.md description 'Relay a prompt from this agent to another agent on the Expanse canvas along a connector you have drawn. Trigger on hand off to the other agent / relay this to <board> / send to the reviewer board.' Procedure: (1) read canvas://boards to resolve the target board by title; (2) check (by reading the canvas connector state the user describes, since the agent can't see cables directly) and TELL the user a directed orchestration cable from this board to the target must exist — if not, instruct them to draw one (Ctrl+K connect 2 selected boards, or drag a connector) because the cable is the authorization; (3) call relay_prompt with the caller's own board as source and the target id, noting the human-confirm modal will appear and that a TOCTOU re-check means deleting the cable mid-confirm safely cancels the relay; (4) confirm delivery. Pure guidance over the shipped relay_prompt tool; respects that browser content never reaches the PTY (relay is terminal->terminal only) and states it.",
+      "placement": ".claude/skills/canvas-handoff/SKILL.md (app-shipped scaffolding). Uses only the shipped relay_prompt tool + canvas://boards; encodes the canRelay/cable-authorization rules from orchestration/seam.ts as plain-language guidance.",
+      "dependencies": "None hard (relay_prompt + canvas://boards shipped, connected tier has relay scope). The agent cannot directly enumerate cables over MCP, so the skill leans on the user to confirm the connector exists — a known limitation worth stating; a future canvas://connectors resource would let the skill verify it itself.",
+      "effort": "S",
+      "risk": "low",
+      "priority": "P2",
+      "lens": "Claude-Code-style SKILLS / slash-commands (markdown skill files) that help a USER operate Canvas ADE + its MCP from their connected agent CLI. These are net-new: grep for 'skill' in src/ returns nothing and there is no .claude/skills/ or .claude/commands/ directory in the repo today. The lens treats \"skills\" as the Claude-Code interpretation (markdown SKILL.md files with a description + trigger + procedure that a connected-tier agent loads on demand) rather than MCP prompts (a separate package-side lens). Crucially, these skills fit the LOCKED architecture by design: they are pure agent-side guidance that drives the ALREADY-SHIPPED MCP tools/resources over the loopback wire (server name 'canvas-ade', endpoint http://127.0.0.1:<port>/mcp, bearer auth, port rotates on restart) — every risky write the skill triggers still pays the host-side runGatedWrite (sanitize + nonce + human-confirm + audit) and tier gating, so a skill can never weaken the security model. The opportunity is that the connected-tier agent today has the tool surface but NO operating manual: it must rediscover the canvas grammar, the consent/tier model, and safe orchestration patterns on every session. Skills are the lowest-risk, highest-leverage way to close that gap because they ship as files, require no package bump, and degrade gracefully (a missing skill just means the agent falls back to raw tools). The biggest dependency/risk theme: canvas://app-model and spawn_group are NOT yet wire-registered (PR-3b/PR-5c deferred), so any skill that needs self-orientation or one-shot zone spawn must either wait on those PRs or compose the three spawn_board calls manually — I flag this per proposal."
+    }
+  ],
+  "critiques": [
+    {
+      "verdicts": [
+        {
+          "name": "canvas://app-model (wire-register the existing resource)",
+          "verdict": "keep",
+          "reason": "Sound and high-leverage. describeApp() is implemented on the RunningMcp facade and e2e-proven. CAVEAT to the 'zero new MAIN code' claim: describeApp is NOT on the package's exported Orchestrator interface (verified dist/index.d.ts:195-285), so the package needs an interface method added + the app's orchestrator binding must expose it through that contract, not just the facade. Still S-effort. Read-only, loopback, no invariant risk. The drift-guard test is the right bundled ask.",
+          "priority": "P0",
+          "dupesWith": "overlaps the app-model halves of 'canvas-skills authoring kit' and 'canvas://app-model' findings across all 4 audit dimensions"
+        },
+        {
+          "name": "spawn_group (wire-register the existing tool)",
+          "verdict": "keep",
+          "reason": "Feasible; spawnGroup is fully implemented in mcpLifecycle.ts with atomic cap reservation. Same interface caveat as app-model (not on the Orchestrator contract yet). The bundled sanitizer fix is CORRECT and load-bearing — verified mcpLifecycle.ts:156 `c >= ' '` passes DEL(0x7F)/C1(0x80-0x9F) while dispatchSanitize.ts:43 correctly strips them. Fix MUST land before wiring or it inherits the hole. risk:med is right (group spawn = swarm growth); keep orchestrator-only.",
+          "priority": "P0",
+          "dupesWith": "set-up-feature-zone playbook depends on this; sanitizer fix duplicates the spawnGroup audit finding"
+        },
+        {
+          "name": "answer_permission (M8 — unblock a permission-prompted worker)",
+          "verdict": "keep",
+          "reason": "Architecturally correct and closes the real dead-scope asymmetry (SCOPE_ANSWER_PERMISSION verified minted at dist:1084/1091/1207 with no tool). Routing through runGatedWrite with UNCONDITIONAL human-confirm + TOCTOU recheck respects the lethal-trifecta invariant — never auto-answers from worker output. T8.1 prompt-heuristic is the only soft part (per-CLI fragility) but failing-closed to 'human notices' is safe. M4+M5 deps are shipped. Bump priority: this is the single highest user-value unblocked tool.",
+          "priority": "P1",
+          "dupesWith": "the 'remove SCOPE_ANSWER_PERMISSION until tool exists' audit finding is the inverse stopgap — pick this OR the removal, not both"
+        },
+        {
+          "name": "get_changed_files + canvas://board/{id}/diff (read-only, pre-commit)",
+          "verdict": "keep",
+          "reason": "Clean fit. Reuses shipped gitDiff.ts CappedSink + cwd resolution; strictly read-only (no git add/commit), so no M6 worktree dependency — correctly identified. parseDiffStat must be lifted from renderer lib to a MAIN-safe pure util (real but trivial). Powers the diff-coloring UX findings. No invariant risk.",
+          "priority": "P1",
+          "dupesWith": "feeds 'Diff coloring in TaskCard/Recap' and the review-pr/fan-out playbooks"
+        },
+        {
+          "name": "await_settled (wire-register + make event-driven)",
+          "verdict": "keep",
+          "reason": "Both halves valid. Verified awaitSettled busy-polls at SETTLE_POLL_MS=1000 (mcpOrchestrator.ts:723/754) while handoffPrompt is event-driven via subscribeStatus — the event-driven refactor is real and the pattern already exists to copy. Read-only (awaits, never writes) so no gate needed. Same Orchestrator-interface-add caveat for the wire half. Low risk, low effort.",
+          "priority": "P1",
+          "dupesWith": "none"
+        },
+        {
+          "name": "spawn_fanout + broadcast_prompt (best-of-N, M9 read-side first)",
+          "verdict": "keep",
+          "reason": "The read-side-first decomposition is the strongest insight in the set — correctly separates spawn+broadcast (needs only N cwds, no M6) from merge (needs M6). broadcast_prompt routing per-target through runGatedWrite with ONE confirm listing all N targets is sound and preserves the gate. Cap at 4 respected. Depends on spawn_group (P0). L-effort justified. Keep at P2 — it's the headline workflow but gated behind P0/P1 prerequisites.",
+          "priority": "P2",
+          "dupesWith": "heavily overlaps the 'fan-out-and-merge' playbook-skill and '/canvas-orchestrate' skill — these are the SAME workflow at three layers (tool / MCP-prompt / agent-skill); pick one delivery layer"
+        },
+        {
+          "name": "judge_outputs (LLM-judge over N candidate results, no auto-act)",
+          "verdict": "keep",
+          "reason": "Respects the invariant explicitly: strictly advisory, reads tainted worker output but NEVER promotes/merges/dispatches (the lethal-trifecta rule). Correctly routes through the app's own LLM egress (ADR 0003) NOT MCP sampling — accurately reflects the 2026-07-28 RC sampling-deprecation pivot. New boardJudge.ts placement is clean. Depends on fan-out (P2) so naturally later.",
+          "priority": "P2",
+          "dupesWith": "none"
+        },
+        {
+          "name": "canvas://tasks + claim_task (lightweight self-claiming task graph, M10 slice)",
+          "verdict": "revise",
+          "reason": "Feasible and the boardId-binding for claim (like write_result) is the right safety model. But this is the largest net-new surface (new taskStore.ts + 4 tools/resources + renderer view) for the least-validated user demand, and it overlaps the existing Command-board kanban conceptually. Revise to a thinner first cut or defer behind the fan-out/judge stack which delivers parallel-agent value sooner with less surface. L-effort, med-risk.",
+          "priority": "P2",
+          "dupesWith": "conceptually overlaps the human-driven Command-board kanban"
+        },
+        {
+          "name": "registerPrompts scaffold",
+          "verdict": "keep",
+          "reason": "Verified registerPrompts(_server){} is a literal no-op (dist:345) called at dist:891 — the hook is in place, only the body is empty. This is the correct foundation for the entire 'skills-as-MCP-prompts' interpretation. Must pass orchestrator+ctx and gate by tier server-side; pure render, never writes. P0 as the unblocker for all prompt-skills. Lowest-risk way to deliver the 'skills' ask in the native MCP primitive.",
+          "priority": "P0",
+          "dupesWith": "is the package-side substrate the entire 'MCP Prompts as skills' lens depends on"
+        },
+        {
+          "name": "review-pr",
+          "verdict": "keep",
+          "reason": "Sound playbook composing only shipped tools (git_diff/spawn_board/handoff_prompt/relay). Note git_diff is orchestrator-tier only (verified Orchestrator interface) so a prompt invoked at connected tier can't call it — the skill must state that. Pure render, no auto-act. Cheap.",
+          "priority": "P1",
+          "dupesWith": "DUPLICATE of '/canvas-review-pr' Claude-Code skill — same recipe, two delivery layers (MCP prompt vs SKILL.md); ship ONE"
+        },
+        {
+          "name": "triage-attention",
+          "verdict": "keep",
+          "reason": "Reads canvas://attention, classifies, proposes interrupt but explicitly never auto-fires on tainted output — invariant-safe. Ships the M5-T5.4 value (data feed exists, UI absent). Cheap. Good fit.",
+          "priority": "P1",
+          "dupesWith": "DUPLICATE of '/canvas-status' skill and overlaps the 'Attention Queue badge+panel' (renderer UI of the same data)"
+        },
+        {
+          "name": "fan-out-and-merge",
+          "verdict": "revise",
+          "reason": "Valid as a prompt but the name overpromises: no merge tool exists pre-M7 and lethal-trifecta forbids auto-merge — the sketch correctly says 'table to human, no merge', so rename to fan-out-and-COMPARE to avoid implying an unbuilt/forbidden capability. Otherwise sound composition of shipped tools.",
+          "priority": "P1",
+          "dupesWith": "DUPLICATE of spawn_fanout/broadcast_prompt (tool layer) and '/canvas-orchestrate' (skill layer) — same workflow three times"
+        },
+        {
+          "name": "sequential-handoff",
+          "verdict": "keep",
+          "reason": "Composes relay along an existing cable; correctly encodes CONNECTED source=caller boardId + canRelay (BUG-021 TOCTOU). Pure guidance. Low effort/risk.",
+          "priority": "P2",
+          "dupesWith": "DUPLICATE of '/canvas-handoff' skill"
+        },
+        {
+          "name": "set-up-feature-zone",
+          "verdict": "keep",
+          "reason": "Degrades gracefully: Phase-1 (3 spawn_board + Ctrl+G) works today, Phase-2 swaps to spawn_group when PR-5c lands. Honest about the dependency. Good fit.",
+          "priority": "P2",
+          "dupesWith": "depends on spawn_group P0"
+        },
+        {
+          "name": "recipe-picker",
+          "verdict": "keep",
+          "reason": "Renderer skillTemplates persisted to canvas.json as an additive field (ADR-0007 additive bump, no floor move) is architecturally correct. Pure renderer, uses the existing scene/session split discipline. Delivers user-facing 'recipes' interpretation. Reasonable.",
+          "priority": "P2",
+          "dupesWith": "DUPLICATE of 'Recipe launcher in SubmitWell' — same persisted-template concept, merge them"
+        },
+        {
+          "name": "e2e-probe",
+          "verdict": "keep",
+          "reason": "Required regression coverage for prompts/list tier-correctness — asserts orch sees all, connected a subset, worker none. Standard @mcp e2e pattern against the real app. Should ship with the first prompt.",
+          "priority": "P1",
+          "dupesWith": "none"
+        },
+        {
+          "name": "Orchestration palette section (Ctrl+K)",
+          "verdict": "keep",
+          "reason": "Verified SECTION_ORDER has no Orchestration entry (commandRegistry.ts:16-23) and the placeholder comment exists (line 11). All verbs route to already-gated MAIN paths or read-only resources; interrupt-all still pays per-call gates. Pure renderer, S-effort, closes a real top-risk discoverability gap. Clear P0.",
+          "priority": "P0",
+          "dupesWith": "overlaps 'Canonical audit shortcut' (both add the audit verb) — bundle into one Orchestration-section PR"
+        },
+        {
+          "name": "Canonical audit shortcut",
+          "verdict": "keep",
+          "reason": "Verified Ctrl+Shift+A self-registers in AuditLogViewer.tsx and is absent from SHORTCUT_ROWS — a trust-critical surface invisible to the ? sheet and Ctrl+K. Moving it into the canonical keymap (drift-guarded) is the right fix. Trivial.",
+          "priority": "P0",
+          "dupesWith": "bundle with 'Orchestration palette section' — same PR, shared openAuditLog verb"
+        },
+        {
+          "name": "Attention Queue badge+panel",
+          "verdict": "keep",
+          "reason": "forwardBoardStatus/attention feed is live and unconsumed (M5-T5.4 UI gap). Read-only chrome badge + jump panel, no gating concern. 'blocked' bucket needs M8 to populate but 'failed' works today — correctly noted. Renderer-only, M-effort.",
+          "priority": "P1",
+          "dupesWith": "renderer twin of the 'triage-attention'/'canvas-status' skills (same data, different surface) — complementary, not redundant"
+        },
+        {
+          "name": "Recipe launcher in SubmitWell",
+          "verdict": "keep",
+          "reason": "Built-in recipe chips pre-filling text+chips+config, persisted to canvas.json (additive, ADR 0007). Gated dispatch pipeline unchanged. Directly addresses the 'every dispatch starts blank / lastWorkerConfig ephemeral' findings. Sound.",
+          "priority": "P1",
+          "dupesWith": "DUPLICATE of 'recipe-picker' — same persisted-template feature; ship as one"
+        },
+        {
+          "name": "Test-connection after Sync",
+          "verdict": "keep",
+          "reason": "New frame-guarded orchestration:ping IPC → MAIN invokes the shipped orchestrator_ping tool; token never crosses to renderer (correct — preserves the no-token-in-renderer invariant). Read-only. Closes the 'no verify-it-works' top UX risk. S-effort.",
+          "priority": "P1",
+          "dupesWith": "overlaps the '/canvas-connect' skill's verify step (agent-side) — different actors (in-app button vs agent), keep both"
+        },
+        {
+          "name": "Cancel queued task on TaskCard",
+          "verdict": "keep",
+          "reason": "discardTask in commandStore frees the cap slot; no board spawned yet so no MAIN call/gate/audit needed — correct analysis. Pure renderer, fills a real removal-path gap. Trivial.",
+          "priority": "P1",
+          "dupesWith": "none"
+        },
+        {
+          "name": "Diff coloring in TaskCard/Recap",
+          "verdict": "keep",
+          "reason": "~15-line pure span-coloring helper, functional color only (matches design tokens, no library). Presentation-only, no dependency. Pairs with get_changed_files for grouping later. Easy win.",
+          "priority": "P2",
+          "dupesWith": "synergy with get_changed_files (structured shape for per-file grouping)"
+        },
+        {
+          "name": "Empty Command board orch-state guard",
+          "verdict": "keep",
+          "reason": "Reads orchestrationStore.enabled (already imported in SettingsModal), shows explanation + Enable button when off. Pure renderer, closes the 'cryptic MAIN failure on first dispatch' low finding. Trivial.",
+          "priority": "P2",
+          "dupesWith": "none"
+        },
+        {
+          "name": "/canvas-connect (orchestration onboarding + connection-verify skill)",
+          "verdict": "keep",
+          "reason": "Pure agent-side guidance over shipped ping + canvas://boards; no new IPC/tools. Correctly notes the port rotates on restart (a real failure mode). Must pin wording to SERVER_NAME='canvas-ade' + mcpUrl() from cliProvisioners/shared.ts to avoid drift. Lowest-risk highest-onboarding-value skill. Delivery: file-shipped, degrades gracefully.",
+          "priority": "P0",
+          "dupesWith": "complements (not dup) the in-app 'Test-connection after Sync' — agent vs UI actor"
+        },
+        {
+          "name": "/canvas-orchestrate (safe swarm dispatch playbook skill)",
+          "verdict": "keep",
+          "reason": "Composes connected-tier scopes that are actually granted (spawn+dispatch per defaultScopesFor('connected')). Explicitly clamps N to free cap slots, uses event-driven wait_for_all (no busy-poll), never auto-acts on output. Honest that spawn_group is unwired pre-PR-5c. Strong fit. But this is the SAME fan-out workflow as the tool-layer and prompt-layer proposals.",
+          "priority": "P1",
+          "dupesWith": "DUPLICATE workflow with spawn_fanout/broadcast_prompt (tool) + fan-out-and-merge (prompt) — choose the delivery layer; I'd lead with the SKILL since it ships as a file with no package bump"
+        },
+        {
+          "name": "/canvas-status (swarm attention + triage skill)",
+          "verdict": "keep",
+          "reason": "Read-mostly over shipped canvas://attention + board-states + output/result; one write (interrupt) uses the gated tool. Honest that blocked/awaiting-review need M8. Good monitoring complement. Cheap.",
+          "priority": "P1",
+          "dupesWith": "DUPLICATE of 'triage-attention' MCP-prompt; complements 'Attention Queue badge+panel' (UI twin)"
+        },
+        {
+          "name": "/canvas-revoke (disconnect + stale-token cleanup skill)",
+          "verdict": "revise",
+          "reason": "Addresses a REAL security gap (provisionedDirs is in-memory → stale bearer tokens survive restart+revoke, verified cliProvisioners/index.ts:168). BUT a skill is the wrong primary fix — it depends on the user remembering to run it and on the skill staying byte-aligned with four provisioner file formats (drift risk flagged correctly). Revise: ship as a SECONDARY aid to the actual fix (persist provisionedDirs to userData). risk:med is right — instructing an agent to edit credential files is delicate. Don't let this substitute for the host-side persistence fix.",
+          "priority": "P1",
+          "dupesWith": "must not replace the 'persist provisionedDirs' audit recommendation — that's the primary fix"
+        },
+        {
+          "name": "/canvas-plan (write structured plan to a Planning board skill)",
+          "verdict": "keep",
+          "reason": "Uses shipped add_planning_elements (consent+confirm gated, full content shown). Caps must cite mcpPlanning.ts constants so skill text and host validator agree (correctly flagged). Handles the planningWriteEnabled gated-off path gracefully. Gets agent reasoning onto the spatial canvas — the product differentiator. Good.",
+          "priority": "P1",
+          "dupesWith": "none"
+        },
+        {
+          "name": "/canvas-review-pr (multi-agent PR review recipe skill)",
+          "verdict": "keep",
+          "reason": "Correctly documents the git_diff orchestrator-tier asymmetry (verified) and falls back to plain shell `git diff` for the connected case. Composes shipped tools, never auto-merges. Headline skill value.",
+          "priority": "P1",
+          "dupesWith": "DUPLICATE of 'review-pr' MCP-prompt — same recipe two layers; pick the SKILL (no package bump)"
+        },
+        {
+          "name": "canvas-skills authoring kit + AGENTS.md primer (skill-discovery scaffolding)",
+          "verdict": "keep",
+          "reason": "The most strategically important skill proposal: it's the substrate that makes all other skills reliable and covers the 3 non-Claude CLIs (codex/gemini/opencode) that don't read SKILL.md. GENERATING the primer from appModel.ts (one source) + a unit test asserting primer.tools==APP_TOOLS elegantly closes the APP_TOOLS drift-guard finding in the same stroke. This is the only skill touching MAIN code (provisioner sync()/unsync() extension) — risk:med is right. Keep at P0.",
+          "priority": "P0",
+          "dupesWith": "absorbs the APP_TOOLS drift-guard finding; overlaps app-model (static mirror vs live wire resource — ship both, primer is the today-fix)"
+        },
+        {
+          "name": "/canvas-handoff (cross-agent relay along a cable skill)",
+          "verdict": "keep",
+          "reason": "Encodes the canRelay/cable-as-authorization model (orchestration/seam.ts) as plain guidance; respects terminal->terminal-only (browser content never reaches PTY). Honest limitation: the agent can't enumerate cables over MCP so it leans on the user — a future canvas://connectors resource would close that. Sound.",
+          "priority": "P2",
+          "dupesWith": "DUPLICATE of 'sequential-handoff' MCP-prompt"
+        }
+      ],
+      "crossCutting": [
+        "FEASIBILITY VERDICT: nothing here violates a locked invariant. Every write proposal correctly routes through runGatedWrite (sanitize->CSPRNG nonce->human-confirm->TOCTOU recheck->audit), keeps loopback-only, never hands a token to the renderer, and never auto-acts on tainted worker output. The judge_outputs and all fan-out/triage proposals explicitly preserve the lethal-trifecta rule (read tainted output, present to human, never auto-trigger). This is a well-disciplined set.",
+        "CORRECTION TO A REPEATED CLAIM: the 'zero new MAIN code' framing for app-model/spawn_group/await_settled is slightly wrong. Verified against dist/index.d.ts:195-285 — the package's exported Orchestrator INTERFACE does NOT contain describeApp/spawnGroup/awaitSettled (they live only on the app's private RunningMcp facade for the CANVAS_E2E seam). Wire-registering each requires THREE coordinated edits, not one: (1) add the method to the package's Orchestrator interface, (2) bind it in the app's buildOrchestrator, (3) register the tool/resource in the package ServerFactory. Still S/M effort each, but it's a sibling-package bump + an app bump in lockstep, not a pure package change. Sequence the package release first.",
+        "THE DOMINANT THEME IS MASSIVE TRIPLE-DUPLICATION ACROSS DELIVERY LAYERS. The same ~4 workflows each appear as (a) an agent-facing MCP TOOL, (b) an MCP PROMPT, and (c) a Claude-Code SKILL.md: fan-out/best-of-N (spawn_fanout+broadcast_prompt / fan-out-and-merge / canvas-orchestrate); review-PR (review-pr prompt / canvas-review-pr skill); triage-attention (triage-attention prompt / canvas-status skill / Attention Queue panel); handoff (sequential-handoff prompt / canvas-handoff skill); recipes (recipe-picker / Recipe launcher in SubmitWell). DECIDE THE DELIVERY LAYER ONCE. Recommendation: lead each workflow with the Claude-Code SKILL.md (ships as a file, no package bump, degrades gracefully, covers connected-tier today) and add the MCP-prompt version only after registerPrompts is built and only where cross-CLI prompts/list discovery adds value. Do NOT build all three for any single workflow.",
+        "HIGHEST-LEVERAGE SEQUENCING (P0 foundation first): 1) Land the two pure-renderer discoverability wins together (Orchestration palette section + canonical audit shortcut) — trivial, closes top UX risks, no deps. 2) Ship the spawnGroup sanitizer fix (mcpLifecycle.ts:156) immediately — it's a live terminal-escape-injection hole independent of any wiring. 3) Build the canvas-skills authoring kit + appModel.ts drift-guard — it's the substrate every skill depends on AND fixes the catalog-drift finding. 4) Ship the first-tier skills (canvas-connect, canvas-orchestrate, canvas-status, canvas-plan) — files only, no package bump, deliver the 'skills' ask today. 5) Then the package bump batch: app-model + spawn_group + await_settled (event-driven) + registerPrompts scaffold + write_result .max() caps + the e2e-probe, as ONE coordinated release. 6) answer_permission (M8) as the next net-new tool. 7) get_changed_files+diff resource -> diff coloring. 8) fan-out read-side + judge as the headline workflow once prerequisites land.",
+        "A HIGH-VALUE IDEA THE DESIGNERS UNDER-WEIGHTED: a read-only canvas://connectors resource. Multiple skills (canvas-handoff, sequential-handoff) and the cable-authorization model are crippled because an agent CANNOT enumerate the orchestration cables it's allowed to relay along — it has to ask the user 'did you draw a cable?'. A tiny read-only resource exposing the directed connector set (terminal->terminal edges) would make relay self-verifiable, let canvas-handoff confirm authorization before attempting, and is strictly read-only/loopback with zero invariant risk. It also unblocks a cleaner canvas-orchestrate. This is a smaller, higher-leverage package addition than the task-graph (canvas://tasks) and should outrank it.",
+        "SECURITY FIXES THAT ARE NOT OPTIONAL AND SHOULDN'T BE DRESSED AS FEATURES: (a) the spawnGroup C1/DEL sanitizer hole (bundled into spawn_group P0 — make sure it lands even if wiring slips); (b) persist provisionedDirs to userData (the /canvas-revoke skill is a band-aid, NOT the fix — a stale 365-day bearer token on disk surviving consent-revoke is the real gap); (c) the McpCommandIn/PlanningOp/AuditEntry hand-maintained cross-bundle mirrors — extract to a shared types module BEFORE adding new McpCommand variants for any skill/recipe dispatch, or the next variant silently breaks the renderer at runtime. (d) write_result .max() Zod caps at the protocol layer. Fold (a)(c)(d) into the package/spawn-group work; (b) is a standalone MAIN fix that should precede shipping more connected-tier provisioning surface.",
+        "DECISIVE PRIORITY CUTS: canvas://tasks+claim_task (revise/defer — largest net-new surface, least-validated demand, overlaps the existing kanban; the connectors resource is a better use of the same package-bump budget). Of the triple-duplicated workflows, DROP the redundant layers: keep canvas-review-pr SKILL over review-pr prompt; keep canvas-handoff SKILL over sequential-handoff prompt; keep canvas-orchestrate SKILL as the primary, with spawn_fanout/broadcast_prompt as the tool-layer it calls (those ARE needed as the underlying capability, but fan-out-and-merge the PROMPT is redundant and mis-named). Merge recipe-picker + Recipe-launcher into one persisted-template feature."
+      ]
+    },
+    {
+      "verdicts": [
+        {
+          "name": "canvas://app-model (wire-register the existing resource)",
+          "verdict": "keep",
+          "priority": "P0",
+          "reason": "Real, high value and near-zero cost: MAIN-complete + e2e-proven, only package registration missing. Unblocks agent self-orientation that ~half the skill proposals depend on. The bundled drift-guard test (APP_TOOLS ⊆ live tools) also closes a separate audit finding. Must-build keystone.",
+          "dupesWith": "canvas-skills authoring kit (static mirror is the fallback for this); cross-referenced by every skill proposal as a dependency"
+        },
+        {
+          "name": "spawn_group (wire-register the existing tool)",
+          "verdict": "keep",
+          "priority": "P0",
+          "reason": "MAIN-complete + e2e-proven; only registration missing. BUT the sanitizer fix (line 156 c>='' passes DEL/C1) is the real load-bearing work and is verified-correct — it must ship REGARDLESS of wiring since the Command board already drives spawnGroup over IPC today with the weak filter. Bundle the fix; wiring is cheap follow-on.",
+          "dupesWith": "set-up-feature-zone skill depends on this; sanitizer fix overlaps the correctness audit finding"
+        },
+        {
+          "name": "answer_permission (M8 — unblock a permission-prompted worker)",
+          "verdict": "keep",
+          "priority": "P1",
+          "reason": "Genuine top-real-world-stall problem; closes the dead-scope asymmetry (SCOPE_ANSWER_PERMISSION granted to every token with no tool — a real implicit-pre-auth risk) AND unlocks the blocked/awaiting-review buckets that 3 other proposals want. Detection heuristic (T8.1) is the risk; start Claude-only. Net-new but well-scoped.",
+          "dupesWith": "unblocks Attention Queue badge + /canvas-status which note dependency on it"
+        },
+        {
+          "name": "get_changed_files + canvas://board/{id}/diff (read-only, pre-commit)",
+          "verdict": "revise",
+          "priority": "P2",
+          "reason": "Read-only, no M6 dependency, reuses shipped gitDiff+parseDiffStat — sound. But user value is thinner than billed: the structured list mainly powers a NICER diff panel (a P2 UX nicety) and a future fan-out compare. Demote to P2 and scope to just the structured tool; defer the duplicate canvas://board/{id}/diff resource (git_diff already returns raw text).",
+          "dupesWith": "Diff coloring in TaskCard (the renderer half this enables); judge_outputs/spawn_fanout consume it"
+        },
+        {
+          "name": "await_settled (wire-register + make event-driven)",
+          "verdict": "revise",
+          "priority": "P2",
+          "reason": "Two unrelated things stapled together. The event-driven refactor is a legit low-value perf cleanup (4 timer wakes/sec — trivial at cap=4). The wire-registration adds a tool agents rarely need (handoff_prompt/wait_for_all already cover the wait case). Keep ONLY the poll→event refactor as a P2 hygiene item; drop the wire-register half as unjustified surface.",
+          "dupesWith": ""
+        },
+        {
+          "name": "spawn_fanout + broadcast_prompt (best-of-N, M9 read-side first)",
+          "verdict": "revise",
+          "priority": "P2",
+          "reason": "Headline product workflow and the read-side genuinely doesn't need M6 — real. But it is LARGE net-new surface and is better delivered FIRST as an MCP-prompt 'fan-out-and-merge' playbook (composes existing spawn_board + wait_for_all) to validate demand before minting two new gated tools. Revise: ship the playbook version first; promote to dedicated tools only if the playbook proves the pattern.",
+          "dupesWith": "fan-out-and-merge skill, /canvas-orchestrate skill — all three are the SAME workflow at different layers"
+        },
+        {
+          "name": "judge_outputs (LLM-judge over N candidate results, no auto-act)",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "Speculative and downstream of two unbuilt things (fan-out + get_changed_files). Adds a brand-new LLM-egress path and a boardJudge.ts for a workflow no user has yet. Classic over-build-ahead-of-demand. The human reading N diffs is fine for v1. Revisit only after fan-out ships and users actually ask for ranking.",
+          "dupesWith": "depends on spawn_fanout + get_changed_files"
+        },
+        {
+          "name": "canvas://tasks + claim_task (lightweight self-claiming task graph, M10 slice)",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "L-effort net-new MAIN subsystem (taskStore.ts + 4 tools/resources) for a self-claiming worker pool — pure M10 speculation with no evidence of demand at single-user desktop scale. The Command board kanban already covers human task assignment. Premature; defer to M10 proper.",
+          "dupesWith": ""
+        },
+        {
+          "name": "registerPrompts scaffold",
+          "verdict": "keep",
+          "priority": "P0",
+          "reason": "Verified: registerPrompts is a literal empty stub called in ServerFactory. This is the ONE foundational enabler for the entire 'MCP-prompts-as-skills' interpretation — the hook exists, only the body is missing. Low risk (read-only, tier-gated, never writes). Build this before any individual playbook.",
+          "dupesWith": "prerequisite for review-pr, triage-attention, fan-out-and-merge, sequential-handoff, set-up-feature-zone"
+        },
+        {
+          "name": "review-pr",
+          "verdict": "revise",
+          "priority": "P1",
+          "reason": "Strong, concrete recipe with real user value. But it duplicates /canvas-review-pr (Claude-Code-skill lens) almost exactly. Pick ONE delivery layer. Recommend the MCP-prompt version (agent-agnostic, works for all 4 CLIs, lives in the package) over the .claude-only skill file. Keep as the flagship first playbook on top of registerPrompts.",
+          "dupesWith": "/canvas-review-pr (same recipe, different layer) — DEDUPE to one"
+        },
+        {
+          "name": "triage-attention",
+          "verdict": "revise",
+          "priority": "P2",
+          "reason": "Useful but largely duplicates /canvas-status (skill lens) and overlaps the Attention Queue UI. Triage value is thin until M8 emits blocked/awaiting-review (today only 'failed' + idle exist). Fold into the prompts pack as a thin second playbook; don't build standalone. Demote to P2 pending M8.",
+          "dupesWith": "/canvas-status, Attention Queue badge+panel"
+        },
+        {
+          "name": "fan-out-and-merge",
+          "verdict": "keep",
+          "priority": "P1",
+          "reason": "This is the RIGHT layer for the best-of-N workflow — a registerPrompts playbook composing shipped tools, no new gated surface, no M6. It subsumes spawn_fanout/broadcast_prompt/judge_outputs as a single recipe and is the de-facto v1 of the headline parallel-agents feature. Keep as the second flagship playbook.",
+          "dupesWith": "spawn_fanout+broadcast_prompt, judge_outputs, /canvas-orchestrate — this playbook is the lean substitute for all three"
+        },
+        {
+          "name": "sequential-handoff",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "Thin: relay along an existing cable is already a 2-tool sequence the agent handles, and it duplicates /canvas-handoff. The 'guided choreography' adds little over the raw tools. Cut from the first prompts pack; the cable-authorization teaching belongs in the primer (canvas-skills kit), not a dedicated playbook.",
+          "dupesWith": "/canvas-handoff (same concept)"
+        },
+        {
+          "name": "set-up-feature-zone",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "Once spawn_group is wire-registered (P0 above), 'set up a feature zone' is a SINGLE tool call — a playbook to wrap one call is redundant. Pre-spawn_group it's a 3-call sequence the primer can document. No standalone playbook warranted.",
+          "dupesWith": "spawn_group, /canvas-orchestrate"
+        },
+        {
+          "name": "recipe-picker",
+          "verdict": "revise",
+          "priority": "P2",
+          "reason": "Overlaps 'Recipe launcher in SubmitWell' almost exactly (both = persisted canned dispatch templates). Collapse the two into ONE renderer feature. Real but second-order value; demote to P2 and build only after the orchestration palette/discoverability basics land.",
+          "dupesWith": "Recipe launcher in SubmitWell (SAME feature)"
+        },
+        {
+          "name": "e2e-probe",
+          "verdict": "keep",
+          "priority": "P1",
+          "reason": "Tier-correctness regression test for prompts/list is cheap and exactly the kind of guard the roadmap's per-task card mandates. Ships with registerPrompts + first playbook. Necessary insurance, not gold-plating.",
+          "dupesWith": "overlaps the broader 'no e2e for onboarding flow' audit finding"
+        },
+        {
+          "name": "Orchestration palette section (Ctrl+K)",
+          "verdict": "keep",
+          "priority": "P0",
+          "reason": "Verified: placeholder comment present, no Orchestration section exists. Highest-leverage discoverability fix — today there is NO keyboard path to enable orchestration, open Command board, or view audit. Pure renderer, routes to gated paths. Cheap, foundational, fixes a lost-user scenario. Must-build.",
+          "dupesWith": "Canonical audit shortcut (audit-log verb is one entry in this section) — MERGE into one PR"
+        },
+        {
+          "name": "Canonical audit shortcut",
+          "verdict": "revise",
+          "priority": "P0",
+          "reason": "Real gap (Ctrl+Shift+A is a self-registered listener invisible to ?-sheet and palette — trust-critical surface hidden). But it is a subset of the Orchestration palette section work. Revise: merge into that single PR rather than ship separately; keep the keymap-canonicalization detail (drop the self-listener, add SHORTCUT_ROWS row).",
+          "dupesWith": "Orchestration palette section (Ctrl+K) — same PR"
+        },
+        {
+          "name": "Attention Queue badge+panel",
+          "verdict": "keep",
+          "priority": "P1",
+          "reason": "M5-T5.4 data shipped but UI absent — a real swarm-usability gap. Read-only, renderer-only, reuses boardStatus buckets. Caveat correctly noted: only 'failed'/idle populate until M8. Worth building now for failed-board surfacing; richens with answer_permission. Keep at P1.",
+          "dupesWith": "/canvas-status (conversational version of same data); triage-attention"
+        },
+        {
+          "name": "Recipe launcher in SubmitWell",
+          "verdict": "keep",
+          "priority": "P1",
+          "reason": "This is the strongest 'skills for humans' interpretation: persisted canned dispatch templates (Review PR/Implement/Test/Debug) pre-filling the well. Real recurring-friction fix (lastWorkerConfig is ephemeral, resets every restart). Renderer-only, additive canvas.json field. Absorbs recipe-picker. Keep as the human-facing skills primitive.",
+          "dupesWith": "recipe-picker (same feature, merge)"
+        },
+        {
+          "name": "Test-connection after Sync",
+          "verdict": "keep",
+          "priority": "P1",
+          "reason": "Closes a verified top UX risk: after Sync the user has ZERO signal the server is reachable, and the port rotates on restart so stale config silently breaks. A ping button is small, frame-guarded, token-never-crosses, read-only. High trust-building value for low cost. Keep.",
+          "dupesWith": "/canvas-connect skill (agent-side version of the same verify-it-works need)"
+        },
+        {
+          "name": "Cancel queued task on TaskCard",
+          "verdict": "keep",
+          "priority": "P2",
+          "reason": "Verified-real small gap: a configured-but-queued task has no removal control short of deleting the whole board. One-button discardTask, no gating (nothing spawned yet), frees a cap slot. Cheap correctness/UX fix. Keep at P2.",
+          "dupesWith": ""
+        },
+        {
+          "name": "Diff coloring in TaskCard/Recap",
+          "verdict": "keep",
+          "priority": "P2",
+          "reason": "~15-line pure presentation helper (+green/-red/@@ accent) on the existing pre block — the primary result artifact is currently an unreadable monochrome wall. Trivially cheap, clear value, no deps. Keep at P2. Pairs with get_changed_files for file grouping later.",
+          "dupesWith": "get_changed_files (the structured-list half enables per-file grouping)"
+        },
+        {
+          "name": "Empty Command board orch-state guard",
+          "verdict": "revise",
+          "priority": "P2",
+          "reason": "Real but minor: telling the user orchestration is off + an Enable button. Largely subsumed once the Orchestration palette section + onboarding discoverability land. Keep as a small renderer polish but fold into the palette/discoverability PR rather than a standalone effort.",
+          "dupesWith": "Orchestration palette section, OrchestrationConsentModal reachability finding"
+        },
+        {
+          "name": "/canvas-connect (orchestration onboarding + connection-verify skill)",
+          "verdict": "revise",
+          "priority": "P1",
+          "reason": "Genuine value (guided connect + ping proof-of-life) but it is a Claude-Code-only .md file duplicating the in-app Test-connection affordance. Revise: ship as ONE primer-bundled section (part of the canvas-skills kit) rather than a standalone skill, and lean on the in-app ping button for the human path. Don't maintain a 4th separate file.",
+          "dupesWith": "Test-connection after Sync, canvas-skills authoring kit"
+        },
+        {
+          "name": "/canvas-orchestrate (safe swarm dispatch playbook skill)",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "Triplicates fan-out-and-merge (prompt playbook) and spawn_fanout (tool) — the SAME workflow at a third layer. Claude-Code-skill-only delivery is the weakest of the three (doesn't reach codex/gemini/opencode). Drop in favor of the MCP-prompt fan-out-and-merge playbook which is agent-agnostic.",
+          "dupesWith": "fan-out-and-merge, spawn_fanout+broadcast_prompt — pick the prompt-playbook layer"
+        },
+        {
+          "name": "/canvas-status (swarm attention + triage skill)",
+          "verdict": "revise",
+          "priority": "P2",
+          "reason": "Conversational triage over canvas://attention — useful but duplicates Attention Queue badge+panel (the in-app version) and triage-attention (the prompt version). Thin until M8. Revise: fold into the canvas-skills primer as a documented usage pattern, not a standalone skill file. The in-app badge is the higher-value delivery.",
+          "dupesWith": "Attention Queue badge+panel, triage-attention"
+        },
+        {
+          "name": "/canvas-revoke (disconnect + stale-token cleanup skill)",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "Treats a real security gap (provisionedDirs ephemeral → stale on-disk tokens survive revoke) with the WRONG fix: an agent-driven file-scanner skill is fragile, must track 4 config formats, and edits user files. The correct fix is the app-side persistence of provisionedDirs (an audit finding). Build the MAIN fix; drop the skill band-aid.",
+          "dupesWith": "provisionedDirs persistence (the real fix lives in MAIN, not a skill)"
+        },
+        {
+          "name": "/canvas-plan (write structured plan to a Planning board skill)",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "add_planning_elements already ships and is consent-gated; this skill just narrates the caps. Low incremental value, Claude-only delivery, and the caps/usage belong in the primer not a dedicated skill. The canvas-skills kit covers the 'agent knows planning-write exists' need.",
+          "dupesWith": "canvas-skills authoring kit (primer covers tool awareness)"
+        },
+        {
+          "name": "/canvas-review-pr (multi-agent PR review recipe skill)",
+          "verdict": "drop",
+          "priority": "P1",
+          "reason": "Duplicate of the review-pr MCP prompt. The prompt-layer version is strictly better (agent-agnostic, in-package, tier-gated). Drop the Claude-only skill-file twin; keep review-pr as the prompt.",
+          "dupesWith": "review-pr (same recipe — keep the prompt version)"
+        },
+        {
+          "name": "canvas-skills authoring kit + AGENTS.md primer (skill-discovery scaffolding)",
+          "verdict": "keep",
+          "priority": "P0",
+          "reason": "The sleeper must-build. A single CLI-agnostic primer (generated from appModel.ts, drift-guarded by test) gives all 4 CLIs the operating manual + the three safety rules + lists the available recipes. It's the substrate that makes every other skill/playbook reliable, and it doubles as the static fallback for canvas://app-model. Touches provisioner (its one MAIN cost) but is the highest-leverage skills item.",
+          "dupesWith": "canvas://app-model (this is its static mirror); subsumes /canvas-plan, /canvas-status, /canvas-handoff, /canvas-connect as documented patterns"
+        },
+        {
+          "name": "/canvas-handoff (cross-agent relay along a cable skill)",
+          "verdict": "drop",
+          "priority": "P2",
+          "reason": "Thin and limited: the agent can't even enumerate cables over MCP so it leans on the user to confirm the connector — weak. The cable-is-authorization teaching belongs in the primer. Duplicates sequential-handoff. Drop; document the relay model in the canvas-skills kit instead.",
+          "dupesWith": "sequential-handoff, canvas-skills authoring kit"
+        }
+      ],
+      "crossCutting": [
+        "DUPLICATE EXPLOSION is the dominant pattern: the 30 candidates collapse to ~6 real underlying gaps, each proposed 3-4x across the function/prompt/skill/palette lenses. (1) best-of-N fan-out = spawn_fanout+broadcast_prompt + judge_outputs + fan-out-and-merge + /canvas-orchestrate (5 proposals, 1 workflow). (2) PR review = review-pr + /canvas-review-pr (2). (3) attention triage = triage-attention + /canvas-status + Attention Queue badge (3). (4) agent self-orientation = canvas://app-model + canvas-skills primer (2, complementary). (5) canned dispatch templates = recipe-picker + Recipe launcher in SubmitWell (2). (6) connection-verify = Test-connection after Sync + /canvas-connect (2). Force one delivery LAYER per gap.",
+        "LAYER-SELECTION RULE that resolves most dupes: for agent-facing recipes prefer MCP PROMPTS (registerPrompts) over Claude-Code .md skill files, because prompts are agent-agnostic (reach all 4 CLIs codex/gemini/opencode/claude) and live in the package, whereas SKILL.md is Claude-Code-only. The entire 'claude-code-skill' lens is the weakest delivery vehicle here — only canvas-skills-primer (which explicitly handles the non-Claude CLIs via AGENTS.md) survives that lens; the rest should be prompts or in-app UI.",
+        "THE GENUINE MUST-BUILD FEW (P0): (a) registerPrompts scaffold — the one foundational enabler verified as an empty stub; (b) canvas://app-model wire-register + its drift-guard test; (c) spawn_group wire-register WITH the verified sanitizer fix (line 156 c>=' ' passes DEL/0x7F + C1 0x80-0x9F — must ship regardless of wiring since the Command board drives it today); (d) Orchestration Ctrl+K palette section + canonical audit shortcut (merged) — fixes a verified lost-user scenario; (e) canvas-skills primer (the operating-manual substrate). Everything else is P1/P2 or drop.",
+        "SECURITY FINDINGS THAT SHOULD RIDE ALONG (not in the proposal set as features but verified and cheap): the configureBoard deny-path mislabel ('rejected' at line 503-504 vs correct 'denied' at line 309) is a one-word forensic-integrity fix; the spawnGroup sanitizer is the real work inside the spawn_group proposal; the write_result Zod .max() caps and provisionedDirs persistence are MAIN/package hardening that the /canvas-revoke skill wrongly tries to band-aid — build the real fixes, drop the skill.",
+        "MISSED IDEA: a canvas://connectors read-only resource. Multiple proposals (/canvas-handoff, sequential-handoff) hit the same wall — an agent cannot enumerate orchestration cables over MCP, so it must ask the user whether a cable exists. A tiny read-only canvas://connectors resource would let relay-capable agents self-verify authorization before calling relay_prompt, making the entire handoff/relay surface actually usable by agents. Cheaper and more enabling than any of the handoff skills proposed.",
+        "MISSED IDEA: extract the shared McpCommand/PlanningOp/AuditEntry types into src/shared/ — flagged as 'med' in 3 of 4 audit dimensions as the most fragile structural coupling (hand-maintained cross-bundle mirrors, no compile-time safety) and it directly threatens EVERY proposal that adds a new McpCommand variant for skill/recipe dispatch. This is invisible-but-load-bearing infrastructure that should precede the recipe/template work.",
+        "RECOMMENDED SEQUENCING: Wave 1 (P0 foundation, parallelizable): registerPrompts scaffold + e2e-probe; canvas://app-model wire + drift test; spawn_group sanitizer-fix-then-wire; src/shared/ type extraction (de-risks everything downstream); Orchestration palette section + audit shortcut. Wave 2 (P0/P1 substrate + first value): canvas-skills primer (depends on app-model/spawn_group landing for accurate content); review-pr + fan-out-and-merge as the two flagship prompt playbooks; Test-connection button; Recipe launcher in SubmitWell. Wave 3 (P1): answer_permission/M8 (Claude-only detection first) → then Attention Queue badge richens; Cancel-queued + Diff-coloring polish. Defer/drop: judge_outputs, canvas://tasks, all the duplicate .md skills, sequential/handoff playbooks.",
+        "ANTI-OVERBUILD VERDICT: the function-lens proposals trend toward minting new gated tools (judge_outputs, canvas://tasks, spawn_fanout, await_settled wire) ahead of demonstrated demand at SINGLE-USER DESKTOP scale. The product's own architecture already lets a prompt-playbook compose shipped tools to deliver the same workflow with zero new attack surface. Prefer playbooks-over-tools until a playbook proves a pattern is hot enough to deserve its own first-class tool."
+      ]
+    }
+  ]
+}
