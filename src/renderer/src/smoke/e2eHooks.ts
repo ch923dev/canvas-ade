@@ -170,6 +170,8 @@ export interface CanvasE2E {
   terminalMounted: (id: string) => boolean
   /** The live xterm font size for a terminal board (px), or undefined if not mounted. */
   terminalFontSize: (id: string) => number | undefined
+  /** The live xterm scrollback for a terminal board (lines), or undefined if not mounted. */
+  terminalScrollback: (id: string) => number | undefined
   /** Rendered terminal geometry for the clip probe: rects of the live xterm sub-elements vs the
    *  clipping well, plus dpr/rows/cols. Null if not mounted. */
   terminalGeometry: (id: string) => null | {
@@ -536,6 +538,9 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalFontSize(id) {
       return e2eTerminals.get(id)?.options.fontSize
+    },
+    terminalScrollback(id) {
+      return e2eTerminals.get(id)?.options.scrollback
     },
     terminalGeometry(id) {
       const term = e2eTerminals.get(id)

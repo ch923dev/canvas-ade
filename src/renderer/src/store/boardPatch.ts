@@ -24,6 +24,7 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     'agentSessionId',
     'agentTranscriptPath',
     'fontSize',
+    'scrollback',
     // v10 (New Terminal presets): the chosen agent identity + whether the board joins
     // activity monitoring (MCP attention/swarm). Both terminal-scoped + serialized.
     'agentKind',
