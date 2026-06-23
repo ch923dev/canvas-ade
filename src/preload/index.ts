@@ -421,7 +421,9 @@ export interface RecapBundle {
 // holds at most one handler per board.
 const osrFrameHandlers = new Map<string, (f: OsrFrame) => void>()
 const osrCursorHandlers = new Map<string, (c: OsrCursor) => void>()
-const osrNetHandlers = new Map<string, (m: OsrNetMessage) => void>()
+// A SET of handlers per board id (JD-4): the Network panel AND a Data-Flow board can both subscribe to
+// the same source board's capture; the store stays the single source of truth, every listener applies.
+const osrNetHandlers = new Map<string, Set<(m: OsrNetMessage) => void>>()
 let osrFrameWired = false
 let osrCursorWired = false
 let osrNetWired = false
@@ -443,7 +445,7 @@ function ensureOsrNetListener(): void {
   if (osrNetWired) return
   osrNetWired = true
   ipcRenderer.on('preview:osrNet', (_e: IpcRendererEvent, m: OsrNetMessage) => {
-    osrNetHandlers.get(m.id)?.(m)
+    osrNetHandlers.get(m.id)?.forEach((fn) => fn(m))
   })
 }
 
@@ -595,9 +597,14 @@ const api = {
     ipcRenderer.invoke('preview:osrNetLineage', { id, requestIds }),
   onPreviewOsrNet: (id: string, listener: (m: OsrNetMessage) => void): (() => void) => {
     ensureOsrNetListener()
-    osrNetHandlers.set(id, listener)
+    const set = osrNetHandlers.get(id) ?? new Set()
+    set.add(listener)
+    osrNetHandlers.set(id, set)
     return () => {
-      if (osrNetHandlers.get(id) === listener) osrNetHandlers.delete(id)
+      const s = osrNetHandlers.get(id)
+      if (!s) return
+      s.delete(listener)
+      if (s.size === 0) osrNetHandlers.delete(id)
     }
   },
   // Cursor stream: the offscreen page's cursor type, applied to the board's <canvas>
