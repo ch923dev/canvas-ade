@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { AuditEntry } from '../../../shared/mcpTypes'
 
 /**
  * Read-only viewer for the MCP dispatch audit trail (T4.1). The trail is written
@@ -10,19 +11,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * opens. Minimal "shell" for M4 — a dense, read-only list; richer filtering/detail can
  * land later without changing the data path.
  */
-
-/** Mirror of the MAIN/preload `AuditEntry` (type-only; kept local to avoid a cross-bundle import). */
-interface AuditEntry {
-  seq: number
-  ts: number
-  type: string
-  targetId: string
-  prompt: string
-  nonce: string
-  status: string
-  outputs?: string
-  detail?: string
-}
 
 const STATUS_COLOR: Record<string, string> = {
   dispatched: 'var(--accent)',

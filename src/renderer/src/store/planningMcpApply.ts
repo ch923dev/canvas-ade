@@ -1,4 +1,5 @@
 import type { PlanningElement, ChecklistItem } from '../lib/boardSchema'
+import type { PlanningOp, PlanningOpTint } from '../../../shared/mcpTypes'
 import {
   NOTE_SIZE,
   CHECKLIST_W,
@@ -20,19 +21,13 @@ import {
  * (read-only) so a materialized element measures + lays out identically to a user-created one.
  */
 
-/** Note tints an op may carry (mirrors `NoteTint` + MAIN's `PlanningOpTint`). */
-export type PlanningOpTint = 'yellow' | 'blue' | 'green' | 'plain'
-
 /**
- * Renderer mirror of MAIN's `PlanningOp` (`src/main/mcpCommand.ts`) — kept in sync BY HAND
- * (separate bundles). Already sanitized + fully-specified by MAIN (`tint`/`done` required).
+ * `PlanningOp` / `PlanningOpTint` are the canonical MCP planning-write-op types, defined once in
+ * the cross-bundle module `src/shared/mcpTypes.ts` (W1-D / F9) and re-exported here so this
+ * module's callers (the unit tests, anything reaching for them via `./planningMcpApply`) keep
+ * resolving unchanged. Already sanitized + fully-specified by MAIN (`tint`/`done` required).
  */
-export type PlanningOp =
-  | { kind: 'note'; text: string; tint: PlanningOpTint }
-  | { kind: 'checklist'; title: string; items: Array<{ label: string; done: boolean }> }
-  | { kind: 'text'; text: string }
-  | { kind: 'arrow'; dx: number; dy: number }
-  | { kind: 'diagram'; source: string }
+export type { PlanningOp, PlanningOpTint }
 
 /**
  * Cumulative cap on total elements one planning board may hold. MAIN caps each BATCH; the

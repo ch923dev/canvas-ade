@@ -1,5 +1,6 @@
 import { appendFile, mkdir, open, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { AuditEntry, AuditInput } from '../shared/mcpTypes'
 
 /**
  * 🔒 Append-only audit trail for MCP dispatch (M4). EVERY action that writes into
@@ -15,35 +16,11 @@ import { join } from 'node:path'
  * an unbounded append log and races a concurrent reader). MAIN is the single writer.
  */
 
-export interface AuditInput {
-  /** The dispatch tool that produced this entry (e.g. 'handoff_prompt', 'interrupt'). */
-  type: string
-  /** The RESOLVED opaque server board id the action targeted (never a user label). */
-  targetId: string
-  /** The full prompt text written to the target PTY ('' for a content-less action). */
-  prompt: string
-  /** The single-use nonce that authorized this dispatch (T4.3). */
-  nonce: string
-  /** Outcome bucket; defaults to 'dispatched' when the entry is recorded pre-result. */
-  status?: string
-  /** Captured output / result text, when the action produced one. */
-  outputs?: string
-  /** Free-form extra context (e.g. a rejection reason). */
-  detail?: string
-}
-
-export interface AuditEntry {
-  /** Monotonic, gap-free sequence across the life of the log (replay/order evidence). */
-  seq: number
-  ts: number
-  type: string
-  targetId: string
-  prompt: string
-  nonce: string
-  status: string
-  outputs?: string
-  detail?: string
-}
+// AuditInput + AuditEntry are the canonical MCP audit-trail shapes — defined once in the
+// cross-bundle module `src/shared/mcpTypes.ts` (W1-D / F9) and re-exported here so every MAIN
+// caller that imports them from `./auditLog` (auditIpc, mcpOrchestrator, mcpRegistry, the tests)
+// keeps resolving unchanged. The I/O logic below is structurally untouched.
+export type { AuditEntry, AuditInput }
 
 export interface AuditLog {
   /** Shape + stamp + persist one entry; resolves to the written entry. */
