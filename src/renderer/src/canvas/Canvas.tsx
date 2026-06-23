@@ -92,6 +92,7 @@ import { useBoardKeyboardNav } from './hooks/useBoardKeyboardNav'
 import { useBoardActions } from './hooks/useBoardActions'
 import { CommandPalette } from './palette/CommandPalette'
 import { usePaletteController } from './palette/usePaletteController'
+import { useAuditLogStore } from './auditLogStore'
 import { useTidyTile } from './hooks/useTidyTile'
 import { useFullView } from './hooks/useFullView'
 import { useBoardPlacement, useConnectorDrag } from './hooks/useBoardPlacement'
@@ -725,6 +726,8 @@ function CanvasInner(): ReactElement {
     openPalette,
     // D4-C: bare `m` toggles the wayfinding minimap (zustand action — identity-stable).
     toggleMinimap: useWayfindingStore((s) => s.toggleMinimap),
+    // W1-A: Ctrl/⌘+Shift+A toggles the MCP dispatch audit log (zustand action — identity-stable).
+    toggleAuditLog: useAuditLogStore((s) => s.toggle),
     cycleBoard,
     moveSelectedBoards,
     resizeSelectedBoards,

@@ -17,6 +17,7 @@ export const SECTION_ORDER = [
   'Boards',
   'Selected board',
   'Groups',
+  'Orchestration',
   'Canvas',
   'Edit',
   'Help'
@@ -53,6 +54,19 @@ export interface PaletteVerbs {
   connectSelectedBoards: () => void
   /** GROUP-01: remove the orchestration connector between the two selected boards (keyboard path). */
   disconnectSelectedBoards: () => void
+  // ── Orchestration (W1-A) — modal-open / navigate verbs only; none cross to MAIN here. ──
+  /** Navigate to (or create) the singleton Command board. */
+  openCommandBoard: () => void
+  /** Toggle the MCP dispatch audit log panel (mirrors the Ctrl/⌘+Shift+A keymap action). */
+  viewAuditLog: () => void
+  /** Open the Enable-orchestration consent modal. */
+  enableOrchestration: () => void
+  /** Revoke this project's orchestration consent (mirrors the Settings toggle's OFF path). */
+  disableOrchestration: () => void
+  /** Open the Sync-agent-CLIs modal. */
+  syncAgentCLIs: () => void
+  /** Navigate to the Command board's executing column. */
+  goToExecutingTasks: () => void
   tidy: () => void
   fitAll: () => void
   resetZoom: () => void
@@ -72,6 +86,10 @@ export interface PaletteSnapshot {
   connectors: { sourceId: string; targetId: string; kind: string }[]
   canUndo: boolean
   canRedo: boolean
+  /** W1-A: this project's orchestration consent — gates the enable/disable/sync rows. */
+  orchestrationEnabled: boolean
+  /** W1-A: at least one task is routing/executing/reporting — gates the "Go to executing" row. */
+  hasExecutingTasks: boolean
 }
 
 const TYPE_LABEL: Record<BoardType, string> = {
@@ -262,6 +280,64 @@ export function buildCommands(snap: PaletteSnapshot, verbs: PaletteVerbs): Palet
     })
   }
 
+  // ── Orchestration (W1-A / F4) — the keyboard path into the MCP swarm layer. Context rows are
+  // HIDDEN (not disabled) when their predicate fails, per the Raycast/Linear convention. ──
+  out.push({
+    id: 'open-command-board',
+    section: 'Orchestration',
+    title: 'Open Command board',
+    keywords: 'orchestrator mcp dispatch kanban agent hub',
+    glyph: '⚡',
+    run: () => verbs.openCommandBoard()
+  })
+  out.push({
+    id: 'view-audit-log',
+    section: 'Orchestration',
+    title: 'View audit log',
+    keywords: 'mcp dispatch history trust review',
+    glyph: '⊟',
+    chips: ['Ctrl', 'Shift', 'A'],
+    run: () => verbs.viewAuditLog()
+  })
+  if (!snap.orchestrationEnabled) {
+    out.push({
+      id: 'enable-orchestration',
+      section: 'Orchestration',
+      title: 'Enable orchestration',
+      keywords: 'mcp setup onboard consent agent',
+      glyph: '✦',
+      run: () => verbs.enableOrchestration()
+    })
+  }
+  if (snap.orchestrationEnabled) {
+    out.push({
+      id: 'disable-orchestration',
+      section: 'Orchestration',
+      title: 'Disable orchestration',
+      keywords: 'mcp revoke consent turn off',
+      glyph: '✦',
+      run: () => verbs.disableOrchestration()
+    })
+    out.push({
+      id: 'sync-agent-clis',
+      section: 'Orchestration',
+      title: 'Sync agent CLIs',
+      keywords: 'mcp provisioner claude codex configure',
+      glyph: '⇄',
+      run: () => verbs.syncAgentCLIs()
+    })
+  }
+  if (snap.hasExecutingTasks) {
+    out.push({
+      id: 'go-to-executing-tasks',
+      section: 'Orchestration',
+      title: 'Go to executing tasks',
+      keywords: 'mcp workers running interrupt dispatch',
+      glyph: '⏹',
+      run: () => verbs.goToExecutingTasks()
+    })
+  }
+
   // ── Canvas ──
   out.push(
     {
@@ -407,7 +483,16 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { section: 'Groups', label: 'Delete the selected connector', chips: ['Del'] },
   { section: 'Groups', label: 'Group tab: focus the group', chips: ['Enter'] },
   { section: 'Groups', label: 'Group tab: select members', chips: ['click'] },
-  { section: 'Groups', label: 'Group tab: manage menu', chips: ['Shift', 'F10'] }
+  { section: 'Groups', label: 'Group tab: manage menu', chips: ['Shift', 'F10'] },
+  // W1-A (F3/F4): the audit log's canonical chord + a pedagogical Ctrl+K reminder. The first row
+  // claims a live canvas chord, so it's covered by the drift-guard CLAIMS table; the second is a
+  // reminder only (Ctrl+K is already drift-guarded as 'palette').
+  { section: 'Orchestration', label: 'View audit log', chips: ['Ctrl', 'Shift', 'A'] },
+  {
+    section: 'Orchestration',
+    label: 'Open command palette for MCP verbs',
+    chips: ['Ctrl', 'K']
+  }
 ]
 
 /** Per-platform chip display: Ctrl→⌘ on mac; Shift always compacts to ⇧. */

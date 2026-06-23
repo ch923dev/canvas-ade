@@ -18,6 +18,7 @@ import type { CommandBoard as CommandBoardData } from '../../lib/boardSchema'
 import { DEFAULT_BOARD_SIZE } from '../../lib/boardSchema'
 import { useCanvasStore } from '../../store/canvasStore'
 import { useTerminalRuntimeStore } from '../../store/terminalRuntimeStore'
+import { useOrchestrationStore } from '../../store/orchestrationStore'
 import {
   useCommandStore,
   tasksInColumn,
@@ -89,6 +90,9 @@ export function CommandBoard({
   const tasks = useCommandStore((s) => s.tasks)
   const configuringTaskId = useCommandStore((s) => s.configuringTaskId)
   const lastWorkerConfig = useCommandStore((s) => s.lastWorkerConfig)
+  // W1-A (H6): the empty-state guard. Dispatch silently no-ops until this project grants
+  // orchestration consent, so an empty board with `enabled === false` is misleading without it.
+  const orchestrationEnabled = useOrchestrationStore((s) => s.enabled)
 
   // `poolKey` IS the cache key: it changes exactly when the board-list inputs deriveWorkerPool reads
   // change (membership/type/monitorActivity), and `running` covers busy↔idle transitions. The live
@@ -298,12 +302,37 @@ export function CommandBoard({
                       })}
                     </div>
                     {tasks.length === 0 && (
-                      <div style={emptyHintStyle}>
-                        <div style={emptyBigStyle}>No tasks yet</div>
-                        <div style={emptySubStyle}>
-                          Describe a task above and Dispatch — it spawns a worker zone and runs.
+                      <>
+                        <div style={emptyHintStyle}>
+                          <div style={emptyBigStyle}>No tasks yet</div>
+                          <div style={emptySubStyle}>
+                            Describe a task above and Dispatch — it spawns a worker zone and runs.
+                          </div>
                         </div>
-                      </div>
+                        {/* W1-A (H6): when orchestration is off, dispatch won't actually run —
+                            spell out the prerequisite + a one-click path to the consent modal. */}
+                        {!orchestrationEnabled && (
+                          <div style={orchestrationGuardStyle}>
+                            <span style={orchestrationGuardTextStyle}>
+                              <span style={{ color: 'var(--warn)' }}>⚠</span> Orchestration is not
+                              enabled for this project. Dispatched tasks will not run until you
+                              enable it.
+                            </span>
+                            <button
+                              type="button"
+                              className="nodrag"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                useOrchestrationStore.getState().setModal('enable')
+                              }}
+                              style={enableBtnStyle}
+                            >
+                              Enable orchestration
+                            </button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 ) : (
@@ -608,4 +637,36 @@ const emptySubStyle: CSSProperties = {
   color: 'var(--text-faint)',
   fontFamily: 'var(--mono)',
   fontSize: 10.5
+}
+// W1-A (H6): the orchestration-disabled prerequisite banner. Warn-accent strip (literal rgba — no
+// `--warn-rgb` token, matching the codebase's existing literal-border pattern) over `--inset`.
+const orchestrationGuardStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  flexWrap: 'wrap',
+  padding: '9px 11px',
+  background: 'var(--inset)',
+  border: '1px solid rgba(232, 179, 57, 0.35)',
+  borderRadius: 'var(--r-inner)',
+  color: 'var(--text-2)',
+  fontSize: 'var(--fs-meta)',
+  lineHeight: 'var(--lh-meta)',
+  flex: 'none'
+}
+const orchestrationGuardTextStyle: CSSProperties = { flex: 1, minWidth: 180 }
+// Accent (primary) button — mirrors OrchestrationConsentModal's primary: solid accent + white ink.
+const enableBtnStyle: CSSProperties = {
+  flex: 'none',
+  height: 26,
+  padding: '0 12px',
+  borderRadius: 'var(--r-ctl)',
+  border: '1px solid var(--accent)',
+  background: 'var(--accent)',
+  color: '#fff',
+  fontFamily: 'var(--ui)',
+  fontSize: 11,
+  fontWeight: 500,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap'
 }
