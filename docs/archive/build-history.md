@@ -492,4 +492,16 @@ reopen regression test, inline-dispositioned; two CodeQL alerts dispositioned as
 test-only false-positives (worker got a defensive message-shape guard). Rebased onto #220 (JSON viewer;
 auto-merged the two overlapping net files cleanly). Squash `64c04f3b`; branch deleted. **Follow-up:** the
 `perf-slices/` package now lives at the repo root — per the doc-lifecycle policy it should be collapsed to
-a dated summary under `docs/reviews/` (deferred; SLICE-002.md is the valuable residue to preserve).
+a dated summary under `docs/reviews/` (done in #225 below; SLICE-002.md is the valuable residue).
+
+## 2026-06-23 — Doc-lifecycle: collapse perf-slices package — #225 (`b75dcd20`, 2026-06-23)
+
+Housekeeping for #219. The perf wave's measure-and-plan package sat at the repo **root**, which the
+doc-lifecycle policy forbids (review packages live under `docs/reviews/<date>/` and collapse to a dated
+summary once all findings are fixed). Relocated to `docs/reviews/2026-06-23-perf-wave/` as a collapsed
+`SUMMARY.md` (wave overview + per-slice outcomes table) + `SLICE-002.md` (`git mv`'d verbatim — the
+not-achievable verdict, the reusable residue); the 12 other cards + `FIX-REPORT.md` + `SLICES.md` +
+`skipped-roadmap.md` + `unconfirmed.md` collapsed to git history (`git log --all -- perf-slices/`).
+Reviews index got a newest-first row; `docs/roadmap.md` Performance section flipped "not yet built" →
+SHIPPED #219 and repointed. Docs-only (no code/schema); gate format:check green; CI check/CodeQL/analyze
+pass. Squash `b75dcd20`; branch deleted.
