@@ -219,15 +219,21 @@ Significant work landed on `main` after Phase 4, outside the original phase ladd
 - Dependabot: **#77 react HELD — CI-RED** (React major, own slice; #76/#78/#79/#80 merged 2026-06-08).
 - Research-only docs (#25/27/29/71/72). **Diagram #72** — next free schema version when implemented (v8 now taken by #92).
 
-**Performance review (2026-06-23) — measure-and-plan, not yet built:**
+**Performance wave (2026-06-23) — ✅ SHIPPED (#219):**
 - A codebase-wide, measurement-grounded perf review (8 parallel discovery zones → adversarial
-  verify) produced **13 ROI-ranked, independently-shippable slices** from 15 confirmed findings.
-  Package: **`perf-slices/`** (`SLICES.md` = wave queue; `slices/` = cards; `skipped-roadmap.md`;
-  `unconfirmed.md`). The obvious wins were already shipped (PA umbrella + Planning epic), so the
-  queue is "deep cuts": the **File Tree / File Board / Command Board** white space (excluded from the
-  PA audit) plus the OSR frame pipeline's MAIN-side cost. Top ROI: FileBoard all-langs barrel
-  (~708 KB→~180 KB gzip), OSR transferable-ArrayBuffer frame IPC (kills ~0.5 core of MAIN copy),
-  CommandBoard fingerprint subscription, planning per-drag snap cache.
+  verify) produced **13 ROI-ranked, independently-shippable slices** from 15 confirmed findings
+  (the obvious wins were already shipped by the PA umbrella + Planning epic, so the queue was "deep
+  cuts": the **File Tree / File Board / Command Board** white space + the OSR frame pipeline's
+  MAIN-side cost). **12 shipped + SLICE-002 closed as not-achievable** in one squash PR #219
+  (`64c04f3b`): FileBoard all-langs barrel (708→486 KB gzip), OSR dirty-rect crop (005) + off-main
+  swizzle (006), network-inspector pipeline memo (007) + table virtualization (010), File-board
+  sliced highlight (008) + deferred reparse (009), planning snap cache (004) + pen tessellation
+  (011), CommandBoard fingerprint subscription (003), xterm scrollback cap (012), lazy FileTree
+  (013). **SLICE-002 (transferable-ArrayBuffer frame IPC) was closed** — zero-copy is impossible
+  across the main→renderer process boundary (Electron transfer lists never accept an `ArrayBuffer`);
+  the only true fix is shared-texture OSR (GPU rewrite, out of scope). Collapsed package +
+  not-achievable verdict: [`reviews/2026-06-23-perf-wave/`](reviews/2026-06-23-perf-wave/);
+  per-slice detail in `archive/build-history.md` › 2026-06-23.
 - **PARTIAL cross-refs (kept, not skipped):** (1) the OSR frame slices are the *MAIN-side*
   complement to **PA-7 (#196)** which only fixed renderer-side rAF coalesce; (2) the planning
   per-drag snap cache (SLICE-004) is the cheap in-scope subset of the **R3 spatial index**, which
