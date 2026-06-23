@@ -46,6 +46,13 @@ interface McpClient {
   call(name: string, args?: Record<string, unknown>): Promise<CallOutcome>
   /** Read a resource and JSON-parse its concatenated text content blocks. */
   readJson<T>(uri: string): Promise<T>
+  /** Names from prompts/list. A worker gets a well-formed empty array (NOT a throw). */
+  listPromptNames(): Promise<string[]>
+  /** Render a prompt via prompts/get; each message's role + text (non-text content → ''). */
+  getPrompt(
+    name: string,
+    args?: Record<string, string>
+  ): Promise<{ messages: Array<{ role: string; text: string }> }>
   close(): Promise<void>
 }
 
@@ -76,6 +83,18 @@ async function connect(url: string, token: string): Promise<McpClient> {
         .map((c) => ('text' in c && typeof c.text === 'string' ? c.text : ''))
         .join('')
       return JSON.parse(text) as T
+    },
+    async listPromptNames(): Promise<string[]> {
+      return (await client.listPrompts()).prompts.map((p) => p.name)
+    },
+    async getPrompt(name, args) {
+      const res = await client.getPrompt({ name, arguments: args ?? {} })
+      return {
+        messages: res.messages.map((m) => ({
+          role: m.role,
+          text: m.content.type === 'text' ? m.content.text : ''
+        }))
+      }
     },
     close: () => client.close()
   }
@@ -187,6 +206,54 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     // ...the worker gets the SPECIFIC tool-not-found denial (a tier split, not a transport miss).
     const workerCall = await mcp.worker.call('orchestrator_ping')
     expect(deniedToolNotFound(workerCall, 'orchestrator_ping')).toBe(true)
+  })
+
+  // W1-F skills substrate: the MCP prompts primitive is tier-gated server-side, exactly like the
+  // tool split above. The orchestrator + a consented `connected` terminal see the canvas-orientation
+  // playbook; a worker sees NONE (a well-formed empty array, not a "server does not support prompts"
+  // rejection — the capability is declared for every tier, the registry filters by ctx.tier).
+  // prompts/get renders the orientation text for a permitted tier and is rejected for a worker.
+  test('prompts/list is tier-gated: orchestrator + connected see canvas-orientation, worker sees none; prompts/get renders + worker denied', async ({
+    electronApp,
+    mcp
+  }) => {
+    // orchestrator: prompts/list includes canvas-orientation
+    const orchNames = await mcp.orch.listPromptNames()
+    expect(orchNames).toContain('canvas-orientation')
+
+    // worker: prompts/list is a well-formed EMPTY array (never a capability rejection / throw)
+    const workerNames = await mcp.worker.listPromptNames()
+    expect(workerNames).toEqual([])
+
+    // connected tier (a consented terminal — the kind the spawn-time provisioner mints): also sees it.
+    const minted = await mainCall<{ token: string; port: number } | null>(
+      electronApp,
+      'mcpMintConnectedToken',
+      mcp.info.workerBoardId
+    )
+    expect(minted).not.toBeNull()
+    const connected = await connect(`http://127.0.0.1:${mcp.info.port}/mcp`, minted!.token)
+    try {
+      expect(await connected.listPromptNames()).toContain('canvas-orientation')
+    } finally {
+      await connected.close()
+    }
+
+    // prompts/get: the orchestrator renders a non-empty orientation message...
+    const got = await mcp.orch.getPrompt('canvas-orientation', {})
+    expect(got.messages.length).toBeGreaterThan(0)
+    expect(got.messages[0]?.role).toBe('user')
+    const text = got.messages[0]?.text ?? ''
+    expect(text.length).toBeGreaterThan(50)
+    // ...spot-check a safety rule is present in the rendered output.
+    expect(text).toContain('runGatedWrite')
+
+    // ...the worker is DENIED prompts/get server-side (tier-gated, the call REJECTS).
+    let workerGetRejected = false
+    await mcp.worker.getPrompt('canvas-orientation', {}).catch(() => {
+      workerGetRejected = true
+    })
+    expect(workerGetRejected).toBe(true)
   })
 
   test('canvas://boards mirrors all three board types, consistently with the board-states roll-up', async ({
