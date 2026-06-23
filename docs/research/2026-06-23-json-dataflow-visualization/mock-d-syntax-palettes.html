@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>D · JSON syntax palettes A/B/C — Canvas ADE</title>
+<style>
+  :root{
+    --void:#0a0a0b; --surface:#141416; --surface-raised:#1a1a1d; --surface-overlay:#1e1e22; --inset:#0e0e10;
+    --border-subtle:rgba(255,255,255,0.06); --border:rgba(255,255,255,0.1); --border-strong:rgba(255,255,255,0.16);
+    --text:#ededee; --text-2:#9b9ba1; --text-3:#7b7b81; --text-faint:#46464b;
+    --accent:#4f8cff; --accent-hover:#6ea0ff; --accent-wash:rgba(79,140,255,0.14);
+    --ok:#3ecf8e; --warn:#e8b339; --err:#f2545b;
+    --ui:'Geist',system-ui,-apple-system,sans-serif;
+    --mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    --r-board:8px; --r-inner:6px; --r-ctl:5px; --r-pill:999px;
+    /* Option B muted, low-chroma value tints (each pulled hard toward grey). Shown for comparison only. */
+    --b-str:#86938c; --b-num:#9a9079; --b-bool:#828fa6; --b-url:#7d93c4;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--void);color:var(--text);font-family:var(--ui);-webkit-font-smoothing:antialiased;font-size:13px;line-height:1.5}
+  body{padding:24px 0 48px;display:flex;flex-direction:column;align-items:center}
+
+  .caption{width:1280px;display:flex;align-items:baseline;gap:10px;margin-bottom:6px;padding:0 2px}
+  .caption .t{font-size:13px;font-weight:600;color:var(--text)}
+  .caption .s{font-size:11px;font-family:var(--mono);color:var(--text-3)}
+  .lede{width:1280px;padding:0 2px 16px;font-size:12px;color:var(--text-2);line-height:1.6}
+  .lede b{color:var(--text)} .lede code{font-family:var(--mono);font-size:11px;color:var(--accent)}
+
+  .cols{width:1280px;display:flex;gap:14px}
+  .col{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-board);overflow:hidden;display:flex;flex-direction:column}
+  .col.reco{border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+  .col-head{height:40px;display:flex;align-items:center;gap:8px;padding:0 13px;border-bottom:1px solid var(--border-subtle);background:var(--surface-raised)}
+  .col-head .name{font-size:12px;font-weight:600;color:var(--text)}
+  .col-head .tag{margin-left:auto;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint);border:1px solid var(--border-subtle);border-radius:var(--r-pill);padding:2px 7px}
+  .col.reco .col-head .tag{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);background:var(--accent-wash)}
+  .rule{font-size:11px;color:var(--text-3);padding:8px 13px;border-bottom:1px solid var(--border-subtle);background:var(--inset);line-height:1.5;min-height:54px}
+
+  .tree{font-family:var(--mono);font-size:12px;line-height:2.0;padding:10px 4px 12px;background:var(--surface)}
+  .ln{display:flex;align-items:center;height:24px;padding:0 13px;white-space:nowrap}
+  .ind{display:inline-block;width:16px;flex:none}
+  .tri{display:inline-block;width:13px;color:var(--text-3);font-size:9px;flex:none}
+  .tri.e{color:transparent}
+  .colon{color:var(--text-faint);margin:0 6px 0 1px}
+  .brace{color:var(--text-3)}
+  .count{color:var(--text-faint);margin-left:7px;font-size:10px}
+  .badge{display:inline-block;font-size:9px;line-height:1;padding:2px 5px;border-radius:3px;margin-left:8px;border:1px solid var(--border-subtle);color:var(--text-3);letter-spacing:0.02em}
+  .annot{color:var(--text-faint);margin-left:8px;font-size:10px}
+
+  /* ---- Option A: accent keys, neutral values ---- */
+  .pa .k{color:var(--accent);opacity:0.92}
+  .pa .str,.pa .num,.pa .bool{color:var(--text)}
+  .pa .null{color:var(--text-3);font-style:italic}
+  .pa .url{color:var(--accent);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px}
+
+  /* ---- Option B: accent keys + muted per-type value tints (opt-in) ---- */
+  .pb .k{color:var(--accent);opacity:0.92}
+  .pb .str{color:var(--b-str)}
+  .pb .num{color:var(--b-num)}
+  .pb .bool{color:var(--b-bool)}
+  .pb .null{color:var(--text-3);font-style:italic}
+  .pb .url{color:var(--b-url);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px}
+
+  /* ---- Option C: accent keys, neutral values, type via weight/italic only ---- */
+  .pc .k{color:var(--accent);opacity:0.92}
+  .pc .str{color:var(--text)}
+  .pc .num{color:var(--text);font-weight:600}
+  .pc .bool{color:var(--text);font-style:italic}
+  .pc .null{color:var(--text-3);font-style:italic}
+  .pc .url{color:var(--accent);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px}
+
+  .legend{width:1280px;margin-top:16px;display:flex;gap:22px;flex-wrap:wrap;padding:12px 14px;background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--r-inner);font-size:11px;color:var(--text-2)}
+  .legend .li{display:flex;align-items:center;gap:7px;font-family:var(--mono)}
+  .legend .sw{width:12px;height:12px;border-radius:3px;border:1px solid var(--border-subtle)}
+  .legend .note{color:var(--text-3);font-family:var(--ui)}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="t">D · JSON syntax palettes — A vs B vs C</span>
+    <span class="s">Canvas ADE — design mock (not live)</span>
+  </div>
+  <div class="lede">
+    Same response, three ways to tell value <b>types</b> apart. The constraint: Canvas ADE uses <b>one</b>
+    functional accent (<code>#4f8cff</code>) and reserves <code>--ok/--warn/--err</code> for status only —
+    so a 5-color "rainbow" highlighter (what DevTools does, and what the first mocks wrongly did) is off-brand.
+    The accent is spent on <b>keys</b> (the highest-value thing to find); the question is what — if anything —
+    happens to the <b>values</b>.
+  </div>
+
+  <div class="cols">
+
+    <!-- ============ OPTION A ============ -->
+    <div class="col reco">
+      <div class="col-head"><span class="name">Option A — accent keys, neutral values</span><span class="tag">Recommended</span></div>
+      <div class="rule">Keys → <b style="color:var(--accent)">accent</b>. All values → neutral white. Type shown by a small grey <b style="color:var(--text-3)">badge</b>. <code style="font-family:var(--mono);color:var(--text-3)">null</code> dim italic; URLs accent. Zero tension with the one-accent rule.</div>
+      <div class="tree pa">
+        <div class="ln"><span class="tri">▾</span><span class="brace">{</span><span class="count">9 keys</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"id"</span><span class="colon">:</span><span class="num">990217845512</span><span class="badge">int64</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"reference"</span><span class="colon">:</span><span class="str">"ORD-2026-0042"</span><span class="badge">string</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"total"</span><span class="colon">:</span><span class="num">1284.00</span><span class="badge">number</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"expedited"</span><span class="colon">:</span><span class="bool">true</span><span class="badge">boolean</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"cancelledAt"</span><span class="colon">:</span><span class="null">null</span><span class="badge">null</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"nextPage"</span><span class="colon">:</span><span class="url">"https://api.shop.dev/…"</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri">▾</span><span class="k">"customer"</span><span class="colon">:</span><span class="brace">{</span><span class="count">2 keys</span></div>
+        <div class="ln"><span class="ind"></span><span class="ind"></span><span class="tri e">·</span><span class="k">"email"</span><span class="colon">:</span><span class="str">"m.v@northwind.co"</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri">▸</span><span class="k">"items"</span><span class="colon">:</span><span class="brace">[ … ]</span><span class="count">22</span></div>
+      </div>
+    </div>
+
+    <!-- ============ OPTION B ============ -->
+    <div class="col">
+      <div class="col-head"><span class="name">Option B — + muted type tints</span><span class="tag">Opt-in toggle</span></div>
+      <div class="rule">Option A <b>plus</b> a desaturated per-type tint on values (mixed ≥45% toward grey). Best raw readability, but it <b style="color:var(--warn)">borrows status-adjacent hues</b> → ship only as an off-by-default toggle, never near status dots.</div>
+      <div class="tree pb">
+        <div class="ln"><span class="tri">▾</span><span class="brace">{</span><span class="count">9 keys</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"id"</span><span class="colon">:</span><span class="num">990217845512</span><span class="badge">int64</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"reference"</span><span class="colon">:</span><span class="str">"ORD-2026-0042"</span><span class="badge">string</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"total"</span><span class="colon">:</span><span class="num">1284.00</span><span class="badge">number</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"expedited"</span><span class="colon">:</span><span class="bool">true</span><span class="badge">boolean</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"cancelledAt"</span><span class="colon">:</span><span class="null">null</span><span class="badge">null</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"nextPage"</span><span class="colon">:</span><span class="url">"https://api.shop.dev/…"</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri">▾</span><span class="k">"customer"</span><span class="colon">:</span><span class="brace">{</span><span class="count">2 keys</span></div>
+        <div class="ln"><span class="ind"></span><span class="ind"></span><span class="tri e">·</span><span class="k">"email"</span><span class="colon">:</span><span class="str">"m.v@northwind.co"</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri">▸</span><span class="k">"items"</span><span class="colon">:</span><span class="brace">[ … ]</span><span class="count">22</span></div>
+      </div>
+    </div>
+
+    <!-- ============ OPTION C ============ -->
+    <div class="col">
+      <div class="col-head"><span class="name">Option C — weight / italic only</span><span class="tag">Strictest</span></div>
+      <div class="rule">No value hues at all. Type cued by <b>weight</b> (numbers bold) and <b><i>italic</i></b> (booleans). Strictest reading of the rule, but the weakest type discrimination when skimming values fast.</div>
+      <div class="tree pc">
+        <div class="ln"><span class="tri">▾</span><span class="brace">{</span><span class="count">9 keys</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"id"</span><span class="colon">:</span><span class="num">990217845512</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"reference"</span><span class="colon">:</span><span class="str">"ORD-2026-0042"</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"total"</span><span class="colon">:</span><span class="num">1284.00</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"expedited"</span><span class="colon">:</span><span class="bool">true</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"cancelledAt"</span><span class="colon">:</span><span class="null">null</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri e">·</span><span class="k">"nextPage"</span><span class="colon">:</span><span class="url">"https://api.shop.dev/…"</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri">▾</span><span class="k">"customer"</span><span class="colon">:</span><span class="brace">{</span><span class="count">2 keys</span></div>
+        <div class="ln"><span class="ind"></span><span class="ind"></span><span class="tri e">·</span><span class="k">"email"</span><span class="colon">:</span><span class="str">"m.v@northwind.co"</span></div>
+        <div class="ln"><span class="ind"></span><span class="tri">▸</span><span class="k">"items"</span><span class="colon">:</span><span class="brace">[ … ]</span><span class="count">22</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="legend">
+    <span class="li"><span class="sw" style="background:var(--accent)"></span> key &amp; URL = accent (all three options)</span>
+    <span class="li"><span class="sw" style="background:var(--text)"></span> value = neutral (A &amp; C)</span>
+    <span class="li"><span class="sw" style="background:var(--b-str)"></span> string</span>
+    <span class="li"><span class="sw" style="background:var(--b-num)"></span> number</span>
+    <span class="li"><span class="sw" style="background:var(--b-bool)"></span> boolean <span class="note">— Option B tints only</span></span>
+    <span class="li"><span class="note">Status hues (green/amber/red) never appear on values in any option.</span></span>
+  </div>
+
+</body>
+</html>

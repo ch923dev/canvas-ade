@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A · Optimized JSON Response Viewer — Canvas ADE</title>
+<style>
+  :root{
+    /* Surfaces */
+    --void:#0a0a0b; --surface:#141416; --surface-raised:#1a1a1d; --surface-overlay:#1e1e22; --inset:#0e0e10;
+    /* Borders */
+    --border-subtle:rgba(255,255,255,0.06); --border:rgba(255,255,255,0.1); --border-strong:rgba(255,255,255,0.16);
+    /* Text */
+    --text:#ededee; --text-2:#9b9ba1; --text-3:#7b7b81; --text-faint:#46464b;
+    /* Accent */
+    --accent:#4f8cff; --accent-hover:#6ea0ff; --accent-wash:rgba(79,140,255,0.14);
+    /* Status */
+    --ok:#3ecf8e; --warn:#e8b339; --err:#f2545b;
+    /* Fonts */
+    --ui:'Geist',system-ui,-apple-system,sans-serif;
+    --mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    /* Radius */
+    --r-board:8px; --r-inner:6px; --r-ctl:5px; --r-pill:999px;
+    /* Elevation */
+    --shadow-pop:0 8px 24px -6px rgba(0,0,0,0.7);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--void);color:var(--text);font-family:var(--ui);-webkit-font-smoothing:antialiased;font-size:13px;line-height:1.45}
+  body{padding:24px 0 48px;display:flex;flex-direction:column;align-items:center}
+
+  /* caption strip */
+  .caption{width:1280px;display:flex;align-items:baseline;gap:8px;margin-bottom:12px;padding:0 2px}
+  .caption .t{font-size:12px;font-weight:600;color:var(--text)}
+  .caption .s{font-size:11px;font-family:var(--mono);color:var(--text-3)}
+  .caption .dot{width:3px;height:3px;border-radius:50%;background:var(--text-faint)}
+
+  /* board */
+  .board{width:1280px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-board);overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,0.4)}
+
+  /* url bar */
+  .urlbar{height:38px;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--surface-raised);border-bottom:1px solid var(--border-subtle)}
+  .dots{display:flex;gap:6px;margin-right:4px}
+  .dots i{width:8px;height:8px;border-radius:50%;display:block;border:1px solid var(--border)}
+  .nav{display:flex;gap:2px;color:var(--text-3)}
+  .nav button{width:22px;height:22px;border:none;background:transparent;color:var(--text-3);border-radius:var(--r-ctl);font-size:13px;cursor:default;display:grid;place-items:center}
+  .nav button:hover{background:var(--surface-overlay);color:var(--text-2)}
+  .url{flex:1;height:24px;display:flex;align-items:center;gap:7px;padding:0 9px;background:var(--inset);border:1px solid var(--border-subtle);border-radius:var(--r-ctl);font-family:var(--mono);font-size:11px;color:var(--text-2)}
+  .url .lock{color:var(--ok);font-size:10px}
+  .url .path{color:var(--text)}
+  .url .q{color:var(--text-3)}
+  .urlbar .frame{font-size:10px;font-weight:500;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);padding:3px 7px;border:1px solid var(--border-subtle);border-radius:var(--r-pill)}
+
+  /* page area (behind, dimmed) */
+  .page{height:104px;background:var(--inset);border-bottom:1px solid var(--border-subtle);position:relative;overflow:hidden;padding:14px 18px}
+  .page .ph-row{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .page .ph-title{font-size:15px;font-weight:600;color:var(--text-2)}
+  .page .ph-pill{font-size:10px;font-family:var(--mono);color:var(--text-3);border:1px solid var(--border-subtle);padding:2px 7px;border-radius:var(--r-pill)}
+  .page .ph-grid{display:flex;gap:10px}
+  .page .ph-card{flex:1;height:42px;background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--r-inner);padding:8px 10px}
+  .page .ph-card .k{font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint)}
+  .page .ph-card .v{font-size:13px;color:var(--text-3);font-family:var(--mono);margin-top:4px}
+  .page::after{content:"page render — preview";position:absolute;right:14px;bottom:10px;font-size:10px;font-family:var(--mono);color:var(--text-faint)}
+
+  /* ===== Network inspector dock ===== */
+  .net{background:var(--surface);border-top:1px solid var(--border)}
+  .net-head{height:34px;display:flex;align-items:center;gap:2px;padding:0 8px;border-bottom:1px solid var(--border-subtle);background:var(--surface-raised)}
+  .net-tab{font-size:12px;font-weight:500;color:var(--text-3);padding:6px 10px;border-radius:var(--r-ctl);cursor:default;position:relative}
+  .net-tab.on{color:var(--text)}
+  .net-tab.on::after{content:"";position:absolute;left:10px;right:10px;bottom:-7px;height:1px;background:var(--accent)}
+  .net-head .grow{flex:1}
+  .net-head .stat{font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-3);display:flex;align-items:center;gap:6px}
+  .net-head .stat .d{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .net-head .x{width:22px;height:22px;display:grid;place-items:center;color:var(--text-3);border-radius:var(--r-ctl)}
+  .net-head .x:hover{background:var(--surface-overlay)}
+
+  .net-body{display:flex;height:430px}
+
+  /* request list */
+  .reqlist{width:340px;border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;background:var(--surface)}
+  .reqlist .lhead{height:26px;display:flex;align-items:center;padding:0 10px;gap:8px;border-bottom:1px solid var(--border-subtle);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint)}
+  .reqlist .lhead .c-name{flex:1}
+  .reqlist .lhead .c-st{width:34px}
+  .reqlist .lhead .c-sz{width:54px;text-align:right}
+  .reqlist .lhead .c-t{width:44px;text-align:right}
+  .reqrow{height:28px;display:flex;align-items:center;padding:0 10px;gap:8px;font-family:var(--mono);font-size:11px;color:var(--text-2);border-bottom:1px solid var(--border-subtle);position:relative}
+  .reqrow:hover{background:var(--surface-raised)}
+  .reqrow.sel{background:var(--accent-wash)}
+  .reqrow.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
+  .reqrow .m{font-weight:500;width:30px;flex:none}
+  .reqrow .m{color:var(--text-2)}
+  .reqrow.sel .m{color:var(--accent)}
+  .reqrow .nm{flex:1;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .reqrow.sel .nm{color:var(--text)}
+  .reqrow .st{width:34px;color:var(--ok)}
+  .reqrow .st.warn{color:var(--warn)}
+  .reqrow .st.err{color:var(--err)}
+  .reqrow .sz{width:54px;text-align:right;color:var(--text-3)}
+  .reqrow .tm{width:44px;text-align:right;color:var(--text-3)}
+
+  /* detail */
+  .detail{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--surface)}
+  .d-subtabs{height:30px;display:flex;align-items:center;gap:2px;padding:0 8px;border-bottom:1px solid var(--border-subtle)}
+  .d-subtab{font-size:11px;font-family:var(--mono);color:var(--text-3);padding:5px 9px;border-radius:var(--r-ctl);position:relative}
+  .d-subtab.on{color:var(--text);background:var(--surface-overlay)}
+
+  /* viewer toolbar */
+  .vtools{height:36px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--border-subtle);background:var(--surface-raised)}
+  .seg{display:flex;background:var(--inset);border:1px solid var(--border-subtle);border-radius:var(--r-ctl);padding:2px;gap:2px}
+  .seg button{font-size:11px;font-family:var(--ui);color:var(--text-3);background:transparent;border:none;padding:3px 9px;border-radius:4px;cursor:default}
+  .seg button.on{background:var(--surface-overlay);color:var(--text)}
+  .vt-div{width:1px;height:18px;background:var(--border-subtle)}
+  .ico-btn{font-size:11px;color:var(--text-2);background:transparent;border:1px solid var(--border-subtle);padding:4px 8px;border-radius:var(--r-ctl);display:flex;align-items:center;gap:5px;cursor:default;font-family:var(--ui)}
+  .ico-btn:hover{border-color:var(--border);color:var(--text)}
+  .ico-btn .gl{font-size:11px;color:var(--text-3)}
+  .vsearch{display:flex;align-items:center;gap:6px;background:var(--inset);border:1px solid var(--border-subtle);border-radius:var(--r-ctl);padding:0 8px;height:24px;min-width:190px}
+  .vsearch input{background:transparent;border:none;outline:none;color:var(--text);font-family:var(--mono);font-size:11px;flex:1;width:100%}
+  .vsearch input::placeholder{color:var(--text-faint)}
+  .vsearch .cnt{font-size:10px;font-family:var(--mono);color:var(--text-3);border-left:1px solid var(--border-subtle);padding-left:7px}
+  .vsearch .gl{color:var(--text-faint);font-size:11px}
+  .grow{flex:1}
+  .pathchip{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--text-3);background:var(--inset);border:1px solid var(--border-subtle);padding:3px 8px;border-radius:var(--r-pill)}
+  .pathchip b{color:var(--accent);font-weight:500}
+
+  /* breadcrumb */
+  .crumb{height:26px;display:flex;align-items:center;gap:6px;padding:0 10px;border-bottom:1px solid var(--border-subtle);font-family:var(--mono);font-size:11px;color:var(--text-3);background:var(--inset)}
+  .crumb .seg-c{color:var(--text-2)}
+  .crumb .seg-c.key{color:var(--accent)}
+  .crumb .sep{color:var(--text-faint)}
+  .crumb .acts{margin-left:auto;display:flex;gap:6px}
+  .crumb .acts button{font-size:10px;font-family:var(--ui);color:var(--text-2);background:var(--surface-raised);border:1px solid var(--border-subtle);padding:2px 8px;border-radius:var(--r-ctl);cursor:default}
+  .crumb .acts button:hover{border-color:var(--border);color:var(--text)}
+
+  /* tree */
+  .tree{flex:1;overflow:hidden;background:var(--surface);font-family:var(--mono);font-size:11px;line-height:1.9;padding:6px 0;position:relative}
+  .ln{display:flex;align-items:center;height:22px;padding:0 12px 0 0;position:relative;white-space:nowrap}
+  .ln:hover{background:var(--surface-raised)}
+  .ln.sel{background:var(--accent-wash)}
+  .ln.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent)}
+  .gutter{width:34px;text-align:right;padding-right:10px;color:var(--text-faint);font-size:10px;flex:none;user-select:none}
+  .ind{display:flex;flex:none}
+  .ind span{width:16px;display:block;height:22px;border-right:1px solid var(--border-subtle);margin-right:0}
+  .tri{width:14px;flex:none;color:var(--text-3);font-size:9px;text-align:center;cursor:default}
+  .tri.empty{color:transparent}
+  .k{color:var(--accent);opacity:0.92}
+  .colon{color:var(--text-faint);margin:0 6px 0 1px}
+  /* Option A — accent-on-keys, neutral values (one-accent rule). Values are primary content → --text;
+     type is conveyed by the neutral .badge chip + structure, never by hue. */
+  .v-str{color:var(--text)}
+  .v-num{color:var(--text)}
+  .v-bool{color:var(--text)}
+  .v-null{color:var(--text-3);font-style:italic}
+  .v-url{color:var(--accent);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:2px}
+  .brace{color:var(--text-3)}
+  .count{color:var(--text-faint);margin-left:7px;font-size:10px}
+  .badge{display:inline-block;font-size:9px;line-height:1;padding:2px 5px;border-radius:3px;margin-left:8px;border:1px solid var(--border-subtle);color:var(--text-3);text-transform:lowercase;letter-spacing:0.03em}
+  .badge.str{color:var(--text-3);border-color:var(--border-subtle)}
+  .badge.num{color:var(--text-3);border-color:var(--border-subtle)}
+  .badge.bool{color:var(--text-3);border-color:var(--border-subtle)}
+  .badge.null{color:var(--text-3)}
+  .annot{color:var(--text-faint);margin-left:9px;font-size:10px}
+  .trunc{color:var(--text-faint)}
+  .showmore{color:var(--accent);margin-left:8px;font-size:10px;cursor:default;border-bottom:1px dotted var(--border-strong)}
+  .ln.dim{opacity:0.5}
+  .row-acts{margin-left:auto;display:none;gap:4px;align-items:center;padding-left:14px}
+  .ln.sel .row-acts,.ln:hover .row-acts{display:flex}
+  .row-acts button{font-size:9px;font-family:var(--ui);color:var(--text-2);background:var(--surface-overlay);border:1px solid var(--border-subtle);padding:2px 6px;border-radius:4px;cursor:default}
+  .row-acts button:hover{color:var(--text);border-color:var(--border)}
+
+  /* footer */
+  .vfoot{height:26px;display:flex;align-items:center;gap:10px;padding:0 12px;border-top:1px solid var(--border-subtle);background:var(--surface-raised);font-family:var(--mono);font-size:10px;color:var(--text-3)}
+  .vfoot .d{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .vfoot .sep{color:var(--text-faint)}
+  .vfoot .vir{color:var(--text-2)}
+
+  /* before/after inset */
+  .ba{width:1280px;margin-top:14px;display:flex;gap:14px}
+  .ba-col{flex:1;background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--r-board);overflow:hidden}
+  .ba-head{height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border-subtle);background:var(--surface-raised)}
+  .ba-tag{font-size:10px;text-transform:uppercase;letter-spacing:0.06em;font-weight:600}
+  .ba-tag.before{color:var(--err)}
+  .ba-tag.after{color:var(--ok)}
+  .ba-head .desc{font-size:11px;color:var(--text-3)}
+  .ba-body{padding:10px 12px;height:128px;overflow:hidden;font-family:var(--mono);font-size:10px;line-height:1.55}
+  .ba-before pre{color:var(--text-3);white-space:pre-wrap;word-break:break-all}
+  .ba-after .mini-ln{display:flex;align-items:center;height:18px}
+  .ba-after .mini-ln .tri{width:12px;color:var(--text-3);font-size:9px}
+  .ba-after .ind2{width:14px;border-right:1px solid var(--border-subtle);height:18px;display:block}
+</style>
+</head>
+<body>
+
+  <div class="caption">
+    <span class="t">A · Optimized JSON Response Viewer</span>
+    <span class="dot"></span>
+    <span class="s">Canvas ADE — design mock (not live)</span>
+  </div>
+
+  <div class="board">
+
+    <!-- URL bar -->
+    <div class="urlbar">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <div class="nav">
+        <button>‹</button><button>›</button><button>⟳</button>
+      </div>
+      <div class="url">
+        <span class="lock">●</span>
+        <span>localhost:3000</span><span class="path">/orders</span>
+      </div>
+      <div class="frame">iPhone 14 · 390</div>
+    </div>
+
+    <!-- dimmed page render -->
+    <div class="page">
+      <div class="ph-row">
+        <span class="ph-title">Orders</span>
+        <span class="ph-pill">page 2 of 5 · 118 total</span>
+      </div>
+      <div class="ph-grid">
+        <div class="ph-card"><div class="k">Revenue</div><div class="v">$48,210.50</div></div>
+        <div class="ph-card"><div class="k">Open</div><div class="v">24</div></div>
+        <div class="ph-card"><div class="k">Avg. ship</div><div class="v">2.1 d</div></div>
+        <div class="ph-card"><div class="k">Refunds</div><div class="v">3</div></div>
+      </div>
+    </div>
+
+    <!-- Network inspector dock -->
+    <div class="net">
+      <div class="net-head">
+        <span class="net-tab">Console</span>
+        <span class="net-tab on">Network</span>
+        <span class="net-tab">Sources</span>
+        <div class="grow"></div>
+        <span class="stat"><span class="d"></span> 14 requests · 3.4 MB</span>
+        <span class="x">⌄</span>
+      </div>
+
+      <div class="net-body">
+
+        <!-- request list -->
+        <div class="reqlist">
+          <div class="lhead">
+            <span class="c-name">Name</span><span class="c-st">St</span><span class="c-sz">Size</span><span class="c-t">Time</span>
+          </div>
+          <div class="reqrow"><span class="m get">GET</span><span class="nm">orders?page=1</span><span class="st">200</span><span class="sz">1.9 MB</span><span class="tm">312ms</span></div>
+          <div class="reqrow sel"><span class="m get">GET</span><span class="nm">api/v2/orders?page=2</span><span class="st">200</span><span class="sz">2.1 MB</span><span class="tm">348ms</span></div>
+          <div class="reqrow"><span class="m post">POST</span><span class="nm">api/v2/orders/refund</span><span class="st">201</span><span class="sz">412 B</span><span class="tm">96ms</span></div>
+          <div class="reqrow"><span class="m get">GET</span><span class="nm">api/v2/customers/4821</span><span class="st">200</span><span class="sz">2.4 KB</span><span class="tm">44ms</span></div>
+          <div class="reqrow"><span class="m get">GET</span><span class="nm">api/v2/inventory/sku</span><span class="st warn">304</span><span class="sz">—</span><span class="tm">12ms</span></div>
+          <div class="reqrow"><span class="m get">GET</span><span class="nm">api/v2/shipping/rates</span><span class="st err">429</span><span class="sz">188 B</span><span class="tm">8ms</span></div>
+          <div class="reqrow"><span class="m get">GET</span><span class="nm">assets/icons.woff2</span><span class="st">200</span><span class="sz">36 KB</span><span class="tm">21ms</span></div>
+          <div class="reqrow"><span class="m post">POST</span><span class="nm">telemetry/batch</span><span class="st">204</span><span class="sz">—</span><span class="tm">5ms</span></div>
+        </div>
+
+        <!-- detail -->
+        <div class="detail">
+          <div class="d-subtabs">
+            <span class="d-subtab">Headers</span>
+            <span class="d-subtab">Payload</span>
+            <span class="d-subtab on">Response</span>
+            <span class="d-subtab">Timing</span>
+            <span class="d-subtab">Cookies</span>
+          </div>
+
+          <!-- viewer toolbar -->
+          <div class="vtools">
+            <div class="seg">
+              <button class="on">Pretty tree</button>
+              <button>Raw</button>
+              <button>Preview</button>
+            </div>
+            <div class="vt-div"></div>
+            <button class="ico-btn"><span class="gl">⊞</span> Expand all</button>
+            <button class="ico-btn"><span class="gl">⊟</span> Collapse all</button>
+            <div class="vt-div"></div>
+            <div class="vsearch">
+              <span class="gl">⌕</span>
+              <input value="email" spellcheck="false">
+              <span class="cnt">3/12</span>
+            </div>
+            <div class="grow"></div>
+            <div class="pathchip">path: <b>orders[0].customer.email</b> ⧉</div>
+          </div>
+
+          <!-- breadcrumb -->
+          <div class="crumb">
+            <span class="seg-c">$</span><span class="sep">▸</span>
+            <span class="seg-c key">orders</span><span class="sep">▸</span>
+            <span class="seg-c">0</span><span class="sep">▸</span>
+            <span class="seg-c key">customer</span><span class="sep">▸</span>
+            <span class="seg-c key">email</span>
+            <div class="acts">
+              <button>Copy path</button>
+              <button>Copy value</button>
+            </div>
+          </div>
+
+          <!-- tree -->
+          <div class="tree">
+            <!-- root -->
+            <div class="ln">
+              <span class="gutter">1</span>
+              <span class="ind"></span>
+              <span class="tri">▾</span>
+              <span class="brace">{</span><span class="count">12 keys</span>
+            </div>
+
+            <!-- meta object -->
+            <div class="ln">
+              <span class="gutter">2</span>
+              <span class="ind"><span></span></span>
+              <span class="tri">▾</span>
+              <span class="k">"meta"</span><span class="colon">:</span><span class="brace">{</span><span class="count">5 keys</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">3</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"page"</span><span class="colon">:</span><span class="v-num">2</span><span class="badge num">number</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">4</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"perPage"</span><span class="colon">:</span><span class="v-num">24</span><span class="badge num">number</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">5</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"total"</span><span class="colon">:</span><span class="v-num">118</span><span class="badge num">number</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">6</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"nextPage"</span><span class="colon">:</span><span class="v-url">"https://api.shop.dev/v2/orders?page=3"</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">7</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"generatedAt"</span><span class="colon">:</span><span class="v-str">"2026-06-23T14:08:51Z"</span><span class="annot">// 4 minutes ago</span>
+            </div>
+
+            <!-- orders array -->
+            <div class="ln">
+              <span class="gutter">8</span>
+              <span class="ind"><span></span></span>
+              <span class="tri">▾</span>
+              <span class="k">"orders"</span><span class="colon">:</span><span class="brace">[</span><span class="count">24</span>
+            </div>
+
+            <!-- orders[0] -->
+            <div class="ln">
+              <span class="gutter">9</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri">▾</span>
+              <span class="k">0</span><span class="colon">:</span><span class="brace">{</span><span class="count">9 keys</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">10</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"id"</span><span class="colon">:</span><span class="v-num">990217845512</span><span class="badge num">int64</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">11</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"reference"</span><span class="colon">:</span><span class="v-str">"ORD-2026-0042"</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">12</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"placedAt"</span><span class="colon">:</span><span class="v-str">"2026-06-22T09:14:03Z"</span><span class="annot">// yesterday 09:14</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">13</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"expedited"</span><span class="colon">:</span><span class="v-bool">true</span><span class="badge bool">boolean</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">14</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"cancelledAt"</span><span class="colon">:</span><span class="v-null">null</span><span class="badge null">null</span>
+            </div>
+
+            <!-- customer (selected) -->
+            <div class="ln sel">
+              <span class="gutter">15</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri">▾</span>
+              <span class="k">"customer"</span><span class="colon">:</span><span class="brace">{</span><span class="count">4 keys</span>
+              <span class="row-acts">
+                <button>Copy path</button><button>Copy value</button>
+              </span>
+            </div>
+            <div class="ln">
+              <span class="gutter">16</span>
+              <span class="ind"><span></span><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"id"</span><span class="colon">:</span><span class="v-num">4821</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">17</span>
+              <span class="ind"><span></span><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"name"</span><span class="colon">:</span><span class="v-str">"Marguerite Vandenberg"</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">18</span>
+              <span class="ind"><span></span><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"email"</span><span class="colon">:</span><span class="v-str">"m.vandenberg@northwind-supply.co"</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">19</span>
+              <span class="ind"><span></span><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"sessionToken"</span><span class="colon">:</span><span class="v-str">"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0ODIx…</span><span class="trunc">"</span><span class="annot">hover to expand · 412 chars</span>
+            </div>
+
+            <!-- items array collapsed -->
+            <div class="ln">
+              <span class="gutter">20</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri">▸</span>
+              <span class="k">"items"</span><span class="colon">:</span><span class="brace">[ … ]</span><span class="count">22</span><span class="showmore">show 22 more</span>
+            </div>
+
+            <!-- shippingAddress -->
+            <div class="ln">
+              <span class="gutter">21</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri">▸</span>
+              <span class="k">"shippingAddress"</span><span class="colon">:</span><span class="brace">{ … }</span><span class="count">6 keys</span>
+            </div>
+
+            <!-- totals -->
+            <div class="ln">
+              <span class="gutter">22</span>
+              <span class="ind"><span></span><span></span><span></span></span>
+              <span class="tri">▾</span>
+              <span class="k">"totals"</span><span class="colon">:</span><span class="brace">{</span><span class="count">4 keys</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">23</span>
+              <span class="ind"><span></span><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"subtotal"</span><span class="colon">:</span><span class="v-num">1284.00</span>
+            </div>
+            <div class="ln">
+              <span class="gutter">24</span>
+              <span class="ind"><span></span><span></span><span></span><span></span></span>
+              <span class="tri empty">·</span>
+              <span class="k">"currency"</span><span class="colon">:</span><span class="v-str">"USD"</span>
+            </div>
+
+            <!-- collapsed sibling orders -->
+            <div class="ln dim">
+              <span class="gutter">25</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri">▸</span>
+              <span class="k">1</span><span class="colon">:</span><span class="brace">{ … }</span><span class="count">9 keys</span>
+            </div>
+            <div class="ln dim">
+              <span class="gutter">26</span>
+              <span class="ind"><span></span><span></span></span>
+              <span class="tri">▸</span>
+              <span class="k">2</span><span class="colon">:</span><span class="brace">{ … }</span><span class="count">9 keys</span>
+              <span class="showmore">show 21 more orders</span>
+            </div>
+          </div>
+
+          <!-- footer -->
+          <div class="vfoot">
+            <span class="d"></span>
+            <span>parsed ok</span>
+            <span class="sep">·</span>
+            <span>2,184,402 bytes</span>
+            <span class="sep">·</span>
+            <span class="vir">2.1 MB · virtualized</span>
+            <span class="sep">·</span>
+            <span>1 of 24 expanded</span>
+            <span class="sep">·</span>
+            <span>UTF-8 · application/json</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- before / after inset -->
+  <div class="ba">
+    <div class="ba-col ba-before">
+      <div class="ba-head">
+        <span class="ba-tag before">Before</span>
+        <span class="desc">flat &lt;pre&gt; dump — unscannable, no structure</span>
+      </div>
+      <div class="ba-body">
+        <pre>{"meta":{"page":2,"perPage":24,"total":118,"nextPage":"https://api.shop.dev/v2/orders?page=3","generatedAt":"2026-06-23T14:08:51Z"},"orders":[{"id":990217845512,"reference":"ORD-2026-0042","placedAt":"2026-06-22T09:14:03Z","expedited":true,"cancelledAt":null,"customer":{"id":4821,"name":"Marguerite Vandenberg","email":"m.vandenberg@northwind-supply.co","sessionToken":"eyJhbGciOiJIUzI1Ni…</pre>
+      </div>
+    </div>
+
+    <div class="ba-col ba-after">
+      <div class="ba-head">
+        <span class="ba-tag after">After</span>
+        <span class="desc">collapsible · typed · searchable · virtualized</span>
+      </div>
+      <div class="ba-body" style="font-size:11px;line-height:1.6;color:var(--text-2)">
+        <div class="mini-ln"><span class="tri">▾</span><span class="brace" style="color:var(--text-3)">{</span><span class="count" style="color:var(--text-faint)">12 keys</span></div>
+        <div class="mini-ln"><span class="ind2"></span><span class="tri">▾</span><span class="k">"meta"</span><span class="colon">:</span><span class="brace" style="color:var(--text-3)">{</span><span class="count" style="color:var(--text-faint)">5 keys</span></div>
+        <div class="mini-ln"><span class="ind2"></span><span class="ind2"></span><span class="tri" style="color:transparent">·</span><span class="k">"page"</span><span class="colon">:</span><span class="v-num">2</span></div>
+        <div class="mini-ln"><span class="ind2"></span><span class="tri">▸</span><span class="k">"orders"</span><span class="colon">:</span><span class="brace" style="color:var(--text-3)">[ … ]</span><span class="count" style="color:var(--text-faint)">24</span><span class="showmore">show all</span></div>
+        <div class="mini-ln"><span class="ind2"></span><span class="ind2"></span><span class="tri" style="color:transparent">·</span><span class="k">"email"</span><span class="colon">:</span><span class="v-str">"m.vandenberg@…"</span></div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

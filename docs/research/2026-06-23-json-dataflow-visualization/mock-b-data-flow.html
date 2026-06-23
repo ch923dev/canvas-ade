@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>B · Data Flow View — Canvas ADE mock</title>
+<style>
+  :root{
+    /* Surfaces */
+    --void:#0a0a0b; --surface:#141416; --surface-raised:#1a1a1d; --surface-overlay:#1e1e22; --inset:#0e0e10;
+    /* Borders */
+    --border-subtle:rgba(255,255,255,0.06); --border:rgba(255,255,255,0.1); --border-strong:rgba(255,255,255,0.16);
+    /* Text */
+    --text:#ededee; --text-2:#9b9ba1; --text-3:#7b7b81; --text-faint:#46464b;
+    /* Accent */
+    --accent:#4f8cff; --accent-hover:#6ea0ff; --accent-wash:rgba(79,140,255,0.14);
+    /* Status */
+    --ok:#3ecf8e; --warn:#e8b339; --err:#f2545b;
+    /* Fonts */
+    --ui:'Geist',system-ui,-apple-system,sans-serif;
+    --mono:'Geist Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    /* Radius */
+    --r-board:8px; --r-inner:6px; --r-ctl:5px; --r-pill:999px;
+    /* Elevation */
+    --shadow-pop:0 8px 24px -6px rgba(0,0,0,0.7);
+    /* graph edge (local var — never shadow the contract --connector token) */
+    --edge:rgba(255,255,255,0.10);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--void); color:var(--text); font-family:var(--ui);
+    font-size:13px; line-height:1.45; -webkit-font-smoothing:antialiased;
+    padding:20px 24px 40px; display:flex; flex-direction:column; align-items:center;
+  }
+  .micro{font-size:10px; font-weight:500; text-transform:uppercase; letter-spacing:0.06em;}
+  .meta{font-family:var(--mono); font-size:11px;}
+  .label{font-size:12px; font-weight:500;}
+  .mono{font-family:var(--mono);}
+
+  /* caption strip */
+  .caption{
+    width:1280px; max-width:100%; display:flex; align-items:baseline; gap:10px;
+    margin-bottom:12px; padding:0 2px;
+  }
+  .caption .title{font-size:13px; font-weight:600; color:var(--text);}
+  .caption .sub{font-size:11px; color:var(--text-3); font-family:var(--mono);}
+
+  /* board */
+  .board{
+    width:1280px; max-width:100%; background:var(--surface);
+    border:1px solid var(--border); border-radius:var(--r-board);
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  /* board title chrome */
+  .board-chrome{
+    height:30px; display:flex; align-items:center; gap:8px; padding:0 10px;
+    background:var(--surface-raised); border-bottom:1px solid var(--border-subtle);
+  }
+  .dot-row{display:flex; gap:6px; align-items:center;}
+  .winbtn{width:9px; height:9px; border-radius:50%; background:var(--border-strong);}
+  .board-name{font-size:11px; color:var(--text-2); display:flex; align-items:center; gap:6px;}
+  .board-name .badge{
+    font-family:var(--mono); font-size:10px; color:var(--text-3);
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill); padding:1px 6px;
+  }
+  .board-chrome .spacer{flex:1;}
+  .live-dot{width:7px; height:7px; border-radius:50%; background:var(--ok);}
+
+  /* url bar */
+  .urlbar{
+    height:34px; display:flex; align-items:center; gap:8px; padding:0 10px;
+    background:var(--surface); border-bottom:1px solid var(--border-subtle);
+  }
+  .nav-ctrls{display:flex; gap:2px;}
+  .icbtn{
+    width:22px; height:22px; border-radius:var(--r-ctl); display:flex; align-items:center; justify-content:center;
+    color:var(--text-3); border:1px solid transparent;
+  }
+  .icbtn:hover{background:var(--surface-raised);}
+  .icbtn svg{width:13px; height:13px;}
+  .url-field{
+    flex:1; height:24px; display:flex; align-items:center; gap:7px; padding:0 9px;
+    background:var(--inset); border:1px solid var(--border-subtle); border-radius:var(--r-pill);
+    font-family:var(--mono); font-size:11px; color:var(--text-2);
+  }
+  .url-field .lock{color:var(--text-faint);}
+  .url-field .host{color:var(--text);}
+  .url-field .path{color:var(--text-2);}
+  .url-meta{font-family:var(--mono); font-size:10px; color:var(--text-faint); display:flex; gap:8px; align-items:center;}
+
+  /* page area */
+  .page-area{
+    height:140px; background:var(--inset); position:relative; overflow:hidden;
+    border-bottom:1px solid var(--border);
+    display:flex; flex-direction:column;
+  }
+  .page-topbar{
+    height:34px; display:flex; align-items:center; gap:14px; padding:0 18px;
+    border-bottom:1px solid var(--border-subtle); background:var(--surface);
+  }
+  .pt-logo{width:16px;height:16px;border-radius:4px;background:var(--accent-wash);border:1px solid var(--border);}
+  .pt-brand{font-size:12px;font-weight:600;color:var(--text);}
+  .pt-nav{display:flex;gap:16px;font-size:12px;color:var(--text-3);}
+  .pt-nav .on{color:var(--text);}
+  .page-body{flex:1;display:flex;}
+  .page-body .skel-col{padding:14px 18px;flex:1;}
+  .sk-h{font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:10px;}
+  .sk-row{height:9px;border-radius:3px;background:var(--surface-raised);margin-bottom:8px;}
+  .sk-row.w1{width:70%;} .sk-row.w2{width:52%;} .sk-row.w3{width:61%;} .sk-row.w4{width:40%;}
+  .page-dim{
+    position:absolute; inset:0; background:rgba(10,10,11,0.35); pointer-events:none;
+  }
+  .page-tag{
+    position:absolute; left:18px; bottom:10px; font-family:var(--mono); font-size:10px;
+    color:var(--text-faint);
+  }
+
+  /* inspector dock */
+  .inspector{
+    background:var(--surface); border-top:1px solid var(--border-strong);
+    display:flex; flex-direction:column;
+  }
+  .insp-tabs{
+    height:32px; display:flex; align-items:stretch; gap:0; padding:0 6px;
+    border-bottom:1px solid var(--border-subtle); background:var(--surface-raised);
+  }
+  .tab{
+    display:flex; align-items:center; gap:7px; padding:0 12px; font-size:12px; font-weight:500;
+    color:var(--text-3); position:relative; cursor:default;
+  }
+  .tab.active{color:var(--text);}
+  .tab.active::after{
+    content:""; position:absolute; left:8px; right:8px; bottom:-1px; height:2px;
+    background:var(--accent); border-radius:2px;
+  }
+  .tab .count{font-family:var(--mono); font-size:10px; color:var(--text-faint);}
+  .tab.active .count{color:var(--text-3);}
+  .insp-tabs .spacer{flex:1;}
+  .insp-tools{display:flex; align-items:center; gap:6px; padding-right:4px;}
+  .privacy-chip{
+    display:flex; align-items:center; gap:6px; height:20px; padding:0 8px;
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill);
+    font-family:var(--mono); font-size:10px; color:var(--text-3);
+  }
+  .privacy-chip svg{width:11px;height:11px;color:var(--text-faint);}
+  .seg{
+    display:flex; border:1px solid var(--border-subtle); border-radius:var(--r-ctl); overflow:hidden; height:20px;
+  }
+  .seg span{padding:0 8px; display:flex; align-items:center; font-size:10px; color:var(--text-3); font-family:var(--mono);}
+  .seg span.on{background:var(--surface-overlay); color:var(--text);}
+
+  /* dock body: 3 columns */
+  .dock-body{display:flex; height:512px;}
+  .col-inv{
+    width:560px; border-right:1px solid var(--border-subtle); display:flex; flex-direction:column;
+    background:var(--surface);
+  }
+  .col-graph{flex:1; border-right:1px solid var(--border-subtle); background:var(--inset); position:relative;}
+  .col-insp{width:300px; background:var(--surface); display:flex; flex-direction:column;}
+
+  .col-head{
+    height:28px; display:flex; align-items:center; gap:8px; padding:0 12px;
+    border-bottom:1px solid var(--border-subtle); color:var(--text-3);
+    font-size:10px; font-weight:500; text-transform:uppercase; letter-spacing:0.06em;
+    background:var(--surface);
+  }
+  .col-head .ct{font-family:var(--mono); color:var(--text-faint); letter-spacing:0; text-transform:none; font-size:10px;}
+  .col-head .spacer{flex:1;}
+  .col-graph .col-head{background:var(--inset);}
+
+  /* inventory list */
+  .inv-list{overflow:auto;}
+  .ep-row{
+    display:grid; grid-template-columns:46px 1fr 54px 70px 56px 18px;
+    align-items:center; column-gap:10px; height:30px; padding:0 12px;
+    border-bottom:1px solid var(--border-subtle); font-size:12px;
+  }
+  .ep-row:hover{background:var(--surface-raised);}
+  .ep-row.sel{background:var(--accent-wash);}
+  .ep-row.sel .route{color:var(--text);}
+  .method{
+    font-family:var(--mono); font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.02em;
+    height:17px; display:flex; align-items:center; justify-content:center; border-radius:var(--r-ctl);
+    border:1px solid var(--border-subtle);
+  }
+  /* Methods are neutral labels — accent is reserved for the selected row/path only (one-accent rule). */
+  .m-get{color:var(--text-2); background:var(--surface-raised); border-color:var(--border-subtle);}
+  .m-post{color:var(--text-2); background:var(--surface-raised); border-color:var(--border-subtle);}
+  .m-ws{color:var(--text-2); background:var(--surface-raised); border-color:var(--border-subtle);}
+  .route{font-family:var(--mono); font-size:12px; color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .route .seg-dyn{color:var(--accent);}
+  .calls{font-family:var(--mono); font-size:11px; color:var(--text-3); text-align:right;}
+  .statusmix{display:flex; height:5px; border-radius:3px; overflow:hidden; background:var(--inset);}
+  .statusmix i{display:block; height:100%;}
+  .sm-2xx{background:var(--ok);}
+  .sm-4xx{background:var(--err);}
+  .sm-3xx{background:var(--warn);}
+  .p50{font-family:var(--mono); font-size:11px; color:var(--text-3); text-align:right;}
+  .p50 b{color:var(--text-2); font-weight:500;}
+  .expand{display:flex; align-items:center; justify-content:flex-end; color:var(--text-faint);}
+  .expand svg{width:11px; height:11px;}
+  .ep-row.open .expand svg{transform:rotate(90deg);}
+
+  /* schema reveal */
+  .schema{
+    background:var(--inset); border-bottom:1px solid var(--border-subtle);
+    padding:9px 12px 11px 56px;
+  }
+  .schema-head{
+    display:flex; align-items:center; gap:8px; margin-bottom:7px;
+  }
+  .schema-head .lbl{font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:500;}
+  .schema-head .ent{
+    font-family:var(--mono); font-size:10px; color:var(--text-2);
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill); padding:1px 7px; background:var(--surface-raised);
+  }
+  .schema-head .src{font-family:var(--mono); font-size:10px; color:var(--text-faint);}
+  .fields{font-family:var(--mono); font-size:11px; line-height:1.7;}
+  .fields .f{display:flex; gap:0; white-space:pre; color:var(--text-3);}
+  .fields .brace{color:var(--text-faint);}
+  .fields .key{color:var(--text);}
+  .fields .opt{color:var(--accent);}
+  .fields .colon{color:var(--text-faint); padding:0 6px 0 1px;}
+  /* Types are neutral annotations; only id/foreign-key types carry the accent (the lineage signal). */
+  .fields .t-string{color:var(--text-2);}
+  .fields .t-number{color:var(--text-2);}
+  .fields .t-bool{color:var(--text-2);}
+  .fields .t-id{color:var(--accent);}
+  .fields .t-null{color:var(--text-faint);}
+  .fields .union{color:var(--text-faint);}
+  .fields .nest{color:var(--text-3);}
+  .fields .arr{color:var(--text-faint);}
+  .lineage-tag{
+    margin-top:8px; display:inline-flex; align-items:center; gap:6px;
+    font-family:var(--mono); font-size:10px; color:var(--accent);
+    background:var(--accent-wash); border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius:var(--r-pill); padding:2px 8px;
+  }
+  .lineage-tag svg{width:11px;height:11px;}
+
+  /* GRAPH */
+  .graph-wrap{position:absolute; inset:28px 0 0 0; overflow:hidden;}
+  .graph-svg{position:absolute; inset:0; width:100%; height:100%;}
+  .gnode{
+    position:absolute; border-radius:var(--r-inner); border:1px solid var(--border);
+    background:var(--surface-raised); padding:7px 10px; min-width:104px;
+  }
+  .gnode .gn-kind{font-size:9px; text-transform:uppercase; letter-spacing:0.07em; color:var(--text-faint); margin-bottom:3px;}
+  .gnode .gn-name{font-family:var(--mono); font-size:11px; color:var(--text);}
+  .gnode .gn-sub{font-family:var(--mono); font-size:10px; color:var(--text-3); margin-top:2px;}
+  .gnode.page{border-color:var(--border-strong); background:var(--surface-overlay);}
+  .gnode.page .gn-name{color:var(--text);}
+  .gnode.endpoint{}
+  .gnode.endpoint .m{
+    display:inline-block; font-family:var(--mono); font-size:9px; font-weight:600;
+    color:var(--text-2); margin-right:5px;
+  }
+  .gnode.entity{border-color:var(--border); min-width:88px;}
+  .gnode.entity .gn-name{color:var(--text);}
+  /* selected path */
+  .gnode.on{box-shadow:0 0 0 1.5px var(--accent);}
+  .gnode.entity.on{background:var(--accent-wash);}
+  .glegend{
+    position:absolute; left:12px; bottom:10px; display:flex; gap:14px; align-items:center;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+  }
+  .glegend .k{display:flex; align-items:center; gap:5px;}
+  .glegend .ln{width:16px; height:0; border-top:1px solid var(--edge);}
+  .glegend .ln.sel{border-top:1.5px solid var(--accent);}
+  .glegend .ln.lin{border-top:1.5px dashed var(--accent);}
+
+  /* right inspector */
+  .insp-entity-head{padding:12px 14px 10px; border-bottom:1px solid var(--border-subtle);}
+  .insp-entity-head .ttl{display:flex; align-items:center; gap:8px;}
+  .insp-entity-head .ent-name{font-size:15px; font-weight:600; color:var(--text);}
+  .insp-entity-head .ent-pill{
+    font-family:var(--mono); font-size:9px; color:var(--text-3); background:var(--surface-raised);
+    border:1px solid var(--border-subtle); border-radius:var(--r-pill); padding:1px 6px;
+  }
+  .insp-entity-head .ent-meta{font-family:var(--mono); font-size:10px; color:var(--text-faint); margin-top:5px;}
+  .insp-section{padding:11px 14px; border-bottom:1px solid var(--border-subtle);}
+  .insp-section .sec-h{
+    font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint);
+    font-weight:500; margin-bottom:9px; display:flex; align-items:center; gap:6px;
+  }
+  .insp-section .sec-h .ct{font-family:var(--mono); letter-spacing:0; text-transform:none; color:var(--text-faint);}
+  .field-line{
+    display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+    font-family:var(--mono); font-size:11px; padding:3px 0; line-height:1.5;
+  }
+  .field-line .fk{color:var(--text);}
+  .field-line .fk .o{color:var(--accent);}
+  .field-line .ft{color:var(--text-3);}
+  .field-line .ft .t-string{color:var(--text-2);}
+  .field-line .ft .t-number{color:var(--text-2);}
+  .field-line .ft .t-bool{color:var(--text-2);}
+  .field-line .ft .t-id{color:var(--accent);}
+  .field-line .ft .t-null{color:var(--text-faint);}
+  .field-line.lin .fk{color:var(--accent);}
+  .endpoint-chip{
+    display:flex; align-items:center; gap:8px; padding:5px 8px; margin-bottom:5px;
+    border:1px solid var(--border-subtle); border-radius:var(--r-ctl); background:var(--surface-raised);
+  }
+  .endpoint-chip .m{font-family:var(--mono); font-size:9px; font-weight:600;}
+  .endpoint-chip .m.get{color:var(--text-2);}
+  .endpoint-chip .m.post{color:var(--text-2);}
+  .endpoint-chip .r{font-family:var(--mono); font-size:11px; color:var(--text-2); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .endpoint-chip .r .seg-dyn{color:var(--accent);}
+  .endpoint-chip .role{
+    font-size:9px; text-transform:uppercase; letter-spacing:0.05em; font-weight:500;
+    padding:1px 6px; border-radius:var(--r-pill);
+  }
+  .role.produces{color:var(--text-3); background:var(--surface-raised);}
+  .role.consumes{color:var(--text-3); background:var(--surface-raised);}
+
+  .footnote{
+    width:1280px; max-width:100%; margin-top:10px; padding:0 2px;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+    display:flex; gap:16px; align-items:center;
+  }
+  .footnote .live{display:flex;align-items:center;gap:5px;}
+  .footnote .live i{width:6px;height:6px;border-radius:50%;background:var(--ok);}
+</style>
+</head>
+<body>
+
+  <!-- caption strip -->
+  <div class="caption">
+    <span class="title">B · Data Flow View</span>
+    <span class="sub">Canvas ADE — design mock (not live)</span>
+  </div>
+
+  <!-- BROWSER BOARD -->
+  <div class="board">
+
+    <!-- board chrome -->
+    <div class="board-chrome">
+      <div class="dot-row">
+        <span class="winbtn"></span><span class="winbtn"></span><span class="winbtn"></span>
+      </div>
+      <div class="board-name">
+        Browser <span class="badge">localhost:3000</span>
+      </div>
+      <div class="spacer"></div>
+      <span class="meta" style="color:var(--text-faint)">390 × 844</span>
+      <span class="live-dot"></span>
+    </div>
+
+    <!-- url bar -->
+    <div class="urlbar">
+      <div class="nav-ctrls">
+        <div class="icbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></div>
+        <div class="icbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+        <div class="icbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v6h6"/><path d="M20 20v-6h-6"/><path d="M4 10a8 8 0 0 1 14-3M20 14a8 8 0 0 1-14 3"/></svg></div>
+      </div>
+      <div class="url-field">
+        <span class="lock"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+        <span><span class="host">localhost:3000</span><span class="path">/orders</span></span>
+      </div>
+      <div class="url-meta">
+        <span>312 req</span>
+        <span style="color:var(--text-faint)">·</span>
+        <span>1.2 MB</span>
+      </div>
+    </div>
+
+    <!-- page area -->
+    <div class="page-area">
+      <div class="page-topbar">
+        <div class="pt-logo"></div>
+        <div class="pt-brand">Acme Ops</div>
+        <div class="pt-nav"><span class="on">Orders</span><span>Customers</span><span>Products</span><span>Reports</span></div>
+      </div>
+      <div class="page-body">
+        <div class="skel-col">
+          <div class="sk-h">Orders</div>
+          <div class="sk-row w1"></div><div class="sk-row w3"></div><div class="sk-row w2"></div><div class="sk-row w4"></div>
+        </div>
+        <div class="skel-col" style="max-width:280px;border-left:1px solid var(--border-subtle)">
+          <div class="sk-h" style="color:var(--text-3)">Order #4821</div>
+          <div class="sk-row w3"></div><div class="sk-row w1"></div><div class="sk-row w2"></div>
+        </div>
+      </div>
+      <div class="page-dim"></div>
+      <div class="page-tag">// live page — captured for analysis</div>
+    </div>
+
+    <!-- INSPECTOR DOCK -->
+    <div class="inspector">
+
+      <!-- tabs -->
+      <div class="insp-tabs">
+        <div class="tab">Network <span class="count">312</span></div>
+        <div class="tab active">Data Flow <span class="count">6 routes</span></div>
+        <div class="spacer"></div>
+        <div class="insp-tools">
+          <div class="privacy-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
+            values scrubbed · structure only
+          </div>
+          <div class="seg"><span class="on">Group: route</span><span>raw</span></div>
+        </div>
+      </div>
+
+      <!-- 3-column body -->
+      <div class="dock-body">
+
+        <!-- COLUMN 1: ENDPOINT INVENTORY -->
+        <div class="col-inv">
+          <div class="col-head">
+            Endpoint Inventory
+            <span class="spacer"></span>
+            <span class="ct">6 templates · 312 calls</span>
+          </div>
+          <div class="inv-list">
+
+            <!-- GET /orders -->
+            <div class="ep-row open sel">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/v2/orders</span>
+              <span class="calls">86</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:96%"></i><i class="sm-4xx" style="width:4%"></i></span>
+              <span class="p50"><b>34</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+            <!-- schema reveal -->
+            <div class="schema">
+              <div class="schema-head">
+                <span class="lbl">Inferred response</span>
+                <span class="ent">Order[]</span>
+                <span class="src">merged from 86 responses</span>
+              </div>
+              <div class="fields">
+                <div class="f"><span class="brace">{</span></div>
+                <div class="f">  <span class="key">id</span><span class="colon">:</span><span class="t-id">OrderId</span></div>
+                <div class="f">  <span class="key">number</span><span class="colon">:</span><span class="t-string">string</span></div>
+                <div class="f">  <span class="key">status</span><span class="colon">:</span><span class="t-string">"open"</span><span class="union"> | </span><span class="t-string">"shipped"</span><span class="union"> | </span><span class="t-string">"cancelled"</span></div>
+                <div class="f">  <span class="key">total</span><span class="colon">:</span><span class="t-number">number</span></div>
+                <div class="f">  <span class="key">currency</span><span class="colon">:</span><span class="t-string">string</span></div>
+                <div class="f">  <span class="key">customerId</span><span class="colon">:</span><span class="t-id">CustomerId</span></div>
+                <div class="f">  <span class="key">items</span><span class="colon">:</span><span class="arr">LineItem[]</span></div>
+                <div class="f">  <span class="key">discount</span><span class="opt">?</span><span class="colon">:</span><span class="t-number">number</span><span class="union"> | </span><span class="t-null">null</span></div>
+                <div class="f">  <span class="key">createdAt</span><span class="colon">:</span><span class="t-string">string</span><span class="nest"> (iso8601)</span></div>
+                <div class="f"><span class="brace">}</span></div>
+              </div>
+              <div class="lineage-tag">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h10"/><path d="M14 8l4 4-4 4"/><circle cx="20" cy="12" r="1.5" fill="currentColor"/></svg>
+                Order.customerId → GET /api/v2/users/:id
+              </div>
+            </div>
+
+            <!-- GET /orders/:id -->
+            <div class="ep-row">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/v2/orders/<span class="seg-dyn">:id</span></span>
+              <span class="calls">58</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:91%"></i><i class="sm-4xx" style="width:9%"></i></span>
+              <span class="p50"><b>41</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- POST /orders -->
+            <div class="ep-row">
+              <span class="method m-post">POST</span>
+              <span class="route">/api/v2/orders</span>
+              <span class="calls">19</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:84%"></i><i class="sm-4xx" style="width:16%"></i></span>
+              <span class="p50"><b>112</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- GET /users/:id -->
+            <div class="ep-row">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/v2/users/<span class="seg-dyn">:id</span></span>
+              <span class="calls">72</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:99%"></i><i class="sm-4xx" style="width:1%"></i></span>
+              <span class="p50"><b>28</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- GET /products -->
+            <div class="ep-row">
+              <span class="method m-get">GET</span>
+              <span class="route">/api/v2/products</span>
+              <span class="calls">63</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:100%"></i></span>
+              <span class="p50"><b>22</b>ms</span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+            <!-- WS /realtime -->
+            <div class="ep-row">
+              <span class="method m-ws">WS</span>
+              <span class="route">/realtime</span>
+              <span class="calls">14</span>
+              <span class="statusmix"><i class="sm-2xx" style="width:100%"></i></span>
+              <span class="p50"><b>—</b></span>
+              <span class="expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- COLUMN 2: DATA-FLOW GRAPH -->
+        <div class="col-graph">
+          <div class="col-head">
+            Data Flow Graph
+            <span class="spacer"></span>
+            <span class="ct">page → endpoint → entity</span>
+          </div>
+          <div class="graph-wrap">
+            <!--
+              viewBox maps 1:1 to the graph-wrap box (~392 × 484).
+              PAGE node:  left 14, top 32, ~104w  -> right edge x=118, v-center y≈70
+              ENDPOINT:   left 150, ~120w (x 150..270), centers y = 64 / 152 / 240 / 328
+              ENTITY:     left 296, ~88w  (x 296..384), centers y = 108 / 184 / 260 / 336
+            -->
+            <svg class="graph-svg" preserveAspectRatio="none" viewBox="0 0 392 484">
+              <!-- page -> endpoints (calm connectors, exit page right edge x=118 y≈70) -->
+              <path d="M118 62 C 138 62, 130 64, 150 64" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 68 C 138 68, 130 152, 150 152" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 74 C 138 74, 130 240, 150 240" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <path d="M118 80 C 138 80, 130 328, 150 328" fill="none" stroke="var(--edge)" stroke-width="1"/>
+
+              <!-- endpoint right edge x=270 -> entity left edge x=296 -->
+              <!-- GET /orders (y64) -> Order (y108)  SELECTED: accent -->
+              <path d="M270 64 C 286 64, 282 108, 296 108" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+              <!-- GET /orders/:id (y152) -> Order (y108) -->
+              <path d="M270 152 C 286 152, 284 108, 296 108" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <!-- GET /users/:id (y240) -> Customer (y184) -->
+              <path d="M270 240 C 286 240, 284 184, 296 184" fill="none" stroke="var(--edge)" stroke-width="1"/>
+              <!-- GET /products (y328) -> Product (y260) -->
+              <path d="M270 328 C 286 328, 284 260, 296 260" fill="none" stroke="var(--edge)" stroke-width="1"/>
+
+              <!-- data-lineage edge: Order entity (x296 y120) -> GET /users/:id node (x150 y228) dashed accent -->
+              <path d="M298 122 C 250 150, 210 200, 168 228" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.85"/>
+            </svg>
+
+            <!-- PAGE node -->
+            <div class="gnode page" style="left:14px; top:46px;">
+              <div class="gn-kind">Page</div>
+              <div class="gn-name">/orders</div>
+              <div class="gn-sub">localhost:3000</div>
+            </div>
+
+            <!-- ENDPOINT nodes (centers y = 64 / 152 / 240 / 328 -> top = center-20) -->
+            <div class="gnode endpoint on" style="left:150px; top:44px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/orders</div>
+              <div class="gn-sub">86 calls · 34ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:132px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/orders/:id</div>
+              <div class="gn-sub">58 calls · 41ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:220px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/users/:id</div>
+              <div class="gn-sub">72 calls · 28ms</div>
+            </div>
+            <div class="gnode endpoint" style="left:150px; top:308px;">
+              <div class="gn-kind"><span class="m">GET</span>endpoint</div>
+              <div class="gn-name">/products</div>
+              <div class="gn-sub">63 calls · 22ms</div>
+            </div>
+
+            <!-- ENTITY nodes (centers y = 108 / 184 / 260 / 336 -> top = center-17) -->
+            <div class="gnode entity on" style="left:296px; top:91px;">
+              <div class="gn-kind">Entity</div>
+              <div class="gn-name">Order</div>
+            </div>
+            <div class="gnode entity" style="left:296px; top:167px;">
+              <div class="gn-kind">Entity</div>
+              <div class="gn-name">Customer</div>
+            </div>
+            <div class="gnode entity" style="left:296px; top:243px;">
+              <div class="gn-kind">Entity</div>
+              <div class="gn-name">Product</div>
+            </div>
+            <div class="gnode entity" style="left:296px; top:319px;">
+              <div class="gn-kind">Entity</div>
+              <div class="gn-name">Address</div>
+            </div>
+
+            <div class="glegend">
+              <span class="k"><span class="ln"></span> call</span>
+              <span class="k"><span class="ln sel"></span> selected</span>
+              <span class="k"><span class="ln lin"></span> lineage</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- COLUMN 3: ENTITY INSPECTOR -->
+        <div class="col-insp">
+          <div class="insp-entity-head">
+            <div class="ttl">
+              <span class="ent-name">Order</span>
+              <span class="ent-pill">entity</span>
+            </div>
+            <div class="ent-meta">inferred · 9 fields · seen in 144 responses</div>
+          </div>
+
+          <div class="insp-section">
+            <div class="sec-h">Inferred fields <span class="ct">9</span></div>
+            <div class="field-line"><span class="fk">id</span><span class="ft"><span class="t-id">OrderId</span></span></div>
+            <div class="field-line"><span class="fk">number</span><span class="ft"><span class="t-string">string</span></span></div>
+            <div class="field-line"><span class="fk">status</span><span class="ft"><span class="t-string">"open"|"shipped"|"cancelled"</span></span></div>
+            <div class="field-line"><span class="fk">total</span><span class="ft"><span class="t-number">number</span></span></div>
+            <div class="field-line"><span class="fk">currency</span><span class="ft"><span class="t-string">string</span></span></div>
+            <div class="field-line lin"><span class="fk">customerId</span><span class="ft"><span class="t-id">CustomerId</span></span></div>
+            <div class="field-line"><span class="fk">items</span><span class="ft"><span class="t-id">LineItem[]</span></span></div>
+            <div class="field-line"><span class="fk">discount<span class="o">?</span></span><span class="ft"><span class="t-number">number</span>|<span class="t-null">null</span></span></div>
+            <div class="field-line"><span class="fk">createdAt</span><span class="ft"><span class="t-string">string</span></span></div>
+          </div>
+
+          <div class="insp-section">
+            <div class="sec-h">Produced by <span class="ct">2</span></div>
+            <div class="endpoint-chip">
+              <span class="m get">GET</span>
+              <span class="r">/api/v2/orders</span>
+              <span class="role produces">produces</span>
+            </div>
+            <div class="endpoint-chip">
+              <span class="m get">GET</span>
+              <span class="r">/api/v2/orders/<span class="seg-dyn">:id</span></span>
+              <span class="role produces">produces</span>
+            </div>
+          </div>
+
+          <div class="insp-section">
+            <div class="sec-h">Consumed by <span class="ct">1</span></div>
+            <div class="endpoint-chip">
+              <span class="m post">POST</span>
+              <span class="r">/api/v2/orders</span>
+              <span class="role consumes">consumes</span>
+            </div>
+          </div>
+
+          <div class="insp-section" style="border-bottom:none">
+            <div class="sec-h">Lineage <span class="ct">1</span></div>
+            <div class="field-line lin" style="line-height:1.5">
+              <span class="fk" style="font-size:11px">customerId → /users/:id</span>
+            </div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-top:3px">
+              foreign key inferred · 72/86 hits
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <span class="live"><i></i> analyzing 312 captured requests</span>
+    <span>schema inference: structural · confidence ≥ 0.9</span>
+    <span style="color:var(--text-3)">Data Flow · Canvas ADE</span>
+  </div>
+
+</body>
+</html>
