@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { AuditEntry } from '../../../shared/mcpTypes'
+import { useAuditLogStore } from './auditLogStore'
 
 /**
  * Read-only viewer for the MCP dispatch audit trail (T4.1). The trail is written
@@ -10,6 +11,11 @@ import type { AuditEntry } from '../../../shared/mcpTypes'
  * Opens with ⌘/Ctrl+Shift+A or the corner launcher; refreshes its list each time it
  * opens. Minimal "shell" for M4 — a dense, read-only list; richer filtering/detail can
  * land later without changing the data path.
+ *
+ * W1-A (F3): the open flag lives in the shared `auditLogStore` so the corner launcher, the
+ * drift-guarded Ctrl/⌘+Shift+A keymap action, and the Ctrl+K "View audit log" verb all toggle
+ * one source of truth. This component is the SOLE renderer of the panel; it no longer
+ * self-registers a `keydown` listener (that chord now resolves in `resolveCanvasKeyAction`).
  */
 
 const STATUS_COLOR: Record<string, string> = {
@@ -29,10 +35,9 @@ function fmtTime(ts: number): string {
 }
 
 export default function AuditLogViewer(): React.ReactElement {
-  const [open, setOpen] = useState(false)
+  const open = useAuditLogStore((s) => s.open)
+  const setOpen = useAuditLogStore((s) => s.setOpen)
   const [entries, setEntries] = useState<AuditEntry[]>([])
-  // Mirrors `open` for the keydown handler (a stable listener can't close over state).
-  const openRef = useRef(false)
 
   const refresh = useCallback(async (): Promise<void> => {
     const read = window.api?.mcp?.readAudit
@@ -40,36 +45,25 @@ export default function AuditLogViewer(): React.ReactElement {
     setEntries(await read({ limit: 200 }))
   }, [])
 
-  // Open sets state + pulls a fresh list (refresh on every open, not via an effect, so
-  // there's no setState-in-effect); close just hides.
-  const openViewer = useCallback((): void => {
-    openRef.current = true
-    setOpen(true)
-    void refresh()
-  }, [refresh])
-  const closeViewer = useCallback((): void => {
-    openRef.current = false
-    setOpen(false)
-  }, [])
-
-  // Global toggle: ⌘/Ctrl+Shift+A.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
-        e.preventDefault()
-        if (openRef.current) closeViewer()
-        else openViewer()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [openViewer, closeViewer])
+  // Pull a fresh trail whenever the panel opens. The open flag now flips from OUTSIDE this
+  // component (corner launcher, the Ctrl+Shift+A keymap, the palette verb), so we refetch on the
+  // closed→open edge via a store subscription rather than in an opener callback. The setState
+  // lives in the subscription callback (an external-store event), NOT synchronously in the effect
+  // body — which is what the original `refresh-in-open()` shape was avoiding (no cascading-render
+  // lint). The component never unmounts between states, so the first open is always an edge.
+  useEffect(
+    () =>
+      useAuditLogStore.subscribe((s, prev) => {
+        if (s.open && !prev.open) void refresh()
+      }),
+    [refresh]
+  )
 
   if (!open) {
     return (
       <button
         type="button"
-        onClick={openViewer}
+        onClick={() => setOpen(true)}
         title="MCP dispatch audit log (⌘/Ctrl+Shift+A)"
         style={{
           position: 'fixed',
@@ -137,7 +131,7 @@ export default function AuditLogViewer(): React.ReactElement {
           <button type="button" onClick={() => void refresh()} style={launcherBtn} title="Refresh">
             Refresh
           </button>
-          <button type="button" onClick={closeViewer} style={launcherBtn} title="Close">
+          <button type="button" onClick={() => setOpen(false)} style={launcherBtn} title="Close">
             Close
           </button>
         </div>

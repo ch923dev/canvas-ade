@@ -672,3 +672,38 @@ re-arm) · headless real-app smoke (OSR paints, no spew) · full e2e matrix both
 Windows `@preview` 31✓; the `@terminal gitDiff` Windows fail is the known worktree host-repo-escape, passes
 in-container). CI all 4 checks green; claude-review 0 crit/0 warn (bot endorsed the failed-reload re-arm +
 the `ownerWired` decision). Files: new `previewOsrOwner.ts`; `previewOsr.ts` + `previewOsr.test.ts`.
+## 2026-06-23 — MCP audit SDD · W1-A orchestration discoverability (F3/F4/H1/H6) — squash pending merge into umbrella
+
+Renderer-only slice of the **2026-06-23 MCP feature-audit SDD package**
+(`docs/reviews/2026-06-23-mcp-audit/sdd/`) — closes the two highest-UX audit findings: there was **no
+keyboard path** to the orchestration surfaces, and the trust-critical audit log was reachable only by a
+self-registered, undiscoverable chord. **No schema impact** (pure Zustand ephemerals + React state).
+- **F4 — palette `'Orchestration'` section.** New `SECTION_ORDER` slot between `'Groups'` and `'Canvas'`
+  + six `buildCommands` rows (Open Command board · View audit log · Enable / Disable orchestration · Sync
+  agent CLIs · Go to executing tasks), HIDDEN-not-disabled by predicate (Raycast/Linear convention) off
+  two new `PaletteSnapshot` fields (`orchestrationEnabled`, `hasExecutingTasks`, derived in
+  `CommandPalette`). Verbs route to existing surfaces/modals only — none cross to MAIN except
+  `disableOrchestration`, which mirrors the Settings revoke (direct `setConsent('declined')`; there is no
+  disable modal — the consent modal is grant-only).
+- **F3/H1 — canonical `Ctrl/⌘+Shift+A`.** Moved the audit-log toggle out of a self-registered
+  `window.addEventListener` in `AuditLogViewer` into the drift-guarded keymap (`resolveCanvasKeyAction` →
+  `toggleAuditLog`), `SHORTCUT_ROWS` (so it shows in the `?` sheet), and a palette verb. Lifted the panel's
+  open flag into a new `auditLogStore` (one source of truth for the corner launcher, the chord, and the
+  verb); the viewer refetches on the closed→open edge via a store subscription (setState in the
+  subscription callback, not the effect body — keeps the no-cascading-render lint green). New drift-guard
+  CLAIM pins the chip↔resolver agreement.
+- **H6 — command-board empty-state guard.** When `orchestrationStore.enabled === false`, an empty
+  Command board shows a warn-accent strip ("Orchestration is not enabled … Dispatched tasks will not run
+  until you enable it") + an accent "Enable orchestration" button (opens the existing consent modal). No
+  longer claims dispatch "runs" when it would silently no-op.
+
+**Files:** `commandRegistry.ts` (+test) · `useCanvasKeybindings.ts` (+test) · `AuditLogViewer.tsx`
+(+integration test isolation reset) · `CommandBoard.tsx` · new `auditLogStore.ts` ·
+`usePaletteController.ts` + `CommandPalette.tsx` (verb/snapshot wiring) · `Canvas.tsx` (one-line dep). The
+last three are W1-A's logical palette/canvas territory (spec §3-§4 zones); no other Wave-1 lane touches
+them. **Verification:** gate green (typecheck · lint 0-err / 34 pre-existing-pattern warns · format · unit
+3355 · build); **real-app check** via a throwaway `@chrome` `_electron` spec (deleted, not committed) +
+screenshots — Ctrl+K shows the Orchestration section with chord chips, the `?` sheet carries "View audit
+log / Ctrl ⇧ A", Ctrl+Shift+A toggles the panel, and the disabled-orchestration command board shows the
+guard; both screenshots match the spec wireframes. Pure renderer → no e2e spec added (spec §6: unit +
+manual). Do not self-merge — queued for the integration role to squash-merge into `feat/mcp-integration`.
