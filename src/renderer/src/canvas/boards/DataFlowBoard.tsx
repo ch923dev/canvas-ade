@@ -32,6 +32,7 @@ import {
   type RequestLineageEdge
 } from '../../lib/lineage'
 import { buildGraph, focusSubgraph, diffGraphs } from '../../lib/dataFlowGraph'
+import { filterNetRecords, urlDomain } from '../../lib/netFilter'
 import { layoutGraph } from '../../lib/graphLayout'
 import { toErMermaid } from '../../lib/erMermaid'
 import { DIAGRAM_SIZE } from './planning/elements'
@@ -89,6 +90,11 @@ export function DataFlowBoard({
     () => (JSON.parse(browserKey) as [string, string][]).map(([id, title]) => ({ id, title })),
     [browserKey]
   )
+  // The bound Browser board's registrable domain — drives the first-party filter (primitive ⇒ stable).
+  const sourceDomain = useCanvasStore((s) => {
+    const b = sourceId ? s.boards.find((x) => x.id === sourceId) : undefined
+    return b && b.type === 'browser' ? urlDomain(b.url) : undefined
+  })
 
   const net = useOsrNetworkStore((s) => (sourceId ? s.byBoard[sourceId] : undefined))
   const setInferShapes = useOsrNetworkStore((s) => s.setInferShapes)
@@ -99,14 +105,25 @@ export function DataFlowBoard({
   const setFocus = useDataFlowStore((s) => s.setFocus)
   const setBaseline = useDataFlowStore((s) => s.setBaseline)
   const setBodyLineage = useDataFlowStore((s) => s.setBodyLineage)
+  const setApiOnly = useDataFlowStore((s) => s.setApiOnly)
+  const setFirstParty = useDataFlowStore((s) => s.setFirstParty)
   useEffect(() => () => useDataFlowStore.getState().clear(board.id), [board.id])
 
-  const records = net?.records ?? NO_RECORDS
+  const allRecords = net?.records ?? NO_RECORDS
   const inferShapes = net?.inferShapes ?? false
   const schemas = net?.schemas ?? NO_SCHEMAS
   // Stable locals (the React Compiler can't preserve a useMemo over an optional-chained dep).
   const bodyLineage = view?.bodyLineage
   const baseline = view?.baseline
+  const apiOnly = view?.apiOnly ?? true // noise filters default ON — a raw production capture is mostly
+  const firstParty = view?.firstParty ?? true // assets + third-party beacons; show "just my app" first.
+
+  // Screen out asset/document + third-party noise BEFORE templating (the JD-4 production-data fix).
+  const records = useMemo(
+    () => filterNetRecords(allRecords, { apiOnly, firstParty, firstPartyDomain: sourceDomain }),
+    [allRecords, apiOnly, firstParty, sourceDomain]
+  )
+  const hiddenCount = allRecords.length - records.length
 
   const groups = useMemo(() => groupByTemplate(records), [records])
   const model: EntityModel = useMemo(
@@ -253,7 +270,7 @@ export function DataFlowBoard({
         )}
       </div>
     )
-  } else if (records.length === 0) {
+  } else if (allRecords.length === 0) {
     body = (
       <div className="df-empty">
         <div className="df-empty-h">No captures yet</div>
@@ -297,6 +314,34 @@ export function DataFlowBoard({
           >
             <span className="df-box">{inferShapes && '✓'}</span> Infer shapes
           </button>
+          <button
+            className={'df-optin' + (apiOnly ? ' df-on' : '')}
+            role="checkbox"
+            aria-checked={apiOnly}
+            onClick={() => setApiOnly(board.id, !apiOnly)}
+            title="Show only data calls (fetch/xhr/websocket) — hide scripts, styles, images, fonts, documents"
+          >
+            <span className="df-box">{apiOnly && '✓'}</span> API only
+          </button>
+          <button
+            className={'df-optin' + (firstParty ? ' df-on' : '')}
+            role="checkbox"
+            aria-checked={firstParty}
+            disabled={!sourceDomain}
+            onClick={() => setFirstParty(board.id, !firstParty)}
+            title={
+              sourceDomain
+                ? `Show only ${sourceDomain} — hide third-party origins (analytics, CDNs, widgets)`
+                : 'First-party filter needs the bound board URL'
+            }
+          >
+            <span className="df-box">{firstParty && '✓'}</span> First-party
+          </button>
+          {hiddenCount > 0 && (
+            <span className="df-hidden" title="Records hidden by the active filters">
+              hidden {hiddenCount}
+            </span>
+          )}
           {(diff.added.size > 0 || diff.changed.size > 0) && (
             <span className="df-diffchip">
               {diff.added.size > 0 && <>+{diff.added.size} new</>}
@@ -329,7 +374,15 @@ export function DataFlowBoard({
         )}
 
         <div className="df-body">
-          {tab === 'graph' ? (
+          {groups.length === 0 ? (
+            <div className="df-empty">
+              <div className="df-empty-h">Everything&apos;s filtered out</div>
+              <div className="df-empty-d">
+                {hiddenCount} record{hiddenCount === 1 ? '' : 's'} hidden by the API-only /
+                first-party filters. Turn one off above to widen the view.
+              </div>
+            </div>
+          ) : tab === 'graph' ? (
             <GraphCanvas
               layout={layout}
               edges={graph.edges}

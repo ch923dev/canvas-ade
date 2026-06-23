@@ -13,10 +13,17 @@
 import type { Entity, EntityModel } from './entityInfer'
 import type { FormatHint, InferredField, ShapeType } from './schemaInfer'
 
-/** Mermaid identifiers/attribute names allow `[A-Za-z0-9_]`; anything else collapses to `_`. */
+/**
+ * Mermaid identifiers/attribute names allow `[A-Za-z0-9_]`; anything else collapses to `_`. A Mermaid
+ * `erDiagram` identifier also may NOT start with a digit (its lexer splits `6985e…` and the parse fails
+ * with `Expecting 'COLON', got 'UNICODE_TEXT'`), so a digit-leading name is prefixed `E_`. This is the
+ * hard guarantee that "→ Planning" can never emit unparseable Mermaid, even for an odd entity name.
+ */
 function safeIdent(s: string, fallback: string): string {
-  const cleaned = s.replace(/[^A-Za-z0-9_]/g, '_').replace(/^_+|_+$/g, '')
-  return cleaned.length > 0 ? cleaned : fallback
+  let cleaned = s.replace(/[^A-Za-z0-9_]/g, '_').replace(/^_+|_+$/g, '')
+  if (cleaned.length === 0) cleaned = fallback
+  if (/^[0-9]/.test(cleaned)) cleaned = 'E_' + cleaned
+  return cleaned
 }
 
 /** A Mermaid label string (relationship `via`) — strip quotes/newlines so it can't break the syntax. */

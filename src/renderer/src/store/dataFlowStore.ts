@@ -22,6 +22,10 @@ export interface DfBoardView {
   baseline?: DfGraph
   /** The MAIN body-side lineage edge list from the last opt-in pass (value-less, request-keyed). */
   bodyLineage?: RequestLineageEdge[]
+  /** Noise filter — keep only data calls (fetch/xhr/ws), dropping assets/documents. Default ON. */
+  apiOnly?: boolean
+  /** Noise filter — keep only the bound board's own domain, dropping third-party origins. Default ON. */
+  firstParty?: boolean
 }
 
 const EMPTY: DfBoardView = { tab: 'graph' }
@@ -32,6 +36,8 @@ interface DataFlowState {
   setFocus: (id: string, focusId: string | undefined) => void
   setBaseline: (id: string, baseline: DfGraph) => void
   setBodyLineage: (id: string, edges: RequestLineageEdge[]) => void
+  setApiOnly: (id: string, on: boolean) => void
+  setFirstParty: (id: string, on: boolean) => void
   clear: (id: string) => void
 }
 
@@ -45,6 +51,10 @@ export const useDataFlowStore = create<DataFlowState>((set) => ({
     set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), baseline } } })),
   setBodyLineage: (id, bodyLineage) =>
     set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), bodyLineage } } })),
+  setApiOnly: (id, apiOnly) =>
+    set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), apiOnly } } })),
+  setFirstParty: (id, firstParty) =>
+    set((s) => ({ byBoard: { ...s.byBoard, [id]: { ...(s.byBoard[id] ?? EMPTY), firstParty } } })),
   clear: (id) =>
     set((s) => {
       if (!(id in s.byBoard)) return s

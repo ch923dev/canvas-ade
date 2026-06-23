@@ -100,6 +100,7 @@ function GraphNode({
     >
       <div className="df-gh">
         {node.method && <span className="df-gm">{node.method}</span>}
+        {node.kind === 'page' && <span className="df-gm">PAGE</span>}
         {node.kind === 'entity' && <span className="df-gm">ENTITY</span>}
         {node.kind === 'shape' && <span className="df-gm">SHAPE</span>}
         <span className="df-gep">{node.label}</span>

@@ -106,7 +106,9 @@ export function buildGraph(
     } catch {
       /* keep raw origin */
     }
-    nodes.push({ id: pageId(origin), kind: 'page', label: 'PAGE', sub: host })
+    // host is the node's IDENTIFIER → it is the primary `label` (renders in the AA-contrast text token);
+    // a "PAGE" tag is drawn by the view. (Was: label 'PAGE' + host as faint meta — an a11y miss.)
+    nodes.push({ id: pageId(origin), kind: 'page', label: host })
   }
 
   // endpoint nodes (header-only in the graph; entities carry the fields) + page→endpoint call edges

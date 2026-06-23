@@ -119,4 +119,33 @@ describe('toErMermaid', () => {
     expect(out).toContain('no entities inferred')
     expect(out).not.toContain('Weather {')
   })
+
+  it('prefixes a digit-leading entity name so Mermaid can never fail to lex it (the export-crash fix)', () => {
+    // A 24-hex ObjectId that escaped upstream as an entity name — Mermaid would otherwise reject it with
+    // "Expecting 'COLON', got 'UNICODE_TEXT'" because an identifier may not start with a digit.
+    const m: EntityModel = {
+      entities: [
+        entity({ name: 'User', kind: 'entity', pk: 'id', fields: [field('id', ['string'])] }),
+        entity({
+          name: '6985e4721a7df4910de6434e',
+          kind: 'entity',
+          pk: '_id',
+          fields: [field('_id', ['string'])]
+        })
+      ],
+      relationships: [
+        {
+          from: 'User',
+          to: '6985e4721a7df4910de6434e',
+          via: 'ref',
+          kind: '1-*',
+          confidence: 'name+type'
+        }
+      ]
+    }
+    const out = toErMermaid(m)
+    expect(out).toContain('E_6985e4721a7df4910de6434e {') // entity box header prefixed
+    expect(out).toMatch(/User \|\|--o\{ E_6985e4721a7df4910de6434e/) // relationship target prefixed
+    expect(out).not.toMatch(/\s6985e4721a7df4910de6434e\b/) // the raw id never appears as a bare token
+  })
 })

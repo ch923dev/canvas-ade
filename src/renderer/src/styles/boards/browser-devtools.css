@@ -1827,6 +1827,22 @@
   color: var(--text);
   border-color: var(--border);
 }
+.df-optin:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.df-hidden {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-pill);
+  background: var(--inset);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
 .df-box {
   width: 13px;
   height: 13px;
@@ -1854,7 +1870,7 @@
   color: var(--text-2);
 }
 .df-dim-txt {
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 .df-spacer {
   margin-left: auto;
@@ -1926,7 +1942,7 @@
   stroke-dasharray: 4 3;
 }
 .df-edges .df-dim {
-  opacity: 0.32;
+  opacity: 0.4;
 }
 .df-elabel {
   fill: var(--accent);
@@ -1952,7 +1968,7 @@
   box-shadow: 0 0 0 1.5px var(--accent);
 }
 .df-gn.df-dim {
-  opacity: 0.34;
+  opacity: 0.52;
 }
 .df-gn.df-added {
   border-style: dashed;
@@ -1989,7 +2005,7 @@
 }
 .df-gmeta {
   margin-left: auto;
-  color: var(--text-faint);
+  color: var(--text-3);
   font-size: 9px;
 }
 .df-chip {
@@ -2027,7 +2043,7 @@
 }
 .df-gty {
   margin-left: auto;
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 .df-gty.df-id {
   color: var(--accent);
@@ -2036,7 +2052,7 @@
 .df-gmore {
   font-family: var(--mono);
   font-size: 9px;
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 
 /* sequence layout */
@@ -2092,7 +2108,7 @@
   background: var(--ok);
 }
 .df-dur {
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 .df-seq-hops {
   padding: 8px 12px;
@@ -2116,7 +2132,7 @@
   padding: 0 14px;
   font-family: var(--mono);
   font-size: 9px;
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 
 /* legend + empty/bind states */
@@ -2136,7 +2152,7 @@
 }
 .df-legend-meta {
   font-family: var(--mono);
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 .df-empty {
   flex: 1;

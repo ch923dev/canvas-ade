@@ -31,6 +31,8 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     await expect(node.locator('.df-e-lin').first()).toBeAttached()
     // focus-on-node default dims part of the surface (some node is not bright)
     expect(await node.locator('.df-gn.df-dim').count()).toBeGreaterThan(0)
+    // the default noise filter hid the non-API `document` record (API-only default exercised)
+    await expect(node.locator('.df-hidden')).toBeVisible()
 
     // visual dev-check artifact
     await node.screenshot({ path: 'test-results/jd4-dataflow-board.png' })
@@ -66,10 +68,34 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
     )
     // a flat capture: unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js)
     await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6)`)
+    // those rows are `.js` assets on a 3rd-party origin → the default filters would hide them all; this
+    // test is about graph degradation, so view the raw firehose.
+    await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, false)`)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     await expect(node.locator('.df-gn-endpoint').first()).toBeVisible({ timeout: 5000 })
     expect(await node.locator('.df-e-rel').count()).toBe(0)
     expect(await node.locator('.df-e-lin').count()).toBe(0)
+  })
+
+  test('noise filters are on by default and hide non-API records (toggleable)', async ({
+    page
+  }) => {
+    const src = await seed(page, 'browser', {})
+    const df = await evalIn<string>(
+      page,
+      `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
+    )
+    await evalIn(
+      page,
+      `window.__canvasE2E.seedDataFlowDemo(${JSON.stringify(src)}, ${JSON.stringify(df)})`
+    )
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
+    const node = page.locator(`.react-flow__node[data-id="${df}"]`)
+    // default API-only filter hides the non-API `document` record → the "hidden N" chip is shown
+    await expect(node.locator('.df-hidden')).toBeVisible({ timeout: 5000 })
+    // turn API-only off (first-party still on, all records are localhost) → nothing hidden → chip gone
+    await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
+    await expect(node.locator('.df-hidden')).toHaveCount(0)
   })
 })

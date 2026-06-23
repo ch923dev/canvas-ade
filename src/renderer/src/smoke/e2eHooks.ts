@@ -306,6 +306,9 @@ export interface CanvasE2E {
    *  a populated focus-on-node graph (entities + a dashed lineage edge) without a live page/MAIN sample.
    *  Returns the route template keys for assertions. */
   seedDataFlowDemo: (sourceId: string, dataflowId: string) => { templates: string[] }
+  /** JD-4 — set the Data-Flow board's noise filters (both default ON) so a spec can exercise the
+   *  unfiltered firehose or assert the filtered view deterministically. */
+  setDfFilters: (dataflowId: string, apiOnly: boolean, firstParty: boolean) => void
 }
 
 /** Extra renderer setters the hook needs that aren't on a store (CanvasInner state). */
@@ -867,6 +870,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
         }
       ])
       return { templates }
+    },
+    setDfFilters(dataflowId, apiOnly, firstParty) {
+      const s = useDataFlowStore.getState()
+      s.setApiOnly(dataflowId, apiOnly)
+      s.setFirstParty(dataflowId, firstParty)
     }
   }
   window.__canvasE2E = api
