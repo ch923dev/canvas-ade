@@ -15,5 +15,11 @@
     "isolatedModules": true,
     "types": ["node", "electron-vite/node"]
   },
-  "include": ["src/main/**/*", "electron.vite.config.ts", "e2e/**/*", "playwright.config.ts"]
+  "include": [
+    "src/main/**/*",
+    "src/shared/**/*",
+    "electron.vite.config.ts",
+    "e2e/**/*",
+    "playwright.config.ts"
+  ]
 }

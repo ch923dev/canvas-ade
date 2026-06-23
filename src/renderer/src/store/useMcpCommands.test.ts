@@ -39,7 +39,8 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
   it('rejects an unknown board type WITHOUT adding a board (defense in depth)', () => {
     const ack = applyMcpCommand({
       type: 'addBoard',
-      // @ts-expect-error — deliberately invalid type, must be rejected
+      // 'malware' is a structurally-valid string in the canonical union (board.type is a loose
+      // `string`); the renderer's SPAWNABLE guard rejects it at runtime (defense in depth).
       board: { id: 'x', type: 'malware' }
     })
     expect(ack.ok).toBe(false)
