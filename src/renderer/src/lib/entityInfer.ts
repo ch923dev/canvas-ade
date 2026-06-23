@@ -12,7 +12,13 @@
  * matches another entity, and an embedded object/array that is itself an entity (containment). A shape
  * with no identity field anywhere, referenced by nothing, stays a LEAF — and we **never invent an edge**.
  */
-import type { InferredField, InferredSchema, ShapeType } from './schemaInfer'
+import {
+  MAP_VALUE_KEY,
+  type InferredField,
+  type InferredSchema,
+  type ShapeType
+} from './schemaInfer'
+import { classifySeg } from './routeTemplate'
 
 export interface FkField {
   via: string // the FK field key (e.g. customerId)
@@ -79,6 +85,14 @@ function singularLower(s: string): string {
 function pascalSingular(s: string): string {
   const w = singular(s)
   return w ? w[0].toUpperCase() + w.slice(1) : w
+}
+/** Name a nested object's entity. A collapsed map's representative value (`{*}`) and any stray id-shaped
+ *  key (a sub-threshold id map that escaped the schema collapse) are named after their CONTAINER — an id
+ *  VALUE must never become an entity name: it would leak a value AND break the Mermaid export (the JD-4
+ *  production-data fix). Any normal key becomes its PascalCase singular. */
+function childEntityName(key: string, containerName: string): string {
+  if (key === MAP_VALUE_KEY || classifySeg(key) !== 'static') return containerName
+  return pascalSingular(key)
 }
 function isScalarId(types: ShapeType[]): boolean {
   return types.includes('string') || types.includes('number')
@@ -178,10 +192,10 @@ function collect(
     const list = embeds.get(singularLower(nameHint))
     for (const f of fields) {
       if (objectFields(f)) {
-        const childName = pascalSingular(f.key)
+        const childName = childEntityName(f.key, nameHint)
         collect(f, childName, false, input, byName, embeds)
         if (list && !list.some((x) => x.via === f.key)) {
-          list.push({ via: f.key, target: childName, many: !!f.elem })
+          list.push({ via: f.key, target: childName, many: !!f.elem || !!f.map })
         }
       }
     }
@@ -190,7 +204,7 @@ function collect(
     for (const f of fields) {
       if (objectFields(f)) {
         const env = ENVELOPE_KEYS.has(f.key.toLowerCase())
-        const childName = env && atRoot ? input.routeName : pascalSingular(f.key)
+        const childName = env && atRoot ? input.routeName : childEntityName(f.key, nameHint)
         collect(f, childName, env && atRoot, input, byName, embeds)
       }
     }

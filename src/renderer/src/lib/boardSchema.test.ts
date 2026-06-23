@@ -16,6 +16,7 @@ import {
   type Connector,
   type PlanningBoard,
   type TerminalBoard,
+  type DataFlowBoard,
   type CanvasDoc,
   type CanvasViewport
 } from './boardSchema'
@@ -77,6 +78,19 @@ describe('createBoard', () => {
     // The persisted shape is just BoardCommon — the queue is ephemeral commandStore state.
     expect(Object.keys(b).sort()).toEqual(['h', 'id', 'title', 'type', 'w', 'x', 'y'])
   })
+
+  it('creates an unbound dataflow board with type only (inferred model is ephemeral)', () => {
+    const b = createBoard('dataflow', { id: 'df1', x: 5, y: 6 })
+    expect(b.type).toBe('dataflow')
+    expect(b.title).toBe('Data Flow')
+    // Unbound by default — just BoardCommon (no sourceBoardId key).
+    expect(Object.keys(b).sort()).toEqual(['h', 'id', 'title', 'type', 'w', 'x', 'y'])
+  })
+
+  it('binds a dataflow board to a source Browser board via opts.sourceBoardId', () => {
+    const b = createBoard('dataflow', { id: 'df2', x: 0, y: 0, sourceBoardId: 'b1' })
+    expect(b).toMatchObject({ type: 'dataflow', sourceBoardId: 'b1' })
+  })
 })
 
 describe('size constants', () => {
@@ -90,7 +104,8 @@ describe('size constants', () => {
       browser: { w: 700, h: 500 },
       planning: { w: 516, h: 366 },
       command: { w: 760, h: 440 },
-      file: { w: 520, h: 380 }
+      file: { w: 520, h: 380 },
+      dataflow: { w: 760, h: 520 }
     })
   })
 })
@@ -559,9 +574,9 @@ describe('migrate', () => {
     expect(migrate(doc)).toEqual(doc)
   })
 
-  // v11/S4 (diagram kind), v12 (command board type) and v13 (file board + fileref element) are all
-  // breaking → SCHEMA_VERSION and the compat floor moved with each. migrate() always brings a doc to
-  // the CURRENT version (13).
+  // v11/S4 (diagram kind), v12 (command board type), v13 (file board + fileref element) and v14
+  // (dataflow board type) are all breaking → SCHEMA_VERSION and the compat floor moved with each.
+  // migrate() always brings a doc to the CURRENT version (14).
   it('migrates a v10 doc forward to the current version without touching existing elements', () => {
     const note = { id: 'n', kind: 'note', x: 0, y: 0, w: 10, h: 10, text: 'hi', tint: 'yellow' }
     const v10 = {
@@ -574,8 +589,8 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(13)
-    expect(MIN_READER_VERSION).toBe(13)
+    expect(SCHEMA_VERSION).toBe(14)
+    expect(MIN_READER_VERSION).toBe(14)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
 
@@ -614,6 +629,104 @@ describe('migrate', () => {
     const out = migrate(structuredClone(v11) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect(out.boards).toEqual(v11.boards)
+  })
+
+  // v14: a NEW BOARD TYPE (`dataflow`) is breaking — both SCHEMA_VERSION and the floor move to 14.
+  // The migration is identity (the type only appears on newly-authored boards), so a v13 doc has
+  // nothing to backfill.
+  it('migrates a v13 doc (dataflow type bump) to the current version as an identity bump', () => {
+    const v13 = {
+      schemaVersion: 13,
+      minReaderVersion: 13,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [{ id: 't', type: 'terminal', title: 'T', x: 0, y: 0, w: 300, h: 200 }]
+    }
+    const out = migrate(structuredClone(v13) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(out.boards).toEqual(v13.boards)
+  })
+
+  // v14 round-trip: a Data-Flow board (bound + unbound) survives toObject → wire → fromObject.
+  it('round-trips a dataflow board (bound + unbound) byte-for-byte', () => {
+    const boards: Board[] = [
+      {
+        id: 'b1',
+        type: 'browser',
+        x: 0,
+        y: 0,
+        w: 700,
+        h: 500,
+        title: 'App',
+        url: 'http://x',
+        viewport: 'desktop'
+      },
+      {
+        id: 'df1',
+        type: 'dataflow',
+        x: 800,
+        y: 0,
+        w: 760,
+        h: 520,
+        title: 'Data Flow',
+        sourceBoardId: 'b1'
+      },
+      { id: 'df2', type: 'dataflow', x: 800, y: 600, w: 760, h: 520, title: 'Data Flow' }
+    ]
+    const wire = JSON.parse(JSON.stringify(toObject(boards, null)))
+    expect(fromObject(wire).boards).toEqual(boards)
+  })
+
+  // The sourceBoardId binding mirrors previewSourceId: a dangling / non-Browser source is dropped
+  // on load (the board reopens unbound), never failing the document.
+  it('drops a dataflow sourceBoardId pointing at a missing or non-Browser board', () => {
+    const boards: Board[] = [
+      { id: 't1', type: 'terminal', x: 0, y: 0, w: 420, h: 340, title: 'T' },
+      {
+        id: 'dfGone',
+        type: 'dataflow',
+        x: 0,
+        y: 0,
+        w: 760,
+        h: 520,
+        title: 'DF',
+        sourceBoardId: 'ghost'
+      },
+      {
+        id: 'dfTerm',
+        type: 'dataflow',
+        x: 0,
+        y: 0,
+        w: 760,
+        h: 520,
+        title: 'DF',
+        sourceBoardId: 't1'
+      }
+    ]
+    const out = fromObject(JSON.parse(JSON.stringify(toObject(boards, null))))
+    const dfGone = out.boards.find((b) => b.id === 'dfGone') as DataFlowBoard
+    const dfTerm = out.boards.find((b) => b.id === 'dfTerm') as DataFlowBoard
+    expect(dfGone.sourceBoardId).toBeUndefined() // source board does not exist
+    expect(dfTerm.sourceBoardId).toBeUndefined() // source is a terminal, not a browser
+  })
+
+  // A dataflow board with a non-string sourceBoardId is rejected by deep validation (→ .bak fallback).
+  it('rejects a dataflow board with a non-string sourceBoardId', () => {
+    expect(() =>
+      fromObject(
+        wrap({
+          id: 'df',
+          type: 'dataflow',
+          x: 0,
+          y: 0,
+          w: 760,
+          h: 520,
+          title: 'DF',
+          sourceBoardId: 7
+        })
+      )
+    ).toThrow()
   })
 
   it('throws when a newer doc has NO minReaderVersion (pre-floor strict behavior)', () => {
@@ -688,15 +801,15 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 13', () => {
-    expect(SCHEMA_VERSION).toBe(13)
+  it('SCHEMA_VERSION is 14', () => {
+    expect(SCHEMA_VERSION).toBe(14)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 13,
-      minReaderVersion: 13,
+      schemaVersion: 14,
+      minReaderVersion: 14,
       viewport: vp,
       boards: [],
       connectors: [],
@@ -881,8 +994,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 13', () => {
-    expect(SCHEMA_VERSION).toBe(13)
+  it('SCHEMA_VERSION is 14', () => {
+    expect(SCHEMA_VERSION).toBe(14)
   })
 
   it('round-trips a valid image element', () => {
@@ -935,8 +1048,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 13', () => {
-    expect(SCHEMA_VERSION).toBe(13)
+  it('SCHEMA_VERSION is 14', () => {
+    expect(SCHEMA_VERSION).toBe(14)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {
@@ -1577,12 +1690,12 @@ describe('schema v10 — terminal agentKind + monitorActivity', () => {
     expect(migrated.schemaVersion).toBe(SCHEMA_VERSION)
   })
 
-  it('v10 was additive (no floor move of its own) — the current writer stamps the CURRENT floor (13)', () => {
+  it('v10 was additive (no floor move of its own) — the current writer stamps the CURRENT floor (14)', () => {
     // v10 (agentKind/monitorActivity) was additive; the compat floor moved with the breaking v11
-    // `diagram` element kind, again with the v12 `command` board type, and again with the v13 `file`
-    // board + `fileref` element kinds. toObject stamps the CURRENT floor (MIN_READER_VERSION = 13).
-    expect(toObject([], null).minReaderVersion).toBe(13)
-    expect(MIN_READER_VERSION).toBe(13)
+    // `diagram` element kind, the v12 `command` board type, the v13 `file` board + `fileref` element
+    // kinds, and the v14 `dataflow` board type. toObject stamps the CURRENT floor (MIN_READER_VERSION = 14).
+    expect(toObject([], null).minReaderVersion).toBe(14)
+    expect(MIN_READER_VERSION).toBe(14)
   })
 
   it('round-trips agentKind + monitorActivity', () => {

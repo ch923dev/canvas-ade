@@ -40,6 +40,23 @@ async function seedDiagram(page: Page, source: string): Promise<string> {
   return id
 }
 
+/** Relative luminance (WCAG) of a `#rrggbb`/`#rgb` colour — used to assert the ER rows are DARK. */
+function luminance(hex: string): number {
+  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(hex.trim())
+  if (!m) return NaN
+  let h = m[1]
+  if (h.length === 3)
+    h = h
+      .split('')
+      .map((c) => c + c)
+      .join('')
+  const ch = (i: number): number => {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * ch(0) + 0.7152 * ch(2) + 0.0722 * ch(4)
+}
+
 /** Read the (only) diagram element's board-local size from the live store. */
 async function diagramSize(page: Page, boardId: string): Promise<{ w: number; h: number }> {
   return page.evaluate((bid) => {
@@ -99,5 +116,69 @@ test.describe('@planning diagram element (real Mermaid worker)', () => {
     const after = await diagramSize(page, boardId)
     expect(after.w).toBeGreaterThan(before.w)
     expect(after.h).toBeGreaterThan(before.h)
+  })
+
+  test('erDiagram attribute rows render on DARK surfaces (a11y contrast — rowOdd/rowEven)', async ({
+    page
+  }) => {
+    // The unified `erBox` renderer fills attribute rows from the `rowOdd`/`rowEven` theme vars (NOT
+    // the legacy `attributeBackgroundColor*` — an earlier fix set those and was a silent no-op, so
+    // Mermaid's near-white `rowOdd` default left half the rows unreadable). Render through the REAL
+    // worker with the REAL theme builder (`diagramThemeVars`) and assert EVERY row background is
+    // dark. Reads fills off the SVG string directly — CSP `connect-src` forbids fetching the blob.
+    await seed(page, 'planning') // ensure the canvas + window.__canvasE2E are live
+    const res = await page.evaluate(async () => {
+      const g = globalThis as any
+      const themeVars = g.__canvasE2E.diagramThemeVars()
+      const out = await g.api.diagram.render({
+        source:
+          'erDiagram\n  USER ||--o{ ORDER : places\n  USER {\n' +
+          '    string id PK\n    string email\n    string name\n' +
+          '    int age\n    datetime createdAt\n    boolean active\n  }',
+        themeVars,
+        id: 'er-contrast'
+      })
+      if (!out.ok) return { error: out.error as string }
+      const doc = new g.DOMParser().parseFromString(out.svg, 'image/svg+xml')
+      const fillsOf = (cls: string): string[] =>
+        Array.from(doc.querySelectorAll(`.${cls} path, .${cls} rect`) as Iterable<any>)
+          .map((n: any) => n.getAttribute('fill'))
+          .filter((f: unknown): f is string => !!f && f !== 'none')
+      return { odd: fillsOf('row-rect-odd'), even: fillsOf('row-rect-even') }
+    })
+
+    expect('error' in res ? res.error : '').toBe('')
+    if ('error' in res) return // narrow for TS; the assert above already failed
+    // Both parities must have rendered (proves the source produced alternating rows, not an empty box).
+    expect(res.odd.length).toBeGreaterThan(0)
+    expect(res.even.length).toBeGreaterThan(0)
+    // EVERY row background must be dark (luminance well below mid-grey). Mermaid's broken `rowOdd`
+    // default is ≈ near-white (luminance ~0.9) → this fails loudly if the var name ever drifts again.
+    for (const fill of [...res.odd, ...res.even]) {
+      expect(luminance(fill), `row fill ${fill} must be dark`).toBeLessThan(0.2)
+    }
+  })
+
+  test('the </> source toggle closes on a single click (no blur-then-reopen)', async ({ page }) => {
+    // Regression: while editing, the source <textarea> holds focus. A bare press on </> blurred it
+    // FIRST (onBlur → setEditing(false) → re-render), so the click then read editing===false and
+    // RE-OPENED the editor — one click = close+reopen, the editor never closed. The fix is
+    // preventDefault on the button's mousedown (keeps focus in the textarea → no spurious blur).
+    await seedDiagram(page, 'graph TD\n  A[Plan] --> B[Build]')
+    await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
+
+    // Select the card (body click, below the 22px header) → the header + </> toggle appear.
+    await page.locator('.pl-diagram').click({ position: { x: 24, y: 80 } })
+    const toggle = page.locator('.pl-diagram-head button').last() // </> is always the last header button
+    await expect(toggle).toBeVisible()
+
+    // Open the source editor.
+    await toggle.click()
+    await expect(page.locator('.pl-diagram-src')).toBeVisible()
+
+    // A SINGLE click must close it (pre-fix this reopened → the textarea stayed visible).
+    await toggle.click()
+    await expect(page.locator('.pl-diagram-src')).toHaveCount(0)
+    await expect(page.locator('.pl-diagram img')).toBeVisible({ timeout: 20000 })
   })
 })

@@ -11,6 +11,7 @@ import type {
   CanvasDoc,
   ChecklistElement,
   CommandBoard,
+  DataFlowBoard,
   FileBoard,
   PlanningBoard,
   TerminalBoard
@@ -129,6 +130,22 @@ function digestCommand(b: CommandBoard): BoardDigest {
   }
 }
 
+function digestDataFlow(b: DataFlowBoard): BoardDigest {
+  // The Data-Flow board persists no content (its inferred model is ephemeral dataFlowStore state),
+  // so the Tier-1 digest is just its identity + the Browser board it analyzes.
+  return {
+    boardId: b.id,
+    type: 'dataflow',
+    title: b.title,
+    status: b.sourceBoardId ? 'bound' : 'unbound',
+    lines: [
+      b.sourceBoardId
+        ? 'Visualizes a Browser board’s captured API surface (endpoints · schemas · entities · lineage)'
+        : 'Unbound — bind it to a Browser board to infer its API surface'
+    ]
+  }
+}
+
 function digestBoard(b: Board, d: DigestDoc): BoardDigest {
   switch (b.type) {
     case 'terminal':
@@ -141,6 +158,8 @@ function digestBoard(b: Board, d: DigestDoc): BoardDigest {
       return digestCommand(b)
     case 'file':
       return digestFile(b)
+    case 'dataflow':
+      return digestDataFlow(b)
   }
 }
 

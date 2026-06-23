@@ -22,11 +22,14 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+  type CSSProperties,
   type ReactElement
 } from 'react'
 import type { DiagramElement } from '../../../lib/boardSchema'
 import { buildDiagramThemeVars, diagramTypeLabel } from './diagramTheme'
 import { resizeFromDrag } from './diagramResize'
+import { wheelZoom, stepZoom, clampPan, ZOOM_MIN, ZOOM_FIT, type Vec2 } from './diagramZoom'
 
 /** Debounce (ms) from the last source keystroke to a committed re-render. */
 const RENDER_DEBOUNCE_MS = 450
@@ -83,6 +86,18 @@ export const DiagramCard = memo(function DiagramCard({
     startH: number
     scale: number
     moved: boolean
+  } | null>(null)
+  // Focus-gated pan/zoom of the rendered diagram — only active while SELECTED. `.nowheel`/`.nopan` on
+  // the viewport (added below when selected) hand the wheel/drag to the card instead of the canvas, so
+  // an unfocused diagram still zooms the canvas normally. `zoom === ZOOM_MIN` (1) is "fit".
+  const [zoom, setZoom] = useState(ZOOM_MIN)
+  const [pan, setPan] = useState<Vec2>({ x: 0, y: 0 })
+  const panRef = useRef<{
+    startX: number
+    startY: number
+    baseX: number
+    baseY: number
+    scale: number
   } | null>(null)
 
   const onResizeDown = useCallback(
@@ -142,6 +157,76 @@ export const DiagramCard = memo(function DiagramCard({
       /* capture already released / synthetic */
     }
   }, [])
+
+  // Set zoom and re-clamp the pan to the new scale (zooming out toward/below fit recentres the model,
+  // so it can never get stranded off-screen — the infinite-canvas feel without losing the diagram).
+  const applyZoom = useCallback(
+    (z: number) => {
+      setZoom(z)
+      setPan((p) => clampPan(p, { w, h: Math.max(0, h - 22) }, z))
+    },
+    [w, h]
+  )
+  // Wheel = zoom (only fires here because the viewport carries `.nowheel` when selected).
+  const onWheel = useCallback(
+    (e: ReactWheelEvent) => {
+      e.stopPropagation()
+      applyZoom(wheelZoom(zoom, e.deltaY))
+    },
+    [zoom, applyZoom]
+  )
+
+  // Drag inside a zoomed-in diagram PANS it; at/below fit the press falls through to the card (move).
+  const onViewportPointerDown = useCallback(
+    (e: ReactPointerEvent) => {
+      if (!interactive || e.button !== 0 || editing || zoom <= ZOOM_FIT) return
+      e.stopPropagation()
+      const host = e.currentTarget as HTMLElement
+      const well = host.closest('.pl-well') as HTMLElement | null
+      const rect = well?.getBoundingClientRect()
+      const scale = well && rect && well.offsetWidth > 0 ? rect.width / well.offsetWidth : 1
+      panRef.current = { startX: e.clientX, startY: e.clientY, baseX: pan.x, baseY: pan.y, scale }
+      try {
+        host.setPointerCapture(e.pointerId)
+      } catch {
+        /* synthetic */
+      }
+    },
+    [interactive, editing, zoom, pan]
+  )
+  const onViewportPointerMove = useCallback(
+    (e: ReactPointerEvent) => {
+      const p = panRef.current
+      if (!p) return
+      const next = clampPan(
+        {
+          x: p.baseX + (e.clientX - p.startX) / p.scale,
+          y: p.baseY + (e.clientY - p.startY) / p.scale
+        },
+        { w, h: Math.max(0, h - 22) },
+        zoom
+      )
+      setPan(next)
+    },
+    [w, h, zoom]
+  )
+  const onViewportPointerUp = useCallback((e: ReactPointerEvent) => {
+    if (!panRef.current) return
+    panRef.current = null
+    try {
+      ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+    } catch {
+      /* already released / synthetic */
+    }
+  }, [])
+
+  // Snap back to a clean fit thumbnail whenever the element loses focus.
+  useEffect(() => {
+    if (!selected) {
+      setZoom(ZOOM_FIT)
+      setPan({ x: 0, y: 0 })
+    }
+  }, [selected])
 
   // Swap the displayed blob URL, revoking the previous one (never leak object URLs).
   const showSvg = useCallback((svg: string) => {
@@ -227,6 +312,15 @@ export const DiagramCard = memo(function DiagramCard({
   )
 
   const showHeader = selected || editing
+  const zoomBtn = (disabled: boolean): CSSProperties => ({
+    all: 'unset',
+    cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? 0.4 : 1,
+    padding: '0 5px',
+    borderRadius: 4,
+    fontFamily: 'var(--term-mono)',
+    color: 'var(--text-3)'
+  })
 
   return (
     <div
@@ -278,10 +372,64 @@ export const DiagramCard = memo(function DiagramCard({
         >
           <span style={{ color: 'var(--text-2)' }}>{diagramTypeLabel(source)}</span>
           <span style={{ flex: 1 }} />
+          {!editing && svgUrl && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 1 }} title="Scroll to zoom">
+              <button
+                type="button"
+                title="Zoom out"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  applyZoom(stepZoom(zoom, -1))
+                }}
+                disabled={zoom <= ZOOM_MIN}
+                style={zoomBtn(zoom <= ZOOM_MIN)}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                title="Reset to fit"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  applyZoom(ZOOM_FIT)
+                }}
+                style={{
+                  all: 'unset',
+                  cursor: 'pointer',
+                  minWidth: 34,
+                  textAlign: 'center',
+                  color: 'var(--text-2)',
+                  fontVariantNumeric: 'tabular-nums'
+                }}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                type="button"
+                title="Zoom in"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  applyZoom(stepZoom(zoom, 1))
+                }}
+                style={zoomBtn(false)}
+              >
+                +
+              </button>
+            </div>
+          )}
           <button
             type="button"
             title={editing ? 'Done editing' : 'Edit source'}
             onPointerDown={(e) => e.stopPropagation()}
+            // While editing, the source <textarea> holds focus. A bare press would blur it FIRST
+            // (onBlur → setEditing(false) → re-render), so by the time onClick fires it reads
+            // editing===false and RE-OPENS the editor — one click = close+reopen, the editor never
+            // closes ("clicking once does 2 clicks"). preventDefault on mousedown keeps focus in the
+            // textarea so no spurious blur fires and the single click toggles with the correct state.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => {
               e.stopPropagation()
               if (editing) {
@@ -337,18 +485,45 @@ export const DiagramCard = memo(function DiagramCard({
           }}
         />
       ) : svgUrl ? (
-        <img
-          src={svgUrl}
-          draggable={false}
-          alt=""
+        <div
+          className={'pl-diagram-view' + (selected ? ' nowheel nodrag nopan' : '')}
+          onWheel={selected ? onWheel : undefined}
+          onPointerDown={onViewportPointerDown}
+          onPointerMove={onViewportPointerMove}
+          onPointerUp={onViewportPointerUp}
+          onPointerCancel={onViewportPointerUp}
           style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain',
-            display: 'block',
-            pointerEvents: 'none'
+            position: 'absolute',
+            // Sit BELOW the header bar when it's shown — otherwise it overlays (clips) the top of the
+            // diagram (the "cut off at the top" bug).
+            inset: showHeader ? '22px 0 0 0' : 0,
+            overflow: 'hidden',
+            cursor: selected && zoom > ZOOM_FIT ? 'grab' : undefined,
+            touchAction: 'none'
           }}
-        />
+        >
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: 'center center'
+            }}
+          >
+            <img
+              src={svgUrl}
+              draggable={false}
+              alt=""
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                display: 'block',
+                pointerEvents: 'none'
+              }}
+            />
+          </div>
+        </div>
       ) : (
         <div
           className="pl-diagram-state"

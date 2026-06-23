@@ -45,6 +45,17 @@ export function buildDiagramThemeVars(): Record<string, string> {
     actorBkg: raised,
     actorBorder: line,
     actorTextColor: text,
+    // erDiagram attribute rows: the unified `erBox` shape renderer fills each row from `rowOdd` /
+    // `rowEven` (NOT the legacy `attributeBackgroundColor*` CSS vars — those are dead for this
+    // renderer). Mermaid's base-theme `rowOdd` default is `lighten(mainBkg, 75%)` ≈ near-white, so
+    // our near-white attribute text renders INVISIBLY on the odd rows. Pin BOTH parities to dark
+    // surfaces (a subtle zebra) so every row meets contrast. (a11y fix — JD-4 ER export pass; the
+    // e2e `erDiagram attribute rows render on DARK surfaces` test locks this against a Mermaid bump.)
+    rowOdd: raised,
+    rowEven: surface,
+    // Legacy alias for older Mermaid ER paths that still read these — kept in sync, harmless.
+    attributeBackgroundColorOdd: raised,
+    attributeBackgroundColorEven: surface,
     // The one saturated colour, used only on active/selected accents Mermaid draws.
     activeTaskBkgColor: accent,
     activeTaskBorderColor: accent,

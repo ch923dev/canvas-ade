@@ -44,6 +44,26 @@ describe('inferEntities', () => {
     )
   })
 
+  it('collapses an id-keyed dictionary into one entity named by its container, not by id values', () => {
+    const entries: Record<string, ShapeNode> = {}
+    for (let i = 0; i < 8; i++)
+      entries[`6985e4721a7df4910de64${String(i).padStart(3, '0')}`] = obj({
+        _id: sc('string'),
+        name: sc('string')
+      })
+    const model = inferEntities([inp({ routeName: 'users', schema: schemaOf(obj(entries)) })])
+    expect(named(model, 'User')).toBeDefined()
+    expect(model.entities.every((e) => !/^[0-9a-f]{24}$/.test(e.name))).toBe(true)
+  })
+
+  it('never names an entity from an id value, even below the map-collapse threshold', () => {
+    const entries: Record<string, ShapeNode> = {}
+    for (let i = 0; i < 3; i++)
+      entries[`6985e4721a7df4910de64${String(i).padStart(3, '0')}`] = obj({ _id: sc('string') })
+    const model = inferEntities([inp({ routeName: 'inbox', schema: schemaOf(obj(entries)) })])
+    expect(model.entities.every((e) => !/^[0-9a-f]{24}$/.test(e.name))).toBe(true)
+  })
+
   it('never invents an edge when no entity name matches the FK target', () => {
     const model = inferEntities([
       inp({ routeName: 'users', schema: schemaOf(obj({ id: sc('string') })) }),

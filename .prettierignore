@@ -17,4 +17,6 @@ pnpm-lock.yaml
 # Hand-authored docs (tables/prose) — keep Prettier's markdown reflow off them.
 *.md
 # Hand-tuned, token-accurate design mocks (throwaway HTML built from the design tokens) — never reflow.
+# Covers both naming conventions: leading `mock-*` (mock-a…e) and trailing `*-mock` (jd-N-…-mock).
 docs/research/**/mock-*.html
+docs/research/**/*-mock.html

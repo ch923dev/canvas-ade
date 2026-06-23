@@ -35,7 +35,10 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
   // state) — only the common geometry/title keys are patchable (e.g. the collapse height swap).
   command: [...COMMON_KEYS],
   // v13 file board (file-tree S1): bound relative path + read-only flag; content never persisted.
-  file: [...COMMON_KEYS, 'path', 'readOnly']
+  file: [...COMMON_KEYS, 'path', 'readOnly'],
+  // v14 dataflow board (JD-4): only the Browser-board binding is persisted — the inferred model is
+  // ephemeral dataFlowStore state, never serialized (ADR 0010).
+  dataflow: [...COMMON_KEYS, 'sourceBoardId']
 }
 
 /**

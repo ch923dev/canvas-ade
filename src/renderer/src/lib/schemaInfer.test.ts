@@ -2,12 +2,16 @@ import { describe, it, expect } from 'vitest'
 import {
   mergeShapes,
   isPiiName,
+  MAP_VALUE_KEY,
   type ShapeNode,
   type ShapeSample,
   type ShapeType,
   type FormatHint,
   type InferredField
 } from './schemaInfer'
+
+/** A 24-hex Mongo-ObjectId-shaped key (the production case that exploded JD-4 before the map collapse). */
+const oid = (n: number): string => `6985e4721a7df4910de64${String(n).padStart(3, '0')}`
 
 const sc = (type: ShapeType, format?: FormatHint): ShapeNode => ({ types: [type], format })
 const obj = (children: Record<string, ShapeNode>): ShapeNode => ({ types: ['object'], children })
@@ -16,6 +20,37 @@ const sample = (root: ShapeNode, complete = true): ShapeSample => ({ root, compl
 
 const childOf = (schema: ReturnType<typeof mergeShapes>, key: string): InferredField | undefined =>
   schema.root.children?.find((f) => f.key === key)
+
+describe('mergeShapes dictionary/map collapse', () => {
+  it('collapses an object keyed by dynamic ids into one {*} value field', () => {
+    const entries: Record<string, ShapeNode> = {}
+    for (let i = 0; i < 8; i++)
+      entries[oid(i)] = obj({ _id: sc('string', 'uuid'), name: sc('string') })
+    const schema = mergeShapes([sample(obj(entries))])
+    expect(schema.root.map).toBe(true)
+    expect(schema.root.children).toHaveLength(1)
+    const rep = schema.root.children?.[0]
+    expect(rep?.key).toBe(MAP_VALUE_KEY)
+    // the representative carries the merged VALUE shape, not the hundreds of id keys
+    expect(rep?.children?.map((c) => c.key).sort()).toEqual(['_id', 'name'])
+  })
+
+  it('keeps fixed (static) members alongside the collapsed map', () => {
+    const entries: Record<string, ShapeNode> = { total: sc('number') }
+    for (let i = 0; i < 8; i++) entries[oid(i)] = obj({ _id: sc('string') })
+    const keys = mergeShapes([sample(obj(entries))]).root.children?.map((c) => c.key)
+    expect(keys).toContain('total')
+    expect(keys).toContain(MAP_VALUE_KEY)
+  })
+
+  it('does NOT collapse a normal record (few, word-named fields)', () => {
+    const schema = mergeShapes([
+      sample(obj({ id: sc('string'), name: sc('string'), email: sc('string') }))
+    ])
+    expect(schema.root.map).toBeUndefined()
+    expect(schema.root.children?.map((c) => c.key)).toEqual(['id', 'name', 'email'])
+  })
+})
 
 describe('isPiiName', () => {
   it('flags PII/secret names (and suffixes), not benign ones', () => {

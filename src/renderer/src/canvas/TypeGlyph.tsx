@@ -95,6 +95,23 @@ export function TypeGlyph({ type, running = false }: TypeGlyphProps): ReactEleme
         <path d="M13 3.5V8.5h5" />
       </svg>
     )
+  if (type === 'dataflow')
+    // The data-flow mark — the ⌗ glyph used on the board chrome + the mock badge, set in the mono
+    // face like the terminal caret / command ⌘ so it reads as a control surface, not an illustration.
+    return (
+      <span
+        style={{
+          fontFamily: 'var(--mono)',
+          fontSize: 13,
+          fontWeight: 500,
+          lineHeight: 1,
+          display: 'inline-flex',
+          alignItems: 'center'
+        }}
+      >
+        ⌗
+      </span>
+    )
   // planning
   return (
     <svg

@@ -20,7 +20,8 @@ const TYPE_TAG: Record<BoardType, string> = {
   browser: 'BROWSER',
   planning: 'PLANNING',
   command: 'COMMAND',
-  file: 'FILE'
+  file: 'FILE',
+  dataflow: 'DATA FLOW'
 }
 
 /** Status indicator: a coloured dot (`--ok` pulses) + optional mono label. */

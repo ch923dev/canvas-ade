@@ -10,9 +10,20 @@
  * so a field clipped by the 5 MB body cap is never mis-inferred as `optional` (REPORT B3).
  */
 
+import { classifySeg } from './routeTemplate'
+
 export type ShapeType = 'string' | 'number' | 'bool' | 'null' | 'object' | 'array' | 'unknown'
 /** A format CLASS label derived in MAIN by pattern (never the matched value). */
 export type FormatHint = 'uuid' | 'date-time' | 'email' | 'uri' | 'int64'
+
+/** The synthetic key the dictionary-collapse uses for a map's representative VALUE field — a stand-in
+ *  for "any id key" (`{ "<objectId>": V, … }` → one `{*}: V` member). Entity inference names the value
+ *  after the map's container, never after an id value (the JD-4 production-data fix). */
+export const MAP_VALUE_KEY = '{*}'
+/** A map must have at least this many keys, and at least this fraction id-shaped, before it collapses
+ *  (below the floor, a couple of numeric/id-ish keys stay literal fields). */
+const MAP_MIN_KEYS = 6
+const MAP_ID_RATIO = 0.8
 
 /** One node of a captured body's SHAPE — emitted by MAIN with every value dropped (wire-mirrored). */
 export interface ShapeNode {
@@ -37,6 +48,7 @@ export interface InferredField {
   pii?: boolean // key matches a PII/secret NAME pattern (no value is ever present to leak)
   children?: InferredField[] // object members
   elem?: InferredField // array element
+  map?: boolean // object is a dictionary keyed by dynamic ids — children collapsed to one `{*}` value
 }
 export interface InferredSchema {
   root: InferredField
@@ -99,8 +111,17 @@ function mergeField(key: string, srcs: SrcNode[]): InferredField {
         }
       }
     }
+    // Dictionary/map collapse: when an object is dominated by dynamic id-shaped keys it is a MAP, not a
+    // record with hundreds of fields. Keep any fixed (static) members as normal fields, and merge ALL the
+    // id-keyed values into ONE representative `{*}` field — so inference can't explode into an entity per
+    // id (the production-data crash/noise fix). `classifySeg` is the same id detector the route templater
+    // uses (numeric / uuid / opaque-hex like a Mongo ObjectId).
+    const dynamicKeys = order.filter((k) => classifySeg(k) !== 'static')
+    const isMap = order.length >= MAP_MIN_KEYS && dynamicKeys.length / order.length >= MAP_ID_RATIO
+    const memberKeys = isMap ? order.filter((k) => classifySeg(k) === 'static') : order
+
     const children: InferredField[] = []
-    for (const k of order) {
+    for (const k of memberKeys) {
       const childSrcs: SrcNode[] = []
       for (const s of objSrcs) {
         const cn = (s.node.children as Record<string, ShapeNode>)[k]
@@ -113,6 +134,19 @@ function mergeField(key: string, srcs: SrcNode[]): InferredField {
       ).length
       child.required = denom > 0 && child.presentIn === denom
       children.push(child)
+    }
+    if (isMap) {
+      const repSrcs: SrcNode[] = []
+      for (const s of objSrcs) {
+        const cs = s.node.children as Record<string, ShapeNode>
+        for (const k of dynamicKeys) if (cs[k]) repSrcs.push({ node: cs[k], complete: s.complete })
+      }
+      const rep = mergeField(MAP_VALUE_KEY, repSrcs)
+      rep.sampleCount = repSrcs.length
+      rep.presentIn = repSrcs.filter((s) => s.complete).length
+      rep.required = repSrcs.length > 0
+      children.push(rep)
+      field.map = true
     }
     field.children = children
   }

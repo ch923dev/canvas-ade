@@ -143,6 +143,7 @@ export interface NetRecord {
   finishMono?: number
   failed?: { errorText: string; blockedReason?: string; canceled?: boolean }
   initiator?: string
+  initiatorRequestId?: string // JD-4: structured initiator's triggering requestId (body-free metadata)
   loaderId?: string
   preserved?: boolean
   navBoundary?: boolean
@@ -202,6 +203,23 @@ export interface OsrNetSchemaResult {
   samples?: ShapeSampleWire[]
   requested?: number
   sampled?: number
+  error?: string
+}
+// ── id-lineage wire types — MIRROR main `previewOsrLineage.ts`. VALUE-LESS edge list: the id NAME +
+//    source/target requestIds + location only, never the matched value (ADR 0010 amendment §B). ──
+export interface RequestLineageEdgeWire {
+  idName: string
+  fromRequestId: string
+  toRequestId: string
+  location: 'path' | 'query' | 'body'
+  confidence: 'body-match'
+}
+/** Result of the MAIN body-side lineage pass: the value-less edge list + bounded-pass counters. */
+export interface OsrNetLineageResult {
+  edges?: RequestLineageEdgeWire[]
+  producersScanned?: number
+  consumersScanned?: number
+  valuesTracked?: number
   error?: string
 }
 /** The offscreen page's cursor, mirrored onto the host <canvas>. `image` (a data URL) +
@@ -403,7 +421,9 @@ export interface RecapBundle {
 // holds at most one handler per board.
 const osrFrameHandlers = new Map<string, (f: OsrFrame) => void>()
 const osrCursorHandlers = new Map<string, (c: OsrCursor) => void>()
-const osrNetHandlers = new Map<string, (m: OsrNetMessage) => void>()
+// A SET of handlers per board id (JD-4): the Network panel AND a Data-Flow board can both subscribe to
+// the same source board's capture; the store stays the single source of truth, every listener applies.
+const osrNetHandlers = new Map<string, Set<(m: OsrNetMessage) => void>>()
 let osrFrameWired = false
 let osrCursorWired = false
 let osrNetWired = false
@@ -425,7 +445,7 @@ function ensureOsrNetListener(): void {
   if (osrNetWired) return
   osrNetWired = true
   ipcRenderer.on('preview:osrNet', (_e: IpcRendererEvent, m: OsrNetMessage) => {
-    osrNetHandlers.get(m.id)?.(m)
+    osrNetHandlers.get(m.id)?.forEach((fn) => fn(m))
   })
 }
 
@@ -572,11 +592,19 @@ const api = {
   /** Sample response bodies for a template (opt-in, capped, MAIN-side) → value-less shape skeletons. */
   sampleOsrNetSchema: (id: string, requestIds: string[]): Promise<OsrNetSchemaResult> =>
     ipcRenderer.invoke('preview:osrNetSampleSchema', { id, requestIds }),
+  // JD-4 id-lineage: the MAIN body-side value-read pass. Returns only the value-less edge list.
+  lineageOsrNet: (id: string, requestIds?: string[]): Promise<OsrNetLineageResult> =>
+    ipcRenderer.invoke('preview:osrNetLineage', { id, requestIds }),
   onPreviewOsrNet: (id: string, listener: (m: OsrNetMessage) => void): (() => void) => {
     ensureOsrNetListener()
-    osrNetHandlers.set(id, listener)
+    const set = osrNetHandlers.get(id) ?? new Set()
+    set.add(listener)
+    osrNetHandlers.set(id, set)
     return () => {
-      if (osrNetHandlers.get(id) === listener) osrNetHandlers.delete(id)
+      const s = osrNetHandlers.get(id)
+      if (!s) return
+      s.delete(listener)
+      if (s.size === 0) osrNetHandlers.delete(id)
     }
   },
   // Cursor stream: the offscreen page's cursor type, applied to the board's <canvas>
