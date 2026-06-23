@@ -226,6 +226,56 @@ test.describe('@preview DevTools Network inspector (per board)', () => {
     await expect(page.locator('.bb-net-row'), 'filter resolves to the single match').toHaveCount(1)
   })
 
+  // Regression for the PR #219 reviewer [warning]: the panel returns null while closed (the list
+  // unmounts) but the virtualization hook stays mounted, so its `scrollTop` state survives. A reopened
+  // list mounts FRESH at scrollTop 0 — a stale large `scrollTop` would render a huge top spacer into a
+  // top-anchored viewport and the table would look blank until the first scroll. The fix seeds
+  // `scrollTop` from the live element on (re)attach.
+  test('SLICE-010: reopening after scrolling does not leave a blank table (stale scrollTop reseed)', async ({
+    page,
+    electronApp
+  }) => {
+    const url = await mainCall<string>(electronApp, 'localUrl')
+    const id = await seed(page, 'browser', { url })
+    await page.waitForTimeout(150)
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    await pollEval(page, runtimeStatus(id, 'connected'), 10_000)
+
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await expect(page.locator('.bb-net-row').first()).toBeVisible({ timeout: 8000 })
+    await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(id)}, 1000)`)
+    await expect(page.locator('.bb-net-meta')).toContainText(/1\d{3} requests/)
+
+    // Scroll to the bottom so the hook's scrollTop state is large, then close the inspector.
+    await evalIn(
+      page,
+      `(() => { const el = document.querySelector('.bb-net-list'); if (el) el.scrollTop = el.scrollHeight })()`
+    )
+    await expect(page.getByText('req-0999.js', { exact: true })).toBeVisible({ timeout: 4000 })
+    await page.getByRole('button', { name: 'Close inspector' }).click()
+    await expect(page.locator('.bb-net')).toHaveCount(0)
+
+    // Reopen. Re-subscribe replays MAIN's few real rows (async), so poll-reseed 1000 to win that
+    // race and recreate the many-rows condition the stale scrollTop would mis-window.
+    await page.getByRole('button', { name: 'Network inspector' }).click()
+    await expect
+      .poll(
+        async () => {
+          await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(id)}, 1000)`)
+          return (await page.locator('.bb-net-meta').textContent()) ?? ''
+        },
+        { timeout: 5000 }
+      )
+      .toContain('1000')
+
+    // With the seed-on-reattach fix the window is anchored at the top → an early row renders. Without
+    // it the window would sit ~row 980 behind a full-viewport top spacer and the table would be blank.
+    await expect(
+      page.getByText('req-0000.js', { exact: true }),
+      'reopened table is not blank — scrollTop was reseeded to the fresh element'
+    ).toBeVisible({ timeout: 4000 })
+  })
+
   test('drag the resize handle grows the panel (bottom dock)', async ({ page, electronApp }) => {
     const url = await mainCall<string>(electronApp, 'localUrl')
     const id = await seed(page, 'browser', { url })

@@ -30,7 +30,13 @@ interface SwizzleRequest {
 const post = postMessage as (message: unknown, transfer: Transferable[]) => void
 
 addEventListener('message', (e: MessageEvent<SwizzleRequest>) => {
-  const { gen, buffer, dirty, full } = e.data
+  // This is a DEDICATED worker: messages can only originate from the renderer that spawned it
+  // (same-origin by construction — `e.origin` is "" for worker messages, so an origin check is
+  // inapplicable). Validate the message SHAPE instead, so a malformed post is dropped rather than
+  // throwing in the swizzle below (defense-in-depth; the only real sender posts the typed request).
+  const msg = e.data
+  if (!msg || !(msg.buffer instanceof ArrayBuffer)) return
+  const { gen, buffer, dirty, full } = msg
   // Fresh RGBA output (off the main thread); the transferred BGRA input is GC'd here.
   const rgba = bgraToRgba(new Uint8Array(buffer))
   post({ gen, buffer: rgba.buffer, dirty, full }, [rgba.buffer])

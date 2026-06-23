@@ -84,6 +84,11 @@ export function useVirtualRows(
   useEffect(() => {
     const el = scrollRef.current
     if (!el || !enabled) return
+    // Seed the real scroll position on (re)attach — like the viewport effect above. The panel
+    // returns null while closed, so a reopen mounts a FRESH list at scrollTop 0; without this the
+    // stale `scrollTop` from a prior open (e.g. 5000) would render a huge top spacer into a
+    // top-anchored viewport → a blank table until the first scroll event corrected it.
+    setScrollTop(el.scrollTop)
     let raf = 0
     const onScroll = (): void => {
       if (raf) return
