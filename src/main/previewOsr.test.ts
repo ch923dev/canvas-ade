@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import type { BrowserWindow } from 'electron'
 import {
   applyOsrInitialLoad,
   applyOsrPaint,
@@ -9,6 +10,7 @@ import {
 } from './previewOsr'
 import { sanitizeOsrSize, applyOsrSize } from './previewOsrSizing'
 import { scaleOsrInputEvent } from './previewOsrInput'
+import { canEmitToOwner, registerOwnerLifecycle } from './previewOsrOwner'
 
 // BUG-005: in OSR mode, ensureOsr used `if (isAllowedPreviewUrl(url)) wc.loadURL(url)` with NO
 // else, so a blocked (non-http(s)) scheme skipped the load AND emitted no lifecycle event ->
@@ -422,5 +424,165 @@ describe('scaleOsrInputEvent (OSR hover/click alignment under supersample)', () 
     expect(scaleOsrInputEvent(ev, 0)).toBe(ev)
     expect(scaleOsrInputEvent(ev, Number.NaN)).toBe(ev)
     expect(scaleOsrInputEvent(ev, -2)).toBe(ev)
+  })
+})
+
+// ── OSR disposed-frame send fix ──────────────────────────────────────────────────────────────────
+// The four emit* helpers send to the module-level host `owner` from the OSR paint pump, which keeps
+// firing across a dev HMR full-page reload. During that reload the host's top-level render frame is
+// disposed mid-swap while the BrowserWindow + its webContents stay ALIVE (isDestroyed()===false) and
+// render-process-gone never fires — so `owner.webContents.send` hits a disposed frame and Electron
+// logs the uncatchable "Render frame was disposed before WebFrameMain could be accessed" spew on
+// every paint. The fix = a dual destroyed-guard (covers close/crash) PLUS a navigation-driven
+// readiness gate (covers the reload frame-swap the destroyed-checks can't see). These mirror the
+// fake-BrowserWindow / fake-emitter doubles in index.flushRenderer.test.ts and previewShared.test.ts.
+
+describe('canEmitToOwner (OSR disposed-frame send guard)', () => {
+  const liveWin = (): BrowserWindow =>
+    ({
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => false }
+    }) as unknown as BrowserWindow
+
+  it('allows a live, ready owner', () => {
+    expect(canEmitToOwner(liveWin(), true)).toBe(true)
+  })
+
+  it('denies a null owner (post-disposeAllOsr)', () => {
+    expect(canEmitToOwner(null, true)).toBe(false)
+  })
+
+  it('denies a destroyed window WITHOUT touching .webContents (throwing getter)', () => {
+    // Reads isDestroyed() FIRST, so a real destroyed window's throwing .webContents never escapes
+    // (the BUG-001 shape from index.flushRenderer.test.ts).
+    const destroyed = {
+      isDestroyed: () => true,
+      get webContents(): never {
+        throw new Error('Object has been destroyed')
+      }
+    } as unknown as BrowserWindow
+    expect(() => canEmitToOwner(destroyed, true)).not.toThrow()
+    expect(canEmitToOwner(destroyed, true)).toBe(false)
+  })
+
+  it('denies when only the webContents is destroyed (board close / app teardown race)', () => {
+    const wcGone = {
+      isDestroyed: () => false,
+      webContents: { isDestroyed: () => true }
+    } as unknown as BrowserWindow
+    expect(canEmitToOwner(wcGone, true)).toBe(false)
+  })
+
+  it('🔒 denies a LIVE, NOT-ready owner — the HMR/page-reload disposed-frame swap the bare isDestroyed guard misses', () => {
+    // The load-bearing case: window + webContents both report alive, but the frame is mid-swap. Only
+    // the readiness gate suppresses the send here; the dual isDestroyed() guard alone would let it
+    // through and reproduce the spew.
+    expect(canEmitToOwner(liveWin(), false)).toBe(false)
+  })
+})
+
+describe('registerOwnerLifecycle (host frame-readiness gate)', () => {
+  type Listener = (...args: unknown[]) => void
+  // Single-listener-per-event fake host webContents (registerOwnerLifecycle wires one per event),
+  // mirroring previewShared.test.ts's fakeWc. `wc` is cast to the helper's own param type (the
+  // un-exported OwnerLifecycleTarget, reached via Parameters) so the fake satisfies its overloads
+  // without widening the production interface; `emit` stays separately typed for the test to fire.
+  function fakeHostWc(): {
+    wc: Parameters<typeof registerOwnerLifecycle>[0]
+    emit: (event: string, ...args: unknown[]) => void
+  } {
+    const handlers = new Map<string, Listener>()
+    const on = (event: string, listener: Listener): unknown => {
+      handlers.set(event, listener)
+      return undefined
+    }
+    return {
+      wc: { on } as unknown as Parameters<typeof registerOwnerLifecycle>[0],
+      emit: (event, ...args) => handlers.get(event)?.(...args)
+    }
+  }
+  const noop = (): void => {}
+
+  it('drops ready FALSE the instant a main-frame page navigation STARTS (the frame swap)', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: true }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    expect(holder.ready).toBe(false)
+  })
+
+  it('IGNORES a same-document SPA route (hash/pushState) — leaves ready true', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: true }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-start-navigation', { isMainFrame: true, isSameDocument: true })
+    expect(holder.ready).toBe(true)
+  })
+
+  it('IGNORES a sub-frame navigation — leaves ready true', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: true }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-start-navigation', { isMainFrame: false, isSameDocument: false })
+    expect(holder.ready).toBe(true)
+  })
+
+  it('re-arms ready TRUE on commit (did-navigate)', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: false }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-navigate')
+    expect(holder.ready).toBe(true)
+  })
+
+  it('re-arms ready TRUE on did-finish-load', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: false }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-finish-load')
+    expect(holder.ready).toBe(true)
+  })
+
+  it('🔒 re-arms ready TRUE on a FAILED/aborted main-frame reload (did-fail-load) — no permanent silence', () => {
+    // The regression a did-finish-load-only re-arm would cause: a reload that aborts mid-HMR (dev
+    // server bounced) never fires did-finish-load, so without this the gate stays false forever and
+    // EVERY open board goes permanently silent.
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: true }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    expect(holder.ready).toBe(false)
+    emit('did-fail-load', {}, -2, 'ERR_FAILED', 'http://localhost:5173/', true)
+    expect(holder.ready).toBe(true)
+  })
+
+  it('does NOT re-arm on a SUB-frame did-fail-load (the main-frame swap is still in progress)', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: false }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-fail-load', {}, -2, 'ERR_FAILED', 'http://localhost:5173/sub', false)
+    expect(holder.ready).toBe(false)
+  })
+
+  it('forces ready FALSE and nulls the owner (onGone) on a host render-process-gone crash', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: true }
+    let gone = false
+    registerOwnerLifecycle(wc, holder, () => {
+      gone = true
+    })
+    emit('render-process-gone')
+    expect(holder.ready).toBe(false)
+    expect(gone).toBe(true)
+  })
+
+  it('models the full HMR cycle: ready → (nav-start) false → (finish-load) true', () => {
+    const { wc, emit } = fakeHostWc()
+    const holder = { ready: true }
+    registerOwnerLifecycle(wc, holder, noop)
+    emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    expect(holder.ready).toBe(false) // sends suppressed across the disposed-frame swap
+    emit('did-finish-load')
+    expect(holder.ready).toBe(true) // resumed once the new frame committed
   })
 })
