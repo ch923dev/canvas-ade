@@ -12,12 +12,14 @@
  * This module is PURE (no electron / @expanse-ade/mcp imports): the static tables are constants and
  * `buildAppModel` takes the live data injected by the orchestrator, so it unit-tests in isolation
  * (mirrors gitDiff.ts's injected-dep discipline). It is exposed app-side via `orchestrator.describeApp`
- * + the CANVAS_E2E seam; the agent-facing MCP resource (`canvas://app-model`) is a deferred follow-up
- * (PR-3b) that wraps this same builder over the loopback wire.
+ * + the CANVAS_E2E seam, AND over the loopback wire as the agent-facing `canvas://app-model` resource
+ * (W1-G / C1, @expanse-ade/mcp ≥0.15.0 — orchestrator-tier), which wraps this same builder.
  *
  * Static-table maintenance: `APP_BOARD_TYPES` + `APP_TOOLS` MIRROR the renderer board-type union
- * (`boardSchema.ts` `BoardType`) and the `@expanse-ade/mcp` tool registration (as of 0.11.0). When a
- * board type or tool is added/removed in those, update the matching table here.
+ * (`boardSchema.ts` `BoardType`) and the `@expanse-ade/mcp` tool registration (as of 0.15.0). When a
+ * board type or tool is added/removed in those, update the matching table here — the
+ * `appModelDrift.test.ts` guard (F25) fails the build if `APP_TOOLS` drifts from what the package
+ * actually registers for an orchestrator session.
  */
 
 /** The minimum token tier that can call a tool. Mirrors the package `Tier` (worker scopes = read-only). */
@@ -104,6 +106,11 @@ export interface AppModel {
 export const APP_TOOLS: readonly AppModelTool[] = [
   { name: 'spawn_board', purpose: 'Create a board on the canvas.', tier: 'orchestrator' },
   {
+    name: 'spawn_group',
+    purpose: 'Spawn a feature-zone cluster (terminal + optional planning/browser + Named Group).',
+    tier: 'orchestrator'
+  },
+  {
     name: 'close_board',
     purpose: 'Remove a board (graceful PTY drain first).',
     tier: 'orchestrator'
@@ -166,6 +173,7 @@ export const APP_BOARD_TYPES: readonly AppModelBoardType[] = [
     purpose: 'A live CLI coding agent running in a real shell.',
     tools: [
       'spawn_board',
+      'spawn_group',
       'configure_board',
       'handoff_prompt',
       'assign_prompt',
