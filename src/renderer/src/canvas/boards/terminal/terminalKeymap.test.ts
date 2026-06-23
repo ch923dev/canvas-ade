@@ -101,6 +101,26 @@ describe('resolveTerminalKey', () => {
   it('Alt+Ctrl+- → null (Alt reserved)', () => {
     expect(resolveTerminalKey(chord('-', { ctrlKey: true, altKey: true }), WIN)).toBeNull()
   })
+
+  it('Ctrl+F → find (Windows/Linux); case-insensitive on the key', () => {
+    expect(resolveTerminalKey(chord('f', { ctrlKey: true }), WIN)).toEqual({ kind: 'find' })
+    expect(resolveTerminalKey(chord('F', { ctrlKey: true }), WIN)).toEqual({ kind: 'find' })
+  })
+  it('mac: Cmd+F → find; Ctrl+F does NOT (Cmd is primary on mac)', () => {
+    expect(
+      resolveTerminalKey(chord('f', { metaKey: true }), { hasSelection: false, isMac: true })
+    ).toEqual({ kind: 'find' })
+    expect(
+      resolveTerminalKey(chord('f', { ctrlKey: true }), { hasSelection: false, isMac: true })
+    ).toBeNull()
+  })
+  it('Ctrl+Shift+F and Alt+Ctrl+F → null (find requires the bare primary modifier)', () => {
+    expect(resolveTerminalKey(chord('f', { ctrlKey: true, shiftKey: true }), WIN)).toBeNull()
+    expect(resolveTerminalKey(chord('f', { ctrlKey: true, altKey: true }), WIN)).toBeNull()
+  })
+  it('plain f (no modifier) → null (types into the shell)', () => {
+    expect(resolveTerminalKey(chord('f'), WIN)).toBeNull()
+  })
 })
 
 describe('TERMINAL_NEWLINE (Shift+Enter byte)', () => {
@@ -142,10 +162,19 @@ describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', 
       paste: number
       fontStep: number
       fontReset: number
+      find: number
       lastFontDelta: number
     }
   } => {
-    const calls = { newline: 0, copy: 0, paste: 0, fontStep: 0, fontReset: 0, lastFontDelta: 0 }
+    const calls = {
+      newline: 0,
+      copy: 0,
+      paste: 0,
+      fontStep: 0,
+      fontReset: 0,
+      find: 0,
+      lastFontDelta: 0
+    }
     return {
       calls,
       newline: () => {
@@ -164,6 +193,9 @@ describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', 
       },
       fontReset: () => {
         calls.fontReset++
+      },
+      find: () => {
+        calls.find++
       },
       ...over
     }
@@ -218,6 +250,7 @@ describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', 
       paste: 0,
       fontStep: 0,
       fontReset: 0,
+      find: 0,
       lastFontDelta: 0
     })
   })
@@ -244,5 +277,12 @@ describe('handleTerminalKey (xterm callback — preventDefault on owned keys)', 
     expect(handleTerminalKey(e, WIN, fx)).toBe(false)
     expect(e.prevented).toBe(true)
     expect(fx.calls.fontReset).toBe(1)
+  })
+  it('Ctrl+F: preventDefault + find + returns false (we own the find chord)', () => {
+    const e = evt('f', { ctrlKey: true })
+    const fx = spyFx()
+    expect(handleTerminalKey(e, WIN, fx)).toBe(false)
+    expect(e.prevented).toBe(true)
+    expect(fx.calls.find).toBe(1)
   })
 })

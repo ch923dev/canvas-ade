@@ -26,6 +26,8 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MutableRefObject,
@@ -34,6 +36,7 @@ import {
 import { useStoreApi } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import {
@@ -80,6 +83,58 @@ interface PortMessage {
 
 /** Platform check for the terminal key resolver's primary modifier (Cmd on macOS). */
 const IS_MAC = navigator.platform.toLowerCase().includes('mac')
+
+/** The full-view modal's inset (mirrors FullViewModal's 5vh/5vw → ~90% of the viewport). */
+const FULL_VIEW_INSET = 0.9
+
+/** Min ConPTY build for xterm to keep reflow ON under the `windowsPty` hint (its `_isReflowEnabled`
+ *  gate). Below this, setting `windowsPty` would DISABLE reflow → widen-loses-data; so we skip it. */
+const CONPTY_REFLOW_MIN_BUILD = 21376
+
+/**
+ * A-Win: xterm's `windowsPty` constructor hint (terminal-scrollback fix § A-Win). On a Windows 11
+ * ConPTY build (≥ 21376) it tells xterm the ConPTY context so its resize/scrollback handling defers
+ * to ConPTY's own screen reprint instead of double-laying-out the screen — cutting the row
+ * duplication/garble seen on a drag-resize. Returns `undefined` (no hint) off Windows (`winBuild`
+ * null) or on older builds, where enabling it would instead DISABLE reflow and lose data on widen.
+ * Pure for unit-testing the build gate.
+ */
+export function conptyHint(
+  winBuild: number | null
+): { backend: 'conpty'; buildNumber: number } | undefined {
+  if (winBuild == null || winBuild < CONPTY_REFLOW_MIN_BUILD) return undefined
+  return { backend: 'conpty', buildNumber: winBuild }
+}
+
+/**
+ * Pure A1 full-view scale (terminal-scrollback fix, docs/research/2026-06-23-terminal-scrollback-reflow).
+ * Full view portals the board OUTSIDE React Flow at native scale (no camera). Letting `fitWhole`
+ * re-propose columns from the bigger modal would change `term.cols`, which drives xterm's lossy
+ * scrollback reflow (the truncation/duplication bug). Instead we keep the FROZEN in-canvas grid and
+ * scale it up VISUALLY: counterScale becomes the factor that fits the existing grid into the modal,
+ * the font seam renders at pinned × cs (natively crisp, no bitmap upscale), and `fitWhole` is frozen
+ * in full view. We divide the modal by the OUTER board box (board.w/board.h) — deliberately an
+ * over-estimate of the grid's content box (it includes the fixed title bar + 12px well padding),
+ * which makes the scale-up CONSERVATIVE: the scaled grid always under-fills slightly and never
+ * clips (the unscaled chrome only widens the gutter). We letterbox (min of the width/height fits)
+ * for the same reason. The no-clip rAF loop in useTerminalReraster is the sub-cell safety net for
+ * any residual overflow. Caveat: counterScale is read from window dims at render time and nothing
+ * re-renders this hook on a bare window resize, so resizing the OS window WHILE a terminal is
+ * maximized leaves the factor stale until the next render/exit — an accepted minor gap (the
+ * common toggle flow is fully correct; window-resize-while-maximized is rare).
+ */
+export function fullViewScale(
+  boardW: number,
+  boardH: number,
+  innerW: number,
+  innerH: number
+): number {
+  if (!(boardW > 0) || !(boardH > 0) || !(innerW > 0) || !(innerH > 0)) return 1
+  const k = Math.min((innerW * FULL_VIEW_INSET) / boardW, (innerH * FULL_VIEW_INSET) / boardH)
+  // Clamp to a sane, finite, positive range: full view should never SHRINK below ~half (a huge
+  // board still reads), and a tiny board scaled to a giant monitor caps at 8× (avoids absurd fonts).
+  return Number.isFinite(k) && k > 0 ? Math.min(Math.max(k, 0.5), 8) : 1
+}
 
 /**
  * Resolve the PTY spawn descriptor's cwd + launchCommand. Pure, so the cwd fallback
@@ -145,6 +200,19 @@ export interface TerminalSpawnDeps {
   pasteIntoTerminal: (term: Terminal, boardId: string, isLive?: () => boolean) => void
 }
 
+/**
+ * Stable handle the host hands to TerminalFindBar (Phase 2). `addonRef`/`termRef` are stable refs
+ * and `close` is a stable callback, so the whole object is memoised once — the bar can be memo'd
+ * and ignore the host's ~12 Hz spinner re-renders.
+ */
+export interface TerminalFindApi {
+  /** Close the find bar (TerminalFindBar clears decorations + refocuses xterm on unmount). */
+  close: () => void
+  /** The live SearchAddon loaded on the current term (null before first spawn). */
+  addonRef: RefObject<SearchAddon | null>
+  termRef: RefObject<Terminal | null>
+}
+
 export interface TerminalSpawnApi {
   state: TerminalState
   /** Read-only from the host (it only reads `.current`); the hook's internals own writes. */
@@ -158,11 +226,15 @@ export interface TerminalSpawnApi {
   /**
    * Settled-zoom counter-scale factor (FREEZE re-raster): the host lays the xterm
    * well out at `boardContent × counterScale` with `transform: scale(1/counterScale)`
-   * and drives the effective render font (pinned × counterScale). 1 in full view and
-   * whenever the settled zoom is unusable. Updates once per camera settle, never per
-   * gesture frame.
+   * and drives the effective render font (pinned × counterScale). In full view (Pure A1)
+   * it is the modal-FILL factor (fullViewScale) so the frozen grid scales up by the font
+   * alone; otherwise the settled zoom, or 1 when unusable. Updates once per camera settle.
    */
   counterScale: number
+  /** Phase 2 find-in-terminal: whether the find bar is open (host mounts TerminalFindBar). */
+  findOpen: boolean
+  /** Stable handle the host passes to TerminalFindBar. */
+  findApi: TerminalFindApi
 }
 
 /** Requires ReactFlowProvider (useStoreApi) + BoardFullViewContext in the render tree. */
@@ -172,6 +244,23 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
 
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  // Phase 2 find-in-terminal: the SearchAddon is loaded onto the term alongside fit (so it is
+  // re-created with every respawn), and the open-state lives here because the Ctrl/Cmd+F chord is
+  // detected in this hook's xterm key handler. The bar's query/result state stays LOCAL to
+  // TerminalFindBar (per-keystroke re-renders never reach the host).
+  const searchAddonRef = useRef<SearchAddon | null>(null)
+  const [findOpen, setFindOpen] = useState(false)
+  const closeFind = useCallback(() => setFindOpen(false), [])
+  const findApi = useMemo<TerminalFindApi>(
+    () => ({ close: closeFind, addonRef: searchAddonRef, termRef }),
+    [closeFind]
+  )
+  // True once the grid has had a real IN-CANVAS fit, i.e. it carries an established column
+  // count. The full-view freeze applies ONLY to an established grid: a FRESH mount that happens
+  // while maximized (e.g. reconfigure-while-full-view respawns the term) must still take its
+  // initial fit — a fresh term has no scrollback to corrupt, and skipping its fit would spawn a
+  // wrong-width PTY (#regression). Reset on each new term in the spawn closure.
+  const establishedRef = useRef(false)
   const portRef = useRef<MessagePort | null>(null)
   // #23: when a Restart happens while the well is unfitted (LOD/display:none),
   // proposeDimensions has no finite dims yet, so we defer the actual respawn and
@@ -208,7 +297,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // effect / respawn the PTY.
   const isFullView = useContext(BoardFullViewContext)
   const fullViewRef = useRef(isFullView)
-  useEffect(() => {
+  // useLayoutEffect (not useEffect): `fitWhole` reads fullViewRef to FREEZE the grid in full view,
+  // and the portal relocation that flips full view also resizes the well → fires the spawn effect's
+  // ResizeObserver. A passive effect could land AFTER that RO callback, so fitWhole would see a
+  // stale `false`, refit, change cols, and reflow (the bug) for one frame. A layout effect commits
+  // the ref synchronously (children before parents) before the post-layout RO delivery — no race.
+  useLayoutEffect(() => {
     fullViewRef.current = isFullView
   }, [isFullView])
 
@@ -219,11 +313,18 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // device pixels at every settled zoom — no camera resample, no defeated hinting
   // (docs/research/2026-06-12-terminal-native-reraster-audit.md). FREEZE: cols/rows
   // NEVER change from a zoom settle (see the ResizeObserver gate in the spawn
-  // effect), so the PTY/TUI never reflows on zoom. Full view portals the board
-  // OUTSIDE ReactFlow at visual scale 1 → counter-scale must be identity there.
+  // effect), so the PTY/TUI never reflows on zoom. Full view (Pure A1) reuses the
+  // SAME seam: it portals the board OUTSIDE ReactFlow (no camera), so counterScale
+  // becomes the modal-FILL factor (fullViewScale) — the frozen grid is scaled up by
+  // the render font alone (the wrapper stays identity there; see useTerminalReraster)
+  // and `fitWhole` is frozen, so cols/rows never change ⇒ no reflow ⇒ no scrollback
+  // truncation/duplication on the toggle.
   const settledZoom = useSettledZoomStore((s) => s.zoom)
-  const counterScale =
-    isFullView || !Number.isFinite(settledZoom) || settledZoom <= 0 ? 1 : settledZoom
+  const counterScale = isFullView
+    ? fullViewScale(board.w, board.h, window.innerWidth, window.innerHeight)
+    : !Number.isFinite(settledZoom) || settledZoom <= 0
+      ? 1
+      : settledZoom
   // Ref mirror for the spawn closure (initial font) + getZoom — NEVER a spawn dep,
   // so a zoom settle cannot respawn the PTY (mirrors fontSizeRef).
   const counterScaleRef = useRef(counterScale)
@@ -234,7 +335,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // Net visual scale of the xterm element, for the selection shim: the camera
   // applies scale(z'), the counter-scale wrapper applies scale(1/cs) — at rest
   // z' === cs so the net is exactly 1 (the shim no-ops); mid-gesture it corrects
-  // by the live ratio. Full view renders outside the camera at scale 1.
+  // by the live ratio. Full view (Pure A1) carries no RESTING CSS scale transform —
+  // the scale-up is the bigger render font alone — so once the open/close stretch
+  // settles the element's net visual scale is 1 and getZoom returns 1 (the shim
+  // no-ops). (During the ~320ms stretch the modal frame is transiently scaled; a
+  // selection started mid-animation could be slightly off — pre-existing, unchanged here.)
   const getZoom = useCallback(
     (): number =>
       fullViewRef.current ? 1 : rfStore.getState().transform[2] / counterScaleRef.current,
@@ -281,6 +386,15 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const fit = fitRef.current
     const term = termRef.current
     if (!fit || !term) return
+    // Pure A1 (terminal-scrollback fix): never refit an ESTABLISHED grid in full view. The portal to
+    // the bigger modal would otherwise re-propose a different column count → term.resize(cols≠current)
+    // → xterm's lossy scrollback reflow (truncation + duplication). Full view scales the FROZEN grid
+    // via counterScale (fullViewScale → font = pinned × cs) instead, so cols/rows stay exactly as
+    // in-canvas across the enter+exit round-trip (zero buffer mutation). A FRESH mount that happens
+    // while maximized (establishedRef still false — e.g. a reconfigure-while-full-view respawn) is the
+    // exception: it has no scrollback to corrupt and DOES need an initial fit, so we don't freeze it.
+    // Read off the refs (fullViewRef is kept current by a layout effect).
+    if (fullViewRef.current && establishedRef.current) return
     try {
       fit.fit()
     } catch {
@@ -304,6 +418,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       overflow -= cellH // each shed lifts the (top-aligned) grid bottom by one cell
     }
     if (rows !== term.rows) term.resize(term.cols, rows) // single PTY resize
+    // Mark the grid established ONLY on an in-canvas fit (the freeze base is an in-canvas column
+    // count). A fresh mount fitting to the modal while full view is active (the establishedRef-false
+    // exception above) must NOT set this, or its later exit fit would be wrongly frozen.
+    if (!fullViewRef.current) establishedRef.current = true
   }, [screenRef])
 
   // Route the in-spawn fit calls through a ref so `spawn`'s dependency array stays byte-identical
@@ -387,13 +505,25 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // Bounded scrollback (perf SLICE-012): xterm retains ~12 B/cell, so 5000 lines pins
       // ~7 MB/terminal that never releases while a board stays mounted at LOD (~137 MB across 20
       // terminals). 2000 keeps generous history at ~40% of the resident buffer. UX-tunable.
-      scrollback: 2000
+      scrollback: 2000,
+      // A-Win (terminal-scrollback fix § A-Win): on Windows 11 ConPTY (build ≥ 21376) tell xterm the
+      // ConPTY context so its resize/scrollback handling aligns with ConPTY's own screen reprint —
+      // this cuts the xterm⇄ConPTY double-layout that duplicates/garbles rows on a resize (the
+      // residual drag-resize path; full view is already reflow-free via Pure A1). Undefined off
+      // Windows or on older builds, where setting it would DISABLE reflow and lose data on widen.
+      windowsPty: conptyHint(window.api?.osWinBuild ?? null)
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // Phase 2: find-in-terminal. Loaded per-term (disposed with the term on respawn). Decorations
+    // (the match highlights + onDidChangeResults count) are requested per find call by the bar.
+    const search = new SearchAddon()
+    term.loadAddon(search)
+    searchAddonRef.current = search
     term.open(el)
     termRef.current = term
     fitRef.current = fit
+    establishedRef.current = false // a fresh grid: not yet fitted in-canvas (full-view freeze base)
     // Attach a GL context only when mounting un-suspended (not under LOD);
     // otherwise the board runs on the DOM renderer until the suspension lifts
     // (see the suspend effect in useTerminalWebgl).
@@ -454,7 +584,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           },
           paste: () => void pasteIntoTerminal(term, board.id, () => termRef.current === term),
           fontStep: (d) => fontStepRef.current(d),
-          fontReset: () => fontResetRef.current()
+          fontReset: () => fontResetRef.current(),
+          find: () => setFindOpen(true)
         }
       )
     )
@@ -577,6 +708,16 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     // fire leaves the key unchanged and is skipped wholesale.
     let lastWrapKey: string | null = null
     const ro = new ResizeObserver(() => {
+      // Pure A1 full-view freeze (terminal-scrollback fix): for an ESTABLISHED grid, ignore the
+      // full-view portal's resize ENTIRELY and do NOT advance lastWrapKey. The well grows to the
+      // modal on enter and shrinks back to the SAME board size on exit, so leaving lastWrapKey at
+      // the pre-full-view (board) key makes the symmetric EXIT fire compare equal and skip too. Net:
+      // the grid keeps its exact in-canvas cols/rows across the whole round-trip — no enter refit and,
+      // crucially, no EXIT refit (an exit refit would race the font transition back to pinned, change
+      // rows, and term.resize → the PTY gets a SIGWINCH → the shell redraws over the bottom rows,
+      // wiping recent output). The font scales via counterScale instead. A FRESH mount in full view
+      // (establishedRef false) still needs its initial fit, so it falls through.
+      if (fullViewRef.current && establishedRef.current) return
       // A detached `el` (no parent) yields no key: fall through to the (cheap, guarded)
       // refit rather than skip — a null key must never satisfy the gate, or two fires
       // while detached would compare null === null and silently drop a real refit.
@@ -624,6 +765,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      searchAddonRef.current = null // disposed with the term above
+      // Phase 2: a FULL xterm replacement (reconfigure shell/cwd/launchCommand) disposes the old
+      // SearchAddon. Close any open find bar so it re-subscribes to the FRESH addon on reopen — its
+      // onDidChangeResults binds once at mount on the stable `api` and can't re-target in place, so
+      // a left-open bar would show a frozen counter. The prior session's search context is gone, so
+      // closing is also correct UX. (The Restart/respawn() path reuses the term+addon — unaffected.)
+      setFindOpen(false)
       startLaunchRef.current = null
     }
     // screenRef / fontStepRef / fontResetRef / pasteIntoTerminal are STABLE (refs +
@@ -698,6 +846,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     startLaunchRef,
     fitWhole,
     restart,
-    counterScale
+    counterScale,
+    findOpen,
+    findApi
   }
 }

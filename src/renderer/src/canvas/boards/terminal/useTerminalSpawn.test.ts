@@ -17,7 +17,12 @@
 //   - resolveSpawnArgs   — the cwd fallback chain + one-shot launch-override precedence
 //   - nextStateAfterAdopt — the adopt / idle-on-mount / fresh-spawn state-machine fork
 import { describe, it, expect } from 'vitest'
-import { resolveSpawnArgs, nextStateAfterAdopt } from './useTerminalSpawn'
+import {
+  resolveSpawnArgs,
+  nextStateAfterAdopt,
+  fullViewScale,
+  conptyHint
+} from './useTerminalSpawn'
 
 describe('resolveSpawnArgs — spawn descriptor resolution (pure)', () => {
   it('cwd prefers the board cwd over the project dir', () => {
@@ -80,5 +85,45 @@ describe('nextStateAfterAdopt — adopt/idle/spawn fork (pure)', () => {
 
   it('a fresh, non-restored board spawns', () => {
     expect(nextStateAfterAdopt(false, false)).toBe('spawn')
+  })
+})
+
+describe('fullViewScale — Pure A1 full-view fill factor (pure)', () => {
+  it('scales the frozen grid UP to fill the modal (letterbox = min of width/height fit)', () => {
+    // 420×340 board into a 1920×1080 viewport: modal ≈ 1728×972, so widthFit ≈ 4.11,
+    // heightFit ≈ 2.86 → min = the height fit (letterbox, never overflow).
+    const k = fullViewScale(420, 340, 1920, 1080)
+    expect(k).toBeCloseTo(Math.min((1920 * 0.9) / 420, (1080 * 0.9) / 340), 5)
+    // height is the binding constraint here → the grid never spills past the modal.
+    expect(k).toBeLessThanOrEqual((1080 * 0.9) / 340 + 1e-9)
+  })
+
+  it('clamps to a sane range: a giant board never scales below 0.5×, a tiny one never above 8×', () => {
+    expect(fullViewScale(100000, 100000, 1920, 1080)).toBe(0.5) // board ≫ modal → floor
+    expect(fullViewScale(1, 1, 1920, 1080)).toBe(8) // board ≪ modal → ceiling
+  })
+
+  it('degenerate inputs (non-positive / non-finite) fall back to identity (1) — never NaN', () => {
+    expect(fullViewScale(0, 340, 1920, 1080)).toBe(1)
+    expect(fullViewScale(420, 0, 1920, 1080)).toBe(1)
+    expect(fullViewScale(420, 340, 0, 1080)).toBe(1)
+    expect(fullViewScale(420, 340, 1920, Number.NaN)).toBe(1)
+  })
+})
+
+describe('conptyHint — A-Win xterm windowsPty build gate (pure)', () => {
+  it('returns the ConPTY hint on Windows 11 builds (>= 21376)', () => {
+    expect(conptyHint(22631)).toEqual({ backend: 'conpty', buildNumber: 22631 })
+    expect(conptyHint(26100)).toEqual({ backend: 'conpty', buildNumber: 26100 })
+    expect(conptyHint(21376)).toEqual({ backend: 'conpty', buildNumber: 21376 }) // boundary (inclusive)
+  })
+
+  it('returns undefined on Win 10 builds below 21376 — setting it there would DISABLE reflow', () => {
+    expect(conptyHint(19045)).toBeUndefined() // Win 10 22H2
+    expect(conptyHint(21375)).toBeUndefined() // one below the boundary
+  })
+
+  it('returns undefined off Windows (null build)', () => {
+    expect(conptyHint(null)).toBeUndefined()
   })
 })
