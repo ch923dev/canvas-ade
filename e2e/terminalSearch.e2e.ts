@@ -101,4 +101,27 @@ test.describe('@terminal find-in-terminal (Ctrl+F)', () => {
     await expect(count).toHaveText('No results')
     await expect(count).toHaveClass(/warn/)
   })
+
+  // Regression for the PR #232 review finding: a FULL xterm re-spawn (reconfigure
+  // shell/cwd/launchCommand) disposes the old SearchAddon; a left-open bar would keep its
+  // onDidChangeResults bound to the disposed addon → frozen counter. The fix closes the bar on the
+  // spawn cleanup, so it re-subscribes to the fresh addon on reopen.
+  test('a full xterm re-spawn (reconfigure) closes an open find bar (no stale subscription)', async ({
+    page
+  }) => {
+    const id = await seedWithBuffer(page)
+    const input = page.locator(`${node(id)} [data-test="terminal-find-input"]`)
+    const count = page.locator(`${node(id)} [data-test="terminal-find-count"]`)
+
+    await openFind(page, id)
+    await input.fill('needle')
+    await expect(count).toHaveText('1 / 3')
+
+    // Change launchCommand → the spawn effect re-runs (full xterm + SearchAddon replacement).
+    await evalIn(
+      page,
+      `window.__canvasE2E.patchBoard(${JSON.stringify(id)}, { launchCommand: 'exit 0' })`
+    )
+    await expect(input, 'find bar closes on a full re-spawn').toHaveCount(0)
+  })
 })

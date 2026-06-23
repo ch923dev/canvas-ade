@@ -765,6 +765,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      searchAddonRef.current = null // disposed with the term above
+      // Phase 2: a FULL xterm replacement (reconfigure shell/cwd/launchCommand) disposes the old
+      // SearchAddon. Close any open find bar so it re-subscribes to the FRESH addon on reopen — its
+      // onDidChangeResults binds once at mount on the stable `api` and can't re-target in place, so
+      // a left-open bar would show a frozen counter. The prior session's search context is gone, so
+      // closing is also correct UX. (The Restart/respawn() path reuses the term+addon — unaffected.)
+      setFindOpen(false)
       startLaunchRef.current = null
     }
     // screenRef / fontStepRef / fontResetRef / pasteIntoTerminal are STABLE (refs +
