@@ -7,6 +7,8 @@ design-reference/
 .claude/
 # Local Playwright MCP scratch (browser snapshots / console logs) — tool output, never reflow.
 .playwright-mcp/
+# Per-project runtime data dir (ADR 0009: canvas.json/assets/memory/tmp) — never source, never reflow.
+.canvas/
 # Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand). Do not reflow.
 src/vendor/
 # Vendored Mermaid bundle for the diagram render worker (S4) — minified, never reflow.

@@ -54,6 +54,16 @@ import { useRunTimer } from './terminal/useRunTimer'
 import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
 import { buildTerminalMenuEntries } from './terminal/terminalMenu'
+import { TerminalFindBar } from './terminal/TerminalFindBar'
+import {
+  shell,
+  shellHidden,
+  screenWrap,
+  screen,
+  idleOverlay,
+  startBtn,
+  interruptChip
+} from './terminal/terminalBoardStyles'
 
 export function TerminalBoard({
   board,
@@ -116,7 +126,9 @@ export function TerminalBoard({
     startLaunchRef,
     fitWhole,
     restart,
-    counterScale
+    counterScale,
+    findOpen,
+    findApi
   } = useTerminalSpawn({
     board,
     projectDir,
@@ -633,6 +645,8 @@ export function TerminalBoard({
                 }}
               >
                 <div ref={screenRef} style={screenStyle} />
+                {/* Phase 2: find-in-terminal bar (Ctrl/Cmd+F). Floats top-right of the well. */}
+                {findOpen && <TerminalFindBar api={findApi} />}
                 {/* TERM-04: an exited / spawn-failed terminal now offers an in-well re-run
                     CTA (bottom bar — never covers the scrollback). Restart re-runs (fresh),
                     Resume re-attaches a known session, Retry/Configure for a failed spawn.
@@ -763,65 +777,4 @@ export function TerminalBoard({
       )}
     </>
   )
-}
-
-const shell: React.CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  display: 'flex',
-  flexDirection: 'column'
-}
-
-/** LOD: hide the xterm well (keep it mounted so the PTY session stays alive). */
-const shellHidden: React.CSSProperties = { ...shell, display: 'none' }
-
-const screenWrap: React.CSSProperties = {
-  flex: 1,
-  minHeight: 0,
-  position: 'relative',
-  background: 'var(--inset)'
-}
-
-/** Identity (counterScale = 1) layout for the xterm host; the counter-scaled variant is
- *  computed inline in render (screenStyle) and reduces to exactly this at cs = 1. */
-const screen: React.CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  padding: '12px' // was '12px 12px 4px'; DESIGN.md §7.1 = 12px. Cosmetic — FitAddon ignores
-  // this padding, so fitWhole (not the padding) is what prevents the clip.
-}
-
-/** Idle (restored/duplicated, not yet started) overlay: centered Start affordance
- *  over the empty --inset well so the terminal never silently auto-spawns (M-1). */
-const idleOverlay: React.CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  zIndex: 2,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  background: 'var(--inset)'
-}
-
-const startBtn: React.CSSProperties = {
-  font: 'inherit',
-  fontSize: 12.5,
-  color: 'var(--text)',
-  background: 'var(--surface)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--r-ctl)',
-  padding: '6px 14px',
-  cursor: 'pointer'
-}
-
-/** TERM-06: the transient "interrupt sent" chip beside the pill (warn-toned, calm). */
-const interruptChip: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 4,
-  fontFamily: 'var(--mono)',
-  fontSize: 10.5,
-  color: 'var(--warn)',
-  whiteSpace: 'nowrap',
-  paddingRight: 4
 }
