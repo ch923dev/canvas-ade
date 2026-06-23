@@ -130,7 +130,9 @@ export function buildGraph(
   // entity / shape nodes + endpoint→entity "returns" edges
   for (const e of model.entities) {
     nodes.push(entityNode(e))
-    for (const key of [...e.producedBy, ...e.consumedBy]) {
+    // Dedupe: an endpoint can both produce AND consume an entity (e.g. PUT /users/{id}), so the same
+    // key would emit two identical `ret:${key}:${e.name}` edges — React Flow drops the duplicate id.
+    for (const key of new Set([...e.producedBy, ...e.consumedBy])) {
       if (endpointIds.has(key)) {
         edges.push({ id: `ret:${key}:${e.name}`, from: key, to: `ent:${e.name}`, kind: 'returns' })
       }

@@ -2,7 +2,8 @@
  * Data-Flow board content (JD-4) — the dedicated board that visualizes a Browser board's captured API
  * surface: endpoint inventory → inferred schemas → entities → id-lineage, as a focus-on-node graph (or
  * a sequence layout). Idempotent regenerate + diff-highlight; "→ Planning" materializes the inferred ER
- * as an editable Mermaid diagram; "Agent context" exports the structure-only model.
+ * as an editable Mermaid diagram. (The shape-only "Agent context" → `.canvas/memory/` export is deferred
+ * to a follow-up — ADR 0010 §B makes it a consent-gated MAIN write, not a clipboard egress.)
  *
  * Data source: the bound Browser board's (`sourceBoardId`) `osrNetworkStore` capture, watched via the
  * refcounted `useSharedOsrNet`. The inferred model is derived live (pure libs) and held EPHEMERALLY —
@@ -224,26 +225,11 @@ export function DataFlowBoard({
       .showToast({ message: 'Data model sketched to a Planning board.', kind: 'ok' })
   }, [model, addBoard, updateBoard, board.x, board.y, board.w])
 
-  const exportAgentContext = useCallback(async () => {
-    // Structure-only digest (names + types + relationships — no values). The model is already
-    // value-less; Task-6 routes this through the MAIN scrub + a .canvas/memory write (the consent
-    // moment). For now it lands on the clipboard — value-free, so safe without a MAIN scrub.
-    const lines = ['# Inferred data model', '']
-    for (const e of model.entities.filter((x) => x.kind === 'entity')) {
-      lines.push(`## ${e.name}${e.pk ? ` (pk: ${e.pk})` : ''}`)
-      for (const f of e.fields) lines.push(`- ${f.key}`)
-    }
-    for (const r of model.relationships)
-      lines.push(`- ${r.from} —${r.kind}→ ${r.to} (via ${r.via})`)
-    try {
-      await navigator.clipboard.writeText(lines.join('\n'))
-      useToastStore
-        .getState()
-        .showToast({ message: 'Data model copied (structure only).', kind: 'ok' })
-    } catch {
-      useToastStore.getState().showToast({ message: 'Could not copy to clipboard.', kind: 'error' })
-    }
-  }, [model])
+  // NB: the "Agent context" export (the shape-only model → `.canvas/memory/`) is deferred. ADR 0010 §B
+  // makes it JD-4's consent moment: it MUST go through a consent dialog + a MAIN-side scrubbed write to
+  // `.canvas/memory/<ts>-dataflow-context.md` — NOT a clipboard egress (no consent, wrong destination).
+  // Rather than ship a divergent clipboard stub, the button is omitted until the proper consent + MAIN
+  // write path lands (the "→ Planning" in-app ER export is the export shipping in this slice).
 
   // ── body states ───────────────────────────────────────────────────────────────────────────────
   let body: ReactElement
@@ -362,9 +348,6 @@ export function DataFlowBoard({
           </button>
           <button className="df-btn df-primary" onClick={exportPlanning}>
             → Planning
-          </button>
-          <button className="df-btn" onClick={exportAgentContext}>
-            ✦ Agent context
           </button>
         </div>
 

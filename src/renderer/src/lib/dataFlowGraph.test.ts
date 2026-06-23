@@ -116,6 +116,29 @@ describe('buildGraph', () => {
     ).toBe(true)
     expect(g.edges.some((e) => e.kind === 'lineage' && e.label === 'userId')).toBe(true)
   })
+
+  it('dedupes the returns edge when one endpoint both produces AND consumes an entity', () => {
+    // PUT /users/{id} both takes and returns the entity → its key lands in producedBy AND consumedBy.
+    // Without dedup this emitted two identical `ret:` edges (same id) and React Flow drops one.
+    const grps = [grp('PUT', ORIGIN, '/api/users/{id}', 5)]
+    const m: EntityModel = {
+      entities: [
+        entity({
+          name: 'User',
+          kind: 'entity',
+          producedBy: [grps[0].key],
+          consumedBy: [grps[0].key],
+          fields: [field('id', ['string'])],
+          fieldKeys: ['id']
+        })
+      ],
+      relationships: []
+    }
+    const built = buildGraph(grps, m, [])
+    expect(built.edges.filter((e) => e.kind === 'returns' && e.to === 'ent:User')).toHaveLength(1)
+    const ids = built.edges.map((e) => e.id)
+    expect(new Set(ids).size).toBe(ids.length) // all edge ids unique (React Flow keys on id)
+  })
 })
 
 describe('buildGraph — flat API graceful degradation', () => {
