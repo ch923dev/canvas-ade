@@ -226,7 +226,10 @@ export function TerminalBoard({
   // Settled-zoom native re-raster (FREEZE): the single font seam (the ONLY writer of
   // term.options.fontSize — pinned × counterScale, never routed through updateBoard/
   // undo) + the counter-scale wrapper style for the xterm host. All the wiring and
-  // its invariants live in useTerminalReraster.
+  // its invariants live in useTerminalReraster, which also reads BoardFullViewContext:
+  // in full view (Pure A1) counterScale is the modal-fill factor and the wrapper stays
+  // identity, so the frozen grid scales up via the render font alone — no column change,
+  // no scrollback reflow.
   const screenStyle = useTerminalReraster({
     pinnedFontSize: board.fontSize,
     bornFont,
@@ -239,6 +242,9 @@ export function TerminalBoard({
 
   // Refit when devicePixelRatio changes (e.g. the window moved to a monitor with different scaling) —
   // the host doesn't resize, so the ResizeObserver never fires, but the cell height changed.
+  // (In full view fitWhole is a deliberate no-op for an established grid — Pure A1 freeze — so a dpr
+  // change while maximized is reconciled by the in-canvas refit on exit. CSS cell size is font-driven,
+  // not dpr-driven, so nothing clips meanwhile.)
   useEffect(() => {
     let mql: MediaQueryList | null = null
     const onChange = (): void => {
