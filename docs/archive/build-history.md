@@ -640,3 +640,35 @@ passes in-container)** + Windows (worktree leg; only the documented `@terminal g
 false-fail, live `@mcp` probes green) → pushed `--no-verify` after the Linux leg confirmed cross-OS green.
 **Coordination:** `mcpOrchestrator.ts` is shared with **W1-G** → W1-C merges BEFORE W1-G starts (W1-G not
 yet begun). Do not self-merge — queued for sequential integration.
+
+## 2026-06-23 — OSR disposed-frame send guard (HMR-reload "Render frame was disposed" spew) — #231 (`5b6f4ab5`, 2026-06-23)
+
+The OSR emit helpers (`emitFrame`/`emitCursor`/`emitEvent`/`emitWidget` in `previewOsr.ts`) push every
+frame/cursor/lifecycle/widget to the host renderer via `owner.webContents.send`. The offscreen paint pump
+keeps firing on its own schedule, so on a dev HMR full-page reload the host's top-level render frame is
+disposed mid-swap and every send made Electron log — asynchronously inside IPC dispatch, so the surrounding
+`try/catch` could never catch it — *"Render frame was disposed before WebFrameMain could be accessed"*, once
+per paint (continuous dev-console spew). Root cause = Electron's `WebFrameMain.render_frame_disposed_` (set
+during the swap, reset only after the new frame attaches — electron/electron#31401); the send is wrapped in
+a non-throwing `console.error` (#41433), which is why the `try/catch` was structurally useless.
+
+**The originally-proposed `isDestroyed()`-only fix was insufficient** (researched + adversarially verified
+via a dynamic workflow): across a reload the window AND its webContents both stay alive
+(`isDestroyed()===false`) and `render-process-gone` never fires (a reload is a navigation, not a crash), so
+a destroyed-guard alone still lets the bad send through. The fix adds a **navigation-driven readiness gate**,
+extracted into a new `src/main/previewOsrOwner.ts` (keeps `previewOsr.ts` under the 700 max-lines ratchet;
+clean one-way dep): `canEmitToOwner` = dual destroyed-guard AND an `ownerReady` flag;
+`registerOwnerLifecycle` flips it false on a main-frame cross-doc `did-start-navigation`, true again on
+`did-navigate`/`did-finish-load`/main-frame `did-fail-load`. **Re-arming on the FAILURE paths is
+load-bearing** — a `did-finish-load`-only gate would stick false forever (every open board permanently
+silent) if a reload aborts mid-HMR (an adversarial-review catch). `ensureOsr`→`armOwner` (idempotent host
+wiring via an `ownerWired` identity guard); `disposeAllOsr`→`clearOwner`. Behaviour-preserving in steady
+state, inert in prod/e2e (the nav-guard-pinned host never navigates post-boot); only the brief disposed-frame
+interval drops idempotent repaints the renderer would discard anyway.
+
+**Verification:** typecheck · lint (ratchet intact) · format · full unit+integration (3337) incl. 14 new
+gate tests (`canEmitToOwner` truth table + `registerOwnerLifecycle` transition table incl. the failed-reload
+re-arm) · headless real-app smoke (OSR paints, no spew) · full e2e matrix both legs (Linux Docker 183✓ +
+Windows `@preview` 31✓; the `@terminal gitDiff` Windows fail is the known worktree host-repo-escape, passes
+in-container). CI all 4 checks green; claude-review 0 crit/0 warn (bot endorsed the failed-reload re-arm +
+the `ownerWired` decision). Files: new `previewOsrOwner.ts`; `previewOsr.ts` + `previewOsr.test.ts`.
