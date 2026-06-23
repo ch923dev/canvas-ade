@@ -85,6 +85,25 @@ const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 /** The full-view modal's inset (mirrors FullViewModal's 5vh/5vw → ~90% of the viewport). */
 const FULL_VIEW_INSET = 0.9
 
+/** Min ConPTY build for xterm to keep reflow ON under the `windowsPty` hint (its `_isReflowEnabled`
+ *  gate). Below this, setting `windowsPty` would DISABLE reflow → widen-loses-data; so we skip it. */
+const CONPTY_REFLOW_MIN_BUILD = 21376
+
+/**
+ * A-Win: xterm's `windowsPty` constructor hint (terminal-scrollback fix § A-Win). On a Windows 11
+ * ConPTY build (≥ 21376) it tells xterm the ConPTY context so its resize/scrollback handling defers
+ * to ConPTY's own screen reprint instead of double-laying-out the screen — cutting the row
+ * duplication/garble seen on a drag-resize. Returns `undefined` (no hint) off Windows (`winBuild`
+ * null) or on older builds, where enabling it would instead DISABLE reflow and lose data on widen.
+ * Pure for unit-testing the build gate.
+ */
+export function conptyHint(
+  winBuild: number | null
+): { backend: 'conpty'; buildNumber: number } | undefined {
+  if (winBuild == null || winBuild < CONPTY_REFLOW_MIN_BUILD) return undefined
+  return { backend: 'conpty', buildNumber: winBuild }
+}
+
 /**
  * Pure A1 full-view scale (terminal-scrollback fix, docs/research/2026-06-23-terminal-scrollback-reflow).
  * Full view portals the board OUTSIDE React Flow at native scale (no camera). Letting `fitWhole`
@@ -456,7 +475,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       // Bounded scrollback (perf SLICE-012): xterm retains ~12 B/cell, so 5000 lines pins
       // ~7 MB/terminal that never releases while a board stays mounted at LOD (~137 MB across 20
       // terminals). 2000 keeps generous history at ~40% of the resident buffer. UX-tunable.
-      scrollback: 2000
+      scrollback: 2000,
+      // A-Win (terminal-scrollback fix § A-Win): on Windows 11 ConPTY (build ≥ 21376) tell xterm the
+      // ConPTY context so its resize/scrollback handling aligns with ConPTY's own screen reprint —
+      // this cuts the xterm⇄ConPTY double-layout that duplicates/garbles rows on a resize (the
+      // residual drag-resize path; full view is already reflow-free via Pure A1). Undefined off
+      // Windows or on older builds, where setting it would DISABLE reflow and lose data on widen.
+      windowsPty: conptyHint(window.api?.osWinBuild ?? null)
     })
     const fit = new FitAddon()
     term.loadAddon(fit)

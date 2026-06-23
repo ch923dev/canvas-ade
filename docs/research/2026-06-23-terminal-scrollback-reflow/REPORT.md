@@ -218,8 +218,12 @@ refinements surfaced by a 3-agent diff review:
 3. **A-Polish kept** as a single `term.refresh(0, rows-1)` on the toggle (in `useTerminalReraster`),
    cheap insurance for the duplication facet. The `clearTextureAtlas` half was dropped (not on the
    public `Terminal` API; the font change already refreshes the atlas).
-- **A-Win DEFERRED to Phase 1b** (needs OS-build-number plumbing to MAIN and targets the *drag-resize*
-  path, not the reported full-view bug). Tracked; not in this PR.
+- **A-Win — shipped as Phase 1b** (separate PR): xterm `windowsPty: { backend:'conpty', buildNumber }`
+  hint, plumbed via `main/platformIpc.ts` (sync `os.release()` build → preload `osWinBuild` → renderer
+  `conptyHint`). **Gated to Win 11 builds ≥ 21376** so it never disables reflow on Win 10 (the
+  `_isReflowEnabled` footgun). Aligns xterm's resize/scrollback handling with ConPTY's reprint (cuts
+  the drag-resize row duplication); does NOT eliminate the cols-reflow itself — that remains Phase 5
+  (serialize/restore). Full terminal+fullview e2e (27) green on Win 11; no regression.
 - **Regression e2e** (`e2e/terminalScrollback.e2e.ts`, `@terminal`): asserts cols frozen *during* full
   view + every line marker (`L000..L119`) survives a round-trip at zoom 1 **and** a non-1 zoom. Uses an
   `exit`-launched (dead) PTY so the live shell can't race the buffer. Green ×3, serial, retries:0.
@@ -238,7 +242,7 @@ refinements surfaced by a 3-agent diff review:
 ## 7. Maximize terminal capabilities — roadmap
 
 > **DECIDED build sequence (2026-06-23) — all four selected, sequenced by value × readiness:**
-> 1. **Phase 1 — Corruption fix (Pure A1 + A-Polish + regression e2e)** — ✅ implemented; A-Win split to Phase 1b (Windows ConPTY hint, needs build-number plumbing). Gates trust in all of below.
+> 1. **Phase 1 — Corruption fix (Pure A1 + A-Polish + regression e2e)** — ✅ implemented (PR #227). **Phase 1b — A-Win** (Windows ConPTY hint, build ≥ 21376) ✅ implemented (separate PR). Gates trust in all of below.
 > 2. **Phase 2 — Find-in-terminal (search)** — top user value for log debugging; independent. *(design artifact: find bar)*
 > 3. **Phase 3 — Configurable + persisted scrollback** — low effort; sets the depth before serialize. *(design artifact: setting field)*
 > 4. **Phase 4 — Correctness pack (web-links + unicode11)** — low effort, independent; unicode also trims wrap miscounts.
