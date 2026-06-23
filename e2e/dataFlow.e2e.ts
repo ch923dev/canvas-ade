@@ -61,16 +61,21 @@ test.describe('@preview Data-Flow board (JD-4)', () => {
   test('a flat API draws zero entity→entity / lineage edges (graceful degradation)', async ({
     page
   }) => {
-    const src = await seed(page, 'browser', {})
+    // Pin the browser origin to the SAME host the seeded rows live on (`example.test`). The flat set
+    // we assert on must be deterministic, but a real Browser board's OSR window also live-captures its
+    // own page load (e.g. a running dev server on localhost) — those asset URLs carry `?v=`/`?t=` query
+    // ids and `/…/{id}/…` paths, which `urlSideLineage` would legitimately turn into edges and pollute
+    // the "flat" assertion (a timing-dependent flake). Keeping the first-party filter ON (with the
+    // origin = example.test) excludes that cross-origin noise, so only the 6 seeded rows are graphed.
+    const src = await seed(page, 'browser', { url: 'https://example.test/' })
     const df = await evalIn<string>(
       page,
       `window.__canvasE2E.seedBoard('dataflow', { sourceBoardId: ${JSON.stringify(src)} })`
     )
-    // a flat capture: unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js)
+    // a flat capture: 6 unrelated endpoints, no shared ids — via the generic seeder (all /req-*.js)
     await evalIn(page, `window.__canvasE2E.seedOsrNet(${JSON.stringify(src)}, 6)`)
-    // those rows are `.js` assets on a 3rd-party origin → the default filters would hide them all; this
-    // test is about graph degradation, so view the raw firehose.
-    await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, false)`)
+    // apiOnly OFF so the `.js` asset rows show; first-party ON so only example.test (the seeds) is graphed.
+    await evalIn(page, `window.__canvasE2E.setDfFilters(${JSON.stringify(df)}, false, true)`)
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(df)})`)
     const node = page.locator(`.react-flow__node[data-id="${df}"]`)
     await expect(node.locator('.df-gn-endpoint').first()).toBeVisible({ timeout: 5000 })
