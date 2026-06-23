@@ -529,3 +529,32 @@ panel's Ctrl+F in embedded mode). Full e2e matrix both legs green (Win 182 + 2 e
 isolated re-run; Linux Docker 182+1flaky-retried+1skip; all 4 JD-2 tests pass both legs). Retires
 H5/H7/M1/A6 + a11y. Squash `396f4c15`; branch deleted. **Next (umbrella):** JD-3 (inventory + schema; in
 flight) → JD-4 (graph + canvas/agent, schema bump) last.
+
+## 2026-06-23 — JD umbrella · JD-3 Data Flow tab (inventory · opt-in inferred schemas · entity inspector) — #229 (`cf245779`, 2026-06-23)
+
+Third slice of the **JD (JSON & Data Flow)** umbrella (REPORT §6 P2). Adds a **Data Flow** tab to the
+per-board Network inspector that turns captured traffic into an **endpoint inventory** + (opt-in) **inferred
+response schemas** + an **entity/relationship inspector** — degrading gracefully (flat APIs ⇒ inventory +
+schemas + island shapes, **never a fabricated entity→entity edge**). Lands under **ADR 0010** (data-shape
+inference & sampling privacy contract): **response bodies are off by default**; enabling triggers **lazy,
+per-template, MAIN-side capped sampling** (20 samples / 8 MB scanned / response-only) behind an
+`isForeignSender` frame guard, and **only value-less shape skeletons cross IPC** — raw values are never sent
+via the inference path (the single raw-body path stays the user-clicked `getOsrNetBody`). Pure `lib/`
+passes: `routeTemplate.ts` (id/uuid/version-guarded segment collapsing → `{param}` templates,
+high-cardinality detection), `schemaInfer.ts` (monoid shape-merge over truncated-sample-safe presence),
+`entityInfer.ts` (**recursive** entity / PK-FK detection — envelope-unwraps `{data:…}`/`{records:[…]}`,
+promotes nested id-bearing objects to embedded entities with containment edges, name+type structural only).
+New `canvas/boards/osr/DataFlowView.tsx` (inventory + recursive schema tree + unwrapped-primary-entity
+inspector + opt-in gate + **resizeable inspector** + **method/origin/template filter**, no
+`dangerouslySetInnerHTML`). MAIN value-stripper split into `main/previewOsrShape.ts` (`extractShape` +
+`sampleResponseShapes`) so `previewOsrNetwork.ts` stays under the 700 max-lines ratchet; thin
+`preview:osrNetSampleSchema` IPC handler + preload mirror; ephemeral viewer state in `osrNetworkStore.ts`
+(`NetTab`→`'network'|'dataflow'`, `dfInspW`, lazy `schemas`) ⇒ **no schema bump**. Relationship Q answered:
+the entity model is GLOBAL (uses ALL routes, name+type structural); value-overlap inclusion-dependency is
+deferred to JD-4. e2e: Data Flow opt-in gate → Enable → value-less schema asserted (raw value `"e2e"` absent,
+structural key `nested` present). Full matrix both legs green (Win 182 + 2 retried-green env-flakes + the
+known `@terminal gitDiff` worktree host-repo-escape false-fail; Linux Docker 183 + 1 retried-green flake + 1
+skip — gitDiff passes clean in Docker, confirming the Win fail is worktree-only). Bot review: **0 critical /
+0 warning, no inline findings** (verified ADR-0010 contract + value-strip + no-innerHTML + recursion bound
+`SHAPE_MAX_DEPTH=64`). Squash `cf245779`; branch deleted. **Next (umbrella):** JD-4 (graph + id-lineage +
+Mermaid/agent export, schema bump) closes the umbrella.
