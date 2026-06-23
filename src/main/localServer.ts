@@ -49,6 +49,9 @@ const PAGE = `<!doctype html>
   const sync = () => { w.textContent = window.innerWidth + 'px'; };
   sync(); window.addEventListener('resize', sync);
   setInterval(() => { t.textContent = new Date().toLocaleTimeString(); }, 1000);
+  // Gated on ?xhr so only the JSON-viewer e2e triggers it (other tests' row counts stay unchanged):
+  // fetch a JSON subresource whose body CDP CAN return (the main document's body is evicted post-commit).
+  if (location.search.indexOf('xhr') !== -1) { fetch('/json').catch(function(){}); }
   console.log('LOCAL_PAGE_OK');
 </script></body></html>`
 
@@ -90,6 +93,15 @@ export function startLocalServer(): Promise<LocalServer> {
           'Content-Disposition': 'attachment; filename="canvas-e2e-download.txt"'
         })
         res.end('canvas-ade e2e download payload')
+        return
+      }
+      // `/json` → a small nested JSON document (big int + array + nested object) so the Network
+      // inspector's JSON body viewer (JsonView) can be exercised end-to-end (load body → fold a row).
+      if ((req.url ?? '').split('?')[0] === '/json') {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+        res.end(
+          '{"id":12345678901234567890,"name":"e2e","tags":["a","b","c","d"],"nested":{"x":1,"y":2}}'
+        )
         return
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
