@@ -493,3 +493,32 @@ test-only false-positives (worker got a defensive message-shape guard). Rebased 
 auto-merged the two overlapping net files cleanly). Squash `64c04f3b`; branch deleted. **Follow-up:** the
 `perf-slices/` package now lives at the repo root — per the doc-lifecycle policy it should be collapsed to
 a dated summary under `docs/reviews/` (deferred; SLICE-002.md is the valuable residue to preserve).
+
+## 2026-06-23 — MCP SDD W1-D · shared MCP type module (`src/shared/mcpTypes.ts`) — PR #222 (`feat/mcp-w1d-shared-types`, 2026-06-23)
+
+First slice of the **MCP spec-driven-development package** (the 2026-06-23 MCP audit's executable build
+plan; specs at `docs/reviews/2026-06-23-mcp-audit/sdd/`). W1-D closes audit finding **F9**: the MAIN →
+renderer control channel was typed by **four hand-mirrored copies** that had no compile-time
+sync — `McpCommand`/`McpCommandAck`/`PlanningOp`/`PlanningOpTint` duplicated across `src/main/mcpCommand.ts`
+and the renderer's `useMcpCommands.ts`/`planningMcpApply.ts`, and `AuditEntry`/`AuditInput` duplicated
+across `src/main/auditLog.ts` and `AuditLogViewer.tsx` (a 5th copy lives in the preload `index.ts`,
+intentionally left for a later slice). A developer adding a command variant on one side and forgetting the
+other would compile clean, serialize over IPC, and hit the renderer's `default:` → silent `unknown command`
+— the drift this slice exists to make impossible before W2/W3 add skill/recipe dispatch variants. **This is
+a pure, behaviour-neutral TYPE refactor:** a new **declaration-only** module `src/shared/mcpTypes.ts`
+(zero value exports, zero Node/Electron/DOM imports — so it compiles under all three tsconfigs and is
+erased entirely at build time) becomes the single source of truth; MAIN re-exports from it
+(`mcpCommand.ts`, `auditLog.ts` keep their public surface so every downstream importer + test resolves
+unchanged) and the renderer imports from it (`useMcpCommands.ts`, `planningMcpApply.ts` re-exports
+`PlanningOp`/`PlanningOpTint` for its test, `AuditLogViewer.tsx`). All three tsconfig projects
+(`node`/`preload`/`web`) add `"src/shared/**/*"` to `include`. **One intended semantic change:** the
+canonical `addBoard.board.type` adopts MAIN's loose `string` (the sender does not import renderer types);
+the renderer's `applyMcpCommand` keeps its runtime allowlist via a new `isSpawnable` type-guard
+(re-narrows `string` → `BoardType`), so the dropped `@ts-expect-error` in `useMcpCommands.test.ts` was
+retired with its runtime rejection assertion intact. **Verification:** full gate green — `pnpm typecheck`
+(node+preload+web, the real acceptance gate), `pnpm lint` (0 err; pre-existing warn-only token-drift
+unchanged), `pnpm format:check`, `pnpm test` (3308 passed / 1 skipped), `pnpm build`; **no runtime
+artifact** (`grep mcpTypes out/` → 0 hits, confirming type-only erasure); headless smoke
+(`CANVAS_SMOKE=exit`) renderer-mounts clean (`reactflow/xterm/webgl` true, no black screen). W1-D is the
+**Wave-1 blocker** — it frees `AuditLogViewer.tsx` for W1-A and is the type foundation all later command
+variants build on; merge it first.
