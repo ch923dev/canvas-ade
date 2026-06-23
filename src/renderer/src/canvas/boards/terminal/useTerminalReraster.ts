@@ -26,6 +26,8 @@
  *     clipped TUI content).
  */
 import {
+  useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -35,13 +37,15 @@ import {
 } from 'react'
 import type { Terminal } from '@xterm/xterm'
 import { clampTerminalFont, effectiveTerminalFont } from './terminalFont'
+import { BoardFullViewContext } from '../../fullViewContext'
 
 export interface TerminalRerasterDeps {
   /** The persisted per-board pin (board.fontSize) — undefined ⇒ unpinned. */
   pinnedFontSize: number | undefined
   /** The font this board was born with (frozen at mount) — the unpinned fallback. */
   bornFont: number
-  /** Settled-zoom counter-scale factor from useTerminalSpawn (1 in full view). */
+  /** Counter-scale factor from useTerminalSpawn: settled zoom in-canvas, or the
+   *  modal-FILL factor in full view (Pure A1). Drives the render font in both cases. */
   counterScale: number
   termRef: RefObject<Terminal | null>
   fitWhole: () => void
@@ -55,6 +59,25 @@ export interface TerminalRerasterDeps {
 export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
   const { pinnedFontSize, bornFont, counterScale, termRef, fitWhole, liveFontRef, identityStyle } =
     deps
+  // Read full-view directly off context (this hook runs in the board's render tree, under
+  // BoardFullViewContext.Provider) so the host doesn't have to thread the flag through. In full
+  // view the scale-up is the bigger render font ALONE (no camera to compensate), so the wrapper
+  // must stay IDENTITY — the in-canvas `transform: scale(1/cs)` would shrink the grid by 1/cs.
+  const isFullView = useContext(BoardFullViewContext)
+
+  // A-Polish (terminal-scrollback fix): force ONE full repaint after a full-view TOGGLE. Pure A1
+  // already removes the reflow (cols frozen), but the toggle still re-measures cells (font flips
+  // pinned↔pinned×fill-factor) across the portal relocation, during which xterm's renderer can be
+  // paused — so the font-change repaint may be deferred/dropped, leaving stale rows (the reported
+  // "duplication"). A post-relocation rAF + term.refresh paints the frozen grid cleanly. Cheap
+  // (one repaint per toggle), and a no-op when no term is mounted.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const t = termRef.current
+      if (t) t.refresh(0, t.rows - 1)
+    })
+    return () => cancelAnimationFrame(id)
+  }, [isFullView, termRef])
 
   const prevPinRef = useRef<number>(clampTerminalFont(pinnedFontSize ?? bornFont))
   // Monotonic token: each seam run supersedes any older no-clip correction loop, so a
@@ -123,7 +146,11 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
 
   return useMemo<CSSProperties>(
     () =>
-      counterScale === 1
+      // Full view (Pure A1) OR cs === 1 ⇒ identity. In full view the bigger render font is the
+      // entire scale-up and there is NO camera, so the in-canvas `scale(1/cs)` would shrink the
+      // grid — the host must stay identity (fills the modal; xterm paints the frozen grid at the
+      // big font in the top-left, the rest is the same-bg gutter that reads as letterbox).
+      isFullView || counterScale === 1
         ? identityStyle
         : {
             position: 'absolute',
@@ -135,6 +162,6 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
             transformOrigin: '0 0',
             padding: 12 * counterScale
           },
-    [counterScale, identityStyle]
+    [isFullView, counterScale, identityStyle]
   )
 }
