@@ -7,6 +7,11 @@ import {
   visibleRows,
   reindent,
   stripBom,
+  pathOf,
+  ancestorsOf,
+  searchMatches,
+  subtreeSource,
+  urlInValue,
   type JsonRow
 } from './osrJson'
 
@@ -155,5 +160,107 @@ describe('reindent', () => {
   it('keeps empty containers on one line', () => {
     expect(reindent('{"a":{},"b":[]}', 'application/json')).toContain('{}')
     expect(reindent('{"a":{},"b":[]}', 'application/json')).toContain('[]')
+  })
+})
+
+// ── JD-2 enrichments ────────────────────────────────────────────────────────────────────────────
+
+describe('windowing / hard row cap', () => {
+  it('default-collapses a shallow container with > ~100 children (array windowing)', () => {
+    const big = '[' + Array.from({ length: 150 }, (_, i) => i).join(',') + ']'
+    const model = buildModel(big, 'application/json')
+    const root = model.rows[0]
+    expect(root.childCount).toBe(150)
+    // depth-0, but childCount > BIG_CONTAINER ⇒ folded by default so the visible list stays bounded
+    expect(initialCollapsed(model.rows).has(root.id)).toBe(true)
+  })
+
+  it('clamps a pathologically wide body to a bounded model (rowCap), no throw', () => {
+    const huge = '[' + '0,'.repeat(200_010) + '0]'
+    const run = (): ReturnType<typeof buildModel> => buildModel(huge, 'application/json')
+    expect(run).not.toThrow()
+    const model = run()
+    expect(model.meta.rowCap).toBe(true)
+    expect(model.rows.length).toBeLessThan(200_010) // bounded ≪ the 200k+ elements
+  })
+})
+
+describe('pathOf', () => {
+  const model = buildModel(
+    '{"profile":{"email":"a@b.c"},"tags":["x","y"],"a-b":{"c":1}}',
+    'application/json'
+  )
+  const byKey = (k: string): JsonRow => model.rows.find((r) => r.key === k)!
+
+  it('builds dotted paths for object members', () => {
+    expect(pathOf(model.rows, byKey('email').id)).toBe('$.profile.email')
+  })
+  it('builds bracketed indices for array elements', () => {
+    const y = model.rows.find((r) => r.valueText === '"y"')!
+    expect(pathOf(model.rows, y.id)).toBe('$.tags[1]')
+  })
+  it('bracket-quotes a non-identifier key', () => {
+    expect(pathOf(model.rows, byKey('c').id)).toBe('$["a-b"].c')
+  })
+})
+
+describe('ancestorsOf', () => {
+  it('returns the enclosing open-container ids (not the row itself), outermost first', () => {
+    const model = buildModel('{"a":{"b":{"c":1}}}', 'application/json')
+    const c = model.rows.find((r) => r.key === 'c')!
+    const anc = ancestorsOf(model.rows, c.id)
+    expect(anc).toHaveLength(3) // root, a, b
+    const depths = anc.map((id) => model.rows.find((r) => r.id === id)!.depth)
+    expect(depths).toEqual([0, 1, 2])
+  })
+})
+
+describe('searchMatches', () => {
+  const model = buildModel('{"email":"a@b.c","name":"emailish","x":1}', 'application/json')
+  it('matches keys OR values, case-insensitively, across the full model', () => {
+    const ids = searchMatches(model.rows, 'email')
+    expect(ids).toHaveLength(2) // the "email" key row + the "emailish" value row
+    expect(searchMatches(model.rows, 'EMAIL')).toEqual(ids) // case-insensitive
+  })
+  it('returns nothing for an empty query', () => {
+    expect(searchMatches(model.rows, '')).toEqual([])
+  })
+})
+
+describe('subtreeSource', () => {
+  const model = buildModel('{"a":1,"b":{"c":2,"d":[3,4]}}', 'application/json')
+  it('re-indents a container subtree losslessly from source', () => {
+    const b = model.rows.find((r) => r.key === 'b' && r.kind === 'open')!
+    const sub = subtreeSource(model, b)
+    expect(sub.startsWith('{')).toBe(true)
+    expect(sub).toContain('"c": 2')
+    expect(sub).toContain('"d"')
+  })
+  it('keeps a big integer verbatim in the copied subtree', () => {
+    const m2 = buildModel('{"big":[12345678901234567890]}', 'application/json')
+    const arr = m2.rows.find((r) => r.key === 'big' && r.kind === 'open')!
+    expect(subtreeSource(m2, arr)).toContain('12345678901234567890')
+  })
+  it('falls back to the value text for a scalar row', () => {
+    const a = model.rows.find((r) => r.key === 'a')!
+    expect(subtreeSource(model, a)).toBe('1')
+  })
+})
+
+describe('urlInValue', () => {
+  const model = buildModel(
+    '{"u":"https://example.com/x","v":"not a url","n":5,"e":"https:\\/\\/x.io\\/a"}',
+    'application/json'
+  )
+  const byKey = (k: string): JsonRow => model.rows.find((r) => r.key === k)!
+  it('returns the bare http(s) URL for a URL-shaped string value', () => {
+    expect(urlInValue(byKey('u'))).toBe('https://example.com/x')
+  })
+  it('un-escapes the common JSON `\\/` slash escape', () => {
+    expect(urlInValue(byKey('e'))).toBe('https://x.io/a')
+  })
+  it('returns null for non-URL strings and non-string values', () => {
+    expect(urlInValue(byKey('v'))).toBeNull()
+    expect(urlInValue(byKey('n'))).toBeNull()
   })
 })

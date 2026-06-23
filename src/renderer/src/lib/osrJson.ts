@@ -57,6 +57,10 @@ export interface JsonRow {
   closeId?: number
   duplicateKey?: boolean
   truncatedHere?: boolean
+  /** on `open`: source offset of the container's brace (for lossless copy-subtree, JD-2). */
+  srcStart?: number
+  /** on `open`: source offset just past the matching close brace. */
+  srcEnd?: number
 }
 
 export interface JsonMeta {
@@ -66,6 +70,8 @@ export interface JsonMeta {
   parseError: boolean
   /** Hit the recursion cap — body is page-controlled, so deep nesting is clamped, not crashed. */
   maxDepth: boolean
+  /** Hit the hard global row cap — a pathological body is clamped to a bounded model (JD-2). */
+  rowCap: boolean
 }
 
 /**
@@ -75,14 +81,35 @@ export interface JsonMeta {
  */
 const MAX_DEPTH = 200
 
+/**
+ * Hard global row cap for the scanner. Virtualization bounds the *rendered* DOM, but the flat-row
+ * model itself is still O(body): a crafted multi-MB array of scalars could materialize millions of
+ * `JsonRow` objects. 200k is far above any real API payload; past it the model is clamped + flagged
+ * (the component renders a terminal `…(row cap)` marker), never grows unbounded.
+ */
+const MAX_ROWS = 200_000
+
+/** A container with more children than this starts collapsed regardless of depth (JD-2 windowing):
+ *  keeps a shallow 50k-element array from exploding the initial visible list before virtualization. */
+const BIG_CONTAINER = 100
+
 export interface JsonModel {
   rows: JsonRow[]
   kind: BodyKind
   meta: JsonMeta
+  /** The BOM-stripped JSON source (json kind only) — backs lossless copy-subtree slicing (JD-2). */
+  src?: string
 }
 
 function zeroMeta(): JsonMeta {
-  return { duplicateKeys: 0, bigInts: 0, truncated: false, parseError: false, maxDepth: false }
+  return {
+    duplicateKeys: 0,
+    bigInts: 0,
+    truncated: false,
+    parseError: false,
+    maxDepth: false,
+    rowCap: false
+  }
 }
 
 /**
@@ -203,6 +230,10 @@ function scanJson(src: string): JsonModel {
       meta.maxDepth = true // clamp page-controlled deep nesting instead of overflowing the stack
       return false
     }
+    if (rows.length >= MAX_ROWS) {
+      meta.rowCap = true // clamp a pathologically wide body to a bounded model (graceful, not a throw)
+      return false
+    }
     skipWs()
     if (p.i >= n) {
       meta.truncated = true
@@ -219,14 +250,21 @@ function scanJson(src: string): JsonModel {
         key,
         kind: 'open',
         brace,
-        duplicateKey: dup || undefined
+        duplicateKey: dup || undefined,
+        srcStart: p.i // offset of the brace — paired with srcEnd below for lossless copy-subtree
       }
       rows.push(openRow)
+      // Stamp the half-open source range + emit the matching close in one place so every exit path
+      // (empty / normal / truncated / parse-error) leaves srcEnd consistent.
+      const finishOpen = (truncated?: boolean): void => {
+        openRow.srcEnd = p.i
+        openRow.closeId = pushClose(depth, closeChar, truncated)
+      }
       p.i++ // consume the brace
       skipWs()
       if (src[p.i] === closeChar) {
         p.i++
-        openRow.closeId = pushClose(depth, closeChar)
+        finishOpen()
         openRow.childCount = 0
         return true
       }
@@ -237,7 +275,7 @@ function scanJson(src: string): JsonModel {
         if (p.i >= n) {
           meta.truncated = true
           openRow.truncatedHere = true
-          openRow.closeId = pushClose(depth, closeChar, true)
+          finishOpen(true)
           openRow.childCount = count
           return true
         }
@@ -246,7 +284,7 @@ function scanJson(src: string): JsonModel {
         if (brace === '{') {
           if (src[p.i] !== '"') {
             meta.parseError = true
-            openRow.closeId = pushClose(depth, closeChar)
+            finishOpen()
             openRow.childCount = count
             return false
           }
@@ -260,7 +298,7 @@ function scanJson(src: string): JsonModel {
           skipWs()
           if (src[p.i] !== ':') {
             meta.parseError = true
-            openRow.closeId = pushClose(depth, closeChar)
+            finishOpen()
             openRow.childCount = count
             return false
           }
@@ -269,7 +307,7 @@ function scanJson(src: string): JsonModel {
         const ok = scanValue(depth + 1, childKey, childDup)
         count++
         if (!ok) {
-          openRow.closeId = pushClose(depth, closeChar, meta.truncated)
+          finishOpen(meta.truncated)
           openRow.childCount = count
           return false
         }
@@ -280,19 +318,19 @@ function scanJson(src: string): JsonModel {
         }
         if (src[p.i] === closeChar) {
           p.i++
-          openRow.closeId = pushClose(depth, closeChar)
+          finishOpen()
           openRow.childCount = count
           return true
         }
         if (p.i >= n) {
           meta.truncated = true
           openRow.truncatedHere = true
-          openRow.closeId = pushClose(depth, closeChar, true)
+          finishOpen(true)
           openRow.childCount = count
           return true
         }
         meta.parseError = true // unexpected token between members
-        openRow.closeId = pushClose(depth, closeChar)
+        finishOpen()
         openRow.childCount = count
         return false
       }
@@ -350,13 +388,20 @@ function scanJson(src: string): JsonModel {
   }
 
   scanValue(0, undefined, false)
-  return { rows, kind: 'json', meta }
+  return { rows, kind: 'json', meta, src }
 }
 
-/** Open-container ids whose depth ≥ `depth` (default 2) — the initial collapsed set (top two levels open). */
+/**
+ * The initial collapsed set: every `open` container whose depth ≥ `depth` (default 2, so the top two
+ * levels open) OR whose `childCount` exceeds `BIG_CONTAINER` (so a shallow huge array — e.g. a 50k
+ * root array — starts folded and never floods the visible list before the virtualizer windows it).
+ */
 export function initialCollapsed(rows: JsonRow[], depth = 2): Set<number> {
   const s = new Set<number>()
-  for (const r of rows) if (r.kind === 'open' && r.depth >= depth) s.add(r.id)
+  for (const r of rows) {
+    if (r.kind !== 'open') continue
+    if (r.depth >= depth || (r.childCount ?? 0) > BIG_CONTAINER) s.add(r.id)
+  }
   return s
 }
 
@@ -387,7 +432,12 @@ export function visibleRows(rows: JsonRow[], collapsed: Set<number>): JsonRow[] 
  */
 export function reindent(body: string, mime?: string, base64?: boolean): string {
   if (base64 || !looksJson(body, mime)) return body
-  const src = stripBom(body)
+  return reindentSource(stripBom(body))
+}
+
+/** Re-indent an already-BOM-stripped JSON source string (or any source slice — e.g. a copied
+ *  subtree). Lossless: string contents, number text, duplicate keys, and key order all survive. */
+function reindentSource(src: string): string {
   const n = src.length
   let out = ''
   let depth = 0
@@ -449,4 +499,92 @@ export function reindent(body: string, mime?: string, base64?: boolean): string 
     i++
   }
   return out
+}
+
+// ── JD-2 enrichments — path/search/subtree/URL helpers (pure; consumed by JsonView) ─────────────
+
+/** A key is a bare `.ident` segment when it's a JS identifier; otherwise `["quoted"]` (path-safe). */
+function keySegment(key: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`
+}
+
+/**
+ * The property path of a row (`$.profile.email`, `$[3].id`) — built by walking the flat model with a
+ * frame stack, so it stays correct under duplicate keys and array indices. The default `$` root is
+ * neutral (JSONPath); the value is the highest-leverage copy for an AI canvas (paste into an agent).
+ */
+export function pathOf(rows: JsonRow[], targetId: number, root = '$'): string {
+  const frames: { isArray: boolean; childIdx: number }[] = []
+  const segs: string[] = []
+  for (const r of rows) {
+    if (r.kind === 'close') {
+      frames.pop()
+      segs.pop()
+      continue
+    }
+    const parent = frames[frames.length - 1]
+    const seg =
+      r.key !== undefined ? keySegment(r.key) : parent?.isArray ? `[${parent.childIdx}]` : ''
+    if (r.id === targetId) return root + segs.join('') + seg
+    if (parent) parent.childIdx++
+    if (r.kind === 'open') {
+      frames.push({ isArray: r.brace === '[', childIdx: 0 })
+      segs.push(seg)
+    }
+  }
+  return root
+}
+
+/** The ids of the `open` containers enclosing a row — the set to un-collapse so a match scrolls into
+ *  view (JD-2 search auto-expand). Excludes the row itself. */
+export function ancestorsOf(rows: JsonRow[], targetId: number): number[] {
+  const stack: number[] = []
+  for (const r of rows) {
+    if (r.kind === 'close') {
+      stack.pop()
+      continue
+    }
+    if (r.id === targetId) return [...stack]
+    if (r.kind === 'open') stack.push(r.id)
+  }
+  return []
+}
+
+/** Ids of rows whose key OR value contains `query` (case-insensitive), in source order. Searches the
+ *  FULL model (not just visible rows) so a match inside a collapsed subtree is still found. */
+export function searchMatches(rows: JsonRow[], query: string): number[] {
+  const q = query.toLowerCase()
+  if (!q) return []
+  const out: number[] = []
+  for (const r of rows) {
+    if (r.kind === 'close') continue
+    const k = r.key?.toLowerCase() ?? ''
+    const v = r.valueText?.toLowerCase() ?? ''
+    if (k.includes(q) || v.includes(q)) out.push(r.id)
+  }
+  return out
+}
+
+/** Copy-subtree source for a container row — the lossless source slice, re-indented. Scalars (or any
+ *  row without a captured source range) fall back to their value text. */
+export function subtreeSource(model: JsonModel, row: JsonRow): string {
+  if (
+    row.kind !== 'open' ||
+    model.src === undefined ||
+    row.srcStart === undefined ||
+    row.srcEnd === undefined
+  ) {
+    return row.valueText ?? ''
+  }
+  return reindentSource(model.src.slice(row.srcStart, row.srcEnd))
+}
+
+/** If a string value is an http(s) URL, return the bare URL (for `shell.openExternal`); else null.
+ *  Minimal `\/`→`/` unescape covers the one escape JSON URLs commonly carry; MAIN re-gates the scheme. */
+export function urlInValue(row: JsonRow): string | null {
+  if (row.valueType !== 'string') return null
+  const raw = row.valueText ?? ''
+  const inner = raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw
+  const url = inner.replace(/\\\//g, '/')
+  return /^https?:\/\/\S+$/i.test(url) ? url : null
 }
