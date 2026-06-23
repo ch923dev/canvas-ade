@@ -483,6 +483,83 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     await mcp.orch.call('close_board', { id: spawnedId }) // restore the baseline
   })
 
+  // ── W1-G: app-model resource (C1) · spawn_group tool (C2) · write_result caps (C3) ───────────
+  test('C1: canvas://app-model serves the orchestrator self-model (incl. spawn_group); worker denied', async ({
+    mcp
+  }) => {
+    type WireAppModel = {
+      version: number
+      boardTypes: Array<{ type: string }>
+      tools: Array<{ name: string; tier: string }>
+      canvas: { boards: unknown[]; connectors: unknown[]; groups: unknown[] }
+      rules: Record<string, unknown>
+    }
+    // Orchestrator-tier: the resource is present + shaped, and its tool catalog now lists spawn_group.
+    const model = await mcp.orch.readJson<WireAppModel>('canvas://app-model')
+    expect(model.version).toBe(1)
+    expect(Array.isArray(model.boardTypes)).toBe(true)
+    expect(model.canvas).toMatchObject({
+      boards: expect.any(Array),
+      connectors: expect.any(Array),
+      groups: expect.any(Array)
+    })
+    expect(model.tools.some((t) => t.name === 'spawn_group' && t.tier === 'orchestrator')).toBe(
+      true
+    )
+    // Worker tier: the resource is NOT registered for the tier → reading it REJECTS (orchestrator-only).
+    let workerDenied = false
+    await mcp.worker.readJson('canvas://app-model').catch(() => {
+      workerDenied = true
+    })
+    expect(workerDenied).toBe(true)
+  })
+
+  test('C2: spawn_group creates a feature-zone cluster on the canvas (no confirm gate); a worker is denied', async ({
+    page,
+    mcp
+  }) => {
+    // spawn_group is orchestrator-only (unlike spawn_board) and content-less, so it spawns WITHOUT a
+    // human confirm — the gate stays on content writes (handoff/assign/relay/add_planning_elements).
+    expect(mcp.orch.tools).toContain('spawn_group')
+    expect(mcp.worker.tools).not.toContain('spawn_group')
+    const spawn = await mcp.orch.call('spawn_group', { name: 'e2e-zone', planning: true })
+    const ids = JSON.parse(okText(spawn) || '{}') as {
+      groupId?: string
+      terminalId?: string
+      planningId?: string
+      browserId?: string
+    }
+    expect(ids.groupId).toBeTruthy()
+    expect(ids.terminalId).toBeTruthy()
+    expect(ids.planningId).toBeTruthy()
+    expect(ids.browserId).toBeUndefined() // a browser member was not requested
+    // Both members round-tripped to the renderer: they are on the canvas.
+    await expect
+      .poll(() => boardOnCanvas(page, ids.terminalId as string), { timeout: 6000 })
+      .toBe(true)
+    await expect
+      .poll(() => boardOnCanvas(page, ids.planningId as string), { timeout: 6000 })
+      .toBe(true)
+    // The worker is DENIED server-side (the specific tool-not-found isError — orchestrator-only).
+    const workerSpawn = await mcp.worker.call('spawn_group', { name: 'nope' })
+    expect(deniedToolNotFound(workerSpawn, 'spawn_group')).toBe(true)
+    // Restore the baseline (close both members; the now-empty group is cleared by the next reset()).
+    await mcp.orch.call('close_board', { id: ids.terminalId as string })
+    await mcp.orch.call('close_board', { id: ids.planningId as string })
+  })
+
+  test('C3 / BUG-009: write_result rejects an oversized summary at the wire (Zod cap), accepts a normal one', async ({
+    mcp
+  }) => {
+    // The package Zod schema caps summary at 100k chars: an oversized payload does NOT ack (it is an
+    // isError result before the orchestrator is reached; the MAIN clamp stays as defense-in-depth).
+    const oversized = await mcp.worker.call('write_result', { summary: 'x'.repeat(100_001) })
+    expect(acked(oversized)).toBe(false)
+    // A legitimately-sized result still succeeds — the cap does not break normal writes.
+    const ok = await mcp.worker.call('write_result', { summary: 'normal', refs: ['src/x.ts'] })
+    expect(acked(ok)).toBe(true)
+  })
+
   test('SECURITY: configure_board sets a launchCommand only through the human confirm gate (BUG-002 exec vector); worker denied', async ({
     page,
     mcp

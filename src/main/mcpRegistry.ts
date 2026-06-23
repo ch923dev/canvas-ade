@@ -75,22 +75,28 @@ export interface OrchestratorOpts {
   handoffTimeoutMs?: number
 }
 
-/** The adapter + the T3.4 idle-reap sweep (extra method beyond the package contract). */
-export type LifecycleOrchestrator = Orchestrator & {
+/**
+ * The adapter + the T3.4 idle-reap sweep + awaitSettled (extras beyond the package contract), PLUS
+ * app-side NARROWING of two methods the package `Orchestrator` now declares as of ≥0.15.0 (W1-G):
+ * `describeApp(): Promise<unknown>` (the package does not own `AppModel`) and a structurally-
+ * equivalent `spawnGroup`. We `Omit` both from the package base and re-declare them with the app's
+ * concrete `AppModel` / `SpawnGroupResult` types so MAIN keeps full typing (a plain intersection
+ * would resolve the call to the package's looser signature first).
+ */
+export type LifecycleOrchestrator = Omit<Orchestrator, 'describeApp' | 'spawnGroup'> & {
   /** Close every MCP-spawned board idle past the TTL; returns the reaped ids. */
   reapIdle(): Promise<string[]>
   /**
-   * PR-3: assemble the read-only app self-model (board types · tool catalog · live canvas · rules).
-   * App-local (NOT on the package `Orchestrator` interface) until the agent-facing MCP resource
-   * (`canvas://app-model`) lands in PR-3b. Read-only — no write path, no token.
+   * Assemble the read-only app self-model (board types · tool catalog · live canvas · rules).
+   * NARROWS the package's `describeApp(): Promise<unknown>` to the concrete `AppModel` (the package
+   * does not own that type). Now wired over the wire as the `canvas://app-model` resource (W1-G / C1).
    */
   describeApp(): Promise<AppModel>
   /**
-   * PR-5b: spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group +
-   * preview wiring) in one undoable step. App-local (NOT on the package `Orchestrator` interface)
-   * until the agent-facing `spawn_group` MCP tool lands in PR-5c — the package registers no
-   * `spawn_group` tool yet (unlike `git_diff`/PR-2b, which the pinned package now DOES register).
-   * Cap-checked (reserves all member slots), not human-gated (content-less empty boards).
+   * Spawn a feature-zone cluster (terminal + optional planning/browser + a Named Group + preview
+   * wiring) in one undoable step. Re-declared with the app's `SpawnGroupInput/Result` (structurally
+   * equal to the package's). Now wired as the `spawn_group` MCP tool (W1-G / C2). Cap-checked
+   * (reserves all member slots), not human-gated (content-less empty boards).
    */
   spawnGroup(input: SpawnGroupInput): Promise<SpawnGroupResult>
   /**
