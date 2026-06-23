@@ -26,6 +26,7 @@ export type TerminalKeyAction =
   | { kind: 'fontInc' }
   | { kind: 'fontDec' }
   | { kind: 'fontReset' }
+  | { kind: 'find' }
 
 /**
  * Byte written to the PTY for a Shift+Enter newline insert. LF (0x0A) — identical to Ctrl+J,
@@ -60,6 +61,10 @@ export function resolveTerminalKey(
     if (e.key === '=' || e.key === '+') return { kind: 'fontInc' }
     if (e.key === '-') return { kind: 'fontDec' }
     if (e.key === '0') return { kind: 'fontReset' }
+    // Find-in-terminal (Phase 2): Ctrl/Cmd+F opens the find bar. SHADOWS readline's
+    // forward-char like every GUI terminal (iTerm/Terminal.app/Windows Terminal) — arrows
+    // remain for cursor motion. The bar is a DOM input, so it never reaches the PTY.
+    if (e.key === 'f' || e.key === 'F') return { kind: 'find' }
   }
 
   if (!primary || e.altKey) return null
@@ -85,6 +90,8 @@ export interface TerminalKeyEffects {
   fontStep(delta: number): void
   /** Reset the per-board font size to the default. */
   fontReset(): void
+  /** Open the find-in-terminal bar (Phase 2 — Ctrl/Cmd+F). */
+  find(): void
 }
 
 /**
@@ -120,5 +127,6 @@ export function handleTerminalKey(
   else if (action.kind === 'fontInc') fx.fontStep(1)
   else if (action.kind === 'fontDec') fx.fontStep(-1)
   else if (action.kind === 'fontReset') fx.fontReset()
+  else if (action.kind === 'find') fx.find()
   return false
 }
