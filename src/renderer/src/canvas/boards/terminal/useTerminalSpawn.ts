@@ -27,6 +27,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type MutableRefObject,
@@ -35,6 +36,7 @@ import {
 import { useStoreApi } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import {
@@ -198,6 +200,19 @@ export interface TerminalSpawnDeps {
   pasteIntoTerminal: (term: Terminal, boardId: string, isLive?: () => boolean) => void
 }
 
+/**
+ * Stable handle the host hands to TerminalFindBar (Phase 2). `addonRef`/`termRef` are stable refs
+ * and `close` is a stable callback, so the whole object is memoised once — the bar can be memo'd
+ * and ignore the host's ~12 Hz spinner re-renders.
+ */
+export interface TerminalFindApi {
+  /** Close the find bar (TerminalFindBar clears decorations + refocuses xterm on unmount). */
+  close: () => void
+  /** The live SearchAddon loaded on the current term (null before first spawn). */
+  addonRef: RefObject<SearchAddon | null>
+  termRef: RefObject<Terminal | null>
+}
+
 export interface TerminalSpawnApi {
   state: TerminalState
   /** Read-only from the host (it only reads `.current`); the hook's internals own writes. */
@@ -216,6 +231,10 @@ export interface TerminalSpawnApi {
    * alone; otherwise the settled zoom, or 1 when unusable. Updates once per camera settle.
    */
   counterScale: number
+  /** Phase 2 find-in-terminal: whether the find bar is open (host mounts TerminalFindBar). */
+  findOpen: boolean
+  /** Stable handle the host passes to TerminalFindBar. */
+  findApi: TerminalFindApi
 }
 
 /** Requires ReactFlowProvider (useStoreApi) + BoardFullViewContext in the render tree. */
@@ -225,6 +244,17 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
 
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  // Phase 2 find-in-terminal: the SearchAddon is loaded onto the term alongside fit (so it is
+  // re-created with every respawn), and the open-state lives here because the Ctrl/Cmd+F chord is
+  // detected in this hook's xterm key handler. The bar's query/result state stays LOCAL to
+  // TerminalFindBar (per-keystroke re-renders never reach the host).
+  const searchAddonRef = useRef<SearchAddon | null>(null)
+  const [findOpen, setFindOpen] = useState(false)
+  const closeFind = useCallback(() => setFindOpen(false), [])
+  const findApi = useMemo<TerminalFindApi>(
+    () => ({ close: closeFind, addonRef: searchAddonRef, termRef }),
+    [closeFind]
+  )
   // True once the grid has had a real IN-CANVAS fit, i.e. it carries an established column
   // count. The full-view freeze applies ONLY to an established grid: a FRESH mount that happens
   // while maximized (e.g. reconfigure-while-full-view respawns the term) must still take its
@@ -485,6 +515,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // Phase 2: find-in-terminal. Loaded per-term (disposed with the term on respawn). Decorations
+    // (the match highlights + onDidChangeResults count) are requested per find call by the bar.
+    const search = new SearchAddon()
+    term.loadAddon(search)
+    searchAddonRef.current = search
     term.open(el)
     termRef.current = term
     fitRef.current = fit
@@ -549,7 +584,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
           },
           paste: () => void pasteIntoTerminal(term, board.id, () => termRef.current === term),
           fontStep: (d) => fontStepRef.current(d),
-          fontReset: () => fontResetRef.current()
+          fontReset: () => fontResetRef.current(),
+          find: () => setFindOpen(true)
         }
       )
     )
@@ -729,6 +765,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      searchAddonRef.current = null // disposed with the term above
+      // Phase 2: a FULL xterm replacement (reconfigure shell/cwd/launchCommand) disposes the old
+      // SearchAddon. Close any open find bar so it re-subscribes to the FRESH addon on reopen — its
+      // onDidChangeResults binds once at mount on the stable `api` and can't re-target in place, so
+      // a left-open bar would show a frozen counter. The prior session's search context is gone, so
+      // closing is also correct UX. (The Restart/respawn() path reuses the term+addon — unaffected.)
+      setFindOpen(false)
       startLaunchRef.current = null
     }
     // screenRef / fontStepRef / fontResetRef / pasteIntoTerminal are STABLE (refs +
@@ -803,6 +846,8 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     startLaunchRef,
     fitWhole,
     restart,
-    counterScale
+    counterScale,
+    findOpen,
+    findApi
   }
 }

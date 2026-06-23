@@ -1,0 +1,436 @@
+<!doctype html>
+<!-- Throwaway design artifact for Phase 2 (find-in-terminal). Token-accurate mock built
+     from src/renderer/src/styles/tokens.css. NOT shipped — screenshotted for sign-off. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 2 — Find-in-terminal mock</title>
+    <style>
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+        --void: #0a0a0b;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #e8b339;
+        --err: #f2545b;
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 36px 40px 44px;
+        background: var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin: 0 0 4px;
+      }
+      .sub {
+        font-size: 12px;
+        color: var(--text-2);
+        margin: 0 0 26px;
+      }
+      .cap {
+        font-size: 11px;
+        color: var(--text-3);
+        margin: 0 0 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+      }
+      .cap b {
+        color: var(--text-2);
+        font-weight: 600;
+      }
+
+      /* ── Terminal board (chrome + well), to show the find bar IN CONTEXT ── */
+      .board {
+        width: 760px;
+        border: 1px solid var(--border);
+        border-radius: var(--r-board);
+        background: var(--surface);
+        box-shadow: var(--shadow-board);
+        overflow: hidden;
+      }
+      .titlebar {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--surface);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--ok);
+        box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.14);
+      }
+      .pill {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-2);
+      }
+      .tb-spacer {
+        flex: 1;
+      }
+      .tb-ico {
+        color: var(--text-3);
+        font-size: 13px;
+        padding: 0 3px;
+      }
+
+      .well {
+        position: relative;
+        height: 300px;
+        background: var(--inset);
+        padding: 12px 14px;
+        font-family: var(--term-mono);
+        font-size: 12.5px;
+        line-height: 19px;
+        color: #b9b9c0;
+        overflow: hidden;
+      }
+      .well .ln {
+        white-space: pre;
+      }
+      .well .t-dim {
+        color: var(--text-3);
+      }
+      .well .t-ok {
+        color: var(--ok);
+      }
+      .well .t-warn {
+        color: var(--warn);
+      }
+      .well .t-err {
+        color: var(--err);
+      }
+      /* search decorations */
+      .m {
+        background: rgba(79, 140, 255, 0.2);
+        border-radius: 2px;
+      }
+      .m-active {
+        background: rgba(79, 140, 255, 0.55);
+        color: #fff;
+        border-radius: 2px;
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+
+      /* ── The find bar ── */
+      .tf-find {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 4px 4px 4px 9px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: var(--r-inner);
+        box-shadow: var(--shadow-pop);
+        font-family: var(--ui);
+        font-size: 12px;
+      }
+      .tf-glass {
+        color: var(--text-3);
+        font-size: 13px;
+        margin-right: 4px;
+        display: inline-flex;
+      }
+      .tf-input {
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+        font-family: var(--ui);
+        font-size: 12px;
+        width: 132px;
+        padding: 0;
+      }
+      .tf-input::placeholder {
+        color: var(--text-3);
+      }
+      .tf-caret {
+        color: var(--text);
+      }
+      .tf-count {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-3);
+        min-width: 40px;
+        text-align: right;
+        padding: 0 6px 0 4px;
+        white-space: nowrap;
+      }
+      .tf-count.warn {
+        color: var(--warn);
+      }
+      .tf-sep {
+        width: 1px;
+        height: 16px;
+        background: var(--border-subtle);
+        margin: 0 3px;
+        flex: none;
+      }
+      .tf-opt {
+        height: 22px;
+        min-width: 24px;
+        padding: 0 5px;
+        border: 1px solid transparent;
+        border-radius: var(--r-ctl);
+        background: transparent;
+        color: var(--text-3);
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .tf-opt:hover {
+        color: var(--text-2);
+        background: var(--surface-overlay);
+      }
+      .tf-opt.is-on {
+        background: var(--accent-wash);
+        color: var(--accent);
+        border-color: rgba(79, 140, 255, 0.32);
+      }
+      .tf-btn {
+        width: 24px;
+        height: 22px;
+        border: 0;
+        background: transparent;
+        color: var(--text-2);
+        border-radius: var(--r-ctl);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+      }
+      .tf-btn:hover {
+        color: var(--text);
+        background: var(--surface-overlay);
+      }
+      .tf-btn.dis {
+        color: var(--text-faint);
+        cursor: default;
+        background: transparent;
+      }
+      .tf-close {
+        color: var(--text-3);
+      }
+
+      /* states strip */
+      .strip {
+        display: flex;
+        gap: 28px;
+        margin-top: 30px;
+        flex-wrap: wrap;
+      }
+      .state-item {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .bar-host {
+        position: relative;
+        width: 360px;
+        height: 56px;
+        background: var(--inset);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-inner);
+      }
+      .bar-host .tf-find {
+        top: 50%;
+        right: 12px;
+        transform: translateY(-50%);
+      }
+      .note {
+        margin-top: 30px;
+        font-size: 12px;
+        color: var(--text-2);
+        line-height: 19px;
+        max-width: 760px;
+      }
+      .note code {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      kbd {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Phase 2 — Find-in-terminal (search)</h1>
+    <p class="sub">
+      <kbd>Ctrl</kbd>+<kbd>F</kbd> opens a calm floating find bar over the terminal well
+      (top-right). One accent (blue). Matches highlight in the live buffer; the active match is
+      brighter + ringed.
+    </p>
+
+    <p class="cap">In context — <b>typing, 4 matches</b></p>
+    <div class="board">
+      <div class="titlebar">
+        <span class="dot"></span>
+        <span class="pill">⠹ Claude · 02:14</span>
+        <span class="tb-spacer"></span>
+        <span class="tb-ico">−</span><span class="tb-ico">+</span><span class="tb-ico">◼</span>
+        <span class="tb-ico">⚙</span><span class="tb-ico">↻</span><span class="tb-ico">⤺</span>
+      </div>
+      <div class="well">
+        <div class="ln t-dim">$ pnpm test:unit</div>
+        <div class="ln">✓ src/lib/boardSchema.test.ts (42)</div>
+        <div class="ln">✓ src/canvas/terminalState.test.ts (18)</div>
+        <div class="ln t-err">× src/preview/previewOsr.test.ts &gt; emits frame after ready</div>
+        <div class="ln">
+          <span class="t-dim">→</span> <span class="m-active">Error</span>: expected paint pump to
+          fire on idle page
+        </div>
+        <div class="ln">at previewOsrOwner.ts:88:14</div>
+        <div class="ln">at processTicksAndRejections (node:internal/process)</div>
+        <div class="ln t-err">× src/preview/liveness.test.ts &gt; caps live windows</div>
+        <div class="ln">
+          <span class="t-dim">→</span> <span class="m">error</span>: MAX_LIVE exceeded (5 &gt; 4)
+        </div>
+        <div class="ln">✓ src/canvas/terminalKeymap.test.ts (12)</div>
+        <div class="ln t-warn">! flaky: menuShell tidy picker (retry 1)</div>
+        <div class="ln">console.<span class="m">error</span> swallowed during teardown</div>
+        <div class="ln t-dim">
+          uncaught <span class="m">Error</span> in afterEach hook — see trace
+        </div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln"><span class="t-ok">Tests</span> 3115 passed | 2 failed (3117)</div>
+        <div class="ln tf-cursor">_</div>
+
+        <div class="tf-find">
+          <span class="tf-glass">⌕</span>
+          <input class="tf-input" value="error" />
+          <span class="tf-count">1 / 4</span>
+          <span class="tf-sep"></span>
+          <button class="tf-opt" title="Match case">Aa</button>
+          <button class="tf-opt" title="Use regular expression">.*</button>
+          <span class="tf-sep"></span>
+          <button class="tf-btn" title="Previous (Shift+Enter)">↑</button>
+          <button class="tf-btn" title="Next (Enter)">↓</button>
+          <span class="tf-sep"></span>
+          <button class="tf-btn tf-close" title="Close (Esc)">✕</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="strip">
+      <div class="state-item">
+        <p class="cap">Empty — <b>just opened</b></p>
+        <div class="bar-host">
+          <div class="tf-find">
+            <span class="tf-glass">⌕</span>
+            <input class="tf-input" placeholder="Find" />
+            <span class="tf-count"></span>
+            <span class="tf-sep"></span>
+            <button class="tf-opt" title="Match case">Aa</button>
+            <button class="tf-opt" title="Use regular expression">.*</button>
+            <span class="tf-sep"></span>
+            <button class="tf-btn dis" title="Previous">↑</button>
+            <button class="tf-btn dis" title="Next">↓</button>
+            <span class="tf-sep"></span>
+            <button class="tf-btn tf-close" title="Close (Esc)">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="state-item">
+        <p class="cap">No results — <b>warn-toned count</b></p>
+        <div class="bar-host">
+          <div class="tf-find">
+            <span class="tf-glass">⌕</span>
+            <input class="tf-input" value="zxqwf" />
+            <span class="tf-count warn">No&nbsp;results</span>
+            <span class="tf-sep"></span>
+            <button class="tf-opt" title="Match case">Aa</button>
+            <button class="tf-opt" title="Use regular expression">.*</button>
+            <span class="tf-sep"></span>
+            <button class="tf-btn dis" title="Previous">↑</button>
+            <button class="tf-btn dis" title="Next">↓</button>
+            <span class="tf-sep"></span>
+            <button class="tf-btn tf-close" title="Close (Esc)">✕</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="state-item">
+        <p class="cap">Options on — <b>case + regex active</b></p>
+        <div class="bar-host">
+          <div class="tf-find">
+            <span class="tf-glass">⌕</span>
+            <input class="tf-input" value="ERR\w+" />
+            <span class="tf-count">2 / 9</span>
+            <span class="tf-sep"></span>
+            <button class="tf-opt is-on" title="Match case">Aa</button>
+            <button class="tf-opt is-on" title="Use regular expression">.*</button>
+            <span class="tf-sep"></span>
+            <button class="tf-btn" title="Previous (Shift+Enter)">↑</button>
+            <button class="tf-btn" title="Next (Enter)">↓</button>
+            <span class="tf-sep"></span>
+            <button class="tf-btn tf-close" title="Close (Esc)">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      <b style="color: var(--text)">Behaviour:</b>
+      <kbd>Ctrl</kbd>+<kbd>F</kbd> open &amp; focus (selection seeds the query) ·
+      <kbd>Enter</kbd> next · <kbd>Shift</kbd>+<kbd>Enter</kbd> prev · <kbd>Esc</kbd> close (returns
+      focus to xterm) · <kbd>Aa</kbd> match-case · <kbd>.*</kbd> regex. Powered by
+      <code>@xterm/addon-search</code> (decorations work under WebGL); <kbd>Ctrl</kbd>+<kbd>F</kbd>
+      routed through <code>terminalKeymap.ts</code>. The bar is a DOM input, so its
+      <kbd>Enter</kbd>/<kbd>Shift+Enter</kbd> never collide with xterm's newline (LF) handler.
+    </p>
+  </body>
+</html>
