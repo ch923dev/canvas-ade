@@ -148,6 +148,31 @@ describe('JsonView — JD-2 enrichments', () => {
     expect(writeText).not.toHaveBeenCalled()
   })
 
+  it('pressing "p" on a close-brace row copies nothing (no bogus "$" path)', () => {
+    const writeText = vi.fn((_text: string) => Promise.resolve())
+    Object.assign(navigator, { clipboard: { writeText } })
+    const { container } = render(<JsonView body='{"a":1}' mime="application/json" base64={false} />)
+    const tree = container.querySelector('[role="tree"]') as HTMLElement
+    // visible = [ '{' open, a:1 scalar, '}' close ] → ArrowDown ×3 lands the active row on the close.
+    fireEvent.keyDown(tree, { key: 'ArrowDown' })
+    fireEvent.keyDown(tree, { key: 'ArrowDown' })
+    fireEvent.keyDown(tree, { key: 'ArrowDown' })
+    fireEvent.keyDown(tree, { key: 'p' })
+    expect(writeText).not.toHaveBeenCalled()
+  })
+
+  it('embedded mode does not intercept Ctrl+F (parent panel shortcut preserved)', () => {
+    const { container } = render(
+      <JsonView body='{"a":1}' mime="application/json" base64={false} embedded />
+    )
+    // No find affordance in embedded mode…
+    expect(container.querySelector('.bb-net-json-findbtn')).toBeNull()
+    // …and onRootKeyDown bails before preventDefault/stopPropagation, leaving Ctrl+F for the parent.
+    const root = container.querySelector('.bb-net-json') as HTMLElement
+    const notCancelled = fireEvent.keyDown(root, { key: 'f', ctrlKey: true })
+    expect(notCancelled).toBe(true)
+  })
+
   it('copies a property path via the row affordance', () => {
     const writeText = vi.fn((_text: string) => Promise.resolve())
     Object.assign(navigator, { clipboard: { writeText } })

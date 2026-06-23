@@ -372,7 +372,9 @@ export function JsonView({
       case 'p':
       case 'P':
         e.preventDefault()
-        copyToClipboard(pathOf(model.rows, cur.id), 'Path copied')
+        // A close-brace row has no path of its own (pathOf skips close rows → bare '$'); no-op it
+        // so the "Path copied" toast never lies about the clipboard content.
+        if (cur.kind !== 'close') copyToClipboard(pathOf(model.rows, cur.id), 'Path copied')
         break
       default:
         break
@@ -381,6 +383,9 @@ export function JsonView({
 
   // ── Keyboard: viewer-level find shortcuts (Ctrl/Cmd+F open · Ctrl/Cmd+G next) ──
   const onRootKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    // Embedded (WS-frame) viewers have no search UI — don't open a phantom search or stopPropagation
+    // the parent panel's Ctrl+F/Ctrl+G.
+    if (embedded) return
     if (!(e.ctrlKey || e.metaKey)) return
     const k = e.key.toLowerCase()
     if (k === 'f') {
