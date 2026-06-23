@@ -294,10 +294,25 @@ export function JsonView({
       scrollToVisibleIndex(clamped)
     }
     const ai = activeId == null ? -1 : vis.findIndex((r) => r.id === activeId)
-    const navKeys = ['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowRight', 'ArrowLeft', 'Enter', ' ']
-    if (ai < 0 && navKeys.includes(e.key)) {
-      e.preventDefault()
-      move(0)
+    // No current row — either nothing is selected yet, or the active row scrolled / collapsed out of
+    // the visible list (e.g. an ancestor was folded after selection). A navigation key seeds the
+    // selection at row 0; any other key (copy / expand) has no target, so bail before reading `cur`
+    // (guards `vis[-1]` → undefined → TypeError on the copy branches).
+    if (ai < 0) {
+      const navKeys = [
+        'ArrowDown',
+        'ArrowUp',
+        'Home',
+        'End',
+        'ArrowRight',
+        'ArrowLeft',
+        'Enter',
+        ' '
+      ]
+      if (navKeys.includes(e.key)) {
+        e.preventDefault()
+        move(0)
+      }
       return
     }
     const cur = vis[ai]

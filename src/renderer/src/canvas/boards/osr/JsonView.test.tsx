@@ -134,6 +134,20 @@ describe('JsonView — JD-2 enrichments', () => {
     expect(container.querySelector(`#${active}`)).toBeTruthy()
   })
 
+  it('copy/expand keys are a safe no-op when no row is active (guards vis[-1])', () => {
+    const writeText = vi.fn((_text: string) => Promise.resolve())
+    Object.assign(navigator, { clipboard: { writeText } })
+    const { container } = render(
+      <JsonView body='{"a":{"x":1}}' mime="application/json" base64={false} />
+    )
+    const tree = container.querySelector('[role="tree"]') as HTMLElement
+    // No selection (activeId null → ai === -1). A copy/expand key must bail before reading the
+    // current row, not throw on vis[-1] (the [warning] the reviewer flagged on the stale-active path).
+    expect(() => fireEvent.keyDown(tree, { key: 'c' })).not.toThrow()
+    expect(() => fireEvent.keyDown(tree, { key: 'p' })).not.toThrow()
+    expect(writeText).not.toHaveBeenCalled()
+  })
+
   it('copies a property path via the row affordance', () => {
     const writeText = vi.fn((_text: string) => Promise.resolve())
     Object.assign(navigator, { clipboard: { writeText } })
