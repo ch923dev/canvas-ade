@@ -899,3 +899,34 @@ claude-review). **Landed via an isolated worktree:** the merge collided with a c
 session that had swapped the main worktree to its own branch — rebased `feat/terminal-scrollback` onto #238
 (disjoint gitDiff, clean) in a dedicated `.worktrees/ts-rebase` checkout, re-ran CI green on the integrated
 base, then squash-merged — leaving the peer session's worktree untouched.
+
+## 2026-06-24 — git env-scope: close the gitPermalink host-repo escape (shared repoScopedEnv) — #241 (`25fd353e`)
+
+Direct follow-up to #238. That PR fixed a `GIT_DIR`/`GIT_WORK_TREE` host-repo escape in `boardGitDiff`;
+the **identical escape** lived at `src/main/fileIpc.ts` (`file:gitPermalink`), which ran `simpleGit(dir)`
+with MAIN's full env inherited. An ambient git env (a `pre-push` hook exports `GIT_DIR`; `e2e/fixtures.ts`
+forwards `process.env` into the app) made `checkIsRepo` / `remote get-url origin` / `revparse HEAD` /
+`revparse --show-toplevel` resolve the AMBIENT repo → a "Copy GitHub link" permalink pointing at the wrong
+repository. No production trigger (MAIN isn't normally launched from a `GIT_DIR`-exporting env) and no e2e
+covered it — flagged as the follow-up in #238.
+
+- **Shared helper:** extracted `repoScopedEnv()` (strip every `GIT_*`, re-set `GIT_TERMINAL_PROMPT=0`) out of
+  `gitDiff.ts` into new `src/main/gitEnv.ts`; both MAIN git seams (`boardGitDiff`, `file:gitPermalink`) now
+  `simpleGit(…).env(repoScopedEnv())`. Stripping the whole `GIT_*` prefix also satisfies simple-git's
+  `blockUnsafeOperationsPlugin` (refuses to spawn on `GIT_EDITOR`/`GIT_SSH`/… in an explicit env) **without
+  any `allowUnsafe*` flag**. `simple-git` stays MAIN-only / read-only / frame-guarded; contextIsolation/
+  sandbox/nodeIntegration:false untouched — strictly safer than the prior inherit-all path.
+- **Tests:** `gitEnv.test.ts` (unit — strips all `GIT_*` incl. lower-case + the simple-git-blocked vars,
+  sets `GIT_TERMINAL_PROMPT=0`, preserves non-GIT vars, no `process.env` mutation) + a real-git
+  `fileIpc.gitPermalink.integration.test.ts` (drives the REAL handler with ambient `GIT_DIR`/`GIT_WORK_TREE`
+  pointed at a decoy repo; asserts the PROJECT repo resolves, not the decoy — **fails without the fix**:
+  counter-check confirmed `res.ok` goes false because the ambient `GIT_WORK_TREE` makes `checkIsRepo` reject
+  the project dir). The #238 `boardGitDiff` regression still passes (helper just moved).
+
+**Verification:** rebased onto `4f65b45d` (#237 terminal-scrollback; disjoint — no overlap with
+gitEnv/gitDiff/fileIpc). typecheck · lint (0 err, new #237 eslint config) · format · vitest 30/30. PR #241
+CI all 4 green on the rebased head (`check`; analyze; CodeQL; claude-review **0 crit / 0 warn / 0 nit / 0
+inline**). **Full e2e matrix both legs green** on the rebased tree: Windows 200 passed + gitDiff 3/3 (2
+`@preview` flakes — `browserNetwork` panel-overlap + an `osrCropSupersample` cascade — re-ran green in
+isolation; Windows runs retries:0) + Linux Docker 200 passed / 1 flaky (retried) / 1 skipped. Cross-zone
+`fileIpc.ts` edit was surgical (1 import + 1 line) and declared on the coordination board.
