@@ -58,6 +58,10 @@ skills-lock.json
 canvas.json
 canvas.json.bak
 
+# Expanse-generated project-data dir (ADR 0009): opening this repo in the app it builds
+# writes canvas.json / assets / memory / tmp scratch here. Never tracked.
+.canvas/
+
 # Playwright (T4 e2e)
 /test-results/
 /playwright-report/

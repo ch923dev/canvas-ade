@@ -67,6 +67,7 @@ import {
   readRecapMap,
   installRecapHook,
   removeRecapHook,
+  findNodeExecutable,
   type RecapMapEntry
 } from './agentRecapMap'
 import { registerRecapHandlers, readConsent } from './recapConsent'
@@ -269,13 +270,22 @@ app.whenReady().then(async () => {
   const recordScript = app.isPackaged
     ? recordScriptRaw.replace('app.asar', 'app.asar.unpacked')
     : recordScriptRaw
-  // BUG-003 (nodePath half): in a packaged build process.execPath is the app executable; running
-  // it with a .js positional arg (without ELECTRON_RUN_AS_NODE=1) boots a second app instance
-  // instead of executing the script. Bake ELECTRON_RUN_AS_NODE=1 into the hook env so Electron
-  // acts as Node. In dev, process.execPath is already a real node binary — no env needed.
-  const recapHookEnv: Record<string, string> | undefined = app.isPackaged
-    ? { ELECTRON_RUN_AS_NODE: '1' }
-    : undefined
+  // The recap SessionStart hook runs recordSession.js with a Node-capable runner. We write the
+  // hook in Claude Code EXEC form (no shell), so the runner must itself be Node-capable WITHOUT an
+  // env var (exec-form hooks can't set env):
+  //   - DEV: process.execPath is the Electron binary, which runs a .js entry AS Node → works.
+  //   - PACKAGED: process.execPath is the app exe, which IGNORES a .js arg (it would boot a second
+  //     window). The earlier `cmd.exe /c set ELECTRON_RUN_AS_NODE=1 && "<exe>" …` shell wrapper that
+  //     worked around this was mangled by cmd.exe quote-escaping on spaced paths and blocked the
+  //     agent CLI from starting. So in packaged builds we resolve a REAL `node` from PATH; if none
+  //     is found, recapRunner is null and we DON'T install the hook (recap silently off — the CLI
+  //     must never break for a missing recap runtime).
+  const recapRunner: string | null = app.isPackaged
+    ? findNodeExecutable()
+    : (findNodeExecutable() ?? process.execPath)
+  if (app.isPackaged && !recapRunner) {
+    console.warn('[recap] No Node runtime found on PATH — session recap disabled (CLI unaffected).')
+  }
   let recapMap = new Map<string, RecapMapEntry>()
 
   // ── Recap env provider (Task 10 Step 2): consent-gated ──────────────────────────────
@@ -531,13 +541,12 @@ app.whenReady().then(async () => {
       // File-tree epic (S2): (re)point the live tree watcher at the now-open project root.
       // watch() closes any prior watcher first, so a project switch re-targets cleanly.
       void fileWatcher?.watch(dir)
-      if (readConsent(userData, dir) === 'enabled') {
+      if (recapRunner && readConsent(userData, dir) === 'enabled') {
         installRecapHook({
           projectDir: dir,
-          nodePath: process.execPath,
+          command: recapRunner,
           scriptPath: recordScript,
-          mapPath: recapMapPath,
-          env: recapHookEnv
+          mapPath: recapMapPath
         })
       }
     },
@@ -578,13 +587,16 @@ app.whenReady().then(async () => {
     getCurrentDir,
     (projectPath, decision) => {
       if (decision === 'enabled') {
-        installRecapHook({
-          projectDir: projectPath,
-          nodePath: process.execPath,
-          scriptPath: recordScript,
-          mapPath: recapMapPath,
-          env: recapHookEnv
-        })
+        // No runner (packaged + no Node on PATH) → recap can't record; leave state as-is rather
+        // than running the decline-side teardown below.
+        if (recapRunner) {
+          installRecapHook({
+            projectDir: projectPath,
+            command: recapRunner,
+            scriptPath: recordScript,
+            mapPath: recapMapPath
+          })
+        }
       } else {
         removeRecapHook(projectPath, recordScript)
         // BUG-002: on decline, stop all in-flight recap activity for this project's boards
