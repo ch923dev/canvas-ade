@@ -94,6 +94,21 @@ function planningElementKinds(page: Page, id: string): Promise<string[] | null> 
   }, id)
 }
 
+/** Planning-board element x positions (proves the grid spreads across columns, @planning). */
+function planningElementXs(page: Page, id: string): Promise<number[]> {
+  return page.evaluate((boardId) => {
+    const hook = (
+      globalThis as unknown as {
+        __canvasE2E: {
+          getBoards(): Array<{ id: string; type: string; elements?: Array<{ x: number }> }>
+        }
+      }
+    ).__canvasE2E
+    const b = hook.getBoards().find((x) => x.id === boardId)
+    return (b?.elements ?? []).map((e) => e.x)
+  }, id)
+}
+
 const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
 const APPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
 const DENY = `(() => { const b = document.querySelector('[data-testid="confirm-deny"]'); if (b) b.click(); return !!b })()`
@@ -215,5 +230,15 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     await expect
       .poll(() => planningElementKinds(page, planId), { timeout: 8000 })
       .toEqual(['note', 'checklist', 'note', 'diagram'])
+
+    // GRID layout (the Phase-1 fix): the batch lands across ≥2 columns, not one vertical strip.
+    // The old materializer placed every element at a single x (one tall column); the grid
+    // spreads them, so distinct x values prove the column→grid change end-to-end.
+    const xs = await planningElementXs(page, planId)
+    expect(new Set(xs).size).toBeGreaterThanOrEqual(2)
+    // Frame the planning board + let the cards measure/grow, then capture a visual of the grid.
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await page.waitForTimeout(700)
+    await page.screenshot({ path: 'test-results/planning-mcp-grid.png' })
   })
 })
