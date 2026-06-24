@@ -314,6 +314,25 @@ describe('materializePlanningOps — 2c presentation (widen / diagram footprint 
       expect(gap).toBeGreaterThanOrEqual(realLowerBound(out[i - 1].items.length))
     }
   })
+
+  it('reserves MORE height for a WRAPPING label (the estimate counts wrapped lines, not just items)', () => {
+    // At MCP_CHECKLIST_W=300 a label wraps ~every 35 chars; a 90-char label is ~3 lines. The card
+    // below a long-label checklist must drop further than below a one-liner — else the wrapped card
+    // (which self-measures taller) would overlap it (the W-label-wrap regression of 2c's estimate).
+    const stack = (label: string): PlanningElement[] =>
+      materializePlanningOps(
+        [
+          { kind: 'checklist', title: 'A', items: [{ label, done: false }], section: 'P' },
+          { kind: 'note', text: 'below', tint: 'yellow', section: 'P' }
+        ],
+        []
+      )
+    const long = stack('x'.repeat(90))
+    const short = stack('short')
+    const longGap = long[1].y - long[0].y
+    const shortGap = short[1].y - short[0].y
+    expect(longGap).toBeGreaterThan(shortGap) // the wrapping label reserved more vertical space
+  })
 })
 
 describe('neededBoardHeight / neededBoardWidth', () => {

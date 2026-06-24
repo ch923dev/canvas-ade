@@ -79,13 +79,17 @@ const NOTE_LINE_H = 16 // NoteCard text line-height (12px font / 16px line)
 const NOTE_PAD_V = 18 // 9px top + 9px bottom
 const NOTE_PAD_H = 22 // 11px each side → wrap width = w − 22
 const NOTE_CHAR_W = 7 // conservative avg char advance (incl. word-wrap slack) at the 12px font
-// Checklist height estimate (2c, tightened). Real interactive render ≈ 77 + 24·N px (header 16 +
-// 3px bar + N×16px rows + 8px inter-row gaps + footer + 11/12/12 pad; checkbox is 16×16). The
+// Checklist height estimate (2c, tightened). Real interactive render ≈ 77 + 24·L px (header 16 +
+// 3px bar + L×16px label LINES + 8px inter-row gaps + footer + 11/12/12 pad; checkbox is 16×16). The
 // estimate must stay ≥ the real height — a sibling card is absolutely positioned, so UNDER-counting
-// would overlap it — so CHECK_ROW (26) keeps a small per-row cushion over the real 24 (row+gap).
+// would overlap it — so CHECK_ROW (26) keeps a small per-line cushion over the real 24 (line+gap).
 const CHECK_HEAD = 52 // title + progress bar + top pad (≈ real 49, +3 cushion)
-const CHECK_ROW = 26 // one single-line row + its inter-row gap (≈ real 24, +2 cushion)
+const CHECK_ROW = 26 // one wrapped label line + its share of the row gap (≈ real 24, +2 cushion)
 const CHECK_FOOT = 36 // "Add item" affordance + bottom pad (folds the last row's absent gap as cushion)
+// Horizontal px a checklist row spends on chrome before the label text: card h-pad (12+12) +
+// checkbox (16) + row gap (9). The label's wrap width = card width − this, so a long label wraps
+// to several lines (W-label-wrap renders item labels in an auto-growing, wrapping textarea).
+const CHECK_ROW_INSET = 49
 // MCP diagram footprints (2c) — host honors the agent's source orientation. Both are bigger than the
 // 280×200 `DIAGRAM_SIZE` user default so an agent flow/ERD is legible; the SVG is vector + object-fit
 // contain, so a larger box scales it up crisply (no re-render).
@@ -104,9 +108,19 @@ function estimateTextHeight(text: string, width: number): number {
   return lines * NOTE_LINE_H + NOTE_PAD_V + 6
 }
 
-/** Estimated rendered height of a checklist from its item count (board-local px). Conservative. */
-function estimateChecklistHeight(items: number): number {
-  return CHECK_HEAD + items * CHECK_ROW + CHECK_FOOT
+/**
+ * Estimated rendered height of a checklist (board-local px). Conservative — must stay ≥ the real
+ * render so a sibling card stacked below it in a column is never overlapped. Each item contributes
+ * `CHECK_ROW` per WRAPPED line: labels render in an auto-growing, wrapping textarea (W-label-wrap),
+ * so a long agent label occupies several lines at this card `width`. Counting wrapped lines (not
+ * just the item count) keeps the estimate above the real height when labels wrap; it reduces to the
+ * single-line `count × CHECK_ROW` when every label fits one line.
+ */
+function estimateChecklistHeight(items: ReadonlyArray<{ label: string }>, width: number): number {
+  const charsPerLine = Math.max(8, Math.floor((width - CHECK_ROW_INSET) / NOTE_CHAR_W))
+  let lines = 0
+  for (const it of items) lines += Math.max(1, Math.ceil(it.label.length / charsPerLine))
+  return CHECK_HEAD + lines * CHECK_ROW + CHECK_FOOT
 }
 
 /**
@@ -142,7 +156,7 @@ function opCell(op: PlanningOp): { w: number; h: number } {
     case 'text':
       return { w: MCP_NOTE_W, h: estimateTextHeight(op.text, MCP_NOTE_W) }
     case 'checklist':
-      return { w: MCP_CHECKLIST_W, h: estimateChecklistHeight(op.items.length) }
+      return { w: MCP_CHECKLIST_W, h: estimateChecklistHeight(op.items, MCP_CHECKLIST_W) }
     case 'arrow':
       return { w: Math.max(GAP, Math.abs(op.dx)), h: Math.max(GAP, Math.abs(op.dy)) }
     case 'diagram':
@@ -331,7 +345,7 @@ export function materializePlanningOps(
  */
 function elementLayoutBox(el: PlanningElement): { x: number; y: number; w: number; h: number } {
   if (el.kind === 'checklist') {
-    return { x: el.x, y: el.y, w: el.w, h: estimateChecklistHeight(el.items.length) }
+    return { x: el.x, y: el.y, w: el.w, h: estimateChecklistHeight(el.items, el.w) }
   }
   if (el.kind === 'text' && typeof el.width === 'number') {
     return { x: el.x, y: el.y, w: el.width, h: estimateTextHeight(el.text, el.width) }

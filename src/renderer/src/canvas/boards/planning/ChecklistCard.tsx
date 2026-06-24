@@ -10,7 +10,7 @@
  * coordinates; stops pointer propagation so toggling/editing never starts a node
  * drag or clears the canvas selection.
  */
-import { memo, useEffect, useRef, type ReactElement } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, type ReactElement } from 'react'
 import type { ChecklistElement } from '../../../lib/boardSchema'
 import { Icon } from '../../Icon'
 import { WidthResizeHandle } from './WidthResizeHandle'
@@ -72,6 +72,17 @@ function Checkbox({ done }: { done: boolean }): ReactElement {
   )
 }
 
+/**
+ * Auto-size one item's label textarea to its wrapped content so a long label reads in FULL across
+ * several lines instead of truncating in a single-line input (the same `height:auto → scrollHeight`
+ * pattern NoteCard uses). The card's ResizeObserver then reports the new height → the board grows.
+ */
+function autoSizeRow(el: HTMLTextAreaElement | null): void {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
 // Memoized: stable callbacks from PlanningBoard + an element object that only changes
 // when THIS checklist changes (patchElement keeps unchanged refs) ⇒ a keystroke in one
 // element re-renders only its own card.
@@ -94,12 +105,12 @@ export const ChecklistCard = memo(function ChecklistCard({
   const total = element.items.length
   const done = element.items.filter((i) => i.done).length
   const pct = total === 0 ? 0 : Math.round((done / total) * 100)
-  const lastInputRef = useRef<HTMLInputElement>(null)
+  const lastInputRef = useRef<HTMLTextAreaElement>(null)
   const prevTotal = useRef(total)
   const cardRef = useRef<HTMLDivElement>(null)
   // Per-item input refs (keyed by item id) so Backspace-delete can restore focus
   // to the adjacent row after the keyed input unmounts (BUG-014).
-  const itemRefs = useRef<Map<string, HTMLInputElement>>(new Map())
+  const itemRefs = useRef<Map<string, HTMLTextAreaElement>>(new Map())
   // Item id to focus after a remove commits + re-renders (the adjacent row).
   const focusAfterRemove = useRef<string | null>(null)
 
@@ -117,6 +128,14 @@ export const ChecklistCard = memo(function ChecklistCard({
     focusAfterRemove.current = null
     itemRefs.current.get(targetId)?.focus()
   }, [total])
+
+  // Keep every label textarea sized to its wrapped content. Re-runs when the items change (edit /
+  // add / remove / undo / paste) and when the card WIDTH changes (a resize re-wraps the labels).
+  // useLayoutEffect so the grow happens before paint (no single-line flash). onChange sizes the
+  // edited row directly for instant feedback; this covers all the other paths.
+  useLayoutEffect(() => {
+    itemRefs.current.forEach(autoSizeRow)
+  }, [element.items, element.w])
 
   // Report the card's bottom edge (board-local) on any size change so the board
   // can auto-grow rather than clip a tall checklist under overflow:hidden (#12).
@@ -251,7 +270,9 @@ export const ChecklistCard = memo(function ChecklistCard({
         {element.items.map((item, idx) => (
           <div
             key={item.id}
-            style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%' }}
+            // flex-start (not center) so the checkbox sits on the FIRST line of a label that
+            // wraps to several lines, instead of floating to the vertical middle of the block.
+            style={{ display: 'flex', alignItems: 'flex-start', gap: 9, width: '100%' }}
           >
             <button
               type="button"
@@ -286,10 +307,11 @@ export const ChecklistCard = memo(function ChecklistCard({
             >
               <Checkbox done={item.done} />
             </button>
-            <input
+            <textarea
               ref={(node) => {
                 if (idx === element.items.length - 1)
-                  (lastInputRef as React.MutableRefObject<HTMLInputElement | null>).current = node
+                  (lastInputRef as React.MutableRefObject<HTMLTextAreaElement | null>).current =
+                    node
                 if (node) itemRefs.current.set(item.id, node)
                 else itemRefs.current.delete(item.id)
               }}
@@ -297,7 +319,11 @@ export const ChecklistCard = memo(function ChecklistCard({
               readOnly={!interactive}
               placeholder="Item…"
               spellCheck={false}
-              onChange={(e) => onChangeItem(element.id, item.id, e.target.value)}
+              rows={1}
+              onChange={(e) => {
+                onChangeItem(element.id, item.id, e.target.value)
+                autoSizeRow(e.currentTarget) // grow with the edit (instant; the effect covers the rest)
+              }}
               onFocus={() => onEditStart?.()}
               // Let a draw gesture begin over an item row (#6); block in select.
               onPointerDown={(e) => {
@@ -306,6 +332,8 @@ export const ChecklistCard = memo(function ChecklistCard({
               onKeyDown={(e) => {
                 e.stopPropagation()
                 if (e.key === 'Enter') {
+                  // Enter ADDS an item (never a literal newline in the label) — long labels read
+                  // across lines via soft WRAP, so a hard newline is never needed here.
                   e.preventDefault()
                   onAddItem(element.id)
                 } else if (e.key === 'Backspace' && item.label.length === 0 && total > 1) {
@@ -332,6 +360,12 @@ export const ChecklistCard = memo(function ChecklistCard({
                 fontSize: 12,
                 lineHeight: '16px',
                 padding: 0,
+                // Auto-grown wrapping label (W-label-wrap): one row tall by default, height is set
+                // to scrollHeight so a long label reads in FULL across lines instead of truncating.
+                display: 'block',
+                resize: 'none',
+                overflow: 'hidden',
+                overflowWrap: 'break-word',
                 // D0-2 (A1): done items must stay readable — faint is disabled-only
                 color: item.done ? 'var(--text-3)' : 'var(--text-2)',
                 textDecoration: item.done ? 'line-through' : 'none',
