@@ -95,13 +95,15 @@ function planningElementKinds(page: Page, id: string): Promise<string[] | null> 
 }
 
 /** Planning-board layout probe (@planning): note rects (real w/h) + the x of every other element,
- *  to assert the masonry spreads across columns and that no two notes overlap. */
+ *  plus the diagram rect (2c footprint) — to assert the masonry spreads across columns, that no two
+ *  notes overlap, and that an agent diagram materializes at its orientation-aware footprint. */
 function planningLayout(
   page: Page,
   id: string
 ): Promise<{
   noteRects: Array<{ x: number; y: number; w: number; h: number }>
   otherXs: number[]
+  diagramRects: Array<{ x: number; y: number; w: number; h: number }>
 }> {
   return page.evaluate((boardId) => {
     const hook = (
@@ -116,11 +118,21 @@ function planningLayout(
       }
     ).__canvasE2E
     const els = hook.getBoards().find((x) => x.id === boardId)?.elements ?? []
+    const rect = (e: {
+      x: number
+      y: number
+      w?: number
+      h?: number
+    }): {
+      x: number
+      y: number
+      w: number
+      h: number
+    } => ({ x: e.x, y: e.y, w: e.w ?? 0, h: e.h ?? 0 })
     return {
-      noteRects: els
-        .filter((e) => e.kind === 'note')
-        .map((e) => ({ x: e.x, y: e.y, w: e.w ?? 0, h: e.h ?? 0 })),
-      otherXs: els.filter((e) => e.kind !== 'note').map((e) => e.x)
+      noteRects: els.filter((e) => e.kind === 'note').map(rect),
+      otherXs: els.filter((e) => e.kind !== 'note').map((e) => e.x),
+      diagramRects: els.filter((e) => e.kind === 'diagram').map(rect)
     }
   }, id)
 }
@@ -277,6 +289,14 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
         expect(overlap).toBe(false)
       }
     }
+    // 2c: the `graph TD` diagram materializes at the orientation-aware TALL (portrait) footprint —
+    // bigger than the legacy fixed 280×200 and taller than wide (the host honored the source's
+    // vertical layout). Proves the footprint path end-to-end through the real MCP write → element.
+    expect(layout.diagramRects).toHaveLength(1)
+    const dia = layout.diagramRects[0]
+    expect(dia.w).toBeGreaterThan(280)
+    expect(dia.h).toBeGreaterThan(200)
+    expect(dia.h).toBeGreaterThan(dia.w) // portrait, since the source is `graph TD` (vertical)
     // Frame the planning board + let the cards measure/grow, then capture a visual of the columns.
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
     await page.waitForTimeout(700)

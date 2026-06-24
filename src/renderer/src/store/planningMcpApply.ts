@@ -1,11 +1,6 @@
 import type { PlanningElement, ChecklistItem } from '../lib/boardSchema'
 import type { PlanningOp, PlanningOpTint } from '../../../shared/mcpTypes'
-import {
-  CHECKLIST_W,
-  DIAGRAM_SIZE,
-  elementBBox,
-  unionBBox
-} from '../canvas/boards/planning/elements'
+import { elementBBox, unionBBox } from '../canvas/boards/planning/elements'
 
 /**
  * Renderer-side materialization of MCP planning-write ops (S2). MAIN validates + sanitizes +
@@ -73,13 +68,29 @@ const MAX_GRID_COLS = 5
 /** Prose-readable width for an agent note/text — wider than the 156px sticky default so a
  *  multi-paragraph note reads in a few lines instead of a tall narrow ribbon. */
 const MCP_NOTE_W = 232
+/**
+ * Width an MCP-authored checklist materializes at (2c) — wider than the shared 240px `CHECKLIST_W`
+ * default so an agent's task labels truncate less in the single-line item `<input>` (true wrap =
+ * an `<input>`→`<textarea>` change in `ChecklistCard`, deferred to the cross-board-transfer
+ * umbrella). User-created checklists keep the 240px default; this is only the MCP seed width.
+ */
+const MCP_CHECKLIST_W = 300
 const NOTE_LINE_H = 16 // NoteCard text line-height (12px font / 16px line)
 const NOTE_PAD_V = 18 // 9px top + 9px bottom
 const NOTE_PAD_H = 22 // 11px each side → wrap width = w − 22
 const NOTE_CHAR_W = 7 // conservative avg char advance (incl. word-wrap slack) at the 12px font
-const CHECK_HEAD = 52 // checklist title + progress bar + top pad
-const CHECK_ROW = 38 // one (single-line) item row
-const CHECK_FOOT = 36 // "Add item" affordance + bottom pad
+// Checklist height estimate (2c, tightened). Real interactive render ≈ 77 + 24·N px (header 16 +
+// 3px bar + N×16px rows + 8px inter-row gaps + footer + 11/12/12 pad; checkbox is 16×16). The
+// estimate must stay ≥ the real height — a sibling card is absolutely positioned, so UNDER-counting
+// would overlap it — so CHECK_ROW (26) keeps a small per-row cushion over the real 24 (row+gap).
+const CHECK_HEAD = 52 // title + progress bar + top pad (≈ real 49, +3 cushion)
+const CHECK_ROW = 26 // one single-line row + its inter-row gap (≈ real 24, +2 cushion)
+const CHECK_FOOT = 36 // "Add item" affordance + bottom pad (folds the last row's absent gap as cushion)
+// MCP diagram footprints (2c) — host honors the agent's source orientation. Both are bigger than the
+// 280×200 `DIAGRAM_SIZE` user default so an agent flow/ERD is legible; the SVG is vector + object-fit
+// contain, so a larger box scales it up crisply (no re-render).
+const DIAGRAM_WIDE = { w: 460, h: 300 } as const // landscape: graph LR/RL, erDiagram, gantt, …
+const DIAGRAM_TALL = { w: 340, h: 400 } as const // portrait: graph TD/TB/BT, sequence, default
 
 function newId(): string {
   return crypto.randomUUID()
@@ -98,6 +109,32 @@ function estimateChecklistHeight(items: number): number {
   return CHECK_HEAD + items * CHECK_ROW + CHECK_FOOT
 }
 
+/**
+ * Pick an MCP diagram's footprint (2c) from its Mermaid `source` — the host honors the orientation
+ * the agent already expressed (it adds no schema field). A horizontally-laid-out diagram (a
+ * `graph/flowchart LR|RL`, an `erDiagram`, a `gantt`/`timeline`/`journey`/`gitGraph`, or a
+ * `direction LR|RL` in a class/state diagram) reads WIDE; a vertical flow / sequence / unknown reads
+ * TALL (the conservative default). `source` is already MAIN-sanitized (control chars stripped).
+ */
+export function diagramFootprint(source: string): { w: number; h: number } {
+  const lower = source.toLowerCase()
+  const firstLine =
+    lower
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? ''
+  // Flowchart/graph with an explicit direction: LR/RL ⇒ wide, TB/TD/BT ⇒ tall.
+  const flow = firstLine.match(/^(?:graph|flowchart)\s+(tb|td|bt|lr|rl)\b/)
+  if (flow) return flow[1] === 'lr' || flow[1] === 'rl' ? DIAGRAM_WIDE : DIAGRAM_TALL
+  // Diagram types that lay out horizontally by nature.
+  if (/^(erdiagram|gantt|timeline|journey|gitgraph)\b/.test(firstLine)) return DIAGRAM_WIDE
+  // class/state diagrams declare direction as a line-level statement (after leading whitespace).
+  // Anchor to line-start (multiline) so the phrase inside a node label / comment can't false-match
+  // and force a TD/sequence/pie diagram wide.
+  if (/^\s*direction\s+(lr|rl)\b/m.test(lower)) return DIAGRAM_WIDE
+  return DIAGRAM_TALL
+}
+
 /** Board-local layout footprint (width + estimated rendered height) the masonry reserves. */
 function opCell(op: PlanningOp): { w: number; h: number } {
   switch (op.kind) {
@@ -105,11 +142,11 @@ function opCell(op: PlanningOp): { w: number; h: number } {
     case 'text':
       return { w: MCP_NOTE_W, h: estimateTextHeight(op.text, MCP_NOTE_W) }
     case 'checklist':
-      return { w: CHECKLIST_W, h: estimateChecklistHeight(op.items.length) }
+      return { w: MCP_CHECKLIST_W, h: estimateChecklistHeight(op.items.length) }
     case 'arrow':
       return { w: Math.max(GAP, Math.abs(op.dx)), h: Math.max(GAP, Math.abs(op.dy)) }
     case 'diagram':
-      return { w: DIAGRAM_SIZE.w, h: DIAGRAM_SIZE.h }
+      return diagramFootprint(op.source)
   }
 }
 
@@ -244,7 +281,7 @@ export function materializePlanningOps(
           kind: 'checklist',
           x,
           y,
-          w: CHECKLIST_W,
+          w: MCP_CHECKLIST_W,
           h: 0,
           title: op.title,
           items
@@ -266,14 +303,15 @@ export function materializePlanningOps(
         break
       }
       case 'diagram':
-        // No svgCache: the DiagramCard renders the source via the worker on display + caches it.
+        // Footprint follows the agent's source orientation (2c, see diagramFootprint); cell.w/h
+        // already carry it. No svgCache: DiagramCard renders the source via the worker on display.
         out.push({
           id: newId(),
           kind: 'diagram',
           x,
           y,
-          w: DIAGRAM_SIZE.w,
-          h: DIAGRAM_SIZE.h,
+          w: cell.w,
+          h: cell.h,
           source: op.source,
           engine: 'mermaid'
         })

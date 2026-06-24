@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  diagramFootprint,
   materializePlanningOps,
   neededBoardHeight,
   neededBoardWidth,
@@ -238,6 +239,80 @@ describe('materializePlanningOps — sections (2a)', () => {
     expect(ys[0]).toBe(ys[1])
     expect(ys[1]).toBe(ys[2])
     expect(ys[3]).toBeGreaterThan(ys[0])
+  })
+})
+
+describe('materializePlanningOps — 2c presentation (widen / diagram footprint / tighter gaps)', () => {
+  it('materializes an MCP checklist at the widened 300px width (not the 240px user default)', () => {
+    const out = materializePlanningOps(
+      [{ kind: 'checklist', title: 'T', items: [{ label: 'a', done: false }] }],
+      []
+    )
+    const cl = out.find((e) => e.kind === 'checklist') as Extract<
+      PlanningElement,
+      { kind: 'checklist' }
+    >
+    expect(cl.w).toBe(300)
+  })
+
+  it('diagramFootprint reads the agent source orientation: LR/ER/direction ⇒ wide, TD/seq/unknown ⇒ tall', () => {
+    const wide = diagramFootprint('graph LR\n A-->B')
+    // The aspect flips with orientation: a wide footprint is landscape, a tall one is portrait-ish.
+    expect(wide.w).toBeGreaterThan(wide.h)
+    const tall = diagramFootprint('graph TD\n A-->B')
+    expect(tall.h).toBeGreaterThan(tall.w)
+    // Horizontal forms all resolve to the SAME wide footprint…
+    expect(diagramFootprint('flowchart RL\n A-->B')).toEqual(wide)
+    expect(diagramFootprint('erDiagram\n CUSTOMER ||--o{ ORDER : places')).toEqual(wide)
+    expect(diagramFootprint('gantt\n title Plan')).toEqual(wide)
+    expect(diagramFootprint('stateDiagram-v2\n  direction LR\n  A --> B')).toEqual(wide)
+    // …and vertical / sequence / unknown all resolve to the SAME tall footprint (conservative).
+    expect(diagramFootprint('flowchart BT\n A-->B')).toEqual(tall)
+    expect(diagramFootprint('sequenceDiagram\n A->>B: hi')).toEqual(tall)
+    expect(diagramFootprint('pie title Pets\n "Dogs": 3')).toEqual(tall)
+    // The `direction` keyword only counts as a line-level statement — the phrase inside a node label
+    // must NOT flip a TD flow to wide (the whole-source-scan false-match).
+    expect(diagramFootprint('graph TD\n A["Set direction LR for the pipeline"]-->B')).toEqual(tall)
+  })
+
+  it('honors the footprint at materialize: a wide-source diagram is wider, a tall one is taller — both > the 280×200 default', () => {
+    const [wide] = materializePlanningOps(
+      [{ kind: 'diagram', source: 'graph LR\n A-->B' }],
+      []
+    ) as Array<Extract<PlanningElement, { kind: 'diagram' }>>
+    const [tall] = materializePlanningOps(
+      [{ kind: 'diagram', source: 'graph TD\n A-->B' }],
+      []
+    ) as Array<Extract<PlanningElement, { kind: 'diagram' }>>
+    expect(wide.w).toBeGreaterThan(tall.w)
+    expect(tall.h).toBeGreaterThan(wide.h)
+    // Both larger than the legacy fixed 280×200 so an agent diagram is legible.
+    expect(wide.w).toBeGreaterThan(280)
+    expect(tall.h).toBeGreaterThan(200)
+  })
+
+  it('🔒 overlap invariant: a stacked checklist reserves ≥ its real rendered height (tighten can never undershoot)', () => {
+    // The gap-tighten lowers CHECK_ROW; the load-bearing invariant is that the reserved spacing
+    // still clears the REAL interactive render (≈ 77 + 24·N px — header + N×16px rows + 8px gaps +
+    // footer + padding; checkbox 16×16). A sibling card is absolutely positioned, so under-reserving
+    // would drop the next card ON TOP of a tall checklist. This guards a future over-tighten.
+    const items = (n: number): { label: string; done: boolean }[] =>
+      Array.from({ length: n }, (_, i) => ({ label: `item ${i}`, done: false }))
+    const out = materializePlanningOps(
+      [
+        { kind: 'checklist', title: 'A', items: items(8), section: 'Plan' },
+        { kind: 'checklist', title: 'B', items: items(3), section: 'Plan' },
+        { kind: 'checklist', title: 'C', items: items(5), section: 'Plan' }
+      ],
+      []
+    ) as Array<Extract<PlanningElement, { kind: 'checklist' }>>
+    const realLowerBound = (n: number): number => 77 + 24 * n
+    // All in one column (same x), strictly increasing y, each gap clearing the upper card's real height.
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i].x).toBe(out[0].x)
+      const gap = out[i].y - out[i - 1].y
+      expect(gap).toBeGreaterThanOrEqual(realLowerBound(out[i - 1].items.length))
+    }
   })
 })
 
