@@ -155,6 +155,8 @@ export interface CanvasState {
       configPending?: boolean
       /** File board only (v12): bind the new board to this relative path. */
       path?: string
+      /** MCP spawn_board only (2b): the agent-chosen title (sanitized + clamped upstream). */
+      title?: string
     }
   ) => string
   /**
@@ -600,7 +602,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       w: size.w,
       h: size.h,
       // File board only: bind the relative path (createBoard ignores it for other types).
-      ...(opts?.path ? { path: opts.path } : {})
+      ...(opts?.path ? { path: opts.path } : {}),
+      // MCP spawn_board only (2b): use the agent title when supplied (else the per-type default).
+      ...(opts?.title ? { title: opts.title } : {})
     })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).

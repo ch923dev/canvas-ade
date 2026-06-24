@@ -30,6 +30,12 @@ const isSpawnable = (type: string): type is BoardType =>
   (SPAWNABLE as readonly string[]).includes(type)
 /** Default anchor for an MCP-spawned board; `addBoard`'s free-slot search spreads collisions. */
 const SPAWN_ANCHOR = { x: 120, y: 120 } as const
+/**
+ * Defense-in-depth re-clamp for an agent-supplied board title (2b). MAIN already sanitized + clamped
+ * it to its `SPAWN_BOARD_MAX_TITLE`; this matches that bound so a malformed/forged command can't
+ * bloat the board chrome. Kept a local literal (MAIN's const lives across the IPC boundary).
+ */
+const MCP_BOARD_TITLE_MAX = 80
 
 /**
  * Apply ONE MAIN → renderer MCP command against `canvasStore`, returning the ack.
@@ -42,7 +48,7 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type } = command.board
+      const { id, type, title } = command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
@@ -50,7 +56,16 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
       const store = useCanvasStore.getState()
       if (store.boards.some((b) => b.id === id)) return { ok: true, type: 'addBoard' }
-      store.addBoard(type, SPAWN_ANCHOR, { id })
+      // 2b: MAIN already sanitized + clamped the optional agent title; re-clamp defensively here
+      // (defense in depth, like the `type` re-validation above) and pass it only when it's a
+      // non-empty string — otherwise the store applies the per-type default title.
+      const cleanTitle =
+        typeof title === 'string' && title.trim().length > 0
+          ? // Clamp by code point (spread → slice → join), not UTF-16 code unit, so a multi-code-unit
+            // char at the boundary isn't split into a lone surrogate (mirrors MAIN's sanitizer).
+            [...title.trim()].slice(0, MCP_BOARD_TITLE_MAX).join('')
+          : undefined
+      store.addBoard(type, SPAWN_ANCHOR, { id, ...(cleanTitle ? { title: cleanTitle } : {}) })
       return { ok: true, type: 'addBoard' }
     }
     case 'removeBoard': {

@@ -20,6 +20,40 @@ const SPAWNABLE = new Set(['terminal', 'browser', 'planning'])
  */
 const SPAWN_GROUP_MAX_NAME = 80
 
+/**
+ * Cap on an MCP-spawned board's optional `title` (2b) — the agent-chosen display name a new board
+ * carries instead of the per-type default. Mirrors the package's wire-level `SPAWN_BOARD_MAX_TITLE`
+ * (`constants.ts`); kept at the same 80 as the group name (both are short canvas-chrome labels).
+ */
+const SPAWN_BOARD_MAX_TITLE = 80
+
+/**
+ * Sanitize an agent-supplied board title (2b) into a single-line, control-char-free, clamped label —
+ * or `undefined` when nothing usable remains (the renderer then uses the per-type default). Stricter
+ * than the inline group-name clamp on one point: it also strips C0/DEL/C1 control chars, because the
+ * title lands VERBATIM in later human-confirm modal bodies (handoff/assign/configure render
+ * `"${board.title}"`), so an agent must not be able to slip control sequences into a confirm the user
+ * is asked to authorize. Whitespace runs collapse to single spaces (a multi-line title would break the
+ * board chrome and could push the real content off-screen in those confirms) BEFORE the control-char
+ * strip, so legitimate spaces survive while raw tabs/newlines do not.
+ */
+function sanitizeBoardTitle(raw: string | undefined): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  let out = ''
+  for (const ch of raw.replace(/\s+/g, ' ')) {
+    const code = ch.codePointAt(0) ?? 0
+    // Strip C0 controls (incl. NUL/ESC; the whitespace collapse already turned tab/newline into a
+    // kept 0x20 space), DEL (0x7F), and the C1 range (0x80-0x9F — the 8-bit CSI/OSC openers).
+    if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
+    out += ch
+  }
+  // Clamp by CODE POINT, not UTF-16 code unit: a plain `.slice(80)` can split a multi-code-unit
+  // char (emoji / surrogate pair) sitting at the boundary into a lone surrogate. Spread → slice →
+  // rejoin keeps every code point whole (and matches the code-point `for…of` strip above).
+  out = [...out.trim()].slice(0, SPAWN_BOARD_MAX_TITLE).join('')
+  return out.length > 0 ? out : undefined
+}
+
 /** Deps the lifecycle cluster needs from the orchestrator (DI factory; mirrors the store-slice split #101). */
 export interface McpLifecycleDeps {
   registry: BoardRegistry
@@ -62,7 +96,13 @@ export interface SpawnGroupResult {
 }
 
 export interface McpLifecycle {
-  spawnBoard(input: { type: string; prompt?: string; cwd?: string }): Promise<{ id: BoardId }>
+  spawnBoard(input: {
+    type: string
+    prompt?: string
+    cwd?: string
+    /** Agent-chosen board title (2b); host sanitizes + clamps. Absent/empty ⇒ per-type default. */
+    title?: string
+  }): Promise<{ id: BoardId }>
   /**
    * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
    * optional planning + browser member, a Named Group over them, and the browser→terminal preview
@@ -100,6 +140,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     type: string
     prompt?: string
     cwd?: string
+    title?: string
   }): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
     // side effect — rather than relying on the renderer's allowlist as the only gate.
@@ -120,6 +161,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // renderer builds the full board (free-slot placement, per-type defaults).
     // `prompt`/`cwd` are accepted now but applied in T3.3 (configure_board).
     const id = randomUUID()
+    // 2b: sanitize + clamp the optional agent title here (the trust boundary) so the renderer
+    // receives a single-line, control-char-free, bounded label. Omitted when nothing usable
+    // remains → the renderer falls back to the per-type default title.
+    const title = sanitizeBoardTitle(input.title)
     // 🔒 Optimistic reservation (BUG-003): the cap check above is synchronous but
     // `sendCommand` yields the event loop. Reserve the slot in `tracked` NOW — BEFORE the
     // await — so a second concurrent spawn near the cap sees the reservation and is rejected
@@ -130,7 +175,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     try {
       const ack = await registry.sendCommand({
         type: 'addBoard',
-        board: { id, type: input.type }
+        board: { id, type: input.type, ...(title ? { title } : {}) }
       })
       if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
     } catch (err) {
