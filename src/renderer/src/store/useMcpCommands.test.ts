@@ -74,6 +74,16 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(useCanvasStore.getState().boards[0].title).toBe('x'.repeat(80))
   })
 
+  it('addBoard re-clamps an agent title by code point (emoji at the boundary stays whole)', () => {
+    // 79 ASCII + emoji + tail = 91 code points / 92 UTF-16 units; the defense-in-depth re-clamp must
+    // cut at 80 CODE POINTS (keeping the emoji whole), not 80 code units (which would split it).
+    const title = 'a'.repeat(79) + '😀' + 'b'.repeat(10)
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal', title } })
+    const t = useCanvasStore.getState().boards[0].title
+    expect(t).toBe('a'.repeat(79) + '😀')
+    expect([...t]).toHaveLength(80)
+  })
+
   it('addBoard ignores a non-string forged title (2b defense in depth)', () => {
     applyMcpCommand({
       type: 'addBoard',

@@ -47,7 +47,10 @@ function sanitizeBoardTitle(raw: string | undefined): string | undefined {
     if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
     out += ch
   }
-  out = out.trim().slice(0, SPAWN_BOARD_MAX_TITLE)
+  // Clamp by CODE POINT, not UTF-16 code unit: a plain `.slice(80)` can split a multi-code-unit
+  // char (emoji / surrogate pair) sitting at the boundary into a lone surrogate. Spread → slice →
+  // rejoin keeps every code point whole (and matches the code-point `for…of` strip above).
+  out = [...out.trim()].slice(0, SPAWN_BOARD_MAX_TITLE).join('')
   return out.length > 0 ? out : undefined
 }
 

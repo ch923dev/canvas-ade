@@ -596,6 +596,16 @@ describe('createMcpLifecycle.spawnBoard — title (2b)', () => {
     expect(sent[0].title).toBe('x'.repeat(80))
   })
 
+  it('clamps by code point so an emoji at the boundary is not split into a lone surrogate', async () => {
+    const { registry, sent } = recordingReg()
+    // 80 code points but 81 UTF-16 code units: a code-UNIT slice(0,80) would keep the emoji's high
+    // surrogate and drop its low surrogate → a lone surrogate. The code-POINT clamp keeps it whole.
+    const title = 'a'.repeat(79) + '😀'
+    await makeLife(registry).spawnBoard({ type: 'terminal', title })
+    expect(sent[0].title).toBe(title)
+    expect([...(sent[0].title as string)]).toHaveLength(80) // emoji intact, not a lone surrogate
+  })
+
   it('omits the title key when it is empty/whitespace-only (renderer uses the default)', async () => {
     const { registry, sent } = recordingReg()
     await makeLife(registry).spawnBoard({ type: 'terminal', title: '   \n\t  ' })

@@ -61,7 +61,9 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // non-empty string — otherwise the store applies the per-type default title.
       const cleanTitle =
         typeof title === 'string' && title.trim().length > 0
-          ? title.trim().slice(0, MCP_BOARD_TITLE_MAX)
+          ? // Clamp by code point (spread → slice → join), not UTF-16 code unit, so a multi-code-unit
+            // char at the boundary isn't split into a lone surrogate (mirrors MAIN's sanitizer).
+            [...title.trim()].slice(0, MCP_BOARD_TITLE_MAX).join('')
           : undefined
       store.addBoard(type, SPAWN_ANCHOR, { id, ...(cleanTitle ? { title: cleanTitle } : {}) })
       return { ok: true, type: 'addBoard' }
