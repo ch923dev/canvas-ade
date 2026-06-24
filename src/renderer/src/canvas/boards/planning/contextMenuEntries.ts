@@ -37,10 +37,23 @@ export interface ContextMenuDeps {
   clearSel: () => void
   setSelectedIds: (ids: Set<string>) => void
   newId: () => string
+  /** Open the "Send to board…" picker for the (group-expanded) selection (cross-board transfer). */
+  onOpenSendTo: (sel: ReadonlySet<string>) => void
 }
 
 export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
-  const { elements, sel, wb, measured, beginChange, commit, clearSel, setSelectedIds, newId } = deps
+  const {
+    elements,
+    sel,
+    wb,
+    measured,
+    beginChange,
+    commit,
+    clearSel,
+    setSelectedIds,
+    newId,
+    onOpenSendTo
+  } = deps
   const selEls = elements.filter((e) => sel.has(e.id))
   const allLocked = selEls.length > 0 && selEls.every(isLocked)
   const anyGrouped = selEls.some((e) => !!e.groupId)
@@ -98,6 +111,16 @@ export function buildContextMenuEntries(deps: ContextMenuDeps): MenuEntry[] {
         commit(wc)
         setSelectedIds(new Set(newIds))
       }
+    },
+    {
+      kind: 'action',
+      id: 'send-to-board',
+      label: 'Send to board…',
+      // Enabled for ANY non-empty selection: the picker's "+ New planning board" row is always a
+      // valid destination, so this stays enabled even when no OTHER planning board exists (resolves
+      // the spec §3.A wording — §10 Q2). The menu only builds with a non-empty `sel`, so no extra
+      // guard. Capture the group-expanded selection so a whole group travels together.
+      onSelect: () => onOpenSendTo(expandGroups(elements, sel))
     },
     {
       kind: 'swatchRow',

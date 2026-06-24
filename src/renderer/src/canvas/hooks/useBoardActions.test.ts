@@ -40,6 +40,7 @@ function makeDeps(): BoardActionsDeps {
     cameraFullViewIdRef: { current: null },
     // Real store action so the GROUP-06 "remove from all" path is exercised end-to-end.
     removeBoardFromAllGroups: useCanvasStore.getState().removeBoardFromAllGroups,
+    focusBoardById: vi.fn(),
     setFocusedId: vi.fn(),
     setSelectedConnectorId: vi.fn(),
     setConnectPointer: vi.fn(),
