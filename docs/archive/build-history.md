@@ -930,3 +930,42 @@ inline**). **Full e2e matrix both legs green** on the rebased tree: Windows 200 
 `@preview` flakes — `browserNetwork` panel-overlap + an `osrCropSupersample` cascade — re-ran green in
 isolation; Windows runs retries:0) + Linux Docker 200 passed / 1 flaky (retried) / 1 skipped. Cross-zone
 `fileIpc.ts` edit was surgical (1 import + 1 line) and declared on the coordination board.
+
+## 2026-06-24 — Recap SessionStart hook: exec-form + self-heal (fix the packaged "Expanse.exe is not recognized" CLI break) — #240 (`2f4e1a88`)
+
+The Terminal recap feature installs a Claude Code `SessionStart` hook into each consented project's
+`.claude/settings.local.json`. The **packaged** build wrote it as a `cmd.exe /c set
+"ELECTRON_RUN_AS_NODE=1"&& "<Expanse.exe>" "<script>" "<map>"` shell wrapper so the app exe could act as
+node (BUG-003). When Claude spawns `cmd.exe` with that single quote-laden arg, Node escapes the inner `"`
+as `\"`, which cmd.exe misparses → `'"…\Expanse.exe"' is not recognized as an internal or external
+command`, and **the agent CLI fails to start in every project Expanse had opened**. Dev builds wrote a
+bare `electron.exe` entry that also **stacked** (one per worktree; idempotency keyed on the exact script
+path, so each new path piled on).
+
+- **Exec-form hook** — `{ command, args }` (direct spawn, no shell). Runner + the two path args stay
+  separate argv elements, so a spaced path can never be folded into a quote-laden shell string (the
+  cmd.exe failure mode). The packaged `recordSession.js` was verified runnable this way with a spaced map
+  path.
+- **Real-node runner** — `findNodeExecutable()` resolves `node` from PATH (exec-form hooks can't set env,
+  and the packaged app exe ignores a `.js` arg, so `ELECTRON_RUN_AS_NODE` is no longer needed). No node
+  found in a packaged build → the hook is **not installed** (recap silently off; the CLI is never broken by
+  a missing recap runtime). Dev still uses `electron.exe` (which runs a `.js` entry as node).
+- **Self-heal** — `installRecapHook` strips ANY prior recap hook (any `recordSession.js` path) before
+  adding exactly one, so old build/worktree entries replace instead of stacking. Unrelated hooks + sibling
+  config (`enabledMcpjsonServers`) preserved; a byte-identical result writes nothing.
+- **`.canvas/` git-ignored** (eslint already ignored it via #241): this repo gets opened in the very app it
+  builds, which writes the ADR 0009 project-data dir.
+- **Local remediation:** 21 broken hooks stripped from 8 project `.claude/settings.local.json` (backups
+  `*.recap-bak`), preserving `enabledMcpjsonServers`.
+
+**Tests/verification:** `agentRecapMap.test.ts` rewritten to the exec-form shape + new self-heal/anti-stacking,
+unrelated-hook preservation, empty-runner guard, and `findNodeExecutable` coverage (17/17). Two claude-review
+`[warning]`s addressed before merge: `isRecapHook` now matches the script BASENAME (not a loose substring, so
+a user path like `…/recordSession.js.bak` survives self-heal), and `findNodeExecutable` guards with
+`statSync(...).isFile()` (a directory named `node`/`node.exe` on PATH no longer yields a broken runner) — each
+with a regression test; re-review came back 0 crit / 0 warn. Rebased onto `1d72e4f` (#241; only
+`eslint.config.mjs` overlapped — main already added the `.canvas/**` ignore, so the duplicate was dropped →
+eslint net-zero). typecheck · lint (0 err) · format. Rebuilt the Windows installer;
+packaged headless smoke boots clean (reactflow/xterm/webgl, real PTY); the exec-form hook writes the recap
+map with a spaced path (the exact prior failure). Pre-push full e2e matrix green both legs (Windows 200
+passed / 1 known dataFlow flake retried / 1 skip; Linux Docker green). PR #240 CI green on the rebased head.
