@@ -67,11 +67,13 @@ export type PlanningOp =
  * Adding a variant here propagates the type error to BOTH sides simultaneously — the
  * compile-time safety this shared module exists to enforce (W1-D / F9).
  *
- * - `addBoard` carries only a MINIMAL spec (id + type), NOT a full PersistedBoard: MAIN mints
- *   the id but does not know canvas geometry, so the renderer builds the full board (free-slot
- *   placement, per-type defaults) from this spec. `board.type` is a loose `string` (MAIN is the
- *   sender and does not import renderer types); the renderer re-validates it against its
+ * - `addBoard` carries only a MINIMAL spec (id + type + optional title), NOT a full PersistedBoard:
+ *   MAIN mints the id but does not know canvas geometry, so the renderer builds the full board
+ *   (free-slot placement, per-type defaults) from this spec. `board.type` is a loose `string` (MAIN
+ *   is the sender and does not import renderer types); the renderer re-validates it against its
  *   SPAWNABLE allowlist at runtime (defense in depth — the value crosses IPC as JSON anyway).
+ *   `board.title` (2b) is the agent-chosen display name, already sanitized + clamped by MAIN
+ *   (`mcpLifecycle.spawnBoard`); absent ⇒ the renderer uses the per-type default title.
  * - `removeBoard` (T3.2) tears one down by id.
  * - `configureBoard` (T3.3) changes a board's durable per-type config (the renderer applies it
  *   through `updateBoard`, which filters to PATCHABLE_KEYS).
@@ -87,7 +89,7 @@ export type PlanningOp =
  */
 export type McpCommand =
   | { type: 'ping' }
-  | { type: 'addBoard'; board: { id: string; type: string } }
+  | { type: 'addBoard'; board: { id: string; type: string; title?: string } }
   | { type: 'removeBoard'; id: string }
   | {
       type: 'configureBoard'

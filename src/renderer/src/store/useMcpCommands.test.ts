@@ -47,6 +47,45 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     expect(useCanvasStore.getState().boards).toHaveLength(0)
   })
 
+  it('addBoard applies an agent-supplied title (2b)', () => {
+    applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'srv-1', type: 'planning', title: 'Auth refactor plan' }
+    })
+    expect(useCanvasStore.getState().boards[0]).toMatchObject({
+      id: 'srv-1',
+      title: 'Auth refactor plan'
+    })
+  })
+
+  it('addBoard falls back to the per-type default title for an empty/whitespace title (2b)', () => {
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal', title: '   ' } })
+    applyMcpCommand({ type: 'addBoard', board: { id: 'srv-2', type: 'terminal' } })
+    const [a, b] = useCanvasStore.getState().boards
+    // A whitespace-only title is ignored ⇒ the board keeps the same default as a no-title spawn.
+    expect(a.title).toBe(b.title)
+  })
+
+  it('addBoard clamps an over-long agent title (2b defense in depth)', () => {
+    applyMcpCommand({
+      type: 'addBoard',
+      board: { id: 'srv-1', type: 'terminal', title: 'x'.repeat(200) }
+    })
+    expect(useCanvasStore.getState().boards[0].title).toBe('x'.repeat(80))
+  })
+
+  it('addBoard ignores a non-string forged title (2b defense in depth)', () => {
+    applyMcpCommand({
+      type: 'addBoard',
+      // title is `string | undefined` in the union; a number can only arrive as hand-rolled IPC
+      // JSON — the renderer guard must keep it from reaching createBoard as a non-string title.
+      board: { id: 'srv-1', type: 'terminal', title: 123 as unknown as string }
+    })
+    const t = useCanvasStore.getState().boards[0].title
+    expect(typeof t).toBe('string')
+    expect(t.length).toBeGreaterThan(0)
+  })
+
   it('removeBoard removes the board from the canvas (T3.2)', () => {
     applyMcpCommand({ type: 'addBoard', board: { id: 'srv-1', type: 'terminal' } })
     expect(useCanvasStore.getState().boards).toHaveLength(1)

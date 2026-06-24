@@ -513,3 +513,98 @@ describe('createMcpLifecycle.spawnGroup (PR-5b — feature-zone cluster)', () =>
     })
   })
 })
+
+describe('createMcpLifecycle.spawnBoard — title (2b)', () => {
+  type AddBoardSpec = { id: string; type: string; title?: string }
+
+  /** A registry that records every addBoard command's `board` spec, so a test can assert the
+   *  exact (sanitized/clamped) title the lifecycle forwarded to the renderer. */
+  function recordingReg(): { registry: BoardRegistry; sent: AddBoardSpec[] } {
+    const sent: AddBoardSpec[] = []
+    const boards: Array<{ id: string; type: string; title: string; status?: string }> = []
+    const registry: BoardRegistry = {
+      listBoards: () => boards,
+      listSessions: () => [],
+      readOutput: () => EMPTY_OUTPUT,
+      readResult: () => EMPTY_RESULT,
+      readMemory: () => EMPTY_MEMORY,
+      readSummary: () => EMPTY_MEMORY,
+      sendCommand: async (cmd) => {
+        if (cmd.type === 'addBoard') {
+          sent.push({ ...cmd.board })
+          boards.push({
+            id: cmd.board.id,
+            type: cmd.board.type,
+            title: cmd.board.title ?? 'default',
+            status: 'running'
+          })
+        }
+        return { ok: true, type: cmd.type }
+      },
+      drainPty: async () => {},
+      ...DISPATCH_DEFAULTS
+    }
+    return { registry, sent }
+  }
+  const makeLife = (registry: BoardRegistry): ReturnType<typeof createMcpLifecycle> =>
+    createMcpLifecycle({
+      registry,
+      now: () => 0,
+      cap: 8,
+      idleTtlMs: 1000,
+      spawnGraceMs: 5000,
+      idleActivityMs: 60_000,
+      listBoards: async () => []
+    })
+
+  it('forwards a clean title onto the addBoard command', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'planning', title: 'Auth refactor plan' })
+    expect(sent[0].title).toBe('Auth refactor plan')
+  })
+
+  it('collapses whitespace runs + trims the title', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'terminal', title: '  Plan\t\n A  ' })
+    expect(sent[0].title).toBe('Plan A')
+  })
+
+  it('strips C0 / DEL / C1 control chars (a title lands verbatim in confirm-modal bodies)', async () => {
+    const { registry, sent } = recordingReg()
+    // 'No<BEL>Bell<CSI>CSI<DEL>' built from codepoints (avoid invisible control bytes in source).
+    const dirty = String.fromCodePoint(
+      0x4e,
+      0x6f,
+      0x07,
+      0x42,
+      0x65,
+      0x6c,
+      0x6c,
+      0x9b,
+      0x43,
+      0x53,
+      0x49,
+      0x7f
+    )
+    await makeLife(registry).spawnBoard({ type: 'terminal', title: dirty })
+    expect(sent[0].title).toBe('NoBellCSI')
+  })
+
+  it('clamps an over-long title to the cap (80)', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'terminal', title: 'x'.repeat(200) })
+    expect(sent[0].title).toBe('x'.repeat(80))
+  })
+
+  it('omits the title key when it is empty/whitespace-only (renderer uses the default)', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'terminal', title: '   \n\t  ' })
+    expect('title' in sent[0]).toBe(false)
+  })
+
+  it('omits the title key when none is supplied (back-compat)', async () => {
+    const { registry, sent } = recordingReg()
+    await makeLife(registry).spawnBoard({ type: 'terminal' })
+    expect('title' in sent[0]).toBe(false)
+  })
+})
