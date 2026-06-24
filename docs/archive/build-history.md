@@ -997,3 +997,38 @@ on retry and pass 13/13 in isolation). CodeQL alert #96 (an id interpolated into
 via a structured `page.evaluate` arg (mirrors `da2a1d1c`) + inline disposition. Rebased four times as main
 advanced (dataflow v14 collision → v15; #238; #237 dup `sendSync` stub; #240/#241 disjoint). PR #239 CI
 green (check · analyze · CodeQL · claude-review 0 crit / 0 warn).
+
+## 2026-06-25 — Planning-MCP umbrella → main · hands-free agent planning boards — #251 (`feat/planning-mcp-umbrella`, merge pending)
+
+When an agentic CLI writes a plan via MCP (`add_planning_elements` / `spawn_board`), the Planning board
+now lays out **elegant + readable hands-free** — the agent owns the structure, the host owns the geometry.
+Six phases developed + reviewed + squash-merged into `feat/planning-mcp-umbrella`, then promoted to `main`
+as one PR. **No `schemaVersion` bump across the whole umbrella** (all renderer/MCP layout; 2a's `section`
+is layout-only/not-persisted; 2b's title uses the existing `BoardCommon.title`). One package bump:
+**`@expanse-ade/mcp` 0.16.0 → 0.17.0** (2a `section` field + 2b `spawn_board` `title` field); app pins `^0.17.0`.
+
+- **#242 masonry** — `planningMcpApply.materializePlanningOps` evolved single-column → row-grid → column
+  MASONRY (shortest-column, content-estimated heights) + untracked `growBoardWidth/Height` so a write grows
+  the board in both dims; a tall note never overlaps the card beneath it.
+- **#245 sections** — optional per-element `section` tag → one column per section (first-appearance order),
+  array order within; no section ⇒ masonry (back-compat). `mcpPlanning.sanitizeSection` (single-line; strips
+  `[`/`]` so a section can't blur the `[label]` confirm boundary).
+- **#247 sizing (2c)** — agent checklists widened (300); `diagramFootprint(source)` infers orientation from
+  the Mermaid header (wide LR/ER/gantt vs tall TD/sequence); tighter checklist height estimate (overlap-invariant).
+- **#248 canvas-aware nudge** — after an auto-grow, if the board now overlaps a neighbour it moves to the
+  nearest free slot (untracked, reverts with the write; skips GROUPED boards; only when a *verified-clear*
+  slot exists — else it stays put). New `repositionBoardUntracked` + exported `overlapsAny`.
+- **#249 checklist label wrap** — item `<input>` → auto-grow `<textarea>` (Enter still ADDS, soft-wrap only);
+  `estimateChecklistHeight` made wrap-aware so a wrapping label can't re-introduce overlap.
+- **#250 board title (2b)** — `spawn_board({ title })` names the new board; shared `src/shared/boardTitle.ts`
+  `sanitizeBoardTitle` (whitespace-collapse · strip C0/DEL/C1 · trim · code-point clamp 80) used by BOTH the
+  MAIN trust boundary and the renderer defense-in-depth re-clamp.
+
+**Verification:** each phase landed with its gate (typecheck · lint 0-err · format · unit) + full e2e matrix at
+its umbrella merge. Umbrella→main pre-merge gate: full e2e matrix GREEN both legs (Windows 202 / Linux 202;
+the recurring `@preview` flakes — browserNetwork/osrCrop/dataFlow — self-heal on retry, 13/13 in isolation),
+CI green (check · analyze · CodeQL · claude-review). Reviewer #251: 3 `[warning]`s — freeSlot exhaustion
+fallback could move a board to a non-free slot (now `overlapsAny`-guarded), renderer title re-clamp didn't
+re-strip controls (now shares `sanitizeBoardTitle`), and this doc-lifecycle deletion — all fixed + dispositioned.
+Per-slice specs `docs/planning-mcp/phase-2a-sections.md`, `phase-2b-board-title.md`, `phase-2c-presentation.md`,
+`phase-2c-canvas-aware-nudge.md`, `phase-2c-checklist-wrap.md` deleted here (this build-history entry is the residue).

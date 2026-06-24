@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
 import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
-import { freeSlot, viewportCenterWorld } from '../lib/freeSlot'
+import { freeSlot, overlapsAny, viewportCenterWorld } from '../lib/freeSlot'
+import { sanitizeBoardTitle } from '../../../shared/boardTitle'
 import {
   materializePlanningOps,
   neededBoardHeight,
@@ -30,12 +31,6 @@ const isSpawnable = (type: string): type is BoardType =>
   (SPAWNABLE as readonly string[]).includes(type)
 /** Default anchor for an MCP-spawned board; `addBoard`'s free-slot search spreads collisions. */
 const SPAWN_ANCHOR = { x: 120, y: 120 } as const
-/**
- * Defense-in-depth re-clamp for an agent-supplied board title (2b). MAIN already sanitized + clamped
- * it to its `SPAWN_BOARD_MAX_TITLE`; this matches that bound so a malformed/forged command can't
- * bloat the board chrome. Kept a local literal (MAIN's const lives across the IPC boundary).
- */
-const MCP_BOARD_TITLE_MAX = 80
 
 /**
  * Apply ONE MAIN → renderer MCP command against `canvasStore`, returning the ack.
@@ -56,15 +51,12 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
       const store = useCanvasStore.getState()
       if (store.boards.some((b) => b.id === id)) return { ok: true, type: 'addBoard' }
-      // 2b: MAIN already sanitized + clamped the optional agent title; re-clamp defensively here
-      // (defense in depth, like the `type` re-validation above) and pass it only when it's a
-      // non-empty string — otherwise the store applies the per-type default title.
-      const cleanTitle =
-        typeof title === 'string' && title.trim().length > 0
-          ? // Clamp by code point (spread → slice → join), not UTF-16 code unit, so a multi-code-unit
-            // char at the boundary isn't split into a lone surrogate (mirrors MAIN's sanitizer).
-            [...title.trim()].slice(0, MCP_BOARD_TITLE_MAX).join('')
-          : undefined
+      // 2b: re-run the SHARED `sanitizeBoardTitle` (defense in depth, a true second pass like the
+      // `isSpawnable` re-validation above — not just a length clamp): MAIN already sanitized the title
+      // on the real path, but a forged/malformed IPC payload carrying control chars must still get the
+      // identical whitespace-collapse + C0/DEL/C1 strip + code-point clamp before it lands in the store.
+      // `undefined` (empty/whitespace-only/non-string) ⇒ the per-type default title.
+      const cleanTitle = sanitizeBoardTitle(title)
       store.addBoard(type, SPAWN_ANCHOR, { id, ...(cleanTitle ? { title: cleanTitle } : {}) })
       return { ok: true, type: 'addBoard' }
     }
@@ -162,8 +154,15 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
         const inGroup = live.groups.some((g) => g.boardIds.includes(command.id))
         if (grown && !inGroup) {
           const others = live.boards.filter((b) => b.id !== command.id)
-          const slot = freeSlot(others, { x: grown.x, y: grown.y }, { w: grown.w, h: grown.h })
-          if (slot.x !== grown.x || slot.y !== grown.y) {
+          const size = { w: grown.w, h: grown.h }
+          const slot = freeSlot(others, { x: grown.x, y: grown.y }, size)
+          // Only move if the slot is BOTH different from where the board grew AND verified clear:
+          // `freeSlot`'s exhaustion fallback (a fully-packed canvas, all rings probed) returns a
+          // not-guaranteed-free position, and moving there could leave the plan overlapping a
+          // different neighbour. When no free slot exists, leave the board where it grew rather than
+          // shuffle it to another overlap.
+          const moved = slot.x !== grown.x || slot.y !== grown.y
+          if (moved && !overlapsAny(others, slot, size)) {
             store.repositionBoardUntracked(command.id, slot.x, slot.y)
           }
         }

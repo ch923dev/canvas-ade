@@ -32,19 +32,33 @@ const RING_DIRS = [
  * so the new board tucks into open space beside the existing cluster instead of covering
  * it. Deterministic (no randomness) so undo/redo + persistence stay reproducible.
  */
+/**
+ * True if a box of `size` at top-left `at` overlaps ANY board (within the PLACE_GAP margin) — the
+ * canonical separation predicate `freeSlot` searches with, exported so callers can VERIFY a returned
+ * slot is actually clear. `freeSlot`'s exhaustion fallback (all rings probed, none free) returns a
+ * non-guaranteed-free position, so the canvas-aware nudge re-checks with this before it moves a board.
+ * One predicate = no drift between "is this slot free" here and inside `freeSlot`.
+ */
+export function overlapsAny(
+  boards: Board[],
+  at: { x: number; y: number },
+  size: { w: number; h: number }
+): boolean {
+  return boards.some(
+    (b) =>
+      at.x < b.x + b.w + PLACE_GAP &&
+      b.x < at.x + size.w + PLACE_GAP &&
+      at.y < b.y + b.h + PLACE_GAP &&
+      b.y < at.y + size.h + PLACE_GAP
+  )
+}
+
 export function freeSlot(
   boards: Board[],
   at: { x: number; y: number },
   size: { w: number; h: number }
 ): { x: number; y: number } {
-  const overlaps = (x: number, y: number): boolean =>
-    boards.some(
-      (b) =>
-        x < b.x + b.w + PLACE_GAP &&
-        b.x < x + size.w + PLACE_GAP &&
-        y < b.y + b.h + PLACE_GAP &&
-        b.y < y + size.h + PLACE_GAP
-    )
+  const overlaps = (x: number, y: number): boolean => overlapsAny(boards, { x, y }, size)
   if (!overlaps(at.x, at.y)) return at
   const strideX = size.w + PLACE_GAP
   const strideY = size.h + PLACE_GAP

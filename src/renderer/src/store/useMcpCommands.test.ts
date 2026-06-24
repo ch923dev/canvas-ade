@@ -458,6 +458,28 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
       expect(plan.w).toBe(400) // a single short note doesn't grow the board…
       expect(plan.x).toBe(0) // …so we never move a board the user placed overlapping on purpose
     })
+
+    it('does NOT move on a fully-packed canvas (freeSlot exhausts → its fallback is not free)', () => {
+      // A board so large it blankets every freeSlot ring probe AND the exhaustion fallback
+      // (at + PLACE_GAP), so no clear slot exists. The grown plan must stay where it is rather than
+      // shuffle to freeSlot's not-guaranteed-free fallback (which would still overlap). Reviewer #251.
+      applyMcpCommand({ type: 'addBoard', board: { id: 'plan-1', type: 'planning' } })
+      applyMcpCommand({ type: 'addBoard', board: { id: 'wall', type: 'terminal' } })
+      useCanvasStore.setState((s) => ({
+        boards: s.boards.map((b) => {
+          if (b.id === 'plan-1') return { ...b, x: 0, y: 0, w: 400, h: 300 }
+          if (b.id === 'wall') return { ...b, x: -500_000, y: -500_000, w: 1_000_000, h: 1_000_000 }
+          return b
+        }),
+        groups: [],
+        past: [],
+        future: []
+      }))
+      wideWrite()
+      const plan = rect('plan-1')
+      expect(plan.w).toBeGreaterThan(450) // it grew (and overlaps the wall)…
+      expect(plan.x === 0 && plan.y === 0).toBe(true) // …but stayed put: no free slot to move to
+    })
   })
 
   describe('spawnGroup (PR-5b — feature-zone cluster)', () => {
