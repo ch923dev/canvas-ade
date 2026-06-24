@@ -863,3 +863,39 @@ flakes (`browserNetwork:14` library-panel overlap + an `osrCropSupersample` casc
 isolation** (the Windows leg runs retries:0, so a single flake hard-fails). **Linux Docker 197 passed / 1
 flaky (retried) / 1 skipped** (199 specs). Resolves the "push `--no-verify` to clear the worktree gitDiff
 false-fail" workaround.
+
+## 2026-06-24 — Terminal scrollback: configurable + persisted (Phase 3) — #237 (`a05475b0`)
+
+Phase 3 of the terminal-capabilities sequence (after Phase 1 full-view freeze + Phase 2 find-in-terminal,
+both shipped via #235). Scrollback was a hard-coded **2000** lines (`useTerminalSpawn.ts`, the SLICE-012
+perf cap — xterm retains ~12 B/cell that never releases while a board stays mounted). Now that full view is
+corruption-free and the buffer is searchable, depth was the missing lever. Makes it **per-board configurable
++ persisted**, with a **sticky last-used default** for new terminals.
+
+- **UX (design signed off — `docs/research/2026-06-24-terminal-scrollback/` mock):** preset **chips**
+  (`1,000 · 2,000 · 10,000 · 50,000`) in the Terminal Settings → **Appearance** tab, directly below Font
+  size; default stays **2,000** (unset boards unchanged — no regression). **No "Unlimited"** — capped at
+  50,000 (~70 MB worst case/terminal) to preserve the SLICE-012 bounded-buffer invariant.
+- **Implementation (mirrors the `fontSize?` precedent end-to-end):** new `terminalScrollback.ts`
+  (`DEFAULT/MIN/MAX`, `SCROLLBACK_PRESETS`, `clampScrollback`, sticky `read/writeStickyScrollback` on
+  localStorage `ca.terminal.scrollback`, `resolveInitialScrollback`) · additive optional
+  `TerminalBoard.scrollback?` in `boardSchema.ts` — **no `schemaVersion` bump** (defaulted at read;
+  `assertBoard` rejects non-finite/negative, `fromObject` clamps `[0,50000]`) · `useTerminalSpawn.ts`
+  reads it via a ref for the xterm constructor **and** a live effect sets `term.options.scrollback` on
+  edit — **no PTY respawn / no session loss** (mirrors the live-font seam) · `NewTerminalDialog.tsx`
+  preset chips seeded from `resolveInitialScrollback`, pinning `board.scrollback` + writing the sticky
+  default (the dialog is scrollback's only entry point) · `scrollback` added to `PATCHABLE_KEYS`.
+- **Tests:** `terminalScrollback.test.ts` (clamp/sticky round-trip/resolve) + `canvasStore.test.ts` +
+  `e2e/terminalScrollbackConfig.e2e.ts` (`@terminal`: pick a preset → persists → reopen reflects → new
+  terminal inherits the sticky default). One CodeQL js/bad-code-sanitization in the e2e (board pin read via
+  an interpolated id) was fixed to a structured `page.evaluate` arg + `expect.poll`.
+
+**Verification:** manual dev check eyeballed in a title-stamped build (`CANVAS_DEV_TITLE='PR#237 scrollback'`
+— live apply / persist / sticky-default all confirmed). **Full e2e matrix both legs green:** Windows 200
+passed (2 unrelated `@preview` flakes — `browserNetwork:14` library-panel overlap + an `osrCropSupersample`
+fixture-teardown cascade — re-ran **green in isolation**, the Windows leg runs retries:0) · Linux Docker 200
+passed / 1 flaky (`dataFlow:11` OSR-capture, retried). PR CI all 4 green (`check`; analyze; CodeQL;
+claude-review). **Landed via an isolated worktree:** the merge collided with a concurrent terminal-recap
+session that had swapped the main worktree to its own branch — rebased `feat/terminal-scrollback` onto #238
+(disjoint gitDiff, clean) in a dedicated `.worktrees/ts-rebase` checkout, re-ran CI green on the integrated
+base, then squash-merged — leaving the peer session's worktree untouched.
