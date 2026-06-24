@@ -20,6 +20,7 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { relative as pathRelative, sep } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 import { simpleGit } from 'simple-git'
+import { repoScopedEnv } from './gitEnv'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { isForeignSender } from './ipcGuard'
 import { getCurrentDir } from './projectStore'
@@ -137,7 +138,11 @@ export function registerFileIpc(ipcMain: IpcMain, getWin: () => BrowserWindow | 
     const dir = getCurrentDir()
     if (!dir) return { ok: false, reason: 'No project open' }
     try {
-      const git = simpleGit(dir)
+      // Scope git to `dir` only: strip inherited GIT_DIR/GIT_WORK_TREE/… (e.g. a pre-push hook's
+      // env forwarded into the app) so checkIsRepo / --show-toplevel / HEAD / origin resolve THIS
+      // project's repo, not an ambient one — else the permalink points at the wrong repository.
+      // Shared with boardGitDiff; see ./gitEnv › repoScopedEnv.
+      const git = simpleGit(dir).env(repoScopedEnv())
       if (!(await git.checkIsRepo())) return { ok: false, reason: 'Not a git repository' }
       let remoteUrl = ''
       try {

@@ -1,4 +1,5 @@
 import simpleGit, { type SimpleGit } from 'simple-git'
+import { repoScopedEnv } from './gitEnv'
 
 /**
  * 🔒 PR-2: read-only working-tree diff for a board, run via `simple-git` in MAIN.
@@ -98,45 +99,6 @@ function isBoundError(err: unknown): boolean {
   return plugin === 'abort' || plugin === 'timeout'
 }
 
-/**
- * Build the environment for the read-only git sub-processes by stripping EVERY `GIT_*` variable
- * from a clone of MAIN's environment. Two problems, one sweep:
- *
- *  1. HOST-REPO ESCAPE (the bug this fixes). `GIT_DIR`/`GIT_WORK_TREE` (+ `GIT_INDEX_FILE`,
- *     `GIT_COMMON_DIR`, `GIT_CEILING_DIRECTORIES`, …) override git's directory discovery, so when
- *     present they pin git to THAT repo regardless of the spawn `cwd`. Git exports them into the
- *     environment of any process it runs as a HOOK — our `.githooks/pre-push` e2e gate runs with
- *     `GIT_DIR` set to the HOST repo — and `e2e/fixtures.ts` forwards `process.env` verbatim into
- *     the Electron app. Without scrubbing, a gitDiff for a board whose cwd is repo A silently
- *     returned repo B's (the host worktree's) diff: it passed in Docker/CI (run directly, no
- *     git-hook env) but false-failed the worktree pre-push gate.
- *
- *  2. simple-git's safety net. The moment we pass an EXPLICIT env object, simple-git inspects it
- *     and REFUSES to spawn if it carries a dangerous git var (GIT_EDITOR, GIT_SSH, GIT_PAGER,
- *     GIT_ASKPASS, GIT_EXTERNAL_DIFF, …) unless the matching `allowUnsafe*` flag is set — and we
- *     will not enable those flags (that would weaken the model).
- *
- * Clearing the whole `GIT_*` prefix is the robust fix for (1) and the simplest way to satisfy (2)
- * without version-coupling to simple-git's block-list. It is also strictly SAFER than today's
- * default `env: undefined` path (which let git inherit GIT_SSH/GIT_EDITOR/… unchecked): the
- * read-only diff needs nothing from the GIT_* namespace — the repo comes from `cwd`, config from
- * the normal config files. Stripping (vs. pinning a discovery ceiling) keeps normal discovery
- * intact: a board cwd that is a SUBDIR of a repo still walks up to the real repo root. This never
- * weakens the MAIN-only / frame-guarded model. `simple-git`'s `.env(obj)` REPLACES the child env
- * (it does NOT merge with process.env), so we clone first, then delete.
- */
-function repoScopedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env }
-  for (const key of Object.keys(env)) {
-    if (/^GIT_/i.test(key)) delete env[key]
-  }
-  // Belt-and-suspenders for the now-GIT_*-free env: never block on an interactive credential
-  // prompt (the diff is local + read-only, but a misconfigured repo shouldn't pin the call until
-  // the GAP-002/007 timeout). Not one of simple-git's flagged vars, so it never trips the check.
-  env.GIT_TERMINAL_PROMPT = '0'
-  return env
-}
-
 export async function boardGitDiff(
   id: string,
   getCwd: (id: string) => string | undefined
@@ -150,7 +112,7 @@ export async function boardGitDiff(
   const controller = new AbortController()
   const sink = new CappedSink(GITDIFF_MAX_READ_BYTES, () => controller.abort())
   // `.env(repoScopedEnv())` pins resolution to `cwd` by stripping inherited GIT_DIR/GIT_WORK_TREE/…
-  // (see repoScopedEnv) — without it, a gitDiff run under a git hook (pre-push) or any shell that
+  // (see ./gitEnv) — without it, a gitDiff run under a git hook (pre-push) or any shell that
   // exported those vars escapes into the host repo instead of the board's repo.
   const git: SimpleGit = simpleGit(cwd, {
     abort: controller.signal,
