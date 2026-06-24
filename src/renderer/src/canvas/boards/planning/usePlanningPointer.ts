@@ -62,6 +62,10 @@ export interface PlanningPointerDeps {
   wellRef: MutableRefObject<HTMLDivElement | null>
   buildMenuEntries: (sel: ReadonlySet<string>) => MenuEntry[]
   setContextMenu: Dispatch<SetStateAction<{ x: number; y: number; entries: MenuEntry[] } | null>>
+  /** Tracks the last board-local pointer position over the well (Phase 3 clipboard, §2.4) —
+   *  the Ctrl+V paste anchor read by usePlanningKeyboard. Updated on EVERY well pointermove,
+   *  including idle moves with no active gesture, so a paste lands under the cursor. */
+  lastPointerRef: MutableRefObject<{ x: number; y: number } | null>
 }
 
 export interface PlanningPointerApi {
@@ -100,7 +104,8 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     measuredRef,
     wellRef,
     buildMenuEntries,
-    setContextMenu
+    setContextMenu,
+    lastPointerRef
   } = deps
 
   const [snapGuides, setSnapGuides] = useState<Guide[] | null>(null)
@@ -339,9 +344,14 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
 
   const onWellPointerMove = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
+      // Track the last in-well pointer position (board-local) for Ctrl+V paste placement
+      // (Phase 3, §2.4). Computed on EVERY move — including idle moves with no active gesture,
+      // which the `if (!d) return` below would otherwise skip — so a paste lands under the
+      // cursor; usePlanningKeyboard reads this ref (board-center fallback while it is null).
+      const p = toBoard(e)
+      lastPointerRef.current = p
       const d = drag.current
       if (!d) return
-      const p = toBoard(e)
       if (d.mode === 'move') {
         // Transient: render the dragged set shifted by the live delta; the store is
         // written once on pointer-up so undo stays one checkpoint (#9).
@@ -408,7 +418,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         setDraftTextBox(rectFromPoints(d.startX, d.startY, p.x, p.y))
       }
     },
-    [toBoard, elements, snapEnabled, measuredRef]
+    [toBoard, elements, snapEnabled, measuredRef, lastPointerRef]
   )
 
   // Double-click empty whiteboard in select mode → drop a free-text element.
