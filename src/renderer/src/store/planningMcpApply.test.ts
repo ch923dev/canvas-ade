@@ -54,13 +54,14 @@ describe('materializePlanningOps', () => {
     expect(new Set(checklist.items.map((i) => i.id)).size).toBe(2)
   })
 
-  it('lays a batch out as a GRID — row-major, columns align, order preserved', () => {
-    // 6 notes → gridColumns(6) = ceil(√6) = 3 columns, 2 rows.
+  it('lays a uniform batch into an aligned grid (masonry degenerates to a grid)', () => {
+    // 6 equal-height notes → gridColumns(6) = ceil(√6) = 3 columns; equal heights make the
+    // shortest-column masonry fill row-by-row, so columns align like a grid.
     const out = materializePlanningOps(
       Array.from({ length: 6 }, (_, i) => note(`n${i}`)),
       []
     )
-    // Agent order is preserved (row-major).
+    // Agent order is preserved (top row fills left→right).
     expect(out.map((e) => (e as Extract<PlanningElement, { kind: 'note' }>).text)).toEqual([
       'n0',
       'n1',
@@ -88,6 +89,34 @@ describe('materializePlanningOps', () => {
     const out = materializePlanningOps([note('a'), note('b')], [])
     expect(out[0].y).toBe(out[1].y) // same row
     expect(out[1].x).toBeGreaterThan(out[0].x) // next column
+  })
+
+  it('never overlaps cards even when heights vary wildly (the masonry fix)', () => {
+    // A tall prose note next to short notes — the bug was the next card landing ON TOP of the
+    // tall one (positioned by a 96px seed while the note renders ~10× taller). Masonry + content
+    // height estimates must keep every note's rect disjoint.
+    const longText = Array.from({ length: 40 }, (_, i) => `line ${i} of a long agent note`).join(
+      '\n'
+    )
+    const ops: PlanningOp[] = [
+      { kind: 'note', text: longText, tint: 'yellow' },
+      ...Array.from({ length: 6 }, (_, i) => note(`short ${i}`))
+    ]
+    const out = materializePlanningOps(ops, []) as Array<{
+      x: number
+      y: number
+      w: number
+      h: number
+    }>
+    // The tall note must actually be tall (estimated from its content, not the 96px seed).
+    expect(out[0].h).toBeGreaterThan(300)
+    const overlaps = (a: (typeof out)[number], b: (typeof out)[number]): boolean =>
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        expect(overlaps(out[i], out[j])).toBe(false)
+      }
+    }
   })
 
   it('starts BELOW existing content (does not overlap a pre-existing element)', () => {

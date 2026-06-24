@@ -246,9 +246,14 @@ describe('applyMcpCommand (renderer applier for MAIN → renderer MCP commands)'
     it('auto-grows the board height to fit tall content (untracked — no extra undo step)', () => {
       planning()
       const before = find('plan-1')?.h ?? 0
-      const ops = Array.from({ length: 8 }, (_, i) => ({
+      // Tall content: 8 multi-line notes — the masonry estimates each note's wrapped height, so
+      // several rows of long notes exceed the default board height and force a grow.
+      const body = Array.from({ length: 12 }, (_, j) => `line ${j} of a fairly long note`).join(
+        '\n'
+      )
+      const ops = Array.from({ length: 8 }, () => ({
         kind: 'note' as const,
-        text: `n${i}`,
+        text: body,
         tint: 'yellow' as const
       }))
       applyMcpCommand({ type: 'patchPlanning', id: 'plan-1', ops })

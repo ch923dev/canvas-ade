@@ -94,18 +94,34 @@ function planningElementKinds(page: Page, id: string): Promise<string[] | null> 
   }, id)
 }
 
-/** Planning-board element x positions (proves the grid spreads across columns, @planning). */
-function planningElementXs(page: Page, id: string): Promise<number[]> {
+/** Planning-board layout probe (@planning): note rects (real w/h) + the x of every other element,
+ *  to assert the masonry spreads across columns and that no two notes overlap. */
+function planningLayout(
+  page: Page,
+  id: string
+): Promise<{
+  noteRects: Array<{ x: number; y: number; w: number; h: number }>
+  otherXs: number[]
+}> {
   return page.evaluate((boardId) => {
     const hook = (
       globalThis as unknown as {
         __canvasE2E: {
-          getBoards(): Array<{ id: string; type: string; elements?: Array<{ x: number }> }>
+          getBoards(): Array<{
+            id: string
+            type: string
+            elements?: Array<{ kind: string; x: number; y: number; w?: number; h?: number }>
+          }>
         }
       }
     ).__canvasE2E
-    const b = hook.getBoards().find((x) => x.id === boardId)
-    return (b?.elements ?? []).map((e) => e.x)
+    const els = hook.getBoards().find((x) => x.id === boardId)?.elements ?? []
+    return {
+      noteRects: els
+        .filter((e) => e.kind === 'note')
+        .map((e) => ({ x: e.x, y: e.y, w: e.w ?? 0, h: e.h ?? 0 })),
+      otherXs: els.filter((e) => e.kind !== 'note').map((e) => e.x)
+    }
   }, id)
 }
 
@@ -198,13 +214,18 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     expect(rejected(await denyP)).toBe(true) // a denied write resolves as an isError result
     expect(await planningElementKinds(page, planId)).toEqual([]) // still empty
 
-    // APPROVE path: write a checklist + two notes + a Mermaid diagram; drive the modal; assert
-    // they land. The diagram proves the v0.12.0 add_planning_elements `diagram` kind end-to-end
-    // (real server schema → confirm shows the source → renderer materializes a DiagramElement).
+    // APPROVE path: write a LONG prose note + a checklist + a note + a Mermaid diagram; drive the
+    // modal; assert they land. The long note exercises the masonry's content-height estimate (the
+    // bug class: a tall note overlapping the card beneath it). The diagram proves the v0.12.0
+    // add_planning_elements `diagram` kind end-to-end (real schema → confirm → DiagramElement).
+    const longNote =
+      'CANVAS_MCP_PLANNING_OK\n\nThis planning note is deliberately long so the masonry must ' +
+      'estimate its wrapped height from the text — the cards beneath it must NOT overlap it: ' +
+      'alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa, lambda, mu, nu, xi.'
     const writeP = mcp.orch.call(TOOL, {
       boardId: planId,
       elements: [
-        { kind: 'note', text: 'CANVAS_MCP_PLANNING_OK', tint: 'blue' },
+        { kind: 'note', text: longNote, tint: 'blue' },
         {
           kind: 'checklist',
           title: 'Auth refactor',
@@ -231,11 +252,20 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
       .poll(() => planningElementKinds(page, planId), { timeout: 8000 })
       .toEqual(['note', 'checklist', 'note', 'diagram'])
 
-    // GRID layout (the Phase-1 fix): the batch lands across ≥2 columns, not one vertical strip.
-    // The old materializer placed every element at a single x (one tall column); the grid
-    // spreads them, so distinct x values prove the column→grid change end-to-end.
-    const xs = await planningElementXs(page, planId)
-    expect(new Set(xs).size).toBeGreaterThanOrEqual(2)
+    // MASONRY layout (the fix): the batch lands across ≥2 columns (not one vertical strip) and —
+    // the bug that prompted the rework — the tall prose note must NOT overlap the card beneath it.
+    const layout = await planningLayout(page, planId)
+    const columnXs = new Set([...layout.noteRects.map((r) => r.x), ...layout.otherXs])
+    expect(columnXs.size).toBeGreaterThanOrEqual(2)
+    // No two notes overlap (notes carry a real w/h; the tall note is positioned by its estimate).
+    for (let i = 0; i < layout.noteRects.length; i++) {
+      for (let j = i + 1; j < layout.noteRects.length; j++) {
+        const a = layout.noteRects[i]
+        const b = layout.noteRects[j]
+        const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+        expect(overlap).toBe(false)
+      }
+    }
     // Frame the planning board + let the cards measure/grow, then capture a visual of the grid.
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
     await page.waitForTimeout(700)
