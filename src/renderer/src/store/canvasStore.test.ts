@@ -7,7 +7,8 @@ import {
   patchBoardUntracked,
   patchBoardMeta,
   acquireProjectSwitchLock,
-  releaseProjectSwitchLock
+  releaseProjectSwitchLock,
+  selectOtherPlanningBoards
 } from './canvasStore'
 import { HISTORY_LIMIT } from './history'
 import {
@@ -15,7 +16,9 @@ import {
   toObject,
   createBoard,
   fromObject,
-  type TerminalBoard
+  type TerminalBoard,
+  type PlanningBoard,
+  type PlanningElement
 } from '../lib/boardSchema'
 // Namespace import so the PERSIST-01 memo test can spy on the live `previewConnectorsFor`
 // binding the store calls internally (vitest gives ESM named imports live bindings).
@@ -2088,5 +2091,112 @@ describe('spawnGroup (PR-5b — feature-zone cluster placement)', () => {
       c: typeof existing
     ): boolean => a.x < c.x + c.w && c.x < a.x + a.w && a.y < c.y + c.h && c.y < a.y + a.h
     for (const m of cluster) expect(overlaps(m, existing)).toBe(false)
+  })
+})
+
+describe('transferElements (cross-board element transfer)', () => {
+  const note = (id: string, x = 0, y = 0, extra: object = {}): PlanningElement =>
+    ({
+      id,
+      kind: 'note',
+      x,
+      y,
+      w: 100,
+      h: 60,
+      tint: 'yellow',
+      text: '',
+      ...extra
+    }) as PlanningElement
+
+  const planning = (id: string, els: PlanningElement[], x = 0): PlanningBoard => ({
+    ...(createBoard('planning', { id, x, y: 0, w: 400, h: 300 }) as PlanningBoard),
+    elements: els
+  })
+
+  const seed = (srcEls: PlanningElement[], tgtEls: PlanningElement[] = []): void => {
+    useCanvasStore.setState({
+      boards: [planning('src', srcEls, 0), planning('tgt', tgtEls, 500)],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+  }
+
+  const elsOf = (id: string): PlanningElement[] =>
+    (get().boards.find((b) => b.id === id) as PlanningBoard).elements
+
+  it('move re-homes the selection and is ONE undo step that restores BOTH boards', () => {
+    seed([note('a', 10, 10), note('b', 20, 20)])
+    const { newIds } = get().transferElements('src', 'tgt', ['a'], 'move', { x: 0, y: 0 })
+    expect(newIds).toHaveLength(1)
+    // 'a' removed from source; a fresh-id copy now lives in the target.
+    expect(elsOf('src').map((e) => e.id)).toEqual(['b'])
+    expect(elsOf('tgt').map((e) => e.id)).toEqual([newIds[0]])
+    // The whole transfer is a single checkpoint…
+    expect(get().past).toHaveLength(1)
+    // …so ONE Ctrl+Z restores source AND target together.
+    get().undo()
+    expect(elsOf('src').map((e) => e.id)).toEqual(['a', 'b'])
+    expect(elsOf('tgt')).toHaveLength(0)
+  })
+
+  it('copy shares a fresh duplicate and leaves the source intact (one undo step)', () => {
+    seed([note('a', 10, 10)])
+    const { newIds } = get().transferElements('src', 'tgt', ['a'], 'copy', { x: 0, y: 0 })
+    expect(elsOf('src').map((e) => e.id)).toEqual(['a']) // source untouched
+    expect(elsOf('tgt').map((e) => e.id)).toEqual([newIds[0]])
+    expect(get().past).toHaveLength(1)
+    get().undo()
+    expect(elsOf('tgt')).toHaveLength(0)
+    expect(elsOf('src').map((e) => e.id)).toEqual(['a'])
+  })
+
+  it('move skips locked members: locked stays in source, only unlocked re-homes', () => {
+    seed([note('a', 0, 0), note('b', 10, 10, { locked: true })])
+    get().transferElements('src', 'tgt', ['a', 'b'], 'move', { x: 0, y: 0 })
+    expect(elsOf('src').map((e) => e.id)).toEqual(['b']) // locked 'b' stays put
+    expect(elsOf('tgt')).toHaveLength(1) // only 'a' moved
+  })
+
+  it('no-op guards arm NO checkpoint (empty selection / move-onto-self / non-planning target)', () => {
+    seed([note('a')])
+    expect(get().transferElements('src', 'tgt', [], 'move', { x: 0, y: 0 })).toEqual({ newIds: [] })
+    expect(get().transferElements('src', 'src', ['a'], 'move', { x: 0, y: 0 })).toEqual({
+      newIds: []
+    })
+    expect(get().transferElements('src', 'nope', ['a'], 'move', { x: 0, y: 0 })).toEqual({
+      newIds: []
+    })
+    // A move whose every member is locked is an empty-payload no-op.
+    seed([note('a', 0, 0, { locked: true })])
+    expect(get().transferElements('src', 'tgt', ['a'], 'move', { x: 0, y: 0 })).toEqual({
+      newIds: []
+    })
+    // None of the above armed an undo checkpoint.
+    expect(get().past).toHaveLength(0)
+  })
+
+  it('rejects a non-planning source/target (e.g. a terminal board)', () => {
+    const term = createBoard('terminal', { id: 'term', x: 0, y: 0 })
+    useCanvasStore.setState({
+      boards: [planning('src', [note('a')], 0), term],
+      past: [],
+      future: []
+    })
+    expect(get().transferElements('src', 'term', ['a'], 'copy', { x: 0, y: 0 })).toEqual({
+      newIds: []
+    })
+    expect(get().past).toHaveLength(0)
+  })
+
+  it('selectOtherPlanningBoards returns every planning board except the source', () => {
+    const p1 = createBoard('planning', { id: 'p1', x: 0, y: 0 })
+    const p2 = createBoard('planning', { id: 'p2', x: 0, y: 0 })
+    const term = createBoard('terminal', { id: 't1', x: 0, y: 0 })
+    expect(selectOtherPlanningBoards([p1, p2, term], 'p1').map((b) => b.id)).toEqual(['p2'])
+    expect(selectOtherPlanningBoards([p1, p2, term], 'p2').map((b) => b.id)).toEqual(['p1'])
+    // Terminals are never destinations.
+    expect(selectOtherPlanningBoards([p1, term], 'p1')).toEqual([])
   })
 })
