@@ -4,20 +4,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // and no electron/node-pty import graph — cwd is injected, not read from pty.ts).
 //
 // The instance mirrors the (subset of the) simple-git surface boardGitDiff drives:
-// `checkIsRepo`, `diff`, `raw` (ls-files + diff --no-index), and the fluent `outputHandler`
-// setter (a no-op here — the byte-bound stream tap is exercised in gitDiff.integration.test.ts
-// against real git). `outputHandler` MUST return the instance to preserve the fluent chain.
+// `checkIsRepo`, `diff`, `raw` (ls-files + diff --no-index), the no-op `outputHandler` setter
+// (the byte-bound stream tap is exercised in gitDiff.integration.test.ts against real git), and
+// the fluent `env` setter. `env` MUST return the instance to preserve the chain
+// (`simpleGit(cwd, opts).env(...)`), the same fluency real simple-git provides.
 const checkIsRepo = vi.fn()
 const diff = vi.fn()
 const raw = vi.fn()
 const outputHandler = vi.fn()
+const env = vi.fn()
 vi.mock('simple-git', () => ({
   // The instance is built lazily inside the `vi.fn` body (called only when `simpleGit(cwd)`
   // runs at test time), so the hoisted-but-not-yet-initialized consts are read after init.
   // The instance mirrors the surface boardGitDiff drives: checkIsRepo / diff / raw, plus the
-  // fluent `outputHandler` setter (a no-op here — the stream tap is covered by the real-git
-  // integration test).
-  default: vi.fn(() => ({ checkIsRepo, diff, raw, outputHandler }))
+  // no-op `outputHandler` setter (stream tap covered by the real-git integration test) and the
+  // fluent `env` setter — which returns the instance so the `.env(...)` chain keeps the surface.
+  default: vi.fn(() => {
+    const instance = { checkIsRepo, diff, raw, outputHandler, env }
+    env.mockReturnValue(instance)
+    return instance
+  })
 }))
 
 import simpleGit from 'simple-git'
@@ -31,6 +37,7 @@ describe('boardGitDiff (PR-2)', () => {
     diff.mockReset()
     raw.mockReset()
     outputHandler.mockReset()
+    env.mockReset() // re-armed to return the instance on the next simpleGit() call
     simpleGitFactory.mockClear()
     // Default: no untracked files (ls-files returns ''), so the tracked diff is returned as-is
     // unless a test overrides `raw`.

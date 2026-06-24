@@ -18,6 +18,13 @@ import { execFileSync } from 'node:child_process'
  * in-process via the CANVAS_E2E `__canvasE2EMain.gitDiff` seam.
  *
  * The base `page` fixture resets the canvas before each test, so boards never leak between them.
+ *
+ * REGRESSION (host-repo escape): when this leg runs under the `.githooks/pre-push` gate from a
+ * worktree, git invokes the hook with GIT_DIR exported to the HOST repo and fixtures.ts forwards
+ * process.env into the app — so `boardGitDiff` used to inherit those vars and return the HOST
+ * repo's diff instead of this test's temp repo's (passes in Docker/CI, which run e2e directly with
+ * no git-hook env). Fixed in src/main/gitDiff.ts › repoScopedEnv() (strips GIT_DIR/GIT_WORK_TREE/…
+ * so resolution is pinned to the board's cwd); covered hermetically by gitDiff.integration.test.ts.
  */
 
 // Hermetic git for the throwaway repo. EVERY invocation is pinned to it via an absolute
