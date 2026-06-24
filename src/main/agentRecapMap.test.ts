@@ -7,6 +7,7 @@ import {
   installRecapHook,
   removeRecapHook,
   isRecapHookInstalled,
+  findNodeExecutable,
   readRecapMap,
   watchRecapMap,
   type RecapMapEntry
@@ -87,7 +88,7 @@ describe('recap hook install/merge', () => {
 
   const opts = (d: string) => ({
     projectDir: d,
-    nodePath: '/usr/bin/node',
+    command: '/usr/bin/node',
     scriptPath: '/app/recordSession.js',
     mapPath: '/u/map.jsonl'
   })
@@ -199,80 +200,192 @@ describe('removeRecapHook BUG-032: tolerates malformed settings.local.json', () 
   })
 })
 
-describe('installRecapHook BUG-003: env field', () => {
+describe('installRecapHook: exec-form hook + self-healing', () => {
   let dir: string
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'recap-env-'))
+    dir = mkdtempSync(join(tmpdir(), 'recap-exec-'))
   })
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('bakes env into a shell-form command (Claude hooks have no env field)', () => {
+  it('writes a Claude EXEC-form hook (command + separate args, no shell, no env) — spaced paths cannot be mangled', () => {
+    // Reproduces the failing-build shape: a runner exe AND paths with spaces. The fix keeps them
+    // as separate argv elements, never folded into a `cmd.exe /c set …&& "exe"` shell string
+    // whose embedded quotes cmd.exe mangles into `'"…\Expanse.exe"' is not recognized`.
     installRecapHook({
       projectDir: dir,
-      nodePath: '/usr/bin/node',
-      scriptPath: '/app/recordSession.js',
-      mapPath: '/u/map.jsonl',
-      env: { ELECTRON_RUN_AS_NODE: '1' }
+      command: 'C:\\Program Files\\nodejs\\node.exe',
+      scriptPath: 'C:\\App\\out\\main\\hooks\\recordSession.js',
+      mapPath: 'C:\\Users\\a b\\recap\\session-map.jsonl'
     })
     const settings = join(dir, '.claude', 'settings.local.json')
     const cfg = JSON.parse(readFileSync(settings, 'utf8'))
     const hooks = cfg.hooks.SessionStart.flatMap((b: { hooks: unknown[] }) => b.hooks) as {
+      type: string
       command: string
       args?: string[]
       env?: unknown
     }[]
-    const hook = hooks.find((h) => h.args?.some((a) => a.includes('/app/recordSession.js')))
-    expect(hook).toBeDefined()
-    // The env assignment rides INSIDE the shell command string, not in an
-    // (unsupported) env field; the script + map paths are quoted in the same string.
-    // Quoting differs per platform: cmd wraps the whole assignment (`set "K=V"&&`),
-    // POSIX single-quotes the value (`K='V'`).
-    const envForm =
-      process.platform === 'win32' ? 'set "ELECTRON_RUN_AS_NODE=1"&& ' : "ELECTRON_RUN_AS_NODE='1' "
-    const shellArg = hook!.args!.find((a) => a.includes(envForm))
-    expect(shellArg).toBeDefined()
-    // Paths are double-quoted for cmd, single-quoted for sh (where "..." still expands $).
-    const wrap = (p: string): string => (process.platform === 'win32' ? `"${p}"` : `'${p}'`)
-    expect(shellArg).toContain(wrap('/app/recordSession.js'))
-    expect(shellArg).toContain(wrap('/u/map.jsonl'))
-    expect(shellArg).toContain(wrap('/usr/bin/node'))
-    expect([process.platform === 'win32' ? 'cmd.exe' : '/bin/sh']).toContain(hook!.command)
-    expect(hook!.env).toBeUndefined()
-    // Idempotency + removal must work on the shell form (scriptPath is a SUBSTRING).
-    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(true)
-    installRecapHook({
-      projectDir: dir,
-      nodePath: '/usr/bin/node',
-      scriptPath: '/app/recordSession.js',
-      mapPath: '/u/map.jsonl',
-      env: { ELECTRON_RUN_AS_NODE: '1' }
-    })
-    const cfg2 = JSON.parse(readFileSync(settings, 'utf8'))
-    expect(cfg2.hooks.SessionStart).toHaveLength(1)
-    removeRecapHook(dir, '/app/recordSession.js')
-    expect(isRecapHookInstalled(dir, '/app/recordSession.js')).toBe(false)
+    expect(hooks).toHaveLength(1)
+    const h = hooks[0]
+    expect(h.command).toBe('C:\\Program Files\\nodejs\\node.exe')
+    expect(h.args).toEqual([
+      'C:\\App\\out\\main\\hooks\\recordSession.js',
+      'C:\\Users\\a b\\recap\\session-map.jsonl'
+    ])
+    // No shell wrapper, no (unsupported) env field.
+    expect(h.command).not.toBe('cmd.exe')
+    expect(h.command).not.toBe('/bin/sh')
+    expect(h.env).toBeUndefined()
+    expect(isRecapHookInstalled(dir, 'C:\\App\\out\\main\\hooks\\recordSession.js')).toBe(true)
   })
 
-  it('keeps the direct command form when no env is provided', () => {
+  it('self-heals: re-installing with a DIFFERENT runner/script path REPLACES the stale entry (no stacking)', () => {
     installRecapHook({
       projectDir: dir,
-      nodePath: '/usr/bin/node',
-      scriptPath: '/app/recordSession.js',
+      command: '/old/node',
+      scriptPath: '/old/build/out/main/hooks/recordSession.js',
+      mapPath: '/u/map.jsonl'
+    })
+    installRecapHook({
+      projectDir: dir,
+      command: '/new/node',
+      scriptPath: '/new/build/out/main/hooks/recordSession.js',
       mapPath: '/u/map.jsonl'
     })
     const settings = join(dir, '.claude', 'settings.local.json')
     const cfg = JSON.parse(readFileSync(settings, 'utf8'))
-    const blocks = cfg.hooks.SessionStart
-    const hook = blocks
-      .flatMap((b: { hooks: unknown[] }) => b.hooks)
-      .find((h: { args?: string[] }) => h.args?.includes('/app/recordSession.js')) as {
-      command: string
-      env?: Record<string, string>
+    const recap = cfg.hooks.SessionStart.flatMap(
+      (b: { hooks: { command?: string; args?: string[] }[] }) => b.hooks
+    ).filter((h: { args?: string[] }) => h.args?.some((a) => a.includes('recordSession.js')))
+    expect(recap).toHaveLength(1)
+    expect(recap[0].command).toBe('/new/node')
+    expect(recap[0].args).toEqual(['/new/build/out/main/hooks/recordSession.js', '/u/map.jsonl'])
+  })
+
+  it('strips stale recap entries from prior builds while preserving unrelated hooks + sibling config', () => {
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        enabledMcpjsonServers: ['canvas-ade'],
+        hooks: {
+          SessionStart: [
+            { matcher: '', hooks: [{ type: 'command', command: 'echo', args: ['hi'] }] },
+            {
+              matcher: '',
+              hooks: [
+                {
+                  type: 'command',
+                  command: '/stale/node',
+                  args: ['/stale/out/main/hooks/recordSession.js', '/u/map.jsonl']
+                }
+              ]
+            }
+          ]
+        }
+      })
+    )
+    installRecapHook({
+      projectDir: dir,
+      command: '/fresh/node',
+      scriptPath: '/fresh/out/main/hooks/recordSession.js',
+      mapPath: '/u/map.jsonl'
+    })
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    const all = cfg.hooks.SessionStart.flatMap(
+      (b: { hooks: { command?: string; args?: string[] }[] }) => b.hooks
+    )
+    expect(all.some((h: { command?: string }) => h.command === 'echo')).toBe(true)
+    const recap = all.filter((h: { args?: string[] }) =>
+      h.args?.some((a: string) => a.includes('recordSession.js'))
+    )
+    expect(recap).toHaveLength(1)
+    expect(recap[0].command).toBe('/fresh/node')
+    expect(cfg.enabledMcpjsonServers).toEqual(['canvas-ade'])
+  })
+
+  it('does nothing when command is empty (no runner resolved)', () => {
+    installRecapHook({
+      projectDir: dir,
+      command: '',
+      scriptPath: '/a/recordSession.js',
+      mapPath: '/u/map.jsonl'
+    })
+    expect(existsSync(join(dir, '.claude', 'settings.local.json'))).toBe(false)
+  })
+
+  it('does NOT strip an unrelated hook whose path only CONTAINS recordSession.js as a substring', () => {
+    // basename match, not substring: a user hook at `…/recordSession.js.bak` must survive self-heal.
+    const settings = join(dir, '.claude', 'settings.local.json')
+    mkdirSync(join(dir, '.claude'), { recursive: true })
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            {
+              matcher: '',
+              hooks: [{ type: 'command', command: 'node', args: ['/u/recordSession.js.bak', '/x'] }]
+            }
+          ]
+        }
+      })
+    )
+    installRecapHook({
+      projectDir: dir,
+      command: '/fresh/node',
+      scriptPath: '/fresh/out/main/hooks/recordSession.js',
+      mapPath: '/u/map.jsonl'
+    })
+    const cfg = JSON.parse(readFileSync(settings, 'utf8'))
+    const all = cfg.hooks.SessionStart.flatMap((b: { hooks: { args?: string[] }[] }) => b.hooks)
+    // the user's .bak hook survives untouched
+    expect(all.some((h: { args?: string[] }) => h.args?.includes('/u/recordSession.js.bak'))).toBe(
+      true
+    )
+    // ...and exactly one real recap hook (basename === recordSession.js) is present — ours
+    const recap = all.filter((h: { args?: string[] }) =>
+      h.args?.some((a: string) => a.split(/[\\/]/).pop() === 'recordSession.js')
+    )
+    expect(recap).toHaveLength(1)
+  })
+})
+
+describe('findNodeExecutable', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'recap-noderes-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('returns null when no node is on PATH, and the path once a node exe appears', () => {
+    const exe = process.platform === 'win32' ? 'node.exe' : 'node'
+    const orig = process.env.PATH
+    try {
+      process.env.PATH = dir
+      expect(findNodeExecutable()).toBeNull()
+      writeFileSync(join(dir, exe), '')
+      expect(findNodeExecutable()).toBe(join(dir, exe))
+    } finally {
+      process.env.PATH = orig
     }
-    expect(hook.command).toBe('/usr/bin/node')
-    expect(hook?.env).toBeUndefined()
+  })
+
+  it('skips a DIRECTORY named like node (isFile guard, not existsSync)', () => {
+    const exe = process.platform === 'win32' ? 'node.exe' : 'node'
+    const orig = process.env.PATH
+    try {
+      mkdirSync(join(dir, exe)) // a directory, not a runnable file
+      process.env.PATH = dir
+      expect(findNodeExecutable()).toBeNull()
+    } finally {
+      process.env.PATH = orig
+    }
   })
 })
 

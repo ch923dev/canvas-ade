@@ -8,26 +8,69 @@
  * without clobbering any pre-existing hooks. Idempotency is keyed on whether
  * our scriptPath already appears in any hook's `args` array.
  */
-import { existsSync, readFileSync, mkdirSync, watch } from 'node:fs'
+import { existsSync, statSync, readFileSync, mkdirSync, watch } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 
 export interface InstallOpts {
   projectDir: string
-  /** Absolute path to the Node binary (process.execPath) */
-  nodePath: string
+  /**
+   * Absolute path to a Node-capable runner that executes recordSession.js. In packaged builds
+   * this MUST be a real `node` executable (see findNodeExecutable) — NOT the app exe, which
+   * ignores a .js arg and would boot a second window. In dev, the Electron binary works because
+   * it runs a .js entry as Node.
+   */
+  command: string
   /** Absolute path to hooks/recordSession.js */
   scriptPath: string
   /** Absolute path to the mapping JSONL file (app-owned, in userData) */
   mapPath: string
-  /**
-   * BUG-003: env vars the hook command must run under. Set
-   * { ELECTRON_RUN_AS_NODE: '1' } in packaged builds so the app exe acts as
-   * node when the Claude SessionStart hook invokes it. Claude Code's hook
-   * schema has NO `env` field, so these are baked into a SHELL-form command
-   * (cmd /c `set K=V&& ...` on Windows, `K=V ...` via /bin/sh on POSIX).
-   */
-  env?: Record<string, string>
+}
+
+const RECAP_SCRIPT_BASENAME = 'recordSession.js'
+
+/** True when a string is, or ends in a path segment that is, exactly recordSession.js. A
+ *  BASENAME match (split on both POSIX and Windows separators), NOT a loose substring — so an
+ *  unrelated user path that merely CONTAINS the name (e.g. `…/recordSession.js.bak`) is never
+ *  mistaken for our hook and stripped. */
+function referencesRecapScript(s: string): boolean {
+  return s.split(/[\\/]/).some((seg) => seg === RECAP_SCRIPT_BASENAME)
+}
+
+/**
+ * True when a hook's command/args reference our recap script (by basename, ANY path). Used to
+ * strip stale recap entries before re-installing so hooks from earlier builds / torn-down
+ * worktrees self-heal instead of stacking (the pile-up bug: the prior idempotency key was the
+ * exact scriptPath, so every new path piled on rather than replacing).
+ */
+function isRecapHook(h: HookCmd): boolean {
+  const parts = [h?.command, ...(Array.isArray(h?.args) ? h.args : [])]
+  return parts.some((p) => typeof p === 'string' && referencesRecapScript(p))
+}
+
+/**
+ * Resolve a real `node` executable from PATH (best-effort). Used as the recap hook's runner in
+ * packaged builds, where process.execPath is the app exe — which can't run a .js as Node without
+ * ELECTRON_RUN_AS_NODE, and Claude Code EXEC-form hooks can't set env. Returns null when no node
+ * is found; the caller then SKIPS installing the hook (recap silently off) rather than writing a
+ * broken one — the CLI must never be broken by a missing recap runtime.
+ */
+export function findNodeExecutable(): string | null {
+  const isWin = process.platform === 'win32'
+  const exe = isWin ? 'node.exe' : 'node'
+  const sep = isWin ? ';' : ':'
+  for (const dir of (process.env.PATH ?? '').split(sep)) {
+    if (!dir) continue
+    const candidate = join(dir, exe)
+    try {
+      // isFile (not existsSync): a DIRECTORY named node/node.exe on PATH would otherwise be
+      // returned and produce a broken, un-spawnable hook command.
+      if (statSync(candidate).isFile()) return candidate
+    } catch {
+      /* missing / unreadable PATH entry — try the next one */
+    }
+  }
+  return null
 }
 
 type HookCmd = { type: string; command: string; args?: string[] }
@@ -66,60 +109,39 @@ export function isRecapHookInstalled(projectDir: string, scriptPath: string): bo
 }
 
 /**
- * Merges the recap SessionStart hook into settings.local.json.
- * No-op if already installed (idempotent, keyed on scriptPath in args).
- * Pre-existing hooks are preserved.
+ * Merges the recap SessionStart hook into settings.local.json as a Claude Code EXEC-form entry
+ * (`{ type, command, args }` — direct spawn, no shell). EXEC form is the Windows-safe shape: the
+ * runner path and the two argument paths are passed as separate argv elements, so a spaced path
+ * can't be mangled by cmd.exe's quote-escaping — the failure mode of the old
+ * `cmd.exe /c set "ELECTRON_RUN_AS_NODE=1"&& "<exe>" …` shell wrapper, which produced
+ * `'"…\Expanse.exe"' is not recognized as an internal or external command` and blocked the agent
+ * CLI from starting.
+ *
+ * Self-healing + idempotent: ANY prior recap hook (any recordSession.js path) is stripped before
+ * exactly one current entry is added, so entries from earlier builds/worktrees can't stack up.
+ * Pre-existing UNRELATED hooks are preserved. Writes nothing when the result is byte-identical.
  */
 export function installRecapHook(opts: InstallOpts): void {
-  if (isRecapHookInstalled(opts.projectDir, opts.scriptPath)) return
+  if (!opts.command) return
   const cfg = readSettings(opts.projectDir)
   cfg.hooks ??= {}
-  cfg.hooks.SessionStart ??= []
-  let hookCmd: HookCmd = {
+  const before = Array.isArray(cfg.hooks.SessionStart) ? cfg.hooks.SessionStart : []
+  const stripped = before
+    .filter((b) => b && typeof b === 'object')
+    .map((b) => ({
+      ...b,
+      hooks: Array.isArray(b.hooks) ? b.hooks.filter((h: HookCmd) => !isRecapHook(h)) : []
+    }))
+    .filter((b) => b.hooks.length > 0)
+  const hookCmd: HookCmd = {
     type: 'command',
-    command: opts.nodePath,
+    command: opts.command,
     args: [opts.scriptPath, opts.mapPath]
   }
-  // BUG-003: bake ELECTRON_RUN_AS_NODE=1 into the hook so the app exe acts as node in
-  // packaged builds (where process.execPath is the Electron app binary, not a plain
-  // node). Claude Code's documented hook schema has no `env` field, so the env
-  // assignment is baked into a shell-form command instead.
-  if (opts.env && Object.keys(opts.env).length > 0) {
-    const pairs = Object.entries(opts.env)
-    // cmd: double quotes (its only quoting form). POSIX: single quotes — double-quoted
-    // strings in sh still expand `$`/backtick, so paths/values get the '\'' splice form.
-    const q = (p: string): string => `"${p}"`
-    const sq = (p: string): string => `'${p.replace(/'/g, "'\\''")}'`
-    const invocation = `${q(opts.nodePath)} ${q(opts.scriptPath)} ${q(opts.mapPath)}`
-    const posixInvocation = `${sq(opts.nodePath)} ${sq(opts.scriptPath)} ${sq(opts.mapPath)}`
-    hookCmd =
-      process.platform === 'win32'
-        ? {
-            type: 'command',
-            command: 'cmd.exe',
-            // /d: skip AutoRun; /s: preserve the quoted command string verbatim.
-            args: [
-              '/d',
-              '/s',
-              '/c',
-              // `set "K=V"` (quotes around the WHOLE assignment — cmd strips them and the
-              // value keeps metacharacters/spaces literal). NOT `set K="V"`, which would
-              // store the quotes INTO the value. Embedded `"` is stripped — cmd has no
-              // reliable escape for it in this form, and a stray quote would terminate
-              // the assignment early (latent injection surface).
-              `${pairs.map(([k, v]) => `set "${k}=${v.replace(/"/g, '')}"&& `).join('')}${invocation}`
-            ]
-          }
-        : {
-            type: 'command',
-            command: '/bin/sh',
-            // Single-quote values AND paths (POSIX-safe for all metacharacters; embedded
-            // ' via the standard '\'' splice) so a future env entry or a path containing
-            // spaces/$/backtick can't shell-split, expand, or inject a command.
-            args: ['-c', `${pairs.map(([k, v]) => `${k}=${sq(v)} `).join('')}${posixInvocation}`]
-          }
-  }
-  cfg.hooks.SessionStart.push({ matcher: '', hooks: [hookCmd] })
+  const next: HookBlock[] = [...stripped, { matcher: '', hooks: [hookCmd] }]
+  // No-op write avoidance: a re-ensure on every project open shouldn't churn the file mtime.
+  if (JSON.stringify(before) === JSON.stringify(next)) return
+  cfg.hooks.SessionStart = next
   writeSettings(opts.projectDir, cfg)
 }
 
