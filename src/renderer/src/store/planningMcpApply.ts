@@ -184,9 +184,15 @@ export function materializePlanningOps(
         // board and break the column — it reads like a note.
         out.push({ id: newId(), kind: 'text', x, y, text: op.text, width: MCP_NOTE_W })
         break
-      case 'arrow':
-        out.push({ id: newId(), kind: 'arrow', x, y, x2: x + op.dx, y2: y + op.dy })
+      case 'arrow': {
+        // Anchor at the cell's far edge for a negative delta so the arrow body stays inside the
+        // reserved column/row (opCell reserves |dx|×|dy| rightward+downward of the origin); else a
+        // left/up-pointing arrow would shoot into the preceding column and escape neededBoardWidth.
+        const ax = op.dx < 0 ? x + Math.abs(op.dx) : x
+        const ay = op.dy < 0 ? y + Math.abs(op.dy) : y
+        out.push({ id: newId(), kind: 'arrow', x: ax, y: ay, x2: ax + op.dx, y2: ay + op.dy })
         break
+      }
       case 'diagram':
         // No svgCache: the DiagramCard renders the source via the worker on display + caches it.
         out.push({

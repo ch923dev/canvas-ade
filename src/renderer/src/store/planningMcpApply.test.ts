@@ -119,6 +119,28 @@ describe('materializePlanningOps', () => {
     }
   })
 
+  it('keeps a negative-delta arrow inside its reserved column (anchors at the far edge)', () => {
+    // MAIN bounds an arrow's magnitude but not its sign — a left/up-pointing arrow (dx/dy < 0)
+    // must still lay out rightward/downward of its column origin, not shoot into the preceding
+    // column. The materializer anchors such an arrow at the cell's far edge.
+    const out = materializePlanningOps(
+      [
+        { kind: 'note', text: 'anchor', tint: 'yellow' },
+        { kind: 'arrow', dx: -80, dy: -40 }
+      ],
+      []
+    )
+    const arrow = out.find((e) => e.kind === 'arrow') as Extract<PlanningElement, { kind: 'arrow' }>
+    // Both endpoints sit at or right-of / below the arrow's own cell origin (min x/y ≥ column left).
+    const minX = Math.min(arrow.x, arrow.x2)
+    const minY = Math.min(arrow.y, arrow.y2)
+    expect(minX).toBeGreaterThanOrEqual(0)
+    expect(minY).toBeGreaterThanOrEqual(0)
+    // The far endpoint is the anchor; the head points back toward (anchor + delta) but stays ≥ origin.
+    expect(arrow.x2).toBe(arrow.x - 80)
+    expect(arrow.y2).toBe(arrow.y - 40)
+  })
+
   it('starts BELOW existing content (does not overlap a pre-existing element)', () => {
     const existing: PlanningElement[] = [
       { id: 'x', kind: 'note', x: 0, y: 0, w: 156, h: 96, tint: 'yellow', text: 'old' }
