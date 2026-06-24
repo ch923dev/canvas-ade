@@ -57,6 +57,7 @@ function makeState(boards: Board[] = [], connectors: Connector[] = []): CanvasSt
     tidyBoards: vi.fn() as never,
     tileBoards: vi.fn() as never,
     growBoardHeight: vi.fn() as never,
+    growBoardWidth: vi.fn() as never,
     setDiagramCache: vi.fn() as never,
     setViewport: vi.fn() as never,
     selectBoard: vi.fn() as never,
