@@ -278,6 +278,13 @@ export interface CanvasState {
    */
   growBoardWidth: (id: string, w: number) => void
   /**
+   * Move a board's top-left to (x, y). UNTRACKED, layout-only — the same rails-neutral contract as
+   * {@link growBoardWidth}: never touches past/future, so the MCP planning-write's canvas-aware
+   * nudge (repositioning the just-grown board off a collision with a neighbour) reverts together
+   * with the write it belongs to and pushes NO separate undo step. No-op when already at (x, y).
+   */
+  repositionBoardUntracked: (id: string, x: number, y: number) => void
+  /**
    * Write a diagram element's DERIVED svgCache (v11/S4). UNTRACKED — the SVG is a render
    * artifact of the canonical `source`, not a user edit, so the async write-back from the hidden
    * worker must NEVER push an undo step nor wipe an armed redo branch (the `lastRecorded`/
@@ -875,6 +882,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (b.id !== id || b.w >= w) return b
         changed = true
         return { ...b, w }
+      })
+      return changed ? { boards } : s
+    }),
+
+  repositionBoardUntracked: (id, x, y) =>
+    set((s) => {
+      // Layout-only, untracked: move x/y and NEVER touch past/future (mirrors growBoardWidth).
+      // The MCP write's canvas-aware overlap nudge is a layout consequence of the write — undo
+      // reverts to the pre-write snapshot (old position AND old size), so it pushes no own step.
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id || (b.x === x && b.y === y)) return b
+        changed = true
+        return { ...b, x, y }
       })
       return changed ? { boards } : s
     }),

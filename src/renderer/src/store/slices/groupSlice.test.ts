@@ -58,6 +58,7 @@ function makeState(boards: Board[] = [], groups: NamedGroup[] = []): CanvasState
     tileBoards: vi.fn() as never,
     growBoardHeight: vi.fn() as never,
     growBoardWidth: vi.fn() as never,
+    repositionBoardUntracked: vi.fn() as never,
     setDiagramCache: vi.fn() as never,
     setViewport: vi.fn() as never,
     selectBoard: vi.fn() as never,
