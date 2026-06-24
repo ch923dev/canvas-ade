@@ -18,6 +18,21 @@ describe('VIEWPORT_PRESETS', () => {
     expect(VIEWPORT_PRESETS.desktop).toMatchObject({ w: 1280, h: 800, notch: false })
   })
 
+  it('adds the wide-desktop tier: 1440p (qhd) 2560×1440 and 4K (uhd) 3840×2160 (v15)', () => {
+    expect(VIEWPORT_PRESETS.qhd).toMatchObject({ w: 2560, h: 1440, notch: false })
+    expect(VIEWPORT_PRESETS.uhd).toMatchObject({ w: 3840, h: 2160, notch: false })
+  })
+
+  it('keeps the 4K logical width under the 4096 sanitizeOsrSize cap (no clamp at 1×)', () => {
+    expect(VIEWPORT_PRESETS.uhd.w).toBeLessThanOrEqual(4096)
+  })
+
+  it('the desktop tier is all 16:9, distinct from desktop 16:10', () => {
+    expect(VIEWPORT_PRESETS.qhd.w / VIEWPORT_PRESETS.qhd.h).toBeCloseTo(16 / 9, 6)
+    expect(VIEWPORT_PRESETS.uhd.w / VIEWPORT_PRESETS.uhd.h).toBeCloseTo(16 / 9, 6)
+    expect(VIEWPORT_PRESETS.desktop.w / VIEWPORT_PRESETS.desktop.h).toBeCloseTo(16 / 10, 6)
+  })
+
   it('uses a larger radius for mobile (22) than desktop (8)', () => {
     expect(VIEWPORT_PRESETS.mobile.radius).toBe(22)
     expect(VIEWPORT_PRESETS.desktop.radius).toBe(8)

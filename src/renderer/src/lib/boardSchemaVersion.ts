@@ -41,8 +41,16 @@
  *   the inferred model (endpoints/schemas/entities/lineage) is body-derived + EPHEMERAL (ADR 0010) and
  *   is NEVER serialized (export to `.canvas/memory/` is the consent moment), so there are no new
  *   body-derived persisted fields.
+ * - v15 = two new BrowserBoard viewport presets — `qhd` (2560×1440, "1440p") and `uhd`
+ *   (3840×2160, "4K") — extending the closed `BrowserViewport` enum past mobile/tablet/desktop.
+ *   The values only appear on newly-selected boards, so existing docs have nothing to backfill
+ *   (identity migration). BREAKING (floor → 15): a pre-15 `assertBoard` rejects the unrecognized
+ *   viewport string and would fail the whole doc, so the compat floor moves to 15 for the clean
+ *   "update the app" message. This bump ALSO introduces the forward-compat clamp in `fromObject`
+ *   (an UNRECOGNIZED viewport coerces to `desktop` instead of failing) — so this is the LAST
+ *   viewport-enum floor bump: every future preset value rides through additively (floor stays 15).
  */
-export const SCHEMA_VERSION = 14
+export const SCHEMA_VERSION = 15
 
 /**
  * Two-tier versioning (ADR 0007): the compat floor stamped into every written doc as
@@ -66,7 +74,11 @@ export const SCHEMA_VERSION = 14
  * pre-13 apps show the clean "update the app to open it" message (assertReadableVersion) instead of a
  * confusing `.bak`-fallback parse failure. Floor moves to 14 with the v14 `dataflow` board type
  * (JD-4): an app older than 14 has no `dataflow` case in `assertBoard`, so it would HARD-FAIL on a doc
- * containing one — pre-14 apps get the clean update-the-app message instead. Every app from 14 on can
- * read all future additive docs.
+ * containing one — pre-14 apps get the clean update-the-app message instead. Floor moves to 15 with the
+ * v15 `qhd`/`uhd` viewport presets: an app older than 15 has those values absent from its `VIEWPORTS`
+ * set, so `assertBoard` rejects a board carrying one and would `.bak`-fallback. Stamping
+ * `minReaderVersion: 15` gives the clean update prompt instead. v15 is the LAST viewport floor bump —
+ * it adds the `fromObject` clamp (unknown viewport → `desktop`), so every app from 15 on reads all
+ * future additive viewport docs.
  */
-export const MIN_READER_VERSION = 14
+export const MIN_READER_VERSION = 15

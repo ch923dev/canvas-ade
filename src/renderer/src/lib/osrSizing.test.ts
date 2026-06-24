@@ -36,6 +36,16 @@ describe('computeOsrSize — logical size (M4 reflow)', () => {
     expect(computeOsrSize(BIG('tablet'), 3, 2)).toMatchObject({ logicalW: 834, logicalH: 1112 })
     expect(computeOsrSize(BIG('desktop'), 0.2, 1)).toMatchObject({ logicalW: 1280, logicalH: 800 })
   })
+
+  it('carries the wide-desktop tier logical box (1440p / 4K)', () => {
+    expect(computeOsrSize(BIG('qhd'), 1, 1)).toMatchObject({ logicalW: 2560, logicalH: 1440 })
+    expect(computeOsrSize(BIG('uhd'), 1, 1)).toMatchObject({ logicalW: 3840, logicalH: 2160 })
+  })
+
+  it('clamps the 4K supersample to the 2× cap (physical 3840×2 stays within GPU limits)', () => {
+    // fit saturates at 1.1 for BIG; 1.1 × 2 × 2 = 4.4 → clamp 2.0, so physical ≤ 3840·2 = 7680.
+    expect(computeOsrSize(BIG('uhd'), 2, 2).supersample).toBe(OSR_MAX_SUPERSAMPLE)
+  })
 })
 
 describe('computeOsrSize — supersample (M1 sharpness)', () => {

@@ -21,11 +21,12 @@
  * Security: this never touches the PTY. URL edits + nav go through the additive
  * `preview:*` control channel to the board's OWN offscreen webContents only.
  */
-import { useState, useRef, useEffect, type ReactElement } from 'react'
+import { useState, useRef, useEffect, type CSSProperties, type ReactElement } from 'react'
 import type { BrowserBoard as BrowserBoardData, BrowserViewport } from '../../lib/boardSchema'
 import { VIEWPORT_PRESETS, deviceFrameRect, TITLEBAR_H, URLBAR_H } from '../../lib/browserLayout'
 import { BoardFrame } from '../BoardFrame'
 import { Icon } from '../Icon'
+import { Menu } from '../Menu'
 import { useCanvasStore } from '../../store/canvasStore'
 import { usePreviewStore, selectRuntime } from '../../store/previewStore'
 import { useOsrLivenessStore } from '../../store/osrLivenessStore'
@@ -45,19 +46,46 @@ import { useOsrNetwork } from './osr/useOsrNetwork'
 import { OsrNetworkPanel } from './osr/OsrNetworkPanel'
 import { useOsrNetworkStore } from '../../store/osrNetworkStore'
 
-const VIEWPORTS: BrowserViewport[] = ['mobile', 'tablet', 'desktop']
+// The two device-class segments shown as icons; the wider desktop sizes collapse into the
+// DESKTOP_TIER dropdown so the control stays calm and scales to future presets (Candidate B).
+const DEVICE_SEGMENTS: readonly BrowserViewport[] = ['mobile', 'tablet']
+const DESKTOP_TIER: readonly BrowserViewport[] = ['desktop', 'qhd', 'uhd']
 const VP_ICON: Record<BrowserViewport, 'mobile' | 'tablet' | 'desktop'> = {
   mobile: 'mobile',
   tablet: 'tablet',
-  desktop: 'desktop'
+  // The desktop tier shares one monitor glyph — the dropdown's text labels disambiguate the sizes.
+  desktop: 'desktop',
+  qhd: 'desktop',
+  uhd: 'desktop'
 }
 const VP_LABEL: Record<BrowserViewport, string> = {
   mobile: 'Mobile',
   tablet: 'Tablet',
-  desktop: 'Desktop'
+  desktop: 'Desktop',
+  qhd: '1440p',
+  uhd: '4K'
 }
 
-/** One segment of the viewport control (icon; active also shows the label). */
+/** Shared segment chrome — mirrors the original VpToggle box so every segment lines up. */
+function segStyle(active: boolean): CSSProperties {
+  return {
+    height: 22,
+    padding: '0 8px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    border: 'none',
+    borderRadius: 4,
+    cursor: 'pointer',
+    background: active ? 'var(--accent-wash)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-3)',
+    fontSize: 11,
+    fontWeight: 500,
+    fontFamily: 'var(--ui)'
+  }
+}
+
+/** One device-class segment (icon; active also shows the label). */
 function VpToggle({
   vp,
   active,
@@ -72,21 +100,7 @@ function VpToggle({
       title={VP_LABEL[vp]}
       onClick={onClick}
       onMouseDown={(e) => e.stopPropagation()}
-      style={{
-        height: 22,
-        padding: '0 8px',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 5,
-        border: 'none',
-        borderRadius: 4,
-        cursor: 'pointer',
-        background: active ? 'var(--accent-wash)' : 'transparent',
-        color: active ? 'var(--accent)' : 'var(--text-3)',
-        fontSize: 11,
-        fontWeight: 500,
-        fontFamily: 'var(--ui)'
-      }}
+      style={segStyle(active)}
     >
       <Icon name={VP_ICON[vp]} size={13} />
       {active && <span>{VP_LABEL[vp]}</span>}
@@ -94,7 +108,87 @@ function VpToggle({
   )
 }
 
-/** Viewport segmented control (title-bar actions slot). */
+/** The desktop-size dropdown segment: a monitor glyph + (when a desktop size is active) its
+ *  label, plus a chevron. Clicking opens the shared Menu shell listing Desktop / 1440p / 4K with
+ *  their CSS box dims and a check on the current size. Accent-active whenever a tier size is live. */
+function DesktopTierControl({
+  value,
+  onChange
+}: {
+  value: BrowserViewport
+  onChange: (vp: BrowserViewport) => void
+}): ReactElement {
+  const [open, setOpen] = useState(false)
+  const anchorRef = useRef<HTMLSpanElement>(null)
+  const active = DESKTOP_TIER.includes(value)
+  return (
+    <span ref={anchorRef} style={{ display: 'inline-flex' }}>
+      <button
+        title="Desktop size"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onMouseDown={(e) => e.stopPropagation()}
+        style={segStyle(active)}
+      >
+        <Icon name="desktop" size={13} />
+        {active && <span>{VP_LABEL[value]}</span>}
+        <Icon name="chevron" size={11} />
+      </button>
+      {open && (
+        <Menu
+          anchor={anchorRef}
+          align="right"
+          label="Desktop size"
+          className="board-menu"
+          onClose={() => setOpen(false)}
+        >
+          {DESKTOP_TIER.map((vp) => {
+            const p = VIEWPORT_PRESETS[vp]
+            const on = vp === value
+            return (
+              <button
+                key={vp}
+                className="board-menu-item"
+                role="menuitemradio"
+                aria-checked={on}
+                onClick={() => {
+                  setOpen(false)
+                  onChange(vp)
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 14,
+                  color: on ? 'var(--accent)' : undefined
+                }}
+              >
+                <span>{VP_LABEL[vp]}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span
+                    style={{
+                      fontFamily: 'var(--mono)',
+                      fontSize: 10,
+                      color: on ? 'var(--accent)' : 'var(--text-3)'
+                    }}
+                  >
+                    {p.w}×{p.h}
+                  </span>
+                  {on ? <Icon name="check" size={12} /> : <span style={{ width: 12 }} />}
+                </span>
+              </button>
+            )
+          })}
+        </Menu>
+      )}
+    </span>
+  )
+}
+
+/** Viewport segmented control (title-bar actions slot): Mobile · Tablet icons + the
+ *  desktop-size dropdown (Candidate B). */
 function ViewportControl({
   value,
   onChange
@@ -115,9 +209,10 @@ function ViewportControl({
         border: '1px solid var(--border-subtle)'
       }}
     >
-      {VIEWPORTS.map((vp) => (
+      {DEVICE_SEGMENTS.map((vp) => (
         <VpToggle key={vp} vp={vp} active={vp === value} onClick={() => onChange(vp)} />
       ))}
+      <DesktopTierControl value={value} onChange={onChange} />
     </div>
   )
 }

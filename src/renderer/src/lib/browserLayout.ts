@@ -45,14 +45,19 @@ export interface ViewportPreset {
 }
 
 /**
- * Viewport presets (DESIGN.md §7.2): Mobile 390×844, Tablet 834×1112,
- * Desktop 1280×800. Widths {390,834,1280} match the proven responsive trick and
- * `cameraBounds.fitZoomFactor`'s preset widths.
+ * Viewport presets (DESIGN.md §7.2): Mobile 390×844, Tablet 834×1112, Desktop 1280×800,
+ * 1440p (qhd) 2560×1440, 4K (uhd) 3840×2160. The page lays out at the preset CSS width, so a
+ * responsive site reflows at the true breakpoint (M4); `qhd`/`uhd` are the wide-desktop tier
+ * surfaced behind the viewport-control dropdown (BrowserBoard `ViewportControl`). uhd's 3840
+ * width sits under the `sanitizeOsrSize` 4096 logical cap, and the renderer clamps the
+ * supersample to ≤2, so the physical render surface stays within GPU texture limits.
  */
 export const VIEWPORT_PRESETS: Record<BrowserViewport, ViewportPreset> = {
   mobile: { w: 390, h: 844, radius: 22, notch: true },
   tablet: { w: 834, h: 1112, radius: 12, notch: false },
-  desktop: { w: 1280, h: 800, radius: 8, notch: false }
+  desktop: { w: 1280, h: 800, radius: 8, notch: false },
+  qhd: { w: 2560, h: 1440, radius: 8, notch: false },
+  uhd: { w: 3840, h: 2160, radius: 8, notch: false }
 }
 
 /** The content well (below titlebar + URL bar), in board-LOCAL world px. */

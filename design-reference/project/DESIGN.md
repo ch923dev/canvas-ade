@@ -220,9 +220,15 @@ LOD and only the title (rendered at a zoom-compensated size) shows.
   (1px `--border-strong`, `--r-inner`, subtle inset). The frame *and the board*
   resize together — board chrome wraps the frame with 12px gutter.
 - **Viewport toggles** in the title-bar actions: a segmented control
-  `Mobile · Tablet · Desktop` (icon + active = `--accent` text on
-  `--accent-wash`). Switching sets the device frame's inner width:
-  - Mobile 390×844 · Tablet 834×1112 · Desktop 1280×800 (scaled to fit board).
+  `Mobile · Tablet · Desktop▾` (icon + active = `--accent` text on
+  `--accent-wash`). Mobile + Tablet are icon segments; the wider desktop sizes
+  collapse into a **dropdown** on the Desktop segment (monitor glyph + current
+  size label + chevron) listing each size with its CSS box + a check on the
+  current. Switching sets the device frame's inner width:
+  - Mobile 390×844 · Tablet 834×1112 · Desktop 1280×800 · 1440p 2560×1440 ·
+    4K 3840×2160 (scaled to fit board). 1440p/4K (the wide-desktop tier, v15)
+    are both 16:9, so their frames share a shape — the `W × H` readout
+    distinguishes them.
 - A compact **URL/route bar** above the frame: `◂ ▸ ⟳  localhost:5173 ▾` mono
   `--text-3`, with a live `--ok` "connected" dot. Right side: current viewport
   dimensions readout (`390 × 844`, mono `--text-3`).
