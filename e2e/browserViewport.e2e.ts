@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures'
-import { evalIn, seed } from './helpers'
+import { seed } from './helpers'
 
 // v15 wide-desktop presets (1440p / 4K) + the Candidate-B viewport control: Mobile · Tablet icon
 // segments plus a Desktop-size DROPDOWN (the shared Menu shell) listing Desktop / 1440p / 4K. This
@@ -8,14 +8,18 @@ import { evalIn, seed } from './helpers'
 // Unit coverage of the preset table / cycle / schema clamp lives in browserLayout/osrSizing/boardSchema
 // tests; this pins the wiring the units can't see.
 
-/** Read the seeded board's current viewport off the e2e store seam. */
+/**
+ * Read the seeded board's current viewport off the e2e store seam. Pass the id as a STRUCTURED ARG
+ * to page.evaluate — never interpolate a page-returned value into eval'd source (CodeQL
+ * js/bad-code-sanitization; mirrors da2a1d1c's structured-arg fix).
+ */
 function readViewport(page: import('@playwright/test').Page, id: string): Promise<string | null> {
-  return evalIn<string | null>(
-    page,
-    `(() => { const b = window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(
-      id
-    )}); return b ? b.viewport : null })()`
-  )
+  return page.evaluate((a) => {
+    const g = globalThis as unknown as {
+      __canvasE2E: { getBoards(): Array<{ id: string; viewport?: string }> }
+    }
+    return g.__canvasE2E.getBoards().find((b) => b.id === a)?.viewport ?? null
+  }, id)
 }
 
 test.describe('@preview browser viewport control (1440p / 4K desktop-size dropdown)', () => {
@@ -24,7 +28,11 @@ test.describe('@preview browser viewport control (1440p / 4K desktop-size dropdo
   }) => {
     const id = await seed(page, 'browser', { url: 'http://127.0.0.1:9/', viewport: 'desktop' })
     await page.waitForTimeout(150)
-    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(id)})`)
+    // Structured arg (not interpolated) — same CodeQL-safe pattern as readViewport.
+    await page.evaluate((a) => {
+      const g = globalThis as unknown as { __canvasE2E: { fitView(id: string): void } }
+      g.__canvasE2E.fitView(a)
+    }, id)
 
     // The control: Mobile + Tablet icon segments and the Desktop-size dropdown trigger.
     await expect(page.getByTitle('Mobile')).toBeVisible()
