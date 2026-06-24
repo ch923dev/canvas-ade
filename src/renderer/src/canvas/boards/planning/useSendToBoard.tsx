@@ -85,6 +85,13 @@ export function useSendToBoard({
       const taken = board.elements.filter(
         (e) => expanded.has(e.id) && (mode === 'copy' || !isLocked(e))
       )
+      // Nothing will transfer (an empty selection, or a Move whose every member is locked) → bail
+      // BEFORE addBoard, or the "+ New planning board" branch would spawn an orphan empty board
+      // (transferElements would then no-op with no feedback). Mirrors the engine's empty-payload guard.
+      if (taken.length === 0) {
+        setOpen(null)
+        return
+      }
       const union = unionBBox(taken.map((e) => elementBBox(e)))
       const at = (w: number, h: number): { x: number; y: number } => ({
         x: Math.max(16, w / 2 - union.w / 2),

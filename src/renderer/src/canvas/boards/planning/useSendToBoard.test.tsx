@@ -174,6 +174,33 @@ describe('useSendToBoard — "+ New planning board"', () => {
     const atX = Math.max(16, d.w / 2 - union.w / 2)
     expect(Math.min(...(fresh as PlanningBoardData).elements.map((e) => e.x))).toBe(atX)
   })
+
+  it('an all-locked Move to NEW spawns NO board (and no toast — no orphan)', () => {
+    const src = useCanvasStore.getState().addBoard('planning', { x: 0, y: 0 })
+    useCanvasStore.getState().updateBoard(src, {
+      elements: [
+        {
+          id: 'lk',
+          kind: 'note',
+          x: 0,
+          y: 0,
+          w: 100,
+          h: 50,
+          text: 'L',
+          rotation: 0,
+          locked: true
+        } as PlanningElement
+      ]
+    })
+    const before = useCanvasStore.getState().boards.length
+
+    const p = openPick(src, ['lk']).pick()
+    act(() => p({ target: NEW_PLANNING_BOARD, mode: 'move' }))
+
+    expect(useCanvasStore.getState().boards).toHaveLength(before) // no orphan board spawned
+    expect(elsOf(src)).toHaveLength(1) // the locked element stayed put
+    expect(useToastStore.getState().toasts).toHaveLength(0)
+  })
 })
 
 describe('useSendToBoard — confirmation toast (Q3)', () => {
