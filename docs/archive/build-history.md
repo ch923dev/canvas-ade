@@ -969,3 +969,31 @@ eslint net-zero). typecheck · lint (0 err) · format. Rebuilt the Windows insta
 packaged headless smoke boots clean (reactflow/xterm/webgl, real PTY); the exec-form hook writes the recap
 map with a spaced path (the exact prior failure). Pre-push full e2e matrix green both legs (Windows 200
 passed / 1 known dataFlow flake retried / 1 skip; Linux Docker green). PR #240 CI green on the rebased head.
+
+## 2026-06-24 — Browser board: 1440p + 4K viewport presets (schema v15) — #239 (`701c5fe2`)
+
+Two wide-desktop Browser-board viewport presets — **1440p** (`qhd`, 2560×1440) and **4K** (`uhd`,
+3840×2160) — added alongside Mobile/Tablet/Desktop. The page lays out at the preset CSS width (a true
+responsive reflow, not just a bigger frame). The viewport control keeps Mobile/Tablet as icon segments
+and collapses the desktop sizes into a **dropdown** (the shared `Menu` shell): Desktop / 1440p / 4K, each
+row showing its `W×H` box with a check on the current (Candidate B, mock-signed-off before code).
+
+- **schema v15** (ADR 0007): `BrowserViewport` enum + `VIEWPORTS` gain `qhd`/`uhd`; identity migration
+  14→15; `MIN_READER_VERSION → 15` (a new viewport value is breaking — a pre-15 `assertBoard` rejects it,
+  so pre-15 apps get the clean update-the-app message). `fromObject` now **clamps an unrecognized viewport
+  → `desktop`** (forward-compat, degrade-not-reject) → the LAST viewport floor bump; future presets ride
+  additively. `assertBoard` stays strict (MCP-path defense-in-depth). MAIN mirror (`projectStore.ts`)
+  bumped lock-step.
+- **sizing/perf**: `VIEWPORT_PRESETS` gains qhd/uhd (radius 8, no notch); all sizing math is data-driven
+  (no logic change). 4K's 3840 logical width is under the `sanitizeOsrSize` 4096 cap; supersample ≤2 keeps
+  physical (7680×4320) within the GPU surface ceiling; MAX_LIVE + paint-gating contain the heaviest board.
+- `viewportCycle` (Duplicate→next) + `tidyLayout` sort rank extended; `DESIGN.md` §7.2 updated.
+
+**Verification:** Candidate B mock signed off, then live dev check (title-stamped build) — the dropdown +
+`W × H` readout matched. Gate: typecheck · lint (0 err) · format · unit+integration (3569). Full e2e
+matrix both legs green (Windows 201 / Linux 201; the `@preview` browserViewport spec deterministic; the
+two recurring flakes — browserNetwork library-panel leak + osrCropSupersample crash cascade — self-healed
+on retry and pass 13/13 in isolation). CodeQL alert #96 (an id interpolated into eval'd e2e source) fixed
+via a structured `page.evaluate` arg (mirrors `da2a1d1c`) + inline disposition. Rebased four times as main
+advanced (dataflow v14 collision → v15; #238; #237 dup `sendSync` stub; #240/#241 disjoint). PR #239 CI
+green (check · analyze · CodeQL · claude-review 0 crit / 0 warn).
