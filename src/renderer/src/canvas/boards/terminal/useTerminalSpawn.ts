@@ -52,6 +52,7 @@ import { installSelectionShim } from './terminalSelection'
 import { useTerminalWebgl } from './useTerminalWebgl'
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
+import { resolveInitialScrollback } from './terminalScrollback'
 import { useSettledZoomStore } from '../../../store/settledZoomStore'
 
 /** xterm palette mirrored from the design tokens (DESIGN.md §2). */
@@ -284,6 +285,18 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     fontSizeRef.current = board.fontSize
   }, [board.fontSize])
 
+  // board.scrollback for the spawn closure's INITIAL xterm construction (read via a ref so a
+  // change is never a spawn dep), AND applied live to an existing term: xterm's `scrollback`
+  // option is mutable, so an edit takes effect WITHOUT respawning the PTY — no session loss,
+  // mirroring the live font seam. Lowering it trims the oldest buffered lines; raising is lossless.
+  const scrollbackRef = useRef<number | undefined>(board.scrollback)
+  useEffect(() => {
+    scrollbackRef.current = board.scrollback
+    const term = termRef.current
+    const next = resolveInitialScrollback(board.scrollback)
+    if (term && term.options.scrollback !== next) term.options.scrollback = next
+  }, [board.scrollback])
+
   // Live camera zoom source for the selection shim. We read it from the React Flow store
   // AT MOUSE-EVENT TIME (transform[2]) rather than via useOnViewportChange: the latter's
   // onChange does not fire for programmatic, zero-duration zoom (e.g. rf.zoomTo) — only for
@@ -502,10 +515,11 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       cursorBlink: true,
       theme: THEME,
       allowProposedApi: true,
-      // Bounded scrollback (perf SLICE-012): xterm retains ~12 B/cell, so 5000 lines pins
-      // ~7 MB/terminal that never releases while a board stays mounted at LOD (~137 MB across 20
-      // terminals). 2000 keeps generous history at ~40% of the resident buffer. UX-tunable.
-      scrollback: 2000,
+      // Bounded scrollback (perf SLICE-012): xterm retains ~12 B/cell that never releases while a
+      // board stays mounted at LOD. Now configurable per board (Appearance tab) with a sticky
+      // default; absent => 2000. Capped at 50000 (~70 MB worst case/terminal — see
+      // terminalScrollback.ts) so a runaway log can't exhaust RAM. No "unlimited" by design.
+      scrollback: resolveInitialScrollback(scrollbackRef.current),
       // A-Win (terminal-scrollback fix § A-Win): on Windows 11 ConPTY (build ≥ 21376) tell xterm the
       // ConPTY context so its resize/scrollback handling aligns with ConPTY's own screen reprint —
       // this cuts the xterm⇄ConPTY double-layout that duplicates/garbles rows on a resize (the

@@ -22,6 +22,7 @@ import {
   type TextColorToken
 } from '../canvas/boards/planning/textStyle'
 import { MAX_TERMINAL_FONT, MIN_TERMINAL_FONT } from '../canvas/boards/terminal/terminalFont'
+import { clampScrollback } from '../canvas/boards/terminal/terminalScrollback'
 import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
 
 /**
@@ -117,6 +118,13 @@ export interface TerminalBoard extends BoardCommon {
    * + default-at-read => NO SCHEMA_VERSION bump (mirrors previewSourceId / agentSessionId).
    */
   fontSize?: number
+  /**
+   * Per-board xterm scrollback in lines (output retained above the viewport). Absent => the
+   * sticky default (else 2000). Optional + default-at-read => NO SCHEMA_VERSION bump (mirrors
+   * fontSize). Bounded [0, 50000] (perf cap SLICE-012 — xterm retains ~12 B/cell that never
+   * releases); an out-of-band hand-edited value is clamped at read in fromObject.
+   */
+  scrollback?: number
   /**
    * v10: which agentic-CLI preset this terminal was created from (e.g. 'claude' | 'codex' |
    * 'gemini' | 'opencode' | 'shell' | a custom id). Identity metadata only — the actual exec
@@ -859,6 +867,9 @@ function assertBoard(b: unknown): void {
       if (b.fontSize !== undefined && !isPositiveNum(b.fontSize)) {
         fail('terminal fontSize must be a positive number')
       }
+      if (b.scrollback !== undefined && (!isFiniteNum(b.scrollback) || b.scrollback < 0)) {
+        fail('terminal scrollback must be a non-negative number')
+      }
       if (b.agentKind !== undefined && typeof b.agentKind !== 'string') {
         fail('terminal agentKind is not a string')
       }
@@ -1057,6 +1068,9 @@ export function fromObject(doc: unknown): CanvasDoc {
     b.h = Math.max(MIN_BOARD_SIZE.h, b.h)
     if (b.type === 'terminal' && b.fontSize !== undefined) {
       b.fontSize = Math.min(MAX_TERMINAL_FONT, Math.max(MIN_TERMINAL_FONT, b.fontSize))
+    }
+    if (b.type === 'terminal' && b.scrollback !== undefined) {
+      b.scrollback = clampScrollback(b.scrollback)
     }
   }
   // Drop a preview link whose source board is no longer present (Slice C′) — a

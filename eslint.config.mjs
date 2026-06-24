@@ -25,6 +25,10 @@ export default tseslint.config(
       'design-reference/**',
       // Harness-managed agent worktrees (each carries its own out/ build bundle).
       '.claude/**',
+      // Per-project Canvas-ADE runtime data (ADR 0009): canvas.json/assets + scratch in
+      // .canvas/tmp/ (one-off .mjs shot scripts etc.). Gitignored runtime state, hidden from
+      // the File Tree and already prettier-ignored — not project source.
+      '.canvas/**',
       // Session worktrees checked out inside the repo dir (parallel-session
       // convention) — each is its own lint root; linting them from main trips
       // tsconfigRootDir ambiguity and double-lints in-flight branches.

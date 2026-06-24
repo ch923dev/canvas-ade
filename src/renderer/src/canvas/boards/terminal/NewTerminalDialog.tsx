@@ -38,6 +38,12 @@ import {
   DEFAULT_TERMINAL_FONT,
   resolveInitialFont
 } from './terminalFont'
+import {
+  DEFAULT_TERMINAL_SCROLLBACK,
+  SCROLLBACK_PRESETS,
+  resolveInitialScrollback,
+  writeStickyScrollback
+} from './terminalScrollback'
 
 const DEFAULT_PRESET = 'claude'
 
@@ -87,6 +93,11 @@ export function NewTerminalDialog({
   const [monitor, setMonitor] = useState(board.monitorActivity !== false)
   const seedFont = resolveInitialFont(board.fontSize)
   const [font, setFont] = useState(seedFont)
+  // Scrollback: seed from the board pin else the sticky default. The dialog is scrollback's ONLY
+  // entry point (no in-terminal gesture like font's Ctrl+/-), so apply both pins the board AND
+  // writes the sticky default for the next new terminal.
+  const seedScrollback = resolveInitialScrollback(board.scrollback)
+  const [scrollback, setScrollback] = useState(seedScrollback)
 
   // Shell list (OS-aware). Only PERSIST a shell the user actually picked: the select auto-seeds
   // to list[0] for display when the board has no explicit shell, but persisting that auto-seed
@@ -135,9 +146,12 @@ export function NewTerminalDialog({
       // Create omits the key when monitoring is on (stays absent = true); edit writes the
       // explicit boolean so the user can toggle it back ON after a prior opt-out.
       ...(editing ? { monitorActivity: monitor } : monitor ? {} : { monitorActivity: false }),
-      // Only pin a font that differs from the sticky default seed (else follow it).
-      ...(font !== seedFont ? { fontSize: font } : {})
+      // Only pin a font/scrollback that differs from the seed (else follow the sticky default).
+      ...(font !== seedFont ? { fontSize: font } : {}),
+      ...(scrollback !== seedScrollback ? { scrollback } : {})
     })
+    // Scrollback's only entry point is this dialog → it owns the sticky new-terminal default.
+    if (scrollback !== seedScrollback) writeStickyScrollback(scrollback)
     onClose()
   }, [
     beginChange,
@@ -152,6 +166,8 @@ export function NewTerminalDialog({
     monitor,
     font,
     seedFont,
+    scrollback,
+    seedScrollback,
     editing,
     onClose
   ])
@@ -288,29 +304,57 @@ export function NewTerminalDialog({
           </button>
         </>
       ) : (
-        <Field label="Font size">
-          <div style={fontRow}>
-            <button
-              type="button"
-              style={{ ...stepBtn, ...(font <= MIN_TERMINAL_FONT ? stepOff : null) }}
-              onClick={() => setFont((f) => Math.max(MIN_TERMINAL_FONT, f - 1))}
-              disabled={font <= MIN_TERMINAL_FONT}
-            >
-              A{'−'}
-            </button>
-            <span style={fontVal}>
-              {font === DEFAULT_TERMINAL_FONT ? `${font} (default)` : font}
-            </span>
-            <button
-              type="button"
-              style={{ ...stepBtn, ...(font >= MAX_TERMINAL_FONT ? stepOff : null) }}
-              onClick={() => setFont((f) => Math.min(MAX_TERMINAL_FONT, f + 1))}
-              disabled={font >= MAX_TERMINAL_FONT}
-            >
-              A+
-            </button>
-          </div>
-        </Field>
+        <>
+          <Field label="Font size">
+            <div style={fontRow}>
+              <button
+                type="button"
+                style={{ ...stepBtn, ...(font <= MIN_TERMINAL_FONT ? stepOff : null) }}
+                onClick={() => setFont((f) => Math.max(MIN_TERMINAL_FONT, f - 1))}
+                disabled={font <= MIN_TERMINAL_FONT}
+              >
+                A{'−'}
+              </button>
+              <span style={fontVal}>
+                {font === DEFAULT_TERMINAL_FONT ? `${font} (default)` : font}
+              </span>
+              <button
+                type="button"
+                style={{ ...stepBtn, ...(font >= MAX_TERMINAL_FONT ? stepOff : null) }}
+                onClick={() => setFont((f) => Math.min(MAX_TERMINAL_FONT, f + 1))}
+                disabled={font >= MAX_TERMINAL_FONT}
+              >
+                A+
+              </button>
+            </div>
+          </Field>
+          <Field label="Scrollback">
+            <>
+              <div style={sbRow} data-test="terminal-scrollback">
+                {SCROLLBACK_PRESETS.map((n) => {
+                  const on = scrollback === n
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      style={on ? { ...sbChip, ...sbChipOn } : sbChip}
+                      onClick={() => setScrollback(n)}
+                      aria-pressed={on}
+                      data-test={`scrollback-${n}`}
+                    >
+                      {n.toLocaleString()}
+                      {n === DEFAULT_TERMINAL_SCROLLBACK && <span style={sbSub}>default</span>}
+                    </button>
+                  )
+                })}
+              </div>
+              <span style={sbHint}>
+                Lines of output kept above the viewport. More history stays searchable, using more
+                memory.
+              </span>
+            </>
+          </Field>
+        </>
       )}
 
       <div style={footer}>
@@ -493,6 +537,42 @@ const fontVal: CSSProperties = {
   fontFamily: 'var(--mono)',
   fontSize: 12,
   color: 'var(--text-2)'
+}
+const sbRow: CSSProperties = { display: 'flex', gap: 6 }
+const sbChip: CSSProperties = {
+  flex: 1,
+  height: 32,
+  borderRadius: 'var(--r-ctl)',
+  border: '1px solid var(--border-subtle)',
+  background: 'var(--inset)',
+  color: 'var(--text-2)',
+  fontFamily: 'var(--ui)',
+  fontSize: 12.5,
+  cursor: 'pointer',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 1.1
+}
+const sbChipOn: CSSProperties = {
+  background: 'var(--accent-wash)',
+  borderColor: 'var(--accent)',
+  color: 'var(--accent)',
+  boxShadow: '0 0 0 1px var(--accent)'
+}
+const sbSub: CSSProperties = {
+  fontSize: 9,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+  opacity: 0.85,
+  marginTop: 1
+}
+const sbHint: CSSProperties = {
+  fontSize: 11,
+  lineHeight: '15px',
+  color: 'var(--text-3)',
+  marginTop: 2
 }
 const footer: CSSProperties = {
   display: 'flex',

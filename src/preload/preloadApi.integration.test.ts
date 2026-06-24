@@ -19,7 +19,11 @@ vi.mock('electron', () => ({
   ipcRenderer: {
     invoke: h.invoke,
     on: vi.fn(),
-    removeListener: vi.fn()
+    removeListener: vi.fn(),
+    // The preload reads osWinBuild once at module load via a synchronous platform:winBuild
+    // round-trip — but ONLY on win32 (A-Win, #230). Without this stub every test in this file
+    // throws "sendSync is not a function" on a Windows dev box (Linux CI never hits the branch).
+    sendSync: vi.fn(() => null)
   }
 }))
 

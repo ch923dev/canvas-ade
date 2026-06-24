@@ -1882,6 +1882,39 @@ describe('terminal fontSize patch', () => {
   })
 })
 
+describe('terminal scrollback patch', () => {
+  it('updateBoard persists scrollback on a terminal (PATCHABLE_KEYS.terminal)', () => {
+    const t = createBoard('terminal', { id: 't1', x: 0, y: 0 }) as TerminalBoard
+    useCanvasStore.setState({
+      boards: [t],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().updateBoard('t1', { scrollback: 10000 } as Partial<TerminalBoard>)
+    expect((useCanvasStore.getState().boards[0] as TerminalBoard).scrollback).toBe(10000)
+  })
+  it('drops a scrollback patched onto a browser (cross-type guard)', () => {
+    const b = createBoard('browser', { id: 'b1', x: 0, y: 0 })
+    useCanvasStore.setState({
+      boards: [b],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore.getState().updateBoard('b1', { scrollback: 10000 } as Partial<TerminalBoard>)
+    expect(
+      (useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>).scrollback
+    ).toBeUndefined()
+  })
+})
+
 describe('patchBoardUntracked (BUG-057)', () => {
   beforeEach(() => {
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })

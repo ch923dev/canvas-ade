@@ -1,0 +1,250 @@
+<!doctype html>
+<!--
+  Phase 3 design artifact — configurable + persisted terminal scrollback.
+  Throwaway token-accurate mock of the New/Settings Terminal dialog's APPEARANCE tab,
+  showing the existing Font size stepper + the NEW Scrollback preset row. Tokens copied
+  verbatim from src/renderer/src/styles/tokens.css; field styles mirror NewTerminalDialog.tsx.
+  Rendered + screenshotted for pixel sign-off before any code (design-before-code rule).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 3 — Scrollback field mock</title>
+    <style>
+      :root {
+        --ui: system-ui, -apple-system, sans-serif;
+        --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+        --void: #0a0a0b;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --r-inner: 6px;
+        --r-ctl: 5px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        display: flex;
+        gap: 40px;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 44px 24px;
+      }
+      .stage {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: center;
+      }
+      .caption {
+        font-size: 11px;
+        color: var(--text-3);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      /* ---- dialog card (mirrors NewTerminalDialog `card`) ---- */
+      .card {
+        width: 460px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border-subtle);
+        border-radius: 10px;
+        box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 13px;
+      }
+      .dlg-title {
+        text-align: center;
+        font-size: 15px;
+        line-height: 22px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+      }
+      /* segmented Details / Appearance */
+      .seg {
+        align-self: center;
+        display: inline-flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--inset);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-ctl);
+      }
+      .seg-btn {
+        height: 24px;
+        padding: 0 14px;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-3);
+        font-family: var(--ui);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .seg-on {
+        background: var(--accent-wash);
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .field-label {
+        font-size: 11px;
+        color: var(--text-3);
+        font-weight: 500;
+      }
+      /* Font size stepper (existing) */
+      .font-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .step-btn {
+        height: 28px;
+        width: 36px;
+        border-radius: var(--r-ctl);
+        border: 1px solid var(--border-subtle);
+        background: var(--inset);
+        color: var(--text);
+        font-family: var(--ui);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .font-val {
+        min-width: 80px;
+        text-align: center;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      /* Scrollback preset chips (NEW) */
+      .sb-row {
+        display: flex;
+        gap: 6px;
+      }
+      .sb-chip {
+        flex: 1;
+        height: 32px;
+        border-radius: var(--r-ctl);
+        border: 1px solid var(--border-subtle);
+        background: var(--inset);
+        color: var(--text-2);
+        font-family: var(--ui);
+        font-size: 12.5px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        line-height: 1.1;
+      }
+      .sb-chip .sub {
+        font-size: 9px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-3);
+        margin-top: 1px;
+      }
+      .sb-on {
+        background: var(--accent-wash);
+        border-color: var(--accent);
+        color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+      .sb-on .sub {
+        color: var(--accent);
+        opacity: 0.85;
+      }
+      .sb-hint {
+        font-size: 11px;
+        line-height: 15px;
+        color: var(--text-3);
+        margin-top: 2px;
+      }
+      /* footer */
+      .footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 2px;
+      }
+      .btn {
+        height: 30px;
+        padding: 0 14px;
+        border-radius: var(--r-ctl);
+        border: 1px solid var(--border-subtle);
+        background: transparent;
+        color: var(--text-2);
+        font-family: var(--ui);
+        font-size: 12.5px;
+        cursor: pointer;
+      }
+      .btn-primary {
+        border: 1px solid var(--accent);
+        background: var(--accent-wash);
+        color: var(--accent);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <div class="caption">Appearance tab — Font size + new Scrollback</div>
+      <div class="card">
+        <div class="dlg-title">Terminal Settings</div>
+        <div class="seg">
+          <button class="seg-btn">Details</button>
+          <button class="seg-btn seg-on">Appearance</button>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Font size</span>
+          <div class="font-row">
+            <button class="step-btn">A−</button>
+            <span class="font-val">12.5 (default)</span>
+            <button class="step-btn">A+</button>
+          </div>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Scrollback</span>
+          <div class="sb-row">
+            <button class="sb-chip">1,000</button>
+            <button class="sb-chip sb-on">2,000<span class="sub">default</span></button>
+            <button class="sb-chip">10,000</button>
+            <button class="sb-chip">50,000</button>
+          </div>
+          <span class="sb-hint"
+            >Lines of output kept above the viewport. More history stays searchable, using more
+            memory.</span
+          >
+        </label>
+
+        <div class="footer">
+          <button class="btn">Cancel</button>
+          <button class="btn btn-primary">Apply &amp; restart</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
