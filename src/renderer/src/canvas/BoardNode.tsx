@@ -124,6 +124,9 @@ export interface BoardViewProps<T extends Board = Board> {
   onPushPreviewTo?: (url: string, target: ResolvedPushTarget) => void
   /** M2: title-bar connector handle → begin a connector drag from this board. */
   onStartConnect?: () => void
+  /** Camera-fit focus on ANY board id (focusBoardById) — the cross-board transfer toast's
+   *  Focus action jumps to the destination through this. Not bound to this board's id. */
+  onFocusBoard?: (id: string) => void
 }
 
 /**
@@ -215,6 +218,8 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     ? (url: string, target: ResolvedPushTarget): void => acts.pushPreviewTo(board.id, url, target)
     : undefined
   const onStartConnect = acts ? (): void => acts.startConnect(board.id) : undefined
+  // Not bound to this board's id — the transfer toast focuses an arbitrary DESTINATION board.
+  const onFocusBoard = acts ? (id: string): void => acts.focusBoard(id) : undefined
   const actions = {
     onFull,
     onDuplicate,
@@ -223,7 +228,8 @@ export function BoardNode({ data, selected = false }: NodeProps<BoardFlowNode>):
     onRemoveFromGroup,
     onRemoveFromAllGroups,
     onPushPreviewTo,
-    onStartConnect
+    onStartConnect,
+    onFocusBoard
   }
 
   // The hover div lives only in the full-chrome render; the LOD card (non-terminal)

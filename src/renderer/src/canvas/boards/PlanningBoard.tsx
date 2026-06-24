@@ -65,6 +65,7 @@ import {
 } from './planning/elements'
 import { buildContextMenuEntries } from './planning/contextMenuEntries'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
+import { useSendToBoard } from './planning/useSendToBoard'
 import { usePlanningKeyboard } from './planning/usePlanningKeyboard'
 import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
@@ -84,7 +85,8 @@ export function PlanningBoard({
   onAddToGroup,
   onRemoveFromGroup,
   onRemoveFromAllGroups,
-  onStartConnect
+  onStartConnect,
+  onFocusBoard
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -144,6 +146,15 @@ export function PlanningBoard({
     y: number
     entries: MenuEntry[]
   } | null>(null)
+
+  // "Send to board…" picker (cross-board element transfer, Phase 2). The hook owns the picker
+  // state + routes the pick through `transferElements`; the board threads the menu's
+  // `onOpenSendTo` (anchored at the current menu position) and renders `sendToPanel`.
+  const { onOpenSendTo, sendToPanel } = useSendToBoard({
+    board,
+    onFocusBoard,
+    menuAnchor: contextMenu
+  })
 
   // Live DOM sizes (board-local px) for the auto-sized kinds (text, checklist), fed by
   // the cards. Refines elementBBox for marquee/snap; a plain ref (no re-render needed —
@@ -419,9 +430,10 @@ export function PlanningBoard({
         commit,
         clearSel,
         setSelectedIds,
-        newId
+        newId,
+        onOpenSendTo
       }),
-    [elements, beginChange, commit, clearSel, board.w, board.h]
+    [elements, beginChange, commit, clearSel, board.w, board.h, onOpenSendTo]
   )
 
   // ── Well keyboard handlers (D3-C extraction) ─────────────────────────────────
@@ -845,6 +857,7 @@ export function PlanningBoard({
           onClose={() => setContextMenu(null)}
         />
       )}
+      {sendToPanel}
     </BoardFrame>
   )
 }

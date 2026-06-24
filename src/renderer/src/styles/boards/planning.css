@@ -115,3 +115,114 @@
     transition: none;
   }
 }
+
+/* "Send to board…" picker (cross-board element transfer, Phase 2 — SendToBoardPanel).
+   Lifted from the approved mock (docs/research/mocks/send-to-board-panel-mock.html), which
+   recreates the `.ca-port-picker` family with the real tokens. Calm/dense Linear-Raycast
+   feel; one accent (functional only); no gradients/glow (DESIGN.md §2). The panel portals
+   to <body> at the cursor, so it is screen-fixed — not inside a `.pl-well`. */
+.pl-sendto {
+  width: 248px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: 8px 10px;
+  font-family: var(--ui);
+  font-size: 12px;
+  color: var(--text-2);
+  box-shadow: var(--shadow-board);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pl-sendto-title {
+  color: var(--text-3);
+  font-size: 11px;
+}
+/* Copy / Move radio (spec §3.A). Native radios with the accent colour — same treatment as
+   the connect-picker's choice inputs. */
+.pl-sendto-mode {
+  display: flex;
+  gap: 18px;
+  padding: 2px 1px 4px;
+}
+.pl-sendto-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.pl-sendto-radio input {
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+/* The selected mode reads brighter (the only state cue — calm, no fill). */
+.pl-sendto-radio-on {
+  color: var(--text);
+}
+/* Hairline between the mode toggle and the destination list. */
+.pl-sendto-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 1px -10px 3px;
+}
+/* Destination rows — raised surface, subtle border, left-aligned; each board picks
+   immediately on click (the transfer is one undo step). */
+.pl-sendto-board {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font-family: var(--ui);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctl);
+  padding: 6px 8px;
+  cursor: pointer;
+  width: 100%;
+}
+.pl-sendto-board:hover {
+  border-color: var(--border-strong);
+  background: var(--surface);
+}
+.pl-sendto-board:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.pl-sendto-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+.pl-sendto-board:hover .pl-sendto-ico {
+  color: var(--text-2);
+}
+.pl-sendto-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* "+ New planning board" — the create action; accent-tinted + dashed to read as
+   "make a destination" rather than "an existing one". */
+.pl-sendto-new {
+  color: var(--accent);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+}
+.pl-sendto-new:hover {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+}
+.pl-sendto-new .pl-sendto-ico {
+  color: var(--accent);
+}
