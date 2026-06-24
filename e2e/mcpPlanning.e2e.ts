@@ -248,7 +248,12 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
           title: 'Auth refactor',
           section: 'Build',
           items: [
-            { label: 'Audit current session mw', done: true },
+            // A deliberately long label (> the ~35-char wrap width at 300px) so W-label-wrap is
+            // exercised end-to-end: it must render across multiple lines, not truncate.
+            {
+              label: 'Audit the current session middleware end-to-end before the Steam launch',
+              done: true
+            },
             { label: 'Wire confirm gate', done: false }
           ]
         },
@@ -297,6 +302,22 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     expect(dia.w).toBeGreaterThan(280)
     expect(dia.h).toBeGreaterThan(200)
     expect(dia.h).toBeGreaterThan(dia.w) // portrait, since the source is `graph TD` (vertical)
+    // W-label-wrap: the long checklist item label rendered ACROSS multiple lines (the auto-growing
+    // textarea grew past one 16px row) instead of truncating — the user's readability ask, verified
+    // through the real render. The card's own ResizeObserver then grows the board to fit.
+    const labelHeight = await page.evaluate(() => {
+      // The e2e tsconfig has no DOM lib, so reach the browser globals through a minimal cast
+      // (mirrors the __canvasE2E probe pattern) rather than naming `document`/HTMLTextAreaElement.
+      const g = globalThis as unknown as {
+        document: {
+          querySelectorAll(s: string): ArrayLike<{ value: string; offsetHeight: number }>
+        }
+      }
+      const tas = Array.from(g.document.querySelectorAll('.pl-check textarea'))
+      const long = tas.find((t) => t.value.startsWith('Audit the current session'))
+      return long ? long.offsetHeight : 0
+    })
+    expect(labelHeight).toBeGreaterThan(20) // > one 16px line → it wrapped + auto-grew
     // Frame the planning board + let the cards measure/grow, then capture a visual of the columns.
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
     await page.waitForTimeout(700)
