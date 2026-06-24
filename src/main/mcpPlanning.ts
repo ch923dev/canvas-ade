@@ -91,8 +91,11 @@ export function sanitizePlanningText(raw: unknown, max: number, field: string): 
  * `undefined` when absent/empty. Unlike {@link sanitizePlanningText} (which keeps newlines for
  * note bodies), a section is a heading: all whitespace (incl. newlines/tabs) collapses to single
  * spaces — so it can't forge multiple confirm-body lines — and C0/C1/DEL controls are stripped.
- * An empty-after-sanitize value is dropped to `undefined` (treated as "no section") rather than
- * rejected, so a blank tag just falls back to the masonry instead of failing the whole batch.
+ * The bracket chars `[`/`]` are also stripped: the confirm body wraps the section as `[label]`, so
+ * a section like `Build] Note:` would otherwise blur the label/kind boundary on that line and
+ * weaken the "human sees the TRUE structure" premise (ADR 0003). An empty-after-sanitize value is
+ * dropped to `undefined` (treated as "no section") rather than rejected, so a blank tag just falls
+ * back to the masonry instead of failing the whole batch.
  */
 function sanitizeSection(raw: unknown, index: number): string | undefined {
   if (raw === undefined || raw === null) return undefined
@@ -103,6 +106,7 @@ function sanitizeSection(raw: unknown, index: number): string | undefined {
   for (const ch of raw.replace(/\s+/g, ' ')) {
     const code = ch.codePointAt(0) ?? 0
     if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
+    if (code === 0x5b || code === 0x5d) continue // [ / ] — would blur the [label] confirm boundary
     out += ch
   }
   const trimmed = out.trim()
@@ -246,7 +250,8 @@ export function renderPlanningConfirmBody(boardTitle: string, ops: PlanningOp[])
   ]
   for (const op of ops) {
     // Surface the agent's column label (2a) so the human sees the structure being written, not just
-    // the content. Already sanitized to a single line in buildOp, so it can't forge body lines.
+    // the content. Already sanitized in buildOp to a single line with no `[`/`]`, so it can neither
+    // forge new body lines nor blur this line's [label]/kind boundary.
     const sec = op.section ? `[${op.section}] ` : ''
     switch (op.kind) {
       case 'note':

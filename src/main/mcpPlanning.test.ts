@@ -150,6 +150,16 @@ describe('buildPlanningOps', () => {
       expect('section' in op).toBe(false)
     })
 
+    it('🔒 strips [ and ] so a section cannot blur the [label] confirm boundary', () => {
+      const [op] = buildPlanningOps([{ kind: 'note', text: 'n', section: 'Build] Note: injected' }])
+      expect(op.section).toBe('Build Note: injected') // brackets gone → no boundary spoof
+      const body = renderPlanningConfirmBody('P', [op])
+      // Exactly one '[' / ']' pair survives — the genuine wrapper the host adds, not the agent's.
+      expect((body.match(/\[/g) ?? []).length).toBe(1)
+      expect((body.match(/\]/g) ?? []).length).toBe(1)
+      expect(body).toContain('• [Build Note: injected] Note: n')
+    })
+
     it('rejects an over-long section (cap) and a non-string section', () => {
       expect(() =>
         buildPlanningOps([{ kind: 'note', text: 'n', section: 'S'.repeat(61) }])
