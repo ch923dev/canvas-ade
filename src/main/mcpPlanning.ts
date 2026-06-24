@@ -39,6 +39,8 @@ export const MAX_PLANNING_TITLE = 200
 export const MAX_PLANNING_LABEL = 500
 /** Max chars for a `diagram` element's Mermaid source (the worker also caps at render time). */
 export const MAX_PLANNING_DIAGRAM = 4000
+/** Max chars for an element's optional `section` tag (2a) — a short single-line column label. */
+export const MAX_PLANNING_SECTION = 60
 /**
  * Max total byte size (UTF-8) of one batch's ops, kept small enough that the FULL content
  * stays human-reviewable in the confirm modal (the security premise: injected text can't be
@@ -84,9 +86,42 @@ export function sanitizePlanningText(raw: unknown, max: number, field: string): 
   return trimmed
 }
 
+/**
+ * Reduce an element's optional `section` tag (2a) to a safe, SINGLE-LINE column label, or
+ * `undefined` when absent/empty. Unlike {@link sanitizePlanningText} (which keeps newlines for
+ * note bodies), a section is a heading: all whitespace (incl. newlines/tabs) collapses to single
+ * spaces — so it can't forge multiple confirm-body lines — and C0/C1/DEL controls are stripped.
+ * An empty-after-sanitize value is dropped to `undefined` (treated as "no section") rather than
+ * rejected, so a blank tag just falls back to the masonry instead of failing the whole batch.
+ */
+function sanitizeSection(raw: unknown, index: number): string | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== 'string') {
+    throw new PlanningContentError(`element ${index} section must be a string`)
+  }
+  let out = ''
+  for (const ch of raw.replace(/\s+/g, ' ')) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) continue
+    out += ch
+  }
+  const trimmed = out.trim()
+  if (trimmed.length === 0) return undefined
+  if (trimmed.length > MAX_PLANNING_SECTION) {
+    throw new PlanningContentError(
+      `element ${index} section exceeds the ${MAX_PLANNING_SECTION}-char limit`
+    )
+  }
+  return trimmed
+}
+
 /** Validate one agent-supplied element → a clean, fully-specified {@link PlanningOp}. */
 function buildOp(el: unknown, index: number): PlanningOp {
   if (!isRecord(el)) throw new PlanningContentError(`element ${index} is not an object`)
+  // The optional column label applies to every kind; sanitize once and attach below.
+  const section = sanitizeSection(el.section, index)
+  const withSection = <T extends object>(op: T): T & { section?: string } =>
+    section ? { ...op, section } : op
   switch (el.kind) {
     case 'note': {
       const text = sanitizePlanningText(el.text, MAX_PLANNING_TEXT, `note[${index}].text`)
@@ -97,11 +132,11 @@ function buildOp(el: unknown, index: number): PlanningOp {
         }
         tint = el.tint as PlanningOpTint
       }
-      return { kind: 'note', text, tint }
+      return withSection({ kind: 'note', text, tint })
     }
     case 'text': {
       const text = sanitizePlanningText(el.text, MAX_PLANNING_TEXT, `text[${index}].text`)
-      return { kind: 'text', text }
+      return withSection({ kind: 'text', text })
     }
     case 'checklist': {
       const title = sanitizePlanningText(el.title, MAX_PLANNING_TITLE, `checklist[${index}].title`)
@@ -128,7 +163,7 @@ function buildOp(el: unknown, index: number): PlanningOp {
         }
         return { label, done: it.done === true }
       })
-      return { kind: 'checklist', title, items }
+      return withSection({ kind: 'checklist', title, items })
     }
     case 'arrow': {
       const { dx, dy } = el
@@ -143,7 +178,7 @@ function buildOp(el: unknown, index: number): PlanningOp {
       if (Math.abs(dx) > MAX_ARROW_DELTA || Math.abs(dy) > MAX_ARROW_DELTA) {
         throw new PlanningContentError(`arrow[${index}] delta exceeds ${MAX_ARROW_DELTA}px`)
       }
-      return { kind: 'arrow', dx, dy }
+      return withSection({ kind: 'arrow', dx, dy })
     }
     case 'diagram': {
       // Sanitize the Mermaid source like any multi-line text field (strip control/escape chars,
@@ -153,7 +188,7 @@ function buildOp(el: unknown, index: number): PlanningOp {
         MAX_PLANNING_DIAGRAM,
         `diagram[${index}].source`
       )
-      return { kind: 'diagram', source }
+      return withSection({ kind: 'diagram', source })
     }
     default:
       throw new PlanningContentError(`element ${index} has an unsupported kind ${String(el.kind)}`)
@@ -210,24 +245,29 @@ export function renderPlanningConfirmBody(boardTitle: string, ops: PlanningOp[])
     'Content to be added (renders as passive notes — nothing runs):'
   ]
   for (const op of ops) {
+    // Surface the agent's column label (2a) so the human sees the structure being written, not just
+    // the content. Already sanitized to a single line in buildOp, so it can't forge body lines.
+    const sec = op.section ? `[${op.section}] ` : ''
     switch (op.kind) {
       case 'note':
-        lines.push(`• Note: ${confirmField(op.text, '  ')}`)
+        lines.push(`• ${sec}Note: ${confirmField(op.text, '  ')}`)
         break
       case 'text':
-        lines.push(`• Text: ${confirmField(op.text, '  ')}`)
+        lines.push(`• ${sec}Text: ${confirmField(op.text, '  ')}`)
         break
       case 'checklist':
-        lines.push(`• Checklist "${confirmField(op.title, '  ')}" (${op.items.length} item(s)):`)
+        lines.push(
+          `• ${sec}Checklist "${confirmField(op.title, '  ')}" (${op.items.length} item(s)):`
+        )
         for (const it of op.items) {
           lines.push(`    ${it.done ? '☑' : '☐'} ${confirmField(it.label, '      ')}`)
         }
         break
       case 'arrow':
-        lines.push(`• Arrow (Δx ${op.dx}, Δy ${op.dy})`)
+        lines.push(`• ${sec}Arrow (Δx ${op.dx}, Δy ${op.dy})`)
         break
       case 'diagram':
-        lines.push(`• Diagram (Mermaid — renders as an image):`)
+        lines.push(`• ${sec}Diagram (Mermaid — renders as an image):`)
         lines.push(`    ${confirmField(op.source, '    ')}`)
         break
     }

@@ -15,15 +15,24 @@ import {
  * `existing`, returns a fresh array); the applier re-validates the result with
  * `assertPlanningElement` (defense in depth) before it lands.
  *
- * MASONRY, not a column (the layout fix): a batch fills ~√n columns (capped at
- * {@link MAX_GRID_COLS}); each card drops into the currently-shortest column, so a multi-element
- * plan reads as a balanced wide board instead of one tall strip — with NO row-alignment gaps when
- * card heights vary wildly (a prose note beside a short checklist). Card heights are ESTIMATED
- * from content (a note's text wraps to many lines; a checklist grows with its item count) so a
- * tall card never overlaps the next card in its column — the actual rendered height (cards
- * self-measure taller than their seed) is biased to leave a small gap, never an overlap. The
- * applier grows the board in BOTH width and height to fit ({@link neededBoardWidth} +
- * {@link neededBoardHeight}).
+ * Two layout modes (the placement is computed first, then a single loop materializes each op):
+ *
+ * - SECTIONED (2a — agent opts in by tagging ≥1 op with a non-empty `section`): one COLUMN PER
+ *   SECTION, columns ordered left→right by each section's FIRST APPEARANCE, each section's cards
+ *   stacked top-to-bottom in AGENT (array) ORDER. The agent owns the plan's structure — placement
+ *   is deterministic, not height-balanced, so it never reads as "random" and there are no
+ *   rebalance gaps (ragged column bottoms are expected). Column width = the widest card in that
+ *   section (columns are independent).
+ * - MASONRY (the default when no op carries a section — older agents + a section-less write): a
+ *   batch fills ~√n uniform-width columns (capped at {@link MAX_GRID_COLS}); each card drops into
+ *   the currently-shortest column, so the plan reads as a balanced wide board instead of one tall
+ *   strip, with no row-alignment gaps when card heights vary wildly.
+ *
+ * Either way, card heights are ESTIMATED from content (a note's text wraps to many lines; a
+ * checklist grows with its item count) so a tall card never overlaps the next card in its column —
+ * the actual rendered height (cards self-measure taller than their seed) is biased to leave a small
+ * gap, never an overlap. The applier grows the board in BOTH width and height to fit
+ * ({@link neededBoardWidth} + {@link neededBoardHeight}).
  *
  * Geometry helpers (`elementBBox`/`unionBBox`/sizes) are imported from `planning/elements`
  * (read-only) so a materialized element measures + lays out identically to a user-created one.
@@ -118,35 +127,98 @@ function gridColumns(n: number): number {
   return Math.min(MAX_GRID_COLS, Math.ceil(Math.sqrt(n)))
 }
 
+/** A board-local top-left where one op's card is placed. */
+interface Placement {
+  x: number
+  y: number
+}
+
 /**
- * Materialize sanitized ops into full elements, laid out as column MASONRY below `existing`.
- * Mints ids (board element + checklist items) + default sizes. Columns are a uniform width (the
- * widest card in the batch) so their x-positions are known up front; each card (in agent order)
- * drops into the currently-shortest column using its ESTIMATED content height — so a tall prose
- * note never overlaps the card beneath it and the columns stay balanced (no row-alignment gaps).
- * Notes seed their estimated height (the textarea then auto-grows to the real height); checklists
- * persist `h: 0` like user-created ones (the card self-measures + grows the board on render).
+ * MASONRY placement (the section-less default): ~√n uniform-width columns; each card (in agent
+ * order) drops into the currently-shortest column by its estimated height, so columns stay
+ * balanced with no row-alignment gaps. Returns one {@link Placement} per op (index-aligned).
+ */
+function placeMasonry(
+  cells: ReadonlyArray<{ w: number; h: number }>,
+  origin: Placement
+): Placement[] {
+  const cols = gridColumns(cells.length)
+  // Uniform column width = the widest card in the batch → column x-positions are known up front
+  // (required to place into the shortest column); narrower cards are left-aligned in their column.
+  let colW = 0
+  for (const c of cells) if (c.w > colW) colW = c.w
+  const colBottom = new Array<number>(cols).fill(0) // running height of each column (from origin.y)
+  return cells.map((cell) => {
+    // Shortest column wins (ties → leftmost) — balances the columns, keeps the top row in order.
+    let c = 0
+    for (let k = 1; k < cols; k++) if (colBottom[k] < colBottom[c]) c = k
+    const x = origin.x + c * (colW + GAP)
+    const y = origin.y + colBottom[c]
+    colBottom[c] += cell.h + GAP
+    return { x, y }
+  })
+}
+
+/**
+ * SECTIONED placement (2a — agent-declared columns): group ops by `section` (key `''` for an
+ * un-tagged op), order the columns by each section's FIRST APPEARANCE, and stack each section's
+ * cards top-to-bottom in AGENT (array) order. Column width = the widest card in that section, so
+ * columns are independent (a diagram-bearing section is wider). Deterministic — no height-balancing
+ * → placement reflects the agent's grouping, not column lengths. Returns index-aligned placements.
+ */
+function placeSectioned(
+  ops: PlanningOp[],
+  cells: ReadonlyArray<{ w: number; h: number }>,
+  origin: Placement
+): Placement[] {
+  const order: string[] = []
+  const groups = new Map<string, number[]>()
+  ops.forEach((op, i) => {
+    const key = op.section ?? ''
+    let g = groups.get(key)
+    if (!g) {
+      g = []
+      groups.set(key, g)
+      order.push(key)
+    }
+    g.push(i)
+  })
+  const placements = new Array<Placement>(ops.length)
+  let colX = origin.x
+  for (const key of order) {
+    const idxs = groups.get(key) as number[]
+    let colW = 0
+    for (const i of idxs) if (cells[i].w > colW) colW = cells[i].w
+    let y = origin.y
+    for (const i of idxs) {
+      placements[i] = { x: colX, y }
+      y += cells[i].h + GAP
+    }
+    colX += colW + GAP
+  }
+  return placements
+}
+
+/**
+ * Materialize sanitized ops into full elements below `existing`, laid out as agent-declared
+ * SECTION columns when any op carries a `section`, else as balanced column MASONRY (see the module
+ * doc). Mints ids (board element + checklist items) + default sizes. Notes seed their estimated
+ * height (the textarea then auto-grows to the real height); checklists persist `h: 0` like
+ * user-created ones (the card self-measures + grows the board on render).
  */
 export function materializePlanningOps(
   ops: PlanningOp[],
   existing: PlanningElement[]
 ): PlanningElement[] {
   const origin = layoutStart(existing)
-  const cols = gridColumns(ops.length)
   const cells = ops.map(opCell)
-  // Uniform column width = the widest card in the batch → column x-positions are known up front
-  // (required to place into the shortest column); narrower cards are left-aligned in their column.
-  let colW = 0
-  for (const c of cells) if (c.w > colW) colW = c.w
-  const colBottom = new Array<number>(cols).fill(0) // running height of each column (from origin.y)
+  // Sectioned the moment the agent tags ANY op with a non-empty section; else the masonry default.
+  const sectioned = ops.some((op) => (op.section ?? '').length > 0)
+  const placements = sectioned ? placeSectioned(ops, cells, origin) : placeMasonry(cells, origin)
 
   const out: PlanningElement[] = []
   ops.forEach((op, i) => {
-    // Shortest column wins (ties → leftmost) — balances the columns, keeps the top row in order.
-    let c = 0
-    for (let k = 1; k < cols; k++) if (colBottom[k] < colBottom[c]) c = k
-    const x = origin.x + c * (colW + GAP)
-    const y = origin.y + colBottom[c]
+    const { x, y } = placements[i]
     const cell = cells[i]
     switch (op.kind) {
       case 'note':
@@ -207,7 +279,6 @@ export function materializePlanningOps(
         })
         break
     }
-    colBottom[c] += cell.h + GAP
   })
   return out
 }
