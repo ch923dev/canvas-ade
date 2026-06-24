@@ -122,6 +122,53 @@ describe('buildPlanningOps', () => {
     const ops = buildPlanningOps(padded)
     expect(ops[0]).toEqual({ kind: 'note', text: 'hi', tint: 'yellow' })
   })
+
+  describe('section tag (2a column control)', () => {
+    it('carries an optional section on every kind', () => {
+      const ops = buildPlanningOps([
+        { kind: 'note', text: 'n', section: 'Overview' },
+        { kind: 'checklist', title: 'T', items: [{ label: 'a' }], section: 'Setup' },
+        { kind: 'text', text: 't', section: 'Notes' },
+        { kind: 'arrow', dx: 1, dy: 1, section: 'Flow' },
+        { kind: 'diagram', source: 'graph TD\n A-->B', section: 'Arch' }
+      ])
+      expect(ops.map((o) => o.section)).toEqual(['Overview', 'Setup', 'Notes', 'Flow', 'Arch'])
+    })
+
+    it('omits section entirely when absent (no key on the op)', () => {
+      const [op] = buildPlanningOps([{ kind: 'note', text: 'n' }])
+      expect('section' in op).toBe(false)
+    })
+
+    it('collapses a multi-line / padded section to a single line (no confirm-body forgery)', () => {
+      const [op] = buildPlanningOps([{ kind: 'note', text: 'n', section: '  Set\nup\t\x07 ' }])
+      expect(op.section).toBe('Set up') // newline+tab → space, control stripped, trimmed
+    })
+
+    it('drops a section that is empty after sanitization (falls back to no section)', () => {
+      const [op] = buildPlanningOps([{ kind: 'note', text: 'n', section: '  \x00 \n ' }])
+      expect('section' in op).toBe(false)
+    })
+
+    it('🔒 strips [ and ] so a section cannot blur the [label] confirm boundary', () => {
+      const [op] = buildPlanningOps([{ kind: 'note', text: 'n', section: 'Build] Note: injected' }])
+      expect(op.section).toBe('Build Note: injected') // brackets gone → no boundary spoof
+      const body = renderPlanningConfirmBody('P', [op])
+      // Exactly one '[' / ']' pair survives — the genuine wrapper the host adds, not the agent's.
+      expect((body.match(/\[/g) ?? []).length).toBe(1)
+      expect((body.match(/\]/g) ?? []).length).toBe(1)
+      expect(body).toContain('• [Build Note: injected] Note: n')
+    })
+
+    it('rejects an over-long section (cap) and a non-string section', () => {
+      expect(() =>
+        buildPlanningOps([{ kind: 'note', text: 'n', section: 'S'.repeat(61) }])
+      ).toThrow(PlanningContentError)
+      expect(() => buildPlanningOps([{ kind: 'note', text: 'n', section: 42 }])).toThrow(
+        PlanningContentError
+      )
+    })
+  })
 })
 
 describe('renderPlanningConfirmBody', () => {
@@ -172,5 +219,15 @@ describe('renderPlanningConfirmBody', () => {
     const body = renderPlanningConfirmBody('P', ops)
     expect(body).not.toMatch(/\n{3,}/) // no run of 3+ newlines survives
     expect(body).toContain('visible tail') // the later element is still rendered
+  })
+
+  it('surfaces an element section as a [label] prefix so the human sees the column structure', () => {
+    const ops = buildPlanningOps([
+      { kind: 'note', text: 'goal', section: 'Overview' },
+      { kind: 'checklist', title: 'Setup', items: [{ label: 'env' }], section: 'Setup' }
+    ])
+    const body = renderPlanningConfirmBody('P', ops)
+    expect(body).toContain('• [Overview] Note: goal')
+    expect(body).toContain('• [Setup] Checklist "Setup"')
   })
 })

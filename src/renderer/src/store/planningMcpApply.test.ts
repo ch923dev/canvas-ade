@@ -151,6 +151,96 @@ describe('materializePlanningOps', () => {
   })
 })
 
+describe('materializePlanningOps — sections (2a)', () => {
+  const secNote = (text: string, section: string): PlanningOp => ({
+    kind: 'note',
+    text,
+    tint: 'yellow',
+    section
+  })
+
+  it('lays one COLUMN PER SECTION in first-appearance order (tops share a row, xs increase)', () => {
+    const out = materializePlanningOps(
+      [
+        secNote('intro', 'Overview'),
+        {
+          kind: 'checklist',
+          title: 'Setup',
+          items: [{ label: 'env', done: false }],
+          section: 'Setup'
+        },
+        {
+          kind: 'checklist',
+          title: 'Build',
+          items: [{ label: 'api', done: false }],
+          section: 'Build'
+        }
+      ],
+      []
+    )
+    // Three distinct columns; the first card of each sits at the same top y.
+    expect(out[0].y).toBe(out[1].y)
+    expect(out[1].y).toBe(out[2].y)
+    // Column order follows first appearance: Overview < Setup < Build (left → right).
+    expect(out[0].x).toBeLessThan(out[1].x)
+    expect(out[1].x).toBeLessThan(out[2].x)
+  })
+
+  it('stacks same-section cards top-to-bottom in array order (one column, increasing y)', () => {
+    const out = materializePlanningOps(
+      [secNote('a', 'Setup'), secNote('b', 'Setup'), secNote('c', 'Setup')],
+      []
+    )
+    // All in one column (same x), in agent order down the column.
+    expect(out[0].x).toBe(out[1].x)
+    expect(out[1].x).toBe(out[2].x)
+    expect(out[0].y).toBeLessThan(out[1].y)
+    expect(out[1].y).toBeLessThan(out[2].y)
+  })
+
+  it('a pre-section un-tagged element forms the leading "" column', () => {
+    const out = materializePlanningOps([note('intro'), secNote('setup work', 'Setup')], [])
+    // The un-tagged intro leads (first appearance of key ""), then the Setup column.
+    expect(out[0].y).toBe(out[1].y)
+    expect(out[0].x).toBeLessThan(out[1].x)
+  })
+
+  it('never overlaps cards across sections with wildly varying heights', () => {
+    const longText = Array.from({ length: 40 }, (_, i) => `line ${i} of a long agent note`).join(
+      '\n'
+    )
+    const out = materializePlanningOps(
+      [
+        secNote(longText, 'Overview'), // a very tall card
+        secNote('s1', 'Setup'),
+        secNote('s2', 'Setup'),
+        { kind: 'checklist', title: 'Test', items: [{ label: 't', done: false }], section: 'Test' }
+      ],
+      []
+    ) as Array<{ x: number; y: number; w: number; h: number }>
+    const overlaps = (a: (typeof out)[number], b: (typeof out)[number]): boolean =>
+      a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        expect(overlaps(out[i], out[j])).toBe(false)
+      }
+    }
+  })
+
+  it('falls back to MASONRY when no element carries a section (Phase-1 behaviour)', () => {
+    // 6 equal notes with NO section → masonry's √n grid (3 cols), which row-aligns. Asserting the
+    // row structure (ys[0]==ys[1]==ys[2], ys[3] lower) proves the section path did NOT engage.
+    const out = materializePlanningOps(
+      Array.from({ length: 6 }, (_, i) => note(`n${i}`)),
+      []
+    )
+    const ys = out.map((e) => e.y)
+    expect(ys[0]).toBe(ys[1])
+    expect(ys[1]).toBe(ys[2])
+    expect(ys[3]).toBeGreaterThan(ys[0])
+  })
+})
+
 describe('neededBoardHeight / neededBoardWidth', () => {
   it('height is 0 for an empty board and grows with content', () => {
     expect(neededBoardHeight([])).toBe(0)

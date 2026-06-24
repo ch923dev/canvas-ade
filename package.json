@@ -46,7 +46,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@expanse-ade/mcp": "^0.15.0",
+    "@expanse-ade/mcp": "^0.16.0",
     "@uiw/codemirror-extensions-langs": "^4.25.10",
     "@uiw/react-codemirror": "^4.25.10",
     "chokidar": "^5.0.0",

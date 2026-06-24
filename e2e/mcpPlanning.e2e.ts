@@ -215,27 +215,33 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     expect(await planningElementKinds(page, planId)).toEqual([]) // still empty
 
     // APPROVE path: write a LONG prose note + a checklist + a note + a Mermaid diagram; drive the
-    // modal; assert they land. The long note exercises the masonry's content-height estimate (the
-    // bug class: a tall note overlapping the card beneath it). The diagram proves the v0.12.0
+    // modal; assert they land. The long note exercises the content-height estimate (the bug class:
+    // a tall note overlapping the card beneath it). The diagram proves the v0.12.0
     // add_planning_elements `diagram` kind end-to-end (real schema → confirm → DiagramElement).
+    //
+    // 2a: every element carries a `section` so the host lays out AGENT-DECLARED COLUMNS, not the
+    // height-balanced masonry. First-appearance order Overview → Build = two columns: the two
+    // `Overview` notes stack in column 0, the `Build` checklist + diagram stack in column 1. This
+    // proves `section` survives the wire (requires @expanse-ade/mcp ≥ 0.16.0, which the app pins).
     const longNote =
-      'CANVAS_MCP_PLANNING_OK\n\nThis planning note is deliberately long so the masonry must ' +
+      'CANVAS_MCP_PLANNING_OK\n\nThis planning note is deliberately long so the column layout must ' +
       'estimate its wrapped height from the text — the cards beneath it must NOT overlap it: ' +
       'alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa, lambda, mu, nu, xi.'
     const writeP = mcp.orch.call(TOOL, {
       boardId: planId,
       elements: [
-        { kind: 'note', text: longNote, tint: 'blue' },
+        { kind: 'note', text: longNote, tint: 'blue', section: 'Overview' },
         {
           kind: 'checklist',
           title: 'Auth refactor',
+          section: 'Build',
           items: [
             { label: 'Audit current session mw', done: true },
             { label: 'Wire confirm gate', done: false }
           ]
         },
-        { kind: 'note', text: 'second note', tint: 'green' },
-        { kind: 'diagram', source: 'graph TD\n  A[Plan]-->B[Build]' }
+        { kind: 'note', text: 'second note', tint: 'green', section: 'Overview' },
+        { kind: 'diagram', source: 'graph TD\n  A[Plan]-->B[Build]', section: 'Build' }
       ]
     })
     expect(await pollEval(page, MODAL, 8000)).toBe(true)
@@ -252,11 +258,16 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
       .poll(() => planningElementKinds(page, planId), { timeout: 8000 })
       .toEqual(['note', 'checklist', 'note', 'diagram'])
 
-    // MASONRY layout (the fix): the batch lands across ≥2 columns (not one vertical strip) and —
-    // the bug that prompted the rework — the tall prose note must NOT overlap the card beneath it.
+    // SECTIONED layout (2a): the batch lands across exactly two AGENT-DECLARED columns. Both
+    // `Overview` notes share ONE column (same x, stacked) and both `Build` elements (checklist +
+    // diagram) share the NEXT column to the right — deterministic grouping, NOT height-balancing
+    // (under the old masonry the two same-section notes would scatter into different columns).
     const layout = await planningLayout(page, planId)
-    const columnXs = new Set([...layout.noteRects.map((r) => r.x), ...layout.otherXs])
-    expect(columnXs.size).toBeGreaterThanOrEqual(2)
+    const noteXs = new Set(layout.noteRects.map((r) => r.x))
+    expect(noteXs.size).toBe(1) // both Overview notes in one column
+    const otherXs = new Set(layout.otherXs)
+    expect(otherXs.size).toBe(1) // checklist + diagram in one column
+    expect(layout.otherXs[0]).toBeGreaterThan(layout.noteRects[0].x) // Build column right of Overview
     // No two notes overlap (notes carry a real w/h; the tall note is positioned by its estimate).
     for (let i = 0; i < layout.noteRects.length; i++) {
       for (let j = i + 1; j < layout.noteRects.length; j++) {
@@ -266,9 +277,9 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
         expect(overlap).toBe(false)
       }
     }
-    // Frame the planning board + let the cards measure/grow, then capture a visual of the grid.
+    // Frame the planning board + let the cards measure/grow, then capture a visual of the columns.
     await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
     await page.waitForTimeout(700)
-    await page.screenshot({ path: 'test-results/planning-mcp-grid.png' })
+    await page.screenshot({ path: 'test-results/planning-mcp-sections.png' })
   })
 })
