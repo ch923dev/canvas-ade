@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
 import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
-import { viewportCenterWorld } from '../lib/freeSlot'
+import { freeSlot, viewportCenterWorld } from '../lib/freeSlot'
 import {
   materializePlanningOps,
   neededBoardHeight,
@@ -128,9 +128,31 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       store.beginChange()
       store.updateBoard(command.id, { elements: nextElements })
       const needW = neededBoardWidth(nextElements)
-      if (needW > board.w) store.growBoardWidth(command.id, needW)
+      const grewW = needW > board.w
+      if (grewW) store.growBoardWidth(command.id, needW)
       const needH = neededBoardHeight(nextElements)
-      if (needH > board.h) store.growBoardHeight(command.id, needH)
+      const grewH = needH > board.h
+      if (grewH) store.growBoardHeight(command.id, needH)
+      // Canvas-aware nudge: a board grows from its top-left rightward + downward, so a wide/tall
+      // agent plan can grow UNDER a neighbouring board. If the board actually grew, re-read its NEW
+      // rect and, when it now overlaps another board, move the WHOLE board to the nearest free slot
+      // (the same spiral `freeSlot` the spawn path uses, PLACE_GAP margin) so the plan tucks into
+      // open canvas instead. UNTRACKED like the grows → reverts with the write, no separate undo
+      // step. Skipped for a GROUPED board (a feature zone owns its own arrangement — never yank a
+      // member out of its cluster) and when nothing grew (don't move a board the user placed
+      // overlapping on purpose). Other boards always stay put.
+      if (grewW || grewH) {
+        const live = useCanvasStore.getState()
+        const grown = live.boards.find((b) => b.id === command.id)
+        const inGroup = live.groups.some((g) => g.boardIds.includes(command.id))
+        if (grown && !inGroup) {
+          const others = live.boards.filter((b) => b.id !== command.id)
+          const slot = freeSlot(others, { x: grown.x, y: grown.y }, { w: grown.w, h: grown.h })
+          if (slot.x !== grown.x || slot.y !== grown.y) {
+            store.repositionBoardUntracked(command.id, slot.x, slot.y)
+          }
+        }
+      }
       return { ok: true, type: 'patchPlanning' }
     }
     case 'spawnGroup': {
