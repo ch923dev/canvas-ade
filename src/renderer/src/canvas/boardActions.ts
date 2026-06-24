@@ -31,6 +31,12 @@ export interface BoardActions {
   removeFromGroup: (boardId: string, groupId: string) => void
   /** GROUP-06: remove a board from every group it belongs to, in one undo step. */
   removeFromAllGroups: (boardId: string) => void
+  /**
+   * Camera-fit + dim focus on a board (the canonical `focusBoardById` path — the SAME one
+   * Enter / double-click / minimap use). Used by the cross-board transfer toast's "Focus"
+   * action to jump to the destination board. No auto-pan elsewhere.
+   */
+  focusBoard: (id: string) => void
 }
 
 export const BoardActionsContext = createContext<BoardActions | null>(null)
