@@ -270,6 +270,9 @@ describe('materializePlanningOps — 2c presentation (widen / diagram footprint 
     expect(diagramFootprint('flowchart BT\n A-->B')).toEqual(tall)
     expect(diagramFootprint('sequenceDiagram\n A->>B: hi')).toEqual(tall)
     expect(diagramFootprint('pie title Pets\n "Dogs": 3')).toEqual(tall)
+    // The `direction` keyword only counts as a line-level statement — the phrase inside a node label
+    // must NOT flip a TD flow to wide (the whole-source-scan false-match).
+    expect(diagramFootprint('graph TD\n A["Set direction LR for the pipeline"]-->B')).toEqual(tall)
   })
 
   it('honors the footprint at materialize: a wide-source diagram is wider, a tall one is taller — both > the 280×200 default', () => {

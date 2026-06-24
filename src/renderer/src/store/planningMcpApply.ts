@@ -128,8 +128,10 @@ export function diagramFootprint(source: string): { w: number; h: number } {
   if (flow) return flow[1] === 'lr' || flow[1] === 'rl' ? DIAGRAM_WIDE : DIAGRAM_TALL
   // Diagram types that lay out horizontally by nature.
   if (/^(erdiagram|gantt|timeline|journey|gitgraph)\b/.test(firstLine)) return DIAGRAM_WIDE
-  // class/state diagrams declare direction on a later line.
-  if (/\bdirection\s+(lr|rl)\b/.test(lower)) return DIAGRAM_WIDE
+  // class/state diagrams declare direction as a line-level statement (after leading whitespace).
+  // Anchor to line-start (multiline) so the phrase inside a node label / comment can't false-match
+  // and force a TD/sequence/pie diagram wide.
+  if (/^\s*direction\s+(lr|rl)\b/m.test(lower)) return DIAGRAM_WIDE
   return DIAGRAM_TALL
 }
 
