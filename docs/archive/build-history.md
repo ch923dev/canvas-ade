@@ -824,3 +824,42 @@ post-#234 SHA (the worktree's shared `node_modules` sat on `@expanse-ade/mcp` 0.
 an isolated install would require deleting the shared-tree symlink — declined); cross-OS covered by the
 Linux full leg + CI, and the JD-4 renderer specs passed Windows pre-#234-rebase. **Closes the JSON & Data
 Flow umbrella.**
+
+## 2026-06-24 — gitDiff worktree host-repo escape fix — #238 (`51690282`)
+
+Retires a long-standing false-fail of `e2e/gitDiff.e2e.ts` on the **Windows e2e leg when run from a git
+worktree** (the pre-push gate scenario) — the test pointed a terminal board at an isolated temp repo but
+got back the **HOST worktree repo's** diff, then timed out (~20s/retry). It passed on the Linux Docker leg
+and CI, so the standing workaround was `git push --no-verify` (see the multiple "known worktree
+host-repo-escape" notes on the coordination board, e.g. #229/#234 merges).
+
+- **Root cause:** `boardGitDiff` ran `simpleGit(cwd)` with the git child inheriting MAIN's full env. The git
+  **`pre-push` hook exports `GIT_DIR`** (the worktree's gitdir) and `e2e/fixtures.ts` forwards the entire
+  `process.env` into the app, so git honored the inherited `GIT_DIR`/`GIT_WORK_TREE` over the spawn `cwd`
+  (env override, NOT directory walk-up — which can't escape a valid repo cwd). No git-hook env in
+  Docker/CI, which is why only the worktree pre-push run reproduced it.
+- **Fix (`src/main/gitDiff.ts` › `repoScopedEnv()`):** the read-only git sub-processes now run with a
+  cloned `process.env` that has **every `GIT_*` var stripped** (repo discovery pinned to the spawn `cwd`)
+  plus `GIT_TERMINAL_PROMPT=0` re-set, passed via `.env()`. Stripping (vs a `GIT_CEILING_DIRECTORIES`
+  ceiling) preserves legitimate sub-dir → repo-root walk-up in production, and clearing the whole `GIT_*`
+  prefix also sidesteps simple-git's `blockUnsafeOperationsPlugin` (which refuses to spawn on
+  `GIT_EDITOR`/`GIT_SSH`/… in an explicit env) **without enabling any `allowUnsafe*` flag**. Strictly safer
+  than the prior inherit-all path; `simple-git` stays MAIN-only / read-only / frame-guarded;
+  contextIsolation/sandbox/nodeIntegration:false untouched.
+- **Tests:** new real-git regression in `gitDiff.integration.test.ts` (ambient `GIT_DIR`/`GIT_WORK_TREE`
+  → a 2nd repo; asserts the board's canary `ESCAPE-CANARY-A`, not the ambient `HOST-REPO-B-CHANGE` — fails
+  without the fix); `gitDiff.test.ts` mock updated for the fluent `.env()` chain; regression note added to
+  the handler + the `gitDiff.e2e.ts` docstring.
+- **Out-of-scope follow-up flagged (not fixed):** `fileIpc.ts:140` (`file:gitPermalink`) has the identical
+  escape (no e2e; only manifests if MAIN itself is launched from a `GIT_DIR`-exporting env). Left for a
+  follow-up that extracts `repoScopedEnv()` to a shared helper and applies it to both.
+
+**Verification:** rebased clean onto `682d5aab` (4 unrelated main commits, zero gitDiff overlap). typecheck ·
+lint (0 err) · format · gitDiff vitest 20/20 (incl. the new cross-platform regression). PR #238 CI all 4
+green (`check`; analyze; CodeQL; claude-review **0 crit / 0 warn / 0 inline**). **Full e2e matrix both legs
+green** on the rebased tree: **Windows 197 passed + gitDiff 3/3** — the previously-false-failing
+`gitDiff.e2e.ts:104` now passes from the worktree in **1.1s** (no 20s timeout); 2 unrelated `@preview`
+flakes (`browserNetwork:14` library-panel overlap + an `osrCropSupersample` cascade) re-ran **green in
+isolation** (the Windows leg runs retries:0, so a single flake hard-fails). **Linux Docker 197 passed / 1
+flaky (retried) / 1 skipped** (199 specs). Resolves the "push `--no-verify` to clear the worktree gitDiff
+false-fail" workaround.
