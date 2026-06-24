@@ -270,6 +270,14 @@ export interface CanvasState {
    */
   growBoardHeight: (id: string, h: number) => void
   /**
+   * Grow a board's WIDTH to fit laid-out content (the MCP planning grid). UNTRACKED,
+   * layout-only — the same rails-neutral contract as {@link growBoardHeight}: never touches
+   * undo/redo, only ever grows, a no-op when the board is already wide enough. The planning-
+   * write path pairs it with growBoardHeight so an agent batch can widen the board into a grid
+   * instead of only lengthening it into a single column.
+   */
+  growBoardWidth: (id: string, w: number) => void
+  /**
    * Write a diagram element's DERIVED svgCache (v11/S4). UNTRACKED — the SVG is a render
    * artifact of the canonical `source`, not a user edit, so the async write-back from the hidden
    * worker must NEVER push an undo step nor wipe an armed redo branch (the `lastRecorded`/
@@ -854,6 +862,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (b.id !== id || b.h >= h) return b
         changed = true
         return { ...b, h }
+      })
+      return changed ? { boards } : s
+    }),
+
+  growBoardWidth: (id, w) =>
+    set((s) => {
+      // Layout-only, untracked: only-grow, and NEVER touch past/future (mirrors
+      // growBoardHeight). The MCP grid laying a batch wider must not pollute or wipe undo/redo.
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id || b.w >= w) return b
+        changed = true
+        return { ...b, w }
       })
       return changed ? { boards } : s
     }),

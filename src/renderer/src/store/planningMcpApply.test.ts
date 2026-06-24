@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { materializePlanningOps, neededBoardHeight, type PlanningOp } from './planningMcpApply'
+import {
+  materializePlanningOps,
+  neededBoardHeight,
+  neededBoardWidth,
+  type PlanningOp
+} from './planningMcpApply'
 import { assertPlanningElement, type PlanningElement } from '../lib/boardSchema'
+
+const note = (text: string): PlanningOp => ({ kind: 'note', text, tint: 'yellow' })
 
 describe('materializePlanningOps', () => {
   it('mints ids + positions and produces schema-valid elements of each kind', () => {
@@ -47,13 +54,40 @@ describe('materializePlanningOps', () => {
     expect(new Set(checklist.items.map((i) => i.id)).size).toBe(2)
   })
 
-  it('stacks new elements vertically (strictly increasing y, no overlap of card kinds)', () => {
-    const ops: PlanningOp[] = [
-      { kind: 'note', text: 'n1', tint: 'yellow' },
-      { kind: 'note', text: 'n2', tint: 'yellow' }
-    ]
-    const out = materializePlanningOps(ops, [])
-    expect(out[1].y).toBeGreaterThan(out[0].y)
+  it('lays a batch out as a GRID — row-major, columns align, order preserved', () => {
+    // 6 notes → gridColumns(6) = ceil(√6) = 3 columns, 2 rows.
+    const out = materializePlanningOps(
+      Array.from({ length: 6 }, (_, i) => note(`n${i}`)),
+      []
+    )
+    // Agent order is preserved (row-major).
+    expect(out.map((e) => (e as Extract<PlanningElement, { kind: 'note' }>).text)).toEqual([
+      'n0',
+      'n1',
+      'n2',
+      'n3',
+      'n4',
+      'n5'
+    ])
+    const xs = out.map((e) => e.x)
+    const ys = out.map((e) => e.y)
+    // Row 0 (first 3) share a y; row 1 (next 3) share a strictly lower (greater) y.
+    expect(ys[0]).toBe(ys[1])
+    expect(ys[1]).toBe(ys[2])
+    expect(ys[3]).toBeGreaterThan(ys[0])
+    expect(ys[3]).toBe(ys[4])
+    expect(ys[4]).toBe(ys[5])
+    // Columns align (i and i+cols share an x) and increase left→right across a row.
+    expect(xs[0]).toBe(xs[3])
+    expect(xs[1]).toBe(xs[4])
+    expect(xs[0]).toBeLessThan(xs[1])
+    expect(xs[1]).toBeLessThan(xs[2])
+  })
+
+  it('places a 2-element batch side by side (a grid, not a column)', () => {
+    const out = materializePlanningOps([note('a'), note('b')], [])
+    expect(out[0].y).toBe(out[1].y) // same row
+    expect(out[1].x).toBeGreaterThan(out[0].x) // next column
   })
 
   it('starts BELOW existing content (does not overlap a pre-existing element)', () => {
@@ -66,17 +100,24 @@ describe('materializePlanningOps', () => {
   })
 })
 
-describe('neededBoardHeight', () => {
-  it('is 0 for an empty board and grows with content', () => {
+describe('neededBoardHeight / neededBoardWidth', () => {
+  it('height is 0 for an empty board and grows with content', () => {
     expect(neededBoardHeight([])).toBe(0)
     const out = materializePlanningOps(
-      Array.from({ length: 5 }, (_, i) => ({
-        kind: 'note' as const,
-        text: `n${i}`,
-        tint: 'yellow' as const
-      })),
+      Array.from({ length: 5 }, (_, i) => note(`n${i}`)),
       []
     )
     expect(neededBoardHeight(out)).toBeGreaterThan(96)
+  })
+
+  it('width is 0 for an empty board and a multi-column batch is wider than a single card', () => {
+    expect(neededBoardWidth([])).toBe(0)
+    const single = materializePlanningOps([note('only')], [])
+    const grid = materializePlanningOps(
+      Array.from({ length: 6 }, (_, i) => note(`n${i}`)),
+      []
+    )
+    // The single note is one column; the 6-note grid spans 3 columns → strictly wider.
+    expect(neededBoardWidth(grid)).toBeGreaterThan(neededBoardWidth(single))
   })
 })

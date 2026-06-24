@@ -5,6 +5,7 @@ import { viewportCenterWorld } from '../lib/freeSlot'
 import {
   materializePlanningOps,
   neededBoardHeight,
+  neededBoardWidth,
   MAX_PLANNING_BOARD_ELEMENTS
 } from './planningMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
@@ -120,12 +121,16 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       const nextElements = [...board.elements, ...added]
       // beginChange() FIRST (lazy checkpoint, like configureBoard) so the agent's write is ONE
       // discrete undo step that chains with human edits (BUG-023); updateBoard filters to
-      // PATCHABLE_KEYS.planning ('elements'). Then auto-grow the board to fit via the
-      // UNTRACKED growBoardHeight so the layout bump pushes no phantom undo step (BUG-024).
+      // PATCHABLE_KEYS.planning ('elements'). Then auto-grow the board to fit the grid in BOTH
+      // dimensions via the UNTRACKED growBoardWidth/Height so the layout bump pushes no phantom
+      // undo step (BUG-024) — width too, else a wide batch is clipped on the right (the column→
+      // grid fix: a multi-element write widens the board, it no longer only lengthens it).
       store.beginChange()
       store.updateBoard(command.id, { elements: nextElements })
-      const needed = neededBoardHeight(nextElements)
-      if (needed > board.h) store.growBoardHeight(command.id, needed)
+      const needW = neededBoardWidth(nextElements)
+      if (needW > board.w) store.growBoardWidth(command.id, needW)
+      const needH = neededBoardHeight(nextElements)
+      if (needH > board.h) store.growBoardHeight(command.id, needH)
       return { ok: true, type: 'patchPlanning' }
     }
     case 'spawnGroup': {
