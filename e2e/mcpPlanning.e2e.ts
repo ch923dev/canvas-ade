@@ -94,6 +94,49 @@ function planningElementKinds(page: Page, id: string): Promise<string[] | null> 
   }, id)
 }
 
+/** Planning-board layout probe (@planning): note rects (real w/h) + the x of every other element,
+ *  plus the diagram rect (2c footprint) — to assert the masonry spreads across columns, that no two
+ *  notes overlap, and that an agent diagram materializes at its orientation-aware footprint. */
+function planningLayout(
+  page: Page,
+  id: string
+): Promise<{
+  noteRects: Array<{ x: number; y: number; w: number; h: number }>
+  otherXs: number[]
+  diagramRects: Array<{ x: number; y: number; w: number; h: number }>
+}> {
+  return page.evaluate((boardId) => {
+    const hook = (
+      globalThis as unknown as {
+        __canvasE2E: {
+          getBoards(): Array<{
+            id: string
+            type: string
+            elements?: Array<{ kind: string; x: number; y: number; w?: number; h?: number }>
+          }>
+        }
+      }
+    ).__canvasE2E
+    const els = hook.getBoards().find((x) => x.id === boardId)?.elements ?? []
+    const rect = (e: {
+      x: number
+      y: number
+      w?: number
+      h?: number
+    }): {
+      x: number
+      y: number
+      w: number
+      h: number
+    } => ({ x: e.x, y: e.y, w: e.w ?? 0, h: e.h ?? 0 })
+    return {
+      noteRects: els.filter((e) => e.kind === 'note').map(rect),
+      otherXs: els.filter((e) => e.kind !== 'note').map((e) => e.x),
+      diagramRects: els.filter((e) => e.kind === 'diagram').map(rect)
+    }
+  }, id)
+}
+
 const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
 const APPROVE = `(() => { const b = document.querySelector('[data-testid="confirm-approve"]'); if (b) b.click(); return !!b })()`
 const DENY = `(() => { const b = document.querySelector('[data-testid="confirm-deny"]'); if (b) b.click(); return !!b })()`
@@ -183,23 +226,39 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     expect(rejected(await denyP)).toBe(true) // a denied write resolves as an isError result
     expect(await planningElementKinds(page, planId)).toEqual([]) // still empty
 
-    // APPROVE path: write a checklist + two notes + a Mermaid diagram; drive the modal; assert
-    // they land. The diagram proves the v0.12.0 add_planning_elements `diagram` kind end-to-end
-    // (real server schema → confirm shows the source → renderer materializes a DiagramElement).
+    // APPROVE path: write a LONG prose note + a checklist + a note + a Mermaid diagram; drive the
+    // modal; assert they land. The long note exercises the content-height estimate (the bug class:
+    // a tall note overlapping the card beneath it). The diagram proves the v0.12.0
+    // add_planning_elements `diagram` kind end-to-end (real schema → confirm → DiagramElement).
+    //
+    // 2a: every element carries a `section` so the host lays out AGENT-DECLARED COLUMNS, not the
+    // height-balanced masonry. First-appearance order Overview → Build = two columns: the two
+    // `Overview` notes stack in column 0, the `Build` checklist + diagram stack in column 1. This
+    // proves `section` survives the wire (requires @expanse-ade/mcp ≥ 0.16.0, which the app pins).
+    const longNote =
+      'CANVAS_MCP_PLANNING_OK\n\nThis planning note is deliberately long so the column layout must ' +
+      'estimate its wrapped height from the text — the cards beneath it must NOT overlap it: ' +
+      'alpha, beta, gamma, delta, epsilon, zeta, eta, theta, iota, kappa, lambda, mu, nu, xi.'
     const writeP = mcp.orch.call(TOOL, {
       boardId: planId,
       elements: [
-        { kind: 'note', text: 'CANVAS_MCP_PLANNING_OK', tint: 'blue' },
+        { kind: 'note', text: longNote, tint: 'blue', section: 'Overview' },
         {
           kind: 'checklist',
           title: 'Auth refactor',
+          section: 'Build',
           items: [
-            { label: 'Audit current session mw', done: true },
+            // A deliberately long label (> the ~35-char wrap width at 300px) so W-label-wrap is
+            // exercised end-to-end: it must render across multiple lines, not truncate.
+            {
+              label: 'Audit the current session middleware end-to-end before the Steam launch',
+              done: true
+            },
             { label: 'Wire confirm gate', done: false }
           ]
         },
-        { kind: 'note', text: 'second note', tint: 'green' },
-        { kind: 'diagram', source: 'graph TD\n  A[Plan]-->B[Build]' }
+        { kind: 'note', text: 'second note', tint: 'green', section: 'Overview' },
+        { kind: 'diagram', source: 'graph TD\n  A[Plan]-->B[Build]', section: 'Build' }
       ]
     })
     expect(await pollEval(page, MODAL, 8000)).toBe(true)
@@ -215,5 +274,53 @@ test.describe('@mcp @planning agent → planning content write (live loopback, c
     await expect
       .poll(() => planningElementKinds(page, planId), { timeout: 8000 })
       .toEqual(['note', 'checklist', 'note', 'diagram'])
+
+    // SECTIONED layout (2a): the batch lands across exactly two AGENT-DECLARED columns. Both
+    // `Overview` notes share ONE column (same x, stacked) and both `Build` elements (checklist +
+    // diagram) share the NEXT column to the right — deterministic grouping, NOT height-balancing
+    // (under the old masonry the two same-section notes would scatter into different columns).
+    const layout = await planningLayout(page, planId)
+    const noteXs = new Set(layout.noteRects.map((r) => r.x))
+    expect(noteXs.size).toBe(1) // both Overview notes in one column
+    const otherXs = new Set(layout.otherXs)
+    expect(otherXs.size).toBe(1) // checklist + diagram in one column
+    expect(layout.otherXs[0]).toBeGreaterThan(layout.noteRects[0].x) // Build column right of Overview
+    // No two notes overlap (notes carry a real w/h; the tall note is positioned by its estimate).
+    for (let i = 0; i < layout.noteRects.length; i++) {
+      for (let j = i + 1; j < layout.noteRects.length; j++) {
+        const a = layout.noteRects[i]
+        const b = layout.noteRects[j]
+        const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+        expect(overlap).toBe(false)
+      }
+    }
+    // 2c: the `graph TD` diagram materializes at the orientation-aware TALL (portrait) footprint —
+    // bigger than the legacy fixed 280×200 and taller than wide (the host honored the source's
+    // vertical layout). Proves the footprint path end-to-end through the real MCP write → element.
+    expect(layout.diagramRects).toHaveLength(1)
+    const dia = layout.diagramRects[0]
+    expect(dia.w).toBeGreaterThan(280)
+    expect(dia.h).toBeGreaterThan(200)
+    expect(dia.h).toBeGreaterThan(dia.w) // portrait, since the source is `graph TD` (vertical)
+    // W-label-wrap: the long checklist item label rendered ACROSS multiple lines (the auto-growing
+    // textarea grew past one 16px row) instead of truncating — the user's readability ask, verified
+    // through the real render. The card's own ResizeObserver then grows the board to fit.
+    const labelHeight = await page.evaluate(() => {
+      // The e2e tsconfig has no DOM lib, so reach the browser globals through a minimal cast
+      // (mirrors the __canvasE2E probe pattern) rather than naming `document`/HTMLTextAreaElement.
+      const g = globalThis as unknown as {
+        document: {
+          querySelectorAll(s: string): ArrayLike<{ value: string; offsetHeight: number }>
+        }
+      }
+      const tas = Array.from(g.document.querySelectorAll('.pl-check textarea'))
+      const long = tas.find((t) => t.value.startsWith('Audit the current session'))
+      return long ? long.offsetHeight : 0
+    })
+    expect(labelHeight).toBeGreaterThan(20) // > one 16px line → it wrapped + auto-grew
+    // Frame the planning board + let the cards measure/grow, then capture a visual of the columns.
+    await evalIn(page, `window.__canvasE2E.fitView(${JSON.stringify(planId)})`)
+    await page.waitForTimeout(700)
+    await page.screenshot({ path: 'test-results/planning-mcp-sections.png' })
   })
 })

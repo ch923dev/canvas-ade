@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
 import { useCanvasStore } from './canvasStore'
 import { assertPlanningElement, type BoardType, type PlanningElement } from '../lib/boardSchema'
-import { viewportCenterWorld } from '../lib/freeSlot'
+import { freeSlot, overlapsAny, viewportCenterWorld } from '../lib/freeSlot'
+import { sanitizeBoardTitle } from '../../../shared/boardTitle'
 import {
   materializePlanningOps,
   neededBoardHeight,
+  neededBoardWidth,
   MAX_PLANNING_BOARD_ELEMENTS
 } from './planningMcpApply'
 import type { McpCommand, McpCommandAck } from '../../../shared/mcpTypes'
@@ -41,7 +43,7 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
     case 'ping':
       return { ok: true, type: 'ping' }
     case 'addBoard': {
-      const { id, type } = command.board
+      const { id, type, title } = command.board
       if (typeof id !== 'string' || id.length === 0 || !isSpawnable(type)) {
         return { ok: false, error: `invalid addBoard spec: ${JSON.stringify(command.board)}` }
       }
@@ -49,7 +51,13 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       // no-op + ack ok, so a re-delivered addBoard can't push a duplicate board.
       const store = useCanvasStore.getState()
       if (store.boards.some((b) => b.id === id)) return { ok: true, type: 'addBoard' }
-      store.addBoard(type, SPAWN_ANCHOR, { id })
+      // 2b: re-run the SHARED `sanitizeBoardTitle` (defense in depth, a true second pass like the
+      // `isSpawnable` re-validation above — not just a length clamp): MAIN already sanitized the title
+      // on the real path, but a forged/malformed IPC payload carrying control chars must still get the
+      // identical whitespace-collapse + C0/DEL/C1 strip + code-point clamp before it lands in the store.
+      // `undefined` (empty/whitespace-only/non-string) ⇒ the per-type default title.
+      const cleanTitle = sanitizeBoardTitle(title)
+      store.addBoard(type, SPAWN_ANCHOR, { id, ...(cleanTitle ? { title: cleanTitle } : {}) })
       return { ok: true, type: 'addBoard' }
     }
     case 'removeBoard': {
@@ -120,12 +128,45 @@ export function applyMcpCommand(command: McpCommand): McpCommandAck {
       const nextElements = [...board.elements, ...added]
       // beginChange() FIRST (lazy checkpoint, like configureBoard) so the agent's write is ONE
       // discrete undo step that chains with human edits (BUG-023); updateBoard filters to
-      // PATCHABLE_KEYS.planning ('elements'). Then auto-grow the board to fit via the
-      // UNTRACKED growBoardHeight so the layout bump pushes no phantom undo step (BUG-024).
+      // PATCHABLE_KEYS.planning ('elements'). Then auto-grow the board to fit the grid in BOTH
+      // dimensions via the UNTRACKED growBoardWidth/Height so the layout bump pushes no phantom
+      // undo step (BUG-024) — width too, else a wide batch is clipped on the right (the column→
+      // grid fix: a multi-element write widens the board, it no longer only lengthens it).
       store.beginChange()
       store.updateBoard(command.id, { elements: nextElements })
-      const needed = neededBoardHeight(nextElements)
-      if (needed > board.h) store.growBoardHeight(command.id, needed)
+      const needW = neededBoardWidth(nextElements)
+      const grewW = needW > board.w
+      if (grewW) store.growBoardWidth(command.id, needW)
+      const needH = neededBoardHeight(nextElements)
+      const grewH = needH > board.h
+      if (grewH) store.growBoardHeight(command.id, needH)
+      // Canvas-aware nudge: a board grows from its top-left rightward + downward, so a wide/tall
+      // agent plan can grow UNDER a neighbouring board. If the board actually grew, re-read its NEW
+      // rect and, when it now overlaps another board, move the WHOLE board to the nearest free slot
+      // (the same spiral `freeSlot` the spawn path uses, PLACE_GAP margin) so the plan tucks into
+      // open canvas instead. UNTRACKED like the grows → reverts with the write, no separate undo
+      // step. Skipped for a GROUPED board (a feature zone owns its own arrangement — never yank a
+      // member out of its cluster) and when nothing grew (don't move a board the user placed
+      // overlapping on purpose). Other boards always stay put.
+      if (grewW || grewH) {
+        const live = useCanvasStore.getState()
+        const grown = live.boards.find((b) => b.id === command.id)
+        const inGroup = live.groups.some((g) => g.boardIds.includes(command.id))
+        if (grown && !inGroup) {
+          const others = live.boards.filter((b) => b.id !== command.id)
+          const size = { w: grown.w, h: grown.h }
+          const slot = freeSlot(others, { x: grown.x, y: grown.y }, size)
+          // Only move if the slot is BOTH different from where the board grew AND verified clear:
+          // `freeSlot`'s exhaustion fallback (a fully-packed canvas, all rings probed) returns a
+          // not-guaranteed-free position, and moving there could leave the plan overlapping a
+          // different neighbour. When no free slot exists, leave the board where it grew rather than
+          // shuffle it to another overlap.
+          const moved = slot.x !== grown.x || slot.y !== grown.y
+          if (moved && !overlapsAny(others, slot, size)) {
+            store.repositionBoardUntracked(command.id, slot.x, slot.y)
+          }
+        }
+      }
       return { ok: true, type: 'patchPlanning' }
     }
     case 'spawnGroup': {

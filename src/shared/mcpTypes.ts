@@ -38,13 +38,23 @@ export type PlanningOpTint = 'yellow' | 'blue' | 'green' | 'plain'
  * `diagram` carries a Mermaid `source` the renderer materializes into a `DiagramElement` (host
  * schema v11) and renders to a themed SVG in the sandboxed worker. 🔒 Untrusted passive content:
  * it renders, never auto-arms an action.
+ *
+ * Every op may carry an optional sanitized `section` (2a) — a short column label MAIN passes
+ * through from the agent. The renderer groups ops by `section` and lays out one column per section
+ * (first-appearance order). Layout-only: it drives `x/y` at materialize time and is never persisted
+ * on the resulting `PlanningElement` (so no schema bump). Absent everywhere → the renderer's masonry.
  */
 export type PlanningOp =
-  | { kind: 'note'; text: string; tint: PlanningOpTint }
-  | { kind: 'checklist'; title: string; items: Array<{ label: string; done: boolean }> }
-  | { kind: 'text'; text: string }
-  | { kind: 'arrow'; dx: number; dy: number }
-  | { kind: 'diagram'; source: string }
+  | { kind: 'note'; text: string; tint: PlanningOpTint; section?: string }
+  | {
+      kind: 'checklist'
+      title: string
+      items: Array<{ label: string; done: boolean }>
+      section?: string
+    }
+  | { kind: 'text'; text: string; section?: string }
+  | { kind: 'arrow'; dx: number; dy: number; section?: string }
+  | { kind: 'diagram'; source: string; section?: string }
 
 // ── Command union (formerly hand-mirrored in mcpCommand.ts + useMcpCommands.ts) ──
 
@@ -57,11 +67,13 @@ export type PlanningOp =
  * Adding a variant here propagates the type error to BOTH sides simultaneously — the
  * compile-time safety this shared module exists to enforce (W1-D / F9).
  *
- * - `addBoard` carries only a MINIMAL spec (id + type), NOT a full PersistedBoard: MAIN mints
- *   the id but does not know canvas geometry, so the renderer builds the full board (free-slot
- *   placement, per-type defaults) from this spec. `board.type` is a loose `string` (MAIN is the
- *   sender and does not import renderer types); the renderer re-validates it against its
+ * - `addBoard` carries only a MINIMAL spec (id + type + optional title), NOT a full PersistedBoard:
+ *   MAIN mints the id but does not know canvas geometry, so the renderer builds the full board
+ *   (free-slot placement, per-type defaults) from this spec. `board.type` is a loose `string` (MAIN
+ *   is the sender and does not import renderer types); the renderer re-validates it against its
  *   SPAWNABLE allowlist at runtime (defense in depth — the value crosses IPC as JSON anyway).
+ *   `board.title` (2b) is the agent-chosen display name, already sanitized + clamped by MAIN
+ *   (`mcpLifecycle.spawnBoard`); absent ⇒ the renderer uses the per-type default title.
  * - `removeBoard` (T3.2) tears one down by id.
  * - `configureBoard` (T3.3) changes a board's durable per-type config (the renderer applies it
  *   through `updateBoard`, which filters to PATCHABLE_KEYS).
@@ -77,7 +89,7 @@ export type PlanningOp =
  */
 export type McpCommand =
   | { type: 'ping' }
-  | { type: 'addBoard'; board: { id: string; type: string } }
+  | { type: 'addBoard'; board: { id: string; type: string; title?: string } }
   | { type: 'removeBoard'; id: string }
   | {
       type: 'configureBoard'

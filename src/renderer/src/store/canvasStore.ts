@@ -155,6 +155,8 @@ export interface CanvasState {
       configPending?: boolean
       /** File board only (v12): bind the new board to this relative path. */
       path?: string
+      /** MCP spawn_board only (2b): the agent-chosen title (sanitized + clamped upstream). */
+      title?: string
     }
   ) => string
   /**
@@ -269,6 +271,21 @@ export interface CanvasState {
    * (#BUG-024). Only ever grows; a no-op when the board is already tall enough.
    */
   growBoardHeight: (id: string, h: number) => void
+  /**
+   * Grow a board's WIDTH to fit laid-out content (the MCP planning grid). UNTRACKED,
+   * layout-only — the same rails-neutral contract as {@link growBoardHeight}: never touches
+   * undo/redo, only ever grows, a no-op when the board is already wide enough. The planning-
+   * write path pairs it with growBoardHeight so an agent batch can widen the board into a grid
+   * instead of only lengthening it into a single column.
+   */
+  growBoardWidth: (id: string, w: number) => void
+  /**
+   * Move a board's top-left to (x, y). UNTRACKED, layout-only — the same rails-neutral contract as
+   * {@link growBoardWidth}: never touches past/future, so the MCP planning-write's canvas-aware
+   * nudge (repositioning the just-grown board off a collision with a neighbour) reverts together
+   * with the write it belongs to and pushes NO separate undo step. No-op when already at (x, y).
+   */
+  repositionBoardUntracked: (id: string, x: number, y: number) => void
   /**
    * Write a diagram element's DERIVED svgCache (v11/S4). UNTRACKED — the SVG is a render
    * artifact of the canonical `source`, not a user edit, so the async write-back from the hidden
@@ -585,7 +602,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       w: size.w,
       h: size.h,
       // File board only: bind the relative path (createBoard ignores it for other types).
-      ...(opts?.path ? { path: opts.path } : {})
+      ...(opts?.path ? { path: opts.path } : {}),
+      // MCP spawn_board only (2b): use the agent title when supplied (else the per-type default).
+      ...(opts?.title ? { title: opts.title } : {})
     })
     // A fresh, this-session add is NOT idle-on-mount, so a Terminal board auto-spawns
     // on mount. Only restored/duplicated boards are flagged idle (M-1).
@@ -854,6 +873,33 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (b.id !== id || b.h >= h) return b
         changed = true
         return { ...b, h }
+      })
+      return changed ? { boards } : s
+    }),
+
+  growBoardWidth: (id, w) =>
+    set((s) => {
+      // Layout-only, untracked: only-grow, and NEVER touch past/future (mirrors
+      // growBoardHeight). The MCP grid laying a batch wider must not pollute or wipe undo/redo.
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id || b.w >= w) return b
+        changed = true
+        return { ...b, w }
+      })
+      return changed ? { boards } : s
+    }),
+
+  repositionBoardUntracked: (id, x, y) =>
+    set((s) => {
+      // Layout-only, untracked: move x/y and NEVER touch past/future (mirrors growBoardWidth).
+      // The MCP write's canvas-aware overlap nudge is a layout consequence of the write — undo
+      // reverts to the pre-write snapshot (old position AND old size), so it pushes no own step.
+      let changed = false
+      const boards = s.boards.map((b) => {
+        if (b.id !== id || (b.x === x && b.y === y)) return b
+        changed = true
+        return { ...b, x, y }
       })
       return changed ? { boards } : s
     }),

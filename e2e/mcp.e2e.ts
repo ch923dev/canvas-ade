@@ -158,6 +158,17 @@ function boardLaunchCommand(page: Page, id: string): Promise<string | undefined>
     return hook.getBoards().find((b) => b.id === boardId)?.launchCommand
   }, id)
 }
+/** A board's title via the renderer hook (2b spawn_board title). Structured-arg eval (#82 pattern). */
+function boardTitle(page: Page, id: string): Promise<string | undefined> {
+  return page.evaluate((boardId) => {
+    const hook = (
+      globalThis as unknown as {
+        __canvasE2E: { getBoards(): Array<{ id: string; title?: string }> }
+      }
+    ).__canvasE2E
+    return hook.getBoards().find((b) => b.id === boardId)?.title
+  }, id)
+}
 
 /** Drive the trusted confirm modal like a human (the dispatch tools block on this gate). */
 const MODAL = `!!document.querySelector('[data-testid="confirm-modal"]')`
@@ -481,6 +492,20 @@ test.describe('@mcp swarm-layer tier enforcement + dispatch (live loopback)', ()
     const workerSpawn = await mcp.worker.call('spawn_board', { type: 'terminal' })
     expect(deniedToolNotFound(workerSpawn, 'spawn_board')).toBe(true)
     await mcp.orch.call('close_board', { id: spawnedId }) // restore the baseline
+  })
+
+  test('spawn_board carries an agent title onto the new board (2b)', async ({ page, mcp }) => {
+    // 2b end-to-end: the optional title rides spawn_board → orchestrator → addBoard command →
+    // the rendered board's editable title (instead of the generic per-type default).
+    const spawn = await mcp.orch.call('spawn_board', {
+      type: 'planning',
+      title: 'Auth refactor plan'
+    })
+    const id = okText(spawn)
+    expect(id).not.toBe('')
+    await expect.poll(() => boardOnCanvas(page, id), { timeout: 6000 }).toBe(true)
+    await expect.poll(() => boardTitle(page, id), { timeout: 6000 }).toBe('Auth refactor plan')
+    await mcp.orch.call('close_board', { id }) // restore the baseline
   })
 
   // ── W1-G: app-model resource (C1) · spawn_group tool (C2) · write_result caps (C3) ───────────

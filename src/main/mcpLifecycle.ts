@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { BoardId, BoardSummary } from '@expanse-ade/mcp'
 import { sanitizeDispatchText } from './dispatchSanitize'
+import { sanitizeBoardTitle } from '../shared/boardTitle'
 import type { BoardRegistry } from './mcpRegistry'
 
 /**
@@ -62,7 +63,13 @@ export interface SpawnGroupResult {
 }
 
 export interface McpLifecycle {
-  spawnBoard(input: { type: string; prompt?: string; cwd?: string }): Promise<{ id: BoardId }>
+  spawnBoard(input: {
+    type: string
+    prompt?: string
+    cwd?: string
+    /** Agent-chosen board title (2b); host sanitizes + clamps. Absent/empty ⇒ per-type default. */
+    title?: string
+  }): Promise<{ id: BoardId }>
   /**
    * PR-5b: spawn a whole feature-zone CLUSTER in one undoable step — a terminal (always) plus an
    * optional planning + browser member, a Named Group over them, and the browser→terminal preview
@@ -100,6 +107,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     type: string
     prompt?: string
     cwd?: string
+    title?: string
   }): Promise<{ id: BoardId }> => {
     // 🔒 Defense-in-depth (APP-N3): reject an off-type spawn at the adapter — BEFORE any
     // side effect — rather than relying on the renderer's allowlist as the only gate.
@@ -120,6 +128,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // renderer builds the full board (free-slot placement, per-type defaults).
     // `prompt`/`cwd` are accepted now but applied in T3.3 (configure_board).
     const id = randomUUID()
+    // 2b: sanitize + clamp the optional agent title here (the trust boundary) so the renderer
+    // receives a single-line, control-char-free, bounded label. Omitted when nothing usable
+    // remains → the renderer falls back to the per-type default title.
+    const title = sanitizeBoardTitle(input.title)
     // 🔒 Optimistic reservation (BUG-003): the cap check above is synchronous but
     // `sendCommand` yields the event loop. Reserve the slot in `tracked` NOW — BEFORE the
     // await — so a second concurrent spawn near the cap sees the reservation and is rejected
@@ -130,7 +142,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     try {
       const ack = await registry.sendCommand({
         type: 'addBoard',
-        board: { id, type: input.type }
+        board: { id, type: input.type, ...(title ? { title } : {}) }
       })
       if (!ack.ok) throw new Error(`spawn_board failed: ${ack.error}`)
     } catch (err) {
