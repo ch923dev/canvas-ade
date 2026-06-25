@@ -93,6 +93,7 @@ import { registerRecapIpc } from './recapIpc'
 import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 import { initAutoUpdate, type UpdaterLike } from './autoUpdate'
+import { parseAuthDeepLink, deepLinkFromArgv } from './authDeepLink'
 
 // Build-time auto-update gate (electron.vite.config.ts `define`). True ONLY for signed
 // production builds; fences initAutoUpdate so unsigned builds never touch the update feed.
@@ -241,8 +242,66 @@ function createWindow(): void {
   }
 }
 
+// ── Phase 1 accounts: OAuth deep-link (expanse://) + single-instance lock ───────────────────────
+// The OAuth callback from the system browser returns to the app via the custom scheme. On
+// Windows/Linux the OS launches a SECOND instance carrying the URL in argv, which the running
+// primary receives through 'second-instance' — that requires the single-instance lock, acquired
+// BEFORE whenReady (calling it later is a silent no-op). macOS delivers it via 'open-url' instead.
+//
+// PACKAGED-ONLY: dev intentionally allows several concurrent instances (multiple worktrees /
+// title-stamped PR checks — see CLAUDE.md "Manual dev check"), and the e2e harness runs UNPACKAGED
+// against a shared persistent userData; the lock is keyed on userData, so taking it there would
+// deny the second launch. app.isPackaged is false in both, so the lock is only ever taken in a real
+// packaged build (where the deep-link actually matters). Verify via `pnpm pack:dir`.
+const gotSingleInstanceLock = app.isPackaged ? app.requestSingleInstanceLock() : true
+if (!gotSingleInstanceLock) {
+  // A second instance (e.g. the OS opening an expanse:// link) — the primary handles it; exit now.
+  app.quit()
+}
+
+// Step 3 is LOG-ONLY: validate the scheme + surface host/path. NEVER log the query string — it
+// carries the auth code + state. Step 4 adds PKCE state matching + the MAIN-only code→token exchange.
+function handleAuthDeepLink(url: string): void {
+  const link = parseAuthDeepLink(url)
+  if (!link) {
+    console.warn('[auth] ignored a non-expanse / malformed deep-link URL')
+    return
+  }
+  console.log(`[auth] deep-link received: ${link.host}${link.path}`)
+}
+
+function focusPrimaryWindow(): void {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+}
+
+if (app.isPackaged && gotSingleInstanceLock) {
+  // electron-builder's `protocols:` block writes the OS registration (NSIS registry / Info.plist /
+  // .desktop); this makes the running process the live handler so open-url / second-instance fire.
+  app.setAsDefaultProtocolClient('expanse')
+  // macOS delivery (can arrive before ready; Electron buffers until a handler exists).
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    handleAuthDeepLink(url)
+  })
+  // Windows/Linux delivery: a second launch carrying the URL routes here on the primary instance.
+  app.on('second-instance', (_event, argv) => {
+    const url = deepLinkFromArgv(argv)
+    if (url) handleAuthDeepLink(url)
+    focusPrimaryWindow()
+  })
+}
+
 app.whenReady().then(async () => {
+  // A second packaged instance (no lock) is already quitting — don't build a window or wire IPC.
+  if (!gotSingleInstanceLock) return
   electronApp.setAppUserModelId('com.expanse.app')
+  // Cold start via the scheme (Windows/Linux first launch): the deep-link URL is in our own argv.
+  if (app.isPackaged) {
+    const coldLink = deepLinkFromArgv(process.argv)
+    if (coldLink) handleAuthDeepLink(coldLink)
+  }
   // F10: free Alt+V so Claude Code's clipboard-image paste reaches xterm. On Windows/
   // Linux the default menu's Alt mnemonics (Alt+V = View) eat it, and Chromium handles
   // Ctrl+C/V natively in inputs there, so dropping the menu is safe. On macOS the Edit

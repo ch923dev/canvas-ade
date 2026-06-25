@@ -24,6 +24,15 @@ asarUnpack:
 
 npmRebuild: true
 
+# Phase 1 accounts: register the expanse:// custom scheme so the OAuth callback from the system
+# browser routes back into the app. electron-builder writes the NSIS registry entry (Windows),
+# CFBundleURLTypes (macOS) and the .desktop MimeType (Linux). Handled in src/main/index.ts via
+# open-url (macOS) / second-instance (Win/Linux) behind the packaged-only single-instance lock.
+protocols:
+  - name: Expanse
+    schemes:
+      - expanse
+
 # Arch is driven per-job by the CI matrix CLI flags (--x64 / --arm64), NOT pinned
 # here — a hardcoded `arch: [x64, arm64]` overrides the flag and makes a single-arch
 # job (e.g. the native arm64 Linux runner) also attempt the other arch, which g++
