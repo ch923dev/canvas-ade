@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import type {
+  ArrowElement,
   ChecklistElement,
+  DiagramElement,
+  FileRefElement,
   ImageElement,
   NoteElement,
-  PlanningElement
+  PlanningElement,
+  StrokeElement
 } from '../../../lib/boardSchema'
 import { MIN_TEXT_WIDTH_PX } from './textStyle'
 import {
@@ -606,5 +610,174 @@ describe('setArrowEndpoint (D3-B endpoint editing)', () => {
     const next = setArrowEndpoint([a, s], 'a1', 'start', 1, 2)
     expect(next[1]).toBe(s)
     expect(next[0]).not.toBe(a)
+  })
+})
+
+import { extractForTransfer, insertTransferred } from './elements'
+
+describe('cross-board transfer engine (extractForTransfer / insertTransferred)', () => {
+  // Reuses the `note(id,x,y,extra)` factory + `seqId`/`counter` defined above.
+
+  it('normalizes the payload so the selection union-bbox top-left is the origin', () => {
+    const els = [note('a', 40, 60), note('b', 100, 200)]
+    const { payload } = extractForTransfer(els, ['a', 'b'])
+    // union top-left = (min x, min y) = (40, 60) → payload shifts by (-40, -60).
+    const a = payload.find((e) => e.id === 'a')!
+    const b = payload.find((e) => e.id === 'b')!
+    expect([a.x, a.y]).toEqual([0, 0])
+    expect([b.x, b.y]).toEqual([60, 140])
+    // Immutable + deep-cloned: source untouched, payload is a distinct object graph.
+    expect(els[0].x).toBe(40)
+    expect(payload[0]).not.toBe(els[0])
+  })
+
+  it('empty selection → empty payload, source ref unchanged (no-op signal for the store)', () => {
+    const els = [note('a')]
+    const { payload, remaining } = extractForTransfer(els, [])
+    expect(payload).toEqual([])
+    expect(remaining).toBe(els)
+  })
+
+  it('expands groups on extract and remaps to ONE fresh group per source group on insert', () => {
+    counter = 0
+    const els = [
+      note('a', 0, 0, { groupId: 'g' }),
+      note('b', 10, 10, { groupId: 'g' }),
+      note('c', 50, 50)
+    ]
+    // Selecting only 'a' pulls its group-sibling 'b'; ungrouped 'c' is left behind.
+    const { payload } = extractForTransfer(els, ['a'])
+    expect(payload.map((e) => e.id).sort()).toEqual(['a', 'b'])
+    const { elements, newIds } = insertTransferred([], payload, { x: 0, y: 0 }, seqId)
+    expect(elements).toHaveLength(2)
+    expect(newIds).toHaveLength(2)
+    // Fresh ids (not the source 'a'/'b').
+    expect(elements.every((e) => e.id.startsWith('new-'))).toBe(true)
+    // Both inserts share ONE fresh group, remapped away from the source 'g'.
+    expect(elements[0].groupId).toBe(elements[1].groupId)
+    expect(elements[0].groupId).not.toBe('g')
+    expect(elements[0].groupId).toBeTruthy()
+  })
+
+  it('move skips locked members (lock-precedence): excluded from payload, kept in remaining', () => {
+    const els = [note('a', 0, 0), note('b', 10, 10, { locked: true })]
+    const { payload, remaining } = extractForTransfer(els, ['a', 'b'], 'move')
+    expect(payload.map((e) => e.id)).toEqual(['a']) // locked 'b' does NOT re-home
+    expect(remaining.map((e) => e.id)).toEqual(['b']) // locked 'b' stays in source
+  })
+
+  it('copy includes locked members (they copy normally) and leaves the source ref intact', () => {
+    const els = [note('a', 0, 0), note('b', 10, 10, { locked: true })]
+    const { payload, remaining } = extractForTransfer(els, ['a', 'b'], 'copy')
+    expect(payload.map((e) => e.id).sort()).toEqual(['a', 'b'])
+    expect(remaining).toBe(els) // copy never touches the source
+  })
+
+  it('move whose every member is locked yields an empty payload + unchanged source', () => {
+    const els = [note('a', 0, 0, { locked: true })]
+    const { payload, remaining } = extractForTransfer(els, ['a'], 'move')
+    expect(payload).toEqual([])
+    expect(remaining).toBe(els)
+  })
+
+  it('copies asset refs (assetId / source / svgCache / path) verbatim through extract → insert', () => {
+    counter = 0
+    const img: PlanningElement = {
+      id: 'img',
+      kind: 'image',
+      x: 0,
+      y: 0,
+      w: 100,
+      h: 80,
+      assetId: 'assets/abc.png'
+    }
+    const diag: PlanningElement = {
+      id: 'd',
+      kind: 'diagram',
+      x: 0,
+      y: 0,
+      w: 280,
+      h: 200,
+      source: 'graph TD\n  A-->B',
+      engine: 'mermaid',
+      svgCache: 'assets/def.svg'
+    }
+    const fref: PlanningElement = {
+      id: 'f',
+      kind: 'fileref',
+      x: 0,
+      y: 0,
+      w: 224,
+      h: 46,
+      path: 'src/x.ts',
+      label: 'x.ts'
+    }
+    const { payload } = extractForTransfer([img, diag, fref], ['img', 'd', 'f'])
+    const { elements } = insertTransferred([], payload, { x: 5, y: 5 }, seqId)
+    const outImg = elements.find((e) => e.kind === 'image') as ImageElement
+    expect(outImg.assetId).toBe('assets/abc.png')
+    const outDiag = elements.find((e) => e.kind === 'diagram') as DiagramElement
+    expect(outDiag.source).toBe('graph TD\n  A-->B')
+    expect(outDiag.svgCache).toBe('assets/def.svg')
+    expect(outDiag.engine).toBe('mermaid')
+    const outFref = elements.find((e) => e.kind === 'fileref') as FileRefElement
+    expect(outFref.path).toBe('src/x.ts')
+    expect(outFref.label).toBe('x.ts')
+  })
+
+  it('preserves arrow endpoints + stroke points through extract → insert (shifted, not deformed)', () => {
+    counter = 0
+    const arrowEl: PlanningElement = { id: 'ar', kind: 'arrow', x: 10, y: 10, x2: 40, y2: 50 }
+    const strokeEl: PlanningElement = {
+      id: 'st',
+      kind: 'stroke',
+      x: 0,
+      y: 0,
+      points: [10, 10, 20, 30, 40, 50]
+    }
+    const { payload } = extractForTransfer([arrowEl, strokeEl], ['ar', 'st'])
+    // union top-left = (10, 10) → normalize by (-10, -10); then insert translates by (100, 200).
+    const { elements } = insertTransferred([], payload, { x: 100, y: 200 }, seqId)
+    const outArrow = elements.find((e) => e.kind === 'arrow') as ArrowElement
+    expect([outArrow.x, outArrow.y, outArrow.x2, outArrow.y2]).toEqual([100, 200, 130, 240])
+    const outStroke = elements.find((e) => e.kind === 'stroke') as StrokeElement
+    expect(outStroke.points).toEqual([100, 200, 110, 220, 130, 240])
+    expect(outStroke.points).not.toBe(strokeEl.points) // fresh array, source untouched
+  })
+
+  it('deep-clones so the payload never aliases the source (checklist items array is fresh)', () => {
+    const cl: PlanningElement = {
+      id: 'cl',
+      kind: 'checklist',
+      x: 0,
+      y: 0,
+      w: 240,
+      h: 0,
+      title: 'T',
+      items: [{ id: 'i', label: 'x', done: false }]
+    }
+    const { payload } = extractForTransfer([cl], ['cl'])
+    const outCl = payload[0] as ChecklistElement
+    expect(outCl.items).not.toBe((cl as ChecklistElement).items)
+    expect(outCl.items).toEqual([{ id: 'i', label: 'x', done: false }])
+  })
+
+  it('insertTransferred appends to the target without mutating it', () => {
+    counter = 0
+    const target = [note('keep', 5, 5)]
+    const { payload } = extractForTransfer([note('a', 0, 0)], ['a'])
+    const { elements } = insertTransferred(target, payload, { x: 0, y: 0 }, seqId)
+    expect(elements.map((e) => e.id)).toEqual(['keep', 'new-0'])
+    expect(target).toHaveLength(1) // target array not mutated
+  })
+
+  it('mints distinct ids + objects on repeated inserts of one payload (paste-twice safe)', () => {
+    counter = 0
+    const { payload } = extractForTransfer([note('a', 0, 0)], ['a'])
+    const first = insertTransferred([], payload, { x: 0, y: 0 }, seqId)
+    const second = insertTransferred(first.elements, payload, { x: 10, y: 10 }, seqId)
+    expect(second.elements).toHaveLength(2)
+    expect(first.newIds[0]).not.toBe(second.newIds[0])
+    expect(second.elements[0]).not.toBe(second.elements[1])
   })
 })

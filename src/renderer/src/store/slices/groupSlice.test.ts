@@ -53,6 +53,7 @@ function makeState(boards: Board[] = [], groups: NamedGroup[] = []): CanvasState
     removeBoardFromGroup: vi.fn() as never,
     removeBoardFromAllGroups: vi.fn() as never,
     updateBoard: vi.fn() as never,
+    transferElements: vi.fn() as never,
     resizeBoard: vi.fn() as never,
     tidyBoards: vi.fn() as never,
     tileBoards: vi.fn() as never,

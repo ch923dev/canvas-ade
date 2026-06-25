@@ -22,12 +22,14 @@ import type {
 } from '../../../lib/boardSchema'
 import { noteRotation, TINT_CYCLE } from './tints'
 import { MIN_TEXT_WIDTH_PX, type FontSizeToken } from './textStyle'
-// Geometry lives in the unified rail now; `BBox` is used internally by anchors()/unionBBox().
-import { type BBox } from './elementRegistry'
+// Geometry lives in the unified rail now; `BBox` is used internally by anchors()/unionBBox()
+// and `elementBBox` by the transfer engine's origin-normalization.
+import { elementBBox, type BBox } from './elementRegistry'
 
 // Re-export the geometry rail's public surface (canonical source = ./elementRegistry) so
 // existing `./elements` importers keep their import paths unchanged — behavior-identical (S3).
-export { elementBBox, nominalChecklistHeight, TEXT_NOMINAL, type Measured } from './elementRegistry'
+export { nominalChecklistHeight, TEXT_NOMINAL, type Measured } from './elementRegistry'
+export { elementBBox }
 export type { BBox }
 
 /** Default sizes for the card-shaped elements (board-local px). */
@@ -530,4 +532,96 @@ export function duplicateElements(
     copies.push(copy)
   }
   return { elements: [...els, ...copies], newIds }
+}
+
+// ── Cross-board transfer engine (Phase 1, pure half of transferElements) ─────────
+// One pure transform pair drives all three transfer triggers (picker / copy-paste /
+// cross-board drag — spec §4). `extractForTransfer` lifts a selection off the SOURCE
+// board into a normalized, source-independent payload; `insertTransferred` materializes
+// that payload into a TARGET board with fresh identity. The store action `transferElements`
+// (canvasStore.ts) sequences them as one undo step. No schema change — reuses existing kinds
+// + the project-scoped content-addressed asset store (an in-project asset ref is a plain
+// string copy: §1.1).
+
+/** Re-home (remove from source) vs. share a duplicate (source left intact). */
+export type TransferMode = 'copy' | 'move'
+
+/**
+ * Lift a selection off a source board for a cross-board transfer (spec §4.1).
+ *
+ * - `payload`: the **group-expanded** (`expandGroups`) selection, **deep-cloned**
+ *   (`structuredClone` → no array/object aliasing back to the source) and **normalized** so
+ *   the selection's union-bbox top-left sits at the origin `(0,0)`. Placement is then a single
+ *   translate at insert time (§4.3). Element ids + `groupId`s are PRESERVED here — they are
+ *   reset on insert. Asset refs (`assetId`/`source`/`svgCache`/`path`) ride along verbatim
+ *   (same project → valid references; §1.1).
+ * - `remaining`: the source array AFTER the transfer:
+ *   - `'copy'` (default): the source is untouched → `remaining` is `els` (same ref → the store
+ *     leaves the source board alone, no second undo write).
+ *   - `'move'`: source minus the moved ids, applying **lock-precedence** (Q1) — locked members
+ *     **stay in source** and are **NOT** in `payload` (a Move never silently re-homes a locked
+ *     element, mirroring Delete/Cut). Copy is unaffected: locked elements copy normally.
+ *
+ * Pure + immutable: the input array and its elements are never mutated.
+ */
+export function extractForTransfer(
+  els: PlanningElement[],
+  ids: Iterable<string>,
+  mode: TransferMode = 'copy'
+): { payload: PlanningElement[]; remaining: PlanningElement[] } {
+  const selected = expandGroups(els, ids)
+  // What actually moves: the selection, minus locked members on a MOVE (lock-precedence).
+  // On a COPY every selected element is taken (locked elements copy normally).
+  const isMoving = (el: PlanningElement): boolean =>
+    selected.has(el.id) && (mode === 'copy' || !isLocked(el))
+  const taken = els.filter(isMoving)
+  // Nothing to take (empty selection, or a move whose every member is locked) → empty payload;
+  // signal "source unchanged" with the same `els` ref so the store no-ops without arming undo.
+  if (taken.length === 0) return { payload: [], remaining: els }
+  // Normalize to the origin: subtract the selection's union-bbox top-left. With no live DOM
+  // measurement, `elementBBox` uses the nominal sizes — deterministic + unit-testable. `shiftElement`
+  // is per-kind correct (arrow shifts both endpoints; stroke shifts every point pair).
+  const origin = unionBBox(taken.map((el) => elementBBox(el)))
+  const payload = taken.map((el) => shiftElement(structuredClone(el), -origin.x, -origin.y))
+  const remaining = mode === 'move' ? els.filter((el) => !isMoving(el)) : els
+  return { payload, remaining }
+}
+
+/**
+ * Materialize an extracted `payload` into a target board's element array (spec §4.1).
+ *
+ * Each payload element gets a **fresh id** and its `groupId` is **remapped** — every original
+ * group becomes ONE fresh group among the inserts (the `duplicateElements` remap logic), so a
+ * transferred cluster lands as a cohesive group in the target without colliding with the
+ * source's group ids. The whole payload is then translated by `at` (per-kind correct via
+ * `shiftElement`) and appended. `targetEls` is never mutated.
+ *
+ * Each insert is independently deep-cloned (`structuredClone`), so the SAME payload may be
+ * inserted repeatedly (paste-twice, later phases) without the inserts aliasing one another.
+ * Returns the new element array plus the fresh ids (for reselection in the target).
+ */
+export function insertTransferred(
+  targetEls: PlanningElement[],
+  payload: PlanningElement[],
+  at: { x: number; y: number },
+  newId: () => string
+): { elements: PlanningElement[]; newIds: string[] } {
+  const groupRemap = new Map<string, string>()
+  const newIds: string[] = []
+  const inserts: PlanningElement[] = []
+  for (const el of payload) {
+    const id = newId()
+    newIds.push(id)
+    let copy = shiftElement({ ...structuredClone(el), id }, at.x, at.y)
+    if (el.groupId) {
+      let g = groupRemap.get(el.groupId)
+      if (!g) {
+        g = newId()
+        groupRemap.set(el.groupId, g)
+      }
+      copy = { ...copy, groupId: g }
+    }
+    inserts.push(copy)
+  }
+  return { elements: [...targetEls, ...inserts], newIds }
 }

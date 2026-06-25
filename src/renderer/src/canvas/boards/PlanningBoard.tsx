@@ -65,6 +65,8 @@ import {
 } from './planning/elements'
 import { buildContextMenuEntries } from './planning/contextMenuEntries'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
+import { CrossBoardDragGhost } from './planning/CrossBoardDragGhost'
+import { useSendToBoard } from './planning/useSendToBoard'
 import { usePlanningKeyboard } from './planning/usePlanningKeyboard'
 import { usePlanningPointer } from './planning/usePlanningPointer'
 import { usePlanningImageIO } from './planning/usePlanningImageIO'
@@ -84,7 +86,8 @@ export function PlanningBoard({
   onAddToGroup,
   onRemoveFromGroup,
   onRemoveFromAllGroups,
-  onStartConnect
+  onStartConnect,
+  onFocusBoard
 }: BoardViewProps<PlanningBoardData>): ReactElement {
   const updateBoard = useCanvasStore((s) => s.updateBoard)
   const beginChange = useCanvasStore((s) => s.beginChange)
@@ -130,6 +133,11 @@ export function PlanningBoard({
     [toggleSel]
   )
   const wellRef = useRef<HTMLDivElement>(null)
+  // Phase 3 clipboard (§2.4): the last board-local pointer position over THIS well — the
+  // Ctrl+V paste anchor. usePlanningPointer writes it on every well pointermove and
+  // usePlanningKeyboard reads it (board-center fallback while null). Ephemeral session
+  // state — a plain ref, never serialized.
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   // BUG-052: ref that mirrors the live dragPos from usePlanningPointer so
   // growForChecklist can gate on it without a forward-reference (the useCallback
   // is defined before usePlanningPointer is called in the component body).
@@ -144,6 +152,15 @@ export function PlanningBoard({
     y: number
     entries: MenuEntry[]
   } | null>(null)
+
+  // "Send to board…" picker (cross-board element transfer, Phase 2). The hook owns the picker
+  // state + routes the pick through `transferElements`; the board threads the menu's
+  // `onOpenSendTo` (anchored at the current menu position) and renders `sendToPanel`.
+  const { onOpenSendTo, sendToPanel } = useSendToBoard({
+    board,
+    onFocusBoard,
+    menuAnchor: contextMenu
+  })
 
   // Live DOM sizes (board-local px) for the auto-sized kinds (text, checklist), fed by
   // the cards. Refines elementBBox for marquee/snap; a plain ref (no re-render needed —
@@ -419,9 +436,10 @@ export function PlanningBoard({
         commit,
         clearSel,
         setSelectedIds,
-        newId
+        newId,
+        onOpenSendTo
       }),
-    [elements, beginChange, commit, clearSel, board.w, board.h]
+    [elements, beginChange, commit, clearSel, board.w, board.h, onOpenSendTo]
   )
 
   // ── Well keyboard handlers (D3-C extraction) ─────────────────────────────────
@@ -442,7 +460,10 @@ export function PlanningBoard({
     measuredRef,
     buildMenuEntries,
     setContextMenu,
-    newId
+    newId,
+    lastPointerRef,
+    boardW: board.w,
+    boardH: board.h
   })
 
   // ── Whiteboard pointer state machine (Wave-5 B5 extraction) ──────────────────
@@ -465,7 +486,8 @@ export function PlanningBoard({
     draftTextBox,
     pendingErase,
     snapGuides,
-    endpointDrag
+    endpointDrag,
+    crossBoardDrag
   } = usePlanningPointer({
     tool,
     setTool,
@@ -480,7 +502,9 @@ export function PlanningBoard({
     measuredRef,
     wellRef,
     buildMenuEntries,
-    setContextMenu
+    setContextMenu,
+    lastPointerRef,
+    boardId: board.id
   })
 
   // Mirror dragPos into the ref so growForChecklist (defined earlier) reads it lazily.
@@ -623,6 +647,11 @@ export function PlanningBoard({
       <div
         ref={wellRef}
         className="pl-well"
+        // Cross-board drag hit-test target (Phase 4 §3.C): a DISTINCT attribute from the
+        // DiagramCard's `data-board-id` so `closest('[data-planning-well]')` resolves to the
+        // WELL (its rect) and never a diagram card. Only Planning wells carry it → dropping
+        // over a terminal/browser board finds no target.
+        data-planning-well={board.id}
         tabIndex={0}
         onPointerDown={onWellPointerDown}
         onPointerMove={onWellPointerMove}
@@ -845,6 +874,8 @@ export function PlanningBoard({
           onClose={() => setContextMenu(null)}
         />
       )}
+      {sendToPanel}
+      {crossBoardDrag && <CrossBoardDragGhost drag={crossBoardDrag} />}
     </BoardFrame>
   )
 }

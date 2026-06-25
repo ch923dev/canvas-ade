@@ -36,10 +36,15 @@ import { tileLayout, type TileTemplate } from '../lib/tileLayout'
 import { freeSlot, PLACE_GAP } from '../lib/freeSlot'
 import { useCommandStore, commandStoreDefaults } from './commandStore'
 import { applyBoardPatch } from './boardPatch'
+import { makeTransferElements, type TransferElements } from './planningTransfer'
 import { createConnectorSlice } from './slices/connectorSlice'
 import { createFileBoardSlice } from './slices/fileBoardSlice'
 import { createGroupSlice, pruneBoardFromGroups } from './slices/groupSlice'
 import type { SetCanvasState } from './slices/sliceTypes'
+
+// selectOtherPlanningBoards lives in ./planningTransfer with the rest of the transfer concern;
+// re-exported here so existing `from '.../canvasStore'` importers keep working.
+export { selectOtherPlanningBoards } from './planningTransfer'
 
 /** Active dock tool: the neutral select tool or a pending add-board type. */
 export type Tool = 'select' | BoardType
@@ -245,6 +250,8 @@ export interface CanvasState {
   removeBoardFromAllGroups: (boardId: string) => void
   /** Shallow-merge a partial patch into one board (move, rename, per-type props). */
   updateBoard: (id: string, patch: Partial<Board>) => void
+  /** Cross-board element transfer (planning ↔ planning, same canvas) — see {@link TransferElements}. */
+  transferElements: TransferElements
   /** Resize a board, clamped to the minimum board size. */
   resizeBoard: (id: string, w: number, h: number) => void
   /**
@@ -798,6 +805,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const past = takePendingPast(s)
       return s.future.length ? { boards, past, future: [] } : { boards, past }
     }),
+
+  transferElements: makeTransferElements(get, newId),
 
   resizeBoard: (id, w, h) =>
     set((s) => {

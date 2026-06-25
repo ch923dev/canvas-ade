@@ -1,0 +1,252 @@
+<!doctype html>
+<!--
+  THROWAWAY pixel mock — SendToBoardPanel (cross-board element transfer, Phase 2 picker).
+  Design-artifact gate per CLAUDE.md › "Design artifact before code". NOT wired into src/ or
+  the build: a standalone .html so the look can be signed off before the real component lands.
+
+  Recreates the look of BrowserPickPanel (the `.ca-port-picker` family in
+  src/renderer/src/styles/{boards/terminal.css, canvas/connect-picker.css}) using the REAL
+  design tokens copied verbatim from src/renderer/src/styles/tokens.css. Layout = spec §3.A:
+  title "Send N items to…", a Copy / Move radio, the list of OTHER planning boards, and a
+  "+ New planning board" row. Calm/dense Linear-Raycast feel; one accent (#4f8cff), functional
+  only; no gradients/glow (DESIGN.md §2).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SendToBoardPanel — pixel mock</title>
+    <style>
+      /* ── Design tokens (verbatim subset of src/renderer/src/styles/tokens.css) ── */
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+        /* §2 Surfaces */
+        --void: #0a0a0b;
+        --grid-dot: #202022;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+
+        /* §2 Borders */
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+
+        /* §2 Text */
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+
+        /* §2 Accent */
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+
+        /* §4 Radius */
+        --r-ctl: 5px;
+
+        /* §4 Elevation */
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      /* Canvas-like backdrop (the void + dot grid) so the popover reads in context. */
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 1px 1px, var(--grid-dot) 1px, transparent 0) 0 0 / 16px 16px,
+          var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        display: grid;
+        place-items: center;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* ── .ca-port-picker family (verbatim look from terminal.css/connect-picker.css) ── */
+      .ca-port-picker {
+        width: 248px;
+        background: var(--surface-overlay);
+        border: 1px solid var(--border);
+        border-radius: var(--r-ctl);
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--text-2);
+        box-shadow: var(--shadow-board);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .ca-port-picker-title {
+        color: var(--text-3);
+        font-size: 11px;
+      }
+
+      /* Copy / Move radio (spec §3.A "( ) Copy  (•) Move"). Native radios with the accent
+         color — same treatment as .ca-browser-choice input in connect-picker.css. */
+      .stb-mode {
+        display: flex;
+        gap: 18px;
+        padding: 2px 1px 4px;
+      }
+      .stb-radio {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-2);
+        cursor: pointer;
+        user-select: none;
+      }
+      .stb-radio input {
+        accent-color: var(--accent);
+        cursor: pointer;
+        margin: 0;
+      }
+      /* The selected mode reads brighter (the only state cue — calm, no fill). */
+      .stb-radio-on {
+        color: var(--text);
+      }
+
+      /* Hairline between the mode toggle and the destination list. */
+      .stb-divider {
+        height: 1px;
+        background: var(--border-subtle);
+        margin: 1px -10px 3px;
+      }
+
+      /* Destination rows — modeled on .ca-port-choice (raised surface, subtle border, left
+         aligned), each board picks immediately on click (transfer is one undo step). */
+      .stb-board {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-align: left;
+        font-family: var(--ui);
+        font-size: 12px;
+        color: var(--text);
+        background: var(--surface-raised);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-ctl);
+        padding: 6px 8px;
+        cursor: pointer;
+        width: 100%;
+      }
+      .stb-board:hover {
+        border-color: var(--border-strong);
+        background: var(--surface);
+      }
+      .stb-ico {
+        flex: none;
+        display: grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        color: var(--text-3);
+      }
+      .stb-board:hover .stb-ico {
+        color: var(--text-2);
+      }
+      .stb-label {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* "+ New planning board" — the create action; accent-tinted + dashed to read as
+         "make a destination" rather than "an existing one" (still calm; accent is functional). */
+      .stb-new {
+        color: var(--accent);
+        background: transparent;
+        border: 1px dashed var(--border-strong);
+      }
+      .stb-new:hover {
+        background: var(--accent-wash);
+        border-color: var(--accent);
+      }
+      .stb-new .stb-ico {
+        color: var(--accent);
+      }
+
+      /* Caption under the mock — not part of the panel; for the sign-off screenshot only. */
+      .caption {
+        position: fixed;
+        bottom: 16px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-faint);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ca-port-picker nodrag" role="dialog" aria-label="Send to board">
+      <div class="ca-port-picker-title">Send 3 items to…</div>
+
+      <div class="stb-mode" role="radiogroup" aria-label="Transfer mode">
+        <label class="stb-radio">
+          <input type="radio" name="mode" />
+          <span>Copy</span>
+        </label>
+        <label class="stb-radio stb-radio-on">
+          <input type="radio" name="mode" checked />
+          <span>Move</span>
+        </label>
+      </div>
+
+      <div class="stb-divider"></div>
+
+      <button class="stb-board" type="button">
+        <span class="stb-ico" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke="currentColor" />
+            <path d="M4 5h6M4 7.5h6M4 10h3.5" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+        </span>
+        <span class="stb-label">Sprint Plan</span>
+      </button>
+
+      <button class="stb-board" type="button">
+        <span class="stb-ico" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke="currentColor" />
+            <path d="M4 5h6M4 7.5h6M4 10h3.5" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+        </span>
+        <span class="stb-label">Architecture</span>
+      </button>
+
+      <button class="stb-board" type="button">
+        <span class="stb-ico" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1.5" y="1.5" width="11" height="11" rx="2" stroke="currentColor" />
+            <path d="M4 5h6M4 7.5h6M4 10h3.5" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+        </span>
+        <span class="stb-label">Bug Triage</span>
+      </button>
+
+      <button class="stb-board stb-new" type="button">
+        <span class="stb-ico" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M7 2.5v9M2.5 7h9" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+        </span>
+        <span class="stb-label">New planning board</span>
+      </button>
+    </div>
+
+    <div class="caption">SendToBoardPanel · cross-board element transfer · pixel mock (tokens.css)</div>
+  </body>
+</html>

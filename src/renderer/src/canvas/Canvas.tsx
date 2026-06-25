@@ -590,6 +590,7 @@ function CanvasInner(): ReactElement {
     fullViewIdRef,
     cameraFullViewIdRef,
     removeBoardFromAllGroups,
+    focusBoardById,
     setFocusedId,
     setSelectedConnectorId,
     setConnectPointer,

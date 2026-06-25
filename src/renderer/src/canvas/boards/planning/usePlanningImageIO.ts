@@ -11,6 +11,7 @@ import { useCallback, useEffect, type DragEvent as ReactDragEvent, type RefObjec
 import type { PlanningBoard as PlanningBoardData, PlanningElement } from '../../../lib/boardSchema'
 import { useCanvasStore } from '../../../store/canvasStore'
 import { makeImage, fitImageSize, IMAGE_MAX } from './elements'
+import { hasClipboard } from './elementClipboard'
 import { showToast } from '../../../store/toastStore'
 
 const newId = (): string => crypto.randomUUID()
@@ -94,6 +95,15 @@ export function usePlanningImageIO(deps: PlanningImageIODeps): {
     (e: ClipboardEvent): void => {
       const well = wellRef.current
       if (!well || !well.contains(document.activeElement)) return
+      // E7 precedence (spec §3.B / §6): the in-app element clipboard is the most recent
+      // EXPLICIT Ctrl+C/X and WINS over an OS-clipboard bitmap while this well owns focus.
+      // The Ctrl+V keydown handler (usePlanningKeyboard) preventDefaults when it pastes
+      // elements, which normally suppresses this `paste` event — but keydown
+      // preventDefault-suppresses-`paste` is unreliable in Electron, so this is the robust
+      // INSURANCE: defer the image paste so a single Ctrl+V can never double-paste (an
+      // element set AND a bitmap). We return WITHOUT preventDefault, so a plain text paste
+      // into a focused note's textarea still proceeds natively (this is not an image).
+      if (hasClipboard()) return
       const data = e.clipboardData
       if (!data) return
       // A pasted bitmap can surface either as a DataTransferItem (kind 'file') OR only in

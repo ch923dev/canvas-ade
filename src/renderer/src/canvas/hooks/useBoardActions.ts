@@ -21,6 +21,8 @@ export interface BoardActionsDeps {
   fullViewIdRef: MutableRefObject<string | null>
   cameraFullViewIdRef: MutableRefObject<string | null>
   removeBoardFromAllGroups: (boardId: string) => void
+  /** Canonical camera-fit + dim focus (focusBoardById) — drives the transfer toast's Focus action. */
+  focusBoardById: (id: string) => void
   setFocusedId: Dispatch<SetStateAction<string | null>>
   setSelectedConnectorId: Dispatch<SetStateAction<string | null>>
   setConnectPointer: Dispatch<SetStateAction<{ x: number; y: number } | null>>
@@ -43,6 +45,7 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
     fullViewIdRef,
     cameraFullViewIdRef,
     removeBoardFromAllGroups,
+    focusBoardById,
     setFocusedId,
     setSelectedConnectorId,
     setConnectPointer,
@@ -118,7 +121,9 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
       removeFromGroup: (boardId, groupId) =>
         useCanvasStore.getState().removeBoardFromGroup(groupId, boardId),
       // GROUP-06: ⋯ menu → remove this board from every group it belongs to, in one undo step.
-      removeFromAllGroups: (boardId) => removeBoardFromAllGroups(boardId)
+      removeFromAllGroups: (boardId) => removeBoardFromAllGroups(boardId),
+      // Cross-board transfer toast → focus the destination board via the canonical camera path.
+      focusBoard: (id) => focusBoardById(id)
     }
   }, [
     duplicateBoard,
@@ -131,6 +136,7 @@ export function useBoardActions(deps: BoardActionsDeps): BoardActions {
     fullViewIdRef,
     cameraFullViewIdRef,
     removeBoardFromAllGroups,
+    focusBoardById,
     setFocusedId,
     setSelectedConnectorId,
     setConnectPointer,

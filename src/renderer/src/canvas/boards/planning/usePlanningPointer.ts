@@ -20,7 +20,10 @@ import {
   type SetStateAction
 } from 'react'
 import type { ArrowElement, PlanningElement } from '../../../lib/boardSchema'
-import { pushBoardPoint } from '../../../lib/pen'
+import { pushBoardPoint, screenScale } from '../../../lib/pen'
+import { useCanvasStore } from '../../../store/canvasStore'
+import { showToast } from '../../../store/toastStore'
+import { dropPlacement, grabAnchorOffset, resolveDropTarget } from './crossBoardDrag'
 import { eraseHitTest } from './erase'
 import { rectFromPoints, marqueeHits } from './marquee'
 import { computeSnap, precomputeStatics, SNAP_TOL, type Guide, type StaticSnap } from './snapping'
@@ -62,6 +65,35 @@ export interface PlanningPointerDeps {
   wellRef: MutableRefObject<HTMLDivElement | null>
   buildMenuEntries: (sel: ReadonlySet<string>) => MenuEntry[]
   setContextMenu: Dispatch<SetStateAction<{ x: number; y: number; entries: MenuEntry[] } | null>>
+  /** Tracks the last board-local pointer position over the well (Phase 3 clipboard, §2.4) —
+   *  the Ctrl+V paste anchor read by usePlanningKeyboard. Updated on EVERY well pointermove,
+   *  including idle moves with no active gesture, so a paste lands under the cursor. */
+  lastPointerRef: MutableRefObject<{ x: number; y: number } | null>
+  /** This board's id (Phase 4 cross-board drag) — the SOURCE the hit-test rejects + the
+   *  `transferElements` source on a foreign-well drop. */
+  boardId: string
+}
+
+/**
+ * Transient cross-board drag affordance (Phase 4 §3.C) — surfaced once the cursor leaves the
+ * SOURCE well during a move, consumed by `CrossBoardDragGhost`. EPHEMERAL session state: it is
+ * NEVER serialized, never routed into `elements[]`/`PATCHABLE_KEYS` (scene/session split). All
+ * coordinates are SCREEN px (the ghost is a screen-fixed body portal).
+ */
+export interface CrossBoardDrag {
+  /** The cursor position (anchors the count chip + the footprint offset). */
+  cursor: { x: number; y: number }
+  /** How many elements are being dragged (the chip label). */
+  count: number
+  /** The selection's union footprint in SCREEN px, plus the cursor's offset within it (the
+   *  grab anchor, scaled) — so the outline tracks where the payload will land. */
+  ghost: { w: number; h: number; offsetX: number; offsetY: number }
+  /** The drop-target well's screen rect when over a valid foreign Planning board; else null
+   *  (over the source / empty canvas / a non-planning board). */
+  target: {
+    boardId: string
+    rect: { left: number; top: number; width: number; height: number }
+  } | null
 }
 
 export interface PlanningPointerApi {
@@ -83,6 +115,9 @@ export interface PlanningPointerApi {
   snapGuides: Guide[] | null
   /** Live endpoint-drag preview (board-local); null when idle. Transient, never serialized. */
   endpointDrag: { id: string; end: ArrowEnd; x: number; y: number } | null
+  /** Live cross-board drag affordance (Phase 4 §3.C); null unless a move has left this well.
+   *  Rendered by CrossBoardDragGhost. Transient, never serialized. */
+  crossBoardDrag: CrossBoardDrag | null
 }
 
 export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerApi {
@@ -100,10 +135,15 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     measuredRef,
     wellRef,
     buildMenuEntries,
-    setContextMenu
+    setContextMenu,
+    lastPointerRef,
+    boardId
   } = deps
 
   const [snapGuides, setSnapGuides] = useState<Guide[] | null>(null)
+  // Transient cross-board drag affordance (Phase 4 §3.C) — set once a move leaves this well,
+  // read by CrossBoardDragGhost; null otherwise. Ephemeral, never serialized.
+  const [crossBoardDrag, setCrossBoardDrag] = useState<CrossBoardDrag | null>(null)
 
   // In-progress (uncommitted) gesture state — drawn as a draft until pointer-up.
   const [draftArrow, setDraftArrow] = useState<ArrowElement | null>(null)
@@ -139,6 +179,20 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         grabY: number
         alt: boolean
         snapCache: { elements: PlanningElement[]; statics: StaticSnap[] } | null
+        // Phase 4 cross-board drag (§4.3): the grab point's offset from the (mode-aware,
+        // group-expanded, lock-filtered) selection's NOMINAL union top-left — IDENTICAL to the
+        // basis `extractForTransfer` normalizes the payload against — plus that union's
+        // board-local size for the ghost footprint. `count` is the mode-aware transferred-element
+        // count (= `taken.length`, which on a COPY re-includes a group's locked members), so the
+        // ghost chip matches the payload + toast — `ids.length` would under-count that case.
+        // Fixed for the whole gesture (computed at grab). The drop adds grabOffset back so the
+        // grabbed point lands under the cursor.
+        transfer: {
+          grabOffset: { x: number; y: number }
+          unionW: number
+          unionH: number
+          count: number
+        }
       }
     | { mode: 'arrow'; id: string }
     | { mode: 'arrowEnd'; id: string; end: ArrowEnd; sx: number; sy: number; moved: boolean }
@@ -180,6 +234,30 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     y: number
   } | null>(null)
 
+  // ── Cross-board drag hit-test (Phase 4 §3.C) ─────────────────────────────────
+  // The board under the screen cursor, resolved to a foreign Planning well's drop target.
+  // `document.elementFromPoint` ignores pointer-capture (it redirects EVENTS, not hit-testing)
+  // AND the pointer-events:none ghost, so this works mid-drag. `closest('[data-planning-well]')`
+  // climbs from whatever child the cursor is over (a card — incl. a DiagramCard, which carries
+  // its own `data-board-id`, hence a DISTINCT well attribute) to the owning well. Returns the
+  // resolved target board id + the well element (for its fresh rect/offsetWidth at drop), or
+  // null over the source / empty canvas / a non-planning board.
+  const hitTest = useCallback(
+    (clientX: number, clientY: number): { boardId: string; wellEl: HTMLElement } | null => {
+      // jsdom (unit tests) has no elementFromPoint → no hit-test, no cross-board target.
+      if (typeof document.elementFromPoint !== 'function') return null
+      const hit = document.elementFromPoint(clientX, clientY)
+      const wellEl = hit?.closest<HTMLElement>('[data-planning-well]') ?? null
+      const targetId = resolveDropTarget(
+        wellEl?.getAttribute('data-planning-well') ?? null,
+        boardId,
+        useCanvasStore.getState().boards
+      )
+      return targetId && wellEl ? { boardId: targetId, wellEl } : null
+    },
+    [boardId]
+  )
+
   // ── Element drag (select tool): grab → move in board-local space ─────────────
   const startElementDrag = useCallback(
     (e: PointerEvent, id: string) => {
@@ -206,6 +284,15 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       })
       if (movingIds.length === 0) return
       const p = toBoard(e)
+      // Phase 4 (§4.3): precompute the cross-board grab anchor ONCE here (the selection is
+      // fixed for the gesture). The union is over the SAME set + at the SAME nominal sizes the
+      // transfer engine normalizes against — mirror `extractForTransfer`'s `taken` exactly
+      // (re-expand `movingIds` through groups, then drop locked on a MOVE) so the grabbed point
+      // lands precisely under the cursor on drop. Alt (captured below) decides copy-vs-move.
+      const alt = e.altKey
+      const expandedForUnion = expandGroups(elements, movingIds)
+      const taken = elements.filter((el) => expandedForUnion.has(el.id) && (alt || !isLocked(el)))
+      const union = unionBBox(taken.map((el) => elementBBox(el)))
       // Record the grab point; the live delta is pointer − grab. Works for every
       // kind (cards + arrows + strokes) since we translate by delta (#28, #37).
       // Capture Alt at grab → an alt-drag duplicates rather than moves on pointer-up.
@@ -215,8 +302,14 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         ids: movingIds,
         grabX: p.x,
         grabY: p.y,
-        alt: e.altKey,
-        snapCache: null
+        alt,
+        snapCache: null,
+        transfer: {
+          grabOffset: grabAnchorOffset(p, union),
+          unionW: union.w,
+          unionH: union.h,
+          count: taken.length
+        }
       }
       // Capture on the WELL (not the card) so move/up route to the well handlers
       // even when the cursor leaves the card during a fast drag.
@@ -339,9 +432,14 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
 
   const onWellPointerMove = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
+      // Track the last in-well pointer position (board-local) for Ctrl+V paste placement
+      // (Phase 3, §2.4). Computed on EVERY move — including idle moves with no active gesture,
+      // which the `if (!d) return` below would otherwise skip — so a paste lands under the
+      // cursor; usePlanningKeyboard reads this ref (board-center fallback while it is null).
+      const p = toBoard(e)
+      lastPointerRef.current = p
       const d = drag.current
       if (!d) return
-      const p = toBoard(e)
       if (d.mode === 'move') {
         // Transient: render the dragged set shifted by the live delta; the store is
         // written once on pointer-up so undo stays one checkpoint (#9).
@@ -381,6 +479,50 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
           setSnapGuides(null)
         }
         setDragPos({ ids: d.ids, dx, dy, alt: d.alt })
+        // Cross-board sub-mode (Phase 4 §3.C): the within-board preview above is UNCHANGED.
+        // Once the cursor leaves the SOURCE well, surface the canvas-level ghost + hit-test a
+        // foreign Planning well as the drop target. Inside the well (the common case) we clear
+        // it — so within-board dragging never touches this state. The ghost is screen-fixed, so
+        // everything here is in SCREEN px.
+        const sourceRect = wellRef.current?.getBoundingClientRect()
+        const cursorInside =
+          !!sourceRect &&
+          e.clientX >= sourceRect.left &&
+          e.clientX <= sourceRect.right &&
+          e.clientY >= sourceRect.top &&
+          e.clientY <= sourceRect.bottom
+        // Cross-board sub-mode runs only for a LAID-OUT well the cursor has LEFT. A zero-size
+        // rect (jsdom unit tests, or a not-yet-measured well) is excluded so within-board
+        // dragging is untouched there. (setState(null) bails when already null — no-op on every
+        // in-well frame, so within-board drag stays allocation-free.)
+        if (!sourceRect || sourceRect.width === 0 || sourceRect.height === 0 || cursorInside) {
+          setCrossBoardDrag(null)
+        } else {
+          // The source well is laid out mid-gesture (offsetWidth > 0), so screenScale always
+          // takes the measured ratio — the fallback (1) is dead-path here (and at drop, below).
+          const s = screenScale(sourceRect.width, wellRef.current?.offsetWidth ?? 0, 1)
+          const t = d.transfer
+          const hit = hitTest(e.clientX, e.clientY)
+          let target: CrossBoardDrag['target'] = null
+          if (hit) {
+            const r = hit.wellEl.getBoundingClientRect()
+            target = {
+              boardId: hit.boardId,
+              rect: { left: r.left, top: r.top, width: r.width, height: r.height }
+            }
+          }
+          setCrossBoardDrag({
+            cursor: { x: e.clientX, y: e.clientY },
+            count: d.transfer.count,
+            ghost: {
+              w: t.unionW * s,
+              h: t.unionH * s,
+              offsetX: t.grabOffset.x * s,
+              offsetY: t.grabOffset.y * s
+            },
+            target
+          })
+        }
       } else if (d.mode === 'arrow') {
         setDraftArrow((a) => (a ? { ...a, x2: p.x, y2: p.y } : a))
       } else if (d.mode === 'arrowEnd') {
@@ -408,7 +550,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         setDraftTextBox(rectFromPoints(d.startX, d.startY, p.x, p.y))
       }
     },
-    [toBoard, elements, snapEnabled, measuredRef]
+    [toBoard, elements, snapEnabled, measuredRef, lastPointerRef, wellRef, hitTest]
   )
 
   // Double-click empty whiteboard in select mode → drop a free-text element.
@@ -479,6 +621,46 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         const pos = dragPos
         setDragPos(null)
         setSnapGuides(null)
+        // Clear the cross-board ghost regardless of where we dropped (no-op if never set).
+        setCrossBoardDrag(null)
+        // Cross-board drop (Phase 4 §3.C) — branch on a FOREIGN Planning well FIRST: re-home
+        // (or copy, on alt) through the shared engine and SKIP the within-board commit. Only
+        // with a real pointer-up position (no `e` on an OS pointer-cancel → within-board).
+        if (e) {
+          const hit = hitTest(e.clientX, e.clientY)
+          if (hit) {
+            const rect = hit.wellEl.getBoundingClientRect()
+            const at = dropPlacement({
+              cursor: { x: e.clientX, y: e.clientY },
+              targetRect: rect,
+              targetLayoutWidth: hit.wellEl.offsetWidth,
+              // Dead-path mid-drop (the target well is laid out → screenScale measures it).
+              fallbackZoom: 1,
+              grabOffset: d.transfer.grabOffset
+            })
+            const mode = d.alt ? 'copy' : 'move'
+            // The engine's ONE undo step (no second beginChange/updateBoard path here).
+            const { newIds } = useCanvasStore
+              .getState()
+              .transferElements(boardId, hit.boardId, d.ids, mode, at)
+            if (newIds.length > 0) {
+              // A move removed the source ids → the stale selection must drop (a copy leaves
+              // the originals selected). Then the same confirmation toast as the other triggers
+              // (Q3) — sans the Focus action, which is moot for a drag (the target is on-screen,
+              // under the cursor you just dropped at; the picker keeps Focus for its off-screen case).
+              if (mode === 'move') clearSel()
+              const title =
+                useCanvasStore.getState().boards.find((b) => b.id === hit.boardId)?.title ??
+                'planning board'
+              showToast({
+                message: `${mode === 'move' ? 'Moved' : 'Copied'} ${newIds.length} item${
+                  newIds.length === 1 ? '' : 's'
+                } to ${title}`
+              })
+            }
+            return // handled cross-board — do NOT also run the within-board commit
+          }
+        }
         if (pos && (pos.dx !== 0 || pos.dy !== 0)) {
           beginChange()
           if (pos.alt) {
@@ -597,7 +779,9 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
       clearSel,
       measuredRef,
       setSelectedIds,
-      setTool
+      setTool,
+      hitTest,
+      boardId
     ]
   )
 
@@ -605,8 +789,11 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     // An OS pointer-cancel (palm/stylus/system gesture) mid-erase must NOT commit a
     // destructive delete the user never finished — discard the in-flight swipe. Other
     // gestures (move/arrow/pen) keep their existing pointer-up behavior on cancel.
-    // Always drop any live snap guides so they never linger past a cancelled move.
+    // Always drop any live snap guides + the cross-board ghost so neither lingers past a
+    // cancelled move (the move fall-through to onWellPointerUp clears the ghost too, but the
+    // early-return modes below never set it, so this is the single belt-and-braces clear).
     setSnapGuides(null)
+    setCrossBoardDrag(null)
     if (drag.current?.mode === 'erase') {
       drag.current = null
       setPendingErase(null)
@@ -649,6 +836,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
     draftTextBox,
     pendingErase,
     snapGuides,
-    endpointDrag
+    endpointDrag,
+    crossBoardDrag
   }
 }
