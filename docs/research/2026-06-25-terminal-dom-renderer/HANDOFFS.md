@@ -4,8 +4,9 @@ Umbrella branch: **`feat/terminal-crisp-umbrella`** · worktree `.worktrees/term
 Spec: `docs/research/2026-06-25-terminal-dom-renderer/REPORT.md` (on the umbrella branch).
 
 **Status (2026-06-25):** P1 ✅ (DOM renderer) · P2 ✅ (DOM-only, hybrid ruled out) · umbrella REBASED
-onto `origin/main afe3c89` (#254), tip `69283cc3` · **Lane A = DISPATCHED** (worktree
-`.worktrees/terminal-dom-liveness`) · **Lane C = SUPERSEDED by #254** · Lane B open.
+onto `origin/main afe3c89` (#254), tip `2b457770` · **Lane A = DISPATCHED** (worktree
+`.worktrees/terminal-dom-liveness`) · **Lane B = DISPATCHED** (worktree `.worktrees/terminal-theming`,
+✎ design-artifact-first) · **Lane C = SUPERSEDED by #254**. A & B share `useTerminalSpawn.ts`.
 
 **Dispatch order:** lanes branch off the **umbrella tip** and PR **into the umbrella** (not main). A & B
 both touch `useTerminalSpawn.ts` → develop concurrently, merge sequentially with a rebase between.
@@ -87,20 +88,46 @@ with Lane B — coordinate (sequential merge, rebase between). gh auth switch --
 pushing; inline-reply every bot review comment.
 ```
 
-## Lane B — Terminal theming / color (after P1; ✎ design artifact first)
+## Lane B — Terminal theming / color (✎ DESIGN ARTIFACT FIRST; worktree READY)
+
+> Worktree already created: `.worktrees/terminal-theming` (branch `feat/terminal-theming`, off umbrella
+> tip `2b457770`). Open a Claude session there and paste the prompt.
 
 ```
-You are on the terminal-crisp umbrella. P1 (DOM renderer) is committed. Read REPORT.md §5 (Lane B) + §6.
-Branch off the umbrella tip into your own worktree.
+You are implementing Lane B of the terminal-crisp umbrella, in the worktree .worktrees/terminal-theming
+(branch feat/terminal-theming, already created off the umbrella tip). Read
+docs/research/2026-06-25-terminal-dom-renderer/REPORT.md §5 Lane B + §6 coordination.
 
-Implement Lane B — terminal theme/color now that the DOM renderer gives real subpixel AA + native
-color. Produce a DESIGN ARTIFACT (token-true HTML/JSX mock or wireframe) for sign-off BEFORE code.
-Then: additive board `themeId?`/`fontFamilyId?` (closed-registry ids; ADR 0007 writer-only schema
-bump, board-level — do NOT move MIN_READER_VERSION; fromObject degrades unknown id → default); move
-the inline THEME (useTerminalSpawn) into a TERMINAL_THEMES registry; Configure-panel swatch control;
-live apply via `term.options.theme = {…fresh}` (xterm ref-compares — mutate = no-op). Mirror the
-fontSize?/terminalFont.ts sticky precedent. Gate + dev check. PR into the umbrella; coordinate the
-useTerminalSpawn touch with lanes A/C.
+CONTEXT: P1 shipped the DOM renderer (real subpixel AA + native color/weight, no atlas rebuild) and P2
+confirmed DOM-only. #254 (web-links + unicode11) is already merged. Lane A (liveness gating) is in
+flight in .worktrees/terminal-dom-liveness and SHARES useTerminalSpawn.ts with you — coordinate on
+ACTIVE-WORK (sequential merge, rebase between).
+
+DESIGN ARTIFACT FIRST (CLAUDE.md mandate — no UI lands code-first): before any implementation, produce
+a token-true throwaway mock (HTML/JSX built with the real tokens from src/renderer/src/index.css,
+rendered + screenshotted, or a clear wireframe) of the theme/color picker in the Terminal Configure
+panel + the New Terminal dialog. Get the user's sign-off on the artifact, THEN write the plan, THEN code.
+
+IMPLEMENT (after sign-off):
+- Move the inline THEME object (currently in useTerminalSpawn.ts) into a TERMINAL_THEMES registry
+  (closed set of ids). Keep the current palette as the default theme so existing boards are unchanged.
+- Additive board schema: `themeId?` / `fontFamilyId?` (closed-registry ids). ADR 0007 WRITER-ONLY bump
+  (board-level optional field) — do NOT move MIN_READER_VERSION. fromObject must degrade an unknown id
+  to the default (forward-compat). Mirror the fontSize?/terminalFont.ts sticky-default precedent (ADR
+  0005) for a per-app last-used default.
+- Configure-panel + New Terminal dialog: a swatch / segmented control. Live apply via
+  `term.options.theme = {…fresh}` (xterm REF-compares the theme object — you must assign a NEW object;
+  mutating in place is a no-op). fontFamilyId maps to a --term-mono-style literal resolved like the
+  existing mono token.
+
+GUARDRAILS: stay on the DOM renderer (no WebGL); don't touch the selection shim / Pure A1 full-view /
+find / scrollback / the #254 addons; keep one accent (DESIGN.md §2 — themes are about the 16-color ANSI
+palette + bg/fg, not chrome accents). VERIFY: gate (typecheck/lint/format/unit) + scoped @terminal e2e
+(a theme switch persists + applies live without respawn; unknown id → default on load) + title-stamped
+dev check (CANVAS_DEV_TITLE='Lane B terminal theming').
+
+PROCESS: PR INTO feat/terminal-crisp-umbrella (NOT main). gh auth switch --user ch923dev before
+pushing; inline-reply every bot review comment.
 ```
 
 ## Lane C — Correctness pack — ✅ SUPERSEDED (do not run)
