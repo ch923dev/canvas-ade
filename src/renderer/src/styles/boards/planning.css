@@ -226,3 +226,44 @@
 .pl-sendto-new .pl-sendto-ico {
   color: var(--accent);
 }
+
+/* Cross-board drag ghost (Phase 4 — spec §3.C). A screen-fixed body portal layer painted
+   above every board; pointer-events:none so it never blocks the elementFromPoint hit-test
+   nor returns itself. Calm/one-accent (DESIGN.md §2): a faint footprint outline + a count
+   chip following the cursor, and an accent ring on the active drop-target well. */
+.pl-xfer-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10000;
+}
+.pl-xfer-ring,
+.pl-xfer-ghost {
+  position: fixed;
+  border-radius: var(--r-inner);
+  box-sizing: border-box;
+}
+/* Drop-target affordance — a solid accent ring with a faint wash on the destination well. */
+.pl-xfer-ring {
+  border: 2px solid var(--accent);
+  background: var(--accent-wash);
+}
+/* The dragged selection's footprint, offset so the grabbed point sits under the cursor. */
+.pl-xfer-ghost {
+  border: 1.5px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+/* Count chip at the cursor ("N items") — the send-to panel's surface/border vocabulary. */
+.pl-xfer-chip {
+  position: fixed;
+  padding: 2px 7px;
+  font-family: var(--ui);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--shadow-board);
+  white-space: nowrap;
+}
