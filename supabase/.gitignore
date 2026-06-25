@@ -1,0 +1,5 @@
+# Real secrets file (copied from .env.example) — never commit.
+.env
+# Supabase CLI local state.
+.branches
+.temp

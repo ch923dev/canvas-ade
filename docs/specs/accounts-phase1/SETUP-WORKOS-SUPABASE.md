@@ -1,100 +1,95 @@
 # Phase 1 — WorkOS + Supabase setup checklist (unblocks step 4)
 
 Founder-facing. These are the **external accounts + dashboard config** the live PKCE flow (step 4)
-needs. None of this is code — it produces a handful of values the app + backend consume. Do the
-**Staging** environment first; repeat for Production before launch.
+needs. Verified 2026-06-26 against the official `workos/electron-authkit-example` + WorkOS/Supabase docs.
 
-> The authoritative implementation reference is the official **`workos/electron-authkit-example`**
-> on GitHub — step 4 mirrors it. Use it to resolve any exact-endpoint/SDK detail; the steps below are
-> the dashboard setup it assumes.
+## Architecture (confirmed — simpler than first drafted)
+
+- **Sign-in needs NO backend.** WorkOS's official Electron example does the code→token exchange **in
+  the Electron main process** using **only the Client ID + PKCE** — **no WorkOS API key (`sk_…`)** is
+  used. PKCE replaces the client secret, so there's nothing secret to ship in the binary.
+- **Redirect = custom scheme `expanse://auth/callback`** — supported (the official example uses
+  `workos-auth://callback`). This is exactly what step 3 already registers + handles. *(Loopback
+  `http://127.0.0.1:<port>/callback` is the documented RFC 8252 fallback if a Production env ever
+  rejects the custom scheme.)*
+- **Supabase = entitlement layer ONLY**, not part of login. The app calls a `license` Edge Function
+  with the WorkOS access token; the function verifies it via **WorkOS JWKS** and returns the plan.
+  Scaffolded + ready in **`supabase/`** (see `supabase/README.md`).
+
+```
+Electron MAIN: PKCE → system browser → WorkOS → expanse://auth/callback → authenticateWithCode
+              (Client ID only, no secret) → store tokens in safeStorage → GET license fn (Bearer token)
+Supabase license fn: verify WorkOS JWT via JWKS → { active, plan }   ← entitlement, not auth
+```
 
 ---
 
-## A. WorkOS (auth)
+## A. WorkOS (auth) — dashboard
 
-- [ ] **Create a WorkOS account** → it starts in the **Staging** environment. (Free; AuthKit is free to 1M MAU.)
-- [ ] **Enable AuthKit** (User Management) for the environment.
-- [ ] **Add a social login: Google** — AuthKit → Authentication → enable **Google OAuth**. (WorkOS provides shared dev Google creds in Staging; add your own Google OAuth client before Production.)
-- [ ] **Register the redirect URI** exactly: **`expanse://auth/callback`**
-      (AuthKit → Redirects / Authentication → Redirect URIs). This is the custom scheme step 3 already registers + handles. WorkOS must allow a custom-scheme redirect for the desktop public client.
-- [ ] **Treat the desktop app as a PUBLIC client (PKCE, no secret).** Confirm AuthKit allows the
-      Authorization Code + PKCE flow for this app. The `code_challenge_method` is **S256**.
-- [ ] **Collect these values:**
-  - `WORKOS_CLIENT_ID` — **public**, safe to ship in the desktop binary (pin it in a MAIN constant).
-  - AuthKit **authorize base URL** — the hosted authorization endpoint (public; pin in MAIN). The app builds `…/authorize?client_id=…&redirect_uri=expanse://auth/callback&response_type=code&code_challenge=…&code_challenge_method=S256&state=…`.
-  - `WORKOS_API_KEY` (secret, `sk_…`) — **backend ONLY** (Supabase function secret). **NEVER** in the desktop binary or any renderer code.
-- [ ] **Decide where the code→token exchange runs.** WorkOS's `authenticate` (code exchange) call
-      typically needs the **API key** → so the exchange must happen on the **backend** (the Supabase
-      function below), not in the desktop. Flow: desktop gets `code` on the `expanse://` callback →
-      POSTs `{ code, code_verifier }` to your backend → backend calls WorkOS with the API key →
-      returns the user + a session the desktop stores. (Confirm against the Electron example; if it
-      shows a no-secret desktop exchange, we can do it in MAIN instead. **This single choice decides
-      whether step 4 needs the backend exchange endpoint or just the license stub.**)
+- [ ] **Sign up** at dashboard.workos.com → you're in the **Staging** environment.
+- [ ] **Authentication** (left nav) → **Google OAuth** → *Configure* → use WorkOS's **demo
+      credentials** to test instantly (swap in your own Google Cloud OAuth client before Production).
+- [ ] **Redirects** tab → add the redirect URI **exactly**: `expanse://auth/callback`
+      *(custom scheme — confirmed supported. If Production ever rejects it, switch to the loopback fallback.)*
+- [ ] **API Keys** → copy the **Client ID** (`client_…`). **This is the only WorkOS value the app
+      needs**, and it's public (safe to share + ship). The **Secret Key (`sk_…`) is NOT used by the
+      desktop sign-in** — leave it server-side; you don't need it for Phase 1.
+- [ ] **PKCE:** there's no toggle — it's activated by *how the app calls the API* (`code_challenge` +
+      `S256` on authorize, `code_verifier` with no secret on authenticate). Adding the redirect URI is
+      what authorizes the native flow.
 
-## B. Supabase (backend + DB + entitlement)
+**Endpoints the app (step 4) will use** (FYI — fixed, nothing to configure):
+`GET https://api.workos.com/user_management/authorize` and
+`POST https://api.workos.com/user_management/authenticate` (PKCE: `code_verifier`, no `client_secret`).
+JWKS for the license fn: `https://api.workos.com/sso/jwks/<CLIENT_ID>`; issuer `https://api.workos.com/`.
 
-- [ ] **Create a Supabase project** (free tier fine for dev; note the **region** + the **project URL** and **anon key**). Upgrade to **Pro ($25/mo)** before/at launch (the strategy doc's recommendation).
-- [ ] **Create the `users` table** (SQL editor):
-  ```sql
-  create table public.users (
-    id uuid primary key default gen_random_uuid(),
-    workos_user_id text unique not null,
-    email text not null,
-    plan text not null default 'free',
-    created_at timestamptz not null default now()
-  );
+## B. Supabase (entitlements) — project + deploy
+
+- [x] **Project created** — `ExpanseDB` (org "Expanse Devs", Free). ✅
+- [ ] Note the **project ref** (Settings → General → Reference ID) and **Project URL** (Settings → API).
+- [ ] **Install the CLI:** `scoop bucket add supabase https://github.com/supabase/scoop-bucket.git` then `scoop install supabase`.
+- [ ] **Deploy the scaffolded backend** (`supabase/` is already in this branch) — run from the repo root:
+  ```bash
+  supabase login
+  supabase init
+  supabase link --project-ref <your-project-ref>
+  supabase db push
+  cp supabase/.env.example supabase/.env      # put your real client_... in it
+  supabase secrets set --env-file supabase/.env
+  supabase functions deploy license --no-verify-jwt
   ```
-- [ ] **Edge Function `license`** — returns the cached-entitlement shape the desktop reads
-      (`GET /api/license` in the spec). Phase 1 stub: verify the caller's WorkOS JWT via **JWKS**, then
-      return `{ active: true, plan: 'free' }`. (Real Stripe-driven plan is Phase 2.)
-- [ ] **(Only if §A says the exchange is backend-side)** Edge Function `auth-exchange` — accepts
-      `{ code, code_verifier }`, calls WorkOS `authenticate` with `WORKOS_API_KEY`, upserts the
-      `users` row, returns `{ userId, email, plan, accessToken, refreshToken, expiresAt }`.
-- [ ] **Set function secrets:** `WORKOS_API_KEY`, `WORKOS_CLIENT_ID` (Supabase → Edge Functions → Secrets). Never commit these.
-- [ ] **Note the function base URL** (e.g. `https://<ref>.functions.supabase.co`) → this is the app's `LICENSE_API_URL` / `AUTH_API_URL`.
+  Full notes in **`supabase/README.md`**.
+- [ ] Note the deployed function URL: **`https://<project-ref>.functions.supabase.co/license`**.
 
-## C. Values the app will consume (collected from A + B)
+## C. Values to hand back (so I can wire step 4)
 
-| Value | Secret? | Where it lives |
+| Value | Secret? | Where it goes |
 |---|---|---|
-| `WORKOS_CLIENT_ID` | No (public) | pinned MAIN constant (`src/main/authConfig.ts`, step 4) |
-| AuthKit authorize base URL | No (public) | pinned MAIN constant |
-| `expanse://auth/callback` | No | already in `electron-builder.yml` + `index.ts` (step 3) |
-| Backend base URL (`AUTH_API_URL` / `LICENSE_API_URL`) | No | pinned MAIN constant (per environment) |
-| `WORKOS_API_KEY` | **YES** | **Supabase function secret only** — never in the app |
+| **WorkOS Client ID** (`client_…`) | No (public) | pinned MAIN constant (`authConfig.ts`) + the Supabase secret |
+| **`license` function URL** | No | pinned MAIN constant (`LICENSE_API_URL`) |
+| ~~WorkOS API key~~ | — | **not needed** for the desktop flow |
+| Supabase project ref / URL | No | (you set the function secret; the app only calls the function URL) |
 
-> Public ≠ secret: a PKCE public client's `client_id` and the authorize/redirect URLs are meant to be
-> visible. The only secret is the WorkOS API key, and it stays server-side.
+> The WorkOS Secret Key and Supabase service_role key are **not** needed for Phase 1 sign-in or the
+> license stub. Keep them private; you won't paste them anywhere in the app or this chat.
 
-## D. Verify against step 3 (already shipped) — a real end-to-end smoke
+## D. Smoke-test step 3 BEFORE any step-4 code
 
-Once §A's redirect URI is set, you can prove the deep-link round-trip **before** any step-4 code:
-1. `pnpm pack:dir` and run `release/win-unpacked/Expanse.exe` once (so Windows registers the
-   `expanse://` handler via the NSIS/packaged registration).
-2. In a normal browser, open the WorkOS authorize URL (build it with your `client_id` +
-   `redirect_uri=expanse://auth/callback`) and complete Google sign-in.
-3. The browser hands off to `expanse://auth/callback?...`; the running app logs
-   **`[auth] deep-link received: auth/callback`** (the step-3 handler; it deliberately does **not**
-   log the code/state). Seeing that line = the OS routing + scheme registration + handler all work.
+Once §A's redirect URI is set:
+1. `pnpm pack:dir`, run `release/win-unpacked/Expanse.exe` once (registers the `expanse://` handler).
+2. In a browser, open the WorkOS authorize URL (Client ID + `redirect_uri=expanse://auth/callback`) and finish Google sign-in.
+3. The app logs **`[auth] deep-link received: auth/callback`** (the step-3 handler — it deliberately
+   does NOT log the code/state). Seeing that = OS routing + scheme registration + handler all work.
 
 ## E. Security guardrails (carry into step 4)
 
-- WorkOS **API key only on the backend** (Supabase secret). No `client_secret` in the binary.
-- **System browser only** for the authorize step (never an embedded `BrowserWindow`).
-- PKCE `code_verifier` + `state` generated + held in **MAIN memory** only; the deep-link is
-  **validated + state-matched in MAIN** (step 3 validates the scheme; step 4 adds the `state` check).
-- Tokens land in `safeStorage` via `authTokenStore` (step 2); **never crossed over IPC** (presence-only).
+System browser only (never embedded webview) · **no `client_secret`/API key in the binary** (PKCE) ·
+`code_verifier` + `state` in MAIN memory only · deep-link validated + state-matched in MAIN · tokens
+in `safeStorage`, never over IPC · license fn validates signature+issuer+expiry, **never `aud`**.
 
-## F. Still mine to build in step 4 (once A–C exist)
+## F. Still mine to build in step 4 (once §C values exist)
 
-`src/main/workosAuth.ts` (PKCE param gen + authorize-URL build + the exchange call — to MAIN or to the
-backend per §A) · `src/main/authConfig.ts` (the pinned public values) · `src/main/authIpc.ts`
-(`auth:status` / `auth:signIn` / `auth:signOut` + the `auth:statusChanged` push) · wire the real
-`handleAuthDeepLink` to do the state-match + exchange instead of log-only · the preload `auth`
-namespace (step 5) · the `license` fetch into `entitlementCache` (step 2 module, already built).
-
----
-
-**Hand me back:** the four public values in §C (client id, authorize base URL, backend base URL, and
-which exchange model §A landed on). With those, step 4 is unblocked — I pin them in `authConfig.ts`
-and wire the live flow.
+Add `@workos-inc/node` (on MAIN, then merge) · `authConfig.ts` (pin Client ID + authorize base +
+license URL) · `workosAuth.ts` (PKCE gen, authorize URL, `authenticateWithCode`) · upgrade the
+step-3 `handleAuthDeepLink` from log-only to state-match + exchange · `authIpc.ts` + preload `auth`
+namespace · fetch the license fn into `entitlementCache` (already built in step 2).

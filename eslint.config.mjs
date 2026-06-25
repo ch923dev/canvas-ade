@@ -36,6 +36,10 @@ export default tseslint.config(
       // Agent tooling — workflow scripts run with injected globals (phase/agent/…),
       // not lintable as standalone modules; not project source.
       '.agents/**',
+      // Supabase backend (Phase 1 accounts) — Deno Edge Functions + SQL migrations are a separate
+      // runtime (Deno globals, https:// URL imports), not part of the Electron app's TS project.
+      // Keep the app's eslint/tsconfig out of it; the function is deployed by the Supabase CLI.
+      'supabase/**',
       // Vendored third-party source kept verbatim (ADR 0001 — perfect-freehand).
       'src/vendor/**',
       // Diagram render-worker assets (S4): the vendored Mermaid bundle + the static worker
