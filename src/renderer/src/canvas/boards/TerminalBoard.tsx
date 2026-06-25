@@ -54,6 +54,7 @@ import {
   MIN_TERMINAL_FONT,
   MAX_TERMINAL_FONT
 } from './terminal/terminalFont'
+import { useTerminalAppearance } from './terminal/useTerminalAppearance'
 import { useTerminalReraster } from './terminal/useTerminalReraster'
 import { useRunTimer } from './terminal/useRunTimer'
 import { useInterruptFeedback } from './terminal/useInterruptFeedback'
@@ -139,7 +140,7 @@ export function TerminalBoard({
 
   // ── Spawn lifecycle ───────────────────────────────────────────────────────────
   // The PTY spawn/respawn/restart state machine + xterm construction + MessagePort data
-  // plane + ResizeObserver-deferred spawn + adopt/idle fork + WebGL pooling + selection
+  // plane + ResizeObserver-deferred spawn + adopt/idle fork + DOM-renderer + selection
   // shim + custom key handler + kill-tree teardown all live in useTerminalSpawn. The host
   // keeps only the DOM anchor (screenRef), the font-handler bridge refs the key handler
   // reads (fontStepRef/fontResetRef), and the smart-paste fn (passed in — not imported —
@@ -160,7 +161,6 @@ export function TerminalBoard({
   } = useTerminalSpawn({
     board,
     projectDir,
-    lod,
     screenRef,
     fontStepRef,
     fontResetRef,
@@ -299,6 +299,15 @@ export function TerminalBoard({
     attach()
     return () => mql?.removeEventListener('change', onChange)
   }, [fitWhole])
+
+  // Live theme + font-family apply (Lane B): a themeId/fontFamilyId change applies to the LIVE term
+  // (palette repaint / typeface swap + refit) with no respawn — see useTerminalAppearance.
+  useTerminalAppearance({
+    themeId: board.themeId,
+    fontFamilyId: board.fontFamilyId,
+    termRef,
+    fitWhole
+  })
 
   // Clear the burst timer on unmount.
   useEffect(

@@ -36,7 +36,8 @@ import { makeChecklist } from '../canvas/boards/planning/elements'
 import { clearClipboard } from '../canvas/boards/planning/elementClipboard'
 import { buildDiagramThemeVars } from '../canvas/boards/planning/diagramTheme'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
-import { e2eTerminals, e2eTerminalInput, e2eTerminalLink } from './e2eRegistry'
+import { e2eTerminals, e2eTerminalInput, e2eTerminalLink, e2eTerminalHeld } from './e2eRegistry'
+import { isTerminalLive } from '../store/terminalLivenessStore'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
@@ -170,10 +171,21 @@ export interface CanvasE2E {
   panBy: (dx: number, dy: number) => void
   /** True if a terminal board's xterm instance is currently mounted (registered). */
   terminalMounted: (id: string) => boolean
+  /** Lane A — whether useTerminalLiveness currently rates this terminal LIVE (on-screen ∧ ≥ LOD).
+   *  Default-true for an unreconciled board; false once gated off-screen / below-LOD. */
+  terminalLive: (id: string) => boolean
+  /** Lane A — the write coalescer's HELD byte count for a terminal (PTY bytes buffered but not yet
+   *  rendered). Grows while the board is gated (proves the PTY keeps producing); ~0 while live. */
+  terminalHeldBytes: (id: string) => number
   /** The live xterm font size for a terminal board (px), or undefined if not mounted. */
   terminalFontSize: (id: string) => number | undefined
   /** The live xterm scrollback for a terminal board (lines), or undefined if not mounted. */
   terminalScrollback: (id: string) => number | undefined
+  /** Lane B: the live xterm theme background hex for a terminal board (a stable representative of
+   *  the applied ANSI palette), or undefined if not mounted. Asserts a theme switch applied live. */
+  terminalThemeBg: (id: string) => string | undefined
+  /** Lane B: the live xterm font-family literal stack for a terminal board, or undefined. */
+  terminalFontFamily: (id: string) => string | undefined
   /** Phase 4: the active Unicode width-table version ('11' once the Unicode11Addon loaded), or
    *  undefined if not mounted. The links e2e asserts the addon took effect at construction. */
   terminalUnicodeVersion: (id: string) => string | undefined
@@ -196,11 +208,12 @@ export interface CanvasE2E {
     wellBottom: number
     overflow: number
   }
-  /** FREEZE re-raster probe: the live render-state the counter-scale drives. `netScale`
-   *  is the .xterm-screen rendered-vs-layout width ratio (1 at rest under the wrapper);
-   *  `effectiveFont` is the live xterm render font (≈ pinned × counterScale, possibly
-   *  stepped down by the no-clip correction); `hSlack`/`vSlack` are the rendered px
-   *  between the grid's right/bottom edge and the well's (negative ⇒ the grid CLIPS). */
+  /** Terminal render-state probe (DOM renderer; terminal-crisp umbrella). `netScale` is the
+   *  .xterm-screen rendered-vs-layout width ratio — IN-CANVAS it equals the camera zoom (the
+   *  host rides the transform, no counter-scale), 1 in full view; `effectiveFont` is the live
+   *  xterm render font (the pin in-canvas; pinned × fullViewScale in full view); `hSlack`/
+   *  `vSlack` are the rendered px between the grid's right/bottom edge and the well's
+   *  (negative ⇒ the grid CLIPS). */
   terminalCounterScale: (id: string) => null | {
     effectiveFont: number
     cols: number
@@ -549,11 +562,23 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     terminalMounted(id) {
       return e2eTerminals.has(id)
     },
+    terminalLive(id) {
+      return isTerminalLive(id)
+    },
+    terminalHeldBytes(id) {
+      return e2eTerminalHeld.get(id)?.() ?? 0
+    },
     terminalFontSize(id) {
       return e2eTerminals.get(id)?.options.fontSize
     },
     terminalScrollback(id) {
       return e2eTerminals.get(id)?.options.scrollback
+    },
+    terminalThemeBg(id) {
+      return e2eTerminals.get(id)?.options.theme?.background
+    },
+    terminalFontFamily(id) {
+      return e2eTerminals.get(id)?.options.fontFamily
     },
     terminalUnicodeVersion(id) {
       return e2eTerminals.get(id)?.unicode.activeVersion

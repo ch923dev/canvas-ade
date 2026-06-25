@@ -363,6 +363,35 @@ describe('fromObject deep validation', () => {
     expect(() => fromObject(wrap({ ...base, port: 5173, shell: 'pwsh' }))).not.toThrow()
     expect(() => fromObject(wrap({ ...base, port: 'http' }))).toThrow()
     expect(() => fromObject(wrap({ ...base, launchCommand: 7 }))).toThrow()
+    // v16 theming: a string themeId/fontFamilyId is accepted; a non-string throws.
+    expect(() =>
+      fromObject(wrap({ ...base, themeId: 'dracula', fontFamilyId: 'geist' }))
+    ).not.toThrow()
+    expect(() => fromObject(wrap({ ...base, themeId: 7 }))).toThrow()
+    expect(() => fromObject(wrap({ ...base, fontFamilyId: false }))).toThrow()
+  })
+
+  it('PRESERVES an unknown themeId/fontFamilyId verbatim (forward-compat — degrade is at render)', () => {
+    // A doc written by a NEWER build carries a theme id this build doesn't know. assertBoard must
+    // NOT reject it (no closed-enum check), and fromObject must NOT rewrite it — else an older app
+    // would destroy the user's choice on a save round-trip (ADR 0007, mirrors background.scene).
+    const board = {
+      id: 't',
+      type: 'terminal',
+      title: 'T',
+      x: 0,
+      y: 0,
+      w: 300,
+      h: 200,
+      themeId: 'some-future-theme',
+      fontFamilyId: 'some-future-font'
+    }
+    const out = fromObject(wrap(board)).boards[0] as {
+      themeId?: string
+      fontFamilyId?: string
+    }
+    expect(out.themeId).toBe('some-future-theme')
+    expect(out.fontFamilyId).toBe('some-future-font')
   })
 
   it('throws when planning.elements is not an array', () => {
@@ -610,7 +639,7 @@ describe('migrate', () => {
     }
     const out = migrate(structuredClone(v10) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(15)
+    expect(SCHEMA_VERSION).toBe(16)
     expect(MIN_READER_VERSION).toBe(15)
     expect((out.boards[0] as { elements: unknown[] }).elements).toEqual([note])
   })
@@ -696,6 +725,43 @@ describe('migrate', () => {
     const out = migrate(structuredClone(v14) as never) as CanvasDoc
     expect(out.schemaVersion).toBe(SCHEMA_VERSION)
     expect(out.boards).toEqual(v14.boards)
+  })
+
+  // v16: optional TerminalBoard themeId + fontFamilyId (Lane B). ADDITIVE — a writer-only bump
+  // (floor STAYS 15). The migration is identity (the ids only appear on newly-themed boards), so a
+  // v15 doc with an existing un-themed terminal rides through untouched and stays openable by a v15 app.
+  it('migrates a v15 doc (terminal theming bump) to the current version as an identity bump (floor stays 15)', () => {
+    const v15 = {
+      schemaVersion: 15,
+      minReaderVersion: 15,
+      viewport: null,
+      connectors: [],
+      groups: [],
+      boards: [{ id: 't', type: 'terminal', title: 'T', x: 0, y: 0, w: 300, h: 200 }]
+    }
+    const out = migrate(structuredClone(v15) as never) as CanvasDoc
+    expect(out.schemaVersion).toBe(16)
+    expect(MIN_READER_VERSION).toBe(15) // writer-only bump — older (>=15) readers still open it
+    expect(out.boards).toEqual(v15.boards)
+  })
+
+  // v16 round-trip: a themed terminal survives toObject → wire → fromObject byte-for-byte.
+  it('round-trips a themed terminal board byte-for-byte', () => {
+    const boards: Board[] = [
+      {
+        id: 't',
+        type: 'terminal',
+        x: 0,
+        y: 0,
+        w: 300,
+        h: 200,
+        title: 'T',
+        themeId: 'dracula',
+        fontFamilyId: 'geist'
+      }
+    ]
+    const wire = JSON.parse(JSON.stringify(toObject(boards, null)))
+    expect(fromObject(wire).boards).toEqual(boards)
   })
 
   // v14 round-trip: a Data-Flow board (bound + unbound) survives toObject → wire → fromObject.
@@ -851,14 +917,14 @@ describe('migrate', () => {
 describe('schema v2 — viewport', () => {
   const vp: CanvasViewport = { x: -120, y: 40, zoom: 0.75 }
 
-  it('SCHEMA_VERSION is 15', () => {
-    expect(SCHEMA_VERSION).toBe(15)
+  it('SCHEMA_VERSION is 16', () => {
+    expect(SCHEMA_VERSION).toBe(16)
   })
 
   it('toObject embeds the viewport and version', () => {
     const doc = toObject([], vp)
     expect(doc).toEqual({
-      schemaVersion: 15,
+      schemaVersion: 16,
       minReaderVersion: 15,
       viewport: vp,
       boards: [],
@@ -1044,8 +1110,8 @@ describe('W4 image element', () => {
     ]
   })
 
-  it('SCHEMA_VERSION is 15', () => {
-    expect(SCHEMA_VERSION).toBe(15)
+  it('SCHEMA_VERSION is 16', () => {
+    expect(SCHEMA_VERSION).toBe(16)
   })
 
   it('round-trips a valid image element', () => {
@@ -1098,8 +1164,8 @@ describe('W4 image element', () => {
 
 // ── Named Board Groups (schema v6) ────────────────────────────────────────────
 describe('schema v6 — board groups', () => {
-  it('SCHEMA_VERSION is 15', () => {
-    expect(SCHEMA_VERSION).toBe(15)
+  it('SCHEMA_VERSION is 16', () => {
+    expect(SCHEMA_VERSION).toBe(16)
   })
 
   it('migrates a v5 doc to current (groups backfilled at the v5→v6 step)', () => {

@@ -120,3 +120,14 @@
   outline: none;
   box-shadow: 0 0 0 1.5px var(--accent);
 }
+
+/* Terminal scrollback scrollbar (terminal-crisp umbrella). xterm's `.xterm-viewport` is the
+   scrollback scroller; the DOM renderer surfaces its native bar (the WebGL canvas previously
+   obscured it), and the bright default bar reads as a defect against the calm --inset well.
+   Match the app convention (.cp-list / devtools): a thin, dark, subtle thumb on a transparent
+   track. Loaded after @xterm/xterm/css via index.css, so it wins the cascade. Wheel-scroll
+   and scrollback are unaffected — this only restyles the bar. */
+.xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}

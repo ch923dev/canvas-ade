@@ -1918,6 +1918,45 @@ describe('terminal scrollback patch', () => {
   })
 })
 
+describe('terminal theming patch (Lane B)', () => {
+  it('updateBoard persists themeId + fontFamilyId on a terminal (PATCHABLE_KEYS.terminal)', () => {
+    const t = createBoard('terminal', { id: 't1', x: 0, y: 0 }) as TerminalBoard
+    useCanvasStore.setState({
+      boards: [t],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore
+      .getState()
+      .updateBoard('t1', { themeId: 'dracula', fontFamilyId: 'geist' } as Partial<TerminalBoard>)
+    const out = useCanvasStore.getState().boards[0] as TerminalBoard
+    expect(out.themeId).toBe('dracula')
+    expect(out.fontFamilyId).toBe('geist')
+  })
+  it('drops themeId/fontFamilyId patched onto a browser (cross-type guard)', () => {
+    const b = createBoard('browser', { id: 'b1', x: 0, y: 0 })
+    useCanvasStore.setState({
+      boards: [b],
+      connectors: [],
+      groups: [],
+      past: [],
+      future: [],
+      selectedId: null,
+      selectedIds: []
+    })
+    useCanvasStore
+      .getState()
+      .updateBoard('b1', { themeId: 'dracula', fontFamilyId: 'geist' } as Partial<TerminalBoard>)
+    const out = useCanvasStore.getState().boards[0] as unknown as Record<string, unknown>
+    expect(out.themeId).toBeUndefined()
+    expect(out.fontFamilyId).toBeUndefined()
+  })
+})
+
 describe('patchBoardUntracked (BUG-057)', () => {
   beforeEach(() => {
     useCanvasStore.setState({ boards: [], past: [], future: [], selectedId: null })

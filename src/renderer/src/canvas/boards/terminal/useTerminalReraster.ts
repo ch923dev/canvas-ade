@@ -1,29 +1,28 @@
 /**
- * Host-side wiring of the settled-zoom native re-raster (FREEZE variant) — see
- * docs/research/2026-06-12-terminal-native-reraster-audit.md and the counterScale
- * source in useTerminalSpawn. Two responsibilities, moved as a unit out of
- * TerminalBoard (max-lines ratchet):
+ * Host-side font seam + full-view scale-up for the xterm terminal (terminal-crisp umbrella,
+ * docs/research/2026-06-25-terminal-dom-renderer). Two responsibilities, moved as a unit out
+ * of TerminalBoard (max-lines ratchet):
  *
- *  1. The counter-scale wrapper style for the xterm host: layout at
- *     `boardContent × cs` with `transform: scale(1/cs)` — net visual scale exactly 1
- *     at rest (camera z === cs), so the renderer's backing store maps 1:1 to device
- *     pixels at every settled zoom. The padding scales WITH cs so the visual gutter
- *     matches the camera-scaled 12px it always had AND fit results stay z-invariant
- *     (available px and cell px scale by the same factor).
+ *  1. The host layout style. The live terminal runs on xterm's DOM renderer, which Chromium
+ *     re-rasters crisp at the live camera scale — so IN-CANVAS the host is IDENTITY and rides
+ *     the camera transform directly (counterScale is 1). There is no counter-scale wrapper
+ *     in-canvas; the `scale(1/cs)` branch survives only as defense for a hypothetical non-1
+ *     in-canvas counterScale and is unreachable today (full view also returns identity — below).
  *
- *  2. The SINGLE font seam — the ONLY writer of `term.options.fontSize` after
- *     construction (the audit's "two masters" rule). Two inputs, one writer: the
- *     persisted PIN (board.fontSize ?? bornFont — pinned-space, what undo /
- *     persistence / the toolbar see) and the settled-zoom counterScale. Effective
- *     render font = pinned × counterScale, fractional, never routed through
- *     updateBoard/undo. A PIN change reflows the grid (fitWhole → PTY resize, as
- *     before); a ZOOM-driven change never does — cols/rows are frozen across zoom,
- *     the wrapper and the font scale together. useLayoutEffect so the font lands in
- *     the same paint as the wrapper style (no one-frame glyph-size flash on settle).
- *     Plus the NO-CLIP correction: xterm cell dims quantize to whole px, so the frozen
- *     grid can land one cell-step wider/taller than the wrapper at some zooms — a
- *     bounded rAF loop steps the render font down until the grid fits (gutter, never
- *     clipped TUI content).
+ *  2. The SINGLE font seam — the ONLY writer of `term.options.fontSize` after construction
+ *     (the "two masters" rule). Two inputs, one writer: the persisted PIN (board.fontSize ??
+ *     bornFont — pinned-space, what undo / persistence / the toolbar see) and `counterScale`.
+ *     Effective render font = pinned × counterScale. In-canvas counterScale is 1, so the render
+ *     font is just the pin (constant across zoom — the DOM renderer handles crispness). In FULL
+ *     VIEW counterScale is the modal-FILL factor (fullViewScale, Pure A1 #235): the board is
+ *     portaled OUTSIDE React Flow with no camera, so the frozen grid is enlarged by the render
+ *     font ALONE (pinned × fullViewScale) — no col refit ⇒ no scrollback reflow. A PIN change
+ *     reflows the grid (fitWhole → PTY resize); a full-view enter/exit changes only the font.
+ *     useLayoutEffect so the font lands in the same paint as the host style.
+ *     Plus the NO-CLIP correction (full-view safety net): xterm cell dims quantize to whole px,
+ *     so the frozen grid at pinned × fullViewScale can land one cell-step wider/taller than the
+ *     modal — a bounded rAF loop steps the render font down until it fits. At counterScale = 1
+ *     (in-canvas) the grid was fitted by fitWhole, so the loop no-ops.
  */
 import {
   useContext,
@@ -44,8 +43,8 @@ export interface TerminalRerasterDeps {
   pinnedFontSize: number | undefined
   /** The font this board was born with (frozen at mount) — the unpinned fallback. */
   bornFont: number
-  /** Counter-scale factor from useTerminalSpawn: settled zoom in-canvas, or the
-   *  modal-FILL factor in full view (Pure A1). Drives the render font in both cases. */
+  /** Scale factor from useTerminalSpawn: 1 in-canvas (DOM renderer, no counter-scale), or the
+   *  modal-FILL factor in full view (fullViewScale, Pure A1 #235). Drives the render font. */
   counterScale: number
   termRef: RefObject<Terminal | null>
   fitWhole: () => void
@@ -55,7 +54,7 @@ export interface TerminalRerasterDeps {
   identityStyle: CSSProperties
 }
 
-/** Returns the style for the xterm host div (identity at cs = 1). */
+/** Returns the host layout style (identity today) + drives the single font seam. */
 export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
   const { pinnedFontSize, bornFont, counterScale, termRef, fitWhole, liveFontRef, identityStyle } =
     deps
@@ -146,10 +145,11 @@ export function useTerminalReraster(deps: TerminalRerasterDeps): CSSProperties {
 
   return useMemo<CSSProperties>(
     () =>
-      // Full view (Pure A1) OR cs === 1 ⇒ identity. In full view the bigger render font is the
-      // entire scale-up and there is NO camera, so the in-canvas `scale(1/cs)` would shrink the
-      // grid — the host must stay identity (fills the modal; xterm paints the frozen grid at the
-      // big font in the top-left, the rest is the same-bg gutter that reads as letterbox).
+      // Identity in BOTH live cases: in-canvas cs === 1 (the DOM renderer rides the camera, no
+      // counter-scale), and full view (the scale-up is the bigger render font ALONE, no camera —
+      // an in-canvas `scale(1/cs)` would shrink the grid; xterm paints the frozen grid at the big
+      // font top-left, the rest is same-bg gutter that reads as letterbox). The `scale(1/cs)`
+      // branch below is retained as defense but unreachable today.
       isFullView || counterScale === 1
         ? identityStyle
         : {
