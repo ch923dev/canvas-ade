@@ -121,7 +121,7 @@ test.describe('@terminal terminal font resize', () => {
     // metric-independent — the sibling Ctrl+- test asserts the pin and is reliable on both legs.
     const pinDropped = await pollEval(
       page,
-      `window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(a)})?.fontSize === ${start - 1}`,
+      `window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(a)})?.fontSize === ${JSON.stringify(start - 1)}`,
       8000
     )
     expect(pinDropped, 'A pin shrank to the sticky size (start-1) before seeding B').toBe(true)
@@ -159,7 +159,7 @@ test.describe('@terminal terminal font resize', () => {
     // guard on the Linux leg's font metrics — see the sibling "inherits the sticky" test's note).
     await pollEval(
       page,
-      `window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(a)})?.fontSize === ${start - 1}`,
+      `window.__canvasE2E.getBoards().find((x) => x.id === ${JSON.stringify(a)})?.fontSize === ${JSON.stringify(start - 1)}`,
       8000
     )
     // Reset A (Ctrl+0): A returns to ~the factory default (12.5) but must NOT rewrite the sticky.
