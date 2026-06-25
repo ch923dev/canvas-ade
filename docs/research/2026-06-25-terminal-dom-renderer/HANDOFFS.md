@@ -3,11 +3,14 @@
 Umbrella branch: **`feat/terminal-crisp-umbrella`** · worktree `.worktrees/terminal-crisp` · seed `07a700bf`.
 Spec: `docs/research/2026-06-25-terminal-dom-renderer/REPORT.md` (on the umbrella branch).
 
-**Dispatch order:** P1 first (foundation). Lanes A/B/C only **after P1 is committed to the umbrella**
-(they all touch `useTerminalSpawn.ts` → develop concurrently, merge sequentially with a rebase between).
+**Status (2026-06-25):** P1 ✅ (DOM renderer) · P2 ✅ (DOM-only, hybrid ruled out) · umbrella REBASED
+onto `origin/main afe3c89` (#254), tip `69283cc3` · **Lane A = DISPATCHED** (worktree
+`.worktrees/terminal-dom-liveness`) · **Lane C = SUPERSEDED by #254** · Lane B open.
+
+**Dispatch order:** lanes branch off the **umbrella tip** and PR **into the umbrella** (not main). A & B
+both touch `useTerminalSpawn.ts` → develop concurrently, merge sequentially with a rebase between.
 Each session: read `Z:\Canvas ADE\.claude\coordination\ACTIVE-WORK.md`, work in ITS OWN worktree,
-branch off the **umbrella tip**, PR **into the umbrella** (not main), inline-reply every bot comment,
-`gh auth switch --user ch923dev` before pushing.
+inline-reply every bot comment, `gh auth switch --user ch923dev` before pushing.
 
 ---
 
@@ -37,18 +40,51 @@ Implement P1 — switch the live terminal to xterm's DOM renderer (the permanent
   BEFORE deciding on the WebGL@1 hybrid.
 ```
 
-## Lane A — DOM perf liveness gating (after P1)
+## Lane A — DOM perf liveness gating (PRIMARY perf work; worktree READY)
+
+> Worktree already created: `.worktrees/terminal-dom-liveness` (branch `feat/terminal-dom-liveness`,
+> off umbrella tip `69283cc3`). Just open a Claude session there and paste the prompt.
 
 ```
-You are on the terminal-crisp umbrella. P1 (DOM renderer) is committed to feat/terminal-crisp-umbrella.
-Read docs/research/2026-06-25-terminal-dom-renderer/REPORT.md §5 (Lane A) + §6.
-Branch off the umbrella tip into your own worktree (new-worktree.ps1 -Base feat/terminal-crisp-umbrella).
+You are implementing Lane A of the terminal-crisp umbrella, in the worktree
+.worktrees/terminal-dom-liveness (branch feat/terminal-dom-liveness, already created off the umbrella
+tip). Read docs/research/2026-06-25-terminal-dom-renderer/REPORT.md §2-3 (root cause + perf), §5 Lane A,
+§6 coordination, AND the "P2 RESULT" block (the load-test that motivates this lane).
 
-Implement Lane A — pause/throttle DOM-renderer terminals that are off-screen or below the zoom LOD,
-and coalesce PTY writes (xterm #880: the renderer draws all incoming data regardless of visibility).
-Reuse the OSR liveness pattern (paint-gate below-LOD, freeze last frame). The PTY session must NOT
-tear down. Gate + scoped e2e + dev check. PR into the umbrella; coordinate the useTerminalSpawn touch
-on ACTIVE-WORK with lanes B/C (sequential merge, rebase between).
+CONTEXT: P1 shipped the DOM renderer (crisp under zoom). P2 load-tested it and proved camera motion is
+NEVER the bottleneck (zoom >= static), so the WebGL@1 hybrid was RULED OUT. The residual cost at heavy
+load (P2: N=8 streamers all visible ~40fps) lives in the WRITE / DOM-mutation path — and xterm's DOM
+renderer draws ALL incoming PTY data regardless of whether the board is visible (xterm #880). Lane A is
+the DURABLE fix and the reason DOM-only is safe. Lane C is SUPERSEDED (web-links+unicode11 already
+merged via #254 — do not re-add). Lane B (theming) is the only other live lane.
+
+IMPLEMENT:
+- Gate the live xterm RENDER work for terminals that are OFF-SCREEN or BELOW-LOD (camera < LOD_ZOOM
+  0.4). The PTY session and the buffer MUST stay alive — only the rendering/DOM mutation is paused.
+- Coalesce PTY writes: batch the per-chunk term.write() calls (the port.onmessage 'data' path in
+  useTerminalSpawn) into a buffered flush (rAF- or microtask-batched), so a burst of small chunks
+  becomes few writes; widen the flush window (or hold the buffer) while hidden/below-LOD and flush
+  losslessly on becoming visible. Respect scrollback caps so a hidden firehose can't grow unbounded.
+- REUSE the OSR liveness architecture as the template: src/renderer/.../boards/useOffscreenLiveness.ts
+  (isOsrVisible / on-screen ∧ ≥LOD gating, MAX_LIVE eviction with a frozen last frame). LOD_ZOOM /
+  isLod live in src/renderer/src/lib/canvasView.ts. The terminal analogue of a "frozen last frame" is
+  simply: leave the DOM as-is and stop applying writes while hidden.
+
+DO NOT REGRESS (verify each): DOM renderer stays (no WebGL); Pure A1 full-view scrollback (#235); find
+(#232); configurable scrollback (#237); the scale-correct selection shim + Shift+Enter LF; the #254
+web-links + unicode11 addons; settledZoomStore/useZoomSettle (OSR preview depends on settledZoom). NO
+`will-change: transform` on the terminal host or any ancestor (re-introduces blur).
+
+VERIFY: gate (typecheck/lint/format/unit) + scoped @terminal e2e + a NEW e2e proving a hidden/below-LOD
+terminal stops rendering writes while its PTY stays alive and catches up losslessly when revealed.
+Quantify the win: extend e2e/terminalLoad.bench.ts (run via playwright.bench.config.ts) with an
+"N streamers, only K visible" scenario and show the visible terminals' fps stays high regardless of how
+many off-screen streamers run (vs the current all-visible baseline). Title-stamped manual dev check
+(CANVAS_DEV_TITLE='Lane A terminal liveness') on a LIVE multi-terminal layout.
+
+PROCESS: PR INTO feat/terminal-crisp-umbrella (NOT main). On ACTIVE-WORK, you SHARE useTerminalSpawn.ts
+with Lane B — coordinate (sequential merge, rebase between). gh auth switch --user ch923dev before
+pushing; inline-reply every bot review comment.
 ```
 
 ## Lane B — Terminal theming / color (after P1; ✎ design artifact first)
@@ -67,15 +103,8 @@ fontSize?/terminalFont.ts sticky precedent. Gate + dev check. PR into the umbrel
 useTerminalSpawn touch with lanes A/C.
 ```
 
-## Lane C — Correctness pack (after P1)
+## Lane C — Correctness pack — ✅ SUPERSEDED (do not run)
 
-```
-You are on the terminal-crisp umbrella. P1 (DOM renderer) is committed. Read REPORT.md §5 (Lane C) + §6.
-A feat/terminal-correctness-pack worktree already exists — rebase it onto the umbrella tip (or branch
-fresh off the umbrella tip).
-
-Implement Lane C — add @xterm/addon-web-links + @xterm/addon-unicode11 (load in useTerminalSpawn
-alongside fit/search). Deps change on MAIN then merge per the worktree-deps rule, OR add to the
-umbrella and reconcile. Gate + scoped e2e + dev check. PR into the umbrella; coordinate the
-useTerminalSpawn touch with lanes A/B.
-```
+web-links + unicode11 shipped on `main` as **#254** (Phase 4) and merged into the umbrella when it was
+rebased onto `afe3c89`. The addons load in `useTerminalSpawn` alongside fit/search; `terminalLinks.e2e`
+(6 tests) is green on the DOM renderer. Nothing left for Lane C.
