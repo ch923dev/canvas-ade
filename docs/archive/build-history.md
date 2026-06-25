@@ -998,7 +998,7 @@ via a structured `page.evaluate` arg (mirrors `da2a1d1c`) + inline disposition. 
 advanced (dataflow v14 collision → v15; #238; #237 dup `sendSync` stub; #240/#241 disjoint). PR #239 CI
 green (check · analyze · CodeQL · claude-review 0 crit / 0 warn).
 
-## 2026-06-25 — Planning-MCP umbrella → main · hands-free agent planning boards — #251 (`feat/planning-mcp-umbrella`, merge pending)
+## 2026-06-25 — Planning-MCP umbrella → main · hands-free agent planning boards — #251 (`86a6bad8`, 2026-06-25)
 
 When an agentic CLI writes a plan via MCP (`add_planning_elements` / `spawn_board`), the Planning board
 now lays out **elegant + readable hands-free** — the agent owns the structure, the host owns the geometry.
