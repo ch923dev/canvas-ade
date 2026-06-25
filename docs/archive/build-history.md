@@ -1101,3 +1101,24 @@ non-blocking nits (a `safeOrigin` opaque-origin `'null'`-string that is unreacha
 hover micro-sleep) — no fix pushed (unreachable + would re-trigger CI for a nit). Spec
 `docs/research/2026-06-24-terminal-correctness-pack/SPEC.md` kept. **Phase 5 (serialize/restore + save-to-file)
 remains.**
+
+## 2026-06-26 — Reset the Project Library panel between e2e specs (kill the `@preview` library-panel-overlap flake) — #255 (`d131e27d`, 2026-06-26)
+
+Fixes the known cross-spec **`@preview` "library-panel-overlap" flake** (`browserNetwork:14` "Close inspector" —
+*passed in isolation, failed in-suite*, so `retries:2` masked it on CI/pre-push). **Root cause:** the Project
+Library panel kept its open/closed state in component-local `useState`, which the e2e `reset()` could not reach
+(unlike `DigestPanel`, closed via `host.setDigestOpen(false)`). `browserLibrary` opens it and never closes it;
+with `workers:1` the app is reused across specs in alphabetical order, so the leaked-open fixed 320px right-docked
+panel (`z-index:70`) occluded `browserNetwork`'s real-click target.
+
+**Fix:** hoist `open`/`setOpen` into the existing `libraryStore` (already holds this panel's `refreshNonce`);
+`ProjectLibraryPanel` reads them from the store; `reset()` now closes it (mirrors the DigestPanel reset). Added a
+`@core` guard in `reset-isolation.e2e.ts` (open → `reset()` → assert `data-open="false"`). **Production behavior
+unchanged** (`reset()` is e2e-only); no schemaVersion bump. 4 files, +57/−8.
+
+**Verification:** negative reproduce — disabling *only* the `reset()` close line failed **exactly**
+`browserNetwork:14` + the new guard, nothing else. Pre-merge full e2e matrix GREEN both legs (Windows 215 / Linux
+Docker 215, retries:2); cheap gate green (typecheck · lint 0-err · format). CI green (check · analyze · CodeQL ·
+claude-review — reviewer clean, no `[critical]`/`[warning]`, zero inline). An `@mcp:497` (`spawn_board` title)
+failure seen during triage was an **environment artifact** (orphan Electron from a SIGKILL-ed matrix run + a stale
+`node_modules` after #254 landed mid-session) — passes on clean main; not a defect.
