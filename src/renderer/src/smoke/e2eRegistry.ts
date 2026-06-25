@@ -49,3 +49,12 @@ export const e2eTerminalLink = new Map<
   string,
   (uri: string, mods: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }) => void
 >()
+
+/**
+ * Per-board getter for the Lane-A write coalescer's HELD byte count (terminal-crisp umbrella),
+ * populated by useTerminalSpawn ONLY in e2e mode. While a terminal is gated (off-screen /
+ * below-LOD) its PTY output is held, not rendered; a spec reads this back (`terminalHeldBytes`)
+ * to prove the session keeps producing data (the held buffer grows) while the rendered framebuffer
+ * stays frozen — and that the buffer drains to ~0 once the terminal is revealed and flushes.
+ */
+export const e2eTerminalHeld = new Map<string, () => number>()
