@@ -6,29 +6,32 @@
 > picked by the user) — sub-PRs land **into** `feat/terminal-serialize-umbrella`; the umbrella merges
 > to `main` **once**, with the full e2e matrix both legs at that single pre-merge gate.
 
-## ⚠️ Coordination & sequencing — read first
+## ✅ Coordination & sequencing — UNBLOCKED (re-validated 2026-06-26)
 
-Phase 5 touches `useTerminalSpawn.ts`, `useTerminalReraster.ts`, and `TerminalBoard.tsx`. **Those exact
-files are owned and actively rewritten by the in-flight `terminal-crisp-umbrella` session** (DOM-renderer
-default; its P1 already landed *in that umbrella* at `b67ca826`, net −211 LOC — it **deletes the FREEZE
-counter-scale / reraster machinery**). That umbrella is not yet on `main` but will land as one merge.
+The blocking dependency has cleared: the **terminal-crisp umbrella landed on `main`** as
+**#259** (`78088bbc` feat + `c6c1e404` history). This branch is **rebased onto post-#259 `main`**, and the
+spec below was **re-validated against the landed code** (`useTerminalSpawn.ts` / `TerminalBoard.tsx`).
+Two premises from the parked draft were corrected:
 
-Two consequences bake into this spec:
+1. **FREEZE / `useTerminalReraster` were NOT deleted — they survived, repurposed.** #259 made xterm's
+   **DOM renderer** the default (no WebGL/canvas addon; `useTerminalSpawn.ts:599`) and set in-canvas
+   `counterScale = 1`, so the live grid rides React Flow's `scale(z)` transform directly (crisp at any
+   zoom). `fitWhole` + `counterScale` + the full-view Pure-A1 freeze all remain — they now guard only the
+   **zoom path** (the ResizeObserver never fires on zoom — `:794`) and the **full-view toggle**
+   (established-grid gate — `:433`, `:812`).
+2. **The drag-resize cols-reflow is therefore STILL LIVE — S2 is still required.** A genuine board
+   **drag-resize** changes the well's border-box → the RO fires → `fitWhole` calls `fit.fit()`
+   (`:435`), which re-proposes **both cols and rows** from the new size (the row-shed afterward only
+   trims rows). A cols change → `term.resize(cols≠current)` → xterm's lossy reflow (#5319). This is the
+   lone remaining reflow path, exactly the residual REPORT §7 flagged. **S2 seam:** in `fitWhole`, use
+   `fit.proposeDimensions()` to detect a cols delta and, when present, serialize→resize→reset→write so the
+   buffer re-wraps cleanly at the new width instead of reflowing.
 
-1. **Phase 5 implementation is BLOCKED until the terminal-crisp umbrella lands on `main`.** This document
-   is design-only until then. When it lands, branch the Phase 5 umbrella off the *post-terminal-crisp*
-   `main` (or off the terminal-crisp umbrella tip if we choose to run concurrently — but a clean
-   dependency is cheaper than a live rebase race on `useTerminalSpawn`).
-2. **The resize backstop (Slice 2) is designed against the DOM renderer, not FREEZE.** Phase 1's fix made
-   the *full-view toggle* reflow-safe by freezing cols. With the DOM renderer, zoom no longer re-fits cols
-   at all (it is crisp at any CSS scale), so the **only** remaining cols-changing path is a genuine
-   board-size **drag-resize** — exactly the residual REPORT §7 flagged as "the all-resize backstop."
-   Slice 2 wraps that one path; it does **not** depend on the about-to-be-deleted reraster loop.
-
-> Note: the terminal-crisp umbrella's planned "Lane C (web-links + unicode11)" duplicates Phase 4, which
-> is already on `main` (#254). That lane collapses to a conflict-resolution when the umbrella rebases on
-> main; it is not Phase 5's concern, but it means `@xterm/addon-web-links`/`-unicode11` are already
-> present — Phase 5 adds only `@xterm/addon-serialize`.
+> The #259 umbrella also superseded its own planned "Lane C (web-links + unicode11)" with the already-merged
+> Phase 4 (#254), so `@xterm/addon-web-links`/`-unicode11` are present on `main`. **Phase 5 adds only
+> `@xterm/addon-serialize`.** The addon load site is `useTerminalSpawn.ts:554-565` (beside fit/search,
+> before/after `term.open()` — serialize needs no DOM binding); hold the instance in a ref so S2/S3 can
+> call `.serialize()`.
 
 ## Problem
 
@@ -184,13 +187,18 @@ drag-resize is what's left).
 - **Scroll position.** Preserve `ydisp` when scrolled up (the user is reading); otherwise scroll to tail.
 - **Cost.** `serialize()` of 50k lines is O(n) but runs only on a resize *settle*, not continuously. Cap
   the snapshot at the board's `scrollback` (Phase 3, ≤50k) — already bounded.
-- **DOM renderer.** No reraster/atlas interaction (FREEZE is gone); a `term.refresh` after write is the
-  only repaint nicety. Validate the DOM renderer reflows identically (it shares xterm core's Buffer).
+- **DOM renderer / FREEZE coexistence.** FREEZE *survived* #259 — it guards zoom (the RO never fires on
+  zoom, `:794`) and full-view (established-grid gate, `:433`/`:812`) only, and does **not** gate a real
+  drag-resize, so the backstop and FREEZE never contend. No WebGL atlas to clear (DOM renderer); a
+  `term.refresh(0, rows-1)` after write is the only repaint nicety. The DOM renderer shares xterm core's
+  Buffer, so it reflows identically — the corruption is genuinely present on this path.
 
-**Implementation.** A `useTerminalResizeBackstop` hook (new) wired where the post-terminal-crisp fit logic
-lives in `useTerminalSpawn.ts`. Adds `@xterm/addon-serialize` (loaded at construction; addon is passive
-until `serialize()` is called). No PTY respawn. No schema. Detect a *real* cols delta only (skip
-no-delta settles, exactly like Phase 1's established-grid guard) so an idle board never pays the cost.
+**Implementation.** Wrap the cols change **inside `fitWhole`** (`useTerminalSpawn.ts:421`): before
+`fit.fit()`, read `fit.proposeDimensions()`; if `cols === term.cols`, take today's plain fit; if it
+differs, run serialize → `term.resize(dims.cols, dims.rows)` → `reset()` → `write(snap)` (extracted to a
+pure-ish `terminalResizeBackstop.ts` helper). Hold the `SerializeAddon` instance in a ref (loaded at
+`:554-565`). No PTY respawn, no schema. The zoom path never reaches here and full-view is gated by
+`establishedRef`, so **only a real drag-resize pays the cost**.
 
 **Tests.** `e2e/terminalResizeBackstop.e2e.ts` (`@terminal`) — the corruption repro: write `L000..L119`
 into a dead PTY, **programmatically drag-resize** the board node much wider then much narrower (drive the
@@ -284,10 +292,10 @@ state and that Start spawns live. Cover the park→snapshot→adopt path.
     font cluster (visible in the S1 mock) is **adopted** — S1 adds two `.w3-sep` dividers to
     `ElementContextMenu`/the TERM-07 builder so the export action reads as its own group.
 
-### Blocked-until note
-Per **Coordination & sequencing** above, **do not start implementation until the terminal-crisp umbrella
-is on `main`.** This spec is the design artifact; the umbrella worktree holds it until the dependency
-clears, at which point the Phase 5 sub-PRs branch off the post-terminal-crisp `main`.
+### Status
+**UNBLOCKED 2026-06-26** — terminal-crisp landed (#259); this branch is rebased onto post-#259 `main`
+(`c6c1e404`) and the spec is re-validated against the landed code (see Coordination & sequencing). UI
+design SIGNED OFF (2026-06-25). **Implementation in progress, starting with S4 then S1.**
 
 ## Out of scope
 - **xterm 6.0 bump** (REPORT B1) — the reflow bug is unfixed in 6.0 too; a bump buys only adjacent
