@@ -124,18 +124,19 @@ test.describe('@terminal full-view scrollback is preserved (Pure A1, no reflow)'
     )
   })
 
-  test('every line survives a full-view round-trip at a NON-1 zoom (counter-scaled wrapper)', async ({
+  test('every line survives a full-view round-trip at a NON-1 zoom (DOM host rides the camera)', async ({
     page
   }) => {
     await evalIn(page, `window.localStorage.setItem('ca.terminal.fontSize', '${PINNED}')`)
     const id = await seed(page, 'terminal', { launchCommand: 'exit' })
-    // A non-1 settled zoom puts the in-canvas wrapper on the counter-scaled style (width cs*100% +
-    // transform scale(1/cs)); full view flips it to identity and back. cols may settle to a slightly
-    // different value across that transition, but NO LINE may be lost or duplicated.
+    // A non-1 camera zoom: under the DOM renderer the in-canvas host rides the camera transform
+    // directly (NO counter-scale — the render font stays pinned regardless of zoom). Full view
+    // flips to the portal (the frozen grid scales up via fullViewScale → font > pinned) and back.
+    // cols may settle slightly differently across that transition, but NO LINE may be lost/duped.
     await evalIn(page, `window.__canvasE2E.setZoom(1.5)`)
     expect(
-      await pollEval(page, `(${fontOf(id)} || 0) > ${PINNED + 1}`, 4000),
-      'settled zoom 1.5 applied (effective font ≈ pinned×1.5)'
+      await pollEval(page, `Math.abs(window.__canvasE2E.getZoom() - 1.5) < 1e-6`, 4000),
+      'camera settled at 1.5 (render font stays pinned in-canvas)'
     ).toBe(true)
     await fillBuffer(page, id)
 
@@ -145,6 +146,11 @@ test.describe('@terminal full-view scrollback is preserved (Pure A1, no reflow)'
 
     await evalIn(page, `window.__canvasE2E.setFullView(${JSON.stringify(id)})`)
     expect(await pollEval(page, IN_MODAL, 4000), 'relocated to modal').toBe(true)
+    // Full view scales the FROZEN grid up by the render font alone (Pure A1) — font > pinned.
+    expect(
+      (await evalIn<number | undefined>(page, fontOf(id))) ?? 0,
+      'font scaled up in full view'
+    ).toBeGreaterThanOrEqual(PINNED)
     await evalIn(page, `window.__canvasE2E.setFullView(null)`)
     expect(await pollEval(page, `!(${IN_MODAL})`, 4000), 'back on canvas').toBe(true)
 
