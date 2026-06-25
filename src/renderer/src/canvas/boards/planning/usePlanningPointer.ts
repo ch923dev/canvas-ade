@@ -182,9 +182,17 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         // Phase 4 cross-board drag (§4.3): the grab point's offset from the (mode-aware,
         // group-expanded, lock-filtered) selection's NOMINAL union top-left — IDENTICAL to the
         // basis `extractForTransfer` normalizes the payload against — plus that union's
-        // board-local size for the ghost footprint. Fixed for the whole gesture (computed at
-        // grab). The drop adds grabOffset back so the grabbed point lands under the cursor.
-        transfer: { grabOffset: { x: number; y: number }; unionW: number; unionH: number }
+        // board-local size for the ghost footprint. `count` is the mode-aware transferred-element
+        // count (= `taken.length`, which on a COPY re-includes a group's locked members), so the
+        // ghost chip matches the payload + toast — `ids.length` would under-count that case.
+        // Fixed for the whole gesture (computed at grab). The drop adds grabOffset back so the
+        // grabbed point lands under the cursor.
+        transfer: {
+          grabOffset: { x: number; y: number }
+          unionW: number
+          unionH: number
+          count: number
+        }
       }
     | { mode: 'arrow'; id: string }
     | { mode: 'arrowEnd'; id: string; end: ArrowEnd; sx: number; sy: number; moved: boolean }
@@ -299,7 +307,8 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
         transfer: {
           grabOffset: grabAnchorOffset(p, union),
           unionW: union.w,
-          unionH: union.h
+          unionH: union.h,
+          count: taken.length
         }
       }
       // Capture on the WELL (not the card) so move/up route to the well handlers
@@ -504,7 +513,7 @@ export function usePlanningPointer(deps: PlanningPointerDeps): PlanningPointerAp
           }
           setCrossBoardDrag({
             cursor: { x: e.clientX, y: e.clientY },
-            count: d.ids.length,
+            count: d.transfer.count,
             ghost: {
               w: t.unionW * s,
               h: t.unionH * s,
