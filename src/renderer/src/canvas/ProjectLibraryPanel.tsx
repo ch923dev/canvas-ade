@@ -4,8 +4,9 @@
  * (`.canvas/downloads/`) and the canvas asset store (`.canvas/assets/`). Distinct from the per-board
  * DevTools Assets/Downloads tabs, which inspect the CURRENT page's network resources.
  *
- * Self-contained: it owns its own open state + reopen tab + e2e-driveable DOM, so Canvas mounts it
- * with a single `<ProjectLibraryPanel />`. Reads the filesystem via the MAIN-confined `api.library`
+ * Self-contained: its open state lives in `libraryStore` (so the e2e `reset()` can close it between
+ * specs — see the store note), with its own reopen tab + e2e-driveable DOM, so Canvas mounts it with
+ * a single `<ProjectLibraryPanel />`. Reads the filesystem via the MAIN-confined `api.library`
  * (list/reveal/open) — no schema, nothing serialized.
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
@@ -27,7 +28,10 @@ function formatBytes(n: number): string {
 }
 
 export function ProjectLibraryPanel(): ReactElement {
-  const [open, setOpen] = useState(false)
+  // Open state lives in the store (not useState) so the e2e reset() can close it between specs —
+  // a panel left open leaked across specs and occluded a later @preview click target.
+  const open = useLibraryStore((s) => s.open)
+  const setOpen = useLibraryStore((s) => s.setOpen)
   const [tab, setTab] = useState<Tab>('downloads')
   const [listing, setListing] = useState<LibraryListing | null>(null)
   const asideRef = useRef<HTMLElement>(null)

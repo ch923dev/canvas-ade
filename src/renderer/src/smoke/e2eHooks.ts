@@ -43,6 +43,7 @@ import { useSaveStatusStore } from '../store/saveStatusStore'
 import { useSettledZoomStore } from '../store/settledZoomStore'
 import { useWayfindingStore, MINIMAP_VISIBLE_KEY } from '../store/wayfindingStore'
 import { useCommandStore, commandStoreDefaults, type CommandTask } from '../store/commandStore'
+import { useLibraryStore } from '../store/libraryStore'
 import { listScenes } from '../canvas/backdrop/sceneRegistry'
 
 /** Per-board runtime fields the harness asserts on (subset of PreviewRuntime). */
@@ -764,6 +765,11 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // face) — a spec that switched the seg to 'groups' or collapsed the board would leak that
       // into the next spec (the cross-spec global-state class). Reset to the shipped defaults.
       useCommandStore.setState(commandStoreDefaults())
+      // The Project Library panel's open state is a global ephemeral store too (same class as the
+      // Digest panel closed via host.setDigestOpen above). A spec that opened it (browserLibrary)
+      // left a fixed 320px right-docked overlay covering a later @preview spec's click target (the
+      // "Close inspector" button) — the cross-spec library-panel-overlap flake. Close it.
+      useLibraryStore.getState().setOpen(false)
       // Phase 3: the in-app element clipboard (planning Ctrl+C/X/V) is a renderer module
       // singleton — it intentionally persists for the whole app session, so a spec that did a
       // Ctrl+C/X would leak an armed clipboard into the next spec (the cross-spec module-state
