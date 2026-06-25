@@ -28,7 +28,11 @@ const PATCHABLE_KEYS: Record<BoardType, readonly string[]> = {
     // v10 (New Terminal presets): the chosen agent identity + whether the board joins
     // activity monitoring (MCP attention/swarm). Both terminal-scoped + serialized.
     'agentKind',
-    'monitorActivity'
+    'monitorActivity',
+    // v16 (terminal theming, Lane B): the xterm colour-theme + font-family ids. Both
+    // terminal-scoped + serialized; the dialog Apply patches them via updateBoard.
+    'themeId',
+    'fontFamilyId'
   ],
   browser: [...COMMON_KEYS, 'url', 'viewport', 'previewSourceId'],
   planning: [...COMMON_KEYS, 'elements'],

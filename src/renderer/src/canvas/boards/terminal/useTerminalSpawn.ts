@@ -63,25 +63,12 @@ import { installSelectionShim } from './terminalSelection'
 import { BoardFullViewContext } from '../../fullViewContext'
 import { resolveInitialFont } from './terminalFont'
 import { resolveInitialScrollback } from './terminalScrollback'
-
-/** xterm palette mirrored from the design tokens (DESIGN.md §2). */
-const THEME = {
-  background: '#0e0e10', // --inset
-  foreground: '#ededee', // --text
-  cursor: '#4f8cff', // --accent
-  cursorAccent: '#0e0e10',
-  selectionBackground: 'rgba(79,140,255,0.25)',
-  black: '#0e0e10',
-  brightBlack: '#46464b',
-  red: '#f2545b',
-  green: '#3ecf8e',
-  yellow: '#e8b339',
-  blue: '#4f8cff',
-  magenta: '#b18cff',
-  cyan: '#3ecfce',
-  white: '#9b9ba1',
-  brightWhite: '#ededee'
-} as const
+import {
+  terminalThemeColors,
+  resolveTerminalFontFamily,
+  resolveInitialThemeId,
+  resolveInitialFontFamilyId
+} from './terminalThemes'
 
 /** A control-plane message arriving over the data-plane MessagePort. */
 interface PortMessage {
@@ -297,6 +284,18 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     fontSizeRef.current = board.fontSize
   }, [board.fontSize])
 
+  // board.themeId / board.fontFamilyId for the spawn closure's INITIAL xterm construction, read via
+  // refs so a change is NEVER a spawn dep — the theme/font apply LIVE in the host (TerminalBoard's
+  // live-apply effects) without respawning the PTY (mirrors fontSizeRef / scrollbackRef). Lane B.
+  const themeIdRef = useRef<string | undefined>(board.themeId)
+  const fontFamilyIdRef = useRef<string | undefined>(board.fontFamilyId)
+  useEffect(() => {
+    themeIdRef.current = board.themeId
+  }, [board.themeId])
+  useEffect(() => {
+    fontFamilyIdRef.current = board.fontFamilyId
+  }, [board.fontFamilyId])
+
   // board.scrollback for the spawn closure's INITIAL xterm construction (read via a ref so a
   // change is never a spawn dep), AND applied live to an existing term: xterm's `scrollback`
   // option is mutable, so an edit takes effect WITHOUT respawning the PTY — no session loss,
@@ -486,15 +485,12 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const el = screenRef.current
     if (!el) return () => {}
 
-    // xterm measures + renders glyphs with the literal `fontFamily`, where CSS var() does
-    // NOT resolve — passing 'var(--term-mono)' breaks the font parse, so glyphs render tiny
-    // inside full-width cells (the wide letter-spacing). Resolve the --term-mono token
-    // (hinted OS terminal stack — Cascadia Mono/Consolas/SF Mono) to its literal value before
-    // handing it to xterm. A hinted system font renders native-crisp where the thin Geist Mono
-    // webfont read soft. UI chrome stays on --mono (Geist Mono); only the live grid uses this.
-    const mono =
-      getComputedStyle(document.documentElement).getPropertyValue('--term-mono').trim() ||
-      'Consolas, ui-monospace, "SF Mono", Menlo, monospace'
+    // Font family from the closed registry (terminalThemes.ts, Lane B). xterm measures + renders
+    // glyphs with the literal `fontFamily` and CSS var() does NOT resolve there, so the registry
+    // reads the literal stack off the --term-mono* var (default 'system' = the hinted OS terminal
+    // stack — Cascadia Mono/Consolas/SF Mono). Read via the ref so a font change applies LIVE in
+    // the host without respawning; an absent/unknown id degrades to the system default.
+    const mono = resolveTerminalFontFamily(resolveInitialFontFamilyId(fontFamilyIdRef.current))
 
     const term = new Terminal({
       fontFamily: mono,
@@ -504,7 +500,10 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       fontSize: resolveInitialFont(fontSizeRef.current) * counterScaleRef.current,
       lineHeight: 1.2,
       cursorBlink: true,
-      theme: THEME,
+      // ANSI palette from the closed theme registry (Lane B). Read via the ref so a theme change
+      // applies LIVE in the host (term.options.theme = {…fresh}) without respawning the PTY; an
+      // absent id resolves to the sticky last-used, an unknown id degrades to the Canvas default.
+      theme: terminalThemeColors(resolveInitialThemeId(themeIdRef.current)),
       allowProposedApi: true,
       // Bounded scrollback (perf SLICE-012): xterm retains ~12 B/cell that never releases while a
       // board stays mounted at LOD. Now configurable per board (Appearance tab) with a sticky
