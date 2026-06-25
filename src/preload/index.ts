@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpcRendererEvent } from 'electron'
+import { authApi } from './authApi'
 
 // ── Phase 2.1 terminal — shell-list + launchCommand + spawn result ──
 /** Lifecycle state surfaced to the Terminal board (mirrors main `PtyState`). */
@@ -459,6 +460,10 @@ export type UpdateStatus =
   | { state: 'ready'; version: string }
   | { state: 'error'; message: string }
 
+// Phase 1 accounts: AuthStatus + the `auth` namespace live in ./authApi (max-lines ratchet);
+// re-exported here so the renderer's import path stays stable.
+export type { AuthStatus } from './authApi'
+
 // Windows OS build number (null off Windows), read SYNC once at preload load so the renderer has it
 // synchronously when constructing xterm (A-Win: the `windowsPty` hint — see main/platformIpc.ts +
 // useTerminalSpawn). One-time sendSync of a static value; the handler is registered at app init,
@@ -854,6 +859,10 @@ const api = {
     /** Install the downloaded update + relaunch — fired from the "ready" update toast. */
     install: (): Promise<boolean> => ipcRenderer.invoke('update:install')
   },
+
+  // ── Phase 1 accounts (auth/identity; presence-only — a token NEVER crosses this boundary). The
+  //    namespace lives in ./authApi to keep this file under the max-lines ratchet. ──
+  auth: authApi,
 
   // ── MCP board mirror (control plane; metadata only — id/type/title + coarse status
   //    bucket, never content) ──

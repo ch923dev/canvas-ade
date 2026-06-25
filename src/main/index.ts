@@ -94,12 +94,22 @@ import { computeRecapFacts } from './recapFacts'
 import { createResultSynthesizer, type ResultSynthesizer } from './boardResultSynth'
 import { initAutoUpdate, type UpdaterLike } from './autoUpdate'
 import { parseAuthDeepLink, deepLinkFromArgv } from './authDeepLink'
+import { createAuthTokenStore } from './authTokenStore'
+import { readSession, writeSession, clearSession } from './authSession'
+import { readEntitlement, writeEntitlement, clearEntitlement } from './entitlementCache'
+import { createAuthService, type AuthService } from './authService'
+import { registerAuthHandlers, pushAuthStatus } from './authIpc'
+import { AUTH_CONFIG } from './authConfig'
 
 // Build-time auto-update gate (electron.vite.config.ts `define`). True ONLY for signed
 // production builds; fences initAutoUpdate so unsigned builds never touch the update feed.
 declare const __ENABLE_AUTO_UPDATE__: boolean
 
 let mainWindow: BrowserWindow | null = null
+// Phase 1 accounts: the sign-in service is constructed in whenReady (needs userData + the
+// safeStorage encryptor). A deep-link callback that arrives before then is buffered, then flushed.
+let authService: AuthService | null = null
+let pendingDeepLink: string | null = null
 let localServer: LocalServer | null = null
 let mcp: RunningMcp | null = null
 // Terminal recap (Task 10): the session-map fs.watch disposer; torn down in shutdown().
@@ -267,7 +277,14 @@ function handleAuthDeepLink(url: string): void {
     console.warn('[auth] ignored a non-expanse / malformed deep-link URL')
     return
   }
-  console.log(`[auth] deep-link received: ${link.host}${link.path}`)
+  // authService re-parses the raw URL to read the code/state query and does the state-match +
+  // MAIN-only exchange. If the callback arrives before the service exists (open-url can fire
+  // pre-ready), buffer it and flush on ready.
+  if (authService) {
+    void authService.handleCallback(url)
+  } else {
+    pendingDeepLink = url
+  }
 }
 
 function focusPrimaryWindow(): void {
@@ -466,6 +483,34 @@ app.whenReady().then(async () => {
     isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
     encryptString: (s) => safeStorage.encryptString(s),
     decryptString: (b) => safeStorage.decryptString(b)
+  }
+
+  // ── Phase 1 accounts: construct the sign-in service (reuses the safeStorage encryptor) + register
+  //    its IPC, then flush any deep-link that arrived before the service existed (open-url pre-ready).
+  authService = createAuthService({
+    config: AUTH_CONFIG,
+    tokenStore: createAuthTokenStore(userData, llmEncryptor),
+    session: {
+      read: () => readSession(userData),
+      write: (s) => writeSession(userData, s),
+      clear: () => clearSession(userData)
+    },
+    entitlement: {
+      read: () => readEntitlement(userData),
+      write: (e) => writeEntitlement(userData, e),
+      clear: () => clearEntitlement(userData)
+    },
+    openExternal: (url) => {
+      void shell.openExternal(url)
+    },
+    encryptionAvailable: () => safeStorage.isEncryptionAvailable(),
+    onStatusChanged: (s) => pushAuthStatus(() => mainWindow, s)
+  })
+  registerAuthHandlers(ipcMain, () => mainWindow, authService)
+  if (pendingDeepLink) {
+    const url = pendingDeepLink
+    pendingDeepLink = null
+    void authService.handleCallback(url)
   }
   // Isolate the key/config/budget store under a throwaway temp dir for ANY e2e run so a test
   // key never lands in real userData. The current Playwright harness sets CANVAS_E2E (not the

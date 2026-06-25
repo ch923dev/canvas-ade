@@ -5,6 +5,7 @@ import {
   createState,
   buildAuthorizeUrl,
   exchangeCodeForTokens,
+  decodeJwtExp,
   type FetchLike
 } from './workosAuth'
 
@@ -60,7 +61,7 @@ describe('exchangeCodeForTokens', () => {
     let capturedBody: Record<string, unknown> = {}
     const fakeFetch: FetchLike = async (url, init) => {
       capturedUrl = url
-      capturedBody = JSON.parse(init.body) as Record<string, unknown>
+      capturedBody = JSON.parse(init.body ?? '{}') as Record<string, unknown>
       return {
         ok: true,
         status: 200,
@@ -115,5 +116,21 @@ describe('exchangeCodeForTokens', () => {
     await expect(
       exchangeCodeForTokens({ clientId: 'c', code: 'x', codeVerifier: 'v' }, fakeFetch)
     ).rejects.toThrow(/unexpected response shape/)
+  })
+})
+
+describe('decodeJwtExp', () => {
+  function jwt(payload: object): string {
+    const b64 = (s: string): string =>
+      Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    return `${b64('{"alg":"RS256"}')}.${b64(JSON.stringify(payload))}.sig`
+  }
+  it('returns the exp claim as epoch ms', () => {
+    expect(decodeJwtExp(jwt({ exp: 1700 }))).toBe(1700 * 1000)
+  })
+  it('returns null for a token with no exp / not a JWT', () => {
+    expect(decodeJwtExp(jwt({ sub: 'u' }))).toBeNull()
+    expect(decodeJwtExp('not-a-jwt')).toBeNull()
+    expect(decodeJwtExp('')).toBeNull()
   })
 })

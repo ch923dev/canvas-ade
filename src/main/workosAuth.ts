@@ -77,7 +77,7 @@ export interface AuthResult {
 /** The minimal fetch surface this module uses — injectable so the exchange unit-tests without network. */
 export type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string }
+  init: { method: string; headers: Record<string, string>; body?: string }
 ) => Promise<{
   ok: boolean
   status: number
@@ -118,5 +118,24 @@ export async function exchangeCodeForTokens(
     user: { id: data.user.id, email: data.user.email },
     accessToken: data.access_token,
     refreshToken: data.refresh_token
+  }
+}
+
+/**
+ * Read the `exp` (seconds-since-epoch) from a JWT's payload and return it as epoch ms, or null when
+ * the token is unparseable. Used to derive a token-bundle expiry without verifying the signature
+ * (the server already issued it; the short-lived access token is re-fetched via refresh).
+ */
+export function decodeJwtExp(token: string): number | null {
+  const parts = token.split('.')
+  if (parts.length < 2) return null
+  try {
+    const json = Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString(
+      'utf8'
+    )
+    const payload = JSON.parse(json) as { exp?: number }
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null
+  } catch {
+    return null
   }
 }
