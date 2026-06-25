@@ -8,8 +8,10 @@
 import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import { Modal } from './Modal'
 import { Icon } from './Icon'
+import { AccountAvatar } from './AccountAvatar'
 import { DEFAULT_MODELS } from '../lib/llmModels'
 import { useCanvasStore } from '../store/canvasStore'
+import { useAccountStore } from '../store/accountStore'
 import { useOrchestrationStore } from '../store/orchestrationStore'
 
 const PROVIDERS: Array<{ id: keyof typeof DEFAULT_MODELS; label: string }> = [
@@ -27,7 +29,15 @@ const ENV_VAR: Record<keyof typeof DEFAULT_MODELS, string> = {
   local: 'OPENAI_API_KEY'
 }
 
-export function SettingsModal({ onClose }: { onClose: () => void }): ReactElement {
+export function SettingsModal({
+  onClose,
+  onSignIn
+}: {
+  onClose: () => void
+  /** Phase 1 accounts: the Account section's signed-out "Sign in" CTA. AppChrome closes Settings
+   *  then opens SignInView (two shared Modals must not stack); optional so the modal stands alone. */
+  onSignIn?: () => void
+}): ReactElement {
   const [provider, setProvider] = useState<keyof typeof DEFAULT_MODELS>('openrouter')
   const [model, setModel] = useState<string>(DEFAULT_MODELS.openrouter)
   const [baseUrl, setBaseUrl] = useState('')
@@ -249,6 +259,11 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
       cardProps={{ 'data-test': 'settings-modal' }}
       cardStyle={styles.card}
     >
+      {/* Phase 1 accounts: identity + plan at the top of Settings (DESIGN.md › Surface 2). */}
+      <AccountSection onSignIn={onSignIn} />
+
+      <div style={styles.divider} />
+
       <div style={styles.head}>Context brain · LLM</div>
 
       <label style={styles.field}>
@@ -444,6 +459,82 @@ export function SettingsModal({ onClose }: { onClose: () => void }): ReactElemen
   )
 }
 
+// Phase 1 accounts: the "Account" block at the top of Settings (DESIGN.md › Surface 2). Signed-out
+// → a CTA card whose "Sign in" defers to the parent (close Settings → open SignInView). Signed-in →
+// identity row + plan badge + Manage-subscription (disabled until billing, Phase 2) + Sign out.
+// Own store subscription so a status push re-renders only this section.
+function AccountSection({ onSignIn }: { onSignIn?: () => void }): ReactElement {
+  const status = useAccountStore((s) => s.status)
+  const email = useAccountStore((s) => s.email)
+  const plan = useAccountStore((s) => s.plan)
+  const [busy, setBusy] = useState(false)
+
+  const signOut = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      // MAIN clears local tokens/session/entitlement and pushes auth:statusChanged, which flips
+      // this section back to the signed-out CTA. A rejected IPC is non-fatal (state is local).
+      await window.api.auth.signOut()
+    } catch {
+      // swallow — sign-out is best-effort local teardown
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div style={styles.head}>Account</div>
+      {status === 'signed-in' ? (
+        <>
+          <div style={styles.acctRow} data-test="account-row">
+            <AccountAvatar email={email} plan={plan} size={28} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={styles.acctEmail}>{email ?? 'Signed in'}</div>
+              <div style={styles.acctSub}>Signed in</div>
+            </div>
+            <span style={plan === 'pro' ? styles.badgePro : styles.badgeFree}>
+              {plan === 'pro' ? 'PRO' : 'FREE'}
+            </span>
+          </div>
+          <div style={styles.row}>
+            <button
+              className="ca-btn-ghost"
+              disabled
+              title="Available when billing ships (Phase 2)"
+              data-test="account-manage"
+            >
+              Manage subscription
+            </button>
+            <div style={{ flex: 1 }} />
+            <button
+              className="ca-btn-ghost"
+              disabled={busy}
+              data-test="account-signout"
+              onClick={() => void signOut()}
+            >
+              Sign out
+            </button>
+          </div>
+        </>
+      ) : (
+        <div style={styles.acctCta} data-test="account-cta">
+          <span style={styles.acctCtaText}>
+            Sign in to sync settings across machines and unlock Pro.
+          </span>
+          <button
+            className="ca-btn-primary"
+            data-test="account-cta-signin"
+            onClick={() => onSignIn?.()}
+          >
+            Sign in
+          </button>
+        </div>
+      )}
+    </>
+  )
+}
+
 const styles: Record<string, CSSProperties> = {
   // Scrim + card chrome (surface/border/shadow) come from the shared Modal; only the
   // Settings-specific layout stays here.
@@ -487,6 +578,55 @@ const styles: Record<string, CSSProperties> = {
   },
   divider: { height: 1, background: 'var(--border-subtle)', margin: '2px 0' },
   hint: { fontSize: 11, lineHeight: '15px', color: 'var(--text-3)' },
+  // Phase 1 accounts: the signed-in identity row + the signed-out CTA card + plan badges.
+  acctRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 11,
+    background: 'var(--surface)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--r-inner)',
+    padding: '11px 13px'
+  },
+  acctEmail: {
+    fontSize: 12.5,
+    color: 'var(--text)',
+    fontWeight: 500,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
+  },
+  acctSub: { fontSize: 11, color: 'var(--text-3)', marginTop: 2 },
+  acctCta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    background: 'var(--inset)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--r-inner)',
+    padding: '12px 13px'
+  },
+  acctCtaText: { flex: 1, fontSize: 12, color: 'var(--text-2)', lineHeight: '17px' },
+  badgeFree: {
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.03em',
+    color: 'var(--text-3)',
+    background: 'var(--surface)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 4,
+    padding: '2px 7px'
+  },
+  badgePro: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '0.03em',
+    color: 'var(--accent)',
+    background: 'var(--accent-wash)',
+    border: '1px solid rgba(79,140,255,.4)',
+    borderRadius: 4,
+    padding: '2px 7px'
+  },
   // Agent orchestration row (the mock's `.setrow`): description + Sync button + toggle.
   orchRow: {
     background: 'var(--surface)',

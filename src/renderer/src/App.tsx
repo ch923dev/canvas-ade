@@ -9,6 +9,8 @@ import { useRendererSmoke } from './smoke/useRendererSmoke'
 import { useMcpPublish } from './store/useMcpPublish'
 import { useMcpCommands } from './store/useMcpCommands'
 import { useCanvasStore, patchBoardMeta } from './store/canvasStore'
+import { useAccountStore, useAccountSync } from './store/accountStore'
+import { SignInView } from './canvas/SignInView'
 import { useAutosave } from './store/useAutosave'
 import { isE2E } from './smoke/e2eRegistry'
 
@@ -23,9 +25,12 @@ function App(): React.ReactElement {
   useMcpPublish()
   useMcpCommands()
   useUpdateToasts()
+  // Phase 1 accounts: hydrate the account store at boot + subscribe to MAIN's auth:statusChanged.
+  useAccountSync()
 
   const status = useCanvasStore((s) => s.project.status)
   const applyOpenResult = useCanvasStore((s) => s.applyOpenResult)
+  const accountStatus = useAccountStore((s) => s.status)
 
   // Belt-and-suspenders against drop-to-navigate (audit `packaged-fileurl-nav-allowed`):
   // a file or URL dropped anywhere on the window default-navigates the whole frame to
@@ -93,6 +98,14 @@ function App(): React.ReactElement {
           screen too (a failed final flush aborts the switch — its toast must outlive
           whatever surface raised it). */}
       <ToastIsland />
+      {/* Phase 1 accounts: the forced sign-in gate. `__REQUIRE_ACCOUNT__` is a build-time
+          constant that DEFAULTS OFF (electron.vite.config.ts renderer define) — so this whole
+          branch is dead-code-eliminated in normal builds and Phase 1 behaves exactly like today.
+          It shows only on a CONFIRMED 'signed-out' (never the brief boot 'checking'), as a locked
+          overlay (Esc/scrim disabled, no Cancel) over the app. */}
+      {__REQUIRE_ACCOUNT__ && accountStatus === 'signed-out' && (
+        <SignInView forced onClose={() => {}} />
+      )}
     </div>
   )
 }
