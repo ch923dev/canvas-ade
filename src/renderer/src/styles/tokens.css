@@ -32,6 +32,12 @@
      Mono / Consolas (Windows), SF Mono / Menlo (mac), ui-monospace (Linux). All system
      fonts → no webfont fetch, no load-timing softness. UI chrome keeps --mono (Geist). */
   --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+  /* Terminal-theming Lane B: the closed font-family registry (terminalThemes.ts) reads
+     its stack off these vars, exactly like --term-mono (var() does not resolve inside
+     xterm's fontFamily). `system` = --term-mono above; the bundled Geist Mono webfont is
+     now crisp on the DOM renderer (no atlas), and Courier is the universal classic look. */
+  --term-mono-geist: 'Geist Mono', ui-monospace, monospace;
+  --term-mono-courier: 'Courier New', Courier, monospace;
   --serif: Georgia, 'Times New Roman', serif;
 
   /* §2 Surfaces (furthest → closest) */

@@ -57,6 +57,13 @@ import { SCHEMA_VERSION, MIN_READER_VERSION } from './boardSchemaVersion'
  *   board persists only `BoardCommon` + an optional `sourceBoardId` (the bound Browser board — mirrors
  *   `BrowserBoard.previewSourceId`). The inferred model is body-derived + EPHEMERAL (ADR 0010), never
  *   serialized; export to `.canvas/memory/` is the consent moment.
+ * - **v15 = the `qhd`/`uhd` BrowserBoard viewport presets** (1440p / 4K). NEW enum values ⇒ BREAKING
+ *   (floor → 15): a pre-15 `assertBoard` rejects the unrecognized viewport. Identity migration; this
+ *   bump also adds the `fromObject` clamp (unknown viewport → `desktop`), so it is the LAST viewport floor.
+ * - **v16 = optional TerminalBoard `themeId` + `fontFamilyId`** (terminal theming, Lane B). Closed-registry
+ *   ids (terminalThemes.ts) persisted as free strings + degraded-at-read → identity bump; ADDITIVE so
+ *   MIN_READER_VERSION stays 15 (`assertBoard` type-checks them without rejecting an unknown id, so a
+ *   future theme id rides through and the stored id is PRESERVED — ADR 0007, mirrors `background.scene`).
  */
 // SCHEMA_VERSION + MIN_READER_VERSION are defined in ./boardSchemaVersion (a dependency-free module)
 // so a main-side lock-step test can import the authoritative numbers without dragging in this file's
@@ -139,6 +146,21 @@ export interface TerminalBoard extends BoardCommon {
    * opt-in). `false` keeps a plain shell out of the orchestrator's view.
    */
   monitorActivity?: boolean
+  /**
+   * v16 (terminal theming, Lane B): the xterm colour theme id (terminalThemes.ts closed
+   * registry — e.g. 'canvas' | 'dracula' | 'solarized'). Free string (not a TS enum) so a
+   * future theme needs NO schema bump; an absent OR unknown id degrades to the default at
+   * read (terminalThemeColors), and the stored id is PRESERVED verbatim (forward-compat,
+   * ADR 0007 — mirrors `background.scene` / `agentKind`). Absent ⇒ the sticky last-used
+   * default, then the 'canvas' default (mirrors `fontSize`).
+   */
+  themeId?: string
+  /**
+   * v16: the xterm font-family id (terminalThemes.ts — 'system' | 'geist' | 'courier').
+   * Same free-string + degrade-at-read + sticky-default contract as `themeId`. Maps to a
+   * literal monospace stack resolved like the `--term-mono` token.
+   */
+  fontFamilyId?: string
 }
 
 export interface BrowserBoard extends BoardCommon {
@@ -633,7 +655,11 @@ const MIGRATIONS: Record<number, Migration> = {
   // v15: the `qhd`/`uhd` BrowserBoard viewport presets (1440p / 4K). The values only appear on
   // newly-selected boards, so existing docs have nothing to backfill — identity bump. BREAKING
   // (floor → 15): a pre-15 assertBoard rejects the unrecognized viewport string (boardSchemaVersion.ts).
-  14: (doc) => ({ ...doc, schemaVersion: 15 })
+  14: (doc) => ({ ...doc, schemaVersion: 15 }),
+  // v16: optional TerminalBoard `themeId` + `fontFamilyId` (terminal theming, Lane B). Both optional +
+  // degraded-at-read → identity bump; ADDITIVE so MIN_READER_VERSION stays 15 (assertBoard type-checks
+  // them as strings without rejecting an unknown id, so a future theme id never fails the load).
+  15: (doc) => ({ ...doc, schemaVersion: 16 })
 }
 
 /**
@@ -879,6 +905,15 @@ function assertBoard(b: unknown): void {
       }
       if (b.monitorActivity !== undefined && typeof b.monitorActivity !== 'boolean') {
         fail('terminal monitorActivity is not a boolean')
+      }
+      // v16 theming: type-check ONLY (do NOT reject an unknown id) — a future theme/font id
+      // written by a newer build must not fail the whole doc. The id is preserved verbatim
+      // and degrades to the default at render (terminalThemes.ts), per ADR 0007 forward-compat.
+      if (b.themeId !== undefined && typeof b.themeId !== 'string') {
+        fail('terminal themeId is not a string')
+      }
+      if (b.fontFamilyId !== undefined && typeof b.fontFamilyId !== 'string') {
+        fail('terminal fontFamilyId is not a string')
       }
       return
     case 'browser':

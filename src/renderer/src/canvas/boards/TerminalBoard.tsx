@@ -54,6 +54,7 @@ import {
   MIN_TERMINAL_FONT,
   MAX_TERMINAL_FONT
 } from './terminal/terminalFont'
+import { useTerminalAppearance } from './terminal/useTerminalAppearance'
 import { useTerminalReraster } from './terminal/useTerminalReraster'
 import { useRunTimer } from './terminal/useRunTimer'
 import { useInterruptFeedback } from './terminal/useInterruptFeedback'
@@ -298,6 +299,15 @@ export function TerminalBoard({
     attach()
     return () => mql?.removeEventListener('change', onChange)
   }, [fitWhole])
+
+  // Live theme + font-family apply (Lane B): a themeId/fontFamilyId change applies to the LIVE term
+  // (palette repaint / typeface swap + refit) with no respawn — see useTerminalAppearance.
+  useTerminalAppearance({
+    themeId: board.themeId,
+    fontFamilyId: board.fontFamilyId,
+    termRef,
+    fitWhole
+  })
 
   // Clear the burst timer on unmount.
   useEffect(
