@@ -275,12 +275,14 @@ state and that Start spawns live. Cover the park→snapshot→adopt path.
 - **Order:** S4 + S1 first (renderer-agnostic, no addon — can even be one PR), then S2 (adds the addon +
   the colored-export add-on for S1), then S3. Each sub-PR: gate (typecheck · lint · format:check · unit) +
   a manual **title-stamped** dev check (`CANVAS_DEV_TITLE='PR#NNN <slice>'`).
-- **Design-before-code:** token-exact HTML→PNG mocks are produced for the two UI slices and await the
-  user's nod — `s4-jump-bottom-mock.png` (badge: in-context, plain/streaming/hidden states) and
-  `s1-save-mock.png` (the real `.w3-menu` with "Save output…" → the native OS save dialog, plus the S2
-  format-submenu preview). The inline ASCII wireframes per slice remain for quick reference. S2/S3 are
-  invisible (flow specs only). *(One proposal visible in the S1 mock but not yet in the impl note: a
-  hairline `.w3-sep` separating "Save output…" from Copy/Paste and the font cluster — adopt or drop.)*
+- **Design-before-code: SIGNED OFF 2026-06-25** ("Looks good to me, sign off the badge and menu").
+  Token-exact HTML→PNG mocks for the two UI slices: `s4-jump-bottom-mock.png` (badge: in-context,
+  plain/streaming/hidden states) and `s1-save-mock.png` (the real `.w3-menu` with "Save output…" → the
+  native OS save dialog, plus the S2 format-submenu preview). The inline ASCII wireframes per slice
+  remain for quick reference. S2/S3 are invisible (flow specs only).
+  - **Resolved:** the hairline `.w3-sep` separating "Save output…" from the Copy/Paste group and the
+    font cluster (visible in the S1 mock) is **adopted** — S1 adds two `.w3-sep` dividers to
+    `ElementContextMenu`/the TERM-07 builder so the export action reads as its own group.
 
 ### Blocked-until note
 Per **Coordination & sequencing** above, **do not start implementation until the terminal-crisp umbrella
