@@ -1,0 +1,335 @@
+<!doctype html>
+<!--
+  Phase 5 · Slice S4 design artifact — jump-to-bottom badge.
+  Throwaway token-accurate mock. Tokens copied verbatim from src/renderer/src/styles/tokens.css;
+  terminal chrome mirrors the Phase-2 find-bar mock (titlebar + well). The badge overlays the well
+  bottom-right exactly like the find bar overlays top-right. Rendered + screenshotted for sign-off.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Phase 5 S4 — Jump-to-bottom badge</title>
+    <style>
+      :root {
+        --ui: 'Geist', system-ui, -apple-system, sans-serif;
+        --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+        --term-mono: 'Cascadia Mono', Consolas, 'SF Mono', Menlo, ui-monospace, monospace;
+        --void: #0a0a0b;
+        --surface: #141416;
+        --surface-raised: #1a1a1d;
+        --surface-overlay: #1e1e22;
+        --inset: #0e0e10;
+        --border-subtle: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.1);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #ededee;
+        --text-2: #9b9ba1;
+        --text-3: #7b7b81;
+        --text-faint: #46464b;
+        --accent: #4f8cff;
+        --accent-hover: #6ea0ff;
+        --accent-wash: rgba(79, 140, 255, 0.14);
+        --ok: #3ecf8e;
+        --warn: #e8b339;
+        --err: #f2545b;
+        --r-board: 8px;
+        --r-inner: 6px;
+        --r-ctl: 5px;
+        --shadow-pop: 0 8px 24px -6px rgba(0, 0, 0, 0.7);
+        --shadow-board: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 36px 40px 44px;
+        background: var(--void);
+        font-family: var(--ui);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      h1 {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin: 0 0 4px;
+      }
+      .sub {
+        font-size: 12px;
+        color: var(--text-2);
+        margin: 0 0 26px;
+        max-width: 720px;
+        line-height: 18px;
+      }
+      .cap {
+        font-size: 11px;
+        color: var(--text-3);
+        margin: 0 0 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+      }
+      .cap b {
+        color: var(--text-2);
+        font-weight: 600;
+      }
+
+      /* ── Terminal board chrome (mirrors the find-bar mock) ── */
+      .board {
+        width: 720px;
+        border: 1px solid var(--border);
+        border-radius: var(--r-board);
+        background: var(--surface);
+        box-shadow: var(--shadow-board);
+        overflow: hidden;
+      }
+      .titlebar {
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 10px;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--surface);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--ok);
+        box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.14);
+      }
+      .pill {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-2);
+      }
+      .tb-spacer {
+        flex: 1;
+      }
+      .tb-ico {
+        color: var(--text-3);
+        font-size: 13px;
+        padding: 0 3px;
+      }
+
+      .well {
+        position: relative;
+        height: 290px;
+        background: var(--inset);
+        padding: 12px 14px;
+        font-family: var(--term-mono);
+        font-size: 12.5px;
+        line-height: 19px;
+        color: #b9b9c0;
+        overflow: hidden;
+      }
+      .well .ln {
+        white-space: pre;
+      }
+      .t-dim {
+        color: var(--text-3);
+      }
+      .t-ok {
+        color: var(--ok);
+      }
+      .t-warn {
+        color: var(--warn);
+      }
+      .t-err {
+        color: var(--err);
+      }
+      .t-acc {
+        color: var(--accent);
+      }
+      /* scrollbar hint on the right edge — thumb sits high = scrolled up */
+      .scroll-hint {
+        position: absolute;
+        top: 6px;
+        right: 3px;
+        width: 4px;
+        height: 84px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.14);
+      }
+
+      /* ── S4 — the jump-to-bottom badge ── */
+      .tb-jump {
+        position: absolute;
+        bottom: 12px;
+        right: 16px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 28px;
+        padding: 0 10px 0 11px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        box-shadow: var(--shadow-pop);
+        color: var(--text-2);
+        font-family: var(--ui);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .tb-jump:hover {
+        color: var(--text);
+        border-color: var(--border-strong);
+      }
+      .tb-jump .chev {
+        font-size: 12px;
+        color: var(--text);
+        display: inline-flex;
+        line-height: 1;
+      }
+      .tb-jump .new {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        font-weight: 600;
+        color: #fff;
+        background: var(--accent);
+        border-radius: 999px;
+        padding: 1px 6px;
+        line-height: 1.45;
+      }
+
+      /* states strip */
+      .strip {
+        display: flex;
+        gap: 26px;
+        margin-top: 32px;
+        flex-wrap: wrap;
+      }
+      .state-item {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .bar-host {
+        position: relative;
+        width: 300px;
+        height: 92px;
+        background: var(--inset);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--r-inner);
+        overflow: hidden;
+      }
+      .bar-host .filler {
+        padding: 10px 12px;
+        font-family: var(--term-mono);
+        font-size: 11.5px;
+        line-height: 17px;
+        color: #6f6f76;
+      }
+      .bar-host .tb-jump {
+        bottom: 10px;
+        right: 12px;
+      }
+      .note {
+        margin-top: 32px;
+        font-size: 12px;
+        color: var(--text-2);
+        line-height: 19px;
+        max-width: 720px;
+      }
+      .note code,
+      kbd {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      .at-tail {
+        font-size: 11.5px;
+        color: var(--text-3);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 100%;
+        justify-content: center;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Phase 5 · S4 — Jump-to-bottom badge</h1>
+    <p class="sub">
+      A calm pill, bottom-right of the terminal well (the find bar's mirror image), shown
+      <b>only while scrolled above the live tail</b>. Click → snap to the bottom. An optional accent
+      count chip surfaces output that streamed in while you were reading up-buffer.
+    </p>
+
+    <p class="cap">In context — <b>scrolled up, 3 new lines streamed in below</b></p>
+    <div class="board">
+      <div class="titlebar">
+        <span class="dot"></span>
+        <span class="pill">⠹ Claude · 02:14</span>
+        <span class="tb-spacer"></span>
+        <span class="tb-ico">−</span><span class="tb-ico">+</span><span class="tb-ico">◼</span>
+        <span class="tb-ico">⚙</span><span class="tb-ico">↻</span><span class="tb-ico">⤺</span>
+      </div>
+      <div class="well">
+        <div class="ln t-dim">$ pnpm dev</div>
+        <div class="ln"><span class="t-acc">VITE</span> v7.0.4 ready in 612 ms</div>
+        <div class="ln t-dim">➜ Local: http://localhost:5173/</div>
+        <div class="ln">⠹ compiling renderer… <span class="t-dim">(342 modules)</span></div>
+        <div class="ln t-ok">✓ main + preload bundled</div>
+        <div class="ln">[hmr] update /src/canvas/boards/TerminalBoard.tsx</div>
+        <div class="ln">[hmr] update /src/styles/chrome/terminal.css</div>
+        <div class="ln t-dim">› reloading offscreen preview partition preview-3…</div>
+        <div class="ln">[osr] frame stream resumed (4 live)</div>
+        <div class="ln t-warn">! slow effect: useOffscreenSizing settled in 41ms</div>
+        <div class="ln">⠹ waiting for file changes…</div>
+        <div class="ln">&nbsp;</div>
+        <div class="ln t-dim">— you are reading up here —</div>
+        <div class="ln">&nbsp;</div>
+        <div class="scroll-hint"></div>
+
+        <button class="tb-jump">
+          <span class="chev">↓</span>
+          Jump to bottom
+          <span class="new">3 new</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="strip">
+      <div class="state-item">
+        <p class="cap">No new output — <b>plain jump</b></p>
+        <div class="bar-host">
+          <div class="filler">…<br />build output above<br />…</div>
+          <button class="tb-jump"><span class="chev">↓</span> Jump to bottom</button>
+        </div>
+      </div>
+
+      <div class="state-item">
+        <p class="cap">Streaming — <b>accent count chip</b></p>
+        <div class="bar-host">
+          <div class="filler">…<br />build output above<br />…</div>
+          <button class="tb-jump">
+            <span class="chev">↓</span> Jump to bottom <span class="new">12 new</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="state-item">
+        <p class="cap">At the tail — <b>badge hidden</b></p>
+        <div class="bar-host">
+          <div class="at-tail">▸ no badge — viewport is at the live bottom</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      <b style="color: var(--text)">Behaviour:</b> visible when
+      <code>buffer.active.viewportY &lt; buffer.active.baseY</code> (scrolled up); hidden at the tail.
+      Click or <kbd>End</kbd> → <code>term.scrollToBottom()</code>. The count increments on
+      <code>onLineFeed</code> while scrolled up and resets on snap-to-bottom (S4-stretch — if cut, the
+      pill reads a plain “Jump to bottom”). Pure renderer: no IPC, no schema, no addon. Lives in the
+      well overlay beside the find bar (<code>TerminalBoard.tsx</code> + <code>terminal-jump.css</code>).
+    </p>
+  </body>
+</html>
