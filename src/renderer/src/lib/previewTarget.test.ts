@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { createBoard, type Board } from './boardSchema'
-import { classifyPushTargets } from './previewTarget'
+import { createBoard, type Board, type BrowserBoard } from './boardSchema'
+import { classifyPushTargets, resolveLinkBoardTarget } from './previewTarget'
 
 const term = (id: string, title = id): Board => ({
   ...createBoard('terminal', { id, x: 0, y: 0 }),
@@ -9,6 +9,11 @@ const term = (id: string, title = id): Board => ({
 const browser = (id: string, src?: string): Board => ({
   ...createBoard('browser', { id, x: 0, y: 0 }),
   ...(src ? { previewSourceId: src } : {})
+})
+const browserAt = (id: string, url: string, src?: string): Board => ({
+  ...(createBoard('browser', { id, x: 0, y: 0 }) as BrowserBoard),
+  ...(src ? { previewSourceId: src } : {}),
+  url
 })
 
 describe('classifyPushTargets', () => {
@@ -52,5 +57,46 @@ describe('classifyPushTargets', () => {
 
   it('returns no linked + no candidates when the terminal stands alone', () => {
     expect(classifyPushTargets([term('t1')], 't1')).toEqual({ linkedIds: [], candidates: [] })
+  })
+})
+
+describe('resolveLinkBoardTarget', () => {
+  it('reuses an existing Browser board showing the same origin', () => {
+    const boards = [term('t1'), browserAt('B', 'http://localhost:3000/old')]
+    expect(resolveLinkBoardTarget(boards, 't1', 'http://localhost:3000/new')).toEqual({
+      kind: 'existing',
+      id: 'B'
+    })
+  })
+
+  it('matches on origin only — a different port spawns a fresh board', () => {
+    const boards = [term('t1'), browserAt('B', 'http://localhost:3000/')]
+    expect(resolveLinkBoardTarget(boards, 't1', 'http://localhost:5173/')).toEqual({
+      kind: 'spawn'
+    })
+  })
+
+  it('prefers a same-origin board already linked to this terminal over an unrelated one', () => {
+    const boards = [
+      term('t1'),
+      browserAt('U', 'http://localhost:3000/a'), // same origin, unlinked
+      browserAt('L', 'http://localhost:3000/b', 't1') // same origin, linked to t1
+    ]
+    expect(resolveLinkBoardTarget(boards, 't1', 'http://localhost:3000/c')).toEqual({
+      kind: 'existing',
+      id: 'L'
+    })
+  })
+
+  it('spawns when no Browser board shows the origin', () => {
+    const boards = [term('t1'), browserAt('B', 'https://example.com/')]
+    expect(resolveLinkBoardTarget(boards, 't1', 'http://localhost:3000/')).toEqual({
+      kind: 'spawn'
+    })
+  })
+
+  it('spawns for an unparseable link (cannot match an origin)', () => {
+    const boards = [term('t1'), browserAt('B', 'http://localhost:3000/')]
+    expect(resolveLinkBoardTarget(boards, 't1', 'not a url')).toEqual({ kind: 'spawn' })
   })
 })

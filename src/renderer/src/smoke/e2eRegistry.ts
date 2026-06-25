@@ -36,3 +36,16 @@ export function appendTerminalInput(id: string, d: string): void {
   arr.push(d)
   e2eTerminalInput.set(id, arr)
 }
+
+/**
+ * Per-board terminal web-link activator (Phase 4), populated by useTerminalSpawn ONLY in e2e mode.
+ * It is the EXACT function the WebLinksAddon hands a clicked URI to (scheme/modifier gate →
+ * destination routing → Browser board create/route or shell:openExternal), so the harness can drive
+ * the real routing deterministically without synthesizing an xterm link-click (whose mousedown→
+ * mouseup→activate chain doesn't fire under synthetic input). The addon's REAL URL detection is
+ * covered separately by the hover assertion. `mods` mirrors the MouseEvent modifier flags.
+ */
+export const e2eTerminalLink = new Map<
+  string,
+  (uri: string, mods: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }) => void
+>()
