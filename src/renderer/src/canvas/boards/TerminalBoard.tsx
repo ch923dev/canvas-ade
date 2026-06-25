@@ -61,6 +61,7 @@ import { useInterruptFeedback } from './terminal/useInterruptFeedback'
 import { TerminalEndCTA } from './terminal/TerminalEndCTA'
 import { buildTerminalMenuEntries } from './terminal/terminalMenu'
 import { TerminalFindBar } from './terminal/TerminalFindBar'
+import { TerminalJumpButton } from './terminal/TerminalJumpButton'
 import {
   shell,
   shellHidden,
@@ -685,6 +686,9 @@ export function TerminalBoard({
                 <div ref={screenRef} style={screenStyle} />
                 {/* Phase 2: find-in-terminal bar (Ctrl/Cmd+F). Floats top-right of the well. */}
                 {findOpen && <TerminalFindBar api={findApi} />}
+                {/* Phase 5 · S4: jump-to-bottom badge. Floats bottom-right; self-hides at the
+                    tail. `ready` gates its scroll subscription to a term that exists (≠ idle). */}
+                <TerminalJumpButton termRef={termRef} ready={state !== 'idle'} />
                 {/* TERM-04: an exited / spawn-failed terminal now offers an in-well re-run
                     CTA (bottom bar — never covers the scrollback). Restart re-runs (fresh),
                     Resume re-attaches a known session, Retry/Configure for a failed spawn.
