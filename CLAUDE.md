@@ -127,7 +127,7 @@ design-reference/   authoritative design bundle (read-only)
 docs/        README.md (map) · roadmap.md · feature-proposals.md · decisions/ (ADRs 0001-0002) ·
              reviews/ (all hunts+reviews; README index + newest = open backlog) · research/ ·
              archive/ (build-history.md + git pointers for collapsed per-slice/handoff docs)
-.github/workflows/build.yml   6-target CI matrix (unsigned until Phase 5)
+.github/workflows/   pr.yml (check-only) · staging.yml (unsigned matrix on push→main) · production.yml (sign+notarize+publish on Release) · codeql.yml · claude-code-review.yml
 electron.vite.config.ts · electron-builder.yml · tsconfig.{json,node,preload,web}.json
 ```
 
@@ -273,8 +273,12 @@ file = open findings).
 **Current state (milestone-level only — no SHA here):** Phases 0-4 + all board types, MCP M0-M5,
 the Context subsystem, Whiteboard W1-W5, Testing T0-T5, the Electron 33->42 bump (T9), review
 Waves 0-5, and the 2026-06-10 full-app audit fix run (#107, 72/72 findings) are all shipped on
-`main`. **The release blocker is Phase 5 (packaging/signing).** Open candidates and "start here
-next" live in `docs/roadmap.md`.
+`main`. **Phase 5 (packaging/signing) is built + merged (#161, `841ba596`):** the app packages
+(verified `pack:dir` + the unsigned CI matrix is green on every push), and electron-updater is wired
++ compiler-gated (`__ENABLE_AUTO_UPDATE__`). **The only thing between here and a shipped release is
+external — purchasing the signing certs (Apple Developer ID + a Windows Authenticode/cloud-signing
+cert), adding the secrets, then the first signed Release run** (runbook: `docs/contributing/releasing.md`;
+ADR 0008). Open candidates and "start here next" live in `docs/roadmap.md`.
 
 **Live state is deliberately NOT tracked in this file — including the current `main` SHA.** The
 current integration tip, the per-PR landing log, and the in-flight worktree/PR queue all live in
