@@ -1067,3 +1067,37 @@ browserNetwork/osrCropSupersample/dataFlow — self-heal on retry, all green in 
 ghost count chip read `d.ids.length` (drops locked) but a COPY of a group re-includes locked members → it
 under-counted vs the payload + toast; fixed by carrying `taken.length` as `transfer.count` (`c9ecc484`) +
 dispositioned inline.
+
+## 2026-06-25 — Terminal correctness pack: clickable web-links + Unicode 11 (Phase 4) — #254 (`195024e2`, 2026-06-25)
+
+Fourth terminal-capabilities slice (after Phase 1 full-view freeze + Phase 2 find #235, Phase 3 configurable
+scrollback #237). Loads two official xterm addons in the spawn closure:
+- **`@xterm/addon-unicode11`** — `term.unicode.activeVersion='11'` for correct emoji/CJK/combining cell width;
+  fixes wide-glyph misalignment AND the wrap miscount that fed the Phase-1 reflow drift.
+- **`@xterm/addon-web-links`** — `Ctrl/Cmd+click` activates a link (plain click stays selection). Smart default
+  by host: localhost / `127.0.0.0/8` / `0.0.0.0` / `::1` / `*.local` / RFC-1918 → an in-canvas Browser board
+  (same-origin reuse, else spawn beside the terminal — reusing the port-detect `onPushPreviewTo`→`applyPush`
+  create/route path); every other http(s) URL + `mailto:` → the OS browser; `Shift` flips the destination.
+
+**Design decisions:** the external path goes through a NEW general, frame-guarded `shell:openExternal` channel
+(`shellIpc.ts`, mirrors `clipboardIpc.ts`) that REUSES the one `previewShared.openExternalSafe` allowlist
+("Bug #23": http/https/mailto, re-validated in MAIN) — no second validation; preload `openExternalUrl`. New pure
+`terminalLinks.ts` (`isOpenableScheme`/`isLocalHost`/`classifyLinkHost`/`resolveLinkDestination`) +
+`resolveLinkBoardTarget` in `previewTarget.ts` (same-origin reuse else spawn). The addon link handler is
+ref-stable (`onLinkActivateRef`) so it never becomes a spawn dep. **No schemaVersion bump, no PTY respawn.**
+
+**e2e split (the load-bearing decision):** xterm's internal mousedown→mouseup→activate chain does NOT fire under
+synthetic clicks (terminal-mouse-synthesis limit — a probe confirmed `hover` fires but `activate` never does), so
+`terminalLinks.e2e.ts` proves the addon DETECTS/linkifies via a REAL hover (`window.__linkHover`) and drives
+ROUTING through an `activateTerminalLink` seam (mirrors the `e2eTerminals` registry) into the real store + a real
+`shell:openExternal` recorder (MAIN `shell.openExternal` patched via `electronApp.evaluate`). The literal click
+gesture was verified in the manual title-stamped dev check.
+
+**Verification:** gate (typecheck · lint 0-err · format · 3640 unit/integration, incl. terminalLinks 12 /
+previewTarget +5 / shellIpc 4). Pre-merge full e2e matrix GREEN both legs (Windows 213 / Linux 213; the recurring
+`@preview` flakes — browserNetwork/osrCropSupersample/browser — all clean in isolation; terminalLinks 6/6 on both
+legs). CI green (check · analyze · CodeQL · claude-review); reviewer clean — no `[critical]`/`[warning]`, 2
+non-blocking nits (a `safeOrigin` opaque-origin `'null'`-string that is unreachable in-flow; an intentional e2e
+hover micro-sleep) — no fix pushed (unreachable + would re-trigger CI for a nit). Spec
+`docs/research/2026-06-24-terminal-correctness-pack/SPEC.md` kept. **Phase 5 (serialize/restore + save-to-file)
+remains.**
