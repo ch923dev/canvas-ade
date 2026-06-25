@@ -6,10 +6,11 @@
  * for SETTLE_MS:
  *   1. snaps a zoom inside the snap band to exactly 100% (`snapZoom`), anchored at
  *      the pane center with duration 0 — the everyday working band lands pixel-exact
- *      for raster content (the xterm WebGL canvas), and
- *   2. publishes the settled zoom to `settledZoomStore` — the terminal WebGL policy
- *      (useTerminalWebgl via useTerminalSpawn) switches renderers on settle only,
- *      never per gesture frame.
+ *      (a comfort detent), and
+ *   2. publishes the settled zoom to `settledZoomStore` — the OSR Browser preview
+ *      (useOffscreenSizing) supersamples its offscreen content on settle only, never
+ *      per gesture frame. (The terminal no longer consumes this: it runs on the DOM
+ *      renderer, crisp at any live scale — terminal-crisp umbrella.)
  *
  * Why the store mirror and not useOnViewportChange/onMoveEnd: programmatic camera
  * moves (rf.zoomTo / fitView with duration 0) bypass onViewportChange — only
