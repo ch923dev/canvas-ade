@@ -37,12 +37,15 @@ import { useStoreApi } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { TerminalBoard as TerminalBoardData } from '../../../lib/boardSchema'
 import type { TerminalState } from '../terminalState'
 import {
   isE2E,
   e2eTerminals,
   e2eTerminalInput,
+  e2eTerminalLink,
   appendTerminalInput
 } from '../../../smoke/e2eRegistry'
 import { handleTerminalKey, TERMINAL_NEWLINE } from './terminalKeymap'
@@ -199,6 +202,13 @@ export interface TerminalSpawnDeps {
    * listing it in the spawn dep set below does not churn the callback identity.
    */
   pasteIntoTerminal: (term: Terminal, boardId: string, isLive?: () => boolean) => void
+  /**
+   * Web-links activation (Phase 4 correctness pack): the WebLinksAddon hands a Ctrl/Cmd-clicked
+   * link's URI to the host, which routes it to a Browser board or the OS browser. Read through a
+   * ref so the addon's click handler — built ONCE per spawn — never becomes a spawn dep (mirrors
+   * the fontStepRef seam); `shiftKey` carries the board↔external destination flip.
+   */
+  onLinkActivate: (uri: string, opts: { shiftKey: boolean }) => void
 }
 
 /**
@@ -289,6 +299,13 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
   // change is never a spawn dep), AND applied live to an existing term: xterm's `scrollback`
   // option is mutable, so an edit takes effect WITHOUT respawning the PTY — no session loss,
   // mirroring the live font seam. Lowering it trims the oldest buffered lines; raising is lossless.
+  // Web-links handler (Phase 4): ref-synced so the addon's click handler (built once per spawn)
+  // always calls the host's LATEST router without becoming a spawn dep. Mirrors fontStepRef.
+  const onLinkActivateRef = useRef(deps.onLinkActivate)
+  useEffect(() => {
+    onLinkActivateRef.current = deps.onLinkActivate
+  }, [deps.onLinkActivate])
+
   const scrollbackRef = useRef<number | undefined>(board.scrollback)
   useEffect(() => {
     scrollbackRef.current = board.scrollback
@@ -534,9 +551,44 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
     const search = new SearchAddon()
     term.loadAddon(search)
     searchAddonRef.current = search
+    // Phase 4 correctness pack — Unicode 11 width tables: correct cell width for emoji / CJK /
+    // combining chars, fixing wide-glyph misalignment AND the wrap miscount that fed the reflow
+    // drift Phase 1 fought. Proposed API (allowProposedApi is set above).
+    term.loadAddon(new Unicode11Addon())
+    term.unicode.activeVersion = '11'
     term.open(el)
     termRef.current = term
     fitRef.current = fit
+    // Phase 4 — clickable links: Ctrl/Cmd+click activates (plain click stays with the selection
+    // shim); the host routes the URI to a Browser board or the OS browser. The handler reads the
+    // host's latest router via the ref so this closure-built addon never depends on its identity.
+    // Loaded AFTER term.open(): xterm's Linkifier (which sets the hovered link + binds the
+    // mousedown/up activation) initializes against the DOM at open, so the provider must register
+    // onto an opened terminal to be clickable.
+    const activateLink = (
+      uri: string,
+      mods: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
+    ): void => {
+      if (!(mods.ctrlKey || mods.metaKey)) return // require the modifier; plain click = select
+      onLinkActivateRef.current(uri, { shiftKey: !!mods.shiftKey })
+    }
+    term.loadAddon(
+      new WebLinksAddon(
+        (event, uri) => activateLink(uri, event),
+        isE2E()
+          ? {
+              // Real-hover probe: the @terminal e2e asserts the addon actually DETECTED + linkified a
+              // URL (the part synthetic clicks can't reach), reading this back as `window.__linkHover`.
+              hover: (_e, uri) => {
+                ;(window as unknown as { __linkHover?: string }).__linkHover = uri
+              }
+            }
+          : undefined
+      )
+    )
+    // e2e seam: drive the EXACT activation function the addon calls so the routing (modifier gate →
+    // Browser-board create/route or shell:openExternal) is testable without an xterm link-click.
+    if (isE2E()) e2eTerminalLink.set(board.id, activateLink)
     establishedRef.current = false // a fresh grid: not yet fitted in-canvas (full-view freeze base)
     // Attach a GL context only when mounting un-suspended (not under LOD);
     // otherwise the board runs on the DOM renderer until the suspension lifts
@@ -773,6 +825,7 @@ export function useTerminalSpawn(deps: TerminalSpawnDeps): TerminalSpawnApi {
       portRef.current = null
       if (isE2E()) e2eTerminals.delete(board.id)
       if (isE2E()) e2eTerminalInput.delete(board.id)
+      if (isE2E()) e2eTerminalLink.delete(board.id)
       // Free the WebGL context before disposing the terminal (no-op if a prior
       // context-loss or LOD detach already disposed it and nulled the ref).
       detachWebgl()

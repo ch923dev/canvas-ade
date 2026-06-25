@@ -36,7 +36,7 @@ import { makeChecklist } from '../canvas/boards/planning/elements'
 import { clearClipboard } from '../canvas/boards/planning/elementClipboard'
 import { buildDiagramThemeVars } from '../canvas/boards/planning/diagramTheme'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
-import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
+import { e2eTerminals, e2eTerminalInput, e2eTerminalLink } from './e2eRegistry'
 import { disposeLiveResources } from '../store/disposeLiveResources'
 import { useToastStore } from '../store/toastStore'
 import { useSaveStatusStore } from '../store/saveStatusStore'
@@ -173,6 +173,17 @@ export interface CanvasE2E {
   terminalFontSize: (id: string) => number | undefined
   /** The live xterm scrollback for a terminal board (lines), or undefined if not mounted. */
   terminalScrollback: (id: string) => number | undefined
+  /** Phase 4: the active Unicode width-table version ('11' once the Unicode11Addon loaded), or
+   *  undefined if not mounted. The links e2e asserts the addon took effect at construction. */
+  terminalUnicodeVersion: (id: string) => string | undefined
+  /** Phase 4: drive the terminal's web-link activator with a URI + modifier flags — the EXACT
+   *  function the WebLinksAddon calls — so routing (Browser board vs shell:openExternal, modifier
+   *  gate, Shift flip) is testable without synthesizing an xterm link-click. No-op if not mounted. */
+  activateTerminalLink: (
+    id: string,
+    uri: string,
+    mods: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
+  ) => void
   /** Rendered terminal geometry for the clip probe: rects of the live xterm sub-elements vs the
    *  clipping well, plus dpr/rows/cols. Null if not mounted. */
   terminalGeometry: (id: string) => null | {
@@ -542,6 +553,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
     },
     terminalScrollback(id) {
       return e2eTerminals.get(id)?.options.scrollback
+    },
+    terminalUnicodeVersion(id) {
+      return e2eTerminals.get(id)?.unicode.activeVersion
+    },
+    activateTerminalLink(id, uri, mods) {
+      e2eTerminalLink.get(id)?.(uri, mods)
     },
     terminalGeometry(id) {
       const term = e2eTerminals.get(id)

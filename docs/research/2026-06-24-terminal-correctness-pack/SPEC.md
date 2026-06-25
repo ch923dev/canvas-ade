@@ -78,13 +78,18 @@ renderer→OS boundary, so they are the riskiest part of this phase.
    `term.unicode.activeVersion='11'`; load `WebLinksAddon(handler)` where `handler(event, uri)` =
    `isOpenableScheme` guard → `resolveLinkDestination` → call the board path (#4) or the external IPC (#5).
    The handler is stable (board id + store refs), not a spawn dep.
-4. **Browser-board path** — reuse `addBoard('browser', pos, { url })` for the create case and a same-origin
-   lookup over `canvasStore.boards` (type `'browser'`) to route an existing one (focus + navigate via
-   `previewStore`/`navigatePreview`). Spawn position = terminal board rect offset right. Factor the
-   create-or-route into a small helper so the port-detect flow and the link flow share it.
-5. **`shell:openExternal` IPC** (`preload/index.ts` + `main/index.ts`) — a new shared, scheme-validated
-   channel for the external path. MAIN enforces the allowlist before `shell.openExternal`. (The existing
-   `preview:openExternal` stays preview-scoped; do not overload it.)
+4. **Browser-board path** — reuse the existing port-detect create/route machinery rather than re-implement
+   it: `resolveLinkBoardTarget(boards, fromId, url)` (NEW in `previewTarget.ts`) picks a same-origin Browser
+   board (preferring one already linked to this terminal) else `{kind:'spawn'}`, and the result flows
+   through the SAME `onPushPreviewTo` → `applyPush` path the "Preview" globe button uses (`applyPush` spawns
+   `addBoard('browser', { x: from.x+from.w+40, y: from.y })` + `updateBoard({url, previewSourceId})`, or
+   re-points + reloads the existing board). So the link flow and the port-detect flow share one applier.
+5. **`shell:openExternal` IPC** (NEW `main/shellIpc.ts`, mirrors `clipboardIpc.ts`; preload
+   `openExternalUrl`) — a general, frame-guarded external-open channel that **reuses the ONE allowlist
+   primitive** `previewShared.openExternalSafe` / `isAllowedExternal` ("Bug #23": http/https/mailto only)
+   rather than writing a second validation. MAIN re-validates before `shell.openExternal`. (The existing
+   `preview:openExternal` stays preview-scoped; the terminal gets its own correctly-named channel — both
+   delegate to the same primitive, so there is no duplicated security logic.)
 
 **No `schemaVersion` bump** (no persisted state added). **No PTY respawn** (addons load at construction;
 the Restart/respawn path reuses the term — unaffected).

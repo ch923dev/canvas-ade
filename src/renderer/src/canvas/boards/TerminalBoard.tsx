@@ -20,7 +20,12 @@ import type { BoardViewProps } from '../BoardNode'
 import { agentIdentity, brailleFrame, isRunning, statusFor } from './terminalState'
 import { prefersReducedMotion } from '../../lib/motion'
 import { useCanvasStore } from '../../store/canvasStore'
-import { classifyPushTargets, type PreviewCandidate } from '../../lib/previewTarget'
+import {
+  classifyPushTargets,
+  resolveLinkBoardTarget,
+  type PreviewCandidate
+} from '../../lib/previewTarget'
+import { isOpenableScheme, resolveLinkDestination } from './terminal/terminalLinks'
 import {
   runDetectPorts,
   makePortDetectNote,
@@ -109,6 +114,29 @@ export function TerminalBoard({
   const configPending = useCanvasStore((s) => s.configPendingId === board.id)
   const clearConfigPending = useCanvasStore((s) => s.clearConfigPending)
 
+  // Phase 4 — clickable terminal links. The WebLinksAddon (loaded in useTerminalSpawn) hands a
+  // Ctrl/Cmd-clicked URI here. Smart default by host: a local dev URL opens in a Browser board
+  // (reusing a same-origin one, else spawning beside this terminal — the same create/route path as
+  // the port-detect "Preview" button); every other http(s) URL, plus mailto, opens in the OS
+  // browser. Shift flips board↔external. file:/javascript:/data:/custom are ignored here and
+  // re-rejected in MAIN. Defined ABOVE useTerminalSpawn (it consumes this) — needs only the
+  // onPushPreviewTo prop + board.id, both in scope, so there's no use-before-define.
+  const handleLink = useCallback(
+    (uri: string, opts: { shiftKey: boolean }): void => {
+      if (!isOpenableScheme(uri)) return
+      const dest = resolveLinkDestination(uri, opts)
+      if (dest === 'external' || !onPushPreviewTo) {
+        // External, or no canvas action wired (e.g. LOD card) → open in the OS browser. MAIN
+        // re-validates the scheme before shell.openExternal (never trust the renderer for an open).
+        void window.api.openExternalUrl(uri)
+        return
+      }
+      const target = resolveLinkBoardTarget(useCanvasStore.getState().boards, board.id, uri)
+      onPushPreviewTo(uri, target)
+    },
+    [board.id, onPushPreviewTo]
+  )
+
   // ── Spawn lifecycle ───────────────────────────────────────────────────────────
   // The PTY spawn/respawn/restart state machine + xterm construction + MessagePort data
   // plane + ResizeObserver-deferred spawn + adopt/idle fork + WebGL pooling + selection
@@ -137,7 +165,8 @@ export function TerminalBoard({
     fontStepRef,
     fontResetRef,
     pasteIntoTerminal,
-    configPending
+    configPending,
+    onLinkActivate: handleLink
   })
 
   // Edit-config dialog open (the unified New Terminal dialog in 'edit' mode). A modal with

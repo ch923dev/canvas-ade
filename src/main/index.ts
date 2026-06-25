@@ -59,6 +59,7 @@ import { createAuditLog } from './auditLog'
 import { registerAuditHandler, getAuditLog } from './auditIpc'
 import { requestConfirm } from './mcpConfirm'
 import { registerClipboardHandlers } from './clipboardIpc'
+import { registerShellHandlers } from './shellIpc'
 import { registerPlatformIpc } from './platformIpc'
 import { makeFlushChannel, makeFlushFinish } from './flushChannel'
 // Terminal/agent-CLI session recap (Task 10 wiring) ────────────────────────────────
@@ -321,6 +322,8 @@ app.whenReady().then(async () => {
   }
   registerPtyHandlers(ipcMain, () => mainWindow)
   registerClipboardHandlers(ipcMain, () => mainWindow)
+  // General external-open channel (scheme re-validated in MAIN) — Phase 4 terminal web-links.
+  registerShellHandlers(ipcMain, () => mainWindow)
   // SYNC platform info (Windows build number) for the terminal's xterm windowsPty hint (A-Win).
   registerPlatformIpc(ipcMain)
   // File-tree epic (S1): frame-guarded, root-confined fs IPC (read/write/list/stat). The

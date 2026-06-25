@@ -30,6 +30,38 @@ export type PushClassification = {
   candidates: PreviewCandidate[]
 }
 
+/** Origin (scheme + host + port) of a URL, or null when it doesn't parse. */
+function safeOrigin(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).origin
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve where a clicked terminal link that targets a Browser board should land (Phase 4 —
+ * correctness pack). Reuse a Browser board ALREADY showing the link's origin — route + focus it —
+ * preferring one already linked to THIS terminal so a one-off click doesn't hijack an unrelated
+ * board; otherwise spawn a fresh Browser board beside the terminal. Keyed on the link's origin
+ * (not the terminal↔browser link graph that classifyPushTargets uses), so the destination is the
+ * already-open view of that app when there is one. An unparseable link spawns (can't match). Pure.
+ */
+export function resolveLinkBoardTarget(
+  boards: Board[],
+  fromId: string,
+  url: string
+): ResolvedPushTarget {
+  const origin = safeOrigin(url)
+  if (origin === null) return { kind: 'spawn' }
+  const sameOrigin = boards.filter(
+    (b): b is BrowserBoard => b.type === 'browser' && safeOrigin(b.url) === origin
+  )
+  if (sameOrigin.length === 0) return { kind: 'spawn' }
+  const linked = sameOrigin.find((b) => b.previewSourceId === fromId)
+  return { kind: 'existing', id: (linked ?? sameOrigin[0]).id }
+}
+
 export function classifyPushTargets(boards: Board[], fromId: string): PushClassification {
   const terminalTitles = new Map(
     boards.filter((b) => b.type === 'terminal').map((t) => [t.id, t.title] as const)

@@ -502,6 +502,11 @@ const api = {
     readText: (): Promise<string> => ipcRenderer.invoke('clipboard:readText')
   },
 
+  // General "open this URL in the OS browser" — scheme re-validated in MAIN (shellIpc →
+  // openExternalSafe). Used by app surfaces outside the preview subsystem (Phase 4 terminal
+  // web-links). Returns whether MAIN actually opened it (false = scheme blocked / unparseable).
+  openExternalUrl: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:openExternal', url),
+
   // ── Browser preview — engine-agnostic control plane (shared by the offscreen engine) ──
   // Open the preview's current URL in the OS browser (scheme-gated in main).
   openExternalPreview: (url: string): Promise<boolean> =>
