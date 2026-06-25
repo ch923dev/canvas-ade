@@ -33,6 +33,7 @@ import { resolveConnectTarget } from '../lib/resolveConnectTarget'
 import type { TidyMode } from '../lib/tidyLayout'
 import type { TileTemplate } from '../lib/tileLayout'
 import { makeChecklist } from '../canvas/boards/planning/elements'
+import { clearClipboard } from '../canvas/boards/planning/elementClipboard'
 import { buildDiagramThemeVars } from '../canvas/boards/planning/diagramTheme'
 import { clampTerminalFont } from '../canvas/boards/terminal/terminalFont'
 import { e2eTerminals, e2eTerminalInput } from './e2eRegistry'
@@ -746,6 +747,12 @@ export function installE2EHooks(rf: ReactFlowInstance, host: E2EHostHooks): void
       // face) — a spec that switched the seg to 'groups' or collapsed the board would leak that
       // into the next spec (the cross-spec global-state class). Reset to the shipped defaults.
       useCommandStore.setState(commandStoreDefaults())
+      // Phase 3: the in-app element clipboard (planning Ctrl+C/X/V) is a renderer module
+      // singleton — it intentionally persists for the whole app session, so a spec that did a
+      // Ctrl+C/X would leak an armed clipboard into the next spec (the cross-spec module-state
+      // class). A non-empty element clipboard wins over an OS image paste (E7), which would then
+      // silently break whiteboard's image-paste spec. Clear it so each test starts empty.
+      clearClipboard()
       // S3: the File-board viewer font is sticky too (localStorage, persistent userData); the
       // A-/A+ steppers ratchet it across runs (same self-ratchet class as the minimap above), so
       // file.e2e's A+ assertion eventually fails once the base hits FILE_FONT_MAX. Clear it so

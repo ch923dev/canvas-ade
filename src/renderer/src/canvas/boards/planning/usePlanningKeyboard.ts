@@ -36,12 +36,15 @@ import { screenScale } from '../../../lib/pen'
 import {
   elementBBox,
   expandGroups,
+  extractForTransfer,
   groupElements,
+  insertTransferred,
   isLocked,
   translateMany,
   ungroupElements,
   unionBBox
 } from './elements'
+import { getClipboard, hasClipboard, setClipboard } from './elementClipboard'
 import { shortcutTool, type PlanTool } from './tools'
 import type { MenuEntry } from './ElementContextMenu'
 
@@ -75,6 +78,13 @@ export interface PlanningKeyboardDeps {
   buildMenuEntries: (sel: ReadonlySet<string>) => MenuEntry[]
   setContextMenu: Dispatch<SetStateAction<{ x: number; y: number; entries: MenuEntry[] } | null>>
   newId: () => string
+  /** Last board-local pointer position over THIS well (Phase 3 clipboard, §2.4) — the Ctrl+V
+   *  paste anchor. Updated by usePlanningPointer on every well pointermove; `null` until the
+   *  pointer has been over the well since mount (→ paste falls back to the board center). */
+  lastPointerRef: MutableRefObject<{ x: number; y: number } | null>
+  /** Board content dimensions (board-local px) for the paste center-fallback (§4.3). */
+  boardW: number
+  boardH: number
 }
 
 export interface PlanningKeyboardApi {
@@ -98,7 +108,10 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
     measuredRef,
     buildMenuEntries,
     setContextMenu,
-    newId
+    newId,
+    lastPointerRef,
+    boardW,
+    boardH
   } = deps
 
   // True while an arrow-key burst is in flight: the first nudge of a burst takes the
@@ -207,6 +220,65 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
         return
       }
 
+      // Ctrl/⌘+C copy · Ctrl/⌘+X cut · Ctrl/⌘+V paste — the in-app element clipboard
+      // (Phase 3, spec §3.B). Select-tool only; this is the well's onKeyDown so the well
+      // already owns focus, and the cards' textareas/inputs stopPropagation their own
+      // keydown (a Ctrl+C while editing note text copies the text natively, never reaching
+      // here). Copy/cut act on the group-expanded selection. Cut-then-paste are TWO separate
+      // user actions = TWO undo steps, so they go through the board's own beginChange/commit
+      // — NOT `transferElements` (that store action is the ATOMIC picker/drag one-step path).
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && tool === 'select') {
+        const k = e.key.toLowerCase()
+        // Copy: snapshot the (group-expanded, deep-cloned, origin-normalized) selection onto
+        // the clipboard. No store mutation, no checkpoint. Empty selection → fall through.
+        if (k === 'c' && selectedIds.size > 0) {
+          e.stopPropagation()
+          e.preventDefault()
+          setClipboard(extractForTransfer(elements, selectedIds, 'copy').payload)
+          return
+        }
+        // Cut: extract in 'move' mode — lock-precedence is built in (locked members stay in
+        // source and are NOT placed on the clipboard, mirroring Delete/Cut). Set the clipboard,
+        // then commit the `remaining` source as ONE undo step + clear the selection. Bail BEFORE
+        // beginChange when nothing is takeable (an all-locked selection) so no phantom checkpoint.
+        if (k === 'x' && selectedIds.size > 0) {
+          e.stopPropagation()
+          e.preventDefault()
+          const { payload, remaining } = extractForTransfer(elements, selectedIds, 'move')
+          if (payload.length > 0) {
+            setClipboard(payload)
+            beginChange()
+            commit(remaining)
+            clearSel()
+          }
+          return
+        }
+        // Paste: materialize fresh-id copies into THIS board as ONE undo step + reselect the
+        // inserts. Pastes into the focused board, so cross-board (copy/move from another board)
+        // and same-board (within-board duplicate) both fall out for free. Empty clipboard → fall
+        // through (no preventDefault) so the image-paste path (usePlanningImageIO) still runs (E7).
+        if (k === 'v' && hasClipboard()) {
+          e.stopPropagation()
+          e.preventDefault()
+          const payload = getClipboard()!
+          // Center the payload on the paste anchor — the last in-well pointer position, else the
+          // board content center (§4.3). The payload is origin-normalized (union top-left at 0,0),
+          // so its nominal-size union gives the dimensions; subtract half to center on the anchor
+          // and clamp the top-left to ≥16 so an oversized payload still lands inside (picker §4.3).
+          const union = unionBBox(payload.map((el) => elementBBox(el)))
+          const anchor = lastPointerRef.current ?? { x: boardW / 2, y: boardH / 2 }
+          const at = {
+            x: Math.max(16, anchor.x - union.w / 2),
+            y: Math.max(16, anchor.y - union.h / 2)
+          }
+          const { elements: next, newIds } = insertTransferred(elements, payload, at, newId)
+          beginChange()
+          commit(next)
+          setSelectedIds(new Set(newIds))
+          return
+        }
+      }
+
       // Arrow-key nudge (A4): select tool + non-empty selection only; otherwise the
       // key falls through untouched.
       const delta = ARROW_DELTA.get(e.key)
@@ -278,7 +350,10 @@ export function usePlanningKeyboard(deps: PlanningKeyboardDeps): PlanningKeyboar
       setTool,
       newId,
       openMenuAtSelection,
-      endNudgeBurst
+      endNudgeBurst,
+      lastPointerRef,
+      boardW,
+      boardH
     ]
   )
 
