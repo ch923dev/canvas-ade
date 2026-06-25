@@ -65,6 +65,7 @@ import {
 } from './planning/elements'
 import { buildContextMenuEntries } from './planning/contextMenuEntries'
 import { ElementContextMenu, type MenuEntry } from './planning/ElementContextMenu'
+import { CrossBoardDragGhost } from './planning/CrossBoardDragGhost'
 import { useSendToBoard } from './planning/useSendToBoard'
 import { usePlanningKeyboard } from './planning/usePlanningKeyboard'
 import { usePlanningPointer } from './planning/usePlanningPointer'
@@ -485,7 +486,8 @@ export function PlanningBoard({
     draftTextBox,
     pendingErase,
     snapGuides,
-    endpointDrag
+    endpointDrag,
+    crossBoardDrag
   } = usePlanningPointer({
     tool,
     setTool,
@@ -501,7 +503,8 @@ export function PlanningBoard({
     wellRef,
     buildMenuEntries,
     setContextMenu,
-    lastPointerRef
+    lastPointerRef,
+    boardId: board.id
   })
 
   // Mirror dragPos into the ref so growForChecklist (defined earlier) reads it lazily.
@@ -644,6 +647,11 @@ export function PlanningBoard({
       <div
         ref={wellRef}
         className="pl-well"
+        // Cross-board drag hit-test target (Phase 4 §3.C): a DISTINCT attribute from the
+        // DiagramCard's `data-board-id` so `closest('[data-planning-well]')` resolves to the
+        // WELL (its rect) and never a diagram card. Only Planning wells carry it → dropping
+        // over a terminal/browser board finds no target.
+        data-planning-well={board.id}
         tabIndex={0}
         onPointerDown={onWellPointerDown}
         onPointerMove={onWellPointerMove}
@@ -867,6 +875,7 @@ export function PlanningBoard({
         />
       )}
       {sendToPanel}
+      {crossBoardDrag && <CrossBoardDragGhost drag={crossBoardDrag} />}
     </BoardFrame>
   )
 }
