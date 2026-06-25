@@ -1032,3 +1032,38 @@ fallback could move a board to a non-free slot (now `overlapsAny`-guarded), rend
 re-strip controls (now shares `sanitizeBoardTitle`), and this doc-lifecycle deletion — all fixed + dispositioned.
 Per-slice specs `docs/planning-mcp/phase-2a-sections.md`, `phase-2b-board-title.md`, `phase-2c-presentation.md`,
 `phase-2c-canvas-aware-nudge.md`, `phase-2c-checklist-wrap.md` deleted here (this build-history entry is the residue).
+
+## 2026-06-25 — Cross-board element transfer (Planning ↔ Planning) umbrella → main · picker · clipboard · drag — #253 (`ade1d90d`, 2026-06-25)
+
+Move/Copy any element selection between Planning boards on the same canvas, three ways — all routed through one
+`transferElements` store action so every transfer is ONE undo step (a single Ctrl+Z restores both boards).
+Same-project only (assets are project-scoped + content-addressed → image/diagram/fileref transfer = string copy,
+no asset rewrite); locked elements stay put on a Move. **No schema bump.** Umbrella of 4 phases, each PR'd into
+`feat/planning-cross-board-transfer`:
+- **#243 Phase 1 — engine** — `extractForTransfer` (group-expand · deep-clone · origin-normalize · skip-locked-
+  on-move) + `insertTransferred` (fresh ids + group remap; paste-twice safe) in `planning/elements.ts`;
+  `transferElements` + `selectOtherPlanningBoards`; picker mock (the design sign-off artifact).
+- **#244 Phase 2 — "Send to board…" picker** — `SendToBoardPanel` + `useSendToBoard` host hook; context-menu
+  entry; centered placement; all-locked-Move guarded from spawning an orphan board; toast Focus via `focusBoardById`.
+- **#246 Phase 3 — clipboard** — Ctrl+C/X/V via an ephemeral `elementClipboard` module singleton; cut/paste use
+  the board's own commit (one undo step each); image-paste coexistence via a `hasClipboard()` defer-guard.
+- **#252 Phase 4 — cross-board drag** — `crossBoardDrag` pure helpers + `CrossBoardDragGhost` (body portal,
+  pointer-events:none); leave-source-well → `elementFromPoint` hit-test on a distinct `data-planning-well` attr;
+  drop reuses `transferElements` (plain = Move / Alt = Copy); within-board drop path UNCHANGED.
+
+**Integration (this PR):** rebased clean onto `origin/main` (no conflicts; carries the #251 planning-MCP work +
+the `@expanse-ade/mcp` 0.15→0.17 bump). The rebase stacked #251's `canvasStore.ts` additions onto
+`transferElements` → tripped the 700-line max-lines ratchet (720) → extracted the whole transfer concern into a
+new `src/renderer/src/store/planningTransfer.ts` (`makeTransferElements` factory + `selectOtherPlanningBoards` +
+a `TransferElements` type alias that also collapses the interface signature; selector re-exported for API
+stability); behavior byte-for-byte unchanged, `canvasStore.ts` → ~693. The 4 per-phase handoff prompts deleted
+here (doc-lifecycle; this entry is the residue; spec `docs/research/2026-06-24-planning-cross-board-transfer.md`
++ the picker mock kept).
+
+**Verification:** gate (typecheck · lint 0-err · format · 3683 unit/integration). Umbrella→main pre-merge gate:
+full e2e matrix GREEN both legs (Windows 207 / Linux 207; the recurring `@preview` flakes —
+browserNetwork/osrCropSupersample/dataFlow — self-heal on retry, all green in isolation), CI green
+(check · analyze · CodeQL · claude-review) on both heads. Reviewer #253: 1 `[warning]` — the cross-board drag
+ghost count chip read `d.ids.length` (drops locked) but a COPY of a group re-includes locked members → it
+under-counted vs the payload + toast; fixed by carrying `taken.length` as `transfer.count` (`c9ecc484`) +
+dispositioned inline.
