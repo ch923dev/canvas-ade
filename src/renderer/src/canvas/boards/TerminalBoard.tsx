@@ -687,8 +687,13 @@ export function TerminalBoard({
                 {/* Phase 2: find-in-terminal bar (Ctrl/Cmd+F). Floats top-right of the well. */}
                 {findOpen && <TerminalFindBar api={findApi} />}
                 {/* Phase 5 · S4: jump-to-bottom badge. Floats bottom-right; self-hides at the
-                    tail. `ready` gates its scroll subscription to a term that exists (≠ idle). */}
-                <TerminalJumpButton termRef={termRef} ready={state !== 'idle'} />
+                    tail. `ready` gates its scroll subscription to a term that exists (≠ idle);
+                    `raised` lifts it above the TERM-04 end-CTA when that owns the bottom bar. */}
+                <TerminalJumpButton
+                  termRef={termRef}
+                  ready={state !== 'idle'}
+                  raised={state === 'exited' || state === 'spawn-failed'}
+                />
                 {/* TERM-04: an exited / spawn-failed terminal now offers an in-well re-run
                     CTA (bottom bar — never covers the scrollback). Restart re-runs (fresh),
                     Resume re-attaches a known session, Retry/Configure for a failed spawn.

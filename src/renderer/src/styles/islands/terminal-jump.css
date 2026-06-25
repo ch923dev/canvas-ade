@@ -22,6 +22,10 @@
   cursor: pointer;
   animation: tj-in 120ms ease-out;
 }
+/* Float clear of the TERM-04 end-state CTA (Restart/Resume) when it owns the bottom bar. */
+.tj-jump.tj-raised {
+  bottom: 60px;
+}
 @keyframes tj-in {
   from {
     opacity: 0;
