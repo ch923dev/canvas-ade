@@ -52,6 +52,11 @@ nsis:
 mac:
   target:
     - target: dmg
+    # zip is REQUIRED for macOS auto-update: Squirrel.Mac (electron-updater) pulls the
+    # update from a .zip, not the .dmg (the dmg is the manual-download artifact). With
+    # only dmg, `latest-mac.yml` has no asset to point at and in-app updates silently
+    # never fire on macOS. Producing both is the standard electron-updater mac setup.
+    - target: zip
   # macOS uses the padded variant (build/icon-mac.png) — Apple's app-icon grid
   # expects ~100px transparent margin so the Dock icon matches native apps; the
   # shared build/icon.png is full-bleed (correct for win .ico / linux PNG, oversized
