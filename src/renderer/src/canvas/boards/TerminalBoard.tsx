@@ -139,7 +139,7 @@ export function TerminalBoard({
 
   // ── Spawn lifecycle ───────────────────────────────────────────────────────────
   // The PTY spawn/respawn/restart state machine + xterm construction + MessagePort data
-  // plane + ResizeObserver-deferred spawn + adopt/idle fork + WebGL pooling + selection
+  // plane + ResizeObserver-deferred spawn + adopt/idle fork + DOM-renderer + selection
   // shim + custom key handler + kill-tree teardown all live in useTerminalSpawn. The host
   // keeps only the DOM anchor (screenRef), the font-handler bridge refs the key handler
   // reads (fontStepRef/fontResetRef), and the smart-paste fn (passed in — not imported —
@@ -160,7 +160,6 @@ export function TerminalBoard({
   } = useTerminalSpawn({
     board,
     projectDir,
-    lod,
     screenRef,
     fontStepRef,
     fontResetRef,

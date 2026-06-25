@@ -196,11 +196,12 @@ export interface CanvasE2E {
     wellBottom: number
     overflow: number
   }
-  /** FREEZE re-raster probe: the live render-state the counter-scale drives. `netScale`
-   *  is the .xterm-screen rendered-vs-layout width ratio (1 at rest under the wrapper);
-   *  `effectiveFont` is the live xterm render font (≈ pinned × counterScale, possibly
-   *  stepped down by the no-clip correction); `hSlack`/`vSlack` are the rendered px
-   *  between the grid's right/bottom edge and the well's (negative ⇒ the grid CLIPS). */
+  /** Terminal render-state probe (DOM renderer; terminal-crisp umbrella). `netScale` is the
+   *  .xterm-screen rendered-vs-layout width ratio — IN-CANVAS it equals the camera zoom (the
+   *  host rides the transform, no counter-scale), 1 in full view; `effectiveFont` is the live
+   *  xterm render font (the pin in-canvas; pinned × fullViewScale in full view); `hSlack`/
+   *  `vSlack` are the rendered px between the grid's right/bottom edge and the well's
+   *  (negative ⇒ the grid CLIPS). */
   terminalCounterScale: (id: string) => null | {
     effectiveFont: number
     cols: number
