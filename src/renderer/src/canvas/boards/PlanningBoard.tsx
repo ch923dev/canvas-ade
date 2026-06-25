@@ -132,6 +132,11 @@ export function PlanningBoard({
     [toggleSel]
   )
   const wellRef = useRef<HTMLDivElement>(null)
+  // Phase 3 clipboard (§2.4): the last board-local pointer position over THIS well — the
+  // Ctrl+V paste anchor. usePlanningPointer writes it on every well pointermove and
+  // usePlanningKeyboard reads it (board-center fallback while null). Ephemeral session
+  // state — a plain ref, never serialized.
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
   // BUG-052: ref that mirrors the live dragPos from usePlanningPointer so
   // growForChecklist can gate on it without a forward-reference (the useCallback
   // is defined before usePlanningPointer is called in the component body).
@@ -454,7 +459,10 @@ export function PlanningBoard({
     measuredRef,
     buildMenuEntries,
     setContextMenu,
-    newId
+    newId,
+    lastPointerRef,
+    boardW: board.w,
+    boardH: board.h
   })
 
   // ── Whiteboard pointer state machine (Wave-5 B5 extraction) ──────────────────
@@ -492,7 +500,8 @@ export function PlanningBoard({
     measuredRef,
     wellRef,
     buildMenuEntries,
-    setContextMenu
+    setContextMenu,
+    lastPointerRef
   })
 
   // Mirror dragPos into the ref so growForChecklist (defined earlier) reads it lazily.
