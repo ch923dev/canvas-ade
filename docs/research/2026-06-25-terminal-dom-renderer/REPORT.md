@@ -61,8 +61,9 @@ The DOM renderer deletes **both** mechanisms.
 
 **Verdict: DOM-renderer-default is the correct permanent fix.** Guardrails to ship: scrollback caps
 (have, #237), write coalescing, and paint-gating off-screen/below-LOD boards (reuse the OSR liveness
-pattern + the `lod` flag). Keep a WebGL-at-zoom-1 hybrid as a *conditional* escape hatch only if
-profiling shows DOM-default can't sustain the heaviest multi-session load.
+pattern + the `lod` flag). The WebGL-at-zoom-1 hybrid was kept as a *conditional* escape hatch pending
+profiling — **P2 (below) profiled it and ruled it OUT**: camera motion is never the bottleneck, so the
+hybrid optimizes a non-existent cost while re-introducing during-motion blur. Ship DOM-only.
 
 ## 4. The change is surgical (NOT the stale branch as-is)
 
@@ -105,6 +106,34 @@ stale base (~#141). Merging it as-is would **regress** three things that landed 
 - **Smooth → ship DOM-only.** **Janks at zoom 1 → enable WebGL-at-zoom-1**: re-arm the existing
   `attachWebgl`/`detachWebgl` on `settledZoom === 1 && liveZoom === 1`; drop to DOM on any zoom ≠ 1
   (panning at zoom 1 doesn't resample a canvas, so WebGL stays crisp while panning). Small increment.
+
+> **P2 RESULT — 2026-06-25: SHIP DOM-ONLY. Hybrid ruled OUT.**
+> Harness: `e2e/terminalLoad.bench.ts` (+ `playwright.bench.config.ts`) — N terminals each running an
+> infinite colored-output PTY stream (worst case: tighter than real agents AND all tiled on-screen
+> above LOD), measuring in-page rAF frame cadence across **static / pan / zoom** phases at the same
+> stream load. Two runs, dev box (≈165 Hz display, so fps caps ~163 and frame-time is the real signal):
+>
+> | N | phase | fps | p50 | p95 | max | jank>33ms |
+> |---|---|---|---|---|---|---|
+> | 1 | static/pan/zoom | ~163 | 6.1ms | 6.2ms | <36ms | ~0% |
+> | 4 | static | 116–133 | 6.1ms | 12.2ms | 18ms | 0% |
+> | 4 | zoom | 144–160 | 6.1ms | 6–12ms | 12ms | 0% |
+> | 8 | static | **45** | **24ms** | 30ms | 42ms | 0.6–2.2% |
+> | 8 | pan | 55 | 18ms | 24ms | 60ms | <1% |
+> | 8 | zoom | **65** | **12ms** | 18ms | 24ms | 0% |
+>
+> **Decisive finding: camera motion is NEVER the bottleneck — `zoom ≥ pan ≥ static` at every N**
+> (zoom is the *smoothest* phase at N=8). If DOM glyph re-rasterization under `scale(z)` were costly,
+> zoom would be the *worst* phase; it is the best. So the WebGL-at-zoom-1 hybrid optimizes a cost that
+> does not exist, while re-introducing the exact during-motion blur P1 removes → **rejected.**
+> The only real cost is the **write / DOM-mutation path** at extreme concurrent streaming (8 full-tilt
+> streamers all visible → ~40 fps, still no perceptible jank). That cost is **renderer-agnostic**
+> (WebGL pays it too) and is addressed by **Lane A** (write coalescing + paint-gate off-screen/below-LOD),
+> not a renderer swap. Real usage (agents pause to think; off-screen boards paint-gated) is far lighter
+> than this bench. **Bench not part of the gate** (separate config, `*.bench.ts`); re-run on demand.
+> *Caveat:* bench ran on the pre-#254 umbrella tip; post-rebase the DOM renderer also carries the
+> web-links link-layer + unicode11 width cost (Lane C, now landed on `main` as #254) — re-bench after
+> the rebase to refresh the numbers, but it does not change the DOM-vs-hybrid call.
 
 ### Lane A — DOM perf liveness gating (after P1 in umbrella)
 xterm #880: the renderer draws all incoming data regardless of visibility. Pause/throttle term
