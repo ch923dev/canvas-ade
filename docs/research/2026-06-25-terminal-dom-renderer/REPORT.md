@@ -131,9 +131,11 @@ stale base (~#141). Merging it as-is would **regress** three things that landed 
 > (WebGL pays it too) and is addressed by **Lane A** (write coalescing + paint-gate off-screen/below-LOD),
 > not a renderer swap. Real usage (agents pause to think; off-screen boards paint-gated) is far lighter
 > than this bench. **Bench not part of the gate** (separate config, `*.bench.ts`); re-run on demand.
-> *Caveat:* bench ran on the pre-#254 umbrella tip; post-rebase the DOM renderer also carries the
-> web-links link-layer + unicode11 width cost (Lane C, now landed on `main` as #254) — re-bench after
-> the rebase to refresh the numbers, but it does not change the DOM-vs-hybrid call.
+> *Re-benched post-rebase onto #254 (2026-06-25):* the DOM renderer now also carries the web-links
+> link-layer + unicode11 width cost (Lane C landed on `main` as #254). Numbers are unchanged within
+> noise (N=8 static p50 24ms / zoom p50 18ms; `zoom ≥ pan ≥ static` still holds), and the full
+> `@terminal` e2e (49 tests, incl. #254's `terminalLinks`) is green on the merged tree. **Decision
+> stands: DOM-only.**
 
 ### Lane A — DOM perf liveness gating (after P1 in umbrella)
 xterm #880: the renderer draws all incoming data regardless of visibility. Pause/throttle term
